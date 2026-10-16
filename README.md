@@ -10,7 +10,7 @@ SDO doesn't trust its agents to grade their own work:
 - **Agents propose; a broker commits.** Every agent works in an isolated Git worktree. A commit broker enforces who may change which artifact, and only validated changes reach the application's operational branch.
 - **Memory grows from verified outcomes.** After an incident, SDO checks recovery itself, records the outcome, and lets the responder add incident detectors and playbooks. The next incident of the same kind starts from that memory.
 
-SDO is described in the paper [A Self-Defining Operator for Distributed Applications](https://arxiv.org/abs/2610.14547). See [Citation](#citation) to cite it.
+SDO is described in the paper [A Self-Defining Operator for Distributed Applications](https://arxiv.org/abs/2610.14547).
 
 > **Status:** research prototype. Interfaces and on-disk formats may change without notice.
 
