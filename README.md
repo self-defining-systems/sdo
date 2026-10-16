@@ -1,5 +1,7 @@
 # SDO: Self-Defining Operator
 
+[![arXiv](https://img.shields.io/badge/arXiv-2610.14547-b31b1b.svg)](https://arxiv.org/abs/2610.14547)
+
 SDO deploys an application from its source code and then keeps it running. You give it a repository and a plain-language health objective ("the frontend serves requests; every Deployment is available"). SDO deploys the application to Kubernetes, writes Go detectors that check that objective, and runs a long-lived controller that watches the application and sends a coding agent to repair it when a detector fires.
 
 SDO doesn't trust its agents to grade their own work:
@@ -7,6 +9,8 @@ SDO doesn't trust its agents to grade their own work:
 - **Detectors are deterministic Go, checked independently.** Agents write detectors, but SDO reruns validation itself before one ships. It compiles the detector in a no-network sandbox and rejects detectors that would fire on the application's healthy structure. An agent's own self-check never counts as evidence. At runtime, detectors never call a model.
 - **Agents propose; a broker commits.** Every agent works in an isolated Git worktree. A commit broker enforces who may change which artifact, and only validated changes reach the application's operational branch.
 - **Memory grows from verified outcomes.** After an incident, SDO checks recovery itself, records the outcome, and lets the responder add incident detectors and playbooks. The next incident of the same kind starts from that memory.
+
+SDO is described in the paper [A Self-Defining Operator for Distributed Applications](https://arxiv.org/abs/2610.14547).
 
 > **Status:** research prototype. Interfaces and on-disk formats may change without notice.
 
@@ -163,6 +167,22 @@ uv run pytest tests/unit/
 ```
 
 [docs/testing-guide.md](docs/testing-guide.md) has the full set of Python and Go test commands, including integration tests and the contract fixtures shared between Go and Python.
+
+## Citation
+
+If you use SDO in your research, please cite:
+
+```bibtex
+@misc{li2026selfdefiningoperatordistributedapplications,
+      title={A Self-Defining Operator for Distributed Applications},
+      author={Shihang Li and Thomas Anderson and Ratul Mahajan and Simon Peter and Luke Zettlemoyer},
+      year={2026},
+      eprint={2610.14547},
+      archivePrefix={arXiv},
+      primaryClass={cs.DC},
+      url={https://arxiv.org/abs/2610.14547},
+}
+```
 
 ## License
 
