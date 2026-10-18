@@ -32,6 +32,7 @@ from sdo.agents.views import (
 from sdo.agents.views import (
     IncidentView as PydIncidentView,
 )
+from sdo.contracts import OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
     IncidentClosure,
@@ -51,6 +52,14 @@ def test_outcomes_are_typed_across_the_reflection_boundary() -> None:
     fields = contract_proto.ReflectionRequest.DESCRIPTOR.fields_by_name
     assert fields["outcome"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
     assert fields["prior_outcomes"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
+
+
+def test_outcome_classification_type_matches_proto_validation() -> None:
+    from buf.validate import validate_pb2
+
+    field = OutcomeRecord.DESCRIPTOR.fields_by_name["classification"]
+    permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
+    assert {item.value for item in OutcomeClassification} == set(permitted)
 
 
 def test_outcome_round_trips_through_canonical_contract() -> None:
