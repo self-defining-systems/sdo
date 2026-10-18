@@ -298,7 +298,17 @@ class SystemHost:
     def image_versions(self, ref: str, modules: Sequence[str]) -> ImageVersions | None:
         if not modules:
             identity = self._text(
-                ["docker", "run", "--rm", "--entrypoint", "/usr/local/bin/sdo-operator", ref, "schema-identity"],
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--workdir",
+                    "/opt/sdo/sdo/operator",
+                    "--entrypoint",
+                    "/usr/local/bin/sdo-operator",
+                    ref,
+                    "schema-identity",
+                ],
                 timeout=120,
             )
             if identity is None:

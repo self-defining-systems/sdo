@@ -232,6 +232,8 @@ def test_go_only_images_probe_the_native_binary_without_python_or_codex() -> Non
         "docker",
         "run",
         "--rm",
+        "--workdir",
+        "/opt/sdo/sdo/operator",
         "--entrypoint",
         "/usr/local/bin/sdo-operator",
         "sdo-controller:test",
