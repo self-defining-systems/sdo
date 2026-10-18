@@ -12,6 +12,6 @@ echo "Running all tests..."
 # Run Python tests
 "$SCRIPT_DIR/test_python.sh" "$@"
 
-for module in controller/sdk controller/core controller/runtime; do
+for module in sdo/operator sdo/operator/contracts sdo/operator/sdk sdo/operator/core sdo/operator/runtime; do
   (cd "$PROJECT_ROOT/$module" && go test ./...)
 done

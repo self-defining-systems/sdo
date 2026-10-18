@@ -1,0 +1,19 @@
+{
+  "schema_version": "sdo.dev/v1alpha1",
+  "agent_id": "sdo-responder",
+  "capabilities": [
+    {
+      "task_type": "incident-response",
+      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentRequest",
+      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentResult"
+    }
+  ],
+  "kubernetes_job": {
+    "image": "sdo-worker:native-smoke",
+    "command": [
+      "python3",
+      "-m",
+      "sdo.agents.responder.worker"
+    ]
+  }
+}

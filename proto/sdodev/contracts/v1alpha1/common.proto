@@ -6,7 +6,7 @@ syntax = "proto3";
 // proto governs the schema, not the encoding.
 package sdodev.contracts.v1alpha1;
 
-option go_package = "sdo.dev/controller/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 // ObjectRef identifies a Kubernetes object a finding or repair refers to.
 // Mirrors sdo.contracts.models.ObjectRef (the Pydantic model this will replace

@@ -28,12 +28,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from benchmarks.sregym.adapter import kubectl
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
-from sdo.operational_memory import DEFAULT_REFLECTION_SESSION
 
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter import ClusterOps
@@ -180,7 +180,6 @@ def _cluster_ops(args: argparse.Namespace, namespace: str) -> ClusterOps:
     """Cluster operations for the SDO agent, with the opt-in harness wrappers applied."""
 
     from benchmarks.sregym.adapter import KubectlClusterOps, kubectl_capture_ops
-    from sdo.controller_install import kubectl
 
     ops: ClusterOps = KubectlClusterOps()
     if args.inject_before_resume:
@@ -199,14 +198,9 @@ def _sdo_agent(
         RuntimeConfig,
         control_namespace_for,
         deployed_lifecycle,
-        run_or_reuse_lifecycle,
+        launch_native_lifecycle,
     )
     from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
-    from sdo.agent_runtime.lifecycle import LifecycleValidationCache
-
-    validation_cache = (
-        None if args.no_validation_cache else LifecycleValidationCache(environment.run_dir / "validation-cache")
-    )
 
     runtime_config = RuntimeConfig(
         repository=environment.workspace,
@@ -238,20 +232,17 @@ def _sdo_agent(
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
         verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
-        validation_cache=validation_cache,
     )
     ops = _cluster_ops(args, environment.namespace)
+
+    def start_native(context: object) -> bool:
+        launch_native_lifecycle(runtime_config, context.health_objective, runtime_config.submission_api_base or "")  # type: ignore[attr-defined]
+        return False
+
     agent_arguments = {
         "ops": ops,
         "lifecycle_inputs": lambda: deployed_lifecycle(environment.namespace),
-        "run_lifecycle": lambda context: run_or_reuse_lifecycle(
-            environment.workspace,
-            application=environment.application,
-            context=context,
-            provider=args.provider,
-            model=args.model,
-            validation_cache=validation_cache,
-        ),
+        "run_lifecycle": start_native,
     }
     if composite:
         from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, reader_for
@@ -526,7 +517,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default=DEFAULT_REFLECTION_SESSION)
+    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="fresh")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")
     run.add_argument(
@@ -543,11 +534,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--follow-up-cooldown-seconds", type=int, default=30)
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
-    run.add_argument(
-        "--no-validation-cache",
-        action="store_true",
-        help="revalidate the lifecycle detectors instead of sharing verdicts in <run-dir>/validation-cache",
-    )
     run.add_argument("--health-timeout", type=float, default=300.0, help="seconds to wait for health after recovery")
     run.add_argument("--proxy-port", type=int, default=0, help="Codex baseline API proxy port (default: free port)")
     run.add_argument("--run-id", default=None)

@@ -4,7 +4,7 @@ Reads the reflection request each recorded rollout actually sent (the second
 task of a Codex session: the resumed reflection), re-parses its ``Current
 outcome`` and ``Outcome history`` JSON into outcome records, renders both
 sections again with the bounded views in
-``sdo.agent_runtime.responder.reflection_outcomes``, and reports the character
+``sdo.agents.responder.reflection_outcomes``, and reports the character
 and estimated-token difference. No model is called.
 
 A prompt token is re-read by every later request of the session, so the
@@ -19,8 +19,8 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from sdo.agent_runtime.responder import current_outcome_view, history_view
-from sdo.operational_memory import OutcomeRecord
+from sdo.agents.responder import current_outcome_view, history_view
+from sdo.contracts import OutcomeRecord
 
 #: o200k measured 3.93-4.08 characters per token on recorded reflection prompts.
 CHARS_PER_TOKEN = 4.0

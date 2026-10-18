@@ -1,0 +1,15 @@
+{
+  "schema_version": "sdo.dev/v1alpha1",
+  "agent_id": "sdo-reflector",
+  "capabilities": [
+    {
+      "task_type": "outcome-reflection",
+      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest",
+      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult"
+    }
+  ],
+  "kubernetes_job": {
+    "image": "sdo-responder:v0.1.0",
+    "command": ["python3", "-m", "sdo.agents.responder.reflection_worker"]
+  }
+}

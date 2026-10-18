@@ -26,20 +26,19 @@ from benchmarks.sregym.adapter import (
     Clock,
     ClusterOps,
     PersistentState,
+    ReceiptRejectedError,
     StageInputs,
     drain_pending_incident,
-    receipt_resolution,
     run_persistent_stage,
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
-from sdo.controller_install import ControllerInstallError
+from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from benchmarks.sregym.adapter import DeployedLifecycle, DeployedLifecycleContext, RuntimeConfig
-    from sdo.agent_runtime.lifecycle import LifecycleValidationCache
 
 
 @dataclass(frozen=True)
@@ -52,7 +51,6 @@ class SdoAgentSettings:
     results_dir: Path
     kubeconfig: str | None = None
     verification_timeout_seconds: float = 3900.0
-    validation_cache: LifecycleValidationCache | None = None
 
     def __post_init__(self) -> None:
         if self.runtime_config.submission_api_base or self.runtime_config.submission_relay_target_base:
@@ -146,7 +144,6 @@ class SdoPersistentAgent:
             state_path=settings.state_path,
             kubeconfig=settings.kubeconfig,
             verification_timeout_seconds=settings.verification_timeout_seconds,
-            validation_cache=settings.validation_cache,
             stop_on_detector_review=self._stop_on_detector_review,
         )
 
@@ -216,7 +213,7 @@ class SdoPersistentAgent:
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
             )
-        except ControllerInstallError as exc:
+        except ReceiptRejectedError as exc:
             error = f"strict receipt rejected: {exc}"
         finally:
             # A failed drain must not block the next incident; its evidence stays on disk.

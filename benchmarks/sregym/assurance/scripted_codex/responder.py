@@ -19,14 +19,14 @@ if TYPE_CHECKING:
     from .directive import Directive
 
 #: Unit tests outside a cluster point this at a stub; in a pod it is SDO's real status check.
-STATUS_COMMAND = os.environ.get("SDO_SCRIPTED_STATUS_COMMAND", "python3 -m sdo incident status")
+STATUS_COMMAND = os.environ.get("SDO_SCRIPTED_STATUS_COMMAND", "python3 -m sdo.agents.responder.status_cli")
 STATUS_POLL_SECONDS = float(os.environ.get("SDO_SCRIPTED_STATUS_POLL_SECONDS", "5"))
 WARM_MARKER = "Warm path: validated incident memory matches this incident."
 _WARM_PLAYBOOK = re.compile(r"--- Playbook `([^`]+)` \(inlined")
 
 
 def warm_playbooks(prompt: str) -> list[str]:
-    """Playbook paths the prompt inlined for the warm path; empty for a cold prompt."""
+    """Logical playbook IDs the prompt inlined for the warm path."""
 
     return _WARM_PLAYBOOK.findall(prompt) if WARM_MARKER in prompt else []
 
@@ -85,7 +85,7 @@ def respond(turn: Turn, directive: Directive, request: dict[str, Any], prompt: s
         "repair_actions": [],
         "verification_evidence": [],
     }
-    warm = [path for path in warm_playbooks(prompt) if path == f"{plan.playbook_dir}/README.md"]
+    warm = [playbook_id for playbook_id in warm_playbooks(prompt) if playbook_id == plan.playbook_id]
     try:
         if directive.mitigation == "healed_noop":
             _healed_noop(turn, directive, result)
@@ -127,7 +127,7 @@ def _warm(
     playbook: str,
 ) -> None:
     facts = plan.warm_facts(namespace, directive.target, request, worktree)
-    sanity, repair, verify = plan.warm_commands(facts, playbook.rsplit("/", 1)[0])
+    sanity, repair, verify = plan.warm_commands(facts)
     code, output = turn.run(sanity)
     if code == 0:
         # The playbook's precondition does not hold: fall back to a full investigation.
@@ -157,7 +157,7 @@ def _warm(
             healthy = True
             break
     result["verification_evidence"].append(_verification(healthy, status_output))
-    result["applied_playbooks"] = [{"path": playbook}]
+    result["applied_playbooks"] = [{"playbook_id": playbook}]
     if healthy:
         result["status"] = "completed"
         diagnosis = plan.root_cause(_warm_diagnosis_facts(facts, request), request)

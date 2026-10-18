@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"sdo.dev/controller/sdk"
+	"sdo.dev/operator/sdk"
 )
 
 const playbookPath = ".sdo/playbooks/missing-configmap/README.md"

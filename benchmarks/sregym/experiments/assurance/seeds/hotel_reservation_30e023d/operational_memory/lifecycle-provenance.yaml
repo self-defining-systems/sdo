@@ -1853,7 +1853,7 @@ health_judge:
     source: openshift/user-service.yaml
   detector_source: "package objective\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"\
     sort\"\n\t\"time\"\n\n\tcorev1 \"k8s.io/api/core/v1\"\n\tnetworkingv1 \"k8s.io/api/networking/v1\"\
-    \n\t\"sdo.dev/controller/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
+    \n\t\"sdo.dev/operator/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
     \ = \"v3\"\nconst healthObjectiveDigest = \"6931b8e687702ada46cc03b5a9c6cb35ccf044dc1e41415b54e2e5092fec9a24\"\
     \n\nvar requiredDeployments = map[string]struct{}{\n\t\"consul\": {},\n\t\"frontend\"\
     : {},\n\t\"geo\": {},\n\t\"jaeger\": {},\n\t\"memcached-profile\": {},\n\t\"memcached-rate\"\
@@ -1991,8 +1991,8 @@ health_judge:
     \ + \"/\" + resource.Name,\n\t}\n}\n"
   detector_test_source: "package objective\n\nimport (\n\t\"context\"\n\t\"testing\"\
     \n\n\tappsv1 \"k8s.io/api/apps/v1\"\n\tcorev1 \"k8s.io/api/core/v1\"\n\tmetav1\
-    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/controller/sdk\"\n\t\"\
-    sdo.dev/controller/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
+    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/operator/sdk\"\n\t\"\
+    sdo.dev/operator/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
     \ *testing.T) {\n\treplicas := int32(1)\n\tfindings, err := (Detector{}).Detect(context.Background(),\
     \ sdktest.Snapshot{\n\t\tNamespaceName: \"demo\",\n\t\tDeploymentList: []appsv1.Deployment{\n\
     \t\t\t{ObjectMeta: metav1.ObjectMeta{Name: \"frontend\", Namespace: \"demo\"},\
@@ -2089,7 +2089,7 @@ health_judge:
   session_id: 01a0e704-a45b-7022-99ff-596569f9a528
   source_commit: 4a477b35abd0e10ed65121bc215b7187ad61954a
   traffic_files:
-  - content: "package generators\n\nimport \"sdo.dev/controller/sdk/traffic\"\n\n\
+  - content: "package generators\n\nimport \"sdo.dev/operator/sdk/traffic\"\n\n\
       func Scenarios() traffic.Catalog {\n\treturn traffic.Catalog{\n\t\t{\n\t\t\t\
       ID: \"hotel-search\",\n\t\t\tDescription: \"Search nearby hotels for a valid\
       \ date range and render availability and hotel profiles.\",\n\t\t\tTarget: traffic.Target{Service:\
@@ -2850,7 +2850,7 @@ health_judge_rounds:
     source: openshift/user-service.yaml
   detector_source: "package objective\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"\
     sort\"\n\t\"time\"\n\n\tcorev1 \"k8s.io/api/core/v1\"\n\tnetworkingv1 \"k8s.io/api/networking/v1\"\
-    \n\t\"sdo.dev/controller/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
+    \n\t\"sdo.dev/operator/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
     \ = \"v3\"\nconst healthObjectiveDigest = \"6931b8e687702ada46cc03b5a9c6cb35ccf044dc1e41415b54e2e5092fec9a24\"\
     \n\nvar requiredDeployments = map[string]struct{}{\n\t\"consul\": {},\n\t\"frontend\"\
     : {},\n\t\"geo\": {},\n\t\"jaeger\": {},\n\t\"memcached-profile\": {},\n\t\"memcached-rate\"\
@@ -2974,8 +2974,8 @@ health_judge_rounds:
     \t}\n}\n"
   detector_test_source: "package objective\n\nimport (\n\t\"context\"\n\t\"testing\"\
     \n\n\tappsv1 \"k8s.io/api/apps/v1\"\n\tcorev1 \"k8s.io/api/core/v1\"\n\tmetav1\
-    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/controller/sdk\"\n\t\"\
-    sdo.dev/controller/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
+    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/operator/sdk\"\n\t\"\
+    sdo.dev/operator/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
     \ *testing.T) {\n\treplicas := int32(1)\n\tfindings, err := (Detector{}).Detect(context.Background(),\
     \ sdktest.Snapshot{\n\t\tNamespaceName: \"demo\",\n\t\tDeploymentList: []appsv1.Deployment{\n\
     \t\t\t{ObjectMeta: metav1.ObjectMeta{Name: \"frontend\", Namespace: \"demo\"},\
@@ -3026,7 +3026,7 @@ health_judge_rounds:
   session_id: 01a0e6fd-f5f9-7c31-be55-1da8301bb49b
   source_commit: 4a477b35abd0e10ed65121bc215b7187ad61954a
   traffic_files:
-  - content: "package generators\n\nimport \"sdo.dev/controller/sdk/traffic\"\n\n\
+  - content: "package generators\n\nimport \"sdo.dev/operator/sdk/traffic\"\n\n\
       func Scenarios() traffic.Catalog {\n\treturn traffic.Catalog{\n\t\t{\n\t\t\t\
       ID: \"hotel-search\",\n\t\t\tDescription: \"Search nearby hotels for a valid\
       \ date range and render availability and hotel profiles.\",\n\t\t\tTarget: traffic.Target{Service:\
@@ -3786,7 +3786,7 @@ health_judge_rounds:
     source: openshift/user-service.yaml
   detector_source: "package objective\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"\
     sort\"\n\t\"time\"\n\n\tcorev1 \"k8s.io/api/core/v1\"\n\tnetworkingv1 \"k8s.io/api/networking/v1\"\
-    \n\t\"sdo.dev/controller/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
+    \n\t\"sdo.dev/operator/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
     \ = \"v3\"\nconst healthObjectiveDigest = \"6931b8e687702ada46cc03b5a9c6cb35ccf044dc1e41415b54e2e5092fec9a24\"\
     \n\nvar requiredDeployments = map[string]struct{}{\n\t\"consul\": {},\n\t\"frontend\"\
     : {},\n\t\"geo\": {},\n\t\"jaeger\": {},\n\t\"memcached-profile\": {},\n\t\"memcached-rate\"\
@@ -3919,8 +3919,8 @@ health_judge_rounds:
     \ + \"/\" + resource.Name,\n\t}\n}\n"
   detector_test_source: "package objective\n\nimport (\n\t\"context\"\n\t\"testing\"\
     \n\n\tappsv1 \"k8s.io/api/apps/v1\"\n\tcorev1 \"k8s.io/api/core/v1\"\n\tmetav1\
-    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/controller/sdk\"\n\t\"\
-    sdo.dev/controller/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
+    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/operator/sdk\"\n\t\"\
+    sdo.dev/operator/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
     \ *testing.T) {\n\treplicas := int32(1)\n\tfindings, err := (Detector{}).Detect(context.Background(),\
     \ sdktest.Snapshot{\n\t\tNamespaceName: \"demo\",\n\t\tDeploymentList: []appsv1.Deployment{\n\
     \t\t\t{ObjectMeta: metav1.ObjectMeta{Name: \"frontend\", Namespace: \"demo\"},\
@@ -4000,7 +4000,7 @@ health_judge_rounds:
   session_id: 01a0e701-09a7-71e3-878e-8620846075dd
   source_commit: 4a477b35abd0e10ed65121bc215b7187ad61954a
   traffic_files:
-  - content: "package generators\n\nimport \"sdo.dev/controller/sdk/traffic\"\n\n\
+  - content: "package generators\n\nimport \"sdo.dev/operator/sdk/traffic\"\n\n\
       func Scenarios() traffic.Catalog {\n\treturn traffic.Catalog{\n\t\t{\n\t\t\t\
       ID: \"hotel-search\",\n\t\t\tDescription: \"Search nearby hotels for a valid\
       \ date range and render availability and hotel profiles.\",\n\t\t\tTarget: traffic.Target{Service:\
@@ -4760,7 +4760,7 @@ health_judge_rounds:
     source: openshift/user-service.yaml
   detector_source: "package objective\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"\
     sort\"\n\t\"time\"\n\n\tcorev1 \"k8s.io/api/core/v1\"\n\tnetworkingv1 \"k8s.io/api/networking/v1\"\
-    \n\t\"sdo.dev/controller/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
+    \n\t\"sdo.dev/operator/sdk\"\n)\n\nconst deterministicHealthDetectorVersion\
     \ = \"v3\"\nconst healthObjectiveDigest = \"6931b8e687702ada46cc03b5a9c6cb35ccf044dc1e41415b54e2e5092fec9a24\"\
     \n\nvar requiredDeployments = map[string]struct{}{\n\t\"consul\": {},\n\t\"frontend\"\
     : {},\n\t\"geo\": {},\n\t\"jaeger\": {},\n\t\"memcached-profile\": {},\n\t\"memcached-rate\"\
@@ -4898,8 +4898,8 @@ health_judge_rounds:
     \ + \"/\" + resource.Name,\n\t}\n}\n"
   detector_test_source: "package objective\n\nimport (\n\t\"context\"\n\t\"testing\"\
     \n\n\tappsv1 \"k8s.io/api/apps/v1\"\n\tcorev1 \"k8s.io/api/core/v1\"\n\tmetav1\
-    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/controller/sdk\"\n\t\"\
-    sdo.dev/controller/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
+    \ \"k8s.io/apimachinery/pkg/apis/meta/v1\"\n\t\"sdo.dev/operator/sdk\"\n\t\"\
+    sdo.dev/operator/sdk/sdktest\"\n)\n\nfunc TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t\
     \ *testing.T) {\n\treplicas := int32(1)\n\tfindings, err := (Detector{}).Detect(context.Background(),\
     \ sdktest.Snapshot{\n\t\tNamespaceName: \"demo\",\n\t\tDeploymentList: []appsv1.Deployment{\n\
     \t\t\t{ObjectMeta: metav1.ObjectMeta{Name: \"frontend\", Namespace: \"demo\"},\
@@ -4996,7 +4996,7 @@ health_judge_rounds:
   session_id: 01a0e704-a45b-7022-99ff-596569f9a528
   source_commit: 4a477b35abd0e10ed65121bc215b7187ad61954a
   traffic_files:
-  - content: "package generators\n\nimport \"sdo.dev/controller/sdk/traffic\"\n\n\
+  - content: "package generators\n\nimport \"sdo.dev/operator/sdk/traffic\"\n\n\
       func Scenarios() traffic.Catalog {\n\treturn traffic.Catalog{\n\t\t{\n\t\t\t\
       ID: \"hotel-search\",\n\t\t\tDescription: \"Search nearby hotels for a valid\
       \ date range and render availability and hotel profiles.\",\n\t\t\tTarget: traffic.Target{Service:\
@@ -5038,4 +5038,4 @@ health_judge_rounds:
 validation:
   diagnostics_digest: eb7ea8a6ff3423890789aa94d8a625408046a2d5811c376fd416054435c65c81
   schema_version: sdo.lifecycle-validation/v1
-  validator_identity: container-sandbox/v1:sha256:cdf497cbfe9528da622b0627f4fac98b31479d01d633e775ff66f831bef6c349:controller.builder.check_cli-test/v1
+  validator_identity: container-sandbox/v1:sha256:cdf497cbfe9528da622b0627f4fac98b31479d01d633e775ff66f831bef6c349:sdo.operator.builder.check_cli-test/v1

@@ -30,7 +30,7 @@ def test_built_images_that_import_their_entry_points_at_the_pins_pass(fake_host:
 
 def test_an_image_that_cannot_import_its_entry_point_fails(fake_host: FakeHost) -> None:
     fake_host.versions["ci/responder:1"] = ImageVersions(
-        codex="0.157.1", agentshim="0.7.0", import_error="sdo.agent_runtime.responder.job: ModuleNotFoundError: httpx"
+        codex="0.157.1", agentshim="0.7.0", import_error="sdo.agents.responder.job: ModuleNotFoundError: httpx"
     )
 
     report = _check(fake_host, {"responder_image": "ci/responder:1"})

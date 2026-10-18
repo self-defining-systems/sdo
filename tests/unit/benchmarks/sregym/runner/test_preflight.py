@@ -33,8 +33,8 @@ from benchmarks.sregym.runner.preflight import (
     read_quota_snapshot,
     run_preflight,
 )
-from sdo.agent_runtime.lifecycle.agents import CodexLifecycleBackend
-from sdo.agent_runtime.responder import INCIDENT_REASONING_EFFORT
+from sdo.agents.lifecycle.agents import CodexLifecycleBackend
+from sdo.agents.responder import INCIDENT_REASONING_EFFORT
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 EXPERIMENTS = REPO_ROOT / "benchmarks" / "sregym" / "experiments"
@@ -214,6 +214,29 @@ def test_an_image_with_a_stale_agentshim_aborts(fake_host: FakeHost, sregym_dir:
     assert "agentshim '0.6.8'" in check.detail
     assert "ImportError" in check.detail
     assert "build_sdo_images.sh" in check.remedy
+
+
+def test_go_only_images_probe_the_native_binary_without_python_or_codex() -> None:
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "sdo.dev/v1alpha1+sdk.test\n", "")
+
+    versions = SystemHost(run=run).image_versions("sdo-controller:test", ())
+
+    assert versions is not None
+    assert versions.import_error is None
+    assert len(commands) == 1
+    assert commands[0] == [
+        "docker",
+        "run",
+        "--rm",
+        "--entrypoint",
+        "/usr/local/bin/sdo-operator",
+        "sdo-controller:test",
+        "schema-identity",
+    ]
 
 
 def test_a_missing_sdo_image_aborts(fake_host: FakeHost, sregym_dir: Path) -> None:

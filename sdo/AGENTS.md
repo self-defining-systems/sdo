@@ -1,42 +1,32 @@
-# SDO Python runtime
+# SDO production packages
 
-This package implements the production lifecycle around the Go controller.
-
-## Public workflow
-
-`sdo operate` is the production entry point:
-
-```text
-sdo operate REPOSITORY --namespace NAMESPACE (--goal TEXT | --goal-file PATH)
-```
-
-Optional flags select the application name, agent provider (`codex` or `claude`), model, controller/responder/validator images, repository PVC, credentials Secret, repair-evidence policy (`commit` or `recorded-actions`), bounded deployment attempts, runtime timeout, and an optional separate controller namespace (`--controller-namespace`; by default the controller shares the application namespace). Its orchestration:
-
-1. accept a human health objective;
-2. deploy the application source to Kubernetes with a fresh coding-agent session;
-3. require an attributable source commit and independent deployment verification;
-4. create or validate the five `.sdo/` operational-memory artifact classes;
-5. build and install the application-specific controller; and
-6. leave operation to the controller rather than a bounded shell-monitor loop.
+`sdo/` contains Python agent implementations and versioned contracts alongside the Go operator. The active `sdo-operator host` and `sdo-operator operate` commands run the Go lifecycle, controller, broker, installer, and operational-memory edge. Python implements the registered workers and their model sessions.
 
 ## Package map
 
-- `agent_runtime/lifecycle/` — source deployment, topology capture, independent health judging, and initial memory.
-- `agent_runtime/responder/` — incident sessions, broker-facing CLI, credentials, and reflection.
-- `operational_memory/` — typed memory models, worktrees, validation, commit broker, and outcomes.
-- `contracts/` — structured findings, detector evaluations, and responder incident messages.
-- `controller_install/` — production Kubernetes controller installation.
+| Package | Responsibility |
+|---|---|
+| `agents/deployer/`, `agents/health_judge/`, `agents/responder/` | Built-in agent implementations. They receive typed tasks, work in proposal checkouts, and return typed results. Their Codex/Claude choices are local implementation details. |
+| `agents/registrations/` | Example capability and launch manifests for built-in agents; the Go registry accepts other implementations that obey the same contracts. |
+| `agents/lifecycle/` | Shared source architecture and health judge agent prompts and DTOs; operational decisions remain in Go. |
+| `contracts/`, `../proto/` | Generated Python/Go protobuf contracts and their shared schema. Agent task/result envelopes use ProtoJSON and typed `Any` payloads whose URLs are checked against registration. |
+| `operator/worker_registry/` | Go registration validation, capability selection, and generic Kubernetes worker execution. Unknown agents or task/result types fail closed. |
+| `operator/lifecycle/`, `operator/deployment/`, `operator/artifacts/` | Go lifecycle coordinator, trusted deployment strategies, and the physical bootstrap-artifact writer. |
+| `operator/broker/`, `operator/memory/`, `operator/outcome_derivation/` | Go commit authority, logical outcome interfaces and physical JSON repository adapter, and controller-derived outcome records. |
+| `operator/{sdk,core,runtime,builder,install}/` | Deterministic detector API and execution, long-running controller, build/supervision, and Kubernetes installation. |
 
-The durable memory root is `.sdo/`. Treat `goal.md`, `arch.md`, `playbooks/`, `diagnostics/`, and `outcomes.jsonl` as separately owned contracts. Provenance and schema files support validation but do not add another agent-owned memory class.
+## Durable memory and ownership
+
+The five durable artifact classes remain `.sdo/goal.md`, `.sdo/arch.md`, `.sdo/playbooks/`, `.sdo/diagnostics/`, and outcomes. Agents propose source changes in isolated checkouts and return logical artifact proposals; only the Go broker validates and publishes commits. The health judge owns health diagnostics, responders own incident diagnostics and playbooks, and the controller owns outcomes.
+
+The Go `operator/memory` interface reads outcomes by incident ID and does not expose filenames. Its JSON adapter stores one versioned document per incident at `.sdo/outcomes/<sha256(incident_id)>.json` and can import the retired `.sdo/outcomes.jsonl` stream. Agent requests carry logical memory snapshots and worker results carry typed artifact proposals; the Go edge projects those into files before broker validation. Physical paths belong to that edge; only the broker receives the writer capability.
 
 ## Development rules
 
-- Write reproducing tests first for bugs and contract tests first for features.
-- Preserve fresh-session separation between the deployer and health judge.
-- Do not let responders modify human-owned goals, deployer-owned architecture, judge-owned health detectors, or prior controller outcomes.
-- Run generated detector code only through isolated validation and the deterministic Go controller path.
-- Keep benchmark APIs, verdicts, submission relays, and receipts inside `../benchmarks/sregym/adapter/`.
-- Keep existing async event loops intact; make handlers async and await work directly.
-- Update `../docs/architecture.md` (including its component map and artifact ownership matrix) when lifecycle or ownership contracts change.
+- Write a failing contract test before changing public behavior. Preserve fresh deployer, judge, responder, and reflection sessions where their roles require separation.
+- Keep agent tasks language neutral. An agent may edit only its proposal checkout, never the accepted repository or broker-owned `.sdo/` outcomes.
+- Run generated detector code only through isolated validation and deterministic Go controller execution. Keep benchmark verdicts, submission relays, and receipts under `../benchmarks/sregym/`.
+- Keep existing async Python handlers on their event loop.
+- Update `../docs/architecture.md` and `../.agents/skills/analyze-experiment/references/` when ownership, layout, or evidence interpretation changes.
 
-Validate Python edits with the root formatting/lint scripts and focused tests under `tests/unit/sdo/`.
+Validate Python edits with root formatting/lint scripts and focused tests under `tests/unit/sdo/`; validate Go packages from their respective `sdo/operator/` modules.

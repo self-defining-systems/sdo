@@ -3,9 +3,9 @@ clean: true
 managed:
   enabled: true
 plugins:
-  # Go types for the controller (module: sdo.dev/controller/contracts).
+  # Go types for the controller (module: sdo.dev/operator/contracts).
   - local: protoc-gen-go
-    out: controller/contracts/gen
+    out: sdo/operator/contracts/gen
     opt: paths=source_relative
   # Python types for sdo/contracts. The remote buf plugins are pinned to v33.4
   # so the generated gencode matches the protobuf runtime (6.33.4) locked in

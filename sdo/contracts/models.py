@@ -4,7 +4,7 @@ from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = "sdo.dev/v1alpha1"
 
@@ -52,10 +52,20 @@ class Finding(ContractModel):
     evidence: str = Field(min_length=1)
     primary_resource: ObjectRef
     related_resources: list[ObjectRef] = Field(default_factory=list)
-    playbooks: list[str] = Field(default_factory=list)
+    playbook_ids: list[str] = Field(default_factory=list, validation_alias=AliasChoices("playbook_ids", "playbooks"))
     parameter_bindings: dict[str, ObjectRef] = Field(default_factory=dict)
     fingerprint: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def playbooks(self) -> list[str]:
+        return self.playbook_ids
+
+    def model_copy(self, *, update: dict[str, Any] | None = None, deep: bool = False) -> Finding:
+        if update and "playbooks" in update:
+            update = {**update, "playbook_ids": update["playbooks"]}
+            del update["playbooks"]
+        return super().model_copy(update=update, deep=deep)
 
 
 class DetectorEvaluation(ContractModel):
@@ -83,12 +93,18 @@ class DetectorTimelineEntry(ContractModel):
     rule_id: str = ""
     fingerprint: str = Field(min_length=1)
     parameter_bindings: dict[str, ObjectRef] = Field(default_factory=dict)
-    surfaced_playbooks: list[str] = Field(default_factory=list)
+    surfaced_playbook_ids: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("surfaced_playbook_ids", "surfaced_playbooks")
+    )
     first_activated_at: datetime
     last_seen_at: datetime
     cleared_at: datetime | None = None
     relation: DispatchRelation
     activations: int = Field(default=1, ge=1)
+
+    @property
+    def surfaced_playbooks(self) -> list[str]:
+        return self.surfaced_playbook_ids
 
     @model_validator(mode="after")
     def _ordered_timestamps(self) -> DetectorTimelineEntry:
@@ -100,8 +116,18 @@ class DetectorTimelineEntry(ContractModel):
 
 
 class SurfacedPlaybook(ContractModel):
-    path: str = Field(min_length=1)
+    playbook_id: str = Field(min_length=1, validation_alias=AliasChoices("playbook_id", "path"))
     parameter_bindings: dict[str, ObjectRef] = Field(default_factory=dict)
+
+    @property
+    def path(self) -> str:
+        return self.playbook_id
+
+    def model_copy(self, *, update: dict[str, Any] | None = None, deep: bool = False) -> SurfacedPlaybook:
+        if update and "path" in update:
+            update = {**update, "playbook_id": update["path"]}
+            del update["path"]
+        return super().model_copy(update=update, deep=deep)
 
 
 class PriorOutcomeEvidence(ContractModel):
@@ -110,9 +136,21 @@ class PriorOutcomeEvidence(ContractModel):
     match_reason: Literal["exact-fingerprint", "learned-detector-origin", "detector-rule-resource-kind"]
     root_cause_summaries: list[str] = Field(default_factory=list)
     repair_action_summaries: list[str] = Field(default_factory=list)
-    applied_playbooks: list[str] = Field(default_factory=list)
+    applied_playbook_ids: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("applied_playbook_ids", "applied_playbooks")
+    )
     source_commit: str = Field(min_length=1)
     exact_source_match: bool
+
+    @property
+    def applied_playbooks(self) -> list[str]:
+        return self.applied_playbook_ids
+
+    def model_copy(self, *, update: dict[str, Any] | None = None, deep: bool = False) -> PriorOutcomeEvidence:
+        if update and "applied_playbooks" in update:
+            update = {**update, "applied_playbook_ids": update["applied_playbooks"]}
+            del update["applied_playbooks"]
+        return super().model_copy(update=update, deep=deep)
 
 
 class StateFieldChange(ContractModel):
@@ -187,6 +225,44 @@ class FollowUpContext(ContractModel):
     prior_responder_summary: str = ""
 
 
+class MemoryWatch(ContractModel):
+    api_version: str = ""
+    kind: str = Field(min_length=1)
+
+
+class MemoryDetector(ContractModel):
+    id: str = Field(min_length=1)
+    detector_class: Literal["health", "incident"]
+    owner: Literal["health_judge", "responder"]
+    watches: list[MemoryWatch] = Field(default_factory=list)
+    firing: int = 0
+    possible_playbook_ids: list[str] = Field(default_factory=list)
+    originating_incident: str = ""
+    description: str = ""
+    predicate_excerpt: str = ""
+    reads_events: bool = False
+
+
+class MemoryScript(ContractModel):
+    name: str = Field(min_length=1)
+    content: str = ""
+
+
+class MemoryPlaybook(ContractModel):
+    id: str = Field(min_length=1)
+    markdown: str = ""
+    scripts: list[MemoryScript] = Field(default_factory=list)
+
+
+class OperationalMemorySnapshot(ContractModel):
+    accepted_commit: str = Field(min_length=1)
+    goal_markdown: str = ""
+    architecture_markdown: str = ""
+    playbook_index_markdown: str = ""
+    detectors: list[MemoryDetector] = Field(default_factory=list)
+    playbooks: list[MemoryPlaybook] = Field(default_factory=list)
+
+
 class IncidentRequest(ContractModel):
     schema_version: Literal["sdo.dev/v1alpha1"] = SCHEMA_VERSION
     application: str = Field(min_length=1)
@@ -198,8 +274,9 @@ class IncidentRequest(ContractModel):
     relevant_outcomes: list[PriorOutcomeEvidence] = Field(default_factory=list, max_length=3)
     source_commit: str = Field(min_length=1)
     deployed_commit: str = Field(min_length=1)
-    architecture_summary_path: str = Field(min_length=1)
-    health_objective_path: str = Field(min_length=1)
+    # Legacy Python broker transport only. Native worker tasks use memory_snapshot.
+    architecture_summary_path: str = ""
+    health_objective_path: str = ""
     repository_worktree: str = Field(min_length=1)
     repository_base_commit: str = Field(min_length=1)
     response_deadline: datetime
@@ -207,6 +284,7 @@ class IncidentRequest(ContractModel):
     repair_policy: Literal["commit", "recorded-actions"] = "commit"
     state_changes: StateChanges | None = None
     follow_up: FollowUpContext | None = None
+    memory_snapshot: OperationalMemorySnapshot | None = None
 
 
 #: Live evidence kinds a root cause may cite. Static artifacts (manifests,
@@ -240,7 +318,19 @@ class ConfirmedRootCause(ContractModel):
 
 
 class AppliedPlaybook(SurfacedPlaybook):
-    scripts: list[str] = Field(default_factory=list)
+    script_names: list[str] = Field(default_factory=list, validation_alias=AliasChoices("script_names", "scripts"))
+
+    @property
+    def scripts(self) -> list[str]:
+        return self.script_names
+
+
+class LateFindingsPull(ContractModel):
+    incident_id: str = Field(min_length=1)
+    pull_count: int = Field(ge=1)
+    detector_ids: list[str] = Field(default_factory=list)
+    playbook_ids: list[str] = Field(default_factory=list)
+    report_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class VerificationEvidence(ContractModel):
@@ -342,12 +432,20 @@ class IncidentResult(ContractModel):
     repair_changes: list[str] = Field(default_factory=list)
     repair_actions: list[RepairActionReceipt] = Field(default_factory=list)
     final_detector_states: list[DetectorEvaluation] = Field(default_factory=list)
-    proposed_memory_changes: list[str] = Field(default_factory=list)
+    proposed_artifact_ids: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("proposed_artifact_ids", "proposed_memory_changes")
+    )
+
+    @property
+    def proposed_memory_changes(self) -> list[str]:
+        return self.proposed_artifact_ids
+
     verification_evidence: list[VerificationEvidence] = Field(default_factory=list)
     usage: UsageMetrics
     timing: TimingMetrics
     responder_session_id: str | None = None
     error: str | None = None
+    late_findings_pull: LateFindingsPull | None = None
 
     @model_validator(mode="after")
     def validate_repair_action_ids(self) -> IncidentResult:

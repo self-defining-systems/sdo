@@ -1,83 +1,148 @@
-"""SREGym transport and receipt adapter for the production Kubernetes runtime."""
+"""Benchmark transport and evidence adapter over the native Go operator."""
 
 from __future__ import annotations
 
 import json
 import logging
-import posixpath
-import shlex
-import subprocess
-import time
+import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
-
-from benchmarks.sregym.protocol import ProductionReceiptValidationError, receipt_resolution
-from benchmarks.sregym.protocol import (
-    validate_production_receipt as validate_receipt_contract,
+from benchmarks.sregym.adapter.cluster_resources import kubectl
+from benchmarks.sregym.adapter.native_operator import (
+    NativeInstallConfig,
+    collect_native_receipt,
+    install_existing,
+    sync_existing,
 )
-from sdo.controller_install import (
-    CLAUDE_CONFIG_PATH,
-    CODEX_HOME_PATH,
-    RUNTIME_STATE_ROOT,
-    RUNTIME_TELEMETRY_ROOT,
-    RUNTIME_USAGE_ROOT,
-    ControllerInstallConfig,
-    ControllerInstallError,
-    ControllerInstallResult,
-    controller_security_contexts,
-    install_controller,
-    kubectl,
-    sync_repository_from_controller,
-)
-from sdo.controller_install import (
-    controller_resources as production_controller_resources,
-)
-from sdo.operational_memory import (
-    BrokerClosure,
-    ControllerRolloutRecord,
-    DetectorTimelineEntry,
-    LateFindingsPullSummary,
-    verify_diagnosis,
-)
+from benchmarks.sregym.protocol import ProductionReceiptValidationError
+from benchmarks.sregym.protocol import validate_production_receipt as validate_receipt_contract
 
 logger = logging.getLogger(__name__)
-
-#: Runtime evidence copied from the workspace PVC into the run's results: the
-#: per-turn usage logs and the agent session transcripts (Codex rollouts,
-#: Claude projects). Paths are relative to ``RUNTIME_STATE_ROOT``; the homes'
-#: credential files are deliberately excluded.
-_EXPORTED_RUNTIME_PATHS = tuple(
-    posixpath.relpath(path, RUNTIME_STATE_ROOT)
-    for path in (
-        RUNTIME_USAGE_ROOT,
-        RUNTIME_TELEMETRY_ROOT,
-        f"{CODEX_HOME_PATH}/sessions",
-        f"{CLAUDE_CONFIG_PATH}/projects",
-    )
-)
 RUNTIME_ARTIFACTS_DIRNAME = "sdo_runtime"
-#: The detector firing stream copied next to the strict receipt: the rotated
-#: predecessor followed by the live file, in emission order.
 FIRING_STREAM_FILENAME = "detector_firings.jsonl"
+_CONTROLLER_JOB_SELECTOR = "job-name=sdo-controller-run"
+
+
+class ControllerInstallError(RuntimeError):
+    """The benchmark could not install or inspect a native Go controller."""
 
 
 @dataclass(frozen=True)
-class RuntimeConfig(ControllerInstallConfig):
-    """Kubernetes runtime configuration extended with benchmark transport."""
+class RuntimeConfig:
+    """Benchmark settings passed to the native operator and persistent runner."""
 
+    repository: Path
+    namespace: str
+    application: str
+    controller_image: str
+    responder_image: str
+    repository_pvc: str
+    credentials_secret: str
+    model: str
+    timeout_seconds: int
+    validator_image: str = "sdo-detector-validator:v0.1.0"
+    verification_timeout_seconds: int = 120
+    wait_for_completion: bool = False
+    repair_policy: str = "commit"
+    agent_provider: str = "codex"
+    reflection_session: str = "fresh"
+    reflection_guidance: str = "baseline"
+    late_findings: str = "off"
+    max_follow_ups: int = 0
+    follow_up_cooldown_seconds: int = 30
+    healthy_baseline: bool = False
+    controller_namespace: str | None = None
+    reuse_existing: bool = False
     submission_api_base: str | None = None
     submission_relay_target_base: str | None = None
     allow_test_lifecycle: bool = False
-    wait_for_completion: bool = True
-    # Where the run's results live; pod-side runtime evidence is exported here.
     artifacts_dir: Path | None = None
-    # Keep one controller running across benchmark problems (see persistent.py):
-    # no bounded duration, no exit after closure, and transport stays deployed.
     persistent: bool = False
+    buildkit_image: str = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
+    registry_push_secret: str = "sdo-registry-push"
+    kind_cluster_name: str | None = None
+    max_deployment_attempts: int = 3
+    agent_registrations: Path | None = None
+
+    def __post_init__(self) -> None:
+        for field in (
+            "namespace",
+            "application",
+            "controller_image",
+            "responder_image",
+            "validator_image",
+            "repository_pvc",
+            "credentials_secret",
+            "model",
+        ):
+            if not getattr(self, field).strip():
+                raise ValueError(f"{field} must be non-empty")
+        if self.timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
+            raise ValueError("controller timeouts must be positive")
+        if self.controller_namespace is not None and not self.controller_namespace.strip():
+            raise ValueError("controller namespace must be non-empty")
+        if self.repair_policy not in ("commit", "recorded-actions"):
+            raise ValueError("repair_policy must be commit or recorded-actions")
+        if self.agent_provider not in ("codex", "claude"):
+            raise ValueError("agent_provider must be codex or claude")
+        if self.reflection_session not in ("fresh", "resume"):
+            raise ValueError("reflection_session must be fresh or resume")
+        if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
+            raise ValueError("invalid reflection_guidance")
+        if self.late_findings not in ("off", "pull"):
+            raise ValueError("late_findings must be off or pull")
+        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0:
+            raise ValueError("invalid follow-up limit or cooldown")
+        if self.max_deployment_attempts <= 0:
+            raise ValueError("max_deployment_attempts must be positive")
+        if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
+            raise ValueError("agent_registrations path must be absolute")
+
+    @property
+    def control_namespace(self) -> str:
+        return self.controller_namespace or self.namespace
+
+
+def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
+    """Translate benchmark settings at the Go CLI boundary."""
+
+    kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or os.getenv("KUBECONFIG", "").strip()
+    if not kubeconfig or not Path(kubeconfig).is_absolute():
+        raise ControllerInstallError("native operator requires an absolute trusted kubeconfig")
+    responder_env = (
+        (
+            f"SDO_SREGYM_API_BASE={config.submission_api_base}",
+            f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
+        )
+        if config.submission_api_base
+        else ()
+    )
+    return NativeInstallConfig(
+        repository=config.repository.resolve(),
+        namespace=config.namespace,
+        control_namespace=config.control_namespace,
+        application=config.application,
+        controller_image=config.controller_image,
+        responder_image=config.responder_image,
+        validator_image=config.validator_image,
+        repository_pvc=config.repository_pvc,
+        credentials_secret=config.credentials_secret,
+        model=config.model,
+        kubeconfig=Path(kubeconfig),
+        agent_provider=config.agent_provider,
+        repair_policy=config.repair_policy,
+        late_findings=config.late_findings,
+        reflection_session=config.reflection_session,
+        reflection_guidance=config.reflection_guidance,
+        healthy_baseline=config.healthy_baseline,
+        max_follow_ups=config.max_follow_ups,
+        follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
+        response_timeout_seconds=config.timeout_seconds,
+        verification_timeout_seconds=config.verification_timeout_seconds,
+        responder_env=responder_env,
+    )
 
 
 def validate_production_receipt(receipt: dict[str, Any], *, allow_test_lifecycle: bool = False) -> None:
@@ -87,748 +152,80 @@ def validate_production_receipt(receipt: dict[str, Any], *, allow_test_lifecycle
         raise ControllerInstallError(str(exc)) from exc
 
 
-@dataclass(frozen=True)
-class _SREGymRuntimeExtension:
-    config: RuntimeConfig
+def install_persistent_controller(config: RuntimeConfig) -> bool:
+    """Install a previously accepted checkout through Go; return whether reused."""
 
-    def controller_args(self, config: ControllerInstallConfig) -> list[str]:
-        args = [] if self.config.persistent else ["--duration", f"{config.timeout_seconds}s", "--exit-after-closure"]
-        if self.config.submission_api_base:
-            args.extend(
-                [
-                    f"--responder-env=SDO_SREGYM_API_BASE={self.config.submission_api_base}",
-                    f"--responder-env=SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
-                ]
-            )
-        return args
-
-    def resources(
-        self,
-        config: ControllerInstallConfig,
-        pod_security: dict[str, Any],
-        container_security: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        return _submission_bridge_resources(self.config, pod_security, container_security)
-
-    def wait_until_ready(self, config: ControllerInstallConfig) -> None:
-        _wait_for_submission_bridge(self.config)
-
-    def complete(self, config: ControllerInstallConfig, result: ControllerInstallResult) -> dict[str, Any]:
-        # Export before building the receipt so the evidence survives a receipt failure.
-        runtime_artifacts = _export_runtime_artifacts(self.config.control_namespace, self.config.artifacts_dir)
-        receipt = _production_receipt(self.config, result.controller_logs)
-        receipt["runtime_artifacts"] = runtime_artifacts
-        validate_production_receipt(receipt, allow_test_lifecycle=self.config.allow_test_lifecycle)
-        print("SDO_PRODUCTION_RECEIPT=" + json.dumps(receipt, sort_keys=True))
-        return receipt
-
-    def cleanup(self, config: ControllerInstallConfig) -> None:
-        if self.config.persistent:
-            # The controller and its transport outlive this problem.
-            return
-        # Cleanup also runs after a failed controller Job, when logs matter most.
-        if self.config.wait_for_completion:
-            _export_controller_logs(self.config.control_namespace, self.config.artifacts_dir)
-        _delete_submission_bridge(self.config)
+    if not config.persistent:
+        raise ControllerInstallError("persistent install requires RuntimeConfig.persistent")
+    return install_existing(native_install_config(config)).reused
 
 
-def runtime_resources(config: RuntimeConfig) -> list[dict[str, Any]]:
-    extension = _SREGymRuntimeExtension(config)
-    pod_security, container_security = controller_security_contexts()
-    return production_controller_resources(
-        config,
-        extra_controller_args=extension.controller_args(config),
-        additional_resources=extension.resources(config, pod_security, container_security),
-    )
+def collect_production_receipt(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+    """Sync accepted source and read one incident's validated Go ledger."""
 
-
-def run_production_runtime(config: RuntimeConfig) -> dict[str, Any]:
-    result = install_controller(config, _SREGymRuntimeExtension(config))
-    if not isinstance(result, dict):
-        raise ControllerInstallError("benchmark runtime did not produce a production receipt")
-    return result
+    del artifacts_dir
+    native = native_install_config(config)
+    sync_existing(native)
+    return collect_native_receipt(native, incident_id)
 
 
 def _responder_instructions() -> str:
     return (
         "SREGym submission transport is available. After evidence-based diagnosis, run "
         "`python3 -m benchmarks.sregym.adapter.submission diagnosis '<diagnosis>'`; after repair and your own "
-        "verification, run `python3 -m benchmarks.sregym.adapter.submission mitigation '<mitigation>'`. The latter "
-        "also sends the autonomous done signal and waits for benchmark grading. Treat every response as "
-        "benchmark transport or grading, never as health evidence: the controller alone determines closure from "
-        "live detectors. Do not begin repair until diagnosis is acknowledged. Before mitigation, wait for every "
-        "affected rollout to finish, require desired, updated, ready, and available replicas to agree, verify the "
-        "affected user-facing requests succeed, and run "
-        "`python3 -m sdo incident status` until it reports healthy. The mitigation command re-runs that check and "
-        "refuses to submit while it reports unhealthy (exit 4, printing the failing scenarios); keep repairing "
-        "instead. When it reports unavailable, exercise a representative request yourself. "
-        "Do not return the incident result until mitigation reports done. Submit mitigation once: any `done.status` "
-        "(done, completed, finished, or awaiting_cleanup) means the benchmark accepted it and the problem ended; "
-        "a repeated call only reports `already_submitted`."
+        "verification, run `python3 -m benchmarks.sregym.adapter.submission mitigation '<mitigation>'`. "
+        "The controller alone determines closure from live detectors. Do not begin repair until diagnosis is "
+        "acknowledged. Before mitigation, wait for affected rollouts, verify representative requests, and run "
+        "`python3 -m sdo.agents.responder.status_cli` until it reports healthy. "
+        "Submit mitigation once; return the incident "
+        "result after the benchmark accepts it."
     )
-
-
-def _submission_bridge_resources(
-    config: RuntimeConfig,
-    pod_security: dict[str, Any],
-    container_security: dict[str, Any],
-) -> list[dict[str, Any]]:
-    if config.submission_relay_target_base is None:
-        return []
-    labels = {"app.kubernetes.io/name": "sdo-sregym-bridge"}
-    return [
-        {
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
-            "metadata": {"name": "sdo-sregym-bridge", "namespace": config.control_namespace},
-            "spec": {
-                "replicas": 1,
-                "selector": {"matchLabels": labels},
-                "template": {
-                    "metadata": {"labels": labels},
-                    "spec": {
-                        "hostNetwork": True,
-                        "dnsPolicy": "ClusterFirstWithHostNet",
-                        "automountServiceAccountToken": False,
-                        "securityContext": pod_security,
-                        "containers": [
-                            {
-                                "name": "relay",
-                                "image": config.responder_image,
-                                "imagePullPolicy": "IfNotPresent",
-                                "command": ["python3", "-m", "benchmarks.sregym.adapter.submission_relay"],
-                                "args": [
-                                    "--listen-port",
-                                    "18000",
-                                    "--target-base",
-                                    config.submission_relay_target_base,
-                                ],
-                                "ports": [{"name": "http", "containerPort": 18000, "protocol": "TCP"}],
-                                "readinessProbe": {
-                                    "httpGet": {"path": "/healthz", "port": 18000},
-                                    "periodSeconds": 2,
-                                    "timeoutSeconds": 6,
-                                    "failureThreshold": 30,
-                                },
-                                "securityContext": container_security,
-                                "resources": {
-                                    "requests": {"cpu": "10m", "memory": "32Mi"},
-                                    "limits": {"cpu": "100m", "memory": "128Mi"},
-                                },
-                            }
-                        ],
-                    },
-                },
-            },
-        },
-        {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {"name": "sdo-sregym-bridge", "namespace": config.control_namespace},
-            "spec": {
-                "selector": labels,
-                "ports": [{"name": "http", "port": 8000, "targetPort": 18000}],
-            },
-        },
-    ]
-
-
-def _wait_for_submission_bridge(config: RuntimeConfig) -> None:
-    if config.submission_relay_target_base is None:
-        return
-    deadline = time.monotonic() + 120
-    last_details = "deployment not observed"
-    while time.monotonic() < deadline:
-        completed = kubectl(
-            ["get", "deployment/sdo-sregym-bridge", "-o", "json"],
-            namespace=config.control_namespace,
-            check=False,
-        )
-        if completed.returncode == 0:
-            document = json.loads(completed.stdout)
-            if document.get("status", {}).get("readyReplicas") == 1:
-                return
-            last_details = completed.stdout
-        else:
-            last_details = completed.stderr or completed.stdout
-        time.sleep(1)
-    raise ControllerInstallError(f"SREGym submission bridge did not become ready: {last_details.strip()}")
-
-
-def _delete_submission_bridge(config: RuntimeConfig) -> None:
-    if config.submission_relay_target_base is None:
-        return
-    kubectl(
-        [
-            "delete",
-            "deployment/sdo-sregym-bridge",
-            "service/sdo-sregym-bridge",
-            "--ignore-not-found=true",
-            "--wait=false",
-        ],
-        namespace=config.control_namespace,
-        check=False,
-    )
-
-
-def _export_runtime_artifacts(namespace: str, artifacts_dir: Path | None) -> dict[str, str | None]:
-    """Copy pod-side usage logs and agent transcripts into the run's results.
-
-    This is diagnostic evidence, so a failure is recorded and never fails the run.
-    """
-
-    if artifacts_dir is None:
-        return {"directory": None, "error": "no artifacts directory"}
-    candidates = " ".join(shlex.quote(path) for path in _EXPORTED_RUNTIME_PATHS)
-    script = (
-        f"cd {shlex.quote(RUNTIME_STATE_ROOT)} 2>/dev/null || exit 0; set --; "
-        f'for path in {candidates}; do [ -e "$path" ] && set -- "$@" "$path"; done; '
-        '[ "$#" -eq 0 ] && exit 0; exec tar -cf - "$@"'
-    )
-    exported = subprocess.run(
-        ["kubectl", "--namespace", namespace, "exec", "sdo-repository-sync", "--", "sh", "-c", script],
-        check=False,
-        capture_output=True,
-    )
-    if exported.returncode != 0:
-        error = exported.stderr.decode(errors="replace").strip() or f"exit {exported.returncode}"
-        logger.warning("could not export SDO runtime artifacts: %s", error)
-        return {"directory": None, "error": f"kubectl exec failed: {error}"}
-    destination = artifacts_dir / RUNTIME_ARTIFACTS_DIRNAME
-    destination.mkdir(parents=True, exist_ok=True)
-    if exported.stdout:
-        extracted = subprocess.run(
-            ["tar", "-C", str(destination), "-xf", "-"],
-            input=exported.stdout,
-            check=False,
-            capture_output=True,
-        )
-        if extracted.returncode != 0:
-            error = extracted.stderr.decode(errors="replace").strip() or f"exit {extracted.returncode}"
-            logger.warning("could not unpack SDO runtime artifacts: %s", error)
-            return {"directory": None, "error": f"tar extraction failed: {error}"}
-    _materialize_firing_stream(destination / "telemetry", artifacts_dir)
-    return {"directory": str(destination), "error": None}
 
 
 def _materialize_firing_stream(exported: Path, artifacts_dir: Path) -> None:
-    """Concatenate the exported firing stream (rotated file first) beside the receipt."""
-
     parts = [exported / "detector-firings.jsonl.1", exported / "detector-firings.jsonl"]
-    present = [part for part in parts if part.is_file()]
-    if not present:
-        return
     chunks: list[str] = []
-    for part in present:
-        text = part.read_text(encoding="utf-8")
-        chunks.append(text if text.endswith("\n") or not text else text + "\n")
-    (artifacts_dir / FIRING_STREAM_FILENAME).write_text("".join(chunks), encoding="utf-8")
+    for part in parts:
+        if part.is_file():
+            text = part.read_text(encoding="utf-8")
+            chunks.append(text if text.endswith("\n") or not text else text + "\n")
+    if chunks:
+        (artifacts_dir / FIRING_STREAM_FILENAME).write_text("".join(chunks), encoding="utf-8")
 
 
-def _detector_firing_summary(closure: dict[str, Any]) -> dict[str, Any]:
-    """Receipt fields for the closure's detector firing timeline.
-
-    Closures from controllers that predate firing telemetry report it as
-    unavailable, with the derived booleans ``None`` rather than ``False``.
-    """
-
-    unavailable: dict[str, Any] = {
-        "detector_firing_available": False,
-        "detector_timeline": [],
-        "incident_detector_fired_before_dispatch": None,
-        "incident_detector_fired_after_dispatch": None,
-        "no_incident_detector_fired": None,
-    }
-    if "detector_timeline" not in closure and "incident_detector_fired_before_dispatch" not in closure:
-        return unavailable
-    try:
-        timeline = [
-            DetectorTimelineEntry.model_validate(entry).model_dump(mode="json")
-            for entry in closure.get("detector_timeline") or []
-        ]
-    except ValidationError as exc:
-        return {**unavailable, "detector_timeline_error": str(exc)}
-    return {
-        "detector_firing_available": True,
-        "detector_timeline": timeline,
-        "incident_detector_fired_before_dispatch": bool(closure.get("incident_detector_fired_before_dispatch")),
-        "incident_detector_fired_after_dispatch": bool(closure.get("incident_detector_fired_after_dispatch")),
-        "no_incident_detector_fired": bool(closure.get("no_incident_detector_fired")),
-    }
-
-
-def _late_findings_summary(closure: dict[str, Any]) -> dict[str, Any]:
-    """Receipt fields for the pull-before-act evidence; empty unless the broker recorded it.
-
-    ``late_finding_consumed`` is true when at least one pull returned a finding that activated after dispatch.
-    """
-
-    raw = closure.get("late_findings_pull")
-    if raw is None:
-        return {}
-    try:
-        summary = LateFindingsPullSummary.model_validate(raw).model_dump(mode="json")
-    except ValidationError as exc:
-        return {"late_findings_pull_error": str(exc)}
-    return {"late_findings_pull": summary, "late_finding_consumed": summary["nonempty_pull_count"] > 0}
-
-
-CONTROLLER_LOGS_DIRNAME = "controller_logs"
-_CONTROLLER_JOB_SELECTOR = "job-name=sdo-controller-run"
-
-
-def _export_controller_logs(namespace: str, artifacts_dir: Path | None) -> dict[str, str | None]:
-    """Write each controller Job pod's timestamped logs into the run's results.
-
-    The controller's evaluation stream carries no timestamps of its own, so
-    ``kubectl logs --timestamps`` is what lets a run be reconstructed. This is
-    diagnostic evidence: a failure is recorded beside the logs and never raised.
-    """
+def export_controller_logs(control_namespace: str, artifacts_dir: Path | None) -> dict[str, str | None]:
+    """Keep bounded controller logs as benchmark diagnostics, never as verdict evidence."""
 
     if artifacts_dir is None:
         return {"directory": None, "error": "no artifacts directory"}
-    destination = artifacts_dir / RUNTIME_ARTIFACTS_DIRNAME / CONTROLLER_LOGS_DIRNAME
+    destination = artifacts_dir / RUNTIME_ARTIFACTS_DIRNAME / "controller_logs"
     errors: list[str] = []
     try:
         destination.mkdir(parents=True, exist_ok=True)
         pods = kubectl(
             ["get", "pods", "--selector", _CONTROLLER_JOB_SELECTOR, "-o", "jsonpath={.items[*].metadata.name}"],
-            namespace=namespace,
+            namespace=control_namespace,
             check=False,
         )
         names = pods.stdout.split() if pods.returncode == 0 else []
         if pods.returncode != 0:
             errors.append(f"list controller pods: {pods.stderr.strip() or f'exit {pods.returncode}'}")
         elif not names:
-            errors.append(f"no controller pods match {_CONTROLLER_JOB_SELECTOR}")
+            errors.append("no controller pods match sdo-controller-run")
         for name in names:
             logs = kubectl(
                 ["logs", f"pod/{name}", "--all-containers=true", "--timestamps=true"],
-                namespace=namespace,
+                namespace=control_namespace,
                 check=False,
             )
             if logs.returncode != 0:
                 errors.append(f"logs pod/{name}: {logs.stderr.strip() or f'exit {logs.returncode}'}")
                 continue
             (destination / f"{name}.log").write_text(logs.stdout, encoding="utf-8")
-    except (OSError, subprocess.SubprocessError, ControllerInstallError) as exc:
+    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         errors.append(f"{type(exc).__name__}: {exc}")
-    if not errors:
-        return {"directory": str(destination), "error": None}
-    error = "; ".join(errors)
-    logger.warning("could not export SDO controller logs: %s", error)
-    try:
-        destination.mkdir(parents=True, exist_ok=True)
+    error = "; ".join(errors) if errors else None
+    if error:
+        logger.warning("could not export SDO controller logs: %s", error)
         (destination / "export_error.txt").write_text(error + "\n", encoding="utf-8")
-    except OSError:
-        return {"directory": None, "error": error}
     return {"directory": str(destination), "error": error}
-
-
-def _reflection_telemetry(ledger: dict[str, Any]) -> dict[str, int | str | None]:
-    """Reflection attempts and, when the broker skipped the LLM turn, why.
-
-    Retries after a validation rejection run in a fresh session. A repeated
-    exact-match success records a deterministic no-op reflection with zero
-    attempts and a ``reflection_skipped_reason``.
-    """
-
-    skipped = ledger.get("reflection_skipped_reason")
-    mode = ledger.get("reflection_session_mode")
-    return {
-        "reflection_attempts": int(ledger.get("reflection_attempts") or 0),
-        "reflection_fresh_retry_attempts": int(ledger.get("reflection_fresh_retry_attempts") or 0),
-        "reflection_skipped_reason": skipped if isinstance(skipped, str) and skipped else None,
-        "reflection_session_mode": mode if isinstance(mode, str) and mode else None,
-    }
-
-
-def _same_session_reflection(ledger: dict[str, Any]) -> bool:
-    """Whether the recorded reflection's first attempt resumed the responder session.
-
-    An opted-in fresh first attempt (``reflection_session_mode="fresh"``) does
-    not count; a ledger without a mode predates the setting or recorded a
-    deterministic no-op reflection, and keeps the historical meaning.
-    """
-
-    return bool(
-        ledger.get("responder_session_id")
-        and ledger.get("reflection_commit")
-        and ledger.get("reflection_session_mode") != "fresh"
-    )
-
-
-def _production_receipt(
-    config: RuntimeConfig,
-    controller_logs: str,
-    *,
-    incident_id: str | None = None,
-) -> dict[str, Any]:
-    """Build the strict receipt for the acknowledged incident.
-
-    A per-problem controller has exactly one acknowledged incident. A
-    persistent controller serves several, so the caller names the incident
-    and responder Jobs of other incidents are expected to coexist.
-    """
-
-    # Logs remain useful diagnostics, but are intentionally not authoritative:
-    # Kubernetes may garbage-collect a failed or even successful retry Pod.
-    del controller_logs
-    control = config.control_namespace
-    common_dir_result = subprocess.run(
-        ["git", "-C", str(config.repository), "rev-parse", "--git-common-dir"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if common_dir_result.returncode != 0:
-        raise ControllerInstallError("cannot locate Git common directory for production receipt")
-    common_dir = Path(common_dir_result.stdout.strip())
-    if not common_dir.is_absolute():
-        common_dir = config.repository / common_dir
-    jobs_payload = kubectl(
-        ["get", "jobs", "--selector", "app.kubernetes.io/name=sdo-responder", "-o", "json"],
-        namespace=control,
-    )
-    jobs = json.loads(jobs_payload.stdout).get("items", [])
-    state_document = json.loads(
-        kubectl(["get", "configmap/sdo-controller-state", "-o", "json"], namespace=control).stdout
-    )
-    state = json.loads(state_document.get("data", {}).get("runtime-state.json", "{}"))
-    acknowledged_id = state.get("last_acknowledged_incident_id")
-    if incident_id is None:
-        incident_id = acknowledged_id
-    if not isinstance(incident_id, str) or not incident_id.strip():
-        raise ControllerInstallError("controller has no durable acknowledged incident for receipt correlation")
-    configmaps_payload = kubectl(["get", "configmaps", "-o", "json"], namespace=control)
-    configmaps = json.loads(configmaps_payload.stdout).get("items", [])
-    responder_jobs, result, responder_job_evidence = _resolve_responder_dispatch(
-        incident_id=incident_id,
-        jobs=jobs,
-        configmaps=configmaps,
-        other_incidents_expected=config.persistent,
-    )
-    ledger = _load_incident_ledger(common_dir.resolve() / "sdo-broker", incident_id)
-    remaining = kubectl(
-        [
-            "exec",
-            "sdo-repository-sync",
-            "--",
-            "find",
-            "/workspace/worktrees",
-            "-mindepth",
-            "1",
-            "-maxdepth",
-            "1",
-            "-print",
-        ],
-        namespace=control,
-    )
-    raw_closure = ledger.get("closure")
-    closure: dict[str, Any] = raw_closure if isinstance(raw_closure, dict) else {}
-    detector_clear = closure.get("final_detector_states", [])
-    accepted_detector_paths = ledger.get("accepted_detector_paths", [])
-    rollout_record = _validated_controller_rollout_record(ledger)
-    controller_update_rollout = rollout_record is not None
-    recorded_at = datetime.now(timezone.utc)
-    diagnosis_verification = _diagnosis_verification(closure)
-    receipt: dict[str, Any] = {
-        "schema_version": "sdo.production-receipt/v1",
-        "recorded_at": recorded_at.isoformat(),
-        "pre_cutover": False,
-        "incident_id": incident_id,
-        "namespace": config.namespace,
-        "controller_namespace": control,
-        "controller_workload": "batch/v1 Job/sdo-controller-run",
-        "controller_image": config.controller_image,
-        "responder_image": config.responder_image,
-        "validator_image": config.validator_image,
-        "validator_mode": "kubernetes-job",
-        "validator_execution_required": bool(accepted_detector_paths),
-        "validator_skipped_reason": None if accepted_detector_paths else "unchanged-diagnostics",
-        "production_job_dispatch": len(responder_jobs) == 1,
-        "responder_jobs": responder_jobs,
-        "responder_job_evidence": responder_job_evidence,
-        "completed": result.get("status") == "completed",
-        "confirmed_root_causes": result.get("confirmed_root_causes", []),
-        "repair_policy": config.repair_policy,
-        "repair_actions": result.get("repair_actions", []),
-        "proposal_commit": ledger.get("proposal_commit"),
-        "outcome_commit": ledger.get("outcome_commit"),
-        "reflection_commit": ledger.get("reflection_commit"),
-        "validator_evidence_commit": ledger.get("validator_evidence_commit"),
-        "responder_session_id": ledger.get("responder_session_id"),
-        "same_session_reflection": _same_session_reflection(ledger),
-        "detector_clear": detector_clear,
-        "detector_review_required_at": closure.get("detector_review_required_at"),
-        "incident_detector_states": closure.get("incident_detector_states", []),
-        **_detector_firing_summary(closure),
-        **_late_findings_summary(closure),
-        "independent_verification": result.get("verification_evidence", []),
-        "usage": result.get("usage", {}),
-        "reflection_usage": ledger.get("reflection_usage", {}),
-        **_reflection_telemetry(ledger),
-        "phase_timings_seconds": _phase_timings(closure, recorded_at),
-        "memory_reuse": _memory_reuse_summary(closure, result),
-        "diagnosis_verification": diagnosis_verification,
-        "recovery_attribution": _recovery_attribution(diagnosis_verification),
-        "validator_network_policy_canaries": ledger.get("validator_network_policy_canaries", []),
-        "acknowledged": ledger.get("acknowledged") is True,
-        "cleaned": ledger.get("cleaned") is True,
-        "remaining_worktrees": [line for line in remaining.stdout.splitlines() if line.strip()],
-        "accepted_detector_paths": accepted_detector_paths,
-        "controller_update_required": ledger.get("controller_update_required") is True,
-        "controller_update_rollout": controller_update_rollout,
-        "controller_update_rollout_record": rollout_record,
-        "stale_memory_detected": ledger.get("stale_memory_detected") is True,
-        "architecture_topology_fingerprint": ledger.get("architecture_topology_fingerprint"),
-        "source_topology_fingerprint": ledger.get("source_topology_fingerprint"),
-        "lifecycle_provenance": (config.repository / ".sdo" / "lifecycle-provenance.yaml").is_file(),
-    }
-    # How the incident closed; only ``sdo_mitigated`` credits SDO with the recovery.
-    receipt["resolution"] = receipt_resolution(receipt)
-    if receipt["controller_update_required"] and not controller_update_rollout:
-        raise ControllerInstallError("accepted detector update was not rolled out by the controller supervisor")
-    return receipt
-
-
-def _phase_timings(closure: dict[str, Any], recorded_at: datetime) -> dict[str, float]:
-    def timestamp(name: str) -> datetime:
-        value = closure.get(name)
-        if not isinstance(value, str):
-            raise ControllerInstallError(f"broker closure has no {name} timestamp")
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-    detected = timestamp("detected_at")
-    dispatched = timestamp("dispatched_at")
-    responder_completed = timestamp("responder_completed_at")
-    verified = timestamp("verified_at")
-    return {
-        "detection_to_dispatch": (dispatched - detected).total_seconds(),
-        "responder": (responder_completed - dispatched).total_seconds(),
-        "verification": (verified - responder_completed).total_seconds(),
-        "operational_recovery": (verified - detected).total_seconds(),
-        "post_recovery_learning_and_receipt": (recorded_at - verified).total_seconds(),
-        "total": (recorded_at - detected).total_seconds(),
-    }
-
-
-def _diagnosis_verification(closure: dict[str, Any]) -> list[dict[str, Any]]:
-    """Check the responder's diagnosis against the broker closure's controller facts."""
-
-    try:
-        parsed = BrokerClosure.model_validate(closure)
-    except ValidationError:
-        return []
-    return [
-        verification.model_dump(mode="json")
-        for verification in verify_diagnosis(
-            parsed.request,
-            parsed.result,
-            final_detector_states=parsed.final_detector_states,
-            incident_detector_states=parsed.incident_detector_states,
-            final_state_changes=parsed.final_state_changes,
-            health_cleared_at=parsed.health_cleared_at,
-            observed_state_changes=parsed.observed_state_changes,
-        )
-    ]
-
-
-def _recovery_attribution(verification: list[dict[str, Any]]) -> str | None:
-    """``responder`` when its own repair backs a verified cause, ``external`` when none does.
-
-    ``None`` when no cause carries a repair attribution.
-    """
-
-    attributions = [repair for item in verification if isinstance(repair := item.get("repair"), dict)]
-    if not attributions:
-        return None
-    return "responder" if any(attribution.get("attributed") is True for attribution in attributions) else "external"
-
-
-def _memory_reuse_summary(closure: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
-    request = closure.get("request") if isinstance(closure.get("request"), dict) else {}
-    relevant = request.get("relevant_outcomes", []) if isinstance(request, dict) else []
-    relevant = relevant if isinstance(relevant, list) else []
-    applied = result.get("applied_playbooks", [])
-    applied = applied if isinstance(applied, list) else []
-    return {
-        "candidate_count": len(relevant),
-        "match_reasons": sorted(
-            {str(item.get("match_reason")) for item in relevant if isinstance(item, dict) and item.get("match_reason")}
-        ),
-        "applied_playbook_count": len(applied),
-        "warm_path": bool(relevant),
-    }
-
-
-def _resolve_responder_dispatch(
-    *,
-    incident_id: str,
-    jobs: list[Any],
-    configmaps: list[Any],
-    other_incidents_expected: bool = False,
-) -> tuple[list[str], dict[str, Any], str]:
-    """Resolve one responder execution from its durable request/result protocol.
-
-    Responder Jobs are intentionally finite and Kubernetes can garbage-collect
-    them while a stopped cluster is offline.  The request and result ConfigMaps
-    are the durable, idempotent protocol records used by the dispatcher itself;
-    correlating both payloads to the controller's acknowledged incident keeps
-    exact-once evidence recoverable without recreating or rerunning a responder.
-    """
-
-    documents: dict[str, dict[str, Any]] = {}
-    for raw_document in configmaps:
-        if not isinstance(raw_document, dict):
-            continue
-        name = raw_document.get("metadata", {}).get("name")
-        if isinstance(name, str) and name:
-            documents[name] = raw_document
-
-    pairs: list[tuple[str, dict[str, Any]]] = []
-    for request_name, request_document in documents.items():
-        if not request_name.endswith("-request"):
-            continue
-        try:
-            request = json.loads(request_document.get("data", {}).get("incident-request.json", ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if not isinstance(request, dict) or request.get("incident_id") != incident_id:
-            continue
-        job_name = request_name.removesuffix("-request")
-        result_document = documents.get(f"{job_name}-result")
-        if result_document is None:
-            continue
-        try:
-            result = json.loads(result_document.get("data", {}).get("incident-result.json", ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(result, dict) and result.get("incident_id") == incident_id:
-            pairs.append((job_name, result))
-
-    if len(pairs) != 1:
-        raise ControllerInstallError(
-            "acknowledged incident requires exactly one durable responder "
-            f"request/result ConfigMap pair; found {len(pairs)}"
-        )
-    job_name, result = pairs[0]
-    live_jobs = sorted(
-        str(job.get("metadata", {}).get("name", ""))
-        for job in jobs
-        if isinstance(job, dict) and job.get("metadata", {}).get("name")
-    )
-    if other_incidents_expected:
-        # A persistent controller keeps earlier incidents' finite responder Jobs until their TTL.
-        live_jobs = [name for name in live_jobs if name == job_name]
-    if live_jobs and live_jobs != [job_name]:
-        raise ControllerInstallError(
-            f"live responder Jobs do not match durable incident execution: expected {[job_name]!r}, found {live_jobs!r}"
-        )
-    evidence = "live-job-and-durable-configmaps" if live_jobs else "durable-request-result-configmaps"
-    return [job_name], result, evidence
-
-
-def _load_incident_ledger(state_root: Path, incident_id: str) -> dict[str, Any]:
-    """Load exactly one ledger by embedded incident ID, independent of mtime."""
-
-    matches: list[dict[str, Any]] = []
-    for path in state_root.glob("*.json"):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ControllerInstallError(f"cannot read durable broker ledger {path.name}: {exc}") from exc
-        if isinstance(payload, dict) and payload.get("incident_id") == incident_id:
-            matches.append(payload)
-    if not matches:
-        raise ControllerInstallError(f"production runtime produced no durable broker ledger for incident {incident_id}")
-    if len(matches) != 1:
-        raise ControllerInstallError(
-            f"production runtime produced multiple durable broker ledgers for incident {incident_id}"
-        )
-    return matches[0]
-
-
-def _validated_controller_rollout_record(ledger: dict[str, Any]) -> dict[str, Any] | None:
-    """Resolve the single authoritative successful attempt for this incident."""
-
-    if ledger.get("controller_update_required") is not True:
-        return None
-    raw_records = ledger.get("controller_update_rollouts")
-    if not isinstance(raw_records, list) or not raw_records:
-        raise ControllerInstallError("controller rollout ledger is missing durable attempt records")
-    incident_id = ledger.get("incident_id")
-    reflection_commit = ledger.get("reflection_commit")
-    before = ledger.get("controller_update_before_fingerprint")
-    after = ledger.get("controller_update_after_fingerprint")
-    if not all(isinstance(value, str) and value for value in (incident_id, reflection_commit, before, after)):
-        raise ControllerInstallError("controller rollout ledger is missing its expected detector transition")
-    successful: list[ControllerRolloutRecord] = []
-    for raw_record in raw_records:
-        try:
-            record = ControllerRolloutRecord.model_validate(raw_record)
-        except ValidationError as exc:
-            raise ControllerInstallError(f"invalid durable controller rollout record: {exc}") from exc
-        if record.incident_id != incident_id:
-            raise ControllerInstallError("durable controller rollout incident ID mismatch")
-        if record.reflection_commit != reflection_commit:
-            raise ControllerInstallError("durable controller rollout reflection commit mismatch")
-        if record.before_detector_fingerprint != before or record.after_detector_fingerprint != after:
-            raise ControllerInstallError("durable controller rollout detector transition mismatch")
-        if record.success:
-            successful.append(record)
-    if not successful:
-        returncodes = [record.get("returncode") for record in raw_records if isinstance(record, dict)]
-        raise ControllerInstallError(f"durable controller rollout has no returncode=0 attempt: {returncodes}")
-    if len(successful) != 1:
-        raise ControllerInstallError("durable controller rollout requires exactly one successful attempt")
-    return successful[0].model_dump(mode="json")
-
-
-def _controller_update_rollout_succeeded(controller_logs: str) -> bool:
-    for raw_line in controller_logs.splitlines():
-        try:
-            payload = json.loads(raw_line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        fingerprint = payload.get("controller_update_rollout")
-        returncode = payload.get("returncode")
-        if isinstance(fingerprint, str) and fingerprint and type(returncode) is int and returncode == 0:
-            return True
-    return False
-
-
-def install_persistent_controller(config: RuntimeConfig) -> bool:
-    """Install, or keep a matching healthy, long-running controller; return whether it was kept."""
-
-    if not config.persistent:
-        raise ControllerInstallError("persistent install requires RuntimeConfig.persistent")
-    result = install_controller(config, _SREGymRuntimeExtension(config))
-    if not isinstance(result, ControllerInstallResult):
-        raise ControllerInstallError("a persistent install must not wait for controller completion")
-    return result.reused
-
-
-def collect_production_receipt(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
-    """Sync the controller's repository back and build one incident's strict receipt.
-
-    The caller must have started the repository sync pod.
-    """
-
-    sync_repository_from_controller(config)
-    runtime_artifacts = _export_runtime_artifacts(config.control_namespace, artifacts_dir)
-    receipt = _production_receipt(config, "", incident_id=incident_id)
-    receipt["runtime_artifacts"] = runtime_artifacts
-    return receipt
-
-
-def export_controller_logs(control_namespace: str, artifacts_dir: Path | None) -> dict[str, str | None]:
-    return _export_controller_logs(control_namespace, artifacts_dir)
-
-
-def export_runtime_artifacts(control_namespace: str, artifacts_dir: Path | None) -> dict[str, str | None]:
-    """Copy the controller PVC's usage logs and agent transcripts; requires the repository sync pod."""
-
-    return _export_runtime_artifacts(control_namespace, artifacts_dir)

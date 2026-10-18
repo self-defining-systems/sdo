@@ -8,13 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from benchmarks.sregym.adapter import ControllerInstallError, RuntimeConfig
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import Clock, ControllerPod, PersistentState, control_namespace_for
-from benchmarks.sregym.adapter.runtime import RuntimeConfig
 from benchmarks.sregym.fastloop.loop import InjectionWindow
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
-from sdo.agent_runtime.lifecycle.validation_cache import LifecycleValidationCache
-from sdo.controller_install import ControllerInstallError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -173,8 +171,6 @@ def _agent(
     tmp_path: Path,
     ops: FakeOps,
     lifecycle_calls: list[str],
-    *,
-    validation_cache: LifecycleValidationCache | None = None,
 ) -> SdoPersistentAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -199,15 +195,12 @@ def _agent(
         state_path=tmp_path / "sdo_persistent_controller.json",
         results_dir=tmp_path / "incidents",
         verification_timeout_seconds=600,
-        validation_cache=validation_cache,
     )
     context = DeployedLifecycleContext(health_objective="objective", active_resources=[])
 
     def run_lifecycle(received: DeployedLifecycleContext) -> bool:
         assert received == context
         lifecycle_calls.append("lifecycle")
-        if validation_cache is not None:
-            validation_cache.source = "validation-cache"
         return True
 
     return SdoPersistentAgent(
@@ -304,15 +297,6 @@ def test_an_injection_failure_propagates_to_the_loop(tmp_path: Path) -> None:
 
     with pytest.raises(ControllerInstallError, match="could not inject"):
         agent.resolve(0, "p", failing_inject)
-
-
-def test_a_cached_lifecycle_validation_is_recorded(tmp_path: Path) -> None:
-    ops, calls = FakeOps(), []
-    agent = _agent(tmp_path, ops, calls, validation_cache=LifecycleValidationCache(tmp_path / "validation-cache"))
-
-    outcome = agent.resolve(0, "p", _inject)
-
-    assert outcome.lifecycle_validation_source == "validation-cache"
 
 
 def test_a_closure_missed_between_polls_takes_its_times_from_the_receipt(tmp_path: Path) -> None:

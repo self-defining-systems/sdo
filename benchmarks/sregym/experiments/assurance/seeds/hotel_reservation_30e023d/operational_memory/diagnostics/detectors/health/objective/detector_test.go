@@ -7,8 +7,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sdo.dev/controller/sdk"
-	"sdo.dev/controller/sdk/sdktest"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestDetectReportsUnavailableRequiredDeploymentAndIgnoresNearMiss(t *testing.T) {

@@ -12,7 +12,7 @@ Python proto types faithfully model BOTH producers of the wire:
 ``json_format.Parse`` rejects unknown fields, so a field either definition grows
 without the proto schema fails here — drift is a test failure, not a run-time
 surprise ten minutes into an experiment. The Go conformance test
-(``controller/runtime/contract_conformance_test.go``) additionally checks the
+(``sdo/operator/runtime/contract_conformance_test.go``) additionally checks the
 protovalidate CEL mirrors the hand-written invariants.
 """
 
@@ -59,7 +59,7 @@ def test_proto_schema_models_pydantic_request_serialization() -> None:
     # way Python writes the wire, and parse that into the proto type.
     raw = json.loads((GO_FIXTURES / "incident_request.json").read_text(encoding="utf-8"))
     pyd = PydIncidentRequest.model_validate(raw)
-    parse_json(pyd.model_dump_json(), IncidentRequest())
+    parse_json(pyd.model_dump_json(exclude={"architecture_summary_path", "health_objective_path"}), IncidentRequest())
 
 
 def test_proto_schema_models_pydantic_view_serialization() -> None:

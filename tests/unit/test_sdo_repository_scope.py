@@ -60,11 +60,11 @@ def test_ci_references_only_existing_repository_scripts() -> None:
 def test_python_implementation_uses_the_canonical_sdo_namespace() -> None:
     legacy_package = "app" + "_operator"
     required_packages = (
-        "sdo/agent_runtime/lifecycle",
-        "sdo/agent_runtime/responder",
+        "sdo/agents/lifecycle",
+        "sdo/agents/responder",
+        "sdo/agents/deployer",
+        "sdo/agents/health_judge",
         "sdo/contracts",
-        "sdo/controller_install",
-        "sdo/operational_memory",
     )
 
     legacy_paths = [

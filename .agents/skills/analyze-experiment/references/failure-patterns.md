@@ -8,6 +8,12 @@ Check incident IDs, commit hashes, final detector state, independent verificatio
 
 A receipt whose `resolution` is `external_recovery` or `cleared_without_sdo_action` is valid but is not an SDO mitigation: count it under "cleared without SDO action", never in the mitigated total, whatever the oracle says. In fastloop records the same value is `sdo_resolution`. Older runs rejected such receipts (`sdo_rejected_production_receipt.json` with `same_session_reflection=true` or `completed=true` required); reclassify them from the rejected receipt's own fields instead of counting a product failure. A remaining rejected receipt is that stage's `agent_failure` only: it no longer blocks the next stage or fails the teardown.
 
+## Outcome-layout or broker-mode mismatch
+
+**Signature:** an investigator counts both imported `.sdo/outcomes/*.json` documents and the retired `.sdo/outcomes.jsonl` stream as independent incidents.
+
+Use the logical incident ID and `sdo/operator/memory` semantics; the JSON filename is `sha256(incident_id)`, not the ID itself. Import is restartable and removes the legacy stream only after every record is accepted. Trusted source evidence is broker-owned, tied to the accepted Git tree and immutable images, and independently re-observed after restart. A worker-reported `deployed` flag or image annotation alone is not evidence. For historical JSONL runs, inspect the accepted Git revision before comparing outcomes.
+
 ## Lifecycle provenance mismatch
 
 **Signature:** deployer commit or topology fingerprint differs from the current application workspace, judge sessions are reused unexpectedly, or the objective digest differs from `goal.md`.
@@ -66,7 +72,7 @@ Check edits to human goals, architecture, health detectors, prior outcomes, or p
 
 **Signature:** an outcome commit exists but reflection is absent when required, uses a different session, produces no validated memory commit, or generalizes beyond evidence.
 
-Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`reflection_fresh_retry_attempts`). Reflection agents are told to run `python3 -m sdo.operational_memory.memory_check --app . --actor responder` before returning; a rejection for a rule that check covers (index link, uppercase placeholder, script syntax, ownership, provenance) means the agent skipped or ignored it, so look for the command in the controller turn log's `shell_command_lines`.
+Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`reflection_fresh_retry_attempts`). Reflection agents return typed logical artifact proposals and may run `sdo-operator draft-test --app . --proposal-json <file>` for scratch feedback. Broker validation remains authoritative; compare the typed proposal, draft-test feedback, broker rejection, and accepted diff.
 
 ## Learned detector never fired
 

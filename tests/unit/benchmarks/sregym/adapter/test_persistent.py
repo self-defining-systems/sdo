@@ -327,33 +327,6 @@ def test_one_controller_serves_both_stages_and_the_second_skips_install_and_life
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
 
 
-def test_stage_reports_how_the_lifecycle_validation_was_satisfied(tmp_path: Path) -> None:
-    from dataclasses import replace
-
-    from sdo.agent_runtime.lifecycle.validation_cache import LifecycleValidationCache
-
-    ops = FakeOps()
-    disabled = _run(tmp_path, ops, "s0", [])
-    assert disabled["lifecycle_validation"] == {"cache": "disabled", "source": None}
-
-    cache = LifecycleValidationCache(tmp_path / "validation-cache")
-    ops.reflectable.add("incident-1")
-
-    def cached_lifecycle() -> bool:
-        cache.source = "validation-cache"
-        return True
-
-    fresh = run_persistent_stage(
-        replace(_inputs(tmp_path, "s1", fingerprint="topology-2"), validation_cache=cache),
-        ops=ops,
-        run_lifecycle=cached_lifecycle,
-        inject=lambda: None,
-        clock=_clock(ops),
-    )
-
-    assert fresh["lifecycle_validation"] == {"cache": "enabled", "source": "validation-cache"}
-
-
 def test_stage_reports_resolution_at_verified_health_before_reflection_finishes(tmp_path: Path) -> None:
     ops = FakeOps()
 

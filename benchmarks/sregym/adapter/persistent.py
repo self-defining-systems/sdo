@@ -35,31 +35,32 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.fault_gate import inject_fault_after_resumed_baseline
+from benchmarks.sregym.adapter.native_operator import (
+    NativeOperatorError,
+)
+from benchmarks.sregym.adapter.native_operator import (
+    export_runtime_artifacts as go_export_runtime_artifacts,
+)
+from benchmarks.sregym.adapter.native_operator import (
+    inspect_existing as go_inspect_existing,
+)
+from benchmarks.sregym.adapter.native_operator import (
+    set_maintenance as go_set_maintenance,
+)
 from benchmarks.sregym.adapter.runtime import (
     RUNTIME_ARTIFACTS_DIRNAME,
+    ControllerInstallError,
     RuntimeConfig,
     collect_production_receipt,
     export_controller_logs,
-    export_runtime_artifacts,
-    install_persistent_controller,
     validate_production_receipt,
 )
-from sdo.agent_runtime.lifecycle import validation_report
-from sdo.controller_install import (
-    CONTROLLER_JOB_NAME,
-    ControllerInstallError,
-    kubectl,
-    set_controller_maintenance,
-    start_repository_sync,
-    stop_repository_sync,
-)
-from sdo.operational_memory import incident_worktree_dirname
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from sdo.agent_runtime.lifecycle import LifecycleValidationCache
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ STRICT_RECEIPT_FILENAME = "sdo_production_receipt_strict.json"
 REJECTED_RECEIPT_FILENAME = "sdo_rejected_production_receipt.json"
 CONTROLLER_LOGS_SUBDIR = Path(RUNTIME_ARTIFACTS_DIRNAME) / "controller_logs"
 POLL_SECONDS = 1.0
+CONTROLLER_JOB_NAME = "sdo-controller-run"
 MAINTENANCE_ACK_TIMEOUT_SECONDS = 600.0
 DRAIN_TIMEOUT_SECONDS = 3600.0
 # After the reflection drain returns, the controller's asynchronous close-out may
@@ -250,8 +252,6 @@ class ClusterOps(Protocol):
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]: ...
 
-    def reap_orphan_worktrees(self, config: RuntimeConfig, keep_dirnames: set[str]) -> list[str]: ...
-
     def export_runtime_artifacts(self, config: RuntimeConfig, artifacts_dir: Path) -> dict[str, str | None]: ...
 
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None: ...
@@ -288,10 +288,22 @@ class KubectlClusterOps:
         )
 
     def install(self, config: RuntimeConfig) -> bool:
-        return install_persistent_controller(config)
+        # The host lifecycle installed this controller on a new stage. On a
+        # reused stage the same inspection proves its current identity without
+        # consulting the resettable local checkout.
+        from benchmarks.sregym.adapter.runtime import native_install_config
+
+        go_inspect_existing(native_install_config(config))
+        return config.reuse_existing
 
     def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
-        set_controller_maintenance(control_namespace, paused=paused, generation=generation)
+        kubeconfig = os.getenv("KUBECONFIG", "").strip()
+        go_set_maintenance(
+            control_namespace,
+            paused=paused,
+            generation=generation,
+            kubeconfig=Path(kubeconfig).resolve() if kubeconfig else None,
+        )
 
     def runtime_state(self, control_namespace: str) -> dict[str, Any]:
         completed = kubectl(
@@ -317,62 +329,16 @@ class KubectlClusterOps:
         return inject_fault_after_resumed_baseline(control_namespace, generation, inject=inject, kubectl_runner=kubectl)
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
-        start_repository_sync(config)
-        try:
-            return collect_production_receipt(config, incident_id, artifacts_dir)
-        finally:
-            stop_repository_sync(config)
-
-    def reap_orphan_worktrees(self, config: RuntimeConfig, keep_dirnames: set[str]) -> list[str]:
-        """Remove worktrees under the shared root whose directory is not in *keep_dirnames*.
-
-        The caller guarantees the controller is quiescent, so every worktree
-        other than the kept ones belongs to a terminal incident. Returns the
-        worktree paths that remain after the reap.
-        """
-
-        control = config.control_namespace
-        start_repository_sync(config)
-        try:
-            listing = kubectl(
-                [
-                    "exec",
-                    "sdo-repository-sync",
-                    "--",
-                    "find",
-                    "/workspace/worktrees",
-                    "-mindepth",
-                    "1",
-                    "-maxdepth",
-                    "1",
-                    "-print",
-                ],
-                namespace=control,
-            )
-            remaining: list[str] = []
-            for line in listing.stdout.splitlines():
-                path = line.strip()
-                if not path:
-                    continue
-                if path.rsplit("/", 1)[-1] in keep_dirnames:
-                    remaining.append(path)
-                    continue
-                kubectl(["exec", "sdo-repository-sync", "--", "rm", "-rf", "--", path], namespace=control)
-            return remaining
-        finally:
-            stop_repository_sync(config)
+        return collect_production_receipt(config, incident_id, artifacts_dir)
 
     def export_runtime_artifacts(self, config: RuntimeConfig, artifacts_dir: Path) -> dict[str, str | None]:
-        """Snapshot usage logs and transcripts at stage end; diagnostic, so errors are returned.
-
-        The repository sync pod is left running: the drain that follows applies
-        the same pod and removes it, so no stage waits on a terminating pod.
-        """
-
+        """Ask the Go operator to export whitelisted runtime evidence."""
         try:
-            start_repository_sync(config)
-            return export_runtime_artifacts(config.control_namespace, artifacts_dir)
-        except (ControllerInstallError, OSError, subprocess.SubprocessError) as exc:
+            from benchmarks.sregym.adapter.runtime import native_install_config
+
+            directory = go_export_runtime_artifacts(native_install_config(config), artifacts_dir.resolve())
+            return {"directory": str(directory), "error": None}
+        except (NativeOperatorError, ControllerInstallError, OSError, subprocess.SubprocessError) as exc:
             return {"directory": None, "error": f"{type(exc).__name__}: {exc}"}
 
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None:
@@ -390,8 +356,6 @@ class StageInputs:
     state_path: Path
     kubeconfig: str | None = None
     verification_timeout_seconds: float = 3900.0
-    # Opt-in shared lifecycle validation verdicts; run_lifecycle consults it.
-    validation_cache: LifecycleValidationCache | None = None
     #: End the stage as a detection miss if no incident has opened this long
     #: after injection. None waits the whole verification budget.
     detection_timeout_seconds: float | None = None
@@ -538,7 +502,6 @@ def run_persistent_stage(
         # Names the responder's rollout in the stage-end evidence.
         "responder_session_id": result.get("responder_session_id"),
         "lifecycle_reused": lifecycle_reused,
-        "lifecycle_validation": validation_report(inputs.validation_cache),
         "fault_injection_deferred": True,
         "fault_gate_timings_seconds": gate_timings,
         "persistent_controller": {
@@ -711,52 +674,10 @@ def _closeout_settled(receipt: dict[str, Any]) -> bool:
     until both are quiescent.
     """
 
+    if receipt.get("schema_version") == "sdo.production-receipt/v2":
+        ledger = receipt.get("native_ledger")
+        return isinstance(ledger, dict) and ledger.get("acknowledged") is True
     return receipt.get("completed") is True and receipt.get("remaining_worktrees") == []
-
-
-def _orphan_reap_keep_set(state: dict[str, Any], draining_incident_id: str) -> set[str] | None:
-    """Dirnames to keep when reaping orphan worktrees, or ``None`` to reap nothing.
-
-    Reaping is safe only when the single-incident controller has gone positively
-    quiescent with the draining incident its last acknowledged incident: no
-    incident open and no closure in flight. Any ambiguity -- an unreadable state,
-    an open incident, a closure (including a follow-up) still settling, or a
-    different last-acknowledged incident -- yields ``None`` so no worktree is
-    removed. When quiescent, only the draining incident's worktree (shared by its
-    follow-ups) is kept; every other worktree belongs to a terminal incident.
-    """
-
-    if not state:
-        return None
-    if state.get("incident_open") or state.get("pending_closure") is not None:
-        return None
-    if state.get("last_acknowledged_incident_id") != draining_incident_id:
-        return None
-    return {incident_worktree_dirname(draining_incident_id)}
-
-
-def _reap_orphan_worktrees(
-    ops: ClusterOps, config: RuntimeConfig, state: dict[str, Any], draining_incident_id: str
-) -> None:
-    """Reap worktrees leaked by terminal incidents, but only when positively safe.
-
-    A worktree is orphaned when its incident was prepared and then abandoned
-    before any closure, so ``acknowledge`` never reaped it (``release_incident``
-    is the source fix). The gate samples the shared worktree directory globally,
-    so a leaked worktree from an earlier incident rejects a later incident's
-    receipt. On a single-incident controller that has gone quiescent, the drain
-    completes the teardown the abandoned incident never did.
-
-    ``state`` is the controller state the reflection drain already sampled at
-    quiescence; the reap does not poll the controller again (an extra read is a
-    no-op in production but would advance the controller state machine a caller
-    is still driving).
-    """
-
-    keep = _orphan_reap_keep_set(state, draining_incident_id)
-    if keep is None:
-        return
-    ops.reap_orphan_worktrees(config, keep)
 
 
 def _collect_settled_receipt(
@@ -821,7 +742,9 @@ def drain_pending_incident(
     # Complete the teardown an abandoned incident left behind, so its leaked
     # worktree does not reject this solved incident's receipt. Safe-guarded: only
     # when the controller is positively quiescent.
-    _reap_orphan_worktrees(ops, config, drained_state, pending.incident_id)
+    # The native Go broker releases abandoned proposals and acknowledged
+    # incident worktrees; the benchmark must not mutate its workspace.
+    del drained_state
     receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
     # The reflection-drain cost includes the wait for close-out to settle; neither
     # is resolution time (both are excluded below).

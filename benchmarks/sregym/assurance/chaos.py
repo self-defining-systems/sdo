@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from sdo.controller_install import kubectl
+from benchmarks.sregym.adapter import kubectl
 
 if TYPE_CHECKING:
     from collections.abc import Callable

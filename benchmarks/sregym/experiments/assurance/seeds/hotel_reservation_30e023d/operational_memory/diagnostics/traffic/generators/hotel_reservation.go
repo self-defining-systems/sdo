@@ -1,6 +1,6 @@
 package generators
 
-import "sdo.dev/controller/sdk/traffic"
+import "sdo.dev/operator/sdk/traffic"
 
 func Scenarios() traffic.Catalog {
 	return traffic.Catalog{

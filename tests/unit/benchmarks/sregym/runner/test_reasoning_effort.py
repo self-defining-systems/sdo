@@ -19,7 +19,7 @@ from benchmarks.sregym.runner.experiment import (
     load_experiment_config,
 )
 from benchmarks.sregym.runner.pipeline import load_pipeline_config, merge_stage_config
-from sdo.agent_runtime.responder import INCIDENT_REASONING_EFFORT
+from sdo.agents.responder import INCIDENT_REASONING_EFFORT
 
 EXPERIMENTS = Path(__file__).resolve().parents[5] / "benchmarks" / "sregym" / "experiments"
 COMPARED_AGENTS = {"codex", "sdo_codex"}

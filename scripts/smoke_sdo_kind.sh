@@ -32,8 +32,9 @@ EOF
 kind create cluster --name "${cluster_name}" --config "${kind_config}" --wait 120s
 docker image inspect sdo-detector-validator:v0.1.0 >/dev/null
 kind load docker-image sdo-detector-validator:v0.1.0 --name "${cluster_name}"
+schema_identity="$(cd "${repo_root}/sdo/operator" && go run ./cmd/sdo-operator schema-identity)"
 
-cat >"${job_manifest}" <<'EOF'
+cat >"${job_manifest}" <<EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -54,8 +55,8 @@ spec:
         - name: validator
           image: sdo-detector-validator:v0.1.0
           imagePullPolicy: Never
-          command: ["python", "-m", "controller.builder.check_cli"]
-          args: ["test", "--app", "/workspace"]
+          command: ["/usr/local/bin/sdo-operator"]
+          args: ["validate", "--app", "/workspace", "--expect-schema", "${schema_identity}"]
           env:
             - {name: HOME, value: /tmp}
             - {name: GOCACHE, value: /tmp/go-cache}

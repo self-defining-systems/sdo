@@ -1,0 +1,114 @@
+package runtime
+
+import (
+	"fmt"
+	"sort"
+	"time"
+
+	"sdo.dev/operator/sdk"
+)
+
+type scheduleEntry struct {
+	detector sdk.Detector
+	nextRun  time.Time
+}
+
+type Scheduler struct {
+	entries map[string]*scheduleEntry
+}
+
+func NewScheduler(detectors []sdk.Detector, start time.Time) *Scheduler {
+	entries := make(map[string]*scheduleEntry, len(detectors))
+	for _, detector := range detectors {
+		entries[detector.Spec().ID] = &scheduleEntry{detector: detector, nextRun: start}
+	}
+	return &Scheduler{entries: entries}
+}
+
+func (s *Scheduler) Select(now time.Time, event *sdk.WatchKind) []sdk.Detector {
+	if event == nil {
+		return s.SelectEvents(now, nil)
+	}
+	return s.SelectEvents(now, []sdk.WatchKind{*event})
+}
+
+// SelectEvents returns every detector that is due at now or watches any of the
+// coalesced events, and advances each selected detector's next interval run.
+func (s *Scheduler) SelectEvents(now time.Time, events []sdk.WatchKind) []sdk.Detector {
+	selected := make([]sdk.Detector, 0)
+	for _, entry := range s.entries {
+		due := !now.Before(entry.nextRun)
+		for _, event := range events {
+			if due {
+				break
+			}
+			due = watchesEvent(entry.detector.Spec().Watches, event)
+		}
+		if !due {
+			continue
+		}
+		selected = append(selected, entry.detector)
+		entry.nextRun = now.Add(entry.detector.Spec().Interval)
+	}
+	sort.Slice(selected, func(left int, right int) bool {
+		return selected[left].Spec().ID < selected[right].Spec().ID
+	})
+	return selected
+}
+
+// Expedite moves a detector's next run earlier, never later.
+func (s *Scheduler) Expedite(detectorID string, at time.Time) {
+	entry, ok := s.entries[detectorID]
+	if !ok || !at.Before(entry.nextRun) {
+		return
+	}
+	entry.nextRun = at
+}
+
+// ExpediteAll makes every detector due at or before at.
+func (s *Scheduler) ExpediteAll(at time.Time) {
+	for id := range s.entries {
+		s.Expedite(id, at)
+	}
+}
+
+func (s *Scheduler) NextRun() time.Time {
+	var next time.Time
+	for _, entry := range s.entries {
+		if next.IsZero() || entry.nextRun.Before(next) {
+			next = entry.nextRun
+		}
+	}
+	return next
+}
+
+func (s *Scheduler) Deadlines() map[string]time.Time {
+	result := make(map[string]time.Time, len(s.entries))
+	for id, entry := range s.entries {
+		result[id] = entry.nextRun
+	}
+	return result
+}
+
+func (s *Scheduler) RestoreDeadlines(deadlines map[string]time.Time) error {
+	for id, deadline := range deadlines {
+		entry, ok := s.entries[id]
+		if !ok {
+			return fmt.Errorf("state references unknown detector %q", id)
+		}
+		entry.nextRun = deadline
+	}
+	return nil
+}
+
+func watchesEvent(watches []sdk.WatchKind, event sdk.WatchKind) bool {
+	for _, watch := range watches {
+		if watch.APIVersion != event.APIVersion || watch.Kind != event.Kind {
+			continue
+		}
+		if watch.Namespace == "" || watch.Namespace == event.Namespace {
+			return true
+		}
+	}
+	return false
+}

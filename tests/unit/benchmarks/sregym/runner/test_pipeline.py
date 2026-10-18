@@ -1374,13 +1374,6 @@ class TestPersistentControllerPipeline:
         assert read_pipeline_state(pipeline_dir).stages[0].status == "failed"
 
 
-def test_runner_preserve_label_matches_the_installed_controller_namespace_label() -> None:
-    from benchmarks.sregym.runner.experiment import PERSISTENT_CONTROLLER_NAMESPACE_LABEL
-    from sdo.controller_install import CONTROLLER_NAMESPACE_LABEL
-
-    assert PERSISTENT_CONTROLLER_NAMESPACE_LABEL == CONTROLLER_NAMESPACE_LABEL
-
-
 def test_persistent_mode_is_off_by_default_for_sdo_codex(tmp_path: Path) -> None:
     from benchmarks.sregym.runner.experiment import ExperimentConfig, config_to_env
 

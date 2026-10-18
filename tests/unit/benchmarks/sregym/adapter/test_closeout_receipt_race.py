@@ -33,13 +33,9 @@ from typing import TYPE_CHECKING, Any
 from benchmarks.sregym.adapter.persistent import (
     STRICT_RECEIPT_FILENAME,
     PersistentState,
-    _orphan_reap_keep_set,
-    _reap_orphan_worktrees,
-    control_namespace_for,
     drain_pending_incident,
 )
-from sdo.operational_memory import incident_worktree_dirname
-from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps, _clock, _config, _run
+from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps, _clock, _run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,80 +132,3 @@ def test_drain_waits_for_the_worktree_to_drain(tmp_path: Path) -> None:
     )
 
     assert (record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).is_file()
-
-
-def test_drain_reaps_a_terminal_incidents_leaked_worktree(tmp_path: Path) -> None:
-    # Seed B: an earlier incident was prepared then abandoned, leaking its
-    # worktree into the shared root. The gate samples that root globally, so the
-    # leftover rejects this solved incident. On a quiescent controller the drain
-    # completes the teardown the abandoned incident never did.
-    ops = FakeOps()
-    ops.worktrees = {"hotel-reservation-abandoned-6bfe56f8150e"}
-    record = _drained_record(tmp_path, ops)
-
-    drain_pending_incident(
-        record,
-        ops=ops,
-        repository=tmp_path / "s0" / "application_workspace",
-        drained_by="next-stage",
-        clock=_clock(ops),
-    )
-
-    assert (record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).is_file()
-    assert ops.worktrees == set()
-    assert any(event[0] == "reap" for event in ops.events)
-
-
-def test_orphan_reap_keep_set_is_none_unless_the_controller_is_positively_quiescent() -> None:
-    draining = "incident-1"
-    kept = {incident_worktree_dirname(draining)}
-
-    # Positively quiescent: no incident open, no closure in flight, and the
-    # draining incident is the last acknowledged one.
-    assert _orphan_reap_keep_set({"last_acknowledged_incident_id": draining}, draining) == kept
-
-    # Any ambiguity reaps nothing.
-    assert _orphan_reap_keep_set({}, draining) is None
-    assert _orphan_reap_keep_set({"incident_open": True, "last_acknowledged_incident_id": draining}, draining) is None
-    assert (
-        _orphan_reap_keep_set(
-            {"pending_closure": {"request": {"incident_id": "incident-2"}}, "last_acknowledged_incident_id": draining},
-            draining,
-        )
-        is None
-    )
-    assert _orphan_reap_keep_set({"last_acknowledged_incident_id": "incident-2"}, draining) is None
-
-
-def test_reap_never_removes_a_live_or_mid_reflection_worktree(tmp_path: Path) -> None:
-    control = control_namespace_for("hotel")
-    config = _config(tmp_path, "hotel", "s0")
-    orphan = "hotel-reservation-abandoned-6bfe56f8150e"
-
-    # A follow-up incident is still being closed (pending_closure present): the
-    # controller is not quiescent, so nothing is reaped even though a leftover
-    # worktree is present.
-    ops = FakeOps()
-    ops.worktrees = {orphan}
-    ops.states[control] = {
-        "pending_closure": {"request": {"incident_id": "incident-1-f1"}},
-        "last_acknowledged_incident_id": "incident-1",
-    }
-    _reap_orphan_worktrees(ops, config, ops.states[control], "incident-1")
-    assert ops.worktrees == {orphan}
-    assert not any(event[0] == "reap" for event in ops.events)
-
-
-def test_reap_never_removes_the_draining_incidents_own_worktree(tmp_path: Path) -> None:
-    control = control_namespace_for("hotel")
-    config = _config(tmp_path, "hotel", "s0")
-    own = incident_worktree_dirname("incident-1")
-    orphan = "hotel-reservation-abandoned-6bfe56f8150e"
-
-    ops = FakeOps()
-    ops.worktrees = {own, orphan}
-    ops.states[control] = {"last_acknowledged_incident_id": "incident-1"}
-    _reap_orphan_worktrees(ops, config, ops.states[control], "incident-1")
-
-    # The orphan is reaped; the draining incident's own worktree is preserved.
-    assert ops.worktrees == {own}

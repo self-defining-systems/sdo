@@ -1,9 +1,8 @@
 # SDO contract protos
 
-Single source of truth for the structured contracts that cross SDO's seams
-(controller↔responder messages, firing telemetry records, controller config, and
-the traffic workload artifact that the Python commit-time gate and the Go prober
-both load).
+Single source of truth for the structured contracts that cross SDO's seams:
+controller↔worker tasks and results, worker registrations, reflection, firing
+telemetry, controller config, and traffic workloads.
 
 ## Layout
 
@@ -18,7 +17,7 @@ the messages under a stable import path.
 
 Generated code is written to:
 
-- Go:     `controller/contracts/gen/`  (module `sdo.dev/controller/contracts`)
+- Go:     `sdo/operator/contracts/gen/`  (module `sdo.dev/operator/contracts`)
 - Python: `sdo/contracts/_gen/` (includes a vendored classic-runtime
   `buf/validate/validate_pb2.py`; see below)
 
@@ -44,7 +43,7 @@ Toolchain (installed via `go install`, so they land in `~/go/bin` — add it to 
   `protoc --python_out` fallback is needed; if it ever becomes unreachable, swap the
   two remote plugins for `local: protoc` with `--python_out`/`--pyi_out`.
 
-Generated Go lives in its own module `sdo.dev/controller/contracts` (`controller/contracts/`,
+Generated Go lives in its own module `sdo.dev/operator/contracts` (`sdo/operator/contracts/`,
 go_package `.../gen/...`); consumers add a `require` + relative `replace` for it.
 
 **Follow-up (not this refactor):** the `contracts` module needs `google.golang.org/protobuf`
@@ -56,10 +55,10 @@ dependency-bump ripple mid-migration.
 
 Relatedly, the relative `replace` directives are fragile because Go `replace` is **not
 transitive**: a consumer that depends on `runtime` does not inherit `runtime`'s
-`replace sdo.dev/controller/contracts => ../contracts`, so every main module in the graph
+`replace sdo.dev/operator/contracts => ../contracts`, so every main module in the graph
 must repeat it. The synthesized detector workspace hit exactly this (it had to grow its own
-`require` + `replace` for `contracts` in `controller/builder/workspace.py`, and both
-Dockerfiles copy `controller/contracts`). A `go.work` workspace, or publishing the
+`require` + `replace` for `contracts` in `sdo/operator/builder/workspace.py`, and both
+Dockerfiles copy `sdo/operator/contracts`). A `go.work` workspace, or publishing the
 `contracts` module, is the cleaner long-term fix than per-generated-`go.mod` replaces. Same
 deferral.
 
@@ -69,7 +68,7 @@ deferral.
 - Semantic invariants (ordered timestamps, token arithmetic, unique IDs) are expressed
   with **protovalidate** (CEL), so validation is single-source too. The CEL is checked
   on the Go side with `buf.build/go/protovalidate` (see
-  `controller/runtime/contract_conformance_test.go`). The one piece CEL cannot do —
+  `sdo/operator/runtime/contract_conformance_test.go`). The one piece CEL cannot do —
   the `UsageMetrics` cache-read alias *normalization* (a mutation) — stays a thin
   hand step at the seam, noted in `messages.proto`.
 - The Python gencode imports `buf.validate` for those field options. `protovalidate`
@@ -78,8 +77,11 @@ deferral.
   the classic `buf/validate/validate_pb2.py` into `sdo/contracts/_gen/buf`
   (via `buf.gen.validate.yaml`). Python validation (needed only at the Stage 2b
   responder-edge conversion) will add a classic-compatible validator then.
-- Do **not** add gRPC services here — SDO keeps its file/PVC/git/HTTP transports.
-- `.sdo/` git memory, detector Go source, and JSONL log formats are out of scope.
+- Do **not** add gRPC services here — SDO currently exchanges ProtoJSON through
+  Job ConfigMaps and uses Git for proposals. A future transport can reuse the
+  same task/result messages.
+- `AgentRegistration` declares capabilities, protobuf type URLs, and a launch
+  artifact. It does not specify the worker language or agent framework.
 
 ## Classic-protobuf-runtime bridge (revisit in Stage 2b)
 

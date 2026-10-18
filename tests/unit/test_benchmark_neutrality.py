@@ -28,10 +28,10 @@ ROOT = Path(__file__).resolve().parents[2]
 #: controller's detectors, or the benchmark adapter's goal and responder text.
 SCANNED_ROOTS = (
     "sdo",
-    "controller/sdk",
-    "controller/core",
-    "controller/runtime",
-    "controller/builder",
+    "sdo/operator/sdk",
+    "sdo/operator/core",
+    "sdo/operator/runtime",
+    "sdo/operator/builder",
     "benchmarks/sregym/adapter",
     "libs/sdo_core",
 )
@@ -74,12 +74,12 @@ def test_scan_covers_the_prompt_builders_and_templates() -> None:
     scanned = {path.relative_to(ROOT).as_posix() for path in _scanned_files()}
 
     for required in (
-        "sdo/agent_runtime/lifecycle/agents.py",
-        "sdo/agent_runtime/lifecycle/operational_memory.py",
-        "sdo/agent_runtime/responder/codex.py",
-        "sdo/agent_runtime/responder/reflection.py",
-        "sdo/operational_memory/detector_sdk.py",
-        "controller/runtime/deploy/rbac.yaml",
+        "sdo/agents/lifecycle/agents.py",
+        "sdo/agents/health_judge/worker.py",
+        "sdo/agents/responder/codex.py",
+        "sdo/agents/responder/reflection.py",
+        "sdo/agents/sdk_reference.py",
+        "sdo/operator/runtime/deploy/rbac.yaml",
         "benchmarks/sregym/adapter/driver.py",
         "benchmarks/sregym/adapter/runtime.py",
     ):
@@ -125,7 +125,7 @@ def test_adapter_responder_instructions_ask_for_user_outcomes_not_a_fault_specif
     text = _responder_instructions()
 
     assert "ready endpoint" not in text
-    assert "verify the affected user-facing requests succeed" in text
+    assert "verify representative requests" in text
 
 
 @pytest.mark.parametrize("mode", ["concise", "full"])

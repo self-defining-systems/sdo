@@ -1,6 +1,6 @@
 """Stage 1 vertical slice of the proto single-source-of-truth track.
 
-``controller/runtime/contract_proto_test.go`` encodes an ``ObjectRef`` through
+``sdo/operator/runtime/contract_proto_test.go`` encodes an ``ObjectRef`` through
 the generated Go type and protojson, normalizes it, and writes
 ``tests/fixtures/sdo/contracts/proto/object_ref.json``. Here the generated
 Python type parses that exact file, re-encodes it through the same canonical

@@ -509,7 +509,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
 def _controller_job_summary(control: str) -> dict[str, Any]:
     """How many controller pods ran and how they ended (a stopped controller is restarted by its Job)."""
 
-    from sdo.controller_install import kubectl
+    from benchmarks.sregym.adapter import kubectl
 
     try:
         completed = kubectl(

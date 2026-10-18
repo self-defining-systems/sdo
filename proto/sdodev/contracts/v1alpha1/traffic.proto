@@ -1,18 +1,14 @@
 syntax = "proto3";
 
-// The traffic workload artifact tree: a `.sdo/diagnostics/traffic/workloads/
-// <name>.yaml` profile that both the Python commit-time validation gate
-// (sdo/operational_memory/repository.py) and the Go controller-side prober
-// (controller/sdk/traffic) load. Proto is the single schema SOURCE; it replaces
-// the hand-written Pydantic models in sdo/operational_memory/models.py and the
-// hand-mirrored Go structs in controller/sdk/traffic. The conformance tests
-// (tests/unit/sdo/contracts/test_traffic_proto_conformance.py and
-// controller/runtime/traffic_conformance_test.go) make drift a failure.
+// The logical traffic workload contract is projected by the Go operational
+// memory edge and consumed by the Go traffic prober (sdo/operator/sdk/traffic).
+// Proto is the schema source for both the stored workload representation and
+// the runtime loader. The cross-language conformance tests make drift a failure.
 //
 // Wire convention: this artifact predates the snake_case message tree and is
 // stored as camelCase YAML (apiVersion, ratePerSecond, minSamples, from/to).
 // protojson's default lowerCamelCase JSON names match those keys exactly, so
-// the stored format is unchanged by this migration; unlike messages.proto the
+// the stored format preserves these names; unlike messages.proto the
 // traffic loaders do NOT use preserving_proto_field_name.
 //
 // Durations stay Go-duration strings ("2s", "500ms", "1m30s") rather than
@@ -29,14 +25,14 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 
-option go_package = "sdo.dev/controller/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 // TrafficSLO bounds a scenario's recent behaviour. Every field is optional: an
 // unset field inherits the workload's SLO, then the package defaults (the merge
 // is host code -- TrafficSLO.scenario_slo in Python, mergeSLO in Go). The
 // min_samples-not-exceeding-window check is cross-field host code because a
 // scenario SLO may set only one of the two and inherit the other. Mirrors
-// sdo.operational_memory.models.TrafficSLO and controller/sdk/traffic.SLO.
+// sdo.operator.sdk.traffic.SLO.
 message TrafficSLO {
   optional int32 window = 1 [(buf.validate.field).int32 = {gte: 1, lte: 100}];
   optional int32 min_samples = 2 [(buf.validate.field).int32.gte = 1];
@@ -50,9 +46,7 @@ message TrafficSLO {
 }
 
 // TrafficWorkloadScenario selects one catalog scenario with a weight and an
-// optional SLO override. Mirrors
-// sdo.operational_memory.models.TrafficWorkloadScenario and
-// controller/sdk/traffic.WorkloadScenario.
+// optional SLO override. Mirrors the Go SDK's traffic.WorkloadScenario.
 message TrafficWorkloadScenario {
   string id = 1 [(buf.validate.field).string.pattern = "^[a-z0-9][a-z0-9_.-]{0,62}$"];
   // weight 0 means "unset"; the loader defaults it to 1 before use. A set
@@ -66,9 +60,8 @@ message TrafficWorkloadScenario {
 }
 
 // TrafficLink is one declared service-to-service dependency edge: `from` calls
-// `to` on `port`. Mirrors sdo.operational_memory.models.TrafficLink and
-// controller/sdk/traffic.Link. The field names are `from`/`to` to match the
-// stored artifact exactly.
+// `to` on `port`. Mirrors the Go SDK's traffic.Link. The field names are
+// `from`/`to` in the logical traffic contract.
 message TrafficLink {
   option (buf.validate.message).cel = {
     id: "link.no_self_loop"
@@ -87,15 +80,12 @@ message TrafficLink {
   string protocol = 4;
 }
 
-// TrafficWorkload is a workload profile stored at
-// `.sdo/diagnostics/traffic/workloads/<name>.yaml`. A `health-probe` runs
+// TrafficWorkload is a logical workload profile. A `health-probe` runs
 // continuously and feeds traffic health detectors; a `verify-burst` runs for a
 // few seconds on demand to verify a repair; a `journey` runs on demand for a
 // bounded time; a `link-probe` runs continuously with no scenarios and dials
 // each declared `links` edge afresh every `interval`, reporting an edge after
-// `failures` consecutive failed dials. Mirrors
-// sdo.operational_memory.models.TrafficWorkload and
-// controller/sdk/traffic.Workload.
+// `failures` consecutive failed dials. Mirrors the Go SDK's traffic.Workload.
 //
 // Defaulted scalars (arrival, rate_per_second, timeout, iteration_timeout,
 // seed, scenario weight, link protocol) carry a zero/empty "unset" sentinel the

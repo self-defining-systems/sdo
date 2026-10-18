@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "google/protobuf/any.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// The operator sends one bounded source proposal attempt to a registered
+// worker. The trusted Go deployment adapter executes the returned plan.
+message SourceDeploymentRequest {
+  string application = 1;
+  string namespace = 2;
+  string health_objective = 3;
+  string correction_feedback = 4;
+  uint32 attempt = 5;
+  // Trusted registry target chosen by the operator, never by the worker.
+  string registry_host = 6;
+}
+
+message SourceDeploymentResult {
+  bool proposed = 1;
+  string summary = 2;
+  string agent_session_id = 3;
+  DeploymentPlan plan = 4;
+}
+
+message DeploymentPlan {
+  string strategy_id = 1;
+  google.protobuf.Any strategy_config = 2;
+}
+
+// The first built-in strategy. Later strategies can use their own typed
+// protobuf config without changing the worker envelope or coordinator.
+message RawManifestStrategy {
+  repeated ImageBuild image_builds = 1;
+  repeated string manifest_paths = 2;
+  repeated string expected_workload_ids = 3;
+}
+
+message ImageBuild {
+  string image = 1;
+  string context_path = 2;
+  string dockerfile_path = 3;
+}
+
+// Architecture is generated only after the source proposal is accepted, so
+// its provenance can cite the broker's canonical source commit.
+message ArchitectureRequest {
+  string application = 1;
+  string accepted_source_commit = 2;
+  string correction_feedback = 3;
+  uint32 attempt = 4;
+  repeated SourceResource source_resources = 5;
+  string source_topology_fingerprint = 6;
+}
+
+message ArchitectureResult {
+  string summary_markdown = 1;
+  string topology_fingerprint = 2;
+  string source_commit = 3;
+  string agent_session_id = 4;
+}
+
+// The independent health judge authors diagnostics after source is accepted.
+message HealthJudgeRequest {
+  string application = 1;
+  string namespace = 2;
+  string health_objective = 3;
+  string accepted_source_commit = 4;
+  string correction_feedback = 5;
+  uint32 attempt = 6;
+  string architecture_summary_markdown = 7;
+  repeated SourceResource source_resources = 8;
+  string source_topology_fingerprint = 9;
+}
+
+// Application source facts prepared from the accepted source commit by Go.
+message SourceResource {
+  string kind = 1;
+  string name = 2;
+  string namespace = 3;
+  string source = 4;
+  repeated string dependencies = 5;
+}
+
+message HealthJudgeResult {
+  bool authored = 1;
+  string summary = 2;
+  string agent_session_id = 3;
+  string objective_digest = 4;
+  repeated string detector_ids = 5;
+  OperationalArtifactProposal artifact_proposal = 6;
+}

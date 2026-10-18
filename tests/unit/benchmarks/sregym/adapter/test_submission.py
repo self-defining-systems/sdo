@@ -6,7 +6,7 @@ import pytest
 
 from benchmarks.sregym.adapter import submission
 from benchmarks.sregym.adapter.submission import SubmissionBridgeError, submit_solution
-from sdo.agent_runtime.responder import IncidentStatusReport, IncidentStatusState, VerifyBurstResult
+from sdo.agents.responder import IncidentStatusReport, IncidentStatusState, VerifyBurstResult
 
 
 class Response:

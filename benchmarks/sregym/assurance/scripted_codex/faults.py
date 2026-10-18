@@ -34,14 +34,11 @@ class Runner(Protocol):
 
 @dataclass(frozen=True)
 class MemoryProposal:
-    """Files a reflection writes, plus the manifest entry and playbook index line it appends."""
+    """Logical detector and playbook mutations returned by scripted reflection."""
 
     detector_id: str
-    playbook_path: str
-    files: dict[str, str]
-    executable: tuple[str, ...]
-    manifest_entry: str
-    index_line: str
+    playbook_id: str
+    artifact_proposal: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -109,7 +106,7 @@ def _finding_evidence(request: dict[str, Any]) -> list[dict[str, str]]:
 
 class FaultPlan(Protocol):
     name: str
-    playbook_dir: str
+    playbook_id: str
 
     def diagnose(self, run: Runner, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts: ...
 
@@ -127,7 +124,7 @@ class FaultPlan(Protocol):
 
     def warm_facts(self, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts: ...
 
-    def warm_commands(self, facts: Facts, playbook_dir: str) -> tuple[str, str, str]: ...
+    def warm_commands(self, facts: Facts) -> tuple[str, str, str]: ...
 
 
 def _restart(namespace: str, target: str) -> tuple[str, str]:
@@ -159,7 +156,7 @@ class NetworkPolicyBlock:
     name = "network_policy_block"
     detector_id = "deny-all-networkpolicy-isolation"
     package = "deny_all_networkpolicy_isolation"
-    playbook_dir = ".sdo/playbooks/deny-all-networkpolicy-isolation"
+    playbook_id = "deny-all-networkpolicy-isolation"
 
     def diagnose(self, run: Runner, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts:
         del worktree
@@ -241,19 +238,20 @@ class NetworkPolicyBlock:
         # The learned detector may lag the health detectors: the playbook's script finds the policy itself.
         return Facts(namespace=namespace, target=target, objects={"policy": f"deny-all-{target}"})
 
-    def warm_commands(self, facts: Facts, playbook_dir: str) -> tuple[str, str, str]:
+    def warm_commands(self, facts: Facts) -> tuple[str, str, str]:
         policy = facts.objects["policy"]
+        absent = f"! kubectl -n {facts.namespace} get networkpolicy {policy} -o name"
         return (
-            f"sh {playbook_dir}/scripts/verify.sh {facts.namespace} {facts.target}",
-            f"sh {playbook_dir}/scripts/repair.sh {facts.namespace} {policy}",
-            f"sh {playbook_dir}/scripts/verify.sh {facts.namespace} {facts.target} && python3 -m sdo incident status",
+            absent,
+            f"kubectl -n {facts.namespace} delete networkpolicy {policy}",
+            f"{absent} && python3 -m sdo.agents.responder.status_cli",
         )
 
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal:
         return _proposal(
             detector_id=self.detector_id,
             package=self.package,
-            playbook_dir=self.playbook_dir,
+            playbook_dir=self.playbook_id,
             title="Deny-all NetworkPolicy isolates a workload",
             description="Detects a NetworkPolicy that denies all ingress and egress of an application workload.",
             watches=(("networking.k8s.io/v1", "NetworkPolicy"), ("v1", "Pod")),
@@ -281,7 +279,7 @@ class MissingConfigMap:
     name = "missing_configmap"
     detector_id = "required-configmap-missing"
     package = "required_configmap_missing"
-    playbook_dir = ".sdo/playbooks/required-configmap-missing"
+    playbook_id = "required-configmap-missing"
 
     def diagnose(self, run: Runner, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts:
         run(f"kubectl -n {namespace} get pods -l {SERVICE_LABEL}={target} -o wide")
@@ -365,19 +363,19 @@ class MissingConfigMap:
                     configmap = str(related.get("name"))
         return Facts(namespace=namespace, target=target, objects={"configmap": configmap})
 
-    def warm_commands(self, facts: Facts, playbook_dir: str) -> tuple[str, str, str]:
+    def warm_commands(self, facts: Facts) -> tuple[str, str, str]:
         configmap = facts.objects.get("configmap") or "-"
         return (
-            f"sh {playbook_dir}/scripts/verify.sh {facts.namespace} {facts.target}",
-            f"sh {playbook_dir}/scripts/repair.sh {facts.namespace} {facts.target} {configmap}",
-            f"sh {playbook_dir}/scripts/verify.sh {facts.namespace} {facts.target} && python3 -m sdo incident status",
+            f"kubectl -n {facts.namespace} get configmap {configmap} -o name",
+            f"kubectl -n {facts.namespace} create configmap {configmap} --from-file=k8s-geo-mongo.sh",
+            f"kubectl -n {facts.namespace} get configmap {configmap} -o name && python3 -m sdo.agents.responder.status_cli",
         )
 
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal:
         return _proposal(
             detector_id=self.detector_id,
             package=self.package,
-            playbook_dir=self.playbook_dir,
+            playbook_dir=self.playbook_id,
             title="Required ConfigMap missing",
             description="Detects a Deployment whose required ConfigMap volume is absent while its pods fail to mount it.",
             watches=(("apps/v1", "Deployment"), ("v1", "ConfigMap"), ("v1", "Pod"), ("v1", "Event")),
@@ -439,8 +437,8 @@ def _proposal(
     incident_id: str,
     outcome_commit: str,
 ) -> MemoryProposal:
-    playbook = f"{playbook_dir}/README.md"
     fault_class = playbook_dir.rsplit("/", 1)[-1]
+    playbook = fault_class
     watch_go = ", ".join(f'{{APIVersion: "{api}", Kind: "{kind}"}}' for api, kind in watches)
     detector_go = _DETECTOR_GO.format(
         package=package,
@@ -459,44 +457,45 @@ def _proposal(
         incident=json.dumps(incident_id),
         commit=json.dumps(outcome_commit),
         title=title,
-        body=readme_body.strip("\n").replace("{playbook_dir}", playbook_dir),
+        body=readme_body.strip("\n").replace("{playbook_dir}", "."),
         detector_id=detector_id,
-    )
-    files = {
-        f".sdo/diagnostics/detectors/incidents/{package}/detector.go": detector_go,
-        f".sdo/diagnostics/detectors/incidents/{package}/detector_test.go": detector_test,
-        playbook: readme,
-    }
-    for name, text in scripts.items():
-        files[f"{playbook_dir}/scripts/{name}"] = text.lstrip("\n")
-    watch_yaml = "".join(f"      - apiVersion: {api}\n        kind: {kind}\n" for api, kind in watches)
-    manifest_entry = (
-        f"  - id: {detector_id}\n"
-        f"    package: ./detectors/incidents/{package}\n"
-        "    constructor: New\n"
-        "    class: incident\n"
-        "    owner: responder\n"
-        "    watches:\n"
-        f"{watch_yaml}"
-        "    interval: 30s\n"
-        "    persistence:\n"
-        "      firing: 1\n"
-        "      clearing: 2\n"
-        "    batching:\n"
-        "      severity: critical\n"
-        "      debounce: 500ms\n"
-        "    possiblePlaybooks:\n"
-        f"      - {playbook}\n"
-        f"    originatingIncident: {json.dumps(incident_id)}\n"
-        f"    originatingCommit: {json.dumps(outcome_commit)}\n"
     )
     return MemoryProposal(
         detector_id=detector_id,
-        playbook_path=playbook,
-        files=files,
-        executable=tuple(f"{playbook_dir}/scripts/{name}" for name in scripts),
-        manifest_entry=manifest_entry,
-        index_line=f"- [{title}]({fault_class}/README.md)",
+        playbook_id=playbook,
+        artifact_proposal={
+            "detectors": [
+                {
+                    "id": detector_id,
+                    "detector_class": "incident",
+                    "owner": "responder",
+                    "constructor": "New",
+                    "watches": [{"api_version": api, "kind": kind} for api, kind in watches],
+                    "interval": "30s",
+                    "firing": 1,
+                    "clearing": 2,
+                    "severity": "critical",
+                    "debounce": "500ms",
+                    "possible_playbook_ids": [playbook],
+                    "originating_incident": incident_id,
+                    "originating_commit": outcome_commit,
+                    "sources": [
+                        {"name": "detector.go", "content": detector_go},
+                        {"name": "detector_test.go", "content": detector_test},
+                    ],
+                }
+            ],
+            "playbooks": [
+                {
+                    "id": playbook,
+                    "owner": "responder",
+                    "fault_class": fault_class,
+                    "originating_incident": incident_id,
+                    "markdown": readme,
+                    "scripts": [{"name": name, "content": text.lstrip("\n")} for name, text in scripts.items()],
+                }
+            ],
+        },
     )
 
 
@@ -504,7 +503,7 @@ def _claimed_proposal(*, incident_id: str, outcome_commit: str) -> MemoryProposa
     return _proposal(
         detector_id="wedged-workload-restart",
         package="wedged_workload_restart",
-        playbook_dir=".sdo/playbooks/wedged-workload-restart",
+        playbook_dir="wedged-workload-restart",
         title="Wedged workload needs a restart",
         description="Detects a Deployment with unavailable replicas, which the responder repaired by a restart.",
         watches=(("apps/v1", "Deployment"),),
@@ -526,7 +525,7 @@ import (
 \t"time"
 
 \t{imports}
-\t"sdo.dev/controller/sdk"
+\t"sdo.dev/operator/sdk"
 )
 
 const detectorID = "{detector_id}"
@@ -540,7 +539,6 @@ func New() sdk.Detector {{ return Detector{{}} }}
 func (Detector) Spec() sdk.DetectorSpec {{
 \treturn sdk.DetectorSpec{{
 \t\tID: detectorID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
-\t\tDescription:         "{description}",
 \t\tWatches:             []sdk.WatchKind{{{watches}}},
 \t\tInterval:            30 * time.Second,
 \t\tPersistence:         sdk.PersistencePolicy{{Firing: 1, Clearing: 2}},
@@ -561,20 +559,13 @@ import (
 \t"testing"
 
 \t{imports}
-\t"sdo.dev/controller/sdk/sdktest"
+\t"sdo.dev/operator/sdk/sdktest"
 )
 
 {body}
 """
 
-_README = """---
-schema_version: 1
-owner: responder
-fault_class: {fault_class}
-originating_incident: {incident}
-originating_commit: {commit}
----
-# {title}
+_README = """# {title}
 
 {body}
 
@@ -582,7 +573,7 @@ originating_commit: {commit}
 
 This playbook was learned from an incident whose cause the controller confirmed: the incident detector
 `{detector_id}` encodes the cause, the health detectors that fired at dispatch cleared after the repair, and
-`python3 -m sdo incident status` reported healthy before the responder returned.
+`python3 -m sdo.agents.responder.status_cli` reported healthy before the responder returned.
 """
 
 _NP_DETECT = """
@@ -676,10 +667,10 @@ Repair:
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <NETWORK_POLICY>
 ```
 
-Then run the verification and `python3 -m sdo incident status` together:
+Then run the verification and `python3 -m sdo.agents.responder.status_cli` together:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo incident status
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
 ```
 """
 
@@ -822,10 +813,10 @@ Repair (`-` finds the missing ConfigMap from the Deployment's volumes):
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <DEPLOYMENT> <CONFIGMAP>
 ```
 
-Then verify together with `python3 -m sdo incident status`:
+Then verify together with `python3 -m sdo.agents.responder.status_cli`:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo incident status
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
 ```
 """
 

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[5]
 
 
 def _sdo_codex_version() -> str:
-    dockerfile = (ROOT / "controller" / "Dockerfile.runtime").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "sdo" / "operator" / "Dockerfile.runtime").read_text(encoding="utf-8")
     match = re.search(r"^ARG CODEX_VERSION=(\S+)$", dockerfile, re.MULTILINE)
     assert match is not None
     return match.group(1)
