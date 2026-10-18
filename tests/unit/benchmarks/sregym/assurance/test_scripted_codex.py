@@ -21,7 +21,10 @@ from benchmarks.sregym.assurance.scripted_codex.directive import Directive
 from benchmarks.sregym.assurance.scripted_codex.usage import request_usage
 from sdo.agents.responder.codex import execute_incident
 from sdo.agents.responder.reflection import CodexSessionBackend
-from sdo.contracts import IncidentRequest, OperationalArtifactDraft
+from sdo.agents.views import (
+    IncidentRequest,
+    OperationalArtifactDraft,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SEED = REPO_ROOT / "tests" / "fixtures" / "sdo" / "contracts" / "incident_request.json"

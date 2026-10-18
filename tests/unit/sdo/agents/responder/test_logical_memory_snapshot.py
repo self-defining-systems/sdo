@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 from sdo.agents.responder import codex
-from sdo.contracts import IncidentRequest
+from sdo.agents.views import (
+    IncidentRequest,
+)
 
 
 def _request() -> IncidentRequest:

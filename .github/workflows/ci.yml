@@ -54,7 +54,7 @@ jobs:
               - '.github/workflows/ci.yml'
             go:
               - 'sdo/operator/**'
-              - 'proto/**'
+              - 'sdo/contracts/proto/**'
               - 'buf*.yaml'
               - 'buf.lock'
               - '.github/workflows/ci.yml'
@@ -183,12 +183,13 @@ jobs:
         run: git fetch --no-tags origin main:main || echo "main unavailable; breaking check will skip"
       - name: Lint, breaking, and codegen-diff checks
         run: |
-          # PR #5 intentionally replaces physical-path fields with logical IDs.
-          # Exempt only the exact old main baseline while the migration enters
-          # the merge queue. Checks become strict again once main advances.
-          if [ "$(git rev-parse main)" = "9b8da441fb7155946f854ffc3832d9b27f08f07c" ] && \
-             [ "$(git rev-parse HEAD:proto/sdodev/contracts/v1alpha1/messages.proto)" = "6ffc3afcbd96493333791b1891cdd77401f878f4" ] && \
-             [ "$(git rev-parse HEAD:proto/sdodev/contracts/v1alpha1/controller_config.proto)" = "a416f39d15341305296338675ec0c07200225130" ]; then
+          # This migration replaces two JSON-string reflection fields with
+          # OutcomeRecord fields. Permit that one intentional break only for
+          # the exact reviewed schema on its original main baseline. The
+          # normal breaking check resumes as soon as main changes.
+          if [ "$(git rev-parse main)" = "f5b40e66369ede2297463222c8bb8e5e84b26c04" ] && \
+             [ "$(git rev-parse HEAD:sdo/contracts/proto/sdodev/contracts/v1alpha1/worker.proto)" = "ecae99d07d14778d1b5477cf4d9b47131374e7ad" ] && \
+             [ "$(git rev-parse HEAD:sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto)" = "0ec7ccc5472bc7260241b3366ae59d2556036d03" ]; then
             BUF_BREAKING_AGAINST=. ./scripts/check_proto.sh
           else
             ./scripts/check_proto.sh

@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 from sdo.agents.responder.codex import _responder_prompt
-from sdo.contracts import FollowUpContext, IncidentRequest
+from sdo.agents.views import (
+    FollowUpContext,
+    IncidentRequest,
+)
 
 _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "incident_request.json"
 

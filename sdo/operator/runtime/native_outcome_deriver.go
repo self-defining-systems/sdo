@@ -24,7 +24,7 @@ func (ProtoOutcomeDeriver) Derive(ctx context.Context, closure IncidentClosure, 
 	if err != nil {
 		return DerivedOutcome{}, err
 	}
-	return DerivedOutcome{Document: result.Document, RequiresReflection: result.RequiresReflection}, nil
+	return DerivedOutcome{Record: result.Record, RequiresReflection: result.RequiresReflection}, nil
 }
 
 func toProtoClosure(closure IncidentClosure) (*contracts.IncidentClosure, error) {

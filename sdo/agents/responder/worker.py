@@ -17,12 +17,14 @@ from google.protobuf import json_format
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
-from sdo.contracts import (
-    AgentResult,
-    AgentTask,
+from sdo.agents.views import (
     IncidentRequest,
     IncidentResult,
     LateFindingsPull,
+)
+from sdo.contracts import (
+    AgentResult,
+    AgentTask,
     ProtoIncidentRequest,
     ProtoIncidentResult,
     parse_json,

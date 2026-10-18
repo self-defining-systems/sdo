@@ -13,7 +13,7 @@ from sdo.agents.responder.cause_admissibility import (
     is_admissible,
     review_confirmed_causes,
 )
-from sdo.contracts import (
+from sdo.agents.views import (
     ConfirmedRootCause,
     DetectorEvaluation,
     Finding,
@@ -52,8 +52,6 @@ def _request(*, firing: tuple[str, ...] = ("missing-configmap",)) -> IncidentReq
         or [DetectorEvaluation(detector_id="health", evaluated_at=_NOW, status="firing")],  # type: ignore[arg-type]
         source_commit="a" * 40,
         deployed_commit="b" * 40,
-        architecture_summary_path=".sdo/arch.md",
-        health_objective_path=".sdo/goal.md",
         repository_worktree="/workspace/app",
         repository_base_commit="c" * 40,
         response_deadline=_NOW,

@@ -554,17 +554,17 @@ func (x *AgentResult) GetErrorSummary() string {
 // Reflection runs only after the broker has committed an authoritative
 // outcome. Its worker may propose file edits, but cannot publish them.
 type ReflectionRequest struct {
-	state            protoimpl.MessageState     `protogen:"open.v1"`
-	Closure          *IncidentClosure           `protobuf:"bytes,1,opt,name=closure,proto3" json:"closure,omitempty"`
-	OutcomeJson      []byte                     `protobuf:"bytes,2,opt,name=outcome_json,json=outcomeJson,proto3" json:"outcome_json,omitempty"`
-	PriorOutcomeJson [][]byte                   `protobuf:"bytes,3,rep,name=prior_outcome_json,json=priorOutcomeJson,proto3" json:"prior_outcome_json,omitempty"`
-	ProposalCommit   string                     `protobuf:"bytes,4,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
-	OutcomeCommit    string                     `protobuf:"bytes,5,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
-	MemorySnapshot   *OperationalMemorySnapshot `protobuf:"bytes,6,opt,name=memory_snapshot,json=memorySnapshot,proto3" json:"memory_snapshot,omitempty"`
+	state          protoimpl.MessageState     `protogen:"open.v1"`
+	Closure        *IncidentClosure           `protobuf:"bytes,1,opt,name=closure,proto3" json:"closure,omitempty"`
+	ProposalCommit string                     `protobuf:"bytes,4,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
+	OutcomeCommit  string                     `protobuf:"bytes,5,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
+	MemorySnapshot *OperationalMemorySnapshot `protobuf:"bytes,6,opt,name=memory_snapshot,json=memorySnapshot,proto3" json:"memory_snapshot,omitempty"`
 	// Empty selects a fresh reflection. Resume requires a valid prior responder session.
 	SessionMode string `protobuf:"bytes,7,opt,name=session_mode,json=sessionMode,proto3" json:"session_mode,omitempty"`
 	// Empty selects baseline. Other modes are generalize and generalize-spec.
-	Guidance      string `protobuf:"bytes,8,opt,name=guidance,proto3" json:"guidance,omitempty"`
+	Guidance      string           `protobuf:"bytes,8,opt,name=guidance,proto3" json:"guidance,omitempty"`
+	Outcome       *OutcomeRecord   `protobuf:"bytes,9,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	PriorOutcomes []*OutcomeRecord `protobuf:"bytes,10,rep,name=prior_outcomes,json=priorOutcomes,proto3" json:"prior_outcomes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -606,20 +606,6 @@ func (x *ReflectionRequest) GetClosure() *IncidentClosure {
 	return nil
 }
 
-func (x *ReflectionRequest) GetOutcomeJson() []byte {
-	if x != nil {
-		return x.OutcomeJson
-	}
-	return nil
-}
-
-func (x *ReflectionRequest) GetPriorOutcomeJson() [][]byte {
-	if x != nil {
-		return x.PriorOutcomeJson
-	}
-	return nil
-}
-
 func (x *ReflectionRequest) GetProposalCommit() string {
 	if x != nil {
 		return x.ProposalCommit
@@ -653,6 +639,20 @@ func (x *ReflectionRequest) GetGuidance() string {
 		return x.Guidance
 	}
 	return ""
+}
+
+func (x *ReflectionRequest) GetOutcome() *OutcomeRecord {
+	if x != nil {
+		return x.Outcome
+	}
+	return nil
+}
+
+func (x *ReflectionRequest) GetPriorOutcomes() []*OutcomeRecord {
+	if x != nil {
+		return x.PriorOutcomes
+	}
+	return nil
 }
 
 type ReflectionResult struct {
@@ -735,7 +735,7 @@ var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\x80\x03\n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\x80\x03\n" +
 	"\x11AgentRegistration\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x19\n" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12N\n" +
@@ -776,16 +776,17 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\x98\x03\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\x8a\x04\n" +
 	"\x11ReflectionRequest\x12D\n" +
-	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12!\n" +
-	"\foutcome_json\x18\x02 \x01(\fR\voutcomeJson\x12,\n" +
-	"\x12prior_outcome_json\x18\x03 \x03(\fR\x10priorOutcomeJson\x12'\n" +
+	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
 	"\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n" +
 	"\x0fmemory_snapshot\x18\x06 \x01(\v24.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12!\n" +
 	"\fsession_mode\x18\a \x01(\tR\vsessionMode\x12\x1a\n" +
-	"\bguidance\x18\b \x01(\tR\bguidance\"\x9c\x02\n" +
+	"\bguidance\x18\b \x01(\tR\bguidance\x12B\n" +
+	"\aoutcome\x18\t \x01(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\aoutcome\x12O\n" +
+	"\x0eprior_outcomes\x18\n" +
+	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomesJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\x9c\x02\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12+\n" +
 	"\x11learning_decision\x18\x02 \x01(\tR\x10learningDecision\x12(\n" +
@@ -821,7 +822,8 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),       // 10: google.protobuf.Timestamp
 	(*IncidentClosure)(nil),             // 11: sdodev.contracts.v1alpha1.IncidentClosure
 	(*OperationalMemorySnapshot)(nil),   // 12: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	(*OperationalArtifactProposal)(nil), // 13: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*OutcomeRecord)(nil),               // 13: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*OperationalArtifactProposal)(nil), // 14: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
@@ -833,12 +835,14 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	9,  // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
 	11, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
 	12, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	13, // 9: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	13, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	13, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	14, // 11: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }
@@ -847,6 +851,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_init() {
 		return
 	}
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
+	file_sdodev_contracts_v1alpha1_outcome_proto_init()
 	file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[0].OneofWrappers = []any{
 		(*AgentRegistration_KubernetesJob)(nil),
 		(*AgentRegistration_LocalProcess)(nil),

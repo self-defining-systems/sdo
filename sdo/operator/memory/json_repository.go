@@ -12,6 +12,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 // JSONStore is the repository adapter. No caller needs to know how .sdo
@@ -24,7 +27,18 @@ func NewJSONStore(repositoryRoot string) *JSONStore { return &JSONStore{root: re
 // logical read interface. Runtime callers never depend on its file layout.
 func OpenReader(repositoryRoot string) Reader { return NewJSONStore(repositoryRoot) }
 
-func (s *JSONStore) Put(ctx context.Context, document []byte) (Outcome, error) {
+func (s *JSONStore) Put(ctx context.Context, record *contracts.OutcomeRecord) (Outcome, error) {
+	if record == nil {
+		return Outcome{}, fmt.Errorf("outcome record is required")
+	}
+	document, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(record)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("encode outcome contract: %w", err)
+	}
+	return s.putDocument(ctx, document)
+}
+
+func (s *JSONStore) putDocument(ctx context.Context, document []byte) (Outcome, error) {
 	if err := ctx.Err(); err != nil {
 		return Outcome{}, err
 	}
@@ -42,7 +56,7 @@ func (s *JSONStore) Put(ctx context.Context, document []byte) (Outcome, error) {
 		return Outcome{}, fmt.Errorf("create outcome: %w", err)
 	}
 	defer os.Remove(file.Name())
-	if _, err = file.Write(outcome.Document); err != nil {
+	if _, err = file.Write(outcome.document); err != nil {
 		file.Close()
 		return Outcome{}, fmt.Errorf("write outcome: %w", err)
 	}
@@ -61,7 +75,7 @@ func (s *JSONStore) Put(ctx context.Context, document []byte) (Outcome, error) {
 		if readErr != nil {
 			return Outcome{}, readErr
 		}
-		if !bytes.Equal(previous.Document, outcome.Document) {
+		if !bytes.Equal(previous.document, outcome.document) {
 			return Outcome{}, fmt.Errorf("%w: %s", ErrConflict, outcome.IncidentID)
 		}
 		return previous, nil
@@ -156,7 +170,7 @@ func (s *JSONStore) ImportLegacy(ctx context.Context) error {
 	for line := 1; ; line++ {
 		data, readErr := reader.ReadBytes('\n')
 		if len(bytes.TrimSpace(data)) != 0 {
-			if _, err := s.Put(ctx, data); err != nil {
+			if _, err := s.putDocument(ctx, data); err != nil {
 				return fmt.Errorf("legacy outcome line %d: %w", line, err)
 			}
 		}
@@ -181,31 +195,27 @@ func parse(document []byte) (Outcome, error) {
 	if err := json.Unmarshal(document, &fields); err != nil || fields == nil {
 		return Outcome{}, fmt.Errorf("outcome must be a JSON object")
 	}
-	var header struct {
-		SchemaVersion  int    `json:"schema_version"`
-		IncidentID     string `json:"incident_id"`
-		Classification string `json:"classification"`
+	record := new(contracts.OutcomeRecord)
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(document, record); err != nil {
+		return Outcome{}, fmt.Errorf("invalid outcome contract: %w", err)
 	}
-	if err := json.Unmarshal(document, &header); err != nil {
-		return Outcome{}, fmt.Errorf("invalid outcome header: %w", err)
+	if record.GetSchemaVersion() != 1 {
+		return Outcome{}, fmt.Errorf("unsupported outcome schema version %d", record.GetSchemaVersion())
 	}
-	if header.SchemaVersion != 1 {
-		return Outcome{}, fmt.Errorf("unsupported outcome schema version %d", header.SchemaVersion)
-	}
-	if strings.TrimSpace(header.IncidentID) == "" {
+	if strings.TrimSpace(record.GetIncidentId()) == "" {
 		return Outcome{}, fmt.Errorf("incident ID is required")
 	}
-	switch header.Classification {
+	switch record.GetClassification() {
 	case "success", "partial", "external_recovery", "cleared_without_action", "false_positive", "false_negative", "failed", "cancelled":
 	default:
-		return Outcome{}, fmt.Errorf("unknown outcome classification %q", header.Classification)
+		return Outcome{}, fmt.Errorf("unknown outcome classification %q", record.GetClassification())
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, bytes.TrimSpace(document), "", "  "); err != nil {
 		return Outcome{}, err
 	}
 	buf.WriteByte('\n')
-	return Outcome{SchemaVersion: header.SchemaVersion, IncidentID: header.IncidentID, Classification: header.Classification, Document: buf.Bytes()}, nil
+	return Outcome{Record: record, SchemaVersion: int(record.GetSchemaVersion()), IncidentID: record.GetIncidentId(), Classification: record.GetClassification(), document: buf.Bytes()}, nil
 }
 
 func filename(incidentID string) string {

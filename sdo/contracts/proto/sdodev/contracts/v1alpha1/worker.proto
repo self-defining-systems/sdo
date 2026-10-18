@@ -5,6 +5,7 @@ package sdodev.contracts.v1alpha1;
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
+import "sdodev/contracts/v1alpha1/outcome.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -71,8 +72,8 @@ message AgentResult {
 // outcome. Its worker may propose file edits, but cannot publish them.
 message ReflectionRequest {
   IncidentClosure closure = 1;
-  bytes outcome_json = 2;
-  repeated bytes prior_outcome_json = 3;
+  reserved 2, 3;
+  reserved "outcome_json", "prior_outcome_json";
   string proposal_commit = 4;
   string outcome_commit = 5;
   OperationalMemorySnapshot memory_snapshot = 6;
@@ -80,6 +81,8 @@ message ReflectionRequest {
   string session_mode = 7;
   // Empty selects baseline. Other modes are generalize and generalize-spec.
   string guidance = 8;
+  OutcomeRecord outcome = 9;
+  repeated OutcomeRecord prior_outcomes = 10;
 }
 
 message ReflectionResult {

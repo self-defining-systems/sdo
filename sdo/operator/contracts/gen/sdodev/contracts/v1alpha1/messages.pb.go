@@ -40,7 +40,7 @@ const (
 )
 
 // Finding is one detector observation. Mirrors sdk.Finding and
-// sdo.contracts.models.Finding.
+// sdo.agents.views.models.Finding.
 type Finding struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	DetectorId        string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
@@ -1968,7 +1968,7 @@ func (x *VerificationEvidence) GetObservedAt() *timestamppb.Timestamp {
 }
 
 // UsageMetrics is agentshim's normalized token accounting for one turn. The
-// CEL below mirrors sdo.contracts.models.UsageMetrics.validate_cached_input;
+// CEL below mirrors sdo.agents.views.models.UsageMetrics.validate_cached_input;
 // the cache-read alias *normalization* (set cached_input_tokens := cache_read
 // when it is zero) is a mutation CEL cannot do and stays a thin hand step.
 type UsageMetrics struct {
@@ -2264,7 +2264,7 @@ func (x *RepairActionReceipt) GetReversible() bool {
 }
 
 // IncidentResult is what the responder returns. The CEL mirrors
-// sdo.contracts.models.IncidentResult.validate_repair_action_ids.
+// sdo.agents.views.models.IncidentResult.validate_repair_action_ids.
 type IncidentResult struct {
 	state                protoimpl.MessageState  `protogen:"open.v1"`
 	SchemaVersion        string                  `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
@@ -2587,7 +2587,7 @@ func (x *IncidentView) GetStateChanges() *StateChanges {
 
 // DetectorTimelineEntry summarizes one finding's firing history within an
 // incident window; carried in the incident closure. Mirrors
-// sdo.contracts.models.DetectorTimelineEntry and the Go runtime struct.
+// sdo.agents.views.models.DetectorTimelineEntry and the Go runtime struct.
 type DetectorTimelineEntry struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	DetectorId          string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`

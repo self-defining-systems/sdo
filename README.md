@@ -150,7 +150,7 @@ To resume a run, pass its log directory instead: `uv run python -m benchmarks.sr
 | `sdo/operator/core/` | Detector execution and snapshot validation |
 | `sdo/operator/runtime/` | The long-running controller: scheduling, findings, batching, responder dispatch, durable state |
 | `sdo/operator/builder/` | Builds and validates an application-specific controller from `.sdo/diagnostics` |
-| `proto/` | Shared contract schemas; Go and Python code is generated from them |
+| `sdo/contracts/proto/` | Shared contract schemas; Go and Python code is generated from them |
 | `libs/` | Shared helpers: the structured agent-CLI runner, model configuration, neutral runtime utilities |
 | `benchmarks/sregym/` | SREGym adapter, protocol clients, experiment runner, fast-loop harness, analysis |
 | `apps/` | Applications used for source-deployment evaluation (Git submodules) |

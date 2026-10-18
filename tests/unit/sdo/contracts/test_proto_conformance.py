@@ -1,13 +1,13 @@
-"""Stage 2a conformance ratchet (Python side).
+"""Agent-view conformance ratchet for the canonical Python protobuf schema.
 
-The proto messages in ``proto/sdodev/contracts/v1alpha1`` are the single schema
+The proto messages in ``sdo/contracts/proto/sdodev/contracts/v1alpha1`` are the single schema
 SOURCE for the controller<->responder tree. This test proves the generated
 Python proto types faithfully model BOTH producers of the wire:
 
 - the Go controller, via the golden fixtures under
   ``tests/fixtures/sdo/contracts/go/`` (pinned by the Go
   ``TestGoContractFixtures``), and
-- the Python Pydantic models in ``sdo.contracts``, via their JSON serialization.
+- the agent-local Pydantic views in ``sdo.agents.views``, via their JSON serialization.
 
 ``json_format.Parse`` rejects unknown fields, so a field either definition grows
 without the proto schema fails here — drift is a test failure, not a run-time
@@ -23,18 +23,41 @@ from pathlib import Path
 
 import pytest
 
-from sdo.contracts import IncidentRequest as PydIncidentRequest
-from sdo.contracts import IncidentResult as PydIncidentResult
-from sdo.contracts import IncidentView as PydIncidentView
+from sdo.agents.views import (
+    IncidentRequest as PydIncidentRequest,
+)
+from sdo.agents.views import (
+    IncidentResult as PydIncidentResult,
+)
+from sdo.agents.views import (
+    IncidentView as PydIncidentView,
+)
+from sdo.agents.views import OutcomeRecord as AgentOutcomeView
+from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
     IncidentClosure,
     IncidentRequest,
     IncidentResult,
     IncidentView,
+    OutcomeRecord,
     parse_json,
 )
 
 GO_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts" / "go"
+
+
+def test_outcomes_are_typed_across_the_reflection_boundary() -> None:
+    assert hasattr(contract_proto, "OutcomeRecord")
+    fields = contract_proto.ReflectionRequest.DESCRIPTOR.fields_by_name
+    assert fields["outcome"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
+    assert fields["prior_outcomes"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
+
+
+def test_agent_outcome_view_round_trips_through_canonical_contract() -> None:
+    view = AgentOutcomeView.model_validate({"incident_id": "incident-1", "classification": "success"})
+    encoded = parse_json(view.model_dump_json(), OutcomeRecord())
+    assert encoded.incident_id == view.incident_id
+    assert encoded.schema_version == 1
 
 
 @pytest.mark.parametrize(
@@ -59,7 +82,7 @@ def test_proto_schema_models_pydantic_request_serialization() -> None:
     # way Python writes the wire, and parse that into the proto type.
     raw = json.loads((GO_FIXTURES / "incident_request.json").read_text(encoding="utf-8"))
     pyd = PydIncidentRequest.model_validate(raw)
-    parse_json(pyd.model_dump_json(exclude={"architecture_summary_path", "health_objective_path"}), IncidentRequest())
+    parse_json(pyd.model_dump_json(), IncidentRequest())
 
 
 def test_proto_schema_models_pydantic_view_serialization() -> None:

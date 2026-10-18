@@ -21,13 +21,15 @@ from sdo.agents.responder.reflection import (
     ReflectionTurn,
     SessionReflector,
 )
+from sdo.agents.views import (
+    BrokerClosure,
+    OperationalMemorySnapshot,
+    OutcomeRecord,
+)
 from sdo.contracts import (
     AgentResult,
     AgentTask,
-    BrokerClosure,
     OperationalArtifactProposal,
-    OperationalMemorySnapshot,
-    OutcomeRecord,
     ReflectionRequest,
     ReflectionResult,
     parse_json,
@@ -74,14 +76,25 @@ def run_reflection_task(
     request = ReflectionRequest()
     if not task.request.Unpack(request):
         raise ValueError("reflection task request is not a ReflectionRequest")
-    if not request.outcome_json or not request.outcome_commit:
+    if not request.HasField("outcome") or not request.outcome_commit:
         raise ValueError("reflection task requires an outcome and outcome commit")
     if not task.workspace.proposal_id or not task.workspace.checkout_path:
         raise ValueError("reflection task requires a proposal workspace")
     if not request.HasField("memory_snapshot"):
         raise ValueError("reflection task requires a logical memory snapshot")
-    outcome = OutcomeRecord.model_validate_json(request.outcome_json)
-    history = [OutcomeRecord.model_validate_json(raw) for raw in request.prior_outcome_json]
+    outcome = OutcomeRecord.model_validate(
+        json_format.MessageToDict(
+            request.outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+        )
+    )
+    history = [
+        OutcomeRecord.model_validate(
+            json_format.MessageToDict(
+                prior, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+            )
+        )
+        for prior in request.prior_outcomes
+    ]
     closure = BrokerClosure.model_validate_json(
         json_format.MessageToJson(
             request.closure,

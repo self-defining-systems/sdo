@@ -23,7 +23,9 @@ from sdo.agents.responder.incident_status import (
     incident_status,
     run_incident_status_cli,
 )
-from sdo.contracts import IncidentRequest
+from sdo.agents.views import (
+    IncidentRequest,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

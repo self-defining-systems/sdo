@@ -11,9 +11,14 @@ import (
 	"time"
 
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
+
+func testDerivedOutcome(id, classification string, reflect bool) DerivedOutcome {
+    return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: classification}, RequiresReflection: reflect}
+}
 
 type rejectingLatePull struct{}
 
@@ -121,7 +126,7 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	derivations := 0
 	deriver := OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
 		derivations++
-		return DerivedOutcome{Document: []byte(`{"schema_version":1,"incident_id":"` + closure.Request.IncidentID + `","classification":"success"}`), RequiresReflection: true}, nil
+		return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
 	})
 	native := NativeIncidentBroker{Repository: repositoryBroker, LedgerRoot: ledgerRoot, Deriver: deriver, ResponderBackend: "test", ResponderModel: "test"}
 	sessions := t.TempDir()
@@ -144,7 +149,7 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	if nativeGit(t, target, "log", "--oneline") == "" {
 		t.Fatal("proposal/outcome were not persisted before retry")
 	}
-	native.Reflector = ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, reflection IncidentWorkspace, _ []byte, _, _ string) (ReflectionDecision, error) {
+	native.Reflector = ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, reflection IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
 		if reflection.BaseCommit == workspace.BaseCommit {
 			t.Fatal("reflection was not based on committed outcome")
 		}
@@ -234,9 +239,9 @@ func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
 	native := NativeIncidentBroker{
 		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-			return DerivedOutcome{Document: []byte(`{"schema_version":1,"incident_id":"` + c.Request.IncidentID + `","classification":"success"}`), RequiresReflection: true}, nil
+			return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
 		}),
-		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, w IncidentWorkspace, _ []byte, _, _ string) (ReflectionDecision, error) {
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, w IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
 			if !invalid {
 				return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already learned"}, nil
 			}
@@ -297,7 +302,7 @@ func TestNativeBrokerRecordedActionsDoNotCreateEmptyProposalCommit(t *testing.T)
 	native := NativeIncidentBroker{
 		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-			return DerivedOutcome{Document: []byte(`{"schema_version":1,"incident_id":"` + c.Request.IncidentID + `","classification":"cleared_without_action"}`)}, nil
+			return testDerivedOutcome(c.Request.IncidentID, "cleared_without_action", false), nil
 		}),
 	}
 	w, err := native.PrepareIncident(context.Background(), "inc-live-only")
@@ -324,8 +329,8 @@ func TestProtoOutcomeDeriverAcceptsRuntimeClosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(derived.Document), `"incident_id":"inc-proto"`) {
-		t.Fatalf("wrong outcome: %s", derived.Document)
+	if derived.Record.GetIncidentId() != "inc-proto" {
+		t.Fatalf("wrong outcome: %+v", derived.Record)
 	}
 }
 
@@ -339,9 +344,9 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 	native := NativeIncidentBroker{
 		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-			return DerivedOutcome{Document: []byte(`{"schema_version":1,"incident_id":"` + closure.Request.IncidentID + `","classification":"success"}`), RequiresReflection: true}, nil
+			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
 		}),
-		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ []byte, _, _ string) (ReflectionDecision, error) {
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
 			manifest := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "manifest.yaml")
 			data, err := os.ReadFile(manifest)
 			if err != nil {

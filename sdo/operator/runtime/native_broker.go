@@ -13,13 +13,15 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
 type DerivedOutcome struct {
-	Document           []byte
+	Record             *contracts.OutcomeRecord
 	RequiresReflection bool
 }
 
@@ -38,7 +40,7 @@ func (f OutcomeDeriverFunc) Derive(ctx context.Context, closure IncidentClosure,
 // ReflectionWorker launches a registered agent with a fresh proposal checkout
 // based on the committed outcome. Its reported paths are never authoritative.
 type ReflectionWorker interface {
-	Reflect(context.Context, IncidentClosure, IncidentWorkspace, []byte, string, string) (ReflectionDecision, error)
+	Reflect(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error)
 }
 
 type ReflectionDecision struct {
@@ -46,9 +48,9 @@ type ReflectionDecision struct {
 	NoChangeReason   string `json:"no_change_reason,omitempty"`
 }
 
-type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, []byte, string, string) (ReflectionDecision, error)
+type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error)
 
-func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome []byte, proposalCommit, outcomeCommit string) (ReflectionDecision, error) {
+func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string) (ReflectionDecision, error) {
 	return f(ctx, closure, workspace, outcome, proposalCommit, outcomeCommit)
 }
 
@@ -205,26 +207,28 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if err != nil {
 				return fmt.Errorf("derive independent outcome: %w", err)
 			}
-			if !json.Valid(derived.Document) {
-				return errors.New("outcome deriver returned invalid JSON")
+			if derived.Record == nil || derived.Record.GetIncidentId() != id {
+				return errors.New("outcome deriver returned an invalid typed record")
 			}
-			var header struct {
-				Classification string `json:"classification"`
-			}
-			if err := json.Unmarshal(derived.Document, &header); err != nil {
-				return err
-			}
-			if derived.RequiresReflection && header.Classification != "success" {
+			if derived.RequiresReflection && derived.Record.GetClassification() != "success" {
 				return errors.New("outcome reflection requires successful classification")
 			}
-			ledger.OutcomeDocument = append([]byte(nil), derived.Document...)
+			encoded, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(derived.Record)
+			if err != nil {
+				return fmt.Errorf("encode outcome ledger: %w", err)
+			}
+			ledger.OutcomeDocument = encoded
 			ledger.RequiresReflection = derived.RequiresReflection
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
 		}
 		if ledger.OutcomeCommit == "" {
-			accepted, err := n.Repository.RecordOutcome(ctx, id, ledger.OutcomeDocument)
+			record := new(contracts.OutcomeRecord)
+			if err := protojson.Unmarshal(ledger.OutcomeDocument, record); err != nil {
+				return fmt.Errorf("decode outcome ledger: %w", err)
+			}
+			accepted, err := n.Repository.RecordOutcome(ctx, id, record)
 			if err != nil {
 				return err
 			}
@@ -256,7 +260,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				}
 				if len(paths) == 0 {
 					workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
-					decision, err := n.Reflector.Reflect(ctx, closure, workspace, ledger.OutcomeDocument, ledger.ProposalCommit, ledger.OutcomeCommit)
+					record := new(contracts.OutcomeRecord)
+					if err := protojson.Unmarshal(ledger.OutcomeDocument, record); err != nil {
+						return fmt.Errorf("decode reflection outcome: %w", err)
+					}
+					decision, err := n.Reflector.Reflect(ctx, closure, workspace, record, ledger.ProposalCommit, ledger.OutcomeCommit)
 					if err != nil {
 						return fmt.Errorf("reflection worker: %w", err)
 					}

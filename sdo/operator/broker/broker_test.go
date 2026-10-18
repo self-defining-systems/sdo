@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+
 	"sdo.dev/operator/memory"
 )
 
@@ -368,7 +370,7 @@ func TestBrokerRecordsOutcomeOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := []byte(`{"schema_version":1,"incident_id":"inc-3","classification":"success"}`)
+	doc := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inc-3", Classification: "success"}
 	first, err := b.RecordOutcome(context.Background(), "inc-3", doc)
 	if err != nil {
 		t.Fatal(err)
@@ -380,7 +382,7 @@ func TestBrokerRecordsOutcomeOnlyOnce(t *testing.T) {
 	if first.Commit != second.Commit {
 		t.Fatalf("duplicate commit: %+v %+v", first, second)
 	}
-	if _, err := b.RecordOutcome(context.Background(), "inc-3", []byte(`{"schema_version":1,"incident_id":"inc-3","classification":"failed"}`)); err == nil {
+	if _, err := b.RecordOutcome(context.Background(), "inc-3", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inc-3", Classification: "failed"}); err == nil {
 		t.Fatal("conflicting outcome accepted")
 	}
 }
@@ -404,7 +406,7 @@ func TestLegacyOutcomeMigrationPublishesAtomicallyAfterInterruptedAttempt(t *tes
 		t.Fatal(err)
 	}
 	before := git(t, target, "rev-parse", "HEAD")
-	document := []byte(`{"schema_version":1,"incident_id":"new","classification":"success"}`)
+	document := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "new", Classification: "success"}
 	if _, err := b.RecordOutcome(ctx, "new", document); err == nil {
 		t.Fatal("conflicting migration accepted")
 	}
@@ -462,7 +464,7 @@ func TestReflectionUsesFreshProposalAfterOutcome(t *testing.T) {
 	if _, err := b.Publish(context.Background(), "inc-4", Responder, ProposalPhase); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.RecordOutcome(context.Background(), "inc-4", []byte(`{"schema_version":1,"incident_id":"inc-4","classification":"success"}`)); err != nil {
+	if _, err := b.RecordOutcome(context.Background(), "inc-4", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inc-4", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
 	reflection, err := b.CreateProposalForPhase(context.Background(), "inc-4", ReflectionPhase)
@@ -550,7 +552,7 @@ func TestResponderCannotChangeJudgeManifestRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.RecordOutcome(context.Background(), "inc-protected", []byte(`{"schema_version":1,"incident_id":"inc-protected","classification":"success"}`)); err != nil {
+	if _, err := b.RecordOutcome(context.Background(), "inc-protected", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "inc-protected", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
 	p, err := b.CreateProposalForPhase(context.Background(), "inc-protected", ReflectionPhase)

@@ -31,7 +31,7 @@ Correlate the deployer source commit with Git and `arch.md`. Correlate the objec
 
 ## Outcome records
 
-The active Go memory adapter stores one versioned JSON document per incident at `.sdo/outcomes/<sha256(incident_id)>.json`; its logical `Reader` lists and gets records by incident ID, while only the broker has `Writer` capability. It can import a retired `.sdo/outcomes.jsonl` stream and removes that stream only after every record is accepted. Correlate incident IDs and outcome commit hashes with the native broker ledger and benchmark `production-receipt/v2`. Important fields include:
+The logical outcome schema is `OutcomeRecord` in `sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto`. The active Go memory adapter stores one versioned JSON document per incident at `.sdo/outcomes/<sha256(incident_id)>.json`; its logical `Reader` lists and gets records by incident ID, while only the broker has `Writer` capability. Reflection tasks carry the accepted current and prior outcomes as typed protobuf records. The adapter can import a retired `.sdo/outcomes.jsonl` stream and removes that stream only after every record is accepted. Correlate incident IDs and outcome commit hashes with the native broker ledger and benchmark `production-receipt/v2`. Important fields include:
 
 - `incident_id`, `source_commit`, `deployed_commit`;
 - detector history, findings, and final health-detector state;

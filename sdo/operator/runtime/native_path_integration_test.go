@@ -109,8 +109,8 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Classification != "success" || !strings.Contains(string(stored.Document), result.SourceCommit) {
-		t.Fatalf("logical outcome lost verified source: %s", stored.Document)
+	if stored.Record.GetClassification() != "success" || stored.Record.GetSourceCommit() != result.SourceCommit {
+		t.Fatalf("logical outcome lost verified source: %+v", stored.Record)
 	}
 	prior := relevantOutcomeEvidence(accepted, []sdk.Finding{{DetectorID: "health", Fingerprint: "fingerprint"}}, result.SourceCommit, nil)
 	if len(prior) != 1 || prior[0].IncidentID != "native-incident" {
@@ -191,7 +191,7 @@ func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.Det
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		if request.GetOutcomeCommit() != task.GetWorkspace().GetBaseCommit() || len(request.GetOutcomeJson()) == 0 {
+		if request.GetOutcomeCommit() != task.GetWorkspace().GetBaseCommit() || request.GetOutcome() == nil {
 			return nil, fmt.Errorf("reflection did not start from committed outcome")
 		}
 		response, err = anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "the accepted playbook already covers this incident"})

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord
+    from sdo.agents.views import DetectorEvaluation, ObjectRef, OutcomeRecord
 
 
 def _timestamp(evaluation: DetectorEvaluation) -> str:

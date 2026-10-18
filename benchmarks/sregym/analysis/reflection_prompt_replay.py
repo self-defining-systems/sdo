@@ -20,7 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sdo.agents.responder import current_outcome_view, history_view
-from sdo.contracts import OutcomeRecord
+from sdo.agents.views import (
+    OutcomeRecord,
+)
 
 #: o200k measured 3.93-4.08 characters per token on recorded reflection prompts.
 CHARS_PER_TOKEN = 4.0

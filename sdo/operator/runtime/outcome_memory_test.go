@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
@@ -26,7 +28,11 @@ func recordOutcomes(t *testing.T, repository, lines string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.Put(context.Background(), data); err != nil {
+		record := new(contracts.OutcomeRecord)
+		if err := protojson.Unmarshal(data, record); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Put(context.Background(), record); err != nil {
 			t.Fatal(err)
 		}
 	}

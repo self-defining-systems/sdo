@@ -39,7 +39,7 @@ type RegisteredReflectionWorker struct {
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
-func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome []byte, proposalCommit, outcomeCommit string) (ReflectionDecision, error) {
+func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string) (ReflectionDecision, error) {
 	if w.Executor == nil || w.Outcomes == nil || w.AgentID == "" || w.Timeout <= 0 {
 		return ReflectionDecision{}, errors.New("registered reflection worker requires executor, outcome store, agent ID, and timeout")
 	}
@@ -81,17 +81,24 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
+	if outcome == nil {
+		return ReflectionDecision{}, errors.New("reflection outcome is required")
+	}
+	current := proto.Clone(outcome).(*contracts.OutcomeRecord)
+	if current.GetIncidentId() != workspace.IncidentID {
+		return ReflectionDecision{}, errors.New("reflection outcome incident differs from proposal")
+	}
 	prior, err := w.Outcomes.List(ctx)
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
-	history := make([][]byte, 0, len(prior))
+	history := make([]*contracts.OutcomeRecord, 0, len(prior))
 	for _, record := range prior {
 		if record.IncidentID != workspace.IncidentID {
-			history = append(history, append([]byte(nil), record.Document...))
+			history = append(history, proto.Clone(record.Record).(*contracts.OutcomeRecord))
 		}
 	}
-	request := &contracts.ReflectionRequest{Closure: closed, OutcomeJson: append([]byte(nil), outcome...), PriorOutcomeJson: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance}
+	request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance}
 	if w.Catalog != nil {
 		snapshot, err := w.Catalog.Snapshot(ctx)
 		if err != nil {
@@ -101,11 +108,19 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("reflection memory snapshot differs from broker proposal base commit")
 		}
 		request.MemorySnapshot = snapshot
-		if bytes.Contains(outcome, []byte(".sdo/")) {
+		currentWire, err := protojson.Marshal(current)
+		if err != nil {
+			return ReflectionDecision{}, err
+		}
+		if bytes.Contains(currentWire, []byte(".sdo/")) {
 			return ReflectionDecision{}, errors.New("physical operational memory path in outcome evidence")
 		}
 		for _, priorOutcome := range history {
-			if bytes.Contains(priorOutcome, []byte(".sdo/")) {
+			wire, err := protojson.Marshal(priorOutcome)
+			if err != nil {
+				return ReflectionDecision{}, err
+			}
+			if bytes.Contains(wire, []byte(".sdo/")) {
 				return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
 			}
 		}

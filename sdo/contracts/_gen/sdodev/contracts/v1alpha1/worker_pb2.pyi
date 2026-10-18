@@ -3,6 +3,7 @@ import datetime
 from google.protobuf import any_pb2 as _any_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
+from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -100,24 +101,24 @@ class AgentResult(_message.Message):
     def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., response: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., proposal_id: _Optional[str] = ..., error_summary: _Optional[str] = ...) -> None: ...
 
 class ReflectionRequest(_message.Message):
-    __slots__ = ("closure", "outcome_json", "prior_outcome_json", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance")
+    __slots__ = ("closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes")
     CLOSURE_FIELD_NUMBER: _ClassVar[int]
-    OUTCOME_JSON_FIELD_NUMBER: _ClassVar[int]
-    PRIOR_OUTCOME_JSON_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_COMMIT_FIELD_NUMBER: _ClassVar[int]
     OUTCOME_COMMIT_FIELD_NUMBER: _ClassVar[int]
     MEMORY_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     SESSION_MODE_FIELD_NUMBER: _ClassVar[int]
     GUIDANCE_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    PRIOR_OUTCOMES_FIELD_NUMBER: _ClassVar[int]
     closure: _messages_pb2.IncidentClosure
-    outcome_json: bytes
-    prior_outcome_json: _containers.RepeatedScalarFieldContainer[bytes]
     proposal_commit: str
     outcome_commit: str
     memory_snapshot: _messages_pb2.OperationalMemorySnapshot
     session_mode: str
     guidance: str
-    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., outcome_json: _Optional[bytes] = ..., prior_outcome_json: _Optional[_Iterable[bytes]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ...) -> None: ...
+    outcome: _outcome_pb2.OutcomeRecord
+    prior_outcomes: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.OutcomeRecord]
+    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ...) -> None: ...
 
 class ReflectionResult(_message.Message):
     __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal")

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from sdo.contracts import BrokerClosure, DetectorEvaluation, Finding, IncidentResult, ObjectRef
+    from sdo.agents.views import BrokerClosure, DetectorEvaluation, Finding, IncidentResult, ObjectRef
 
 #: Upper bound on the whole brief: about 4 characters per token, under 8K tokens.
 BRIEF_MAX_CHARS = 30_000

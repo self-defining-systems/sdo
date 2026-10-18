@@ -42,10 +42,17 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sdo.contracts import DetectorEvaluationStatus, FindingStatus
+from sdo.agents.views import (
+    DetectorEvaluationStatus,
+    FindingStatus,
+)
 
 if TYPE_CHECKING:
-    from sdo.contracts import ConfirmedRootCause, IncidentRequest, IncidentResult
+    from sdo.agents.views import (
+        ConfirmedRootCause,
+        IncidentRequest,
+        IncidentResult,
+    )
 
 #: Environment variable selecting the gate mode on the responder Job.
 CAUSE_ADMISSIBILITY_ENV = "SDO_CAUSE_ADMISSIBILITY"

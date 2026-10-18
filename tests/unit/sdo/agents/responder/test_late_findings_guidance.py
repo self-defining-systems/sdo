@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from sdo.agents.responder.codex import _responder_prompt, late_findings_guidance
-from sdo.contracts import IncidentRequest
+from sdo.agents.views import (
+    IncidentRequest,
+)
 
 _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "incident_request.json"
 

@@ -1,13 +1,14 @@
 # SDO contract protos
 
 Single source of truth for the structured contracts that cross SDO's seams:
-controller↔worker tasks and results, worker registrations, reflection, firing
-telemetry, controller config, and traffic workloads.
+controller↔worker tasks and results, worker registrations, reflection, outcomes,
+firing telemetry, controller config, and traffic workloads. Agent-local Pydantic
+views live in `sdo/agents/views/`; they do not define the cross-component wire.
 
 ## Layout
 
 ```
-proto/sdodev/contracts/v1alpha1/   # versioned contract messages
+sdo/contracts/proto/sdodev/contracts/v1alpha1/   # versioned contract messages
 ```
 
 The proto package is `sdodev.contracts.v1alpha1` (not `sdo.contracts...`) so the
@@ -75,31 +76,30 @@ deferral.
   on PyPI (v2+) ships only the newer `protobuf-py` runtime form, incompatible with the
   classic `google.protobuf` runtime this repo uses, so `scripts/gen_proto.sh` vendors
   the classic `buf/validate/validate_pb2.py` into `sdo/contracts/_gen/buf`
-  (via `buf.gen.validate.yaml`). Python validation (needed only at the Stage 2b
-  responder-edge conversion) will add a classic-compatible validator then.
+  (via `buf.gen.validate.yaml`). The Python agent edge validates its local views
+  with Pydantic and parses protobuf with unknown-field rejection. Running the
+  same CEL rules in Python remains a separate validation improvement.
 - Do **not** add gRPC services here — SDO currently exchanges ProtoJSON through
   Job ConfigMaps and uses Git for proposals. A future transport can reuse the
   same task/result messages.
 - `AgentRegistration` declares capabilities, protobuf type URLs, and a launch
   artifact. It does not specify the worker language or agent framework.
 
-## Classic-protobuf-runtime bridge (revisit in Stage 2b)
+## Classic-protobuf-runtime bridge
 
 The repo runs the classic `google.protobuf` runtime (`protobuf==6.33.4`), while the
 current `protovalidate` tooling targets the newer `protobuf-py` runtime. Three choices
-bridge that gap today; all three exist to keep a single classic runtime, and **Stage 2b**
-(which lands Python validation at the responder-edge conversion on a classic-compatible
-validator) should revisit them so it inherits the context rather than a surprise:
+bridge that gap today while keeping a single classic runtime:
 
 1. **CEL is checked on the Go side only.** `buf.build/go/protovalidate` validates the
    generated Go messages; `protovalidate` is deliberately *not* in `uv.lock` because v2+
-   would drag in the incompatible `protobuf-py` runtime. 2b adds a classic-compatible
-   Python validator (or vendors one) for the conversion seam.
+   would drag in the incompatible `protobuf-py` runtime. A future
+   classic-compatible Python validator can close this asymmetry.
 2. **Vendored `buf/validate/validate_pb2.py`.** The proto field options force the Python
    gencode to `import buf.validate`; `gen_proto.sh` vendors the classic form into
-   `sdo/contracts/_gen/buf`. If 2b's validator ships a classic `buf.validate`, drop the
+   `sdo/contracts/_gen/buf`. If a future validator ships a classic `buf.validate`, drop the
    vendoring.
 3. **Proto package renamed `sdo.contracts` → `sdodev.contracts`** so the generated Python
    root does not shadow the real `sdo` package (the facade puts `_gen` on `sys.path`). If
-   2b changes the Python import strategy, the rename can be reconsidered. go_package is
+   the Python import strategy changes, the rename can be reconsidered. go_package is
    unchanged and protojson is field-name based, so the wire is unaffected either way.

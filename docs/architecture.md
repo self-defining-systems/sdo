@@ -36,12 +36,12 @@ Native incident and reflection tasks carry an accepted-commit-bound `Operational
 
 | Package | Responsibility |
 |---|---|
-| `sdo/agents/{deployer,health_judge,responder}/` | Built-in agent sessions, prompts, local provider adapters, and typed worker entry points; native memory reads and writes use logical contracts |
+| `sdo/agents/{deployer,health_judge,responder}/`, `sdo/agents/views/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and agent-local Pydantic views; native memory reads and writes use logical protobuf contracts |
 | `sdo/agents/lifecycle/` | Shared source architecture and health judge agent prompts and DTOs |
-| `proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |
+| `sdo/contracts/proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
-| `sdo/operator/broker/`, `memory/`, `outcome_derivation/` | Go commit authority, logical snapshot and artifact materialization edge, outcome store with physical JSON adapter, and controller-derived outcome documents |
+| `sdo/operator/broker/`, `memory/`, `outcome_derivation/` | Go commit authority, logical snapshot and artifact materialization edge, outcome store with physical JSON adapter, and controller-derived typed outcomes |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector SDK, deterministic execution, controller, builder/supervisor, and Kubernetes installation |
 | `benchmarks/sregym/` | First-party benchmark adapter, protocol, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
@@ -66,7 +66,7 @@ Generated detectors are deterministic Go. They consume controller snapshots and 
 
 ### Synthetic traffic
 
-The health judge writes Go generators (`.sdo/diagnostics/traffic/generators/`, a package exporting `Scenarios() traffic.Catalog`) and workload profiles (`traffic/workloads/<name>.yaml`). A scenario is a user journey: steps whose endpoints build requests from a seeded rng and per-iteration state and check responses, the Services on its request path (from `.sdo/arch.md`, for localization), a side-effect class (read, idempotent write, or write with cleanup steps), a synthetic-data marker for writes, and the fault classes it must detect. A workload is data: purpose (`health-probe` runs continuously and feeds a traffic health detector; `verify-burst` and `journey` run on demand for a bounded time), scenarios and weights, arrival pattern and rate, timeouts, and per-scenario SLOs. Its schema is defined once in `proto/sdodev/contracts/v1alpha1/traffic.proto` and code-generated for both sides; protovalidate CEL carries the invariants that do not need a Go-duration parse (duration bounds stay host code).
+The health judge writes Go generators (`.sdo/diagnostics/traffic/generators/`, a package exporting `Scenarios() traffic.Catalog`) and workload profiles (`traffic/workloads/<name>.yaml`). A scenario is a user journey: steps whose endpoints build requests from a seeded rng and per-iteration state and check responses, the Services on its request path (from `.sdo/arch.md`, for localization), a side-effect class (read, idempotent write, or write with cleanup steps), a synthetic-data marker for writes, and the fault classes it must detect. A workload is data: purpose (`health-probe` runs continuously and feeds a traffic health detector; `verify-burst` and `journey` run on demand for a bounded time), scenarios and weights, arrival pattern and rate, timeouts, and per-scenario SLOs. Its schema is defined once in `sdo/contracts/proto/sdodev/contracts/v1alpha1/traffic.proto` and code-generated for both sides; protovalidate CEL carries the invariants that do not need a Go-duration parse (duration bounds stay host code).
 
 The `traffic.Engine` owns scheduling, arrival, rate, in-flight and time caps, latency measurement, and seeding: iteration *n* of a workload always builds the same requests, so any failing probe replays exactly. It refuses unsafe requests (writes from read scenarios, writes without the marker) without sending them. The builder compiles generators only into a separate prober binary (`cmd/prober`, with workloads embedded), never into the controller; generated tests prove that every scenario fails against simulated unreachable and 5xx targets plus its declared classes, that workloads name provided scenarios, and that traffic detectors consume health-probe workloads, and a static guard rejects generator imports that reach the network, filesystem, or cluster and package-level clock or rng calls.
 
@@ -84,7 +84,7 @@ The application repository is the shared durable memory. Five artifact classes l
 | `diagnostics/` | Health judge and responder | Health and incident detector source, tests, module, and manifest; synthetic-traffic generators and workloads (judge-owned, except responder-owned `traffic/generators/incident/` and `traffic/workloads/incident-*.yaml`) |
 | Outcomes | Controller through the broker | Immutable, versioned incident outcome documents and evidence |
 
-The logical outcome API is `sdo/operator/memory.Reader` (`Get` and `List` by incident ID) and `Writer` (`Put`, held by the broker). The Go JSON storage adapter alone maps an incident ID to `.sdo/outcomes/<sha256(incident_id)>.json`, stores the complete versioned document, and can import the prior `.sdo/outcomes.jsonl` stream once, deleting that stream only after every record is accepted. The JSONL stream belongs to retired repositories; consumers never infer physical filenames. Broker-owned source deployment evidence lives outside `.sdo/` in its own durable ledger and is bound to an accepted commit.
+The logical outcome contract is `OutcomeRecord` in `sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto`. The controller derives it, the broker alone receives `memory.Writer`, and `memory.Reader` exposes `Get` and `List` by incident ID. Reflection receives the accepted record and prior records as typed protobuf fields. The Go JSON storage adapter alone maps an incident ID to `.sdo/outcomes/<sha256(incident_id)>.json`, stores the versioned document, and can import the prior `.sdo/outcomes.jsonl` stream once, deleting that stream only after every record is accepted. Consumers never infer physical filenames. Broker-owned source deployment evidence lives outside `.sdo/` in its own durable ledger and is bound to an accepted commit.
 
 `schema-version` and `lifecycle-provenance.yaml` are validation metadata. They do not change the five ownership classes. Lifecycle provenance may attest an exact diagnostics-tree digest against an immutable validator image identity; only that exact pair can reuse a prior successful compilation, while any detector or validator change forces isolated validation again.
 
@@ -162,14 +162,14 @@ Status meanings:
 |---|---|---|---|
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
 | Lifecycle decisions | `sdo/operator/lifecycle/`, `artifacts/`, `deployment/` | Active | Source receipt binds the candidate tree and observed immutable images; architecture cites the broker-accepted source commit. |
-| Modular agent registration | `proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
+| Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
 | Built-in agents | `sdo/agents/{deployer,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots and results carry typed proposals or source changes. |
 | Detector SDK and execution | `sdo/operator/sdk/`, `core/`, `runtime/` | Active | Deterministic Go snapshots, detector evaluation, findings, batching, leader election, and controller state have Go tests. |
 | Synthetic traffic | `sdo/operator/sdk/traffic/`, `runtime/prober/`, `builder/`, `.sdo/diagnostics/traffic/` | Active | Generated workloads run in an isolated prober; acceptance remains independently validated. |
 | Controller builder and supervisor | `sdo/operator/builder/` | Active | Go builds and validates accepted diagnostics and supervises controller rollout with durable provenance. |
 | Isolated detector validation | `sdo/operator/builder/`, `sdo/operator/operatorcli/`, `sdo/operator/broker/` | Active | Agent `draft-test` checks scratch projections; broker acceptance uses its own isolated validator Job. |
 | Commit authority | `sdo/operator/broker/` | Active | The Go broker alone publishes role-owned changes; verified source publishing is bound to a trusted candidate-tree digest and durable deployment evidence. |
-| Logical operational memory | `sdo/operator/memory/`, `outcome_derivation/` | Active | Go supplies accepted-commit-bound logical catalogs to workers, materializes typed artifact proposals, and stores versioned per-incident JSON documents. |
+| Logical operational memory | `sdo/contracts/proto/.../outcome.proto`, `sdo/operator/memory/`, `outcome_derivation/` | Active | Go supplies accepted-commit-bound logical catalogs to workers, materializes typed artifact proposals, and stores typed outcomes as versioned per-incident JSON documents. |
 | Outcome reflection and reuse | `sdo/agents/responder/reflection_worker.py`, `sdo/operator/runtime/native_broker.go` | Active | Reflection receives a logical snapshot and returns a typed learning decision; broker validates actual diff and publishes accepted artifacts. |
 | Controller installation | `sdo/operator/install/` | Active | Go installer seeds the accepted commit and starts the controller in a prepared in-cluster checkout. |
 | SREGym adapter and receipts | `benchmarks/sregym/`, `third_party/sregym/` | Benchmark-only | Benchmark submission, strict receipts, and harness verdicts never enter production packages. |
@@ -185,18 +185,18 @@ Status meanings:
 | `.sdo/diagnostics/detectors/incidents/` | Responder | Responder | Incident provenance, compile, matching, and near-miss tests are required. |
 | `.sdo/diagnostics/traffic/generators/`, `traffic/workloads/` | Health judge | Health judge lifecycle | Workloads and generators obey engine limits and isolated validation. |
 | `.sdo/diagnostics/traffic/generators/incident/`, `traffic/workloads/incident-*.yaml` | Responder | Responder | Incident-scoped traffic only; health acceptance remains judge-owned. |
-| Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | Versioned per-incident documents are broker owned. The storage edge imports retired JSONL streams; no agent has writer capability. |
+| Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | `OutcomeRecord` is the logical schema; versioned per-incident documents are broker owned. The storage edge imports retired JSONL streams; no agent has writer capability. |
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. |
 
 ## Repository scope matrix
 
 | Path | Scope decision |
 |---|---|
-| `sdo/agents/`, `sdo/contracts/` | Production agent implementations, pure memory-context DTOs, and typed Python task/result contracts; built-in agents may use Codex or Claude internally. |
+| `sdo/agents/`, `sdo/agents/views/` | Production agent implementations and agent-local Pydantic views; built-in agents may use Codex or Claude internally. |
+| `sdo/contracts/proto/`, `sdo/contracts/_gen/` | Canonical language-neutral task/result and outcome schemas, with generated Python messages. |
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/`, `outcome_derivation/`, `install/` | Production Go authority, physical storage and artifact-projection edge, outcome derivation, and installer. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/controller stack and generated contracts. |
-| `proto/sdodev/contracts/v1alpha1/` | Shared language-neutral task, controller, and lifecycle schema. |
 | `libs/sdo_core/`, `libs/agent_cli/`, `libs/model_config/` | Production-neutral helpers, agent turn runner, and model parsing. |
 | `apps/` | Deployment and evaluation inputs. |
 | `benchmarks/sregym/{adapter,protocol,runner,experiments,analysis}/` | First-party benchmark integration; may import production APIs. |

@@ -25,7 +25,7 @@ import "sdodev/contracts/v1alpha1/traffic.proto";
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 // Finding is one detector observation. Mirrors sdk.Finding and
-// sdo.contracts.models.Finding.
+// sdo.agents.views.models.Finding.
 message Finding {
   string detector_id = 1 [(buf.validate.field).string.min_len = 1];
   string rule_id = 2 [(buf.validate.field).string.min_len = 1];
@@ -244,7 +244,7 @@ message VerificationEvidence {
 }
 
 // UsageMetrics is agentshim's normalized token accounting for one turn. The
-// CEL below mirrors sdo.contracts.models.UsageMetrics.validate_cached_input;
+// CEL below mirrors sdo.agents.views.models.UsageMetrics.validate_cached_input;
 // the cache-read alias *normalization* (set cached_input_tokens := cache_read
 // when it is zero) is a mutation CEL cannot do and stays a thin hand step.
 message UsageMetrics {
@@ -328,7 +328,7 @@ message RepairActionReceipt {
 }
 
 // IncidentResult is what the responder returns. The CEL mirrors
-// sdo.contracts.models.IncidentResult.validate_repair_action_ids.
+// sdo.agents.views.models.IncidentResult.validate_repair_action_ids.
 message IncidentResult {
   option (buf.validate.message).cel = {
     id: "result.unique_repair_action_ids"
@@ -375,7 +375,7 @@ message IncidentView {
 
 // DetectorTimelineEntry summarizes one finding's firing history within an
 // incident window; carried in the incident closure. Mirrors
-// sdo.contracts.models.DetectorTimelineEntry and the Go runtime struct.
+// sdo.agents.views.models.DetectorTimelineEntry and the Go runtime struct.
 message DetectorTimelineEntry {
   option (buf.validate.message).cel = {
     id: "timeline.last_seen_after_first"
