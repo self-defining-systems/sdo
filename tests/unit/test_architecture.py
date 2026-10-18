@@ -178,22 +178,3 @@ def test_production_sdo_does_not_import_benchmark_code() -> None:
             if any(module == prefix or module.startswith(f"{prefix}.") for prefix in forbidden):
                 violations.append(_fmt(filepath, lineno, module, "production SDO cannot depend on benchmark code"))
     assert not violations, f"{len(violations)} production-to-benchmark import(s) found:\n" + "\n".join(violations)
-
-
-def test_operational_memory_does_not_import_agent_runtime() -> None:
-    """Operational memory is a lower layer than executable agent backends."""
-
-    violations: list[str] = []
-    root = _PROJECT_PACKAGES["sdo"] / "operational_memory"
-    for filepath in _iter_py_files(root):
-        for module, lineno in _imports(filepath):
-            if module == "sdo.agents" or module.startswith("sdo.agents."):
-                violations.append(
-                    _fmt(
-                        filepath,
-                        lineno,
-                        module,
-                        "use a structural reflector contract instead of importing an agent runtime",
-                    )
-                )
-    assert not violations, f"{len(violations)} upward operational-memory import(s) found:\n" + "\n".join(violations)

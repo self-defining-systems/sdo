@@ -12,7 +12,7 @@ put it on ``sys.path`` here. The proto package is ``sdodev`` rather than ``sdo``
 precisely so that root never shadows this real ``sdo`` package.
 
 Contracts are serialized as **protojson, never binary**, and share one wire
-convention with the Go controller (``controller/runtime`` ``protoContractJSON``):
+convention with the Go controller (``sdo/operator/runtime`` ``protoContractJSON``):
 proto (snake_case) field names, zero-valued fields omitted. ``to_canonical_json``
 additionally sorts keys and indents so a payload is byte-comparable across the
 Go and Python encoders — the identity the round-trip contract tests assert.

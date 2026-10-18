@@ -2,7 +2,7 @@ syntax = "proto3";
 
 // Detector firing telemetry: the schema of one line of the controller's
 // append-only detector-firings.jsonl stream (Go emitter in
-// controller/runtime/firing_telemetry.go, Python readers in the analysis
+// sdo/operator/runtime/firing_telemetry.go, Python readers in the analysis
 // path). The file stays newline-delimited JSON — only the record schema is
 // proto-governed. Operational telemetry, not operational memory: it never
 // enters .sdo/ and carries no benchmark verdicts.

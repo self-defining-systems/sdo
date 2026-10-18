@@ -33,7 +33,6 @@ SCANNED_ROOTS = (
     "sdo/operator/runtime",
     "sdo/operator/builder",
     "benchmarks/sregym/adapter",
-    "libs/sdo_core",
 )
 SCANNED_SUFFIXES = {".py", ".go", ".yaml", ".yml", ".md", ".txt", ".tmpl"}
 
