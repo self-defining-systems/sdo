@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 type ReflectionTaskExecutor interface {
@@ -112,7 +113,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
-		if bytes.Contains(currentWire, []byte(".sdo/")) {
+		if bytes.Contains(currentWire, []byte(layout.PhysicalPathMarker)) {
 			return ReflectionDecision{}, errors.New("physical operational memory path in outcome evidence")
 		}
 		for _, priorOutcome := range history {
@@ -120,7 +121,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			if err != nil {
 				return ReflectionDecision{}, err
 			}
-			if bytes.Contains(wire, []byte(".sdo/")) {
+			if bytes.Contains(wire, []byte(layout.PhysicalPathMarker)) {
 				return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
 			}
 		}
@@ -128,7 +129,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
-		if bytes.Contains(wire, []byte(".sdo/")) {
+		if bytes.Contains(wire, []byte(layout.PhysicalPathMarker)) {
 			return ReflectionDecision{}, errors.New("physical operational memory path leaked into reflection task")
 		}
 	}

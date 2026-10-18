@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/latefindings"
-	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 // lateFindingSink projects controller-authored telemetry into the incident's
@@ -26,7 +26,7 @@ func (s lateFindingSink) Record(record FiringRecord) error {
 	for name, value := range record.ParameterBindings {
 		bindings[name] = value
 	}
-	playbookIDs, err := memory.PlaybookIDs(record.SurfacedPlaybooks)
+	playbookIDs, err := layout.PlaybookIDs(record.SurfacedPlaybooks)
 	if err != nil { return errors.Join(downstreamErr, fmt.Errorf("project logical late findings playbooks: %w", err)) }
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

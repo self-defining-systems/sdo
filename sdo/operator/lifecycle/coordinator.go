@@ -170,6 +170,21 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	return result, fmt.Errorf("deployment exhausted %d attempts; last rejection: %s", cfg.MaxAttempts, feedback)
 }
 
+// MigrateMemory has the Upkeep actor bring an already-bootstrapped repository's
+// operational memory to the current schema. It is the same step Run performs
+// first, so an interrupted migration resumes by operation ID and an up-to-date
+// repository is left untouched.
+func (c Coordinator) MigrateMemory(ctx context.Context, operationID string) (broker.Receipt, error) {
+	if c.Broker == nil || c.Bootstrap == nil || strings.TrimSpace(operationID) == "" {
+		return broker.Receipt{}, errors.New("broker, artifact store, and operation ID are required")
+	}
+	receipt, err := c.bootstrap(ctx, operationID+"-schema", broker.Upkeep, c.Bootstrap.WriteSchema)
+	if err != nil {
+		return broker.Receipt{}, fmt.Errorf("migrate operational memory: %w", err)
+	}
+	return receipt, nil
+}
+
 func (c Coordinator) validate(cfg Config) error {
 	if c.Broker == nil || c.Bootstrap == nil || c.Registry == nil || c.Workers == nil || c.Readiness == nil || c.Verifier == nil || c.Installer == nil {
 		return errors.New("broker, artifact store, registry, workers, source readiness, health verifier, and installer are required")

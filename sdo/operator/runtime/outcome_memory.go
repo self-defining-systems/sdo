@@ -7,6 +7,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 )
 
@@ -49,7 +50,7 @@ func relevantOutcomeEvidence(
 		if match == "" {
 			continue
 		}
-		playbookIDs, err := memory.PlaybookIDs(record.GetAppliedPlaybooks())
+		playbookIDs, err := layout.PlaybookIDs(record.GetAppliedPlaybooks())
 		if err != nil {
 			continue
 		}

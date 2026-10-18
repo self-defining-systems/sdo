@@ -320,6 +320,24 @@ func TestCoordinatorReusesUnchangedBootstrapArtifacts(t *testing.T) {
 	}
 }
 
+func TestCoordinatorMigratesMemoryAsUpkeepOnly(t *testing.T) {
+	c, b, _, _ := testCoordinator(t)
+	receipt, err := c.MigrateMemory(context.Background(), "migrate-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Commit != "commit-migrate-1-schema" {
+		t.Fatalf("receipt = %+v", receipt)
+	}
+	want := []string{"create:migrate-1-schema", "publish:migrate-1-schema:upkeep"}
+	if strings.Join(b.events, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want only the Upkeep schema step", b.events)
+	}
+	if _, err := (Coordinator{}).MigrateMemory(context.Background(), "migrate-1"); err == nil {
+		t.Fatal("migration ran without a broker")
+	}
+}
+
 func TestCoordinatorResumesAfterAcceptedSourceWithoutRepublishingIt(t *testing.T) {
 	c, b, executor, _ := testCoordinator(t)
 	executor.archFailures = 1

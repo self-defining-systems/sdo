@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 
+	"sdo.dev/operator/memory/layout"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,7 +97,7 @@ func (s Store) Update(ctx context.Context, event Event) error {
 	if event.IncidentID == "" || event.DetectorID == "" || event.Fingerprint == "" {
 		return nil
 	}
-	for _, id := range event.PlaybookIDs { if id=="" || strings.ContainsAny(id,"/\\") || strings.Contains(id,".sdo") { return errors.New("late findings require logical playbook IDs") } }
+	for _, id := range event.PlaybookIDs { if id=="" || strings.ContainsAny(id,"/\\") || strings.Contains(id, layout.Dir) { return errors.New("late findings require logical playbook IDs") } }
 	if event.Event != "cleared" && !(event.Event == "activated" && event.Relation == "after_dispatch") {
 		return nil
 	}

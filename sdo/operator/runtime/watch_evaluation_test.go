@@ -12,7 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
-	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -414,7 +414,7 @@ func requestHasDetector(request IncidentRequest, detectorID string) bool {
 }
 
 func requestSurfacesPlaybook(request IncidentRequest, path string) bool {
-	id, err := memory.PlaybookID(path)
+	id, err := layout.PlaybookID(path)
 	if err != nil {
 		return false
 	}

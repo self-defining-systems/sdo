@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 // HealthProbe evaluates the compiled, accepted detectors against live state.
@@ -143,7 +144,7 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 	if sourceCommit == "" {
 		return false, "", errors.New("deployed source tree is not an accepted ancestor of health diagnostics")
 	}
-	detectorTree, err := git("rev-parse", acceptedCommit+":.sdo/diagnostics")
+	detectorTree, err := git("rev-parse", acceptedCommit+":"+layout.DiagnosticsDir)
 	if err != nil {
 		return false, "", fmt.Errorf("accepted health diagnostics: %w", err)
 	}
@@ -164,7 +165,7 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 	if status != "clear" {
 		return false, "accepted health detectors report " + status, nil
 	}
-	if got, err := git("rev-parse", "HEAD:.sdo/diagnostics"); err != nil || got != detectorTree {
+	if got, err := git("rev-parse", "HEAD:"+layout.DiagnosticsDir); err != nil || got != detectorTree {
 		return false, "", errors.New("accepted health detectors changed during verification")
 	}
 	if status, err := git("status", "--porcelain"); err != nil || status != "" {

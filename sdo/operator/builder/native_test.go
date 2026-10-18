@@ -23,7 +23,7 @@ func TestBuildWorkspaceCompilesApplicationDetectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), `d0 "fixture-diagnostics/detectors/missing_configmap"`) {
+	if !strings.Contains(string(generated), `d0 "fixture-diagnostics/detectors/incidents/missing-configmap"`) {
 		t.Fatalf("generated detector import missing: %s", generated)
 	}
 	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
@@ -48,18 +48,23 @@ func TestBuildWorkspaceAcceptsOpaqueDiagnosticsProjection(t *testing.T) {
 	}
 }
 
-func TestBuildWorkspaceRejectsEscapingDetectorPackage(t *testing.T) {
+func TestBuildWorkspaceRejectsManifestThatDisagreesWithItsLocation(t *testing.T) {
 	app := t.TempDir()
+	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
 	diagnostics := filepath.Join(app, ".sdo", "diagnostics")
-	if err := os.MkdirAll(diagnostics, 0o755); err != nil {
+	if err := copyTree(context.Background(), source, diagnostics); err != nil {
 		t.Fatal(err)
 	}
-	manifest := "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors:\n - id: bad\n   package: ../outside\n   constructor: New\n   class: incident\n   owner: responder\n   originatingIncident: incident\n   originatingCommit: commit\n   possiblePlaybooks: []\n   interval: 1s\n   persistence:\n     firing: 1\n     clearing: 1\n   batching:\n     severity: warn\n     debounce: 0\n"
-	if err := os.WriteFile(filepath.Join(diagnostics, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+	path := filepath.Join(diagnostics, "detectors", "incidents", "missing-configmap", "manifest.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: ".."}); err == nil || !strings.Contains(err.Error(), "escapes diagnostics") {
-		t.Fatalf("escaping detector package was accepted or rejected for wrong reason: %v", err)
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "id: missing-configmap", "id: elsewhere", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildWorkspace(context.Background(), Config{ApplicationRoot: app, DiagnosticsRoot: diagnostics, OperatorRoot: ".."}); err == nil || !strings.Contains(err.Error(), "disagrees with its location") {
+		t.Fatalf("misplaced detector manifest was accepted or rejected for wrong reason: %v", err)
 	}
 }
 
@@ -117,7 +122,7 @@ func TestBuildWorkspaceRejectsDetectorRegistrationDrift(t *testing.T) {
 	if err := copyTree(context.Background(), source, diagnostics); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(diagnostics, "detectors", "missing_configmap", "detector.go")
+	path := filepath.Join(diagnostics, "detectors", "incidents", "missing-configmap", "detector.go")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

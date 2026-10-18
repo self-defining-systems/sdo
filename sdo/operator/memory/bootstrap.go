@@ -7,13 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 func ReadArchitecture(checkout string) (string, error) {
 	if checkout == "" {
 		return "", fmt.Errorf("architecture checkout is required")
 	}
-	data, err := os.ReadFile(filepath.Join(checkout, ".sdo", "arch.md"))
+	data, err := os.ReadFile(filepath.Join(checkout, layout.ArchitectureFile))
 	if err != nil {
 		return "", fmt.Errorf("read accepted architecture: %w", err)
 	}
@@ -21,7 +23,7 @@ func ReadArchitecture(checkout string) (string, error) {
 	if len(parts) != 3 || parts[0] != "" || strings.TrimSpace(parts[2]) == "" {
 		return "", fmt.Errorf("accepted architecture is invalid")
 	}
-	if strings.Contains(strings.ToLower(parts[2]), ".sdo/") {
+	if layout.ContainsPhysicalPath(strings.ToLower(parts[2])) {
 		return "", fmt.Errorf("accepted architecture contains a physical operational-memory path")
 	}
 	return strings.TrimSpace(parts[2]) + "\n", nil
@@ -32,17 +34,20 @@ func WriteGoal(checkout, application, objective string) error {
 		return fmt.Errorf("checkout, application, and health objective are required")
 	}
 	body := fmt.Sprintf("---\nschema_version: 1\nowner: human\napplication: %s\n---\n# Health objective\n\n%s\n", strconv.Quote(application), strings.TrimSpace(objective))
-	return writeBootstrapFile(checkout, "goal.md", body)
+	return writeBootstrapFile(checkout, layout.GoalFile, body)
 }
 
+// WriteSchema stamps the current operational-memory schema. On a repository at
+// an older schema it also migrates the layout, so the Upkeep actor commits one
+// self-consistent change.
 func WriteSchema(checkout string) error {
 	if checkout == "" {
 		return fmt.Errorf("checkout is required")
 	}
-	if err := writeBootstrapFile(checkout, "schema-version", "1\n"); err != nil {
-		return err
+	if _, err := layout.Migrate(checkout); err != nil {
+		return fmt.Errorf("migrate operational memory: %w", err)
 	}
-	module := filepath.Join(checkout, ".sdo", "diagnostics", "go.mod")
+	module := filepath.Join(checkout, layout.DiagnosticsGoModFile)
 	if err := os.MkdirAll(filepath.Dir(module), 0o755); err != nil {
 		return fmt.Errorf("create diagnostics module: %w", err)
 	}
@@ -58,21 +63,21 @@ func WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint,
 			return fmt.Errorf("architecture requires checkout, application, accepted source, fingerprint, and summary")
 		}
 	}
-	if strings.Contains(strings.ToLower(summary), ".sdo/") {
+	if layout.ContainsPhysicalPath(strings.ToLower(summary)) {
 		return fmt.Errorf("architecture summary contains a physical operational-memory path")
 	}
 	content := fmt.Sprintf("---\nschema_version: 1\ngenerated_at_commit: %s\ngenerated_at: %s\napplication: %s\ntopology_fingerprint: %s\n---\n%s\n",
 		acceptedSourceCommit, time.Now().UTC().Format(time.RFC3339Nano), strconv.Quote(application), fingerprint, strings.TrimSpace(summary))
-	return writeBootstrapFile(checkout, "arch.md", content)
+	return writeBootstrapFile(checkout, layout.ArchitectureFile, content)
 }
 
-func writeBootstrapFile(checkout, name, content string) error {
-	directory := filepath.Join(checkout, ".sdo")
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+func writeBootstrapFile(checkout, relative, content string) error {
+	target := filepath.Join(checkout, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return fmt.Errorf("create operational memory: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", name, err)
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", relative, err)
 	}
 	return nil
 }

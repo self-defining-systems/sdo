@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 )
 
 // JSONStore is the repository adapter. No caller needs to know how .sdo
@@ -46,11 +46,11 @@ func (s *JSONStore) putDocument(ctx context.Context, document []byte) (Outcome, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	directory := filepath.Join(s.root, ".sdo", "outcomes")
+	directory := filepath.Join(s.root, layout.OutcomesDir)
 	if err := safeDirectory(directory); err != nil {
 		return Outcome{}, err
 	}
-	path := filepath.Join(directory, filename(outcome.IncidentID))
+	path := filepath.Join(directory, layout.OutcomeFileName(outcome.IncidentID))
 	file, err := os.CreateTemp(directory, ".outcome-*")
 	if err != nil {
 		return Outcome{}, fmt.Errorf("create outcome: %w", err)
@@ -92,7 +92,7 @@ func (s *JSONStore) Get(ctx context.Context, incidentID string) (Outcome, error)
 	if strings.TrimSpace(incidentID) == "" {
 		return Outcome{}, fmt.Errorf("incident ID is required")
 	}
-	path := filepath.Join(s.root, ".sdo", "outcomes", filename(incidentID))
+	path := filepath.Join(s.root, layout.OutcomePath(incidentID))
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		legacy, legacyErr := s.legacyOutcomes(ctx)
@@ -130,7 +130,7 @@ func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	directory := filepath.Join(s.root, ".sdo", "outcomes")
+	directory := filepath.Join(s.root, layout.OutcomesDir)
 	entries, err := os.ReadDir(directory)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("list outcomes: %w", err)
@@ -151,7 +151,7 @@ func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid outcome %q: %w", entry.Name(), err)
 		}
-		if filename(outcome.IncidentID) != entry.Name() {
+		if layout.OutcomeFileName(outcome.IncidentID) != entry.Name() {
 			return nil, fmt.Errorf("outcome filename and incident ID disagree: %q", entry.Name())
 		}
 		outcomes = append(outcomes, outcome)
@@ -177,7 +177,7 @@ func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
 // repository, so readers of an accepted checkout see pre-migration history.
 // Playbook references are normalized to logical IDs.
 func (s *JSONStore) legacyOutcomes(ctx context.Context) ([]Outcome, error) {
-	path := filepath.Join(s.root, ".sdo", "outcomes.jsonl")
+	path := filepath.Join(s.root, layout.LegacyOutcomesFile)
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -214,7 +214,7 @@ func normalizeLegacy(data []byte) (Outcome, error) {
 	if err != nil {
 		return Outcome{}, err
 	}
-	ids, err := PlaybookIDs(outcome.Record.GetAppliedPlaybooks())
+	ids, err := layout.PlaybookIDs(outcome.Record.GetAppliedPlaybooks())
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -230,7 +230,7 @@ func normalizeLegacy(data []byte) (Outcome, error) {
 // stream. Playbook references are stored as logical IDs. The stream is deleted
 // only after every record has been accepted.
 func (s *JSONStore) ImportLegacy(ctx context.Context) error {
-	path := filepath.Join(s.root, ".sdo", "outcomes.jsonl")
+	path := filepath.Join(s.root, layout.LegacyOutcomesFile)
 	if _, err := os.Lstat(path); os.IsNotExist(err) {
 		return nil
 	}
@@ -275,10 +275,6 @@ func parse(document []byte) (Outcome, error) {
 	}
 	buf.WriteByte('\n')
 	return Outcome{Record: record, SchemaVersion: int(record.GetSchemaVersion()), IncidentID: record.GetIncidentId(), Classification: record.GetClassification(), document: buf.Bytes()}, nil
-}
-
-func filename(incidentID string) string {
-	return fmt.Sprintf("%x.json", sha256.Sum256([]byte(incidentID)))
 }
 
 func safeDirectory(directory string) error {

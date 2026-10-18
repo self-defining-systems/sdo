@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 
+	"sdo.dev/operator/memory/layout"
+
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -53,7 +55,7 @@ func SourceInventory(ctx context.Context, checkout, acceptedCommit string) (Sour
 			return SourceFacts{}, fmt.Errorf("invalid accepted source tree metadata")
 		}
 		path := string(pathBytes)
-		if path == ".sdo" || strings.HasPrefix(path, ".sdo/") {
+		if path == layout.Dir || layout.IsMemoryPath(path) {
 			continue
 		}
 		if parts[1] != "blob" || parts[0] == "120000" {

@@ -27,7 +27,7 @@ func TestBootstrapStoreWritesOnlyRoleOwnedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(version) != "1\n" {
+	if string(version) != "2\n" {
 		t.Fatalf("invalid schema version: %q", version)
 	}
 	entries, err := os.ReadDir(filepath.Join(checkout, ".sdo"))

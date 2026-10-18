@@ -1,0 +1,32 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: health-objective
+constructor: New
+class: health
+owner: health_judge
+watches:
+    - apiVersion: v1
+      kind: Pod
+    - apiVersion: v1
+      kind: ConfigMap
+    - apiVersion: v1
+      kind: Service
+    - apiVersion: apps/v1
+      kind: Deployment
+    - apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+    - apiVersion: v1
+      kind: Endpoints
+    - apiVersion: discovery.k8s.io/v1
+      kind: EndpointSlice
+interval: 30s
+persistence:
+    firing: 2
+    clearing: 2
+batching:
+    severity: critical
+    debounce: 500ms
+possiblePlaybooks:
+    - .sdo/playbooks/health-objective/README.md
+originatingCommit: lifecycle-bootstrap

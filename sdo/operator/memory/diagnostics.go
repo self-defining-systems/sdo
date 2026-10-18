@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 // DiagnosticsProjection gives the compiler an accepted detector bundle without
@@ -38,14 +40,14 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
-	status, err := git("status", "--porcelain", "--", ".sdo/diagnostics")
+	status, err := git("status", "--porcelain", "--", layout.DiagnosticsDir)
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
 	if status != "" {
 		return DiagnosticsProjection{}, errors.New("diagnostics must match the accepted commit before controller launch")
 	}
-	fingerprint, err := git("rev-parse", "HEAD:.sdo/diagnostics")
+	fingerprint, err := git("rev-parse", "HEAD:"+layout.DiagnosticsDir)
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
@@ -63,7 +65,7 @@ func CandidateDiagnostics(repository string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, part := range []string{filepath.Join(root, ".sdo"), filepath.Join(root, ".sdo", "diagnostics")} {
+	for _, part := range []string{filepath.Join(root, layout.Dir), filepath.Join(root, layout.DiagnosticsDir)} {
 		info, err := os.Lstat(part)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -75,16 +77,12 @@ func CandidateDiagnostics(repository string) (string, error) {
 			return "", errors.New("diagnostics storage must be a real directory")
 		}
 	}
-	manifest := filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")
-	info, err := os.Lstat(manifest)
+	registered, err := layout.HasDetectors(root)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", ErrDiagnosticsNotBootstrapped
-		}
-		return "", fmt.Errorf("inspect diagnostics manifest: %w", err)
+		return "", fmt.Errorf("inspect diagnostics manifests: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("diagnostics manifest must be a regular file")
+	if !registered {
+		return "", ErrDiagnosticsNotBootstrapped
 	}
-	return filepath.Join(root, ".sdo", "diagnostics"), nil
+	return filepath.Join(root, layout.DiagnosticsDir), nil
 }
