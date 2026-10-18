@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from benchmarks.sregym.protocol.receipt import (
     CLEARED_WITHOUT_SDO_ACTION,
@@ -18,9 +18,12 @@ _ALLOWED_CLASSIFICATIONS = {"success", "cleared_without_action", "external_recov
 
 
 def _object(value: object, name: str) -> dict[str, Any]:
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict):
         raise ProductionReceiptValidationError(f"native {name} must be a JSON object")
-    return value
+    candidate = cast("dict[object, object]", value)
+    if not all(isinstance(key, str) for key in candidate):
+        raise ProductionReceiptValidationError(f"native {name} must be a JSON object")
+    return cast("dict[str, Any]", candidate)
 
 
 def _nonempty(value: object, name: str) -> str:
@@ -38,9 +41,12 @@ def _commit(value: object, name: str, *, optional: bool = False) -> str | None:
 
 
 def _items(value: object, name: str) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+    if not isinstance(value, list):
         raise ProductionReceiptValidationError(f"native {name} must be a list of objects")
-    return value
+    candidate = cast("list[object]", value)
+    if not all(isinstance(item, dict) for item in candidate):
+        raise ProductionReceiptValidationError(f"native {name} must be a list of objects")
+    return cast("list[dict[str, Any]]", candidate)
 
 
 def _timestamp(value: object, name: str) -> None:

@@ -10,7 +10,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
@@ -97,7 +97,7 @@ def run_worker_task(
     *,
     executor: Callable[[IncidentRequest], IncidentResult] = execute_incident,
 ) -> AgentResult:
-    task = parse_json(task_path.read_text(encoding="utf-8"), AgentTask())
+    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id:
         raise ValueError("worker task has invalid version or task ID")
     if task.agent_id != AGENT_ID or task.task_type != TASK_TYPE:

@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 import yaml
 from google.protobuf import json_format
@@ -37,7 +37,7 @@ from sdo.contracts import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 TASK_TYPE = "health-judgment"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
@@ -45,6 +45,37 @@ DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 
 class ResultPublisher(Protocol):
     def publish_payload(self, name: str, key: str, payload: str) -> None: ...
+
+
+class _TrafficFile(Protocol):
+    @property
+    def path(self) -> str: ...
+
+    @property
+    def content(self) -> str: ...
+
+
+class _JudgeDraft(Protocol):
+    @property
+    def objective_digest(self) -> str: ...
+
+    @property
+    def source_commit(self) -> str: ...
+
+    @property
+    def round(self) -> int: ...
+
+    @property
+    def failure_patterns(self) -> Sequence[str]: ...
+
+    @property
+    def detector_source(self) -> str: ...
+
+    @property
+    def detector_test_source(self) -> str: ...
+
+    @property
+    def traffic_files(self) -> Sequence[_TrafficFile]: ...
 
 
 def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
@@ -99,7 +130,7 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     )
 
 
-def _validate_judge_draft(artifact: object, *, health_objective: str, source_commit: str) -> None:
+def _validate_judge_draft(artifact: _JudgeDraft, *, health_objective: str, source_commit: str) -> None:
     """Check agent self-consistency before the Go broker's authoritative validation."""
 
     expected_digest = hashlib.sha256(health_objective.strip().encode()).hexdigest()
@@ -117,7 +148,7 @@ def _validate_judge_draft(artifact: object, *, health_objective: str, source_com
         raise ValueError("health judge must return deterministic objective detector tests")
 
 
-def _judge_proposal(artifact: object) -> OperationalArtifactProposal:
+def _judge_proposal(artifact: _JudgeDraft) -> OperationalArtifactProposal:
     """Convert an agent-authored draft to logical artifacts for the Go mapper."""
 
     proposal = OperationalArtifactProposal()
@@ -182,7 +213,7 @@ def run_judge_task(
     *,
     execute: Callable[[HealthJudgeRequest, Path], HealthJudgeResult] = author_health_diagnostics,
 ) -> AgentResult:
-    task = parse_json(task_path.read_text(encoding="utf-8"), AgentTask())
+    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     if (
         task.schema_version != "sdo.dev/v1alpha1"
         or not task.task_id

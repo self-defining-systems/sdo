@@ -17,6 +17,7 @@ from sdo.agents.responder.reflection import (
     ClaudeSessionBackend,
     CodexSessionBackend,
     ReflectionGuidance,
+    ReflectionSessionMode,
     ReflectionTurn,
     SessionReflector,
 )
@@ -65,7 +66,7 @@ def run_reflection_task(
     *,
     reflector: Reflector | None = None,
 ) -> AgentResult:
-    task = parse_json(task_path.read_text(encoding="utf-8"), AgentTask())
+    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id:
         raise ValueError("reflection task has invalid version or task ID")
     if task.agent_id != AGENT_ID or task.task_type != TASK_TYPE:
@@ -113,7 +114,7 @@ def run_reflection_task(
         outcome=outcome,
         history=history,
         outcome_commit=request.outcome_commit,
-        session_mode=session_mode,
+        session_mode=cast("ReflectionSessionMode", session_mode),
         closure=closure,
     )
     if turn.proposed_changes:

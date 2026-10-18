@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 from enum import Enum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 SCHEMA_VERSION = "sdo.dev/v1alpha1"
 
@@ -61,7 +64,7 @@ class Finding(ContractModel):
     def playbooks(self) -> list[str]:
         return self.playbook_ids
 
-    def model_copy(self, *, update: dict[str, Any] | None = None, deep: bool = False) -> Finding:
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Finding:
         if update and "playbooks" in update:
             update = {**update, "playbook_ids": update["playbooks"]}
             del update["playbooks"]
@@ -123,7 +126,7 @@ class SurfacedPlaybook(ContractModel):
     def path(self) -> str:
         return self.playbook_id
 
-    def model_copy(self, *, update: dict[str, Any] | None = None, deep: bool = False) -> SurfacedPlaybook:
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> SurfacedPlaybook:
         if update and "path" in update:
             update = {**update, "playbook_id": update["path"]}
             del update["path"]
@@ -146,7 +149,7 @@ class PriorOutcomeEvidence(ContractModel):
     def applied_playbooks(self) -> list[str]:
         return self.applied_playbook_ids
 
-    def model_copy(self, *, update: dict[str, Any] | None = None, deep: bool = False) -> PriorOutcomeEvidence:
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> PriorOutcomeEvidence:
         if update and "applied_playbooks" in update:
             update = {**update, "applied_playbook_ids": update["applied_playbooks"]}
             del update["applied_playbooks"]

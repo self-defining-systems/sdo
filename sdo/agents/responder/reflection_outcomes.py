@@ -103,7 +103,7 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
         "confirmed_playbooks": record.confirmed_playbooks,
         "rejected_playbooks": record.rejected_playbooks,
         "diagnosis_verification": [
-            {"verdict": check.verdict.value, "summary": check.summary} for check in record.diagnosis_verification
+            {"verdict": check.verdict, "summary": check.summary} for check in record.diagnosis_verification
         ],
         "detector_history": collapse_detector_history(record.detector_history),
         "memory_commit": record.memory_commit,

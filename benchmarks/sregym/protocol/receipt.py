@@ -37,8 +37,8 @@ def receipt_resolution(receipt: dict[str, Any]) -> str:
 
     if receipt.get("schema_version") == "sdo.production-receipt/v2":
         ledger = receipt.get("native_ledger")
-        outcome = ledger.get("outcome_document") if isinstance(ledger, dict) else None
-        classification = outcome.get("classification") if isinstance(outcome, dict) else None
+        outcome = cast("dict[str, object]", ledger).get("outcome_document") if isinstance(ledger, dict) else None
+        classification = cast("dict[str, object]", outcome).get("classification") if isinstance(outcome, dict) else None
         if classification == "success":
             return SDO_MITIGATED
         if classification == "cleared_without_action":

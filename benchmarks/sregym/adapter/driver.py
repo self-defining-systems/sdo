@@ -877,6 +877,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     if gate is not None:
         gate.join()
     native = _native_install_for_run(args, repository, namespace, application, api_base)
+    if native.kubeconfig is None:
+        raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
     incident_id = _acknowledged_incident_id(control_namespace, native.kubeconfig)
     sync_existing(native)
     receipt = collect_native_receipt(native, incident_id)

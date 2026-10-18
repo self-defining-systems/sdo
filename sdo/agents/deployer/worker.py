@@ -6,7 +6,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,11 +62,13 @@ class SourceProposalDraft(BaseModel):
     expected_workload_ids: list[str]
 
 
-def _provider() -> str:
+def _provider() -> Literal["codex", "claude"]:
     provider = os.environ.get("SDO_AGENT_PROVIDER", "codex").strip().lower()
-    if provider not in {"codex", "claude"}:
-        raise ValueError(f"unsupported deployment provider {provider!r}")
-    return provider
+    if provider == "codex":
+        return "codex"
+    if provider == "claude":
+        return "claude"
+    raise ValueError(f"unsupported deployment provider {provider!r}")
 
 
 def _source_path(value: str) -> str:
@@ -198,7 +200,7 @@ def run_deployment_task(
     *,
     execute: Callable[[SourceDeploymentRequest, Path], SourceDeploymentResult] = propose_source,
 ) -> AgentResult:
-    task = parse_json(task_path.read_text(encoding="utf-8"), AgentTask())
+    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     if (
         task.schema_version != "sdo.dev/v1alpha1"
         or not task.task_id
@@ -238,7 +240,7 @@ def run_architecture_task(
     *,
     execute: Callable[[ArchitectureRequest, Path], ArchitectureResult] = describe_architecture,
 ) -> AgentResult:
-    task = parse_json(task_path.read_text(encoding="utf-8"), AgentTask())
+    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id or not task.agent_id:
         raise ValueError("invalid architecture task identity")
     if task.task_type != ARCHITECTURE_TASK_TYPE or not task.workspace.proposal_id or not task.workspace.checkout_path:
@@ -270,7 +272,7 @@ def main() -> int:
         prepare_codex_home()
         prepare_claude_home()
         task_path = Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH)))
-        task = parse_json(task_path.read_text(encoding="utf-8"), AgentTask())
+        task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
         publisher = KubernetesResultPublisher(namespace=namespace)
         if task.task_type == TASK_TYPE:
             run_deployment_task(task_path, result_name, publisher)
