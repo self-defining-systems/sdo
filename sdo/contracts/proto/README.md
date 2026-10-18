@@ -2,8 +2,11 @@
 
 Single source of truth for the structured contracts that cross SDO's seams:
 controller↔worker tasks and results, worker registrations, reflection, outcomes,
-firing telemetry, controller config, and traffic workloads. Agent-local Pydantic
-views live in `sdo/agents/views/`; they do not define the cross-component wire.
+firing telemetry, controller config, and traffic workloads. The Go controller
+projects internal state into generated messages. Built-in Python agents adapt
+generated messages to local prompt and model-output views in `sdo/agents/views/`;
+those views do not define the cross-component wire. Reflection reads generated
+outcome messages directly.
 
 ## Layout
 

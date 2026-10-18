@@ -14,14 +14,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from google.protobuf import json_format
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sdo.agents.views import DetectorEvaluation, ObjectRef, OutcomeRecord
+    from sdo.contracts import DetectorEvaluation, ObjectRef, OutcomeRecord
 
 
 def _timestamp(evaluation: DetectorEvaluation) -> str:
-    return str(evaluation.model_dump(mode="json")["evaluated_at"])
+    return evaluation.evaluated_at.ToJsonString()
 
 
 def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list[dict[str, Any]]:
@@ -35,7 +37,8 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
     runs: dict[str, list[dict[str, Any]]] = {}
     for evaluation in evaluations:
         detector_runs = runs.setdefault(evaluation.detector_id, [])
-        signature = (evaluation.status.value, evaluation.fingerprints, evaluation.error)
+        error = evaluation.error if evaluation.HasField("error") else None
+        signature = (evaluation.status, tuple(evaluation.fingerprints), error)
         if detector_runs and detector_runs[-1]["_signature"] == signature:
             detector_runs[-1]["last_evaluated_at"] = _timestamp(evaluation)
             detector_runs[-1]["evaluations"] += 1
@@ -44,9 +47,9 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
             {
                 "_signature": signature,
                 "detector_id": evaluation.detector_id,
-                "status": evaluation.status.value,
+                "status": evaluation.status,
                 "fingerprints": list(evaluation.fingerprints),
-                "error": evaluation.error,
+                "error": error,
                 "first_evaluated_at": _timestamp(evaluation),
                 "last_evaluated_at": _timestamp(evaluation),
                 "evaluations": 1,
@@ -62,7 +65,9 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
 def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
     """The incident being reflected on: every field verbatim except the collapsed detector history."""
 
-    view = outcome.model_dump(mode="json")
+    view = json_format.MessageToDict(
+        outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+    )
     view["detector_history"] = collapse_detector_history(outcome.detector_history)
     return view
 
@@ -76,7 +81,7 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
 
     return {
         "incident_id": record.incident_id,
-        "classification": record.classification.value,
+        "classification": record.classification,
         "findings": [
             {
                 "detector_id": finding.detector_id,
@@ -91,7 +96,7 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
             {
                 "summary": cause.summary,
                 "resources": [_resource(ref) for ref in cause.resources],
-                "explained_detectors": cause.explained_detectors,
+                "explained_detectors": list(cause.explained_detectors),
             }
             for cause in record.confirmed_root_causes
         ],
@@ -99,14 +104,14 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
             {"kind": action.kind, "target": action.target, "summary": action.summary, "success": action.success}
             for action in record.repair_actions
         ],
-        "applied_playbooks": record.applied_playbooks,
-        "confirmed_playbooks": record.confirmed_playbooks,
-        "rejected_playbooks": record.rejected_playbooks,
+        "applied_playbooks": list(record.applied_playbooks),
+        "confirmed_playbooks": list(record.confirmed_playbooks),
+        "rejected_playbooks": list(record.rejected_playbooks),
         "diagnosis_verification": [
             {"verdict": check.verdict, "summary": check.summary} for check in record.diagnosis_verification
         ],
         "detector_history": collapse_detector_history(record.detector_history),
-        "memory_commit": record.memory_commit,
+        "memory_commit": record.memory_commit if record.HasField("memory_commit") else None,
     }
 
 

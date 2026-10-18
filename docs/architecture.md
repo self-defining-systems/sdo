@@ -32,17 +32,19 @@ fresh reflection proposal -> broker validation/commit -> controller rollout
 
 Go owns operational decisions and accepted repository state. Python hosts the built-in agent implementations. Registration is implementation neutral: a versioned ProtoJSON `AgentRegistration` advertises an agent ID, capabilities with exact protobuf request/result type URLs, and a launch method. `AgentTask` and `AgentResult` carry typed protobuf `Any` payloads and a proposal workspace. The Go registry rejects unknown IDs, capabilities, and payload types; the generic Kubernetes executor launches a registered worker without knowing its language or model provider. Built-in manifests live in `sdo/agents/registrations/`; third-party workers can use another language if they honor the same contract. Incident, lifecycle, and reflection dispatch use this boundary.
 
+The `.proto` files are the source of truth for messages crossing Go, Python, and worker boundaries. The controller retains its own live state structs for scheduling and persistence, then explicitly projects them into generated protobuf request, result, and closure messages. Outcome derivation constructs generated outcome messages directly. The built-in Python workers parse generated messages at the boundary; their Pydantic models are local prompt and model-output views, not an alternate wire contract. Reflection consumes generated outcome messages directly. Dynamic finding metadata is the only field in the Go incident projection that needs a JSON value conversion. Conformance tests cover the projections and reject contract drift.
+
 Native incident and reflection tasks carry an accepted-commit-bound `OperationalMemorySnapshot` with goal and architecture text, logical detector registrations, and playbook IDs/content. Agents return logical IDs and typed `OperationalArtifactProposal` mutations for detectors, playbooks, and judge-owned traffic. The Go memory edge maps those proposals into repository files; the broker then validates role ownership, provenance, the actual diff, and independent test evidence before commit. Source repair still occurs in an isolated proposal checkout. Workers do not read or write physical operational-memory paths.
 
 | Package | Responsibility |
 |---|---|
-| `sdo/agents/{deployer,health_judge,responder}/`, `sdo/agents/views/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and agent-local Pydantic views; native memory reads and writes use logical protobuf contracts |
+| `sdo/agents/{deployer,health_judge,responder}/`, `sdo/agents/views/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and agent-local prompt/output views; native memory reads and writes use logical protobuf contracts |
 | `sdo/agents/lifecycle/` | Shared source architecture and health judge agent prompts and DTOs |
 | `sdo/contracts/proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
 | `sdo/operator/broker/`, `memory/`, `outcome_derivation/` | Go commit authority, logical snapshot and artifact materialization edge, outcome store with physical JSON adapter, and controller-derived typed outcomes |
-| `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector SDK, deterministic execution, controller, builder/supervisor, and Kubernetes installation |
+| `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector SDK, deterministic execution, controller state and its typed contract projection, builder/supervisor, and Kubernetes installation |
 | `benchmarks/sregym/` | First-party benchmark adapter, protocol, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
 

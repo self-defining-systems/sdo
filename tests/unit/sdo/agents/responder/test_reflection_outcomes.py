@@ -4,6 +4,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+from google.protobuf import json_format
+from google.protobuf.timestamp_pb2 import Timestamp
+
 from sdo.agents.responder.reflection import SessionReflector
 from sdo.agents.responder.reflection_outcomes import (
     collapse_detector_history,
@@ -11,14 +14,13 @@ from sdo.agents.responder.reflection_outcomes import (
     history_view,
     prior_outcome_view,
 )
-from sdo.agents.views import (
+from sdo.contracts.proto import (
     ConfirmedRootCause,
     DetectorEvaluation,
-    DetectorEvaluationStatus,
     Finding,
     ObjectRef,
-    OutcomeClassification,
     OutcomeRecord,
+    OutcomeTimestamps,
     RepairActionReceipt,
 )
 
@@ -29,12 +31,18 @@ _T0 = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _EVIDENCE = "FailedMount: configmap mongo-geo-script not found " * 40
 
 
+def _stamp(at: datetime) -> Timestamp:
+    value = Timestamp()
+    value.FromDatetime(at)
+    return value
+
+
 def _evaluations(detector_id: str, statuses: list[str], *, fingerprint: str = "fp") -> list[DetectorEvaluation]:
     return [
         DetectorEvaluation(
             detector_id=detector_id,
-            evaluated_at=_T0 + timedelta(seconds=index),
-            status=DetectorEvaluationStatus(status),
+            evaluated_at=_stamp(_T0 + timedelta(seconds=index)),
+            status=status,
             fingerprints=[fingerprint] if status == "firing" else [],
         )
         for index, status in enumerate(statuses)
@@ -44,10 +52,11 @@ def _evaluations(detector_id: str, statuses: list[str], *, fingerprint: str = "f
 def _outcome(incident_id: str, *, evaluations: int = 20) -> OutcomeRecord:
     ref = ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="mongo-geo-script")
     return OutcomeRecord(
+        schema_version=1,
         incident_id=incident_id,
         source_commit="source",
         deployed_commit="deployed",
-        classification=OutcomeClassification.SUCCESS,
+        classification="success",
         responder_backend="codex",
         responder_model="gpt-test",
         detector_history=_evaluations("health-objective", ["firing"] * evaluations)
@@ -75,13 +84,13 @@ def _outcome(incident_id: str, *, evaluations: int = 20) -> OutcomeRecord:
                 target="ConfigMap/mongo-geo-script",
                 summary="restore the ConfigMap from tracked source",
                 details="kubectl apply -f kubernetes/geo/mongo-geo-script-configmap.yaml " * 20,
-                started_at=_T0,
-                completed_at=_T0,
+                started_at=_stamp(_T0),
+                completed_at=_stamp(_T0),
                 success=True,
                 reversible=True,
             )
         ],
-        timestamps={"detected_at": _T0.isoformat(), "dispatched_at": _T0.isoformat(), "completed_at": _T0.isoformat()},
+        timestamps=OutcomeTimestamps(detected_at=_stamp(_T0), dispatched_at=_stamp(_T0), completed_at=_stamp(_T0)),
     )
 
 
@@ -120,7 +129,9 @@ def test_current_outcome_keeps_findings_evidence_and_repairs_verbatim() -> None:
 
     view = current_outcome_view(outcome)
 
-    full = outcome.model_dump(mode="json")
+    full = json_format.MessageToDict(
+        outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+    )
     assert {key: value for key, value in view.items() if key != "detector_history"} == {
         key: value for key, value in full.items() if key != "detector_history"
     }

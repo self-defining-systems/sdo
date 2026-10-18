@@ -22,9 +22,8 @@ from sdo.agents.views import (
     IncidentRequest,
     IncidentResult,
     OperationalMemorySnapshot,
-    OutcomeClassification,
-    OutcomeRecord,
 )
+from sdo.contracts import OutcomeRecord
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -51,10 +50,11 @@ class _CapturingBackend:
 
 def _outcome() -> OutcomeRecord:
     return OutcomeRecord(
+        schema_version=1,
         incident_id="inc-1",
         source_commit="source",
         deployed_commit="deployed",
-        classification=OutcomeClassification.SUCCESS,
+        classification="success",
         responder_backend="codex",
         responder_model="gpt-5",
     )

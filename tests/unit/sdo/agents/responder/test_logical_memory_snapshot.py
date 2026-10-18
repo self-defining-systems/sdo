@@ -96,11 +96,13 @@ def test_reflection_brief_uses_logical_snapshot_without_loading_memory_files(tmp
     assert ".sdo/" not in brief
 
     backend = _CapturingBackend()
+    outcome = _outcome()
+    outcome.incident_id = request.incident_id
     SessionReflector(backend).resume(
         session_id="fresh",
         incident_id=request.incident_id,
         worktree=tmp_path,
-        outcome=_outcome().model_copy(update={"incident_id": request.incident_id}),
+        outcome=outcome,
         history=[],
         outcome_commit=request.repository_base_commit,
         session_mode="fresh",

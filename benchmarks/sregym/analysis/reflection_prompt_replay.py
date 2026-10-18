@@ -19,10 +19,10 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+from google.protobuf import json_format
+
 from sdo.agents.responder import current_outcome_view, history_view
-from sdo.agents.views import (
-    OutcomeRecord,
-)
+from sdo.contracts import OutcomeRecord
 
 #: o200k measured 3.93-4.08 characters per token on recorded reflection prompts.
 CHARS_PER_TOKEN = 4.0
@@ -93,8 +93,13 @@ def replay_rollout(rollout: Path) -> PromptReplay | None:
     history_at = text.find(_HISTORY)
     if current_at < 0 or history_at < current_at:
         return None
-    current = OutcomeRecord.model_validate_json(text[current_at + len(_CURRENT) : history_at])
-    history = [OutcomeRecord.model_validate(item) for item in json.loads(text[history_at + len(_HISTORY) :])]
+    current = json_format.Parse(
+        text[current_at + len(_CURRENT) : history_at], OutcomeRecord(), ignore_unknown_fields=True
+    )
+    history = [
+        json_format.ParseDict(item, OutcomeRecord(), ignore_unknown_fields=True)
+        for item in json.loads(text[history_at + len(_HISTORY) :])
+    ]
     old = text[current_at:]
     new = (
         f"Current outcome:\n{json.dumps(current_outcome_view(current), indent=2)}\n\n"

@@ -4,12 +4,9 @@ package outcome_derivation
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -66,32 +63,9 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	classification := classify(closure, repairCommit, healthVerified, verifications)
 	request, result := closure.GetRequest(), closure.GetResult()
 
-	detectorHistory, err := protoList(request.GetDetectorHistory())
-	if err != nil {
-		return Result{}, err
-	}
-	findings, err := protoList(request.GetFindings())
-	if err != nil {
-		return Result{}, err
-	}
-	finalStates, err := protoList(closure.GetFinalDetectorStates())
-	if err != nil {
-		return Result{}, err
-	}
-	rootCauses, err := protoList(result.GetConfirmedRootCauses())
-	if err != nil {
-		return Result{}, err
-	}
-	repairActions, err := protoList(result.GetRepairActions())
-	if err != nil {
-		return Result{}, err
-	}
-	usage := json.RawMessage(`{"llm_calls":0,"input_tokens":0,"output_tokens":0}`)
+	usage := &contractsv1alpha1.UsageMetrics{}
 	if result != nil && result.GetUsage() != nil {
-		usage, err = protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}.Marshal(result.GetUsage())
-		if err != nil {
-			return Result{}, err
-		}
+		usage = proto.Clone(result.GetUsage()).(*contractsv1alpha1.UsageMetrics)
 	}
 	surfaced := make([]string, 0, len(request.GetSurfacedPlaybooks()))
 	for _, playbook := range request.GetSurfacedPlaybooks() {
@@ -103,41 +77,32 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	}
 	rejected := difference(surfaced, applied)
 	completedAt := closure.GetResponderCompletedAt()
-	var verifiedAt any
+	var verifiedAt *timestamppb.Timestamp
 	if healthVerified {
 		completedAt = closure.GetVerifiedAt()
-		verifiedAt = timestamp(closure.GetVerifiedAt())
+		verifiedAt = closure.GetVerifiedAt()
 	}
-	var mitigatedAt any
+	var mitigatedAt *timestamppb.Timestamp
 	if result != nil {
-		mitigatedAt = timestamp(closure.GetResponderCompletedAt())
+		mitigatedAt = closure.GetResponderCompletedAt()
 	}
-	var commit any
+	var commit *string
 	if repairCommit != "" {
-		commit = repairCommit
+		commit = &repairCommit
 	}
-	record := map[string]any{
-		"schema_version": 1,
-		"incident_id":    request.GetIncidentId(), "source_commit": request.GetSourceCommit(), "deployed_commit": request.GetDeployedCommit(),
-		"detector_history": detectorHistory, "findings": findings,
-		"surfaced_playbooks": surfaced, "inspected_playbooks": surfaced, "confirmed_playbooks": applied,
-		"rejected_playbooks": rejected, "applied_playbooks": applied,
-		"confirmed_root_causes": rootCauses, "final_health_detector_state": finalStates,
-		"classification": classification, "repair_commit": commit, "repair_actions": repairActions, "memory_commit": commit,
-		"responder_backend": backend, "responder_model": model, "usage": usage,
-		"timestamps": map[string]any{
-			"detected_at": timestamp(closure.GetDetectedAt()), "dispatched_at": timestamp(closure.GetDispatchedAt()),
-			"mitigated_at": mitigatedAt, "verified_at": verifiedAt, "completed_at": timestamp(completedAt),
+	record := &contractsv1alpha1.OutcomeRecord{
+		SchemaVersion: 1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
+		DetectorHistory: cloneMessages(request.GetDetectorHistory()), Findings: cloneMessages(request.GetFindings()),
+		SurfacedPlaybooks: surfaced, InspectedPlaybooks: append([]string(nil), surfaced...), ConfirmedPlaybooks: append([]string(nil), applied...),
+		RejectedPlaybooks: rejected, AppliedPlaybooks: applied,
+		ConfirmedRootCauses: cloneMessages(result.GetConfirmedRootCauses()), FinalHealthDetectorState: cloneMessages(closure.GetFinalDetectorStates()),
+		Classification: classification, RepairCommit: commit, RepairActions: cloneMessages(result.GetRepairActions()), MemoryCommit: commit,
+		ResponderBackend: backend, ResponderModel: model, Usage: usage,
+		Timestamps: &contractsv1alpha1.OutcomeTimestamps{
+			DetectedAt: cloneTimestamp(closure.GetDetectedAt()), DispatchedAt: cloneTimestamp(closure.GetDispatchedAt()),
+			MitigatedAt: cloneTimestamp(mitigatedAt), VerifiedAt: cloneTimestamp(verifiedAt), CompletedAt: cloneTimestamp(completedAt),
 		},
-		"diagnosis_verification": verifications,
-	}
-	document, err := json.Marshal(record)
-	if err != nil {
-		return Result{}, err
-	}
-	typed := new(contractsv1alpha1.OutcomeRecord)
-	if err := protojson.Unmarshal(document, typed); err != nil {
-		return Result{}, fmt.Errorf("derived outcome violates contract: %w", err)
+		DiagnosisVerification: verifications,
 	}
 	reflect := false
 	if classification == "success" {
@@ -148,23 +113,22 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			}
 		}
 	}
-	return Result{Record: typed, RequiresReflection: reflect}, nil
+	return Result{Record: record, RequiresReflection: reflect}, nil
 }
 
-func protoList[T proto.Message](items []T) ([]json.RawMessage, error) {
-	result := make([]json.RawMessage, 0, len(items))
+func cloneMessages[T proto.Message](items []T) []T {
+	result := make([]T, 0, len(items))
 	for _, item := range items {
-		data, err := protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}.Marshal(item)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, data)
+		result = append(result, proto.Clone(item).(T))
 	}
-	return result, nil
+	return result
 }
 
-func timestamp(value *timestamppb.Timestamp) string {
-	return value.AsTime().UTC().Format(time.RFC3339Nano)
+func cloneTimestamp(value *timestamppb.Timestamp) *timestamppb.Timestamp {
+	if value == nil {
+		return nil
+	}
+	return proto.Clone(value).(*timestamppb.Timestamp)
 }
 
 func difference(left, right []string) []string {
@@ -182,7 +146,7 @@ func difference(left, right []string) []string {
 	return result
 }
 
-func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool, verifications []rootCauseVerification) string {
+func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool, verifications []*contractsv1alpha1.DiagnosisVerification) string {
 	result := closure.GetResult()
 	if closure.GetRequest() == nil {
 		return "failed"

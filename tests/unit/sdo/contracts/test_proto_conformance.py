@@ -32,7 +32,6 @@ from sdo.agents.views import (
 from sdo.agents.views import (
     IncidentView as PydIncidentView,
 )
-from sdo.agents.views import OutcomeRecord as AgentOutcomeView
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
     IncidentClosure,
@@ -41,6 +40,7 @@ from sdo.contracts.proto import (
     IncidentView,
     OutcomeRecord,
     parse_json,
+    to_canonical_json,
 )
 
 GO_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts" / "go"
@@ -53,10 +53,10 @@ def test_outcomes_are_typed_across_the_reflection_boundary() -> None:
     assert fields["prior_outcomes"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
 
 
-def test_agent_outcome_view_round_trips_through_canonical_contract() -> None:
-    view = AgentOutcomeView.model_validate({"incident_id": "incident-1", "classification": "success"})
-    encoded = parse_json(view.model_dump_json(), OutcomeRecord())
-    assert encoded.incident_id == view.incident_id
+def test_outcome_round_trips_through_canonical_contract() -> None:
+    record = OutcomeRecord(schema_version=1, incident_id="incident-1", classification="success")
+    encoded = parse_json(to_canonical_json(record), OutcomeRecord())
+    assert encoded.incident_id == record.incident_id
     assert encoded.schema_version == 1
 
 

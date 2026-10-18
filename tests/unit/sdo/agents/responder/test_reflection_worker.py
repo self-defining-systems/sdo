@@ -8,7 +8,7 @@ from google.protobuf.any_pb2 import Any
 from sdo.agents.responder.reflection import ReflectionTurn
 from sdo.agents.responder.reflection_worker import run_reflection_task
 from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, ReflectionResult
-from sdo.contracts.proto import IncidentClosure, OutcomeRecord, parse_json, to_canonical_json
+from sdo.contracts.proto import IncidentClosure, parse_json, to_canonical_json
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "go" / "closure_repaired.json"
@@ -32,10 +32,6 @@ def _closure() -> IncidentClosure:
         if "surfaced_playbooks" in entry:
             entry["surfaced_playbook_ids"] = entry.pop("surfaced_playbooks")
     return json_format.ParseDict(raw, IncidentClosure())
-
-
-def _typed_outcome(outcome: object) -> OutcomeRecord:
-    return json_format.Parse(outcome.model_dump_json(), OutcomeRecord())
 
 
 class Publisher:
@@ -105,7 +101,7 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     closure = _closure()
     request = ReflectionRequest(
         closure=closure,
-        outcome=_typed_outcome(_outcome(closure.request.incident_id)),
+        outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
     )
     request.memory_snapshot.accepted_commit = "outcome-commit"
@@ -142,7 +138,7 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     closure.result.responder_session_id = "responder-session-123"
     request = ReflectionRequest(
         closure=closure,
-        outcome=_typed_outcome(_outcome(closure.request.incident_id)),
+        outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
         session_mode="resume",
     )
@@ -194,7 +190,7 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
     closure = _closure()
     request = ReflectionRequest(
         closure=closure,
-        outcome=_typed_outcome(_outcome(closure.request.incident_id)),
+        outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
         guidance="generalize-spec",
     )
@@ -226,7 +222,7 @@ def test_reflection_worker_requires_commit_bound_logical_memory(tmp_path: Path) 
     closure = _closure()
     request = ReflectionRequest(
         closure=closure,
-        outcome=_typed_outcome(_outcome(closure.request.incident_id)),
+        outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
     )
     task = AgentTask(
@@ -249,7 +245,7 @@ def test_reflection_worker_returns_logical_artifact_proposal(tmp_path: Path) -> 
     outcome = _outcome(closure.request.incident_id)
     request = ReflectionRequest(
         closure=closure,
-        outcome=_typed_outcome(outcome),
+        outcome=outcome,
         outcome_commit="outcome-commit",
     )
     request.memory_snapshot.accepted_commit = "outcome-commit"
@@ -279,7 +275,7 @@ def test_reflection_worker_rejects_false_origin(tmp_path: Path) -> None:
     closure = _closure()
     request = ReflectionRequest(
         closure=closure,
-        outcome=_typed_outcome(_outcome(closure.request.incident_id)),
+        outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
     )
     request.memory_snapshot.accepted_commit = "outcome-commit"

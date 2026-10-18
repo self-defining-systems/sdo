@@ -107,10 +107,7 @@
   "usage": {
     "llm_calls": 1,
     "input_tokens": 12000,
-    "output_tokens": 2200,
-    "cached_input_tokens": 0,
-    "cache_write_input_tokens": 0,
-    "reasoning_output_tokens": 0
+    "output_tokens": 2200
   },
   "timing": {
     "started_at": "2026-07-09T18:01:00Z",

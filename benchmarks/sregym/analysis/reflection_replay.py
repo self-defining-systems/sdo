@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from google.protobuf import json_format
+
 from libs.agent_cli.structured import run_structured_turn, turn_usage
 from sdo.agents.responder import (
     INCIDENT_REASONING_EFFORT,
@@ -33,8 +35,8 @@ from sdo.agents.responder import (
 )
 from sdo.agents.views import (
     BrokerClosure,
-    OutcomeRecord,
 )
+from sdo.contracts import OutcomeRecord
 
 
 class _ScopedBackend(CodexSessionBackend):
@@ -98,7 +100,7 @@ def replay(workspace: Path, suffix: str, guidance: str, out: Path, *, model: str
     _git(out, "clone", "--quiet", "--no-hardlinks", str(workspace), str(clone))
     _git(clone, "checkout", "--quiet", "--detach", ledger["outcome_commit"])
     records = [
-        OutcomeRecord.model_validate_json(line)
+        json_format.Parse(line, OutcomeRecord(), ignore_unknown_fields=True)
         for line in (clone / ".sdo" / "outcomes.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
