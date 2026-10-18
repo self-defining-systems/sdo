@@ -31,7 +31,10 @@ from sdo.agents.responder import (
     SessionReflector,
     reflection_output_schema,
 )
-from sdo.contracts import BrokerClosure, OutcomeRecord
+from sdo.agents.views import (
+    BrokerClosure,
+    OutcomeRecord,
+)
 
 
 class _ScopedBackend(CodexSessionBackend):

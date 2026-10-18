@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 )
 
@@ -368,7 +369,7 @@ func (b *Broker) ReleaseProposal(incidentID string, phase Phase) error {
 
 // RecordOutcome writes an authoritative immutable outcome in a private broker
 // clone and commits it. Agents cannot supply an outcome through Publish.
-func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, document []byte) (Receipt, error) {
+func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *contracts.OutcomeRecord) (Receipt, error) {
 	var receipt Receipt
 	err := b.locked(func() error {
 		if err := b.requireClean(ctx); err != nil {
@@ -383,7 +384,7 @@ func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, document 
 		if err := store.ImportLegacy(ctx); err != nil {
 			return err
 		}
-		outcome, err := store.Put(ctx, document)
+		outcome, err := store.Put(ctx, record)
 		if err != nil {
 			return err
 		}

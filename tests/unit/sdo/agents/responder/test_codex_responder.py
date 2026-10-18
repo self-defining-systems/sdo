@@ -13,7 +13,7 @@ from sdo.agents.responder.codex import (
     _responder_prompt,
     execute_incident,
 )
-from sdo.contracts import (
+from sdo.agents.views import (
     ConfirmedRootCause,
     IncidentRequest,
     IncidentResult,

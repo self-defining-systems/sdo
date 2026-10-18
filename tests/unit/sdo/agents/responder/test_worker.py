@@ -6,9 +6,13 @@ from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any
 
 from sdo.agents.responder.worker import run_worker_task
+from sdo.agents.views import (
+    IncidentRequest as ModelRequest,
+)
+from sdo.agents.views import (
+    IncidentResult as ModelResult,
+)
 from sdo.contracts import AgentResult, AgentTask
-from sdo.contracts import IncidentRequest as ModelRequest
-from sdo.contracts import IncidentResult as ModelResult
 from sdo.contracts.proto import IncidentRequest as ProtoRequest
 from sdo.contracts.proto import IncidentResult as ProtoResult
 from sdo.contracts.proto import parse_json, to_canonical_json
@@ -26,7 +30,7 @@ class RecordingPublisher:
 
 def _task(path: Path, *, task_type: str = "incident-response") -> AgentTask:
     logical = ModelRequest.model_validate_json((FIXTURES / "incident_request.json").read_text())
-    raw = logical.model_dump(mode="json", exclude={"architecture_summary_path", "health_objective_path"})
+    raw = logical.model_dump(mode="json")
     raw["memory_snapshot"] = {
         "accepted_commit": logical.repository_base_commit,
         "goal_markdown": "Example objective",

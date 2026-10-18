@@ -6,7 +6,12 @@ from typing import Any
 
 import pytest
 
-from sdo.contracts import ConfirmedRootCause, IncidentRequest, IncidentResult, UsageMetrics
+from sdo.agents.views import (
+    ConfirmedRootCause,
+    IncidentRequest,
+    IncidentResult,
+    UsageMetrics,
+)
 
 FIXTURE_DIR = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts"
 

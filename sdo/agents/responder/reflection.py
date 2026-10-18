@@ -9,7 +9,7 @@ from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_st
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
-from sdo.contracts import (
+from sdo.agents.views import (
     OperationalArtifactDraft,
     OutcomeClassification,
     OutcomeRecord,
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor
 
-    from sdo.contracts import BrokerClosure
+    from sdo.agents.views import BrokerClosure
 
 
 def _classification_directive(classification: OutcomeClassification, guidance: ReflectionGuidance = "baseline") -> str:

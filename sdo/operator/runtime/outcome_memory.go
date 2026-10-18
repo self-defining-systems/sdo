@@ -2,33 +2,15 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
 
 const maxRelevantOutcomes = 3
-
-type outcomeMemoryRecord struct {
-	IncidentID          string                `json:"incident_id"`
-	SourceCommit        string                `json:"source_commit"`
-	Classification      string                `json:"classification"`
-	Findings            []sdk.Finding         `json:"findings"`
-	ConfirmedRootCauses []ConfirmedRootCause  `json:"confirmed_root_causes"`
-	AppliedPlaybooks    []string              `json:"applied_playbooks"`
-	RepairActions       []RepairActionReceipt `json:"repair_actions"`
-	// DiagnosisVerification is SDO's deterministic verdict per root cause,
-	// aligned by index with ConfirmedRootCauses. Absent in older records.
-	DiagnosisVerification []struct {
-		Verdict string `json:"verdict"`
-	} `json:"diagnosis_verification"`
-	Timestamps struct {
-		CompletedAt time.Time `json:"completed_at"`
-	} `json:"timestamps"`
-}
 
 // discreditedVerdicts mark a root cause SDO found false (contradicted) or not
 // backed by the responder's own repair (unattributed). Such a cause is
@@ -46,18 +28,18 @@ func relevantOutcomeEvidence(
 		return nil
 	}
 
-	records := make([]outcomeMemoryRecord, 0)
+	records := make([]*contracts.OutcomeRecord, 0)
 	for _, outcome := range stored {
-		var record outcomeMemoryRecord
-		if json.Unmarshal(outcome.Document, &record) == nil && record.Classification == "success" {
-			records = append(records, record)
+		if outcome.Record.GetClassification() == "success" {
+			records = append(records, outcome.Record)
 		}
 	}
 	sort.SliceStable(records, func(i, j int) bool {
-		if records[i].Timestamps.CompletedAt.Equal(records[j].Timestamps.CompletedAt) {
-			return records[i].IncidentID < records[j].IncidentID
+		left, right := outcomeCompletedAt(records[i]), outcomeCompletedAt(records[j])
+		if left.Equal(right) {
+			return records[i].GetIncidentId() < records[j].GetIncidentId()
 		}
-		return records[i].Timestamps.CompletedAt.Before(records[j].Timestamps.CompletedAt)
+		return left.Before(right)
 	})
 
 	evidence := make([]PriorOutcomeEvidence, 0, maxRelevantOutcomes)
@@ -67,40 +49,47 @@ func relevantOutcomeEvidence(
 		if match == "" {
 			continue
 		}
-		playbookIDs, err := memory.PlaybookIDs(record.AppliedPlaybooks)
+		playbookIDs, err := memory.PlaybookIDs(record.GetAppliedPlaybooks())
 		if err != nil {
 			continue
 		}
-		rootCauses := make([]string, 0, len(record.ConfirmedRootCauses))
-		aligned := len(record.DiagnosisVerification) == len(record.ConfirmedRootCauses)
-		for index, cause := range record.ConfirmedRootCauses {
+		rootCauses := make([]string, 0, len(record.GetConfirmedRootCauses()))
+		aligned := len(record.GetDiagnosisVerification()) == len(record.GetConfirmedRootCauses())
+		for index, cause := range record.GetConfirmedRootCauses() {
 			if aligned {
-				if _, discredited := discreditedVerdicts[record.DiagnosisVerification[index].Verdict]; discredited {
+				if _, discredited := discreditedVerdicts[record.GetDiagnosisVerification()[index].GetVerdict()]; discredited {
 					continue
 				}
 			}
-			rootCauses = append(rootCauses, cause.Summary)
+			rootCauses = append(rootCauses, cause.GetSummary())
 		}
-		actions := make([]string, 0, len(record.RepairActions))
-		for _, action := range record.RepairActions {
-			if action.Success {
-				actions = append(actions, action.Summary)
+		actions := make([]string, 0, len(record.GetRepairActions()))
+		for _, action := range record.GetRepairActions() {
+			if action.GetSuccess() {
+				actions = append(actions, action.GetSummary())
 			}
 		}
 		evidence = append(evidence, PriorOutcomeEvidence{
-			IncidentID: record.IncidentID, MatchReason: match, RootCauseSummaries: rootCauses,
+			IncidentID: record.GetIncidentId(), MatchReason: match, RootCauseSummaries: rootCauses,
 			RepairActionSummaries: actions, AppliedPlaybookIDs: playbookIDs,
-			SourceCommit: record.SourceCommit, ExactSourceMatch: record.SourceCommit == sourceCommit,
+			SourceCommit: record.GetSourceCommit(), ExactSourceMatch: record.GetSourceCommit() == sourceCommit,
 		})
 	}
 	return evidence
 }
 
-func outcomeMatch(record outcomeMemoryRecord, current []sdk.Finding, origins map[string]string) string {
-	previous := record.Findings
+func outcomeCompletedAt(record *contracts.OutcomeRecord) time.Time {
+	if record.GetTimestamps() == nil || record.GetTimestamps().GetCompletedAt() == nil {
+		return time.Time{}
+	}
+	return record.GetTimestamps().GetCompletedAt().AsTime()
+}
+
+func outcomeMatch(record *contracts.OutcomeRecord, current []sdk.Finding, origins map[string]string) string {
+	previous := record.GetFindings()
 	for _, left := range previous {
 		for _, right := range current {
-			if left.DetectorID == right.DetectorID && left.Fingerprint != "" && left.Fingerprint == right.Fingerprint {
+			if left.GetDetectorId() == right.DetectorID && left.GetFingerprint() != "" && left.GetFingerprint() == right.Fingerprint {
 				return "exact-fingerprint"
 			}
 		}
@@ -110,19 +99,19 @@ func outcomeMatch(record outcomeMemoryRecord, current []sdk.Finding, origins map
 	// repeat shares no fingerprint with it. Same learned detector, same
 	// resource: the same fault again.
 	for _, right := range current {
-		if origin := origins[right.DetectorID]; origin == "" || origin != record.IncidentID {
+		if origin := origins[right.DetectorID]; origin == "" || origin != record.GetIncidentId() {
 			continue
 		}
 		for _, left := range previous {
-			if sameObject(left.PrimaryResource, right.PrimaryResource) {
+			if sameObject(left.GetPrimaryResource(), right.PrimaryResource) {
 				return "learned-detector-origin"
 			}
 		}
 	}
 	for _, left := range previous {
 		for _, right := range current {
-			if left.DetectorID == right.DetectorID && left.RuleID == right.RuleID &&
-				left.PrimaryResource.Kind == right.PrimaryResource.Kind {
+			if left.GetDetectorId() == right.DetectorID && left.GetRuleId() == right.RuleID &&
+				left.GetPrimaryResource().GetKind() == right.PrimaryResource.Kind {
 				return "detector-rule-resource-kind"
 			}
 		}
@@ -130,7 +119,7 @@ func outcomeMatch(record outcomeMemoryRecord, current []sdk.Finding, origins map
 	return ""
 }
 
-func sameObject(left sdk.ObjectRef, right sdk.ObjectRef) bool {
-	return left.Kind != "" && left.Name != "" && left.Kind == right.Kind &&
-		left.Namespace == right.Namespace && left.Name == right.Name
+func sameObject(left *contracts.ObjectRef, right sdk.ObjectRef) bool {
+	return left.GetKind() != "" && left.GetName() != "" && left.GetKind() == right.Kind &&
+		left.GetNamespace() == right.Namespace && left.GetName() == right.Name
 }

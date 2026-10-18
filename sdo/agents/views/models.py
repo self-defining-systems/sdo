@@ -277,9 +277,6 @@ class IncidentRequest(ContractModel):
     relevant_outcomes: list[PriorOutcomeEvidence] = Field(default_factory=list, max_length=3)
     source_commit: str = Field(min_length=1)
     deployed_commit: str = Field(min_length=1)
-    # Legacy Python broker transport only. Native worker tasks use memory_snapshot.
-    architecture_summary_path: str = ""
-    health_objective_path: str = ""
     repository_worktree: str = Field(min_length=1)
     repository_base_commit: str = Field(min_length=1)
     response_deadline: datetime

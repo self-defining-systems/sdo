@@ -12,7 +12,10 @@ from typing import TYPE_CHECKING, Protocol
 
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
-from sdo.contracts import IncidentRequest, IncidentResult
+from sdo.agents.views import (
+    IncidentRequest,
+    IncidentResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable

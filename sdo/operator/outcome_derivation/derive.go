@@ -16,7 +16,7 @@ import (
 )
 
 type Result struct {
-	Document           []byte
+	Record             *contractsv1alpha1.OutcomeRecord
 	RequiresReflection bool
 }
 
@@ -135,6 +135,10 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	if err != nil {
 		return Result{}, err
 	}
+	typed := new(contractsv1alpha1.OutcomeRecord)
+	if err := protojson.Unmarshal(document, typed); err != nil {
+		return Result{}, fmt.Errorf("derived outcome violates contract: %w", err)
+	}
 	reflect := false
 	if classification == "success" {
 		for _, verification := range verifications {
@@ -144,7 +148,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			}
 		}
 	}
-	return Result{Document: document, RequiresReflection: reflect}, nil
+	return Result{Record: typed, RequiresReflection: reflect}, nil
 }
 
 func protoList[T proto.Message](items []T) ([]json.RawMessage, error) {

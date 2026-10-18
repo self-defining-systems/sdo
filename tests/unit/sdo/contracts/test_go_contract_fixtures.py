@@ -17,7 +17,11 @@ from typing import Any
 import pytest
 
 from sdo.agents.responder.incident_status import _controller_view
-from sdo.contracts import BrokerClosure, IncidentRequest, IncidentView
+from sdo.agents.views import (
+    BrokerClosure,
+    IncidentRequest,
+    IncidentView,
+)
 
 GO_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts" / "go"
 VIEWS = ("incident_view_empty.json", "incident_view_open.json", "incident_view_populated.json")

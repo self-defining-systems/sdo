@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-func outcome(id, classification string) []byte {
-	return []byte(`{"schema_version":1,"incident_id":"` + id + `","classification":"` + classification + `","source_commit":"abc"}`)
+func outcome(id, classification string) *contracts.OutcomeRecord {
+	return &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: classification, SourceCommit: "abc"}
 }
 
 func TestOutcomeStoreIsImmutableAndLayoutIsPrivate(t *testing.T) {
@@ -30,8 +33,8 @@ func TestOutcomeStoreIsImmutableAndLayoutIsPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !json.Valid(read.Document) {
-		t.Fatalf("invalid document: %s", read.Document)
+	if !json.Valid(read.document) {
+		t.Fatalf("invalid document: %s", read.document)
 	}
 	all, err := store.List(context.Background())
 	if err != nil || len(all) != 1 {
@@ -48,7 +51,11 @@ func TestImportLegacyIsIdempotentAndRejectsConflicts(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(outcome("old", "success"), '\n'), 0o644); err != nil {
+	legacy, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(outcome("old", "success"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(legacy, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	store := NewJSONStore(root)
@@ -68,9 +75,9 @@ func TestImportLegacyIsIdempotentAndRejectsConflicts(t *testing.T) {
 
 func TestOutcomeValidation(t *testing.T) {
 	store := NewJSONStore(t.TempDir())
-	for _, document := range [][]byte{[]byte(`[]`), []byte(`{"schema_version":2,"incident_id":"x","classification":"success"}`), []byte(`{"schema_version":1,"incident_id":"","classification":"success"}`), []byte(`{"schema_version":1,"incident_id":"x","classification":"unknown"}`)} {
-		if _, err := store.Put(context.Background(), document); err == nil {
-			t.Fatalf("accepted %s", document)
+	for _, record := range []*contracts.OutcomeRecord{nil, {SchemaVersion: 2, IncidentId: "x", Classification: "success"}, {SchemaVersion: 1, IncidentId: "", Classification: "success"}, {SchemaVersion: 1, IncidentId: "x", Classification: "unknown"}} {
+		if _, err := store.Put(context.Background(), record); err == nil {
+			t.Fatalf("accepted %+v", record)
 		}
 	}
 	if _, err := store.Put(context.Background(), outcome(strings.Repeat("x", 512), "success")); err != nil {

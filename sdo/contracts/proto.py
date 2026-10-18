@@ -1,7 +1,7 @@
 """Generated proto contract messages and the canonical protojson convention.
 
 This is the Python edge of the proto single-source-of-truth track. The ``.proto`` files under
-``proto/`` are the one source; ``buf generate`` emits the messages into ``sdo/contracts/_gen``
+``sdo/contracts/proto/`` are the one source; ``buf generate`` emits the messages into ``sdo/contracts/_gen``
 and this facade re-exports them under a stable import path so callers never
 reach into the generated tree directly.
 
@@ -36,6 +36,7 @@ from sdodev.contracts.v1alpha1 import (
     controller_config_pb2,
     lifecycle_pb2,
     messages_pb2,
+    outcome_pb2,
     telemetry_pb2,
     traffic_pb2,
     worker_pb2,
@@ -77,6 +78,9 @@ ProposedPlaybook = messages_pb2.ProposedPlaybook
 ProposedTrafficGenerator = messages_pb2.ProposedTrafficGenerator
 ProtoMemoryWatch = messages_pb2.MemoryWatch
 ProtoMemoryScript = messages_pb2.MemoryScript
+OutcomeRecord = outcome_pb2.OutcomeRecord
+OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
+DiagnosisVerification = outcome_pb2.DiagnosisVerification
 
 FiringRecord = telemetry_pb2.FiringRecord
 
@@ -127,6 +131,9 @@ __all__ = [
     "KubernetesJobLaunch",
     "LocalProcessLaunch",
     "ObjectRef",
+    "OutcomeRecord",
+    "OutcomeTimestamps",
+    "DiagnosisVerification",
     "ObservedStateChange",
     "PriorOutcomeEvidence",
     "ProposalWorkspace",

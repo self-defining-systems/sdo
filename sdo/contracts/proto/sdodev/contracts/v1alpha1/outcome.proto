@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// Independently verified, durable incident evidence. This is the logical
+// contract; the memory adapter alone chooses its repository representation.
+message OutcomeRecord {
+  int32 schema_version = 1 [(buf.validate.field).int32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string source_commit = 3;
+  string deployed_commit = 4;
+  repeated DetectorEvaluation detector_history = 5;
+  repeated Finding findings = 6;
+  repeated string surfaced_playbooks = 7;
+  repeated string inspected_playbooks = 8;
+  repeated string confirmed_playbooks = 9;
+  repeated string rejected_playbooks = 10;
+  repeated string applied_playbooks = 11;
+  repeated ConfirmedRootCause confirmed_root_causes = 12;
+  repeated DetectorEvaluation final_health_detector_state = 13;
+  string classification = 14 [(buf.validate.field).string = {in: ["success", "partial", "external_recovery", "cleared_without_action", "false_positive", "false_negative", "failed", "cancelled"]}];
+  optional string repair_commit = 15;
+  repeated RepairActionReceipt repair_actions = 16;
+  optional string memory_commit = 17;
+  string responder_backend = 18;
+  string responder_model = 19;
+  UsageMetrics usage = 20;
+  OutcomeTimestamps timestamps = 21;
+  repeated DiagnosisVerification diagnosis_verification = 22;
+}
+
+message OutcomeTimestamps {
+  google.protobuf.Timestamp detected_at = 1;
+  google.protobuf.Timestamp dispatched_at = 2;
+  google.protobuf.Timestamp mitigated_at = 3;
+  google.protobuf.Timestamp verified_at = 4;
+  google.protobuf.Timestamp completed_at = 5;
+}
+
+message DiagnosisVerification {
+  string summary = 1;
+  string verdict = 2;
+  repeated OutcomeEvidenceCheck evidence = 3;
+  repeated OutcomeDetectorFlip detectors = 4;
+  OutcomeRepairAttribution repair = 5;
+}
+
+message OutcomeEvidenceCheck {
+  string kind = 1;
+  string source = 2;
+  optional bool verified = 3;
+  optional string reason = 4;
+}
+
+message OutcomeDetectorFlip {
+  string detector_id = 1;
+  bool fired_at_dispatch = 2;
+  optional bool cleared_after_fix = 3;
+  bool flipped = 4;
+}
+
+message OutcomeRepairAttribution {
+  bool attributed = 1;
+  repeated string actions = 2;
+  repeated string repaired_resources = 3;
+  repeated string externally_reverted = 4;
+  string reason = 5;
+}

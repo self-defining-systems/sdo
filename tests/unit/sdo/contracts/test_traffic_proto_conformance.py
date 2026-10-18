@@ -1,6 +1,6 @@
 """Conformance ratchet for the traffic workload proto (Python side).
 
-``proto/sdodev/contracts/v1alpha1/traffic.proto`` is the single schema SOURCE
+``sdo/contracts/proto/sdodev/contracts/v1alpha1/traffic.proto`` is the single schema SOURCE
 for the ``.sdo/diagnostics/traffic/workloads/<name>.yaml`` artifact. This test
 proves the generated Python proto type models the stored wire: every committed
 workload fixture parses into ``TrafficWorkload`` with no unknown field (protojson

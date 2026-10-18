@@ -17,7 +17,7 @@ from sdo.agents.responder.reflection import (
     SessionReflector,
     reflection_output_schema,
 )
-from sdo.contracts import (
+from sdo.agents.views import (
     BrokerClosure,
     IncidentRequest,
     IncidentResult,

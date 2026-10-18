@@ -11,7 +11,7 @@ from sdo.agents.responder.reflection_outcomes import (
     history_view,
     prior_outcome_view,
 )
-from sdo.contracts import (
+from sdo.agents.views import (
     ConfirmedRootCause,
     DetectorEvaluation,
     DetectorEvaluationStatus,

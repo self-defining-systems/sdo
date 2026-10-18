@@ -10,7 +10,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from sdo.contracts.models import (
+from sdo.agents.views.models import (
     ConfirmedRootCause,
     DetectorEvaluation,
     DetectorTimelineEntry,

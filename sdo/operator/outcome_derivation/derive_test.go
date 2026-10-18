@@ -2,7 +2,6 @@ package outcome_derivation
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,17 +62,9 @@ func TestDeriveGoldenClosureDiagnosisParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var document struct {
-				Classification        string `json:"classification"`
-				DiagnosisVerification []struct {
-					Verdict string `json:"verdict"`
-				} `json:"diagnosis_verification"`
-			}
-			if err := json.Unmarshal(result.Document, &document); err != nil {
-				t.Fatal(err)
-			}
-			if document.Classification != "success" || len(document.DiagnosisVerification) != 1 || document.DiagnosisVerification[0].Verdict != tc.verdict || result.RequiresReflection != tc.reflect {
-				t.Fatalf("unexpected derived outcome: %+v, reflect=%v", document, result.RequiresReflection)
+			record := result.Record
+			if record.GetClassification() != "success" || len(record.GetDiagnosisVerification()) != 1 || record.GetDiagnosisVerification()[0].GetVerdict() != tc.verdict || result.RequiresReflection != tc.reflect {
+				t.Fatalf("unexpected derived outcome: %+v, reflect=%v", record, result.RequiresReflection)
 			}
 		})
 	}
@@ -84,22 +75,11 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var record struct {
-		Classification        string `json:"classification"`
-		DiagnosisVerification []struct {
-			Verdict string `json:"verdict"`
-			Repair  struct {
-				Attributed bool `json:"attributed"`
-			} `json:"repair"`
-		} `json:"diagnosis_verification"`
-		Timestamps struct {
-			CompletedAt string `json:"completed_at"`
-		} `json:"timestamps"`
+	if result.Record == nil || result.Record.GetIncidentId() != "incident-1" || result.Record.GetClassification() != "success" {
+		t.Fatalf("derivation did not return a typed outcome: %+v", result.Record)
 	}
-	if err := json.Unmarshal(result.Document, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record.Classification != "success" || len(record.DiagnosisVerification) != 1 || record.DiagnosisVerification[0].Verdict != "confirmed" || !record.DiagnosisVerification[0].Repair.Attributed || !result.RequiresReflection {
+	record := result.Record
+	if record.GetClassification() != "success" || len(record.GetDiagnosisVerification()) != 1 || record.GetDiagnosisVerification()[0].GetVerdict() != "confirmed" || !record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() || record.GetTimestamps().GetCompletedAt() == nil || !result.RequiresReflection {
 		t.Fatalf("unexpected outcome: %+v, reflect=%v", record, result.RequiresReflection)
 	}
 }
@@ -120,14 +100,8 @@ func TestDeriveRejectsExternalRecoveryAndNoAction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var record struct {
-				Classification string `json:"classification"`
-			}
-			if err := json.Unmarshal(result.Document, &record); err != nil {
-				t.Fatal(err)
-			}
-			if record.Classification != tc.classification || result.RequiresReflection {
-				t.Fatalf("classification=%s reflect=%v", record.Classification, result.RequiresReflection)
+			if result.Record.GetClassification() != tc.classification || result.RequiresReflection {
+				t.Fatalf("classification=%s reflect=%v", result.Record.GetClassification(), result.RequiresReflection)
 			}
 		})
 	}

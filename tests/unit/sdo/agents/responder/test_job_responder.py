@@ -5,7 +5,10 @@ from pathlib import Path
 import pytest
 
 from sdo.agents.responder.job import run_job
-from sdo.contracts import IncidentRequest, IncidentResult
+from sdo.agents.views import (
+    IncidentRequest,
+    IncidentResult,
+)
 
 FIXTURE_DIR = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 

@@ -25,7 +25,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from sdo.contracts import Finding, FindingStatus, IncidentRequest, IncidentView, StateChange
+from sdo.agents.views import (
+    Finding,
+    FindingStatus,
+    IncidentRequest,
+    IncidentView,
+    StateChange,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -18,7 +18,7 @@ func (f reflectionTaskExecutorFunc) Execute(ctx context.Context, task *contracts
 
 func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 	store := memory.NewJSONStore(t.TempDir())
-	if _, err := store.Put(context.Background(), []byte(`{"schema_version":1,"incident_id":"prior","classification":"success"}`)); err != nil {
+	if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
 	w := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
@@ -30,7 +30,7 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 		if err := task.Request.UnmarshalTo(request); err != nil {
 			t.Fatal(err)
 		}
-		if request.GetClosure().GetRequest().GetIncidentId() != "current" || len(request.PriorOutcomeJson) != 1 || request.ProposalCommit != "repair" || request.OutcomeCommit != "outcome" {
+		if request.GetClosure().GetRequest().GetIncidentId() != "current" || len(request.GetPriorOutcomes()) != 1 || request.ProposalCommit != "repair" || request.OutcomeCommit != "outcome" {
 			t.Fatalf("wrong reflection request: %+v", request)
 		}
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "prior case already covers it"})
@@ -40,7 +40,7 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
 	})
 	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
-	decision, err := w.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, []byte(`{"schema_version":1,"incident_id":"current","classification":"success"}`), "repair", "outcome")
+	decision, err := w.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,15 +75,15 @@ func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
 		}
 		return worker.Executor, nil
 	}
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, []byte(`{"schema_version":1,"incident_id":"current"}`), "repair", "outcome"); err == nil || called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err == nil || called {
 		t.Fatalf("resume without accepted session dispatched: %v", err)
 	}
 	closure.Result.ResponderSessionID = "../escape"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, []byte(`{"schema_version":1,"incident_id":"current"}`), "repair", "outcome"); err == nil || called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err == nil || called {
 		t.Fatalf("invalid session token dispatched: %v", err)
 	}
 	closure.Result.ResponderSessionID = "session-123"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, []byte(`{"schema_version":1,"incident_id":"current"}`), "repair", "outcome"); err != nil || !called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err != nil || !called {
 		t.Fatalf("valid session was not dispatched: %v", err)
 	}
 }
