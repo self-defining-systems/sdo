@@ -84,3 +84,52 @@ func TestOutcomeValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func writeLegacy(t *testing.T, root, line string) string {
+	t.Helper()
+	path := filepath.Join(root, ".sdo", "outcomes.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const legacyPhysical = `{"schema_version":1,"incident_id":"old","classification":"success","applied_playbooks":[".sdo/playbooks/fix-cache/README.md"]}`
+
+func TestImportLegacyNormalizesPlaybookReferencesToLogicalIDs(t *testing.T) {
+	root := t.TempDir()
+	writeLegacy(t, root, legacyPhysical)
+	store := NewJSONStore(root)
+	if err := store.ImportLegacy(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(context.Background(), "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := got.Record.GetAppliedPlaybooks(); len(ids) != 1 || ids[0] != "fix-cache" {
+		t.Fatalf("applied playbooks = %v", ids)
+	}
+	if strings.Contains(string(got.document), ".sdo/") {
+		t.Fatalf("physical path persisted: %s", got.document)
+	}
+}
+
+func TestReadersSeeLegacyHistoryWithoutMutatingRepository(t *testing.T) {
+	root := t.TempDir()
+	path := writeLegacy(t, root, legacyPhysical)
+	store := OpenReader(root)
+	all, err := store.List(context.Background())
+	if err != nil || len(all) != 1 || all[0].Record.GetAppliedPlaybooks()[0] != "fix-cache" {
+		t.Fatalf("list = %+v, %v", all, err)
+	}
+	if _, err := store.Get(context.Background(), "old"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("reader mutated the repository: %v", err)
+	}
+}

@@ -71,11 +71,8 @@ def reset_to_seed(environment: FastloopEnvironment) -> str:
     """Stop the persistent controller and return the workspace to its seed commit (``origin/HEAD``).
 
     Scenario expectations (first encounter learns, repeat is warm) assume the
-    lifecycle-only seed memory, so ``--fresh`` starts from it. The broker's
-    ledgers of earlier incidents are removed with the controller they belonged to.
+    lifecycle-only seed memory, so ``--fresh`` starts from it.
     """
-
-    import shutil
 
     from benchmarks.sregym.adapter import KubectlClusterOps, teardown
 
@@ -85,7 +82,6 @@ def reset_to_seed(environment: FastloopEnvironment) -> str:
     workspace = str(environment.workspace)
     subprocess.run(["git", "-C", workspace, "reset", "--quiet", "--hard", "origin/HEAD"], check=True)
     subprocess.run(["git", "-C", workspace, "clean", "--quiet", "-fdx", "--", ".sdo"], check=True)
-    shutil.rmtree(environment.workspace / ".git" / "sdo-broker", ignore_errors=True)
     return subprocess.run(
         ["git", "-C", workspace, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()

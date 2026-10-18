@@ -37,7 +37,6 @@ def _receipt(incident_id: str, *, warm: bool) -> dict[str, Any]:
         "remaining_worktrees": [],
         "usage": {"input_tokens": 300000, "cached_input_tokens": 250000, "output_tokens": 3000},
         "reflection_usage": {} if warm else {"input_tokens": 800000, "cached_input_tokens": 700000, "output_tokens": 9},
-        "reflection_attempts": 0 if warm else 1,
         "reflection_skipped_reason": "repeated exact-match success" if warm else None,
         "memory_reuse": {"warm_path": warm, "match_reasons": ["exact-fingerprint"] if warm else []},
         "confirmed_root_causes": ROOT_CAUSES,

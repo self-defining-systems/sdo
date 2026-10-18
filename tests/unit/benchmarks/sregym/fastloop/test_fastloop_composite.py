@@ -172,7 +172,6 @@ class FakeOps:
             "incident_id": incident_id,
             "usage": {"input_tokens": 100, "cached_input_tokens": 50, "output_tokens": 10},
             "reflection_usage": {"input_tokens": 40, "cached_input_tokens": 0, "output_tokens": 4},
-            "reflection_attempts": 1,
             "memory_reuse": {"warm_path": incident_id == "incident-2", "match_reasons": []},
             "phase_timings_seconds": {"operational_recovery": 30.0, "post_recovery_learning_and_receipt": 60.0},
             "recorded_at": (INJECTED + timedelta(seconds=100)).isoformat(),

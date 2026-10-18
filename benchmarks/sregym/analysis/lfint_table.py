@@ -2,7 +2,7 @@
 
 Joins, for each stage of an SDO persistent-controller pipeline, the strict
 receipt (detector timeline), the result CSV (fault injection time, TTD/TTM),
-the broker ledger (request findings, surfaced playbooks, reflection usage), the
+the receipt's native broker ledger (request findings, surfaced playbooks, reflection decision), the
 durable detector-firing stream, and the learned incident detectors in the
 chained workspace. Output is JSON on stdout so it can be tabulated.
 
@@ -48,17 +48,6 @@ def _stage_files(stage_dir: Path) -> dict[str, Path]:
     return found
 
 
-def _ledgers(stage_dirs: dict[int, Path]) -> dict[str, dict[str, Any]]:
-    """Broker ledger per incident id; the latest chained workspace wins."""
-
-    ledgers: dict[str, dict[str, Any]] = {}
-    for index in sorted(stage_dirs):
-        for path in (stage_dirs[index] / "application_workspace" / ".git" / "sdo-broker").glob("*.json"):
-            ledger = _load(path)
-            ledgers[str(ledger.get("incident_id"))] = ledger
-    return ledgers
-
-
 def _firings(stage_dirs: dict[int, Path]) -> list[dict[str, Any]]:
     events: dict[str, dict[str, Any]] = {}
     for stage_dir in stage_dirs.values():
@@ -84,7 +73,6 @@ def _detector_sources(workspace: Path) -> dict[str, dict[str, Any]]:
 
 def build(pipeline: Path) -> dict[str, Any]:
     stage_dirs = {index: path for index, _name, path in pipeline_stage_dirs(pipeline)}
-    ledgers = _ledgers(stage_dirs)
     firings = _firings(stage_dirs)
     rows: list[dict[str, Any]] = []
     windows: list[tuple[float, float, int]] = []
@@ -105,7 +93,7 @@ def build(pipeline: Path) -> dict[str, Any]:
         incident_id = str(receipt.get("incident_id") or resolution.get("incident_id") or "")
         row["incident_id"] = incident_id
         row["strict_receipt"] = bool(receipt)
-        ledger = ledgers.get(incident_id, {})
+        ledger = receipt.get("native_ledger") or {}
         closure = ledger.get("closure") or {}
         request = closure.get("request") or {}
         dispatched = _ts(closure.get("dispatched_at")) or _ts(closure.get("detected_at"))
@@ -136,16 +124,11 @@ def build(pipeline: Path) -> dict[str, Any]:
         ):
             row[key] = receipt.get(key, closure.get(key))
         row["request_finding_detectors"] = sorted({f["detector_id"] for f in request.get("findings") or []})
-        row["request_playbooks"] = [p["path"] for p in request.get("surfaced_playbooks") or []]
+        row["request_playbooks"] = [p["playbook_id"] for p in request.get("surfaced_playbooks") or []]
         row["closure_incident_detector_states"] = [
             [s["detector_id"], s.get("status")] for s in closure.get("incident_detector_states") or []
         ]
-        usage = ledger.get("reflection_usage") or {}
-        row["reflection_in_tok"] = usage.get("input_tokens")
-        row["reflection_out_tok"] = usage.get("output_tokens")
-        row["reflection_attempts"] = ledger.get("reflection_attempts")
-        row["reflection_decision"] = ledger.get("reflection_learning_decision")
-        row["accepted_detector_paths"] = [p for p in ledger.get("accepted_detector_paths") or [] if "detector.go" in p]
+        row["reflection_decision"] = (ledger.get("reflection_decision") or {}).get("learning_decision")
         rusage = receipt.get("usage") or {}
         row["responder_usage"] = {k: rusage.get(k) for k in ("input_tokens", "output_tokens") if k in rusage}
         nxt = stage_dirs.get(index + 1)

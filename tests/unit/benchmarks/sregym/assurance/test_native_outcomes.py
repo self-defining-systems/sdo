@@ -39,3 +39,26 @@ def test_prefers_correlated_go_evidence_when_host_checkout_has_not_synced(tmp_pa
     }
     assert _evidenced_outcome(evidence, tmp_path, "incident-1")["classification"] == "success"
     assert _evidenced_outcome(evidence, tmp_path, "incident-2") is None
+
+
+def test_ledger_comes_from_the_receipt_and_playbooks_are_logical_ids() -> None:
+    from benchmarks.sregym.assurance.harness import _applied_playbook_ids, _evidenced_ledger
+
+    ledger = {
+        "incident_id": "incident-1",
+        "closure": {"result": {"applied_playbooks": [{"playbook_id": "fix-cache", "script_names": ["repair.sh"]}]}},
+    }
+    evidence = {"native_ledger": ledger}
+
+    assert _evidenced_ledger(evidence, "incident-1") == ledger
+    assert _evidenced_ledger(evidence, "incident-2") is None
+    assert _evidenced_ledger({}, "incident-1") is None
+    assert _applied_playbook_ids(ledger) == ["fix-cache"]
+
+
+def test_reflection_attempts_are_counted_from_scripted_reflection_turns() -> None:
+    from benchmarks.sregym.assurance.harness import _reflection_attempts
+
+    turns = [{"kind": "responder"}, {"kind": "reflection-fresh"}, {"kind": "reflection-retry"}]
+    assert _reflection_attempts(turns) == 2
+    assert _reflection_attempts([{"kind": "responder-warm"}]) == 0

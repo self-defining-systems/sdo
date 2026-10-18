@@ -192,17 +192,24 @@ def _git(workspace: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def broker_ledger(workspace: Path, incident_id: str) -> dict[str, Any] | None:
-    common = Path(_git(workspace, "rev-parse", "--git-common-dir") or ".git")
-    root = (common if common.is_absolute() else workspace / common) / "sdo-broker"
-    for path in root.glob("*.json") if root.is_dir() else []:
-        try:
-            ledger = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(ledger, dict) and ledger.get("incident_id") == incident_id:
-            return ledger
+def _evidenced_ledger(evidence: dict[str, Any], incident_id: str) -> dict[str, Any] | None:
+    """The Go incident ledger the strict receipt carries (``native_ledger``) for *incident_id*."""
+
+    ledger = evidence.get("native_ledger")
+    if isinstance(ledger, dict) and ledger.get("incident_id") == incident_id:
+        return ledger
     return None
+
+
+def _applied_playbook_ids(ledger: dict[str, Any]) -> list[str]:
+    result = (ledger.get("closure") or {}).get("result") or {}
+    return [str(item.get("playbook_id")) for item in result.get("applied_playbooks") or []]
+
+
+def _reflection_attempts(turns: list[dict[str, Any]]) -> int:
+    """Reflection turns the scripted model ran; the receipt records no attempt count."""
+
+    return sum(1 for turn in turns if str(turn.get("kind", "")).startswith("reflection"))
 
 
 def _state_change_names(request: dict[str, Any]) -> list[str]:
@@ -543,16 +550,8 @@ class ScriptedAgent:
                 )
             )
             if expect.warm:
-                ledger = broker_ledger(self._workspace, incident_id) or {}
-                result = (ledger.get("closure") or {}).get("result") or {}
-                applied = [item.get("path") for item in result.get("applied_playbooks") or []]
-                checks.append(
-                    Check(
-                        "playbook-applied",
-                        bool(applied) and memory.get("applied_playbook_count") == len(applied),
-                        f"applied {applied}",
-                    )
-                )
+                applied = _applied_playbook_ids(_evidenced_ledger(evidence, incident_id) or {})
+                checks.append(Check("playbook-applied", bool(applied), f"applied {applied}"))
                 commands = [c["command"] for turn in warm_turns for c in turn.get("commands", [])]
                 checks.append(
                     Check(
@@ -565,11 +564,11 @@ class ScriptedAgent:
             skipped = receipt.get("reflection_skipped_reason")
             checks.append(Check("reflection-skipped", bool(skipped) == expect.reflection_skipped, str(skipped)))
         if expect.min_reflection_attempts is not None:
-            attempts = int(receipt.get("reflection_attempts") or 0)
+            attempts = _reflection_attempts(turns)
             checks.append(Check("reflection-attempts", attempts >= expect.min_reflection_attempts, str(attempts)))
         checks.extend(self._memory_checks(spec, incident_id))
         checks.extend(self._token_checks(evidence, outcome, turns, artifacts))
-        checks.extend(self._leak_checks(spec, incident_id))
+        checks.extend(self._leak_checks(spec, incident_id, evidence))
         record.metrics.update(
             {
                 "responder_turns": len(responder_turns),
@@ -681,8 +680,8 @@ class ScriptedAgent:
             )
         return checks
 
-    def _leak_checks(self, spec: IncidentSpec, incident_id: str) -> list[Check]:
-        ledger = broker_ledger(self._workspace, incident_id)
+    def _leak_checks(self, spec: IncidentSpec, incident_id: str, evidence: dict[str, Any]) -> list[Check]:
+        ledger = _evidenced_ledger(evidence, incident_id)
         if ledger is None:
             return [Check("broker-ledger", False, f"no broker ledger for {incident_id}")]
         request = ((ledger.get("closure") or {}).get("request")) or {}

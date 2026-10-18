@@ -23,6 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sdo.agents.views import (
@@ -32,13 +33,15 @@ from sdo.agents.views import (
     IncidentView,
     StateChange,
 )
+from sdo.contracts import AgentTask, ProtoIncidentRequest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 PROBER_URL_ENVIRONMENT = "SDO_PROBER_URL"
 REQUEST_PATH_ENVIRONMENT = "SDO_REQUEST_PATH"
-DEFAULT_REQUEST_PATH = Path("/sdo/request/incident-request.json")
+#: The controller mounts the AgentTask envelope; the IncidentRequest is its packed ``request``.
+DEFAULT_REQUEST_PATH = Path("/sdo/request/agent-task.json")
 #: Rule-ID prefix of the synthetic-traffic health detector's findings.
 SCENARIO_RULE_PREFIX = "scenario-slo."
 #: Where the controller publishes its state, as NAMESPACE/NAME of a ConfigMap.
@@ -372,8 +375,16 @@ def _load_request(request_path: Path | None) -> IncidentRequest | None:
     if request_path is None or not request_path.is_file():
         return None
     try:
-        return IncidentRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        task = json_format.Parse(request_path.read_text(encoding="utf-8"), AgentTask())
+        typed = ProtoIncidentRequest()
+        if not task.request.Unpack(typed):
+            return None
+        return IncidentRequest.model_validate_json(
+            json_format.MessageToJson(
+                typed, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+            )
+        )
+    except (OSError, ValueError, json_format.Error):
         return None
 
 
