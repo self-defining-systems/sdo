@@ -28,11 +28,6 @@ test = [
     "tach>=0.33",
 ]
 
-[project.scripts]
-sdo = "sdo.__main__:main"
-sdo-detector-check = "controller.builder.check_cli:main"
-sdo-memory-check = "sdo.operational_memory.memory_check:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -51,12 +46,11 @@ members = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["sdo", "controller"]
+packages = ["sdo"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "/sdo",
-    "/controller",
     "/README.md",
     "/pyproject.toml",
 ]
@@ -81,8 +75,8 @@ ignore = ["SIM117", "SIM105", "SIM108", "PT009"]
 "sdo/contracts/proto.py" = ["E402", "I001"]
 
 [tool.coverage.run]
-source = ["sdo", "controller"]
-omit = ["*/apps/*", "*/__main__.py", "*/ui/*"]
+source = ["sdo"]
+omit = ["*/apps/*", "*/__main__.py", "*/ui/*", "*/contracts/_gen/*"]
 
 [tool.coverage.report]
 fail_under = 70

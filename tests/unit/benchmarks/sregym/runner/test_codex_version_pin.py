@@ -18,7 +18,7 @@ def _registry() -> dict[str, dict[str, object]]:
 
 
 def _sdo_image_codex_version() -> str:
-    dockerfile = (ROOT / "controller" / "Dockerfile.runtime").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "sdo" / "operator" / "Dockerfile.runtime").read_text(encoding="utf-8")
     match = re.search(r"^ARG CODEX_VERSION=(\S+)$", dockerfile, flags=re.MULTILINE)
     assert match is not None
     return match.group(1)

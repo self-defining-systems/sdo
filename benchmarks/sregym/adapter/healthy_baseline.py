@@ -5,7 +5,7 @@ snapshots of the healthy application and rejects one that fires on them. Nothing
 snapshots, so the benchmark harness does: just before it injects a fault, while the application is
 deployed and no fault exists, it dumps the namespace in the ``sdktest.Snapshot`` JSON shape and
 writes the files onto the controller's repository volume, outside the application repository. This
-module is harness-only; ``controller/runtime`` is untouched.
+module is harness-only; ``sdo/operator/runtime`` is untouched.
 """
 
 from __future__ import annotations
@@ -41,22 +41,6 @@ _SNAPSHOT_KEYS: dict[str, str] = {
 }
 _RESOURCES = "configmaps,services,pods,deployments,replicasets,endpoints,endpointslices,networkpolicies,events"
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.json$")
-
-# Runs inside the controller pod: argv[1] is the target directory, stdin is {file name: snapshot}.
-_WRITE_SCRIPT = """
-import json, os, sys
-target = sys.argv[1]
-files = json.load(sys.stdin)
-os.makedirs(target, exist_ok=True)
-for name in os.listdir(target):
-    if name.endswith(".json"):
-        os.remove(os.path.join(target, name))
-for name, document in files.items():
-    path = os.path.join(target, name)
-    with open(path + ".tmp", "w", encoding="utf-8") as handle:
-        json.dump(document, handle)
-    os.replace(path + ".tmp", path)
-"""
 
 
 class HealthyBaselineCaptureError(RuntimeError):
@@ -125,11 +109,13 @@ def publish_snapshots(
 ) -> None:
     """Replace the snapshot files on the controller's repository volume."""
 
+    if directory != BASELINE_DIRECTORY:
+        raise ValueError("Go baseline writer uses the fixed healthy baseline directory")
     for name in snapshots:
         if not _FILE_NAME.fullmatch(name):
             raise ValueError(f"unsafe healthy baseline file name: {name!r}")
     completed = kubectl_runner(
-        ["exec", "-i", CONTROLLER_JOB, "-c", "controller", "--", "python3", "-c", _WRITE_SCRIPT, directory],
+        ["exec", "-i", CONTROLLER_JOB, "-c", "controller", "--", "/usr/local/bin/sdo-operator", "baseline-write"],
         namespace=control_namespace,
         input_text=json.dumps(snapshots),
         check=False,

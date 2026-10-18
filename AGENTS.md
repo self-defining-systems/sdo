@@ -4,8 +4,8 @@ SDO autonomously deploys and operates applications using source-grounded agents,
 
 ## Projects
 
-- [`sdo/`](sdo/AGENTS.md) — Python agent runtime, operational memory, contracts, and controller installation
-- `controller/` — detector SDK, execution core, long-running runtime, and controller builder
+- [`sdo/`](sdo/AGENTS.md) — agent implementations, typed contracts, operational-memory adapters, and operator code
+- `sdo/operator/` — Go detector SDK, execution core, controller runtime and builder, worker registry, commit broker, outcome store, and installer
 - [`benchmarks/sregym/`](benchmarks/sregym/AGENTS.md) — first-party SREGym adapters, protocol clients, runners, experiments, and analysis
 - `third_party/sregym/` — external SREGym harness Git submodule
 - `libs/` — shared agent and model libraries; `sdo_core` contains neutral runtime helpers
@@ -29,10 +29,13 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 ## SDO invariants
 
 - `.sdo/` contains the five durable artifact classes: goal, architecture, playbooks, diagnostics, and outcomes.
-- Artifact ownership is enforced by the commit broker. Agents propose changes in isolated worktrees; only validated commits reach the operational branch.
+- Artifact ownership is enforced by the Go commit broker. Agents propose changes in isolated checkouts or typed logical artifacts; only validated commits reach the operational branch.
 - The health judge owns health detectors. Responders may add or refine incident detectors and playbooks after independently verified outcomes.
-- Detector runtime code is deterministic Go using `controller/sdk`; it must not call an LLM or inspect benchmark verdicts.
-- `controller/runtime` remains transport-neutral. SREGym submission relays and receipts stay behind the benchmark adapter.
+- Detector runtime code is deterministic Go using `sdo/operator/sdk`; it must not call an LLM or inspect benchmark verdicts.
+- `sdo/operator/runtime` remains transport-neutral. SREGym submission relays and receipts stay behind the benchmark adapter.
+- Agent implementations register capabilities through versioned protobuf task/result contracts. The native design assigns operational decisions and accepted repository state to Go; only the storage edge knows the physical outcome layout.
+- Native incident/reflection tasks carry accepted-commit-bound logical memory snapshots; agents return logical playbook/script IDs and typed artifact proposals. The Go memory edge materializes detector and playbook files before broker validation. Source repairs remain isolated checkout edits.
+- The active Go broker stores one versioned outcome document per incident at `.sdo/outcomes/<sha256(incident_id)>.json`. The memory edge can import the retired JSONL stream for existing repositories; no Python broker remains on the production path.
 
 When changing operational-memory formats or experiment result structures, update `.agents/skills/analyze-experiment/references/`. When moving production or benchmark boundaries, update `docs/architecture.md` (including its component map, artifact ownership matrix, and repository scope table).
 

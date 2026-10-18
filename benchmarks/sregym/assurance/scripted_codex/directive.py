@@ -45,7 +45,7 @@ class Directive:
         usage_seed: Varies the synthetic token counts so incidents are distinguishable.
         pause_before_repair_seconds: Sleep after diagnosis, before any repair, to widen chaos windows.
         pause_before_result_seconds: Sleep after verification, before the result is returned.
-        status_attempts: How many times ``sdo incident status`` is polled for health after a repair.
+        status_attempts: How many times the agent status command is polled for health after a repair.
     """
 
     scenario: str

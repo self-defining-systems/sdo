@@ -41,7 +41,7 @@
   ],
   "applied_playbooks": [
     {
-      "path": ".sdo/playbooks/missing-configmap/README.md",
+      "playbook_id": "missing-configmap",
       "parameter_bindings": {
         "missing_config_map": {
           "api_version": "v1",
@@ -56,8 +56,8 @@
           "name": "geo"
         }
       },
-      "scripts": [
-        ".sdo/playbooks/missing-configmap/scripts/verify.sh"
+      "script_names": [
+        "verify.sh"
       ]
     }
   ],
@@ -93,9 +93,8 @@
       "fingerprints": []
     }
   ],
-  "proposed_memory_changes": [
-    ".sdo/outcomes.jsonl",
-    ".sdo/playbooks/missing-configmap/README.md"
+  "proposed_artifact_ids": [
+    "missing-configmap"
   ],
   "verification_evidence": [
     {

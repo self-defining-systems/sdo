@@ -17,7 +17,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from benchmarks.sregym.protocol.schema import TERMINAL_STAGES
-from sdo.agent_runtime.responder import IncidentStatusReport, IncidentStatusState, live_incident_status
+from sdo.agents.responder import IncidentStatusReport, IncidentStatusState, live_incident_status
 
 
 class SubmissionBridgeError(RuntimeError):
@@ -109,8 +109,8 @@ def main(argv: list[str] | None = None, *, status_check: Callable[[], IncidentSt
         status = (status_check or live_incident_status)()
         if status.state == IncidentStatusState.UNHEALTHY:
             print(
-                "mitigation not submitted: `python3 -m sdo incident status` reports the application unhealthy.\n"
-                + status.render(),
+                "mitigation not submitted: `python3 -m sdo.agents.responder.status_cli` "
+                "reports the application unhealthy.\n" + status.render(),
                 file=sys.stderr,
             )
             return EXIT_VERIFICATION_FAILED

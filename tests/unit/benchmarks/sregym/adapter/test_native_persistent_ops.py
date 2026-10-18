@@ -1,0 +1,119 @@
+"""Persistent benchmark side effects route through the Go operator CLI."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import TYPE_CHECKING
+
+from benchmarks.sregym.adapter import persistent
+from benchmarks.sregym.adapter.runtime import RuntimeConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+def test_persistent_maintenance_and_receipt_do_not_start_python_sync_pod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = RuntimeConfig(
+        repository=tmp_path / "app",
+        namespace="demo",
+        application="demo",
+        controller_image="controller:go",
+        responder_image="worker:python",
+        repository_pvc="repository",
+        credentials_secret="agent-credentials",
+        model="gpt-6-luna",
+        timeout_seconds=60,
+        controller_namespace="demo-sdo",
+        persistent=True,
+    )
+    called: list[str] = []
+
+    def maintenance(*_args: object, **_kwargs: object) -> None:
+        called.append("maintenance")
+
+    def receipt(*_args: object, **_kwargs: object) -> dict[str, object]:
+        called.append("receipt")
+        return {"schema_version": "sdo.production-receipt/v2"}
+
+    monkeypatch.setattr(persistent, "go_set_maintenance", maintenance)
+    monkeypatch.setattr(persistent, "collect_production_receipt", receipt)
+    ops = persistent.KubectlClusterOps()
+    ops.set_maintenance("demo-sdo", paused=True, generation="stage-2")
+    assert ops.collect_receipt(config, "incident-1", tmp_path)["schema_version"] == "sdo.production-receipt/v2"
+    assert called == ["maintenance", "receipt"]
+
+
+def test_native_closeout_settles_on_acknowledged_go_ledger() -> None:
+    assert persistent._closeout_settled(
+        {
+            "schema_version": "sdo.production-receipt/v2",
+            "native_ledger": {"acknowledged": True},
+        }
+    )
+    assert not persistent._closeout_settled(
+        {
+            "schema_version": "sdo.production-receipt/v2",
+            "native_ledger": {"acknowledged": False},
+        }
+    )
+
+
+def test_persistent_artifact_export_uses_go_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
+    config = RuntimeConfig(
+        repository=tmp_path / "app",
+        namespace="demo",
+        application="demo",
+        controller_image="controller:go",
+        responder_image="worker:python",
+        repository_pvc="repository",
+        credentials_secret="agent-credentials",
+        model="gpt-6-luna",
+        timeout_seconds=60,
+        controller_namespace="demo-sdo",
+        persistent=True,
+    )
+    called: list[Path] = []
+
+    def export(_config: object, output: Path) -> Path:
+        called.append(output)
+        return output / "sdo_runtime"
+
+    monkeypatch.setattr(persistent, "go_export_runtime_artifacts", export)
+    result = persistent.KubectlClusterOps().export_runtime_artifacts(config, tmp_path)
+    assert result == {"directory": str(tmp_path / "sdo_runtime"), "error": None}
+    assert called == [tmp_path]
+
+
+def test_reusable_stage_inspects_live_go_controller_without_reinstall(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
+    config = RuntimeConfig(
+        repository=tmp_path / "stale-stage-checkout",
+        namespace="demo",
+        application="demo",
+        controller_image="controller:go",
+        responder_image="worker:python",
+        repository_pvc="repository",
+        credentials_secret="agent-credentials",
+        model="gpt-6-luna",
+        timeout_seconds=60,
+        controller_namespace="demo-sdo",
+        persistent=True,
+    )
+    called: list[str] = []
+
+    def inspect(_config: object) -> object:
+        called.append("inspect")
+        return object()
+
+    monkeypatch.setattr(persistent, "go_inspect_existing", inspect)
+    assert persistent.KubectlClusterOps().install(replace(config, reuse_existing=True))
+    assert called == ["inspect"]

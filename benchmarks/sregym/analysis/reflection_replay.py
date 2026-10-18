@@ -23,14 +23,15 @@ from pathlib import Path
 from typing import Any
 
 from libs.agent_cli.structured import run_structured_turn, turn_usage
-from sdo.agent_runtime.responder import (
+from sdo.agents.responder import (
     INCIDENT_REASONING_EFFORT,
+    REFLECTION_GUIDANCE_MODES,
     CodexSessionBackend,
     ReflectionTurn,
     SessionReflector,
     reflection_output_schema,
 )
-from sdo.operational_memory import REFLECTION_GUIDANCE_MODES, BrokerClosure, OutcomeRecord
+from sdo.contracts import BrokerClosure, OutcomeRecord
 
 
 class _ScopedBackend(CodexSessionBackend):

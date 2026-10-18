@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// Registration describes a worker's external contract and launch mechanism.
+// Its language, agent framework, and internal session code are private to it.
+message AgentRegistration {
+  string schema_version = 1;
+  string agent_id = 2;
+  repeated AgentCapability capabilities = 3;
+  repeated string permissions = 4;
+  oneof launch {
+    KubernetesJobLaunch kubernetes_job = 5;
+    LocalProcessLaunch local_process = 6;
+  }
+}
+
+message AgentCapability {
+  string task_type = 1;
+  string request_type_url = 2;
+  string result_type_url = 3;
+}
+
+// A worker image is an executable artifact, not a language designation.
+message KubernetesJobLaunch {
+  string image = 1;
+  repeated string command = 2;
+  repeated string environment_names = 3;
+}
+
+message LocalProcessLaunch {
+  repeated string command = 1;
+  repeated string environment_names = 2;
+}
+
+// A proposal checkout is private to one task. The broker owns the accepted
+// repository and imports the actual diff after the worker finishes.
+message ProposalWorkspace {
+  string proposal_id = 1;
+  string checkout_path = 2;
+  string base_commit = 3;
+}
+
+message AgentTask {
+  string schema_version = 1;
+  string task_id = 2;
+  string agent_id = 3;
+  string task_type = 4;
+  google.protobuf.Any request = 5;
+  ProposalWorkspace workspace = 6;
+  google.protobuf.Timestamp deadline = 7;
+}
+
+message AgentResult {
+  string schema_version = 1;
+  string task_id = 2;
+  // completed, failed, or cancelled. The broker still validates the diff.
+  string status = 3;
+  google.protobuf.Any response = 4;
+  string proposal_id = 5;
+  string error_summary = 6;
+}
+
+// Reflection runs only after the broker has committed an authoritative
+// outcome. Its worker may propose file edits, but cannot publish them.
+message ReflectionRequest {
+  IncidentClosure closure = 1;
+  bytes outcome_json = 2;
+  repeated bytes prior_outcome_json = 3;
+  string proposal_commit = 4;
+  string outcome_commit = 5;
+  OperationalMemorySnapshot memory_snapshot = 6;
+  // Empty selects a fresh reflection. Resume requires a valid prior responder session.
+  string session_mode = 7;
+  // Empty selects baseline. Other modes are generalize and generalize-spec.
+  string guidance = 8;
+}
+
+message ReflectionResult {
+  string summary = 1;
+  string learning_decision = 2;
+  string no_change_reason = 3;
+  repeated string proposed_artifact_ids = 4;
+  OperationalArtifactProposal artifact_proposal = 5;
+}

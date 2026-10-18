@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS go-runtime
+WORKDIR /opt/sdo
+# Validator Jobs compile untrusted detector modules without cgo.
+ENV GOCACHE=/go/build-cache \
+    CGO_ENABLED=0
+# The runtime and synthesized detector workspaces use local Go modules in this
+# tree, including memory, worker registration, and generated contracts.
+COPY sdo/operator ./sdo/operator
+RUN cd sdo/operator/sdk && go mod download all
+RUN cd sdo/operator/core && go mod download all
+RUN cd sdo/operator/runtime && go mod download all
+RUN cd sdo/operator && go mod download all
+RUN cd sdo/operator/sdk && go test -run '^$' ./...
+RUN cd sdo/operator/core && go test -run '^$' ./...
+RUN cd sdo/operator/runtime && go test -run '^$' ./...
+RUN cd sdo/operator && go build -buildvcs=false -o /usr/local/bin/sdo-operator ./cmd/sdo-operator
+
+FROM go-runtime AS validator
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+# Pin the embedded schema identity into the image. The validator recomputes
+# it from the baked SDK before compiling a candidate.
+ARG SDO_VALIDATOR_SCHEMA_IDENTITY="unknown"
+LABEL org.opencontainers.image.title="SDO detector validator" \
+      org.opencontainers.image.version="0.1.0" \
+      dev.sdo.validator-schema="${SDO_VALIDATOR_SCHEMA_IDENTITY}"
+RUN chmod -R a+rX /opt/sdo/sdo/operator
+CMD ["/usr/local/bin/sdo-operator", "validate", "--help"]

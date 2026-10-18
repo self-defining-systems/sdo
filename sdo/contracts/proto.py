@@ -31,7 +31,15 @@ if str(_GEN_ROOT) not in sys.path:
 
 from google.protobuf import json_format
 
-from sdodev.contracts.v1alpha1 import common_pb2, controller_config_pb2, messages_pb2, telemetry_pb2, traffic_pb2
+from sdodev.contracts.v1alpha1 import (
+    common_pb2,
+    controller_config_pb2,
+    lifecycle_pb2,
+    messages_pb2,
+    telemetry_pb2,
+    traffic_pb2,
+    worker_pb2,
+)
 
 if TYPE_CHECKING:
     from google.protobuf.message import Message
@@ -58,9 +66,17 @@ UsageMetrics = messages_pb2.UsageMetrics
 TimingMetrics = messages_pb2.TimingMetrics
 RepairActionReceipt = messages_pb2.RepairActionReceipt
 IncidentResult = messages_pb2.IncidentResult
+ProtoLateFindingsPull = messages_pb2.LateFindingsPull
 IncidentView = messages_pb2.IncidentView
 DetectorTimelineEntry = messages_pb2.DetectorTimelineEntry
 IncidentClosure = messages_pb2.IncidentClosure
+OperationalArtifactProposal = messages_pb2.OperationalArtifactProposal
+ProposedDetector = messages_pb2.ProposedDetector
+ProposedGoSource = messages_pb2.ProposedGoSource
+ProposedPlaybook = messages_pb2.ProposedPlaybook
+ProposedTrafficGenerator = messages_pb2.ProposedTrafficGenerator
+ProtoMemoryWatch = messages_pb2.MemoryWatch
+ProtoMemoryScript = messages_pb2.MemoryScript
 
 FiringRecord = telemetry_pb2.FiringRecord
 
@@ -68,8 +84,33 @@ TrafficSLO = traffic_pb2.TrafficSLO
 TrafficWorkloadScenario = traffic_pb2.TrafficWorkloadScenario
 TrafficLink = traffic_pb2.TrafficLink
 TrafficWorkload = traffic_pb2.TrafficWorkload
+ProtoTrafficWorkload = traffic_pb2.TrafficWorkload
+
+AgentRegistration = worker_pb2.AgentRegistration
+AgentCapability = worker_pb2.AgentCapability
+KubernetesJobLaunch = worker_pb2.KubernetesJobLaunch
+LocalProcessLaunch = worker_pb2.LocalProcessLaunch
+ProposalWorkspace = worker_pb2.ProposalWorkspace
+AgentTask = worker_pb2.AgentTask
+AgentResult = worker_pb2.AgentResult
+ReflectionRequest = worker_pb2.ReflectionRequest
+ReflectionResult = worker_pb2.ReflectionResult
+SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
+SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
+DeploymentPlan = lifecycle_pb2.DeploymentPlan
+RawManifestStrategy = lifecycle_pb2.RawManifestStrategy
+ImageBuild = lifecycle_pb2.ImageBuild
+ArchitectureRequest = lifecycle_pb2.ArchitectureRequest
+ArchitectureResult = lifecycle_pb2.ArchitectureResult
+HealthJudgeRequest = lifecycle_pb2.HealthJudgeRequest
+HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
+SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "AgentCapability",
+    "AgentRegistration",
+    "AgentResult",
+    "AgentTask",
     "AppliedPlaybook",
     "ConfirmedRootCause",
     "ControllerConfig",
@@ -81,10 +122,26 @@ __all__ = [
     "IncidentClosure",
     "IncidentRequest",
     "IncidentResult",
+    "ProtoLateFindingsPull",
     "IncidentView",
+    "KubernetesJobLaunch",
+    "LocalProcessLaunch",
     "ObjectRef",
     "ObservedStateChange",
     "PriorOutcomeEvidence",
+    "ProposalWorkspace",
+    "ReflectionRequest",
+    "ReflectionResult",
+    "SourceDeploymentRequest",
+    "SourceDeploymentResult",
+    "DeploymentPlan",
+    "RawManifestStrategy",
+    "ImageBuild",
+    "ArchitectureRequest",
+    "ArchitectureResult",
+    "HealthJudgeRequest",
+    "HealthJudgeResult",
+    "SourceResource",
     "RepairActionReceipt",
     "RootCauseEvidence",
     "StateChange",

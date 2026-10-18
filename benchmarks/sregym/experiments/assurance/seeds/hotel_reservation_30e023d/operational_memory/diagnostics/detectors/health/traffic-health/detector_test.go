@@ -5,7 +5,7 @@ package synthetic
 import (
 	"testing"
 
-	"sdo.dev/controller/sdk/traffic"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func TestRegistration(t *testing.T) {

@@ -17,7 +17,7 @@ SDO is described in the paper [A Self-Defining Operator for Distributed Applicat
 ## How it works
 
 ```text
-sdo operate
+sdo-operator host
   -> source deployer          deploys the application from its repository
   -> health judge             turns the objective into Go health detectors
   -> .sdo operational memory  goal, architecture, detectors, playbooks, outcomes
@@ -56,11 +56,11 @@ This script:
 
 1. Builds the SDO images (`scripts/build_sdo_images.sh`).
 2. Creates a kind cluster with Calico for network policies.
-3. Deploys a small application with a missing ConfigMap.
-4. Runs the real Go controller and a Claude Haiku responder.
-5. Verifies recovery independently, brokers the source repair, records the outcome, and resumes the responder session for reflection.
+3. Runs the native Go host and lifecycle with deterministic typed fixture workers.
+4. Independently validates and deploys the proposed source and health detector.
+5. Starts the Go controller and verifies clear detector evaluations.
 
-The script uses prebuilt lifecycle artifacts so the run focuses on the incident path. Set `SDO_SMOKE_REAL_LIFECYCLE=1` to have fresh agent sessions write the architecture summary and health detector too. Set `SDO_SMOKE_AGENT_PROVIDER=codex` and `SDO_SMOKE_MODEL=<model>` to use Codex instead.
+The smoke uses no model credentials. It covers native bootstrap and controller readiness; incident response and outcome commits require a separate live check.
 
 ### Operate your own application
 
@@ -70,37 +70,38 @@ Build the images into your local Docker image store, or push them to a registry 
 bash scripts/build_sdo_images.sh
 ```
 
-Then point SDO at a Git repository and a namespace:
+Point the Go host at a clean Git repository, a health objective, and the cluster resources it will use:
 
 ```bash
-uv run sdo operate /path/to/application \
+sdo-operator host --repository /path/to/application \
   --namespace my-app \
-  --goal-file /path/to/health-objective.md
+  --application my-app \
+  --goal-file /path/to/health-objective.md \
+  --operation-id my-app-bootstrap \
+  --controller-image sdo-controller:v0.1.0 \
+  --responder-image sdo-responder:v0.1.0 \
+  --validator-image sdo-detector-validator:v0.1.0 \
+  --buildkit-image 'moby/buildkit@sha256:<pinned-digest>' \
+  --repository-pvc sdo-application-repository \
+  --credentials-secret sdo-agent-credentials \
+  --registry-push-secret sdo-registry-push \
+  --model gpt-6-luna
 ```
 
 The full interface:
 
 ```text
-sdo operate REPOSITORY --namespace NAMESPACE (--goal TEXT | --goal-file PATH)
-  [--application NAME] [--agent-provider {codex,claude}] [--model MODEL]
-  [--controller-image IMAGE] [--responder-image IMAGE] [--validator-image IMAGE]
-  [--repository-pvc PVC] [--credentials-secret SECRET]
-  [--repair-policy {commit,recorded-actions}]
-  [--attempts N] [--timeout-seconds N]
+sdo-operator host --repository REPOSITORY --namespace NAMESPACE
+  --application NAME (--goal TEXT | --goal-file PATH)
+  --operation-id ID --controller-image IMAGE --responder-image IMAGE
+  --validator-image IMAGE --buildkit-image DIGEST_PINNED_IMAGE
+  --repository-pvc PVC --credentials-secret SECRET
+  --registry-push-secret SECRET --model MODEL
 ```
 
-| Option | Default |
-|---|---|
-| `--application` | the repository directory name |
-| `--agent-provider` | `codex` |
-| `--model` | `$SDO_MODEL`, else `gpt-6-luna` |
-| `--controller-image` | `sdo-controller:v0.1.0` |
-| `--responder-image` | `sdo-responder:v0.1.0` |
-| `--validator-image` | `sdo-detector-validator:v0.1.0` |
-| `--repository-pvc` | `sdo-application-repository` |
-| `--credentials-secret` | `sdo-codex-credentials` |
-| `--attempts` | 3 |
-| `--timeout-seconds` | 1800 |
+Use `sdo-operator host --help` for optional timeouts, agent registration,
+registry targeting, reflection, and bounded-controller settings. The credential
+and registry push Secrets must already exist in the control namespace.
 
 The health objective always comes from you. SDO never infers it from the application or from benchmark results.
 
@@ -114,7 +115,7 @@ Each operated application carries its operational memory in `.sdo/`, versioned a
 ├── arch.md          # source and topology summary (deployer-owned)
 ├── playbooks/       # repair procedures (responder-owned)
 ├── diagnostics/     # Go health and incident detectors, plus a manifest
-└── outcomes.jsonl   # append-only incident outcomes (controller-owned)
+└── outcomes/        # one incident outcome record per file (controller-owned)
 ```
 
 The commit broker enforces ownership. For example, a responder can add playbooks and incident detectors, but it cannot rewrite the goal, the health detectors, the architecture summary, or past outcomes.
@@ -145,10 +146,10 @@ To resume a run, pass its log directory instead: `uv run python -m benchmarks.sr
 | Path | Contents |
 |---|---|
 | `sdo/` | Python runtime: lifecycle (deploy, architecture, health judge), responder, contracts, operational memory and commit broker, controller installation, `sdo` CLI |
-| `controller/sdk/` | Public Go API for writing detectors |
-| `controller/core/` | Detector execution and snapshot validation |
-| `controller/runtime/` | The long-running controller: scheduling, findings, batching, responder dispatch, durable state |
-| `controller/builder/` | Builds and validates an application-specific controller from `.sdo/diagnostics` |
+| `sdo/operator/sdk/` | Public Go API for writing detectors |
+| `sdo/operator/core/` | Detector execution and snapshot validation |
+| `sdo/operator/runtime/` | The long-running controller: scheduling, findings, batching, responder dispatch, durable state |
+| `sdo/operator/builder/` | Builds and validates an application-specific controller from `.sdo/diagnostics` |
 | `proto/` | Shared contract schemas; Go and Python code is generated from them |
 | `libs/` | Shared helpers: the structured agent-CLI runner, model configuration, neutral runtime utilities |
 | `benchmarks/sregym/` | SREGym adapter, protocol clients, experiment runner, fast-loop harness, analysis |
@@ -163,7 +164,7 @@ To resume a run, pass its log directory instead: `uv run python -m benchmarks.sr
 bash scripts/format_code.sh      # ruff format
 bash scripts/check_errors.sh     # ruff lint, tach architecture boundaries, proto checks
 uv run pytest tests/unit/
-(cd controller/runtime && go test ./...)
+(cd sdo/operator/runtime && go test ./...)
 ```
 
 [docs/testing-guide.md](docs/testing-guide.md) has the full set of Python and Go test commands, including integration tests and the contract fixtures shared between Go and Python.

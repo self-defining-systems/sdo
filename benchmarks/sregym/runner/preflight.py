@@ -82,14 +82,15 @@ SDO_IMAGE_DEFAULTS = {
     "responder_image": "sdo-sregym-responder:v0.1.0",
     "validator_image": "sdo-detector-validator:v0.1.0",
 }
-#: Modules each SDO image must import: the entry points its Jobs run.
+#: Python modules imported by the worker image. An empty tuple means the image
+#: runs the Go operator binary and must not need a Python interpreter.
 SDO_IMAGE_ENTRY_POINTS = {
-    "controller_image": ("controller.builder.check_cli", "sdo.agent_runtime.responder.broker_cli", "agentshim"),
-    "responder_image": ("sdo.agent_runtime.responder.job", "libs.agent_cli", "agentshim"),
-    "validator_image": ("controller.builder.check_cli",),
+    "controller_image": (),
+    "responder_image": ("sdo.agents.responder.job", "libs.agent_cli", "agentshim"),
+    "validator_image": (),
 }
-#: Images that run agents, so their Codex CLI and agentshim must match the pins.
-AGENT_IMAGES = ("controller_image", "responder_image")
+#: Only the worker image runs agent turns and needs these Python/CLI pins.
+AGENT_IMAGES = ("responder_image",)
 #: The SDO driver's model when neither ``[agent.sdo_codex].model`` nor ``MODEL_ID`` is set.
 SDO_DRIVER_DEFAULT_MODEL = "gpt-6-luna"
 #: Env overrides some SDO entry points read when they are given no model.
@@ -112,7 +113,7 @@ class ModelPolicy:
     judge use only Codex gpt-6-luna; the Codex baselines use gpt-6-luna; the
     SREGym judge is only ``codex-gpt-6-luna`` at ``xhigh``. ``agent_effort`` is
     the effort SDO pins its incident agents to in code
-    (``sdo.agent_runtime.responder.INCIDENT_REASONING_EFFORT``; a test keeps
+    (``sdo.agents.responder.INCIDENT_REASONING_EFFORT``; a test keeps
     the two equal), so every compared arm declares it.
     """
 
@@ -295,6 +296,30 @@ class SystemHost:
         )
 
     def image_versions(self, ref: str, modules: Sequence[str]) -> ImageVersions | None:
+        if not modules:
+            identity = self._text(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--workdir",
+                    "/opt/sdo/sdo/operator",
+                    "--entrypoint",
+                    "/usr/local/bin/sdo-operator",
+                    ref,
+                    "schema-identity",
+                ],
+                timeout=120,
+            )
+            if identity is None:
+                return ImageVersions(
+                    codex=None, agentshim=None, import_error="Go operator schema-identity probe failed"
+                )
+            if not identity.strip().startswith("sdo.dev/"):
+                return ImageVersions(
+                    codex=None, agentshim=None, import_error="Go operator returned an invalid schema identity"
+                )
+            return ImageVersions(codex=None, agentshim=None)
         codex_out = self._text(["docker", "run", "--rm", "--entrypoint", "codex", ref, "--version"], timeout=120)
         script = (
             "import importlib, importlib.metadata as m, json, sys\n"
@@ -627,7 +652,7 @@ def _check_application_sources(ctx: _Context) -> PreflightCheck | None:
 
 
 def _check_codex_pins(ctx: _Context) -> PreflightCheck:
-    dockerfile = ctx.project_root / "controller" / "Dockerfile.runtime"
+    dockerfile = ctx.project_root / "sdo" / "operator" / "Dockerfile.runtime"
     pin = dockerfile_arg(dockerfile, "CODEX_VERSION") if dockerfile.is_file() else None
     host = ctx.host.host_codex_version()
     codex_facts: dict[str, Any] = {"pin": pin, "host": host}
@@ -635,7 +660,7 @@ def _check_codex_pins(ctx: _Context) -> PreflightCheck:
     problems: list[str] = []
     remedies: list[str] = []
     if pin is None or not _SEMVER.match(pin):
-        problems.append(f"controller/Dockerfile.runtime pins CODEX_VERSION={pin!r}, not a concrete version")
+        problems.append(f"sdo/operator/Dockerfile.runtime pins CODEX_VERSION={pin!r}, not a concrete version")
         remedies.append("pin ARG CODEX_VERSION to an exact release")
     judged_by_codex = any(config.env.judge_model_id.startswith("codex-") for config in ctx.configs)
     if judged_by_codex and host != pin:

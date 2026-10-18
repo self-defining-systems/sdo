@@ -40,8 +40,6 @@
   "relevant_outcomes": [],
   "source_commit": "source",
   "deployed_commit": "deployed",
-  "architecture_summary_path": ".sdo/arch.md",
-  "health_objective_path": ".sdo/goal.md",
   "repository_worktree": "/tmp/demo",
   "repository_base_commit": "source",
   "response_deadline": "1970-01-01T00:01:01Z",

@@ -1,0 +1,87 @@
+package operatorcli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"sdo.dev/operator/broker"
+	"sdo.dev/operator/install"
+	"sdo.dev/operator/worker_registry"
+)
+
+type IncidentEvidenceConfig struct {
+	Sync                   install.SyncConfig
+	IncidentID, Kubeconfig string
+}
+
+type IncidentEvidenceResult struct {
+	IncidentID       string          `json:"incident_id"`
+	ResponderJobName string          `json:"responder_job_name"`
+	Ledger           json.RawMessage `json:"ledger"`
+}
+
+func ParseIncidentEvidenceLaunch(args []string) (IncidentEvidenceConfig, error) {
+	if len(args) == 0 || args[0] != "incident-evidence" {
+		return IncidentEvidenceConfig{}, errors.New("expected incident-evidence subcommand")
+	}
+	flags := flag.NewFlagSet("sdo-operator incident-evidence", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	control := flags.String("control-namespace", "", "operator namespace")
+	pvc := flags.String("repository-pvc", "", "shared accepted repository PVC")
+	image := flags.String("controller-image", "", "controller image")
+	id := flags.String("incident-id", "", "logical incident ID")
+	kubeconfig := flags.String("kubeconfig", "", "Kubernetes configuration")
+	if err := flags.Parse(args[1:]); err != nil {
+		return IncidentEvidenceConfig{}, err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*control) == "" || strings.TrimSpace(*pvc) == "" || strings.TrimSpace(*image) == "" || strings.TrimSpace(*id) == "" {
+		return IncidentEvidenceConfig{}, errors.New("incident-evidence requires namespace, PVC, controller image, and incident ID")
+	}
+	if *kubeconfig != "" && !filepath.IsAbs(*kubeconfig) {
+		return IncidentEvidenceConfig{}, errors.New("kubeconfig path must be absolute")
+	}
+	return IncidentEvidenceConfig{Sync: install.SyncConfig{ControlNamespace: *control, RepositoryPVC: *pvc, ControllerImage: *image}, IncidentID: *id, Kubeconfig: *kubeconfig}, nil
+}
+
+func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
+	client, err := hostKubernetesClient(cfg.Kubeconfig)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	path, err := broker.NativeLedgerPath(broker.DefaultNativeWorktreeRoot, cfg.IncidentID)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	var data []byte
+	installer := install.Installer{Client: client}
+	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
+		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "cat", path)
+		if cfg.Kubeconfig != "" {
+			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
+		}
+		output, readErr := command.Output()
+		if readErr != nil {
+			var exit *exec.ExitError
+			if errors.As(readErr,&exit) { return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr))) }
+			return fmt.Errorf("read native incident ledger: %w", readErr)
+		}
+		data = output
+		return nil
+	})
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	ledger, err := broker.ValidateNativeLedger(data, cfg.IncidentID)
+	if err != nil {
+		return IncidentEvidenceResult{}, err
+	}
+	return IncidentEvidenceResult{IncidentID: cfg.IncidentID, ResponderJobName: worker_registry.JobName(cfg.IncidentID), Ledger: ledger}, nil
+}

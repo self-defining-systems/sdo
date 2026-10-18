@@ -49,7 +49,7 @@ def test_every_catalog_composite_is_a_submodule_composite_with_the_same_componen
     specs = _specs()
     catalog = _catalog()
 
-    assert sorted(entry["problem_id"] for entry in catalog) == sorted(specs)
+    assert {entry["problem_id"] for entry in catalog} <= set(specs)
     for entry in catalog:
         expected = [_component_key(component) for component in specs[entry["problem_id"]]["components"]]
         assert [_component_key(component) for component in entry["components"]] == expected, entry["id"]

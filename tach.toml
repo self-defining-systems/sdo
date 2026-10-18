@@ -28,44 +28,37 @@ path = "benchmarks.sregym.protocol"
 depends_on = []
 
 [[modules]]
-path = "controller.builder"
-# Seam 3: check_cli._controller_once builds the controller launch config from the
-# shared ControllerConfig proto. The import is function-scoped (it only runs in
-# the runtime image, which has sdo; the validator image has only controller/ and
-# never runs _controller_once) and enforced by
-# tests/unit/controller/builder/test_no_module_level_sdo_import.py. sdo.contracts
-# is pure generated/Pydantic data models with no onward deps.
-depends_on = ["sdo.contracts"]
-
-[[modules]]
 path = "sdo.contracts"
 depends_on = []
 
 [[modules]]
-path = "sdo.operational_memory"
+path = "sdo.agents.lifecycle"
 depends_on = [
+    "libs.agent_cli",
     "sdo.contracts",
 ]
 
 [[modules]]
-path = "sdo.agent_runtime.lifecycle"
+path = "sdo.agents.responder"
 depends_on = [
     "libs.agent_cli",
-    "sdo.operational_memory",
-]
-
-[[modules]]
-path = "sdo.controller_install"
-depends_on = [
-    "sdo.operational_memory",
     "sdo.contracts",
 ]
 
 [[modules]]
-path = "sdo.agent_runtime.responder"
+path = "sdo.agents.deployer"
 depends_on = [
     "libs.agent_cli",
-    "sdo.operational_memory",
+    "sdo.agents.lifecycle",
+    "sdo.agents.responder",
+    "sdo.contracts",
+]
+
+[[modules]]
+path = "sdo.agents.health_judge"
+depends_on = [
+    "sdo.agents.lifecycle",
+    "sdo.agents.responder",
     "sdo.contracts",
 ]
 
@@ -73,20 +66,16 @@ depends_on = [
 path = "benchmarks.sregym.adapter"
 depends_on = [
     "benchmarks.sregym.protocol",
-    "sdo.agent_runtime.lifecycle",
-    "sdo.agent_runtime.responder",
-    "sdo.operational_memory",
-    "sdo.controller_install",
+    "sdo.contracts",
+    "sdo.agents.responder",
 ]
 
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
     "benchmarks.sregym.adapter",
-    "controller.builder",
-    "sdo.agent_runtime.lifecycle",
-    "sdo.controller_install",
-    "sdo.operational_memory",
+    "benchmarks.sregym.protocol",
+    "sdo.contracts",
 ]
 
 [[modules]]
@@ -94,8 +83,8 @@ path = "benchmarks.sregym.assurance"
 depends_on = [
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.fastloop",
-    "sdo.agent_runtime.lifecycle",
-    "sdo.controller_install",
+    "benchmarks.sregym.protocol",
+    "sdo.contracts",
 ]
 
 [[modules]]
@@ -108,19 +97,4 @@ depends_on = [
 path = "benchmarks.sregym.run"
 depends_on = [
     "benchmarks.sregym.runner",
-]
-
-[[modules]]
-path = "sdo.operation"
-depends_on = [
-    "sdo.agent_runtime.lifecycle",
-    "sdo.controller_install",
-]
-
-[[modules]]
-path = "sdo.__main__"
-depends_on = [
-    "sdo.agent_runtime.responder",
-    "sdo.operation",
-    "sdo.operational_memory",
 ]

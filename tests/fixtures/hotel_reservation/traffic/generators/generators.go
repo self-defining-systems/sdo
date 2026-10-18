@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"sdo.dev/controller/sdk/traffic"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 var frontend = traffic.Target{Service: "frontend", Port: 5000}

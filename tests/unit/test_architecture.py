@@ -21,11 +21,9 @@ _PROJECT_PACKAGES: dict[str, Path] = {
 # implementation module. The more-specific agent-runtime owners intentionally
 # precede their parent.
 _OWNERS: tuple[str, ...] = (
-    "sdo.agent_runtime.lifecycle",
-    "sdo.agent_runtime.responder",
+    "sdo.agents.lifecycle",
+    "sdo.agents.responder",
     "sdo.contracts",
-    "sdo.controller_install",
-    "sdo.operational_memory",
     "benchmarks.sregym.adapter",
 )
 
@@ -189,7 +187,7 @@ def test_operational_memory_does_not_import_agent_runtime() -> None:
     root = _PROJECT_PACKAGES["sdo"] / "operational_memory"
     for filepath in _iter_py_files(root):
         for module, lineno in _imports(filepath):
-            if module == "sdo.agent_runtime" or module.startswith("sdo.agent_runtime."):
+            if module == "sdo.agents" or module.startswith("sdo.agents."):
                 violations.append(
                     _fmt(
                         filepath,

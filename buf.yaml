@@ -11,5 +11,8 @@ lint:
 breaking:
   use:
     - FILE
+  except:
+    # Go import paths are repository layout, not part of the on-wire schema.
+    - FILE_SAME_GO_PACKAGE
 deps:
   - buf.build/bufbuild/protovalidate

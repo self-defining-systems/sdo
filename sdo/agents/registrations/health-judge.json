@@ -1,0 +1,15 @@
+{
+  "schema_version": "sdo.dev/v1alpha1",
+  "agent_id": "sdo-health-judge",
+  "capabilities": [
+    {
+      "task_type": "health-judgment",
+      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeRequest",
+      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeResult"
+    }
+  ],
+  "kubernetes_job": {
+    "image": "sdo-responder:v0.1.0",
+    "command": ["python3", "-m", "sdo.agents.health_judge.worker"]
+  }
+}

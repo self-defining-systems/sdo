@@ -2,22 +2,16 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
-from typing import TYPE_CHECKING
 
 import pytest
 
 from benchmarks.sregym.adapter.healthy_baseline import (
-    BASELINE_DIRECTORY,
     HealthyBaselineCaptureError,
     HealthyBaselineCaptureOps,
     capture_snapshots,
     publish_snapshots,
     snapshot_document,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _item(kind: str, name: str, **extra: object) -> dict[str, object]:
@@ -113,29 +107,29 @@ def test_capture_rejects_a_non_positive_count() -> None:
         capture_snapshots("app", kubectl_runner=_Kubectl(), count=0, interval_seconds=0, sleep=lambda _: None)
 
 
-def test_publish_writes_the_snapshots_inside_the_controller_pod_and_replaces_older_ones(tmp_path: Path) -> None:
-    target = tmp_path / "healthy"
-    target.mkdir()
-    (target / "stale.json").write_text("{}", encoding="utf-8")
-    seen: list[list[str]] = []
+def test_publish_sends_snapshots_to_go_baseline_writer() -> None:
+    seen: list[tuple[list[str], str | None]] = []
 
     def kubectl(
         args: list[str], *, namespace: str | None, input_text: str | None = None, check: bool = True
     ) -> subprocess.CompletedProcess[str]:
-        seen.append(args)
+        seen.append((args, input_text))
         assert namespace == "ctl"
-        # Run the exec'd command locally, against tmp_path instead of the volume.
-        script_index = args.index("-c", args.index("python3")) if "python3" in args else -1
-        assert script_index > 0
-        assert args[:3] == ["exec", "-i", "job/sdo-controller-run"]
-        command = [sys.executable, "-c", args[script_index + 1], str(target)]
-        return subprocess.run(command, input=input_text, text=True, capture_output=True, check=False)
+        return subprocess.CompletedProcess(args, 0, "", "")
 
     publish_snapshots({"healthy-0.json": {"namespace": "app"}}, control_namespace="ctl", kubectl_runner=kubectl)
 
-    assert sorted(path.name for path in target.iterdir()) == ["healthy-0.json"]
-    assert json.loads((target / "healthy-0.json").read_text(encoding="utf-8")) == {"namespace": "app"}
-    assert seen
+    assert seen[0][0] == [
+        "exec",
+        "-i",
+        "job/sdo-controller-run",
+        "-c",
+        "controller",
+        "--",
+        "/usr/local/bin/sdo-operator",
+        "baseline-write",
+    ]
+    assert json.loads(seen[0][1] or "") == {"healthy-0.json": {"namespace": "app"}}
 
 
 def test_publish_rejects_unsafe_file_names() -> None:
@@ -146,12 +140,6 @@ def test_publish_rejects_unsafe_file_names() -> None:
 def test_publish_reports_a_failed_exec() -> None:
     with pytest.raises(HealthyBaselineCaptureError, match="boom"):
         publish_snapshots({"healthy-0.json": {}}, control_namespace="ctl", kubectl_runner=_Kubectl(fail=True))
-
-
-def test_baseline_directory_matches_the_controller_install_constant() -> None:
-    from sdo.controller_install.kubernetes import HEALTHY_BASELINE_SOURCE
-
-    assert HEALTHY_BASELINE_SOURCE == BASELINE_DIRECTORY
 
 
 class _Inner:

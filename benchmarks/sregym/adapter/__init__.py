@@ -12,13 +12,15 @@ import importlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from benchmarks.sregym.adapter.cluster_resources import kubectl
     from benchmarks.sregym.adapter.driver import (
         DeployedLifecycle,
         DeployedLifecycleContext,
         deployed_lifecycle,
-        run_or_reuse_lifecycle,
+        launch_native_lifecycle,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
+    from benchmarks.sregym.adapter.native_operator import inspect_existing
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
         KubectlClusterOps,
         PersistentControllerError,
         PersistentState,
+        ReceiptRejectedError,
         StageInputs,
         collect_followup_incident,
         control_namespace_for,
@@ -37,13 +40,22 @@ if TYPE_CHECKING:
         teardown,
         wait_for_maintenance_ack,
     )
-    from benchmarks.sregym.adapter.runtime import RuntimeConfig, receipt_resolution
+    from benchmarks.sregym.adapter.runtime import (
+        ControllerInstallError,
+        RuntimeConfig,
+        native_install_config,
+    )
 
 _EXPORTS: dict[str, str] = {
     "DeployedLifecycle": "driver",
     "DeployedLifecycleContext": "driver",
     "deployed_lifecycle": "driver",
-    "run_or_reuse_lifecycle": "driver",
+    "launch_native_lifecycle": "driver",
+    "native_install_config": "runtime",
+    "ControllerInstallError": "runtime",
+    "inspect_existing": "native_operator",
+    "kubectl": "cluster_resources",
+    "ReceiptRejectedError": "persistent",
     "REJECTED_RECEIPT_FILENAME": "persistent",
     "STRICT_RECEIPT_FILENAME": "persistent",
     "Clock": "persistent",
@@ -61,7 +73,6 @@ _EXPORTS: dict[str, str] = {
     "run_persistent_stage": "persistent",
     "teardown": "persistent",
     "RuntimeConfig": "runtime",
-    "receipt_resolution": "runtime",
     "HealthyBaselineCaptureOps": "healthy_baseline",
     "kubectl_capture_ops": "healthy_baseline",
 }
@@ -83,11 +94,15 @@ __all__ = [
     "kubectl_capture_ops",
     "control_namespace_for",
     "deployed_lifecycle",
+    "launch_native_lifecycle",
+    "native_install_config",
+    "ControllerInstallError",
+    "inspect_existing",
+    "kubectl",
+    "ReceiptRejectedError",
     "collect_followup_incident",
     "drain_pending_incident",
-    "receipt_resolution",
     "pause_controller",
-    "run_or_reuse_lifecycle",
     "run_persistent_stage",
     "teardown",
     "wait_for_maintenance_ack",

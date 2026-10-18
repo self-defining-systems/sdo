@@ -17,7 +17,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 if [ "${base_tag}" = "checkout" ]; then
   docker tag "sdo-detector-validator:v0.1.0" "sdo-detector-validator:${tag}"
   for target in controller sregym-responder; do
-    docker build --quiet --file "${repo_root}/controller/Dockerfile.runtime" --target "${target}" \
+    docker build --quiet --file "${repo_root}/sdo/operator/Dockerfile.runtime" --target "${target}" \
       --tag "sdo-${target}:${tag}-base" "${repo_root}"
   done
 else

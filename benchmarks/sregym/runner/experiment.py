@@ -145,7 +145,7 @@ class ExperimentConfig:
     allow_failed_verdicts: bool = False
     # Agent reasoning effort, passed to SREGym as --reasoning-effort. Empty
     # leaves the agent's default. SDO's incident agents pin theirs in code
-    # (sdo.agent_runtime.responder.INCIDENT_REASONING_EFFORT); a config test
+    # (sdo.agents.responder.INCIDENT_REASONING_EFFORT); a config test
     # keeps every compared arm declaring that value.
     reasoning_effort: str = ""
 

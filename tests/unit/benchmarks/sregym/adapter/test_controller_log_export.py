@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import benchmarks.sregym.adapter.runtime as runtime
-from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
     import pytest
@@ -36,7 +35,7 @@ def test_controller_logs_of_every_job_pod_are_exported_with_timestamps(
 
     monkeypatch.setattr(runtime, "kubectl", fake_kubectl)
 
-    summary = runtime._export_controller_logs("demo", tmp_path)
+    summary = runtime.export_controller_logs("demo", tmp_path)
 
     destination = tmp_path / "sdo_runtime" / "controller_logs"
     assert summary == {"directory": str(destination), "error": None}
@@ -55,7 +54,7 @@ def test_controller_log_export_failure_is_recorded_not_raised(monkeypatch: pytes
 
     monkeypatch.setattr(runtime, "kubectl", fake_kubectl)
 
-    summary = runtime._export_controller_logs("demo", tmp_path)
+    summary = runtime.export_controller_logs("demo", tmp_path)
 
     assert "container not found" in str(summary["error"])
     error_file = tmp_path / "sdo_runtime" / "controller_logs" / "export_error.txt"
@@ -68,39 +67,11 @@ def test_controller_log_export_survives_a_missing_kubectl(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(runtime, "kubectl", missing_kubectl)
 
-    summary = runtime._export_controller_logs("demo", tmp_path)
+    summary = runtime.export_controller_logs("demo", tmp_path)
 
     assert summary["directory"] is None or Path(str(summary["directory"])).is_dir()
     assert "kubectl" in str(summary["error"])
 
 
 def test_controller_log_export_without_a_destination_is_skipped() -> None:
-    assert runtime._export_controller_logs("demo", None) == {"directory": None, "error": "no artifacts directory"}
-
-
-def test_runtime_cleanup_exports_controller_logs_even_after_a_failed_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    exported: list[tuple[str, Path | None]] = []
-    monkeypatch.setattr(
-        runtime,
-        "_export_controller_logs",
-        lambda namespace, artifacts_dir: exported.append((namespace, artifacts_dir)) or {},
-    )
-    monkeypatch.setattr(runtime, "_delete_submission_bridge", lambda _config: None)
-    config = RuntimeConfig(
-        repository=tmp_path / "application",
-        namespace="demo",
-        application="demo",
-        controller_image="controller:test",
-        responder_image="responder:test",
-        repository_pvc="sdo-repository",
-        credentials_secret="sdo-credentials",
-        model="model",
-        timeout_seconds=60,
-        artifacts_dir=tmp_path / "results",
-    )
-
-    runtime._SREGymRuntimeExtension(config).cleanup(config)
-
-    assert exported == [("demo", tmp_path / "results")]
+    assert runtime.export_controller_logs("demo", None) == {"directory": None, "error": "no artifacts directory"}

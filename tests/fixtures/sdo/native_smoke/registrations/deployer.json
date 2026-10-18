@@ -1,0 +1,23 @@
+{
+  "schema_version": "sdo.dev/v1alpha1",
+  "agent_id": "sdo-deployer",
+  "capabilities": [
+    {
+      "task_type": "source-deployment",
+      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.SourceDeploymentRequest",
+      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.SourceDeploymentResult"
+    },
+    {
+      "task_type": "source-architecture",
+      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureRequest",
+      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureResult"
+    }
+  ],
+  "kubernetes_job": {
+    "image": "sdo-worker:native-smoke",
+    "command": [
+      "python3",
+      "/opt/sdo-smoke/worker.py"
+    ]
+  }
+}

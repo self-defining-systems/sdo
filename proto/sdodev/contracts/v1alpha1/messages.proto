@@ -20,8 +20,9 @@ import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
+import "sdodev/contracts/v1alpha1/traffic.proto";
 
-option go_package = "sdo.dev/controller/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 // Finding is one detector observation. Mirrors sdk.Finding and
 // sdo.contracts.models.Finding.
@@ -34,7 +35,7 @@ message Finding {
   string evidence = 6 [(buf.validate.field).string.min_len = 1];
   ObjectRef primary_resource = 7 [(buf.validate.field).required = true];
   repeated ObjectRef related_resources = 8;
-  repeated string playbooks = 9;
+  repeated string playbook_ids = 9;
   map<string, ObjectRef> parameter_bindings = 10;
   string fingerprint = 11;
   google.protobuf.Struct metadata = 12;
@@ -50,7 +51,7 @@ message DetectorEvaluation {
 }
 
 message SurfacedPlaybook {
-  string path = 1 [(buf.validate.field).string.min_len = 1];
+  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
   map<string, ObjectRef> parameter_bindings = 2;
 }
 
@@ -61,7 +62,7 @@ message PriorOutcomeEvidence {
   }];
   repeated string root_cause_summaries = 3;
   repeated string repair_action_summaries = 4;
-  repeated string applied_playbooks = 5;
+  repeated string applied_playbook_ids = 5;
   string source_commit = 6 [(buf.validate.field).string.min_len = 1];
   bool exact_source_match = 7;
 }
@@ -101,6 +102,94 @@ message FollowUpContext {
   string prior_responder_summary = 5;
 }
 
+// Read-only logical memory supplied by the Go storage edge. Agent workers do
+// not parse the accepted repository's physical .sdo layout to find context.
+message MemoryWatch {
+  string api_version = 1;
+  string kind = 2;
+}
+
+message MemoryDetector {
+  string id = 1;
+  string detector_class = 2;
+  string owner = 3;
+  reserved 4;
+  repeated MemoryWatch watches = 5;
+  int32 firing = 6;
+  repeated string possible_playbook_ids = 7;
+  string originating_incident = 8;
+  string description = 9;
+  string predicate_excerpt = 10;
+  bool reads_events = 11;
+}
+
+message MemoryScript {
+  string name = 1;
+  string content = 2;
+}
+
+message MemoryPlaybook {
+  string id = 1;
+  string markdown = 2;
+  repeated MemoryScript scripts = 3;
+}
+
+message OperationalMemorySnapshot {
+  string accepted_commit = 1;
+  string goal_markdown = 2;
+  string architecture_markdown = 3;
+  string playbook_index_markdown = 4;
+  repeated MemoryDetector detectors = 5;
+  repeated MemoryPlaybook playbooks = 6;
+}
+
+// Workers propose logical artifacts; the Go memory edge alone chooses paths,
+// frontmatter, manifest layout, and commit representation.
+message ProposedGoSource {
+  string name = 1;
+  string content = 2;
+}
+
+message ProposedDetector {
+  string id = 1;
+  string detector_class = 2;
+  string owner = 3;
+  string constructor = 4;
+  repeated MemoryWatch watches = 5;
+  string interval = 6;
+  int32 firing = 7;
+  int32 clearing = 8;
+  string severity = 9;
+  string debounce = 10;
+  repeated string possible_playbook_ids = 11;
+  string originating_commit = 12;
+  string originating_incident = 13;
+  repeated ProposedGoSource sources = 14;
+}
+
+message ProposedPlaybook {
+  string id = 1;
+  string owner = 2;
+  string fault_class = 3;
+  string originating_incident = 4;
+  string markdown = 5;
+  repeated MemoryScript scripts = 6;
+}
+
+message ProposedTrafficGenerator {
+  string id = 1;
+  repeated ProposedGoSource sources = 2;
+}
+
+message OperationalArtifactProposal {
+  repeated ProposedDetector detectors = 1;
+  repeated ProposedPlaybook playbooks = 2;
+  repeated ProposedTrafficGenerator traffic_generators = 3;
+  repeated TrafficWorkload traffic_workloads = 4;
+  repeated string delete_detector_ids = 5;
+  repeated string delete_playbook_ids = 6;
+}
+
 // IncidentRequest is the snapshot the controller dispatches to the responder.
 message IncidentRequest {
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
@@ -113,8 +202,8 @@ message IncidentRequest {
   repeated PriorOutcomeEvidence relevant_outcomes = 8 [(buf.validate.field).repeated.max_items = 3];
   string source_commit = 9 [(buf.validate.field).string.min_len = 1];
   string deployed_commit = 10 [(buf.validate.field).string.min_len = 1];
-  string architecture_summary_path = 11 [(buf.validate.field).string.min_len = 1];
-  string health_objective_path = 12 [(buf.validate.field).string.min_len = 1];
+  reserved 11, 12;
+  reserved "architecture_summary_path", "health_objective_path";
   string repository_worktree = 13 [(buf.validate.field).string.min_len = 1];
   string repository_base_commit = 14 [(buf.validate.field).string.min_len = 1];
   google.protobuf.Timestamp response_deadline = 15 [(buf.validate.field).required = true];
@@ -122,6 +211,7 @@ message IncidentRequest {
   string repair_policy = 17 [(buf.validate.field).string = {in: ["commit", "recorded-actions"]}];
   StateChanges state_changes = 18;
   FollowUpContext follow_up = 19;
+  OperationalMemorySnapshot memory_snapshot = 20;
 }
 
 message RootCauseEvidence {
@@ -141,9 +231,9 @@ message ConfirmedRootCause {
 }
 
 message AppliedPlaybook {
-  string path = 1 [(buf.validate.field).string.min_len = 1];
+  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
   map<string, ObjectRef> parameter_bindings = 2;
-  repeated string scripts = 3;
+  repeated string script_names = 3;
 }
 
 message VerificationEvidence {
@@ -253,12 +343,23 @@ message IncidentResult {
   repeated string repair_changes = 6;
   repeated RepairActionReceipt repair_actions = 7;
   repeated DetectorEvaluation final_detector_states = 8;
-  repeated string proposed_memory_changes = 9;
+  repeated string proposed_artifact_ids = 9;
   repeated VerificationEvidence verification_evidence = 10;
   UsageMetrics usage = 11 [(buf.validate.field).required = true];
   TimingMetrics timing = 12 [(buf.validate.field).required = true];
   optional string responder_session_id = 13;
   optional string error = 14;
+  LateFindingsPull late_findings_pull = 15;
+}
+
+// A responder claim that it read controller-published findings during its turn.
+// The broker independently checks this against controller-owned evidence.
+message LateFindingsPull {
+  string incident_id = 1;
+  uint32 pull_count = 2;
+  repeated string detector_ids = 3;
+  repeated string playbook_ids = 4;
+  string report_digest = 5;
 }
 
 // IncidentView is the open incident as the controller's state ConfigMap
@@ -292,7 +393,7 @@ message DetectorTimelineEntry {
   string rule_id = 4;
   string fingerprint = 5 [(buf.validate.field).string.min_len = 1];
   map<string, ObjectRef> parameter_bindings = 6;
-  repeated string surfaced_playbooks = 7;
+  repeated string surfaced_playbook_ids = 7;
   google.protobuf.Timestamp first_activated_at = 8 [(buf.validate.field).required = true];
   google.protobuf.Timestamp last_seen_at = 9 [(buf.validate.field).required = true];
   optional google.protobuf.Timestamp cleared_at = 10;

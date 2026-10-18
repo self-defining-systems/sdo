@@ -41,8 +41,6 @@
     "relevant_outcomes": [],
     "source_commit": "source",
     "deployed_commit": "deployed",
-    "architecture_summary_path": ".sdo/arch.md",
-    "health_objective_path": ".sdo/goal.md",
     "repository_worktree": "/tmp/demo",
     "repository_base_commit": "source",
     "response_deadline": "1970-01-01T00:01:01Z",
@@ -107,7 +105,7 @@
       }
     ],
     "final_detector_states": [],
-    "proposed_memory_changes": [],
+    "proposed_artifact_ids": [],
     "verification_evidence": [
       {
         "name": "sdo-incident-status",
@@ -153,7 +151,7 @@
       "rule_id": "cause",
       "fingerprint": "cause",
       "parameter_bindings": {},
-      "surfaced_playbooks": [],
+      "surfaced_playbook_ids": [],
       "first_activated_at": "1970-01-01T00:00:01Z",
       "last_seen_at": "1970-01-01T00:00:01Z",
       "cleared_at": "1970-01-01T00:00:03Z",

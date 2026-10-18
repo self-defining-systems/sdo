@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import re
@@ -81,7 +82,14 @@ from agentshim import ModelPricing, PricingTable, TokenWeights, cost_usd, defaul
 from agentshim import TokenUsage as NormalizedUsage
 from agentshim.providers.claude import ClaudeStreamParser
 
-from sdo.operational_memory import incident_worktree_dirname
+
+def incident_worktree_dirname(incident_id: str) -> str:
+    """Read-only name mapping for archived pre-cutover benchmark trajectories."""
+
+    digest = hashlib.sha256(incident_id.encode()).hexdigest()[:12]
+    readable = "".join(character if character.isalnum() else "-" for character in incident_id.lower()).strip("-")
+    return f"{readable[:32] or 'incident'}-{digest}"
+
 
 try:
     import tomllib

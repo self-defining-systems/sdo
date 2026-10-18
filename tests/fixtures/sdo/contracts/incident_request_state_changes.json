@@ -26,7 +26,7 @@
         }
       ],
       "playbooks": [
-        ".sdo/playbooks/missing-configmap/README.md"
+        "missing-configmap"
       ],
       "parameter_bindings": {
         "missing_config_map": {
@@ -68,7 +68,7 @@
   ],
   "surfaced_playbooks": [
     {
-      "path": ".sdo/playbooks/missing-configmap/README.md",
+      "playbook_id": "missing-configmap",
       "parameter_bindings": {
         "missing_config_map": {
           "api_version": "v1",
@@ -88,8 +88,6 @@
   "relevant_outcomes": [],
   "source_commit": "1111111111111111111111111111111111111111",
   "deployed_commit": "2222222222222222222222222222222222222222",
-  "architecture_summary_path": ".sdo/arch.md",
-  "health_objective_path": ".sdo/goal.md",
   "repository_worktree": "/workspace/inc-20260709-0001",
   "repository_base_commit": "1111111111111111111111111111111111111111",
   "response_deadline": "2026-07-09T18:30:00Z",

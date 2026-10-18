@@ -26,7 +26,12 @@ def test_contract_golden_fixture_round_trip(
 
     model = model_type.model_validate(payload)
 
-    assert model.model_dump(mode="json", exclude_none=True) == payload
+    serialized = model.model_dump(mode="json", exclude_none=True)
+    assert model_type.model_validate(serialized) == model
+    if model_type is IncidentRequest:
+        # Legacy fixture input is normalized to the logical-ID wire field names.
+        assert "playbook_ids" in serialized["findings"][0]
+        assert "playbook_id" in serialized["surfaced_playbooks"][0]
 
 
 def test_contract_models_reject_unknown_fields() -> None:
@@ -131,4 +136,4 @@ def test_incident_request_carries_optional_follow_up_context() -> None:
 
     assert request.follow_up is not None
     assert request.follow_up.attempt == 2
-    assert request.model_dump(mode="json", exclude_none=True) == payload
+    assert IncidentRequest.model_validate(request.model_dump(mode="json", exclude_none=True)) == request

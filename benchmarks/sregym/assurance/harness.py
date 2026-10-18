@@ -20,6 +20,7 @@ import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,7 +30,7 @@ from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
     STRICT_RECEIPT_FILENAME,
     control_namespace_for,
-    receipt_resolution,
+    kubectl,
 )
 from benchmarks.sregym.assurance.chaos import ChaosContext, ChaosThread
 from benchmarks.sregym.assurance.scripted_codex.directive import (
@@ -38,7 +39,7 @@ from benchmarks.sregym.assurance.scripted_codex.directive import (
     SCRIPTED_LABEL,
     TURN_KEY,
 )
-from sdo.controller_install import kubectl
+from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -152,8 +153,37 @@ def _detector_ids(manifest: str) -> set[str]:
     return {str(item.get("id")) for item in document.get("detectors") or [] if isinstance(item, dict)}
 
 
-def _jsonl_text(text: str) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+def _outcome_file(incident_id: str) -> str:
+    """Locate one accepted native outcome by its opaque incident ID."""
+
+    return f".sdo/outcomes/{sha256(incident_id.encode('utf-8')).hexdigest()}.json"
+
+
+def _read_outcome_text(text: str | None, incident_id: str) -> dict[str, Any] | None:
+    if text is None:
+        return None
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(document, dict) or document.get("incident_id") != incident_id:
+        return None
+    return document
+
+
+def _read_outcome(workspace: Path, incident_id: str) -> dict[str, Any] | None:
+    path = workspace / _outcome_file(incident_id)
+    if not path.is_file():
+        return None
+    return _read_outcome_text(path.read_text(encoding="utf-8"), incident_id)
+
+
+def _evidenced_outcome(evidence: dict[str, Any], workspace: Path, incident_id: str) -> dict[str, Any] | None:
+    ledger = evidence.get("native_ledger")
+    document = ledger.get("outcome_document") if isinstance(ledger, dict) else None
+    if isinstance(document, dict) and document.get("incident_id") == incident_id:
+        return document
+    return _read_outcome(workspace, incident_id)
 
 
 def _git(workspace: Path, *args: str) -> str:
@@ -339,9 +369,9 @@ class ScriptedAgent:
             )
         )
         manifest = self._operational_file(".sdo/diagnostics/manifest.yaml")
-        outcomes_text = self._operational_file(".sdo/outcomes.jsonl")
+        outcome_text = self._operational_file(_outcome_file(incident_id)) if incident_id else None
         record.checks.append(
-            Check("operational-repository-readable", manifest is not None and outcomes_text is not None, "via pod")
+            Check("operational-repository-readable", manifest is not None and outcome_text is not None, "via pod")
         )
         record.checks.extend(
             self._memory_checks(spec, incident_id, None if manifest is None else _detector_ids(manifest))
@@ -349,15 +379,15 @@ class ScriptedAgent:
         if incident_id:
             turns = self._turns_for(incident_id)
             record.turns = turns
-            outcomes = [item for item in _jsonl_text(outcomes_text or "") if item.get("incident_id") == incident_id]
-            classes = [item.get("classification") for item in outcomes]
+            outcome = _read_outcome_text(outcome_text, incident_id)
+            classes = [outcome.get("classification")] if outcome is not None else []
             record.metrics["outcome_classifications"] = classes
             if spec.expect.classification is not None:
                 record.checks.append(
                     Check("classification", classes == [spec.expect.classification], f"classifications {classes}")
                 )
             # An abandoned incident must still reach memory exactly once; a lost one is silent.
-            record.checks.append(Check("outcome-recorded", len(outcomes) == 1, f"{len(outcomes)} outcome record(s)"))
+            record.checks.append(Check("outcome-recorded", outcome is not None, f"{len(classes)} outcome record(s)"))
             if spec.expect.resolution == "not-mitigated":
                 record.checks.append(
                     Check("not-recorded-as-mitigated", "success" not in classes, f"classifications {classes}")
@@ -488,13 +518,9 @@ class ScriptedAgent:
         else:
             checks.append(Check("resolution", not mitigated, f"expected {expect.resolution}, got a verified closure"))
 
-        outcomes = [
-            item
-            for item in _jsonl(self._workspace / ".sdo" / "outcomes.jsonl")
-            if item.get("incident_id") == incident_id
-        ]
-        checks.append(Check("one-outcome-record", len(outcomes) == 1, f"{len(outcomes)} outcome records"))
-        classification = outcomes[-1].get("classification") if outcomes else None
+        outcome_document = _evidenced_outcome(evidence, self._workspace, incident_id)
+        checks.append(Check("one-outcome-record", outcome_document is not None, "native incident outcome"))
+        classification = outcome_document.get("classification") if outcome_document else None
         record.metrics["classification"] = classification
         if expect.resolution == "mitigated":
             checks.append(Check("classified-success", classification == "success", str(classification)))
@@ -593,8 +619,17 @@ class ScriptedAgent:
             line.split(": ", 1) for line in _git(self._workspace, "count-objects", "-v").splitlines() if ": " in line
         )
         sample["git_size_kb"] = int(objects.get("size", 0)) + int(objects.get("size-pack", 0))
-        outcomes = _jsonl(sdo / "outcomes.jsonl")
-        ids = [str(item.get("incident_id")) for item in outcomes]
+        ids: list[str] = []
+        for path in (sdo / "outcomes").glob("*.json"):
+            try:
+                document = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(document, dict) or not isinstance(document.get("incident_id"), str):
+                continue
+            incident_id = document["incident_id"]
+            if path.name == Path(_outcome_file(incident_id)).name:
+                ids.append(incident_id)
         sample["outcomes"] = len(ids)
         sample["duplicate_outcomes"] = sorted({i for i in ids if ids.count(i) > 1})
         return sample

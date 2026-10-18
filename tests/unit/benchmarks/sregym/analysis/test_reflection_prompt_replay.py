@@ -4,7 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.analysis.reflection_prompt_replay import estimate_tokens, replay_directories, replay_rollout
-from tests.unit.sdo.agent_runtime.responder.test_reflection_outcomes import _outcome
+from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 if TYPE_CHECKING:
     from pathlib import Path

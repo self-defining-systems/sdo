@@ -8,7 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
-	"sdo.dev/controller/sdk"
+	"sdo.dev/operator/sdk"
 )
 
 const deterministicHealthDetectorVersion = "v3"

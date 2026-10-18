@@ -16,7 +16,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/duration.proto";
 
-option go_package = "sdo.dev/controller/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 message ControllerConfig {
   // Observation and identity.
@@ -38,10 +38,10 @@ message ControllerConfig {
   string responder_credentials_secret = 14;
   repeated string responder_env = 15;
 
-  // Trusted incident broker.
-  string broker = 16;
+  reserved 16, 18;
+  reserved "broker", "broker_args";
+  // Go-owned repository broker proposal root.
   string broker_worktree_root = 17;
-  repeated string broker_args = 18;
 
   // Telemetry.
   string firing_telemetry_path = 19;
@@ -74,4 +74,35 @@ message ControllerConfig {
   string prober_url = 38;
   optional bool clean_responder_helpers = 39;
   optional bool state_baseline = 40;
+
+  // Optional external worker registry. When omitted, the built-in responder
+  // is registered from the existing responder image and command settings.
+  string agent_registration_directory = 41;
+  string responder_agent_id = 42;
+
+  // Build provenance carried into the running controller. Native broker
+  // rollout receipts compare these with the accepted detector tree and
+  // launched artifact; an image tag alone is not evidence of a rollout.
+  string diagnostics_fingerprint = 43;
+  string controller_artifact_digest = 44;
+  string controller_revision = 45;
+
+  // Native broker selection is carried into the compiled controller child.
+  // A native launch must also use proposal-only worker mounts; these fields
+  // are checked together before the controller acquires its lease.
+  string broker_mode = 46;
+  string validator_image = 47;
+  string schema_identity = 48;
+  string responder_backend = 49;
+  string responder_model = 50;
+  string worker_mount_mode = 51;
+
+  // Operator policy for the outcome reflection session. A resumed session
+  // requires a valid responder session ID from the accepted closure.
+  string reflection_session = 52 [(buf.validate.field).string = {in: ["", "fresh", "resume"]}];
+  string reflection_guidance = 53 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];
+
+  // Replays incident detectors on benchmark-supplied healthy snapshots. The
+  // validator receives only the bounded snapshot directory, read-only.
+  bool healthy_baseline = 54;
 }

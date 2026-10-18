@@ -31,7 +31,6 @@ from benchmarks.sregym.assurance.harness import (
 )
 from benchmarks.sregym.assurance.scenarios import SCENARIOS, IncidentSpec
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
-from sdo.controller_install import DEFAULT_REFLECTION_SESSION
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -110,13 +109,14 @@ def _run(args: argparse.Namespace) -> int:
         RuntimeConfig,
         control_namespace_for,
         deployed_lifecycle,
+        inspect_existing,
+        native_install_config,
     )
     from benchmarks.sregym.fastloop.cli import DEPLOY_OP_TIMEOUT_SECONDS
     from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
     from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
     from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
     from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
-    from sdo.agent_runtime.lifecycle import LifecycleValidationCache, reuse_initial_lifecycle_if_valid
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     images = scripted_images(args.tag)
@@ -130,18 +130,10 @@ def _run(args: argparse.Namespace) -> int:
     specs = expand(args.scenario, args.repeat)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{'+'.join(args.scenario)}"
     results_dir = environment.run_dir / "results" / run_id
-    cache = LifecycleValidationCache(environment.run_dir / "validation-cache")
 
     def reuse_only(context: object) -> bool:
-        reused = reuse_initial_lifecycle_if_valid(
-            environment.workspace,
-            application=environment.application,
-            health_objective=context.health_objective,  # type: ignore[attr-defined]
-            active_resources=context.active_resources,  # type: ignore[attr-defined]
-            validation_cache=cache,
-        )
-        if not reused:
-            raise AssuranceError("the workspace lifecycle is not reusable; a scripted run never runs a model lifecycle")
+        del context
+        inspect_existing(native_install_config(runtime_config))
         return True
 
     runtime_config = RuntimeConfig(
@@ -170,7 +162,6 @@ def _run(args: argparse.Namespace) -> int:
             results_dir=results_dir,
             kubeconfig=str(environment.kubeconfig),
             verification_timeout_seconds=float(args.verification_timeout),
-            validation_cache=cache,
         ),
         ops=KubectlClusterOps(),
         lifecycle_inputs=lambda: deployed_lifecycle(environment.namespace),
@@ -250,7 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--tag", default="assure", help="scripted image tag (build_images.sh)")
     run.add_argument("--timeout", type=int, default=900, help="responder timeout in seconds")
     run.add_argument("--verification-timeout", type=int, default=1200, help="seconds to wait for a verified incident")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default=DEFAULT_REFLECTION_SESSION)
+    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="fresh")
     run.add_argument("--skip-image-load", action="store_true")
     run.add_argument(
         "--fresh", action="store_true", help="tear down the controller and reset the workspace to the seed first"

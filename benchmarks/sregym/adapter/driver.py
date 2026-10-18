@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -21,6 +22,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from benchmarks.sregym.adapter.cluster_resources import (
+    BenchmarkClusterResourcesConfig,
+    kubectl,
+    prepare_benchmark_resources,
+    wait_submission_bridge,
+)
 from benchmarks.sregym.adapter.fault_gate import (
     AWAITING_FAULT_INJECTION,
     FaultGateError,
@@ -28,6 +35,14 @@ from benchmarks.sregym.adapter.fault_gate import (
     request_fault_injection,
 )
 from benchmarks.sregym.adapter.healthy_baseline import capture_snapshots, kubectl_capture_ops, publish_snapshots
+from benchmarks.sregym.adapter.native_operator import (
+    NativeHostConfig,
+    NativeInstallConfig,
+    collect_native_receipt,
+    export_runtime_artifacts,
+    launch_host,
+    sync_existing,
+)
 from benchmarks.sregym.adapter.persistent import (
     PERSISTENT_STATE_ENV,
     ClusterOps,
@@ -37,7 +52,7 @@ from benchmarks.sregym.adapter.persistent import (
     persist_resolution,
     run_persistent_stage,
 )
-from benchmarks.sregym.adapter.runtime import RuntimeConfig, run_production_runtime
+from benchmarks.sregym.adapter.runtime import RuntimeConfig, _responder_instructions
 from benchmarks.sregym.adapter.submission import submit_solution
 from benchmarks.sregym.protocol.conductor import (
     get_api_base,
@@ -47,19 +62,11 @@ from benchmarks.sregym.protocol.conductor import (
     signal_cleanup,
 )
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
-from sdo.agent_runtime.lifecycle import (
-    ActiveTopologyResourceDTO,
-    ClaudeLifecycleBackend,
-    CodexLifecycleBackend,
-    LifecycleValidationCache,
-    reuse_initial_lifecycle_if_valid,
-    run_initial_lifecycle,
-    validation_report,
-)
-from sdo.controller_install import kubectl
-from sdo.operational_memory import DEFAULT_REFLECTION_SESSION
 
 logger = logging.getLogger(__name__)
+DEFAULT_REFLECTION_SESSION = "fresh"
+
+DEFAULT_BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
 
 CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -129,7 +136,20 @@ def _remove_sdo_jobs_before_benchmark_grading(
 ) -> None:
     """Keep completed SDO infrastructure out of application-pod grading."""
 
-    responder_jobs = receipt.get("responder_jobs", [])
+    if receipt.get("schema_version") == "sdo.production-receipt/v2":
+        namespace = str(receipt.get("control_namespace") or namespace)
+        evidence = receipt.get("responder_job_evidence")
+        responder_jobs = (
+            [
+                item.get("job_name")
+                for item in evidence
+                if isinstance(item, dict) and isinstance(item.get("job_name"), str)
+            ]
+            if isinstance(evidence, list)
+            else []
+        )
+    else:
+        responder_jobs = receipt.get("responder_jobs", [])
     names = ["sdo-controller-run"]
     if isinstance(responder_jobs, list):
         names.extend(name for name in responder_jobs if isinstance(name, str) and name.startswith("sdo-"))
@@ -167,13 +187,21 @@ def _submit_recorded_result(
     if stage not in READY_STAGES:
         raise RuntimeError(f"cannot publish SDO result while SREGym is at stage {stage!r}")
 
-    root_causes = receipt.get("confirmed_root_causes", [])
+    result: dict[str, Any] = receipt
+    if receipt.get("schema_version") == "sdo.production-receipt/v2":
+        ledger = receipt.get("native_ledger")
+        closure = ledger.get("closure") if isinstance(ledger, dict) else None
+        candidate = closure.get("result") if isinstance(closure, dict) else None
+        if not isinstance(candidate, dict):
+            raise RuntimeError("native receipt has no responder result")
+        result = candidate
+    root_causes = result.get("confirmed_root_causes", [])
     diagnosis = "; ".join(
         str(item.get("summary", "")).strip()
         for item in root_causes
         if isinstance(item, dict) and str(item.get("summary", "")).strip()
     )
-    repair_actions = receipt.get("repair_actions", [])
+    repair_actions = result.get("repair_actions", [])
     mitigation = "; ".join(
         str(item.get("summary", "")).strip()
         for item in repair_actions
@@ -229,6 +257,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--repository-pvc", default=config.get("repository_pvc", "sdo-application-repository"))
     parser.add_argument("--credentials-secret", default=config.get("credentials_secret", "sdo-codex-credentials"))
+    parser.add_argument("--registry-push-secret", default=config.get("registry_push_secret", "sdo-registry-push"))
+    parser.add_argument("--buildkit-image", default=config.get("buildkit_image", DEFAULT_BUILDKIT_IMAGE))
+    parser.add_argument("--kind-cluster-name", default=config.get("kind_cluster_name"))
+    parser.add_argument("--max-deployment-attempts", type=int, default=int(config.get("max_deployment_attempts", 3)))
+    parser.add_argument("--agent-registrations", default=config.get("agent_registrations"))
     parser.add_argument(
         "--reflection-session",
         choices=("resume", "fresh"),
@@ -304,6 +337,12 @@ def _relay_target_api_base(api_base: str) -> str | None:
     if parsed.hostname not in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return None
     return api_base.rstrip("/")
+
+
+@dataclass(frozen=True)
+class ActiveTopologyResourceDTO:
+    kind: str
+    name: str
 
 
 @dataclass(frozen=True)
@@ -428,6 +467,171 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
+def _launch_native_lifecycle(
+    args: argparse.Namespace,
+    *,
+    repository: Path,
+    namespace: str,
+    application: str,
+    health_objective: str,
+    api_base: str,
+    persistent: bool,
+) -> dict[str, Any]:
+    """Provision benchmark transport, then run the production Go host lifecycle."""
+
+    kind_cluster_name = (args.kind_cluster_name or os.getenv("SREGYM_KIND_CLUSTER_NAME", "")).strip()
+    if not kind_cluster_name:
+        raise RuntimeError("native benchmark operation requires SREGYM_KIND_CLUSTER_NAME or --kind-cluster-name")
+    raw_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or os.getenv("KUBECONFIG", "").strip()
+    if not raw_kubeconfig or not Path(raw_kubeconfig).is_absolute():
+        raise RuntimeError("native benchmark operation requires an absolute trusted kubeconfig")
+    kubeconfig = Path(raw_kubeconfig)
+    control_namespace = control_namespace_for(namespace)
+    cluster = BenchmarkClusterResourcesConfig(
+        namespace=namespace,
+        control_namespace=control_namespace,
+        responder_image=args.responder_image,
+        credentials_secret=args.credentials_secret,
+        registry_push_secret=args.registry_push_secret,
+        registry_insecure=True,
+        kind_cluster_name=kind_cluster_name,
+    )
+    relay_target = _relay_target_api_base(api_base)
+    prepare_benchmark_resources(cluster, relay_target_base=relay_target, kubeconfig=kubeconfig)
+    if relay_target is not None:
+        wait_submission_bridge(control_namespace, kubeconfig)
+    install = NativeInstallConfig(
+        repository=repository.resolve(),
+        namespace=namespace,
+        control_namespace=control_namespace,
+        application=application,
+        controller_image=args.controller_image,
+        responder_image=args.responder_image,
+        validator_image=args.validator_image,
+        repository_pvc=args.repository_pvc,
+        credentials_secret=args.credentials_secret,
+        model=args.model,
+        kubeconfig=kubeconfig,
+        agent_provider=args.provider,
+        repair_policy="recorded-actions",
+        late_findings=args.late_findings,
+        reflection_session=args.reflection_session,
+        reflection_guidance=args.reflection_guidance,
+        healthy_baseline=args.healthy_baseline,
+        max_follow_ups=args.max_follow_ups,
+        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
+        response_timeout_seconds=args.timeout_sec,
+        verification_timeout_seconds=120,
+        duration_seconds=None if persistent else args.timeout_sec,
+        exit_after_closure=not persistent,
+        registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
+        responder_env=(
+            f"SDO_SREGYM_API_BASE={_in_cluster_api_base(api_base)}",
+            f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
+        ),
+    )
+    host = NativeHostConfig(
+        install=install,
+        health_objective=health_objective,
+        operation_id=f"sregym-{uuid.uuid4().hex}",
+        buildkit_image=args.buildkit_image,
+        registry_push_secret=args.registry_push_secret,
+        registry_host=cluster.registry_target.host,
+        registry_insecure=cluster.registry_target.insecure,
+        max_attempts=args.max_deployment_attempts,
+        agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
+    )
+    return launch_host(host)
+
+
+def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_base: str) -> dict[str, Any]:
+    """Run fresh benchmark deployment and controller installation through Go."""
+
+    args = argparse.Namespace(
+        kind_cluster_name=config.kind_cluster_name,
+        controller_image=config.controller_image,
+        responder_image=config.responder_image,
+        validator_image=config.validator_image,
+        repository_pvc=config.repository_pvc,
+        credentials_secret=config.credentials_secret,
+        registry_push_secret=config.registry_push_secret,
+        buildkit_image=config.buildkit_image,
+        model=config.model,
+        provider=config.agent_provider,
+        late_findings=config.late_findings,
+        reflection_session=config.reflection_session,
+        reflection_guidance=config.reflection_guidance,
+        healthy_baseline=config.healthy_baseline,
+        max_follow_ups=config.max_follow_ups,
+        follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
+        timeout_sec=config.timeout_seconds,
+        max_deployment_attempts=config.max_deployment_attempts,
+        agent_registrations=config.agent_registrations,
+    )
+    return _launch_native_lifecycle(
+        args,
+        repository=config.repository,
+        namespace=config.namespace,
+        application=config.application,
+        health_objective=health_objective,
+        api_base=api_base,
+        persistent=config.persistent,
+    )
+
+
+def _native_install_for_run(
+    args: argparse.Namespace, repository: Path, namespace: str, application: str, api_base: str
+) -> NativeInstallConfig:
+    raw_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or os.getenv("KUBECONFIG", "").strip()
+    if not raw_kubeconfig or not Path(raw_kubeconfig).is_absolute():
+        raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
+    return NativeInstallConfig(
+        repository=repository.resolve(),
+        namespace=namespace,
+        control_namespace=control_namespace_for(namespace),
+        application=application,
+        controller_image=args.controller_image,
+        responder_image=args.responder_image,
+        validator_image=args.validator_image,
+        repository_pvc=args.repository_pvc,
+        credentials_secret=args.credentials_secret,
+        model=args.model,
+        kubeconfig=Path(raw_kubeconfig),
+        agent_provider=args.provider,
+        repair_policy="recorded-actions",
+        late_findings=args.late_findings,
+        reflection_session=args.reflection_session,
+        reflection_guidance=args.reflection_guidance,
+        max_follow_ups=args.max_follow_ups,
+        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
+        response_timeout_seconds=args.timeout_sec,
+        verification_timeout_seconds=120,
+        duration_seconds=args.timeout_sec,
+        exit_after_closure=True,
+        responder_env=(
+            f"SDO_SREGYM_API_BASE={_in_cluster_api_base(api_base)}",
+            f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
+        ),
+    )
+
+
+def _acknowledged_incident_id(control_namespace: str, kubeconfig: Path) -> str:
+    completed = kubectl(
+        ["get", "configmap/sdo-controller-state", "-o", "json"],
+        namespace=control_namespace,
+        kubeconfig=kubeconfig,
+    )
+    try:
+        document = json.loads(completed.stdout)
+        state = json.loads(document["data"]["runtime-state.json"])
+        incident_id = state["last_acknowledged_incident_id"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Go controller has no durable acknowledged incident") from exc
+    if not isinstance(incident_id, str) or not incident_id.strip():
+        raise RuntimeError("Go controller has no durable acknowledged incident")
+    return incident_id
+
+
 def _cluster_ops(args: argparse.Namespace, namespace: str) -> ClusterOps:
     ops: ClusterOps = KubectlClusterOps()
     if args.healthy_baseline:
@@ -435,12 +639,14 @@ def _cluster_ops(args: argparse.Namespace, namespace: str) -> ClusterOps:
     return ops
 
 
-def _record_healthy_baseline(namespace: str) -> Callable[[], None]:
-    """Job mode: the controller runs in the application namespace, so record and publish there."""
+def _record_healthy_baseline(namespace: str, control_namespace: str) -> Callable[[], None]:
+    """Capture the application before injection and publish to the operator namespace."""
 
     def record() -> None:
         publish_snapshots(
-            capture_snapshots(namespace, kubectl_runner=kubectl), control_namespace=namespace, kubectl_runner=kubectl
+            capture_snapshots(namespace, kubectl_runner=kubectl),
+            control_namespace=control_namespace,
+            kubectl_runner=kubectl,
         )
 
     return record
@@ -511,36 +717,6 @@ def deployed_lifecycle(namespace: str, *, command_runner: CommandRunner = subpro
     return DeployedLifecycle(context=context, fingerprint=_lifecycle_fingerprint(context))
 
 
-def run_or_reuse_lifecycle(
-    repository: Path,
-    *,
-    application: str,
-    context: DeployedLifecycleContext,
-    provider: str,
-    model: str,
-    validation_cache: LifecycleValidationCache | None = None,
-) -> bool:
-    """Reuse a still-valid lifecycle handoff, or run a fresh model-backed lifecycle; return whether it was reused."""
-
-    reused = reuse_initial_lifecycle_if_valid(
-        repository,
-        application=application,
-        health_objective=context.health_objective,
-        active_resources=context.active_resources,
-        validation_cache=validation_cache,
-    )
-    if not reused:
-        lifecycle_type = ClaudeLifecycleBackend if provider == "claude" else CodexLifecycleBackend
-        run_initial_lifecycle(
-            repository,
-            application=application,
-            health_objective=context.health_objective,
-            active_resources=context.active_resources,
-            backend=lifecycle_type(model=model),
-        )
-    return reused
-
-
 @contextlib.contextmanager
 def _environment(name: str, value: str | None) -> Iterator[None]:
     previous = os.environ.get(name)
@@ -588,28 +764,17 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
     _configure_turn_usage_log(args.logs_dir)
     application = str(app_info.get("app_name") or repository.name)
     namespace = str(app_info.get("namespace") or "default")
+    trusted_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or None
+    if trusted_kubeconfig is not None:
+        if not Path(trusted_kubeconfig).is_absolute():
+            raise RuntimeError("SREGYM_BASE_KUBECONFIG must be absolute")
+        os.environ["KUBECONFIG"] = trusted_kubeconfig
     lifecycle_context = _deployed_lifecycle_context(namespace)
     receipt_dir = _receipt_directory(args.logs_dir, repository)
-    trusted_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or None
-    ambient_kubeconfig = os.environ.get("KUBECONFIG")
-    validation_cache = LifecycleValidationCache.from_env()
-
-    lifecycle_seed_checkpoint_error: list[str] = []
 
     def lifecycle() -> bool:
-        # Host-side lifecycle keeps the benchmark's agent access path.
-        with _environment("KUBECONFIG", ambient_kubeconfig):
-            reused = run_or_reuse_lifecycle(
-                repository,
-                application=application,
-                context=lifecycle_context,
-                provider=args.provider,
-                model=args.model,
-                validation_cache=validation_cache,
-            )
-        if args.logs_dir and persist_lifecycle_seed(repository) is None:
-            lifecycle_seed_checkpoint_error.append(f"lifecycle seed checkpoint was not written for {repository}")
-        return reused
+        launch_native_lifecycle(config, lifecycle_context.health_objective, api_base)
+        return False
 
     config = RuntimeConfig(
         repository=repository,
@@ -636,31 +801,32 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         controller_namespace=control_namespace_for(namespace),
         persistent=True,
         wait_for_completion=False,
+        buildkit_image=args.buildkit_image,
+        registry_push_secret=args.registry_push_secret,
+        kind_cluster_name=args.kind_cluster_name,
+        max_deployment_attempts=args.max_deployment_attempts,
+        agent_registrations=Path(args.agent_registrations).resolve() if args.agent_registrations else None,
     )
-    with _environment("KUBECONFIG", trusted_kubeconfig or ambient_kubeconfig):
-        resolution = run_persistent_stage(
-            StageInputs(
-                stage_label=_stage_label(args.logs_dir),
-                application=application,
-                namespace=namespace,
-                lifecycle_fingerprint=_lifecycle_fingerprint(lifecycle_context),
-                runtime_config=config,
-                receipt_dir=receipt_dir,
-                state_path=Path(raw_state_path),
-                kubeconfig=trusted_kubeconfig,
-                verification_timeout_seconds=float(args.timeout_sec + 300),
-                detection_timeout_seconds=(
-                    float(args.detection_timeout_sec) if args.detection_timeout_sec is not None else None
-                ),
-                validation_cache=validation_cache,
+    resolution = run_persistent_stage(
+        StageInputs(
+            stage_label=_stage_label(args.logs_dir),
+            application=application,
+            namespace=namespace,
+            lifecycle_fingerprint=_lifecycle_fingerprint(lifecycle_context),
+            runtime_config=config,
+            receipt_dir=receipt_dir,
+            state_path=Path(raw_state_path),
+            kubeconfig=trusted_kubeconfig,
+            verification_timeout_seconds=float(args.timeout_sec + 300),
+            detection_timeout_seconds=(
+                float(args.detection_timeout_sec) if args.detection_timeout_sec is not None else None
             ),
-            ops=_cluster_ops(args, namespace),
-            run_lifecycle=lifecycle,
-            inject=lambda: request_fault_injection(api_base),
-        )
+        ),
+        ops=_cluster_ops(args, namespace),
+        run_lifecycle=lifecycle,
+        inject=lambda: request_fault_injection(api_base),
+    )
     resolution["driver_phase_timings_seconds"]["conductor_wait"] = conductor_ready - started
-    if lifecycle_seed_checkpoint_error:
-        resolution["lifecycle_seed_checkpoint_error"] = lifecycle_seed_checkpoint_error[0]
     return resolution
 
 
@@ -685,93 +851,48 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     namespace = str(app_info.get("namespace") or "default")
     lifecycle_context = _deployed_lifecycle_context(namespace)
     health_objective = lifecycle_context.health_objective
-    validation_cache = LifecycleValidationCache.from_env()
-    lifecycle_reused = reuse_initial_lifecycle_if_valid(
-        repository,
-        application=application,
-        health_objective=health_objective,
-        active_resources=lifecycle_context.active_resources,
-        validation_cache=validation_cache,
-    )
-    if not lifecycle_reused:
-        lifecycle_type = ClaudeLifecycleBackend if args.provider == "claude" else CodexLifecycleBackend
-        run_initial_lifecycle(
-            repository,
-            application=application,
-            health_objective=health_objective,
-            active_resources=lifecycle_context.active_resources,
-            backend=lifecycle_type(model=args.model),
-        )
-    lifecycle_ready = time.monotonic()
-    lifecycle_seed_checkpoint_error: str | None = None
-    if args.logs_dir and persist_lifecycle_seed(repository) is None:
-        lifecycle_seed_checkpoint_error = f"lifecycle seed checkpoint was not written for {repository}"
     trusted_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip()
     if trusted_kubeconfig:
         os.environ["KUBECONFIG"] = trusted_kubeconfig
+    control_namespace = control_namespace_for(namespace)
     gate = (
-        _FaultGate(namespace, api_base, before_inject=_record_healthy_baseline(namespace))
+        _FaultGate(control_namespace, api_base, before_inject=_record_healthy_baseline(namespace, control_namespace))
         if fault_deferred and args.healthy_baseline
-        else _FaultGate(namespace, api_base)
+        else _FaultGate(control_namespace, api_base)
         if fault_deferred
         else None
     )
     if gate is not None:
         gate.start()
-    receipt = run_production_runtime(
-        RuntimeConfig(
-            repository=repository,
-            namespace=namespace,
-            application=application,
-            controller_image=args.controller_image,
-            responder_image=args.responder_image,
-            validator_image=args.validator_image,
-            repository_pvc=args.repository_pvc,
-            credentials_secret=args.credentials_secret,
-            model=args.model,
-            timeout_seconds=args.timeout_sec,
-            repair_policy="recorded-actions",
-            agent_provider=args.provider,
-            reflection_session=args.reflection_session,
-            reflection_guidance=args.reflection_guidance,
-            late_findings=args.late_findings,
-            healthy_baseline=args.healthy_baseline,
-            max_follow_ups=args.max_follow_ups,
-            follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
-            submission_api_base=_in_cluster_api_base(api_base),
-            submission_relay_target_base=_relay_target_api_base(api_base),
-            artifacts_dir=_receipt_directory(args.logs_dir, repository),
-        )
+    host_receipt = _launch_native_lifecycle(
+        args,
+        repository=repository,
+        namespace=namespace,
+        application=application,
+        health_objective=health_objective,
+        api_base=api_base,
+        persistent=False,
     )
     runtime_ready = time.monotonic()
     if gate is not None:
         gate.join()
-    receipt["lifecycle_reused"] = lifecycle_reused
-    receipt["lifecycle_validation"] = validation_report(validation_cache)
+    native = _native_install_for_run(args, repository, namespace, application, api_base)
+    if native.kubeconfig is None:
+        raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
+    incident_id = _acknowledged_incident_id(control_namespace, native.kubeconfig)
+    sync_existing(native)
+    receipt = collect_native_receipt(native, incident_id)
+    receipt["native_host_receipt"] = host_receipt
+    artifact_dir = _receipt_directory(args.logs_dir, repository).resolve()
+    receipt["runtime_artifacts"] = {"directory": str(export_runtime_artifacts(native, artifact_dir))}
     receipt["fault_injection_deferred"] = fault_deferred
-    if lifecycle_seed_checkpoint_error is not None:
-        receipt["lifecycle_seed_checkpoint_error"] = lifecycle_seed_checkpoint_error
     if gate is not None:
         receipt["fault_gate_timings_seconds"] = gate.timings
     receipt["driver_phase_timings_seconds"] = {
         "conductor_wait": conductor_ready - started,
-        "inventory_and_lifecycle": lifecycle_ready - conductor_ready,
-        "production_runtime": runtime_ready - lifecycle_ready,
+        "native_lifecycle_and_controller": runtime_ready - conductor_ready,
         "driver_total_before_submission": runtime_ready - started,
     }
-    runtime_timings = receipt.get("phase_timings_seconds")
-    if isinstance(runtime_timings, dict):
-        operational_recovery = runtime_timings.get("operational_recovery")
-        post_recovery = runtime_timings.get("post_recovery_learning_and_receipt")
-        if isinstance(operational_recovery, (int, float)):
-            receipt["incident_resolution_seconds"] = float(operational_recovery)
-            receipt["incident_resolution_scope"] = "detected_to_independently_verified_health"
-            excluded: dict[str, float] = {
-                "pre_incident_inventory_and_lifecycle": lifecycle_ready - conductor_ready,
-            }
-            if isinstance(post_recovery, (int, float)):
-                excluded["post_recovery_learning_and_receipt"] = float(post_recovery)
-            receipt["excluded_from_incident_resolution_seconds"] = excluded
     return receipt
 
 

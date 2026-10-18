@@ -1,0 +1,134 @@
+// Package operatorcli translates installation arguments into the controller's
+// typed launch contract. The compiled child receives only ControllerConfig.
+package operatorcli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"google.golang.org/protobuf/types/known/durationpb"
+	"sdo.dev/operator/builder"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
+)
+
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.988eeb5bea3ffdc5"
+
+type repeatable []string
+
+func (r *repeatable) String() string         { return strings.Join(*r, ",") }
+func (r *repeatable) Set(value string) error { *r = append(*r, value); return nil }
+
+// ParseControllerLaunch rejects native/legacy split-brain before any build or
+// Kubernetes effect. It is pure so installer Job arguments can be contract
+// tested against the same parser shipped in the controller image.
+func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
+	if len(args) == 0 || args[0] != "controller" {
+		return builder.RunConfig{}, false, errors.New("expected controller subcommand")
+	}
+	flags := flag.NewFlagSet("sdo-operator controller", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	app := flags.String("app", "", "accepted application checkout")
+	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "installed Go operator modules")
+	namespace := flags.String("namespace", "", "application namespace")
+	controlNamespace := flags.String("control-namespace", "", "controller namespace")
+	application := flags.String("application", "", "application identity")
+	responderImage := flags.String("responder-image", "", "registered responder image")
+	proberImage := flags.String("prober-image", "", "traffic prober image")
+	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
+	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
+	repositorySubPath := flags.String("repository-pvc-subpath", "", "repository PVC subpath")
+	credentialsSecret := flags.String("credentials-secret", "", "responder credentials secret")
+	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
+	validatorImage := flags.String("validator-image", "", "isolated validator image")
+	model := flags.String("model", "", "responder model")
+	backend := flags.String("responder-backend", "codex", "responder backend")
+	schemaIdentity := flags.String("schema-identity", sdkSchemaIdentity, "accepted SDK schema identity")
+	brokerMode := flags.String("broker-mode", "", "broker mode")
+	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
+	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
+	responderID := flags.String("responder-agent-id", "sdo-responder", "responder agent identity")
+	sourceCommit := flags.String("source-commit", "", "source commit")
+	deployedCommit := flags.String("deployed-commit", "", "deployed commit")
+	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
+	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
+	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	reflectionSession := flags.String("reflection-session", "fresh", "reflection session mode: fresh or resume")
+	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
+	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
+	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
+	duration := flags.Duration("duration", 0, "bounded controller duration")
+	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
+	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
+	var responderEnv repeatable
+	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	if err := flags.Parse(args[1:]); err != nil {
+		return builder.RunConfig{}, false, err
+	}
+	if flags.NArg() != 0 {
+		return builder.RunConfig{}, false, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
+	}
+	if *brokerMode != "native" || *workerMountMode != "proposal-only" {
+		return builder.RunConfig{}, false, errors.New("native broker requires proposal-only worker mounts")
+	}
+	if *duration < 0 || (*supervise && (*duration > 0 || *exitAfterClosure)) {
+		return builder.RunConfig{}, false, errors.New("supervision cannot be combined with bounded duration or exit-after-closure")
+	}
+	if *repairPolicy != "commit" && *repairPolicy != "recorded-actions" {
+		return builder.RunConfig{}, false, fmt.Errorf("unsupported repair policy %q", *repairPolicy)
+	}
+	if *reflectionSession != "fresh" && *reflectionSession != "resume" {
+		return builder.RunConfig{}, false, fmt.Errorf("unsupported reflection session mode %q", *reflectionSession)
+	}
+	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
+		return builder.RunConfig{}, false, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
+	}
+	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown <= 0 {
+		return builder.RunConfig{}, false, errors.New("follow-up limit must be at most 1000 and cooldown positive")
+	}
+	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
+		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *schemaIdentity == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
+		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
+	}
+	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
+		return builder.RunConfig{}, false, errors.New("repository mount and proposal root must be absolute")
+	}
+	if *application == "" {
+		*application = filepath.Base(*app)
+	}
+	launch := &contracts.ControllerConfig{
+		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
+		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
+		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		ResponderImage: *responderImage, ResponderEnv: responderEnv,
+		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
+		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
+		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
+		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
+		ExitAfterClosure: *exitAfterClosure,
+		ProberImage:      *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
+		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
+		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, HealthyBaseline: *healthyBaseline,
+	}
+	if *duration > 0 {
+		launch.Duration = durationpb.New(*duration)
+	}
+	return builder.RunConfig{
+		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
+		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
+			projected, err := memory.AcceptedDiagnostics(ctx, root)
+			if err != nil {
+				return builder.DiagnosticsProjection{}, err
+			}
+			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
+		},
+		PublishProber: memory.PublishProber,
+	}, *supervise, nil
+}
