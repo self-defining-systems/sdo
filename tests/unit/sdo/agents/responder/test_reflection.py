@@ -23,7 +23,7 @@ from sdo.agents.views import (
     IncidentResult,
     OperationalMemorySnapshot,
 )
-from sdo.contracts import OutcomeRecord
+from sdo.contracts import OutcomeClassification, OutcomeRecord
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -58,6 +58,35 @@ def _outcome() -> OutcomeRecord:
         responder_backend="codex",
         responder_model="gpt-5",
     )
+
+
+@pytest.mark.parametrize(
+    ("classification", "expected"),
+    [
+        (OutcomeClassification.SUCCESS, True),
+        (OutcomeClassification.FALSE_POSITIVE, True),
+        (OutcomeClassification.FALSE_NEGATIVE, True),
+        (OutcomeClassification.PARTIAL, False),
+        (OutcomeClassification.EXTERNAL_RECOVERY, False),
+        (OutcomeClassification.CLEARED_WITHOUT_ACTION, False),
+        (OutcomeClassification.FAILED, False),
+        (OutcomeClassification.CANCELLED, False),
+    ],
+)
+def test_reflection_gate_uses_typed_classification(classification: OutcomeClassification, expected: bool) -> None:
+    outcome = _outcome()
+    outcome.classification = classification.value
+    reflected = SessionReflector(_CapturingBackend()).should_reflect(
+        outcome, health_verified=True, session_id="session"
+    )
+    assert reflected is expected
+
+
+def test_reflection_gate_rejects_unknown_classification() -> None:
+    outcome = _outcome()
+    outcome.classification = "sucess"
+    with pytest.raises(ValueError, match="sucess"):
+        SessionReflector(_CapturingBackend()).should_reflect(outcome, health_verified=True, session_id="session")
 
 
 def _fresh_closure(worktree: Path, *, evidence: str = "Deployment unavailable") -> BrokerClosure:

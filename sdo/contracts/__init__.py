@@ -1,3 +1,4 @@
+from sdo.contracts.outcome_classification import OutcomeClassification
 from sdo.contracts.proto import (
     AgentCapability,
     AgentRegistration,
@@ -52,6 +53,7 @@ __all__ = [
     "LocalProcessLaunch",
     "ProposalWorkspace",
     "OperationalArtifactProposal",
+    "OutcomeClassification",
     "OutcomeRecord",
     "OutcomeTimestamps",
     "DiagnosisVerification",

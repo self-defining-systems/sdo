@@ -12,6 +12,7 @@ from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 from sdo.agents.views import (
     OperationalArtifactDraft,  # noqa: TC001 - Pydantic resolves this field at runtime.
 )
+from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -27,12 +28,12 @@ if TYPE_CHECKING:
     from sdo.contracts import OutcomeRecord
 
 
-def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
-    if classification == "false_positive":
+def _classification_directive(classification: OutcomeClassification, guidance: ReflectionGuidance = "baseline") -> str:
+    if classification is OutcomeClassification.FALSE_POSITIVE:
         return "tighten the over-broad detector signature and add a near-miss regression test."
-    if classification == "false_negative":
+    if classification is OutcomeClassification.FALSE_NEGATIVE:
         return "add or widen the missed detector signature and include the reproducing test that previously failed."
-    if classification == "success":
+    if classification is OutcomeClassification.SUCCESS:
         if guidance in _GENERALIZING_GUIDANCE:
             return (
                 "Capture the confirmed signature at the level of its root-cause class, following the generalization "
@@ -162,6 +163,7 @@ def _logical_learning_request(
     snapshot = closure.request.memory_snapshot
     if snapshot is None:
         raise ValueError("logical reflection requires an operational memory snapshot")
+    classification = OutcomeClassification(outcome.classification)
     return (
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot and source code. Propose reusable incident "
@@ -179,8 +181,8 @@ def _logical_learning_request(
         "Return learning_decision=updated only with a nonempty artifact_proposal. "
         "Return no_change with a specific reason and artifact_proposal=null when no safe learning exists.\n\n"
         f"{_logical_guidance(guidance)}"
-        f"For this {outcome.classification} outcome, "
-        f"{_classification_directive(outcome.classification, guidance)}\n\n"
+        f"For this {classification.value} outcome, "
+        f"{_classification_directive(classification, guidance)}\n\n"
         "Before returning an update, save the complete artifact_proposal as ProtoJSON in a temporary file "
         "outside the repository, run `sdo-operator draft-test --app . --proposal-json <file>` from the proposal "
         "checkout, and correct any validation errors. The command checks a scratch projection and does not commit. "
@@ -268,7 +270,14 @@ class SessionReflector:
 
     def should_reflect(self, outcome: OutcomeRecord, *, health_verified: bool, session_id: str | None) -> bool:
         return bool(
-            health_verified and session_id and outcome.classification in {"success", "false_positive", "false_negative"}
+            health_verified
+            and session_id
+            and OutcomeClassification(outcome.classification)
+            in {
+                OutcomeClassification.SUCCESS,
+                OutcomeClassification.FALSE_POSITIVE,
+                OutcomeClassification.FALSE_NEGATIVE,
+            }
         )
 
     def resume(
