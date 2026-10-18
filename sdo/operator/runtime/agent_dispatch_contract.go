@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strconv"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -48,35 +46,11 @@ func builtInReflectorRegistration(image string) *contracts.AgentRegistration {
 }
 
 func incidentRequestToProto(request IncidentRequest) (*contracts.IncidentRequest, error) {
-	raw, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("encode incident request: %w", err)
-	}
-	raw, err = memory.NormalizeWorkerWire(raw)
-	if err != nil {
-		return nil, fmt.Errorf("logical incident playbooks: %w", err)
-	}
-	typed := &contracts.IncidentRequest{}
-	if err := protojson.Unmarshal(raw, typed); err != nil {
-		return nil, fmt.Errorf("convert incident request to protobuf: %w", err)
-	}
-	return typed, nil
+	return incidentRequestContract(request)
 }
 
 func incidentResultToProto(result IncidentResult) (*contracts.IncidentResult, error) {
-	raw, err := json.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("encode incident result: %w", err)
-	}
-	raw, err = memory.NormalizeWorkerWire(raw)
-	if err != nil {
-		return nil, fmt.Errorf("logical applied playbooks: %w", err)
-	}
-	typed := &contracts.IncidentResult{}
-	if err := protojson.Unmarshal(raw, typed); err != nil {
-		return nil, fmt.Errorf("convert incident result to protobuf: %w", err)
-	}
-	return typed, nil
+	return incidentResultContract(result)
 }
 
 func encodeIncidentAgentTask(request IncidentRequest, agentID string, snapshots ...*contracts.OperationalMemorySnapshot) (*contracts.AgentTask, []byte, error) {
@@ -134,36 +108,7 @@ func decodeIncidentAgentResult(payload []byte, task *contracts.AgentTask, regist
 	if err := result.GetResponse().UnmarshalTo(typed); err != nil {
 		return IncidentResult{}, fmt.Errorf("unpack incident result: %w", err)
 	}
-	raw, err := protojson.MarshalOptions{UseProtoNames: true, EmitUnpopulated: true}.Marshal(typed)
-	if err != nil {
-		return IncidentResult{}, fmt.Errorf("encode typed incident result: %w", err)
-	}
-	// ProtoJSON emits int64 as strings; the older in-process result uses
-	// numeric JSON. Keep the compatibility bridge at this dispatch edge.
-	var wire map[string]any
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		return IncidentResult{}, fmt.Errorf("decode typed incident result JSON: %w", err)
-	}
-	if usage, ok := wire["usage"].(map[string]any); ok {
-		for _, field := range []string{"llm_calls", "input_tokens", "output_tokens", "cached_input_tokens", "cache_read_input_tokens", "cache_write_input_tokens", "cache_write_1h_input_tokens", "uncached_input_tokens", "reasoning_output_tokens", "model_requests"} {
-			if value, ok := usage[field].(string); ok {
-				number, err := strconv.ParseInt(value, 10, 64)
-				if err != nil {
-					return IncidentResult{}, fmt.Errorf("invalid usage %s: %w", field, err)
-				}
-				usage[field] = number
-			}
-		}
-	}
-	raw, err = json.Marshal(wire)
-	if err != nil {
-		return IncidentResult{}, fmt.Errorf("normalize typed incident result: %w", err)
-	}
-	var incidentResult IncidentResult
-	if err := json.Unmarshal(raw, &incidentResult); err != nil {
-		return IncidentResult{}, fmt.Errorf("convert incident result: %w", err)
-	}
-	return incidentResult, nil
+	return incidentResultState(typed), nil
 }
 
 // ProtoJSON does not promise stable field order. Canonicalizing lets a

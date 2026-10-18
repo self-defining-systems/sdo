@@ -352,9 +352,9 @@ class UsageMetrics(ContractModel):
     against that older rule.
     """
 
-    llm_calls: int = Field(ge=0)
-    input_tokens: int = Field(ge=0)
-    output_tokens: int = Field(ge=0)
+    llm_calls: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
     cached_input_tokens: int = Field(default=0, ge=0)
     cache_read_input_tokens: int | None = Field(default=None, ge=0)
     cache_write_input_tokens: int = Field(default=0, ge=0)

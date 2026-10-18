@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from google.protobuf import json_format
+
 from benchmarks.sregym.analysis.reflection_prompt_replay import estimate_tokens, replay_directories, replay_rollout
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
@@ -21,10 +23,22 @@ def _user_message(text: str) -> str:
 def _write_rollout(path: Path, *, prior: int, reflection_requests: int = 3) -> None:
     current = _outcome("inc-current")
     history = [*(_outcome(f"inc-{index}") for index in range(prior)), current]
+    current_json = json_format.MessageToJson(
+        current, preserving_proto_field_name=True, indent=2, always_print_fields_with_no_presence=True
+    )
+    history_json = json.dumps(
+        [
+            json_format.MessageToDict(
+                record, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+            )
+            for record in history
+        ],
+        indent=2,
+    )
     request = (
         "Idempotency key: reflection:inc-current:sha\n\nstatic instructions\n"
-        f"Current outcome:\n{current.model_dump_json(indent=2)}\n\n"
-        f"Outcome history:\n{json.dumps([record.model_dump(mode='json') for record in history], indent=2)}\n"
+        f"Current outcome:\n{current_json}\n\n"
+        f"Outcome history:\n{history_json}\n"
     )
     lines = [
         _event("task_started", {}),

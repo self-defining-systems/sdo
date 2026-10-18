@@ -9,37 +9,10 @@ import (
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-type evidenceCheck struct {
-	Kind     string  `json:"kind"`
-	Source   string  `json:"source"`
-	Verified *bool   `json:"verified"`
-	Reason   *string `json:"reason"`
-}
-type detectorFlip struct {
-	DetectorID      string `json:"detector_id"`
-	FiredAtDispatch bool   `json:"fired_at_dispatch"`
-	ClearedAfterFix *bool  `json:"cleared_after_fix"`
-	Flipped         bool   `json:"flipped"`
-}
-type repairAttribution struct {
-	Attributed         bool     `json:"attributed"`
-	Actions            []string `json:"actions"`
-	RepairedResources  []string `json:"repaired_resources"`
-	ExternallyReverted []string `json:"externally_reverted"`
-	Reason             string   `json:"reason"`
-}
-type rootCauseVerification struct {
-	Summary   string            `json:"summary"`
-	Verdict   string            `json:"verdict"`
-	Evidence  []evidenceCheck   `json:"evidence"`
-	Detectors []detectorFlip    `json:"detectors"`
-	Repair    repairAttribution `json:"repair"`
-}
-
-func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []rootCauseVerification {
+func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1alpha1.DiagnosisVerification {
 	result := closure.GetResult()
 	if result == nil {
-		return []rootCauseVerification{}
+		return nil
 	}
 	request := closure.GetRequest()
 	fired := map[string]bool{}
@@ -67,11 +40,11 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []rootCauseVeri
 	}
 	changes := newStateEvidence(closure)
 	repairs := newRepairs(closure)
-	verifications := make([]rootCauseVerification, 0, len(result.GetConfirmedRootCauses()))
+	verifications := make([]*contractsv1alpha1.DiagnosisVerification, 0, len(result.GetConfirmedRootCauses()))
 	for _, cause := range result.GetConfirmedRootCauses() {
-		checks := make([]evidenceCheck, 0, len(cause.GetEvidence()))
+		checks := make([]*contractsv1alpha1.OutcomeEvidenceCheck, 0, len(cause.GetEvidence()))
 		for _, evidence := range cause.GetEvidence() {
-			check := evidenceCheck{Kind: evidence.GetKind(), Source: evidence.GetSource()}
+			check := &contractsv1alpha1.OutcomeEvidenceCheck{Kind: evidence.GetKind(), Source: evidence.GetSource()}
 			switch evidence.GetKind() {
 			case "detector-finding":
 				check.Verified = boolPointer(fired[evidence.GetSource()])
@@ -82,13 +55,13 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []rootCauseVeri
 			}
 			checks = append(checks, check)
 		}
-		flips := make([]detectorFlip, 0, len(cause.GetExplainedDetectors()))
+		flips := make([]*contractsv1alpha1.OutcomeDetectorFlip, 0, len(cause.GetExplainedDetectors()))
 		for _, detectorID := range cause.GetExplainedDetectors() {
 			var clear *bool
 			if evaluation, ok := latest[detectorID]; ok {
 				clear = boolPointer(evaluation.GetStatus() == "clear")
 			}
-			flips = append(flips, detectorFlip{DetectorID: detectorID, FiredAtDispatch: fired[detectorID], ClearedAfterFix: clear, Flipped: fired[detectorID] && clear != nil && *clear})
+			flips = append(flips, &contractsv1alpha1.OutcomeDetectorFlip{DetectorId: detectorID, FiredAtDispatch: fired[detectorID], ClearedAfterFix: clear, Flipped: fired[detectorID] && clear != nil && *clear})
 		}
 		repair := repairs.attribute(cause)
 		verdict := "unverified"
@@ -104,14 +77,14 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []rootCauseVeri
 				verdict = "unattributed"
 			}
 		}
-		verifications = append(verifications, rootCauseVerification{Summary: cause.GetSummary(), Verdict: verdict, Evidence: checks, Detectors: flips, Repair: repair})
+		verifications = append(verifications, &contractsv1alpha1.DiagnosisVerification{Summary: cause.GetSummary(), Verdict: verdict, Evidence: checks, Detectors: flips, Repair: repair})
 	}
 	return verifications
 }
 
 func boolPointer(value bool) *bool       { return &value }
 func stringPointer(value string) *string { return &value }
-func anyContradicted(items []evidenceCheck) bool {
+func anyContradicted(items []*contractsv1alpha1.OutcomeEvidenceCheck) bool {
 	for _, item := range items {
 		if item.Verified != nil && !*item.Verified {
 			return true
@@ -119,7 +92,7 @@ func anyContradicted(items []evidenceCheck) bool {
 	}
 	return false
 }
-func allFlipped(items []detectorFlip) bool {
+func allFlipped(items []*contractsv1alpha1.OutcomeDetectorFlip) bool {
 	for _, item := range items {
 		if !item.Flipped {
 			return false
@@ -358,7 +331,7 @@ func newRepairs(closure *contractsv1alpha1.IncidentClosure) repairs {
 	}
 	return repairs{actions, dispatch, sortedUnique(reverted), cleared}
 }
-func (r repairs) attribute(cause *contractsv1alpha1.ConfirmedRootCause) repairAttribution {
+func (r repairs) attribute(cause *contractsv1alpha1.ConfirmedRootCause) *contractsv1alpha1.OutcomeRepairAttribution {
 	blamed := []objectKey{}
 	for _, ref := range cause.GetResources() {
 		blamed = append(blamed, keyOf(ref))
@@ -401,7 +374,7 @@ func (r repairs) attribute(cause *contractsv1alpha1.ConfirmedRootCause) repairAt
 		labels = append(labels, key.label)
 	}
 	labels = sortedUnique(labels)
-	attribution := repairAttribution{Attributed: false, Actions: actions, RepairedResources: labels, ExternallyReverted: r.reverted}
+	attribution := &contractsv1alpha1.OutcomeRepairAttribution{Attributed: false, Actions: actions, RepairedResources: labels, ExternallyReverted: r.reverted}
 	if len(actions) == 0 {
 		names := []string{}
 		for _, key := range blamed {

@@ -3,9 +3,10 @@ syntax = "proto3";
 // The controller<->responder message tree: the incident request the controller
 // dispatches, the result the responder returns, the view the controller
 // publishes while an incident is open, and the closure the broker records.
-// These mirror sdo/contracts/models.py (Pydantic) and the hand-written Go
-// structs in controller/runtime; proto is the single schema source and the
-// conformance tests make any drift between the three a build failure.
+// These protobuf messages define the component boundary. The Go controller
+// projects its internal state into them explicitly; Python workers parse them
+// before adapting to agent-local prompt and output views. Conformance tests
+// check both projections against this schema.
 //
 // Wire convention: protojson, snake_case
 // field names, enums carried as their lowercase domain strings (constrained by
@@ -244,7 +245,8 @@ message VerificationEvidence {
 }
 
 // UsageMetrics is agentshim's normalized token accounting for one turn. The
-// CEL below mirrors sdo.agents.views.models.UsageMetrics.validate_cached_input;
+// CEL below defines the shared validation rule; the built-in responder's
+// output view applies the same rule before constructing this message.
 // the cache-read alias *normalization* (set cached_input_tokens := cache_read
 // when it is zero) is a mutation CEL cannot do and stays a thin hand step.
 message UsageMetrics {
@@ -327,8 +329,8 @@ message RepairActionReceipt {
   bool reversible = 10;
 }
 
-// IncidentResult is what the responder returns. The CEL mirrors
-// sdo.agents.views.models.IncidentResult.validate_repair_action_ids.
+// IncidentResult is what the responder returns. The CEL enforces unique
+// repair action IDs at the component boundary.
 message IncidentResult {
   option (buf.validate.message).cel = {
     id: "result.unique_repair_action_ids"

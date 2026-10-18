@@ -1,5 +1,5 @@
 from sdo.agents.views.artifact_proposal import OperationalArtifactDraft
-from sdo.agents.views.memory_context import BrokerClosure, OutcomeClassification, OutcomeRecord
+from sdo.agents.views.memory_context import BrokerClosure
 from sdo.agents.views.models import (
     ROOT_CAUSE_EVIDENCE_KINDS,
     ConfirmedRootCause,
@@ -32,8 +32,6 @@ from sdo.agents.views.models import (
 
 __all__ = [
     "BrokerClosure",
-    "OutcomeClassification",
-    "OutcomeRecord",
     "OperationalArtifactDraft",
     "ConfirmedRootCause",
     "DetectorEvaluation",

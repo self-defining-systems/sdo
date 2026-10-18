@@ -10,9 +10,7 @@ from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 from sdo.agents.views import (
-    OperationalArtifactDraft,
-    OutcomeClassification,
-    OutcomeRecord,
+    OperationalArtifactDraft,  # noqa: TC001 - Pydantic resolves this field at runtime.
 )
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -26,14 +24,15 @@ if TYPE_CHECKING:
     from agentshim import CommandExecutor
 
     from sdo.agents.views import BrokerClosure
+    from sdo.contracts import OutcomeRecord
 
 
-def _classification_directive(classification: OutcomeClassification, guidance: ReflectionGuidance = "baseline") -> str:
-    if classification == OutcomeClassification.FALSE_POSITIVE:
+def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
+    if classification == "false_positive":
         return "tighten the over-broad detector signature and add a near-miss regression test."
-    if classification == OutcomeClassification.FALSE_NEGATIVE:
+    if classification == "false_negative":
         return "add or widen the missed detector signature and include the reproducing test that previously failed."
-    if classification == OutcomeClassification.SUCCESS:
+    if classification == "success":
         if guidance in _GENERALIZING_GUIDANCE:
             return (
                 "Capture the confirmed signature at the level of its root-cause class, following the generalization "
@@ -180,7 +179,7 @@ def _logical_learning_request(
         "Return learning_decision=updated only with a nonempty artifact_proposal. "
         "Return no_change with a specific reason and artifact_proposal=null when no safe learning exists.\n\n"
         f"{_logical_guidance(guidance)}"
-        f"For this {outcome.classification.value} outcome, "
+        f"For this {outcome.classification} outcome, "
         f"{_classification_directive(outcome.classification, guidance)}\n\n"
         "Before returning an update, save the complete artifact_proposal as ProtoJSON in a temporary file "
         "outside the repository, run `sdo-operator draft-test --app . --proposal-json <file>` from the proposal "
@@ -213,14 +212,14 @@ def _diagnosis_directive(outcome: OutcomeRecord) -> str:
         contradicted = ", ".join(
             f"{check.kind} {check.source}" + (f" ({check.reason})" if check.reason else "")
             for check in verification.evidence
-            if check.verified is False
+            if check.HasField("verified") and not check.verified
         )
         verdict = getattr(verification.verdict, "value", verification.verdict)
         line = f"- {verdict}: {verification.summary}; detectors flipped: {flipped}"
         line += f"; verified evidence: {verified or 'none'}"
         if contradicted:
             line += f"; evidence not confirmed by the controller: {contradicted}"
-        if verification.repair is not None:
+        if verification.HasField("repair"):
             line += f"; repair attribution: {verification.repair.reason}"
         lines.append(line + "\n")
     return (
@@ -269,14 +268,7 @@ class SessionReflector:
 
     def should_reflect(self, outcome: OutcomeRecord, *, health_verified: bool, session_id: str | None) -> bool:
         return bool(
-            health_verified
-            and session_id
-            and outcome.classification
-            in {
-                OutcomeClassification.SUCCESS,
-                OutcomeClassification.FALSE_POSITIVE,
-                OutcomeClassification.FALSE_NEGATIVE,
-            }
+            health_verified and session_id and outcome.classification in {"success", "false_positive", "false_negative"}
         )
 
     def resume(

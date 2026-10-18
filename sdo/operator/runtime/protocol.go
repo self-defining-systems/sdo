@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 )
 
@@ -117,15 +118,9 @@ type VerificationEvidence struct {
 	ObservedAt time.Time `json:"observed_at"`
 }
 
-type UsageMetrics struct {
-	LLMCalls          int64    `json:"llm_calls"`
-	InputTokens       int64    `json:"input_tokens"`
-	OutputTokens      int64    `json:"output_tokens"`
-	CachedInputTokens int64    `json:"cached_input_tokens"`
-	CacheWriteTokens  int64    `json:"cache_write_input_tokens"`
-	ReasoningTokens   int64    `json:"reasoning_output_tokens"`
-	TotalCostUSD      *float64 `json:"total_cost_usd,omitempty"`
-}
+// UsageMetrics is the shared protobuf message even in controller state, so
+// newly reported accounting fields survive dispatch and outcome derivation.
+type UsageMetrics = contracts.UsageMetrics
 
 type TimingMetrics struct {
 	StartedAt   time.Time `json:"started_at"`
