@@ -86,7 +86,7 @@ SDO_IMAGE_DEFAULTS = {
 #: runs the Go operator binary and must not need a Python interpreter.
 SDO_IMAGE_ENTRY_POINTS = {
     "controller_image": (),
-    "responder_image": ("sdo.agents.responder.job", "libs.agent_cli", "agentshim"),
+    "responder_image": ("sdo.agents.responder.worker", "libs.agent_cli", "agentshim"),
     "validator_image": (),
 }
 #: Only the worker image runs agent turns and needs these Python/CLI pins.

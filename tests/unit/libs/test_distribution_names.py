@@ -10,8 +10,6 @@ LIBS_ROOT = Path(__file__).parents[3] / "libs"
     ("library", "distribution"),
     [
         ("agent_cli", "sdo-agent-cli"),
-        ("model_config", "sdo-model-config"),
-        ("sdo_core", "sdo-core"),
     ],
 )
 def test_internal_distribution_uses_sdo_name(library: str, distribution: str) -> None:

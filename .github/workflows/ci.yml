@@ -55,6 +55,7 @@ jobs:
             go:
               - 'sdo/operator/**'
               - 'sdo/contracts/proto/**'
+              - 'sdo/contracts/_gen/**'
               - 'buf*.yaml'
               - 'buf.lock'
               - '.github/workflows/ci.yml'
@@ -183,17 +184,7 @@ jobs:
         run: git fetch --no-tags origin main:main || echo "main unavailable; breaking check will skip"
       - name: Lint, breaking, and codegen-diff checks
         run: |
-          # This migration replaces two JSON-string reflection fields with
-          # OutcomeRecord fields. Permit that one intentional break only for
-          # the exact reviewed schema on its original main baseline. The
-          # normal breaking check resumes as soon as main changes.
-          if [ "$(git rev-parse main)" = "f5b40e66369ede2297463222c8bb8e5e84b26c04" ] && \
-             [ "$(git rev-parse HEAD:sdo/contracts/proto/sdodev/contracts/v1alpha1/worker.proto)" = "ecae99d07d14778d1b5477cf4d9b47131374e7ad" ] && \
-             [ "$(git rev-parse HEAD:sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto)" = "0ec7ccc5472bc7260241b3366ae59d2556036d03" ]; then
-            BUF_BREAKING_AGAINST=. ./scripts/check_proto.sh
-          else
-            ./scripts/check_proto.sh
-          fi
+          ./scripts/check_proto.sh
       - name: Build the generated Go contracts module
         run: go build ./...
         working-directory: sdo/operator/contracts
@@ -273,7 +264,7 @@ jobs:
           uv run python -m benchmarks.sregym.runner.preflight \
             --image responder_image=sdo-responder:v0.1.0
       - name: Confirm the responder image carries no SREGym answer key
-        # Belt-and-braces over tests/unit/controller/test_dockerfile_benchmark_scope.py,
+        # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
         # which checks the Dockerfile COPY lines statically: this lists the files an
         # actually built image carries, so a leak would fail here even if some other
         # build step (a base image, a stray COPY --from) reintroduced one.

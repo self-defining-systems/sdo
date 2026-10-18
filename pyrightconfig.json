@@ -1,5 +1,5 @@
 {
-  "include": ["sdo", "controller", "benchmarks", "libs"],
+  "include": ["sdo", "benchmarks", "libs"],
   "exclude": ["apps/", "benchmarks/sregym/analysis/", ".venv/", ".claude/", "sdo/contracts/_gen/"],
   "extraPaths": ["sdo/contracts/_gen"],
   "typeCheckingMode": "standard",

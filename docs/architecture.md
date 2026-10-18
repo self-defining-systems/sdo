@@ -141,8 +141,6 @@ The installation code provides manifests and orchestration logic; the always-run
 ## Shared libraries
 
 - `libs/agent_cli/structured.py` runs every production agent turn through [agentshim](https://github.com/vic-lsh/agentshim). SDO's deployer, health judge, responder, and reflection backends name a provider (Codex or Claude Code) and an access level, and keep their subsystem-owned prompts and Pydantic validation. The access levels map onto each provider's own confinement: `read-only` is Codex's read-only sandbox, or Claude's settings sandbox denying workspace writes plus the Edit/Write tools; `workspace-write` is Codex's workspace-write sandbox (network off) with `sdo-operator draft-test` available for typed logical artifact checks, or Claude's sandbox with `sdo-operator draft-test` available for typed logical artifact checks. Codex reads that rule only from `$CODEX_HOME/rules`, so each Codex workspace-write turn runs with a private, non-resumable `CODEX_HOME` under `$SDO_CODEX_HOME_ROOT` (default `~/.cache/sdo/codex-homes`, outside the workspace and `/tmp`) holding the rule and a 0600 copy of the user's `auth.json` (or none when `CODEX_API_KEY`/`OPENAI_API_KEY` is set), deleted when the turn ends; `danger-full-access` removes confinement for sessions that operate the cluster. Each turn also returns the shell commands the agent started, which the lifecycle audits for reads outside the application checkout; Codex omits commands its sandbox denied from that stream, which the audit tolerates because denied commands never ran. The worker session directory is retained for seven days after durable acknowledgment, pruned daily, and exported by `runtime-artifacts` under `sdo_runtime/sessions/<incident-hash>/{codex,claude}/`; verified reflection may resume the exact responder session when configured.
-- `libs/model_config/` holds provider and model-name parsing shared by production and benchmark code.
-- `libs/sdo_core/` contains neutral command, filesystem, and tool helpers.
 - SREGym-specific protocols and runner utilities live under `benchmarks/sregym/`, not `libs/`.
 
 ## Supported and excluded scope
@@ -199,7 +197,7 @@ Status meanings:
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/`, `outcome_derivation/`, `install/` | Production Go authority, physical storage and artifact-projection edge, outcome derivation, and installer. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/controller stack and generated contracts. |
-| `libs/sdo_core/`, `libs/agent_cli/`, `libs/model_config/` | Production-neutral helpers, agent turn runner, and model parsing. |
+| `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. |
 | `benchmarks/sregym/{adapter,protocol,runner,experiments,analysis}/` | First-party benchmark integration; may import production APIs. |
 | `third_party/sregym/` | External benchmark harness Git submodule. |

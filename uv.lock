@@ -17,8 +17,6 @@ resolution-markers = [
 [manifest]
 members = [
     "sdo-agent-cli",
-    "sdo-core",
-    "sdo-model-config",
     "sdo-operator",
 ]
 
@@ -1368,16 +1366,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "agentshim", specifier = ">=0.7.0,<0.8" }]
-
-[[package]]
-name = "sdo-core"
-version = "0.1.0"
-source = { editable = "libs/sdo_core" }
-
-[[package]]
-name = "sdo-model-config"
-version = "0.1.0"
-source = { editable = "libs/model_config" }
 
 [[package]]
 name = "sdo-operator"

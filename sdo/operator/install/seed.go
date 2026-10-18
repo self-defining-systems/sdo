@@ -61,12 +61,6 @@ func KubectlTarSeederWithKubeconfig(repositoryPath, acceptedCommit, kubeconfig s
 	}
 }
 
-// KubectlTarSynchronizer copies the controller's accepted runtime commits back
-// after a bounded Job completes. The sync Pod remains alive until this returns.
-func KubectlTarSynchronizer(repositoryPath string) RepositorySynchronizer {
-	return KubectlTarSynchronizerWithKubeconfig(repositoryPath, "")
-}
-
 // KubectlTarSynchronizerWithKubeconfig keeps sync-back on the requested cluster.
 func KubectlTarSynchronizerWithKubeconfig(repositoryPath, kubeconfig string) RepositorySynchronizer {
 	return func(ctx context.Context, cfg Config) error {

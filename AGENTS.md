@@ -8,7 +8,7 @@ SDO autonomously deploys and operates applications using source-grounded agents,
 - `sdo/operator/` — Go detector SDK, execution core, controller runtime and builder, worker registry, commit broker, outcome store, and installer
 - [`benchmarks/sregym/`](benchmarks/sregym/AGENTS.md) — first-party SREGym adapters, protocol clients, runners, experiments, and analysis
 - `third_party/sregym/` — external SREGym harness Git submodule
-- `libs/` — shared agent and model libraries; `sdo_core` contains neutral runtime helpers
+- `libs/` — shared agent turn-runner library
 - `apps/` — source-deployment evaluation applications
 - `tests/` — unit and integration tests
 

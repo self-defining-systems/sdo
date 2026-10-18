@@ -10,18 +10,8 @@ ignore_type_checking_imports = true
 # --- Layer 0: libs (no internal deps) ---
 
 [[modules]]
-path = "libs.model_config"
-depends_on = []
-
-[[modules]]
-path = "libs.sdo_core"
-depends_on = []
-
-[[modules]]
 path = "libs.agent_cli"
-depends_on = [
-    "libs.sdo_core",
-]
+depends_on = []
 
 [[modules]]
 path = "benchmarks.sregym.protocol"

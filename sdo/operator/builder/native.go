@@ -282,17 +282,6 @@ func validateManifest(value manifest, diagnostics string) error {
 	return nil
 }
 
-func containsFiles(root string) bool {
-	found := false
-	_ = filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
-		if err == nil && !entry.IsDir() {
-			found = true
-		}
-		return nil
-	})
-	return found
-}
-
 func copyTree(ctx context.Context, source, destination string) error {
 	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {

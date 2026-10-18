@@ -286,8 +286,6 @@ func containerSecurity() *corev1.SecurityContext {
 	return &corev1.SecurityContext{AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
 }
 
-// ContainerSecurityContext returns the restricted context used by installer-owned containers.
-func ContainerSecurityContext() *corev1.SecurityContext { return containerSecurity() }
 func pvcVolume(name string) corev1.Volume {
 	return corev1.Volume{Name: "repository", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: name}}}
 }
