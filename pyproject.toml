@@ -76,7 +76,7 @@ ignore = ["SIM117", "SIM105", "SIM108", "PT009"]
 
 [tool.coverage.run]
 source = ["sdo"]
-omit = ["*/apps/*", "*/__main__.py", "*/ui/*"]
+omit = ["*/apps/*", "*/__main__.py", "*/ui/*", "*/contracts/_gen/*"]
 
 [tool.coverage.report]
 fail_under = 70
