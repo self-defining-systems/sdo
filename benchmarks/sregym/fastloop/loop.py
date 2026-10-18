@@ -59,7 +59,6 @@ class AgentOutcome:
     reflection_tokens: TokenCounts = field(default_factory=TokenCounts)
     warm_path: bool | None = None
     match_reasons: tuple[str, ...] = ()
-    reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
     #: How the strict receipt says the incident closed (``sdo_mitigated``, ``external_recovery`` or
     #: ``cleared_without_sdo_action``); ``None`` when no receipt validated. Only ``sdo_mitigated`` is SDO's own fix.
@@ -239,7 +238,6 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "reflection_tokens": outcome.reflection_tokens,
         "warm_path": outcome.warm_path,
         "match_reasons": list(outcome.match_reasons),
-        "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
         "sdo_resolution": outcome.sdo_resolution,
         "reflection_seconds": outcome.reflection_seconds,

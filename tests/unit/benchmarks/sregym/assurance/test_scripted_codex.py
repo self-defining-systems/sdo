@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from google.protobuf import json_format
+from google.protobuf.any_pb2 import Any as ProtoAny
 
 from benchmarks.sregym.assurance.scripted_codex.directive import Directive
 from benchmarks.sregym.assurance.scripted_codex.usage import request_usage
@@ -25,6 +27,9 @@ from sdo.agents.views import (
     IncidentRequest,
     OperationalArtifactDraft,
 )
+from sdo.contracts import AgentTask
+from sdo.contracts.proto import IncidentRequest as ProtoIncidentRequest
+from sdo.contracts.proto import to_canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SEED = REPO_ROOT / "tests" / "fixtures" / "sdo" / "contracts" / "incident_request.json"
@@ -123,8 +128,17 @@ def _request(worktree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         }
     )
     request = IncidentRequest.model_validate(payload)
-    path = tmp_path / "incident-request.json"
-    path.write_text(request.model_dump_json(), encoding="utf-8")
+    packed = ProtoAny()
+    packed.Pack(json_format.Parse(request.model_dump_json(), ProtoIncidentRequest(), ignore_unknown_fields=True))
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="task-1",
+        agent_id="sdo-responder",
+        task_type="incident-response",
+        request=packed,
+    )
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
     monkeypatch.setenv("SDO_REQUEST_PATH", str(path))
     return request
 

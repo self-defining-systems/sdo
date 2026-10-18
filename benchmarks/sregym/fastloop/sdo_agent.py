@@ -229,7 +229,6 @@ class SdoPersistentAgent:
         )
         memory = receipt.get("memory_reuse")
         memory = memory if isinstance(memory, dict) else {}
-        attempts = receipt.get("reflection_attempts")
         skipped = receipt.get("reflection_skipped_reason")
         # When reflection finished between polls the driver never saw the closure; the receipt has it.
         detected, verified = _receipt_closure_times(receipt)
@@ -245,7 +244,6 @@ class SdoPersistentAgent:
             reflection_tokens=TokenCounts.from_usage(receipt.get("reflection_usage")),
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
-            reflection_attempts=attempts if isinstance(attempts, int) else None,
             reflection_skipped_reason=skipped if isinstance(skipped, str) else None,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             error=error,

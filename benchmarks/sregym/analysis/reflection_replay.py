@@ -1,8 +1,9 @@
 """Replay one fresh-session reflection turn offline from a saved pipeline workspace.
 
-A stage's ``application_workspace`` keeps the operational-memory repository and
-the broker ledgers (``.git/sdo-broker/*.json``), each holding the verified
-closure and the authoritative outcome commit of one incident. This tool clones
+A stage's ``application_workspace`` keeps the operational-memory repository,
+and the stage's strict receipts (``runs/**/sdo_production_receipt_strict.json``)
+carry each incident's ``native_ledger``: the verified closure and the
+authoritative outcome commit. This tool clones
 the repository at that outcome commit and runs the production reflection code
 path (``SessionReflector`` with a fresh-session brief) under a chosen guidance,
 so prompt wording can be compared without a cluster. The clone is a scratch
@@ -24,6 +25,7 @@ from typing import Any
 
 from google.protobuf import json_format
 
+from benchmarks.sregym.analysis.incident_cost import RECEIPT_NAME
 from libs.agent_cli.structured import run_structured_turn, turn_usage
 from sdo.agents.responder import (
     INCIDENT_REASONING_EFFORT,
@@ -62,12 +64,24 @@ def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout
 
 
-def find_ledger(workspace: Path, suffix: str) -> dict[str, Any]:
-    for path in sorted((workspace / ".git" / "sdo-broker").glob("*.json")):
-        ledger = json.loads(path.read_text(encoding="utf-8"))
+def find_ledger(stage: Path, suffix: str) -> dict[str, Any]:
+    """The ``native_ledger`` of the incident ending in *suffix*, from the stage's strict receipts."""
+
+    for path in sorted((stage / "runs").rglob(RECEIPT_NAME)):
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        ledger = receipt.get("native_ledger") if isinstance(receipt, dict) else None
         if isinstance(ledger, dict) and str(ledger.get("incident_id", "")).endswith(suffix):
             return ledger
-    raise SystemExit(f"no broker ledger ending in {suffix!r} under {workspace}")
+    raise SystemExit(f"no native ledger ending in {suffix!r} under {stage}")
+
+
+def read_outcomes(repository: Path) -> list[OutcomeRecord]:
+    """Every outcome in the repository's incident-keyed native store."""
+
+    return [
+        json_format.Parse(path.read_text(encoding="utf-8"), OutcomeRecord(), ignore_unknown_fields=True)
+        for path in sorted((repository / ".sdo" / "outcomes").glob("*.json"))
+    ]
 
 
 def memory_delta(clone: Path) -> dict[str, list[str]]:
@@ -92,18 +106,14 @@ def memory_delta(clone: Path) -> dict[str, list[str]]:
 
 
 def replay(workspace: Path, suffix: str, guidance: str, out: Path, *, model: str, timeout: int) -> dict[str, Any]:
-    ledger = find_ledger(workspace, suffix)
+    ledger = find_ledger(workspace.parent, suffix)
     out.mkdir(parents=True, exist_ok=True)
     clone = out / f"clone-{guidance}"
     if clone.exists():
         raise SystemExit(f"{clone} already exists")
     _git(out, "clone", "--quiet", "--no-hardlinks", str(workspace), str(clone))
     _git(clone, "checkout", "--quiet", "--detach", ledger["outcome_commit"])
-    records = [
-        json_format.Parse(line, OutcomeRecord(), ignore_unknown_fields=True)
-        for line in (clone / ".sdo" / "outcomes.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    records = read_outcomes(clone)
     outcome = next(r for r in reversed(records) if r.incident_id == ledger["incident_id"])
     closure = BrokerClosure.model_validate(ledger["closure"])
     reflector = SessionReflector(

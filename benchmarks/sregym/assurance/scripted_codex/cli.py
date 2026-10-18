@@ -26,7 +26,7 @@ from .wire import CLI_VERSION, EventStream, ResumeError, Rollout
 
 RESPONDER_MARKER = "You are the SDO incident responder for incident "
 REFLECTION_MARKER = "Idempotency key: reflection:"
-REQUEST_PATH = Path("/sdo/request/incident-request.json")
+REQUEST_PATH = Path("/sdo/request/agent-task.json")
 EXIT_UNPLANNED = 3
 
 HELP = """Scripted Codex CLI for SDO assurance runs (no model).
@@ -63,10 +63,23 @@ class Invocation:
         self.prompt_argument = positional[-1] if positional and positional[-1] != "-" else None
 
 
+def _unpack_task(task: object) -> dict[str, Any]:
+    """The IncidentRequest packed in the mounted AgentTask envelope (protojson, stdlib only)."""
+
+    packed = task.get("request") if isinstance(task, dict) else None
+    if not isinstance(packed, dict):
+        raise ValueError("agent task has no packed incident request")
+    return {_snake(key): value for key, value in packed.items() if key != "@type"}
+
+
+def _snake(name: str) -> str:
+    return "".join(f"_{char.lower()}" if char.isupper() else char for char in name)
+
+
 def _request(prompt: str) -> dict[str, Any]:
     path = Path(os.environ.get("SDO_REQUEST_PATH", str(REQUEST_PATH)))
     if path.is_file():
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = _unpack_task(json.loads(path.read_text(encoding="utf-8")))
     else:
         marker = "Incident request:\n"
         if marker not in prompt:

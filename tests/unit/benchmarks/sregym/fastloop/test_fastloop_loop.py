@@ -85,7 +85,6 @@ class FakeAgent:
         return outcome.with_learning(
             reflection_seconds=30.0,
             reflection_tokens=TokenCounts(input_tokens=1000, output_tokens=20),
-            reflection_attempts=1,
             sdo_resolution=self.resolution,
         )
 
@@ -157,3 +156,9 @@ def test_config_rejects_empty_problem_lists_and_non_positive_counts(tmp_path: Pa
         LoopConfig(run_id="r", problems=(), incidents=1, results_path=tmp_path / "x.jsonl")
     with pytest.raises(ValueError, match="incidents"):
         LoopConfig(run_id="r", problems=("p",), incidents=0, results_path=tmp_path / "x.jsonl")
+
+
+def test_agent_outcome_carries_no_counter_the_native_receipt_cannot_supply() -> None:
+    from dataclasses import fields
+
+    assert "reflection_attempts" not in {item.name for item in fields(AgentOutcome)}

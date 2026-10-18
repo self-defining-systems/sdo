@@ -470,7 +470,6 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 state.save(settings.state_path)
         usage = TokenCounts()
         reflection = TokenCounts()
-        attempts = 0
         warm = False
         reasons: list[str] = []
         receipts_seen = 0
@@ -486,8 +485,6 @@ class CompositeSdoAgent(SdoPersistentAgent):
             receipts_seen += 1
             usage = _add(usage, TokenCounts.from_usage(receipt.get("usage")))
             reflection = _add(reflection, TokenCounts.from_usage(receipt.get("reflection_usage")))
-            raw_attempts = receipt.get("reflection_attempts")
-            attempts += raw_attempts if isinstance(raw_attempts, int) else 0
             raw_memory = receipt.get("memory_reuse")
             memory: dict[str, Any] = raw_memory if isinstance(raw_memory, dict) else {}
             warm = warm or bool(memory.get("warm_path"))
@@ -501,7 +498,6 @@ class CompositeSdoAgent(SdoPersistentAgent):
             reflection_tokens=reflection,
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
-            reflection_attempts=attempts,
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

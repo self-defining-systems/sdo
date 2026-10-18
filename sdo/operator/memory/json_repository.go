@@ -95,6 +95,15 @@ func (s *JSONStore) Get(ctx context.Context, incidentID string) (Outcome, error)
 	path := filepath.Join(s.root, ".sdo", "outcomes", filename(incidentID))
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
+		legacy, legacyErr := s.legacyOutcomes(ctx)
+		if legacyErr != nil {
+			return Outcome{}, legacyErr
+		}
+		for _, outcome := range legacy {
+			if outcome.IncidentID == incidentID {
+				return outcome, nil
+			}
+		}
 		return Outcome{}, ErrNotFound
 	}
 	if err != nil {
@@ -123,10 +132,7 @@ func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
 	}
 	directory := filepath.Join(s.root, ".sdo", "outcomes")
 	entries, err := os.ReadDir(directory)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("list outcomes: %w", err)
 	}
 	outcomes := make([]Outcome, 0, len(entries))
@@ -150,39 +156,92 @@ func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
 		}
 		outcomes = append(outcomes, outcome)
 	}
+	legacy, err := s.legacyOutcomes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(outcomes))
+	for _, outcome := range outcomes {
+		known[outcome.IncidentID] = struct{}{}
+	}
+	for _, outcome := range legacy {
+		if _, stored := known[outcome.IncidentID]; !stored {
+			outcomes = append(outcomes, outcome)
+		}
+	}
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].IncidentID < outcomes[j].IncidentID })
 	return outcomes, nil
 }
 
-// ImportLegacy performs a one-time, restartable migration from the previous
-// stream. The stream is deleted only after every record has been accepted.
-func (s *JSONStore) ImportLegacy(ctx context.Context) error {
+// legacyOutcomes reads the retired JSONL stream without modifying the
+// repository, so readers of an accepted checkout see pre-migration history.
+// Playbook references are normalized to logical IDs.
+func (s *JSONStore) legacyOutcomes(ctx context.Context) ([]Outcome, error) {
 	path := filepath.Join(s.root, ".sdo", "outcomes.jsonl")
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("open legacy outcomes: %w", err)
+		return nil, fmt.Errorf("open legacy outcomes: %w", err)
 	}
 	defer file.Close()
+	var outcomes []Outcome
 	reader := bufio.NewReader(file)
 	for line := 1; ; line++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data, readErr := reader.ReadBytes('\n')
 		if len(bytes.TrimSpace(data)) != 0 {
-			if _, err := s.putDocument(ctx, data); err != nil {
-				return fmt.Errorf("legacy outcome line %d: %w", line, err)
+			outcome, err := normalizeLegacy(data)
+			if err != nil {
+				return nil, fmt.Errorf("legacy outcome line %d: %w", line, err)
 			}
+			outcomes = append(outcomes, outcome)
 		}
 		if readErr == io.EOF {
-			break
+			return outcomes, nil
 		}
 		if readErr != nil {
-			return fmt.Errorf("read legacy outcomes: %w", readErr)
+			return nil, fmt.Errorf("read legacy outcomes: %w", readErr)
 		}
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close legacy outcomes: %w", err)
+}
+
+func normalizeLegacy(data []byte) (Outcome, error) {
+	outcome, err := parse(data)
+	if err != nil {
+		return Outcome{}, err
+	}
+	ids, err := PlaybookIDs(outcome.Record.GetAppliedPlaybooks())
+	if err != nil {
+		return Outcome{}, err
+	}
+	outcome.Record.AppliedPlaybooks = ids
+	document, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(outcome.Record)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("encode outcome contract: %w", err)
+	}
+	return parse(document)
+}
+
+// ImportLegacy performs a one-time, restartable migration from the previous
+// stream. Playbook references are stored as logical IDs. The stream is deleted
+// only after every record has been accepted.
+func (s *JSONStore) ImportLegacy(ctx context.Context) error {
+	path := filepath.Join(s.root, ".sdo", "outcomes.jsonl")
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return nil
+	}
+	outcomes, err := s.legacyOutcomes(ctx)
+	if err != nil {
+		return err
+	}
+	for _, outcome := range outcomes {
+		if _, err := s.putDocument(ctx, outcome.document); err != nil {
+			return fmt.Errorf("legacy outcome %q: %w", outcome.IncidentID, err)
+		}
 	}
 	if err := os.Remove(path); err != nil {
 		return fmt.Errorf("remove legacy outcomes: %w", err)

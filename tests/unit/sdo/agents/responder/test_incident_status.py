@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from google.protobuf import json_format
+from google.protobuf.any_pb2 import Any as ProtoAny
 
 from sdo.agents.responder.incident_status import (
     EXIT_HEALTHY,
@@ -26,6 +28,9 @@ from sdo.agents.responder.incident_status import (
 from sdo.agents.views import (
     IncidentRequest,
 )
+from sdo.contracts import AgentTask
+from sdo.contracts.proto import IncidentRequest as ProtoIncidentRequest
+from sdo.contracts.proto import to_canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -100,13 +105,37 @@ def prober() -> Iterator[tuple[_FakeProber, str]]:
         server.server_close()
 
 
+def _write_task(path: Path, request: IncidentRequest) -> None:
+    """The file the controller mounts: an AgentTask envelope around the IncidentRequest."""
+
+    packed = ProtoAny()
+    packed.Pack(json_format.Parse(request.model_dump_json(), ProtoIncidentRequest(), ignore_unknown_fields=True))
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="task-1",
+        agent_id="sdo-responder",
+        task_type="incident-response",
+        request=packed,
+    )
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+
+
+def _read_request(path: Path) -> IncidentRequest:
+    task = json_format.Parse(path.read_text(encoding="utf-8"), AgentTask())
+    typed = ProtoIncidentRequest()
+    assert task.request.Unpack(typed)
+    return IncidentRequest.model_validate_json(
+        json_format.MessageToJson(typed, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+    )
+
+
 def _traffic_request(tmp_path: Path) -> Path:
     request = IncidentRequest.model_validate_json((FIXTURE_DIR / "incident_request.json").read_text(encoding="utf-8"))
     finding = request.findings[0].model_copy(
         update={"detector_id": "traffic-health", "rule_id": "scenario-slo.search-hotels"}
     )
-    path = tmp_path / "incident-request.json"
-    path.write_text(request.model_copy(update={"findings": [finding]}).model_dump_json(), encoding="utf-8")
+    path = tmp_path / "agent-task.json"
+    _write_task(path, request.model_copy(update={"findings": [finding]}))
     return path
 
 
@@ -222,7 +251,7 @@ def _view(
     changes: list[dict[str, Any]] | None = None,
     clearing: list[dict[str, Any]] | None = None,
 ) -> str:
-    request = IncidentRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
+    request = _read_request(request_path)
     view: dict[str, Any] = {
         "incident_id": request.incident_id,
         "observed_at": "2026-09-28T10:00:05Z",
@@ -395,13 +424,13 @@ def test_changes_after_the_request_was_taken_are_reported(prober: tuple[_FakePro
 
     _, url = prober
     request_path = _traffic_request(tmp_path)
-    request = json.loads(request_path.read_text(encoding="utf-8"))
+    request = json.loads(_read_request(request_path).model_dump_json())
     request["state_changes"] = {
         "baseline_at": "2026-09-28T09:58:00Z",
         "observed_at": "2026-09-28T10:00:00Z",
         "changes": [{"kind": "ConfigMap", "name": "mongo-geo-script", "change": "removed"}],
     }
-    request_path.write_text(json.dumps(request), encoding="utf-8")
+    _write_task(request_path, IncidentRequest.model_validate(request))
     payload = _view(
         request_path,
         findings=[],
