@@ -162,7 +162,7 @@ func TestParseResponderEnvironmentRejectsReservedAndMalformedValues(t *testing.T
 
 func TestRunRejectsExitAndRestartAfterClosureTogether(t *testing.T) {
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: []string{
-		"--namespace", "demo", "--app-root", t.TempDir(), "--dispatcher", "responder", "--dispatcher-mode", "local",
+		"--namespace", "demo", "--app-root", t.TempDir(), "--dispatcher", "responder",
 		"--exit-after-closure", "--restart-after-closure",
 	}, Stderr: &bytes.Buffer{}})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
@@ -173,7 +173,7 @@ func TestRunRejectsExitAndRestartAfterClosureTogether(t *testing.T) {
 func TestRunRejectsInvalidControlNamespace(t *testing.T) {
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: []string{
 		"--namespace", "demo", "--control-namespace", "Not_Valid", "--app-root", t.TempDir(),
-		"--dispatcher", "responder", "--dispatcher-mode", "local",
+		"--dispatcher", "responder",
 	}, Stderr: &bytes.Buffer{}})
 	if err == nil || !strings.Contains(err.Error(), "invalid control namespace") {
 		t.Fatalf("expected invalid control namespace error, got %v", err)
@@ -184,13 +184,13 @@ func TestAttachFiringTelemetryDefaultsByDispatcherMode(t *testing.T) {
 	mount := t.TempDir()
 	controller := telemetryController(t, nil, &recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		incidentDetector("cause", stateFinding("cause")))
-	if err := attachFiringTelemetry(controller, "", "local", mount); err != nil || controller.firingSink != nil {
+	if err := attachFiringTelemetry(controller, "", false, mount); err != nil || controller.firingSink != nil {
 		t.Fatalf("local mode must not enable telemetry by default: %v", err)
 	}
-	if err := attachFiringTelemetry(controller, "off", "job", mount); err != nil || controller.firingSink != nil {
+	if err := attachFiringTelemetry(controller, "off", true, mount); err != nil || controller.firingSink != nil {
 		t.Fatalf("off must disable telemetry: %v", err)
 	}
-	if err := attachFiringTelemetry(controller, "", "job", mount); err != nil || controller.firingSink == nil {
+	if err := attachFiringTelemetry(controller, "", true, mount); err != nil || controller.firingSink == nil {
 		t.Fatalf("job mode must enable telemetry: %v", err)
 	}
 	step(t, controller, 0)

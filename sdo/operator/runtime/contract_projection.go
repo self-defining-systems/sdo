@@ -348,7 +348,6 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	message := &contracts.IncidentClosure{
 		Request: request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
 		IncidentDetectorStates:              evaluationsContract(closure.IncidentDetectorStates),
-		DetectorTimeline:                    make([]*contracts.DetectorTimelineEntry, 0, len(closure.DetectorTimeline)),
 		IncidentDetectorFiredBeforeDispatch: closure.IncidentDetectorFiredBeforeDispatch,
 		IncidentDetectorFiredAfterDispatch:  closure.IncidentDetectorFiredAfterDispatch,
 		NoIncidentDetectorFired:             closure.NoIncidentDetectorFired,
@@ -356,7 +355,6 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		DetectedAt:                          contractTimestamp(closure.DetectedAt), DispatchedAt: contractTimestamp(closure.DispatchedAt),
 		ResponderCompletedAt: contractTimestamp(closure.ResponderCompletedAt), VerifiedAt: contractTimestamp(closure.VerifiedAt),
 		HealthClearedAt:          optionalContractTimestamp(closure.HealthClearedAt),
-		ObservedStateChanges:     make([]*contracts.ObservedStateChange, 0, len(closure.ObservedStateChanges)),
 		DetectorReviewRequiredAt: optionalContractTimestamp(closure.DetectorReviewRequiredAt),
 		CleanedHelpers:           append([]string(nil), closure.CleanedHelpers...),
 	}
@@ -372,12 +370,149 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	if closure.DetectorReviewReason != "" {
 		message.DetectorReviewReason = &closure.DetectorReviewReason
 	}
-	for _, entry := range closure.DetectorTimeline {
+	message.DetectorTimeline, err = detectorTimelineContract(closure.DetectorTimeline)
+	if err != nil {
+		return nil, err
+	}
+	message.ObservedStateChanges = observedStateChangesContract(closure.ObservedStateChanges)
+	return message, nil
+}
+
+func optionalTimestamp(at time.Time) *timestamppb.Timestamp {
+	if at.IsZero() {
+		return nil
+	}
+	return contractTimestamp(at)
+}
+
+func timestampsContract(times map[string]time.Time) map[string]*timestamppb.Timestamp {
+	if len(times) == 0 {
+		return nil
+	}
+	result := make(map[string]*timestamppb.Timestamp, len(times))
+	for key, at := range times {
+		result[key] = contractTimestamp(at)
+	}
+	return result
+}
+
+func timestampsState(times map[string]*timestamppb.Timestamp) map[string]time.Time {
+	if len(times) == 0 {
+		return nil
+	}
+	result := make(map[string]time.Time, len(times))
+	for key, at := range times {
+		result[key] = controllerTime(at)
+	}
+	return result
+}
+
+func findingsContract(findings []sdk.Finding) ([]*contracts.Finding, error) {
+	result := make([]*contracts.Finding, 0, len(findings))
+	for _, finding := range findings {
+		item, err := findingContract(finding)
+		if err != nil {
+			return nil, fmt.Errorf("finding %s: %w", finding.DetectorID, err)
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
+func findingsState(findings []*contracts.Finding) []sdk.Finding {
+	result := make([]sdk.Finding, 0, len(findings))
+	for _, finding := range findings {
+		result = append(result, findingState(finding))
+	}
+	return result
+}
+
+func stateChangesState(message *contracts.StateChanges) *StateChanges {
+	if message == nil {
+		return nil
+	}
+	result := &StateChanges{
+		BaselineAt: controllerTime(message.GetBaselineAt()), ObservedAt: controllerTime(message.GetObservedAt()),
+		Changes: make([]StateChange, 0, len(message.GetChanges())), Omitted: int(message.GetOmitted()),
+		UnobservedKinds: append([]string(nil), message.GetUnobservedKinds()...),
+	}
+	for _, change := range message.GetChanges() {
+		item := StateChange{Kind: change.GetKind(), Name: change.GetName(), Change: change.GetChange()}
+		for _, field := range change.GetFields() {
+			item.Fields = append(item.Fields, StateFieldChange{Field: field.GetField(), Before: field.GetBefore(), After: field.GetAfter()})
+		}
+		result.Changes = append(result.Changes, item)
+	}
+	return result
+}
+
+func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
+	if message == nil {
+		return nil
+	}
+	result := &IncidentRequest{
+		SchemaVersion: message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
+		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
+		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
+		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
+		RelevantOutcomes:  make([]PriorOutcomeEvidence, 0, len(message.GetRelevantOutcomes())),
+		SourceCommit:      message.GetSourceCommit(), DeployedCommit: message.GetDeployedCommit(),
+		RepositoryWorktree: message.GetRepositoryWorktree(), RepositoryBaseCommit: message.GetRepositoryBaseCommit(),
+		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
+		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
+	}
+	for _, surfaced := range message.GetSurfacedPlaybooks() {
+		result.SurfacedPlaybooks = append(result.SurfacedPlaybooks, SurfacedPlaybook{
+			PlaybookID: surfaced.GetPlaybookId(), ParameterBindings: bindingsState(surfaced.GetParameterBindings()),
+		})
+	}
+	for _, prior := range message.GetRelevantOutcomes() {
+		result.RelevantOutcomes = append(result.RelevantOutcomes, PriorOutcomeEvidence{
+			IncidentID: prior.GetIncidentId(), MatchReason: prior.GetMatchReason(),
+			RootCauseSummaries:    append([]string(nil), prior.GetRootCauseSummaries()...),
+			RepairActionSummaries: append([]string(nil), prior.GetRepairActionSummaries()...),
+			AppliedPlaybookIDs:    append([]string(nil), prior.GetAppliedPlaybookIds()...),
+			SourceCommit:          prior.GetSourceCommit(), ExactSourceMatch: prior.GetExactSourceMatch(),
+		})
+	}
+	if followUp := message.GetFollowUp(); followUp != nil {
+		result.FollowUp = &FollowUpContext{
+			OriginalIncidentID: followUp.GetOriginalIncidentId(), ParentIncidentID: followUp.GetParentIncidentId(),
+			Attempt: int(followUp.GetAttempt()), MaxFollowUps: int(followUp.GetMaxFollowUps()),
+			PriorSummary: followUp.GetPriorResponderSummary(),
+		}
+	}
+	return result
+}
+
+func observedStateChangesContract(changes []ObservedStateChange) []*contracts.ObservedStateChange {
+	result := make([]*contracts.ObservedStateChange, 0, len(changes))
+	for _, change := range changes {
+		result = append(result, &contracts.ObservedStateChange{
+			Kind: change.Kind, Name: change.Name, FirstObservedAt: contractTimestamp(change.FirstObservedAt),
+		})
+	}
+	return result
+}
+
+func observedStateChangesState(changes []*contracts.ObservedStateChange) []ObservedStateChange {
+	result := make([]ObservedStateChange, 0, len(changes))
+	for _, change := range changes {
+		result = append(result, ObservedStateChange{
+			Kind: change.GetKind(), Name: change.GetName(), FirstObservedAt: controllerTime(change.GetFirstObservedAt()),
+		})
+	}
+	return result
+}
+
+func detectorTimelineContract(timeline []DetectorTimelineEntry) ([]*contracts.DetectorTimelineEntry, error) {
+	result := make([]*contracts.DetectorTimelineEntry, 0, len(timeline))
+	for _, entry := range timeline {
 		playbooks, err := layout.PlaybookIDs(entry.SurfacedPlaybookIDs)
 		if err != nil {
 			return nil, fmt.Errorf("timeline playbooks: %w", err)
 		}
-		message.DetectorTimeline = append(message.DetectorTimeline, &contracts.DetectorTimelineEntry{
+		result = append(result, &contracts.DetectorTimelineEntry{
 			DetectorId: entry.DetectorID, DetectorClass: entry.DetectorClass, Owner: entry.Owner, RuleId: entry.RuleID,
 			Fingerprint: entry.Fingerprint, ParameterBindings: bindingsContract(entry.ParameterBindings),
 			SurfacedPlaybookIds: playbooks, FirstActivatedAt: contractTimestamp(entry.FirstActivatedAt),
@@ -385,10 +520,291 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 			Relation: string(entry.Relation), Activations: int32(entry.Activations),
 		})
 	}
-	for _, change := range closure.ObservedStateChanges {
-		message.ObservedStateChanges = append(message.ObservedStateChanges, &contracts.ObservedStateChange{
-			Kind: change.Kind, Name: change.Name, FirstObservedAt: contractTimestamp(change.FirstObservedAt),
-		})
+	return result, nil
+}
+
+func detectorTimelineState(timeline []*contracts.DetectorTimelineEntry) []DetectorTimelineEntry {
+	result := make([]DetectorTimelineEntry, 0, len(timeline))
+	for _, entry := range timeline {
+		item := DetectorTimelineEntry{
+			DetectorID: entry.GetDetectorId(), DetectorClass: entry.GetDetectorClass(), Owner: entry.GetOwner(), RuleID: entry.GetRuleId(),
+			Fingerprint: entry.GetFingerprint(), ParameterBindings: bindingsState(entry.GetParameterBindings()),
+			SurfacedPlaybookIDs: append([]string(nil), entry.GetSurfacedPlaybookIds()...),
+			FirstActivatedAt:    controllerTime(entry.GetFirstActivatedAt()), LastSeenAt: controllerTime(entry.GetLastSeenAt()),
+			Relation: FiringRelation(entry.GetRelation()), Activations: int(entry.GetActivations()),
+		}
+		if entry.ClearedAt != nil {
+			cleared := controllerTime(entry.GetClearedAt())
+			item.ClearedAt = &cleared
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func optionalTimeState(at *timestamppb.Timestamp) *time.Time {
+	if at == nil {
+		return nil
+	}
+	value := controllerTime(at)
+	return &value
+}
+
+func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
+	closure := IncidentClosure{
+		DispatchError: message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
+		IncidentDetectorStates:              evaluationsState(message.GetIncidentDetectorStates()),
+		DetectorTimeline:                    detectorTimelineState(message.GetDetectorTimeline()),
+		IncidentDetectorFiredBeforeDispatch: message.GetIncidentDetectorFiredBeforeDispatch(),
+		IncidentDetectorFiredAfterDispatch:  message.GetIncidentDetectorFiredAfterDispatch(),
+		NoIncidentDetectorFired:             message.GetNoIncidentDetectorFired(),
+		FinalStateChanges:                   stateChangesState(message.GetFinalStateChanges()),
+		DetectedAt:                          controllerTime(message.GetDetectedAt()), DispatchedAt: controllerTime(message.GetDispatchedAt()),
+		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), VerifiedAt: controllerTime(message.GetVerifiedAt()),
+		HealthClearedAt:          optionalTimeState(message.HealthClearedAt),
+		ObservedStateChanges:     observedStateChangesState(message.GetObservedStateChanges()),
+		DetectorReviewRequiredAt: optionalTimeState(message.DetectorReviewRequiredAt),
+		DetectorReviewReason:     message.GetDetectorReviewReason(),
+		CleanedHelpers:           append([]string(nil), message.GetCleanedHelpers()...),
+	}
+	if request := incidentRequestState(message.GetRequest()); request != nil {
+		closure.Request = *request
+	}
+	if message.GetResult() != nil {
+		result := incidentResultState(message.GetResult())
+		closure.Result = &result
+	}
+	return closure
+}
+
+func closureReceiptContract(receipt *ClosureReceipt) *contracts.ClosureReceipt {
+	if receipt == nil {
+		return nil
+	}
+	return &contracts.ClosureReceipt{
+		IncidentId: receipt.IncidentID, Worktree: receipt.Worktree, BaseCommit: receipt.BaseCommit, ProposalCommit: receipt.ProposalCommit,
+		OutcomeCommit: receipt.OutcomeCommit, ReflectionCommit: receipt.ReflectionCommit, AckToken: receipt.AckToken,
+	}
+}
+
+func closureReceiptState(message *contracts.ClosureReceipt) *ClosureReceipt {
+	if message == nil {
+		return nil
+	}
+	return &ClosureReceipt{
+		IncidentID: message.GetIncidentId(), Worktree: message.GetWorktree(), BaseCommit: message.GetBaseCommit(),
+		ProposalCommit: message.GetProposalCommit(), OutcomeCommit: message.GetOutcomeCommit(),
+		ReflectionCommit: message.GetReflectionCommit(), AckToken: message.GetAckToken(),
+	}
+}
+
+func closureFailureContract(failure *ClosureFailure) *contracts.ClosureFailure {
+	if failure == nil {
+		return nil
+	}
+	return &contracts.ClosureFailure{
+		IncidentId: failure.IncidentID, Attempts: int32(failure.Attempts), MaxAttempts: int32(failure.MaxAttempts),
+		LastError: failure.LastError, FirstFailedAt: contractTimestamp(failure.FirstFailedAt),
+		LastFailedAt: contractTimestamp(failure.LastFailedAt), NextAttemptAt: optionalTimestamp(failure.NextAttemptAt),
+		Permanent: failure.Permanent, Action: failure.Action,
+	}
+}
+
+func closureFailureState(message *contracts.ClosureFailure) *ClosureFailure {
+	if message == nil {
+		return nil
+	}
+	return &ClosureFailure{
+		IncidentID: message.GetIncidentId(), Attempts: int(message.GetAttempts()), MaxAttempts: int(message.GetMaxAttempts()),
+		LastError: message.GetLastError(), FirstFailedAt: controllerTime(message.GetFirstFailedAt()),
+		LastFailedAt: controllerTime(message.GetLastFailedAt()), NextAttemptAt: controllerTime(message.GetNextAttemptAt()),
+		Permanent: message.GetPermanent(), Action: message.GetAction(),
+	}
+}
+
+func incidentViewContract(view *IncidentView) (*contracts.IncidentView, error) {
+	if view == nil {
+		return nil, nil
+	}
+	blocking, err := findingsContract(view.BlockingFindings)
+	if err != nil {
+		return nil, fmt.Errorf("blocking findings: %w", err)
+	}
+	clearing, err := findingsContract(view.ClearingFindings)
+	if err != nil {
+		return nil, fmt.Errorf("clearing findings: %w", err)
+	}
+	return &contracts.IncidentView{
+		IncidentId: view.IncidentID, ObservedAt: contractTimestamp(view.ObservedAt),
+		BlockingDetectors: append([]string(nil), view.BlockingDetectors...), BlockingFindings: blocking,
+		ClearingFindings: clearing, StateChanges: stateChangesContract(view.StateChanges),
+	}, nil
+}
+
+func findingStatesContract(states map[string]FindingState) (map[string]*contracts.FindingState, error) {
+	if len(states) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]*contracts.FindingState, len(states))
+	for key, state := range states {
+		finding, err := findingContract(state.Finding)
+		if err != nil {
+			return nil, fmt.Errorf("finding state %s: %w", key, err)
+		}
+		result[key] = &contracts.FindingState{
+			DetectorId: state.DetectorID, Finding: finding, FiringCount: int32(state.FiringCount), ClearCount: int32(state.ClearCount),
+			Active: state.Active, FirstSeenAt: optionalTimestamp(state.FirstSeenAt), Activations: int32(state.Activations),
+			Clears: int32(state.Clears), NotPersisted: int32(state.NotPersisted),
+		}
+	}
+	return result, nil
+}
+
+func findingStatesState(states map[string]*contracts.FindingState) map[string]FindingState {
+	result := make(map[string]FindingState, len(states))
+	for key, state := range states {
+		result[key] = FindingState{
+			DetectorID: state.GetDetectorId(), Finding: findingState(state.GetFinding()), FiringCount: int(state.GetFiringCount()),
+			ClearCount: int(state.GetClearCount()), Active: state.GetActive(), FirstSeenAt: controllerTime(state.GetFirstSeenAt()),
+			Activations: int(state.GetActivations()), Clears: int(state.GetClears()), NotPersisted: int(state.GetNotPersisted()),
+		}
+	}
+	return result
+}
+
+// controllerStateContract projects the controller's restartable state onto the
+// ProtoJSON document persisted in its state ConfigMap.
+func controllerStateContract(state RuntimeState) (*contracts.ControllerState, error) {
+	findingStates, err := findingStatesContract(state.FindingStates)
+	if err != nil {
+		return nil, err
+	}
+	batch, err := findingsContract(state.PendingBatch.Findings)
+	if err != nil {
+		return nil, fmt.Errorf("pending batch: %w", err)
+	}
+	timeline, err := detectorTimelineContract(state.DetectorTimeline)
+	if err != nil {
+		return nil, err
+	}
+	view, err := incidentViewContract(state.IncidentView)
+	if err != nil {
+		return nil, err
+	}
+	message := &contracts.ControllerState{
+		Version: state.Version, SchedulerDeadlines: timestampsContract(state.SchedulerDeadlines), FindingStates: findingStates,
+		PendingBatch: &contracts.BatcherState{
+			Findings: batch, Deadlines: timestampsContract(state.PendingBatch.Deadlines), Deadline: optionalTimestamp(state.PendingBatch.Deadline),
+		},
+		History: evaluationsContract(state.History), IncidentOpen: state.IncidentOpen, ResponderDone: state.ResponderDone,
+		DispatchError: state.DispatchError, IncidentDetectedAt: optionalTimestamp(state.IncidentDetectedAt),
+		IncidentDispatchedAt: optionalTimestamp(state.IncidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(state.ResponderCompletedAt),
+		DetectorReviewRequired: state.DetectorReviewRequired, DetectorReviewRequiredAt: optionalTimestamp(state.DetectorReviewRequiredAt),
+		DetectorReviewReason: state.DetectorReviewReason, DetectorClearSince: timestampsContract(state.DetectorClearSince),
+		IncidentObservedChanges: observedStateChangesContract(state.IncidentObservedChanges), DispatchState: state.DispatchState,
+		IncidentFindingKeys: append([]string(nil), state.IncidentFindingKeys...), ClosureState: state.ClosureState,
+		ClosureReceipt: closureReceiptContract(state.ClosureReceipt), ClosureFailure: closureFailureContract(state.ClosureFailure),
+		LastAcknowledgedIncidentId: state.LastAcknowledgedIncidentID, PendingReleases: append([]string(nil), state.PendingReleases...),
+		EvaluationIteration: int32(state.EvaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+	}
+	if state.IncidentRequest != nil {
+		message.IncidentRequest, err = incidentRequestContract(*state.IncidentRequest)
+		if err != nil {
+			return nil, fmt.Errorf("incident request: %w", err)
+		}
+	}
+	if state.IncidentResult != nil {
+		message.IncidentResult, err = incidentResultContract(*state.IncidentResult)
+		if err != nil {
+			return nil, fmt.Errorf("incident result: %w", err)
+		}
+	}
+	if state.PendingClosure != nil {
+		message.PendingClosure, err = incidentClosureContract(*state.PendingClosure)
+		if err != nil {
+			return nil, fmt.Errorf("pending closure: %w", err)
+		}
 	}
 	return message, nil
+}
+
+// controllerStateState restores in-memory controller state from its persisted
+// document. The incident view is published for responders and never restored.
+func controllerStateState(message *contracts.ControllerState) RuntimeState {
+	state := RuntimeState{
+		Version: message.GetVersion(), SchedulerDeadlines: timestampsState(message.GetSchedulerDeadlines()),
+		FindingStates: findingStatesState(message.GetFindingStates()),
+		PendingBatch: BatcherState{
+			Findings: findingsState(message.GetPendingBatch().GetFindings()), Deadlines: timestampsState(message.GetPendingBatch().GetDeadlines()),
+			Deadline: controllerTime(message.GetPendingBatch().GetDeadline()),
+		},
+		History: evaluationsState(message.GetHistory()), IncidentOpen: message.GetIncidentOpen(), ResponderDone: message.GetResponderDone(),
+		IncidentRequest: incidentRequestState(message.GetIncidentRequest()), DispatchError: message.GetDispatchError(),
+		IncidentDetectedAt: controllerTime(message.GetIncidentDetectedAt()), IncidentDispatchedAt: controllerTime(message.GetIncidentDispatchedAt()),
+		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), DetectorReviewRequired: message.GetDetectorReviewRequired(),
+		DetectorReviewRequiredAt: controllerTime(message.GetDetectorReviewRequiredAt()), DetectorReviewReason: message.GetDetectorReviewReason(),
+		DetectorClearSince:      timestampsState(message.GetDetectorClearSince()),
+		IncidentObservedChanges: observedStateChangesState(message.GetIncidentObservedChanges()), DispatchState: message.GetDispatchState(),
+		IncidentFindingKeys: append([]string(nil), message.GetIncidentFindingKeys()...), ClosureState: message.GetClosureState(),
+		ClosureReceipt: closureReceiptState(message.GetClosureReceipt()), ClosureFailure: closureFailureState(message.GetClosureFailure()),
+		LastAcknowledgedIncidentID: message.GetLastAcknowledgedIncidentId(), PendingReleases: append([]string(nil), message.GetPendingReleases()...),
+		EvaluationIteration: int(message.GetEvaluationIteration()), DetectorTimeline: detectorTimelineState(message.GetDetectorTimeline()),
+	}
+	if message.GetIncidentResult() != nil {
+		result := incidentResultState(message.GetIncidentResult())
+		state.IncidentResult = &result
+	}
+	if message.GetPendingClosure() != nil {
+		closure := incidentClosureState(message.GetPendingClosure())
+		state.PendingClosure = &closure
+	}
+	return state
+}
+
+func parseProtoJSON(data []byte, message proto.Message) error {
+	return (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(data, message)
+}
+
+func rolloutExpectationContract(expectation *ControllerRolloutExpectation) *contracts.ControllerRolloutExpectation {
+	if expectation == nil {
+		return nil
+	}
+	return &contracts.ControllerRolloutExpectation{
+		IncidentId: expectation.IncidentID, ReflectionCommit: expectation.ReflectionCommit,
+		BeforeDetectorFingerprint: expectation.BeforeDetectorFingerprint, AfterDetectorFingerprint: expectation.AfterDetectorFingerprint,
+	}
+}
+
+func rolloutExpectationState(message *contracts.ControllerRolloutExpectation) *ControllerRolloutExpectation {
+	if message == nil {
+		return nil
+	}
+	return &ControllerRolloutExpectation{
+		IncidentID: message.GetIncidentId(), ReflectionCommit: message.GetReflectionCommit(),
+		BeforeDetectorFingerprint: message.GetBeforeDetectorFingerprint(), AfterDetectorFingerprint: message.GetAfterDetectorFingerprint(),
+	}
+}
+
+func rolloutReceiptContract(receipt ControllerRolloutReceipt) *contracts.ControllerRolloutReceipt {
+	return &contracts.ControllerRolloutReceipt{
+		Expectation: rolloutExpectationContract(&receipt.Expectation), BuildArtifact: receipt.BuildArtifact,
+		ControllerRevision: receipt.ControllerRevision, ObservedDetectorFingerprint: receipt.ObservedDetectorFingerprint,
+		Success: receipt.Success, VerifiedAt: contractTimestamp(receipt.VerifiedAt),
+	}
+}
+
+func rolloutReceiptsState(receipts []*contracts.ControllerRolloutReceipt) []ControllerRolloutReceipt {
+	result := make([]ControllerRolloutReceipt, 0, len(receipts))
+	for _, receipt := range receipts {
+		item := ControllerRolloutReceipt{
+			BuildArtifact: receipt.GetBuildArtifact(), ControllerRevision: receipt.GetControllerRevision(),
+			ObservedDetectorFingerprint: receipt.GetObservedDetectorFingerprint(), Success: receipt.GetSuccess(),
+			VerifiedAt: controllerTime(receipt.GetVerifiedAt()),
+		}
+		if expectation := rolloutExpectationState(receipt.GetExpectation()); expectation != nil {
+			item.Expectation = *expectation
+		}
+		result = append(result, item)
+	}
+	return result
 }

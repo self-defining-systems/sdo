@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// Cross-language contract fixtures. The Go controller writes each shape
-// Python parses into tests/fixtures/sdo/contracts/go/, and Python's strict
+// Cross-language contract fixtures. The Go controller writes each message as
+// canonical ProtoJSON that Python parses into tests/fixtures/sdo/contracts/go/, and Python's strict
 // models parse the same files (tests/unit/sdo/contracts/
 // test_go_contract_fixtures.py, the broker and the SREGym receipt tests).
 // Any Go encoding change fails here until the fixtures are regenerated with
@@ -27,16 +29,17 @@ const updateGoContractFixtures = "SDO_UPDATE_GO_CONTRACT_FIXTURES"
 
 var goContractFixtureDir = filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "contracts", "go")
 
-func checkGoContractFixture(t *testing.T, name string, value any) {
+func checkGoContractFixture(t *testing.T, name string, message proto.Message) {
 	t.Helper()
-	encoded, err := json.MarshalIndent(value, "", "  ")
+	compact, err := canonicalProtoJSON(message)
 	if err != nil {
 		t.Fatalf("marshal %s: %v", name, err)
 	}
-	encoded = append(encoded, '\n')
-	if paths := jsonNullPaths(t, encoded); len(paths) > 0 {
-		t.Fatalf("%s encodes null at %v", name, paths)
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, compact, "", "  "); err != nil {
+		t.Fatalf("indent %s: %v", name, err)
 	}
+	encoded := append(indented.Bytes(), '\n')
 	path := filepath.Join(goContractFixtureDir, name)
 	if os.Getenv(updateGoContractFixtures) == "1" {
 		if err := os.MkdirAll(goContractFixtureDir, 0o755); err != nil {
@@ -127,18 +130,27 @@ func goldenResult(request IncidentRequest, cause ConfirmedRootCause, action Repa
 	}
 }
 
+func mustProject[S any, M proto.Message](t *testing.T, project func(S) (M, error), value S) M {
+	t.Helper()
+	message, err := project(value)
+	if err != nil {
+		t.Fatalf("project contract: %v", err)
+	}
+	return message
+}
+
 func TestGoContractFixtures(t *testing.T) {
 	at := time.Unix(1, 0).UTC()
 	finding := stateFinding("cause")
 	finding.DetectorID = "health-objective"
 
 	// Incident views, as `sdo incident status` reads them.
-	checkGoContractFixture(t, "incident_view_empty.json", cloneIncidentView(&IncidentView{
+	checkGoContractFixture(t, "incident_view_empty.json", mustProject(t, incidentViewContract, &IncidentView{
 		IncidentID: "demo-1", ObservedAt: at, StateChanges: &StateChanges{BaselineAt: at, ObservedAt: at},
 	}))
 	clearing := finding
 	clearing.Fingerprint = "clearing"
-	checkGoContractFixture(t, "incident_view_populated.json", cloneIncidentView(&IncidentView{
+	checkGoContractFixture(t, "incident_view_populated.json", mustProject(t, incidentViewContract, &IncidentView{
 		IncidentID: "demo-1", ObservedAt: at,
 		BlockingDetectors: []string{"health-objective"}, BlockingFindings: []sdk.Finding{finding},
 		ClearingFindings: []sdk.Finding{clearing},
@@ -179,9 +191,9 @@ func TestGoContractFixtures(t *testing.T) {
 			},
 		)
 	})
-	checkGoContractFixture(t, "incident_request.json", request)
-	checkGoContractFixture(t, "incident_view_open.json", view)
-	checkGoContractFixture(t, "closure_repaired.json", repaired)
+	checkGoContractFixture(t, "incident_request.json", mustProject(t, incidentRequestContract, request))
+	checkGoContractFixture(t, "incident_view_open.json", mustProject(t, incidentViewContract, view))
+	checkGoContractFixture(t, "closure_repaired.json", mustProject(t, incidentClosureContract, repaired))
 
 	// A wrong fix citing its own edit: the real fault is invisible to the
 	// diff and recovers by other means; the responder restarts frontend at
@@ -212,7 +224,7 @@ func TestGoContractFixtures(t *testing.T) {
 			},
 		)
 	})
-	checkGoContractFixture(t, "closure_own_edit.json", ownEdit)
+	checkGoContractFixture(t, "closure_own_edit.json", mustProject(t, incidentClosureContract, ownEdit))
 	if len(ownEdit.ObservedStateChanges) != 1 || !ownEdit.ObservedStateChanges[0].FirstObservedAt.Equal(time.Unix(2, 0).UTC()) {
 		t.Fatalf("the restart must first be observed after the repair started: %+v", ownEdit.ObservedStateChanges)
 	}

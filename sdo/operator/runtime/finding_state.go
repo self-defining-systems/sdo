@@ -8,21 +8,21 @@ import (
 )
 
 type FindingState struct {
-	DetectorID  string      `json:"detector_id"`
-	Finding     sdk.Finding `json:"finding"`
-	FiringCount int         `json:"firing_count"`
-	ClearCount  int         `json:"clear_count"`
-	Active      bool        `json:"active"`
+	DetectorID  string
+	Finding     sdk.Finding
+	FiringCount int
+	ClearCount  int
+	Active      bool
 	// FirstSeenAt is when this finding was first observed since it last
 	// cleared. It anchors a policy's MinDuration: the finding may not
 	// activate until now Sub FirstSeenAt is at least that long.
-	FirstSeenAt time.Time `json:"first_seen_at,omitempty"`
+	FirstSeenAt time.Time
 	// Activations, Clears, and NotPersisted count this finding's completed
 	// transitions. They make a telemetry event id a pure function of durable
 	// state, so a replay after a crash reproduces the ids it already emitted.
-	Activations  int `json:"activations,omitempty"`
-	Clears       int `json:"clears,omitempty"`
-	NotPersisted int `json:"not_persisted,omitempty"`
+	Activations  int
+	Clears       int
+	NotPersisted int
 }
 
 // FindingTransition is one firing-state change produced by Observe.

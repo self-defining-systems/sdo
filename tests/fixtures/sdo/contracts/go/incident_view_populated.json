@@ -1,61 +1,61 @@
 {
-  "incident_id": "demo-1",
-  "observed_at": "1970-01-01T00:00:01Z",
   "blocking_detectors": [
     "health-objective"
   ],
   "blocking_findings": [
     {
       "detector_id": "health-objective",
-      "rule_id": "cause",
-      "status": "active",
-      "severity": "warn",
-      "summary": "fault",
       "evidence": "evidence",
+      "fingerprint": "cause",
       "primary_resource": {
         "kind": "Deployment",
         "name": "cause"
       },
-      "fingerprint": "cause"
+      "rule_id": "cause",
+      "severity": "warn",
+      "status": "active",
+      "summary": "fault"
     }
   ],
   "clearing_findings": [
     {
       "detector_id": "health-objective",
-      "rule_id": "cause",
-      "status": "active",
-      "severity": "warn",
-      "summary": "fault",
       "evidence": "evidence",
+      "fingerprint": "clearing",
       "primary_resource": {
         "kind": "Deployment",
         "name": "cause"
       },
-      "fingerprint": "clearing"
+      "rule_id": "cause",
+      "severity": "warn",
+      "status": "active",
+      "summary": "fault"
     }
   ],
+  "incident_id": "demo-1",
+  "observed_at": "1970-01-01T00:00:01Z",
   "state_changes": {
     "baseline_at": "1970-01-01T00:00:01Z",
-    "observed_at": "1970-01-01T00:00:01Z",
     "changes": [
       {
-        "kind": "Service",
-        "name": "frontend",
         "change": "modified",
         "fields": [
           {
-            "field": "selector",
+            "after": "app=frontend,x=y",
             "before": "app=frontend",
-            "after": "app=frontend,x=y"
+            "field": "selector"
           }
-        ]
+        ],
+        "kind": "Service",
+        "name": "frontend"
       },
       {
+        "change": "removed",
         "kind": "ConfigMap",
-        "name": "geo-config",
-        "change": "removed"
+        "name": "geo-config"
       }
     ],
+    "observed_at": "1970-01-01T00:00:01Z",
     "omitted": 1,
     "unobserved_kinds": [
       "Secret"

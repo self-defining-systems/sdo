@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -27,11 +26,7 @@ func durableState(client *fake.Clientset) (RuntimeState, error) {
 	if err != nil {
 		return RuntimeState{}, err
 	}
-	var state RuntimeState
-	if err := json.Unmarshal([]byte(object.(*corev1.ConfigMap).Data[stateDataKey]), &state); err != nil {
-		return RuntimeState{}, err
-	}
-	return state, nil
+	return decodeControllerState([]byte(object.(*corev1.ConfigMap).Data[stateDataKey]))
 }
 
 func durabilityController(t *testing.T, client *fake.Clientset, config ControllerConfig, dispatcher Dispatcher) *Controller {

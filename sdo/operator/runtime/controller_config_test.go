@@ -152,7 +152,7 @@ func TestControllerConfigFlagsAreAllDefined(t *testing.T) {
 		Namespace:      "hotel-reservation",
 		AppRoot:        "/workspace/app",
 		Dispatcher:     "/usr/local/bin/responder",
-		DispatcherMode: "local",
+		DispatcherMode: "job",
 		RepairPolicy:   "commit",
 	}
 	assertFlagsDefined(t, controllerConfigToArgs(minimal))
@@ -208,7 +208,7 @@ func TestControllerConfigOmitsUnsetFields(t *testing.T) {
 		Namespace:      "hotel-reservation",
 		AppRoot:        "/workspace/app",
 		Dispatcher:     "/usr/local/bin/responder",
-		DispatcherMode: "local",
+		DispatcherMode: "job",
 		RepairPolicy:   "commit",
 	}
 	for _, arg := range controllerConfigToArgs(minimal) {

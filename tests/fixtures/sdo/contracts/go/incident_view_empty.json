@@ -1,12 +1,8 @@
 {
   "incident_id": "demo-1",
   "observed_at": "1970-01-01T00:00:01Z",
-  "blocking_detectors": [],
-  "blocking_findings": [],
-  "clearing_findings": [],
   "state_changes": {
     "baseline_at": "1970-01-01T00:00:01Z",
-    "observed_at": "1970-01-01T00:00:01Z",
-    "changes": []
+    "observed_at": "1970-01-01T00:00:01Z"
   }
 }

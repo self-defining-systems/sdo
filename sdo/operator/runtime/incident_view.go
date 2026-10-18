@@ -25,22 +25,22 @@ func controllerStateLocation(controlNamespace string) string {
 // state but never restored: a restarted controller republishes it once it has
 // evaluated again.
 type IncidentView struct {
-	IncidentID string    `json:"incident_id"`
-	ObservedAt time.Time `json:"observed_at"`
+	IncidentID string
+	ObservedAt time.Time
 	// BlockingFindings are the active findings closure waits on (every
 	// health detector's, or without any, the incident's own) that the submit
 	// gate has not confirmed clear (GateConfirmationPolicy); BlockingDetectors
 	// names their detectors. A responder must not submit while any remains.
-	BlockingDetectors []string      `json:"blocking_detectors"`
-	BlockingFindings  []sdk.Finding `json:"blocking_findings"`
+	BlockingDetectors []string
+	BlockingFindings  []sdk.Finding
 	// ClearingFindings are the findings closure still counts as active but
 	// the gate has confirmed clear on consecutive fresh evaluations. They
 	// hold closure only until the health judge's own clear persistence is
 	// met, and do not block submission.
-	ClearingFindings []sdk.Finding `json:"clearing_findings"`
+	ClearingFindings []sdk.Finding
 	// StateChanges is the current configuration diff against the healthy
 	// baseline, including changes made after the request was taken.
-	StateChanges *StateChanges `json:"state_changes,omitempty"`
+	StateChanges *StateChanges
 }
 
 // refreshIncidentView recomputes the view after an evaluation, or when the

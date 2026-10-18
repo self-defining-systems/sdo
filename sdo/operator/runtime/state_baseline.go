@@ -44,30 +44,30 @@ const (
 // StateFieldChange is one changed aspect of an object. Before and After are
 // rendered values for small fields and sha256 digests for data.
 type StateFieldChange struct {
-	Field  string `json:"field"`
-	Before string `json:"before,omitempty"`
-	After  string `json:"after,omitempty"`
+	Field  string
+	Before string
+	After  string
 }
 
 // StateChange is one application object that differs from the healthy
 // baseline.
 type StateChange struct {
-	Kind   string             `json:"kind"`
-	Name   string             `json:"name"`
-	Change string             `json:"change"`
-	Fields []StateFieldChange `json:"fields,omitempty"`
+	Kind   string
+	Name   string
+	Change string
+	Fields []StateFieldChange
 }
 
 // StateChanges is the application namespace's configuration diff against its
 // last healthy baseline, attached to an incident request at dispatch.
 type StateChanges struct {
-	BaselineAt time.Time     `json:"baseline_at"`
-	ObservedAt time.Time     `json:"observed_at"`
-	Changes    []StateChange `json:"changes"`
+	BaselineAt time.Time
+	ObservedAt time.Time
+	Changes    []StateChange
 	// Omitted counts changes beyond the cap.
-	Omitted int `json:"omitted,omitempty"`
+	Omitted int
 	// UnobservedKinds could not be read, so their changes are unknown.
-	UnobservedKinds []string `json:"unobserved_kinds,omitempty"`
+	UnobservedKinds []string
 }
 
 // StateBaseline records healthy configuration and reports what changed since.

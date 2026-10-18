@@ -1,28 +1,26 @@
 {
-  "incident_id": "demo-1000000000",
-  "observed_at": "1970-01-01T00:00:02Z",
   "blocking_detectors": [
     "cause"
   ],
   "blocking_findings": [
     {
       "detector_id": "cause",
-      "rule_id": "cause",
-      "status": "active",
-      "severity": "warn",
-      "summary": "fault",
       "evidence": "evidence",
+      "fingerprint": "cause",
       "primary_resource": {
         "kind": "Deployment",
         "name": "cause"
       },
-      "fingerprint": "cause"
+      "rule_id": "cause",
+      "severity": "warn",
+      "status": "active",
+      "summary": "fault"
     }
   ],
-  "clearing_findings": [],
+  "incident_id": "demo-1000000000",
+  "observed_at": "1970-01-01T00:00:02Z",
   "state_changes": {
     "baseline_at": "1970-01-01T00:00:00Z",
-    "observed_at": "1970-01-01T00:00:02Z",
-    "changes": []
+    "observed_at": "1970-01-01T00:00:02Z"
   }
 }

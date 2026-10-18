@@ -1,11 +1,11 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // ErrEffectNotDurable reports an external side effect whose controller-state
@@ -14,7 +14,7 @@ import (
 var ErrEffectNotDurable = errors.New("controller effect is not durably recorded")
 
 type DispatchEffect struct {
-	Request IncidentRequest `json:"request"`
+	Request IncidentRequest
 }
 
 func (c *Controller) PendingDispatchEffect() (DispatchEffect, bool) {
@@ -47,7 +47,7 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 	}
 	if err := c.requireDurableLocked("responder dispatch", func(state RuntimeState) bool {
 		return state.IncidentOpen && state.DispatchState == "pending" && state.IncidentRequest != nil &&
-			sameJSON(*state.IncidentRequest, effect.Request)
+			sameIncidentRequest(*state.IncidentRequest, effect.Request)
 	}); err != nil {
 		c.mu.Unlock()
 		cancel()
@@ -83,10 +83,17 @@ func (c *Controller) requireDurableLocked(effect string, recorded func(RuntimeSt
 	return nil
 }
 
-// sameJSON compares values by their persisted encoding, which is what a
-// restarted controller would recover.
-func sameJSON(left any, right any) bool {
-	leftPayload, leftErr := json.Marshal(left)
-	rightPayload, rightErr := json.Marshal(right)
-	return leftErr == nil && rightErr == nil && bytes.Equal(leftPayload, rightPayload)
+// sameIncidentRequest compares requests by their persisted projection, which
+// is what a restarted controller would recover.
+func sameIncidentRequest(left IncidentRequest, right IncidentRequest) bool {
+	leftMessage, leftErr := incidentRequestContract(left)
+	rightMessage, rightErr := incidentRequestContract(right)
+	return leftErr == nil && rightErr == nil && proto.Equal(leftMessage, rightMessage)
+}
+
+// sameIncidentClosure compares closures by their persisted projection.
+func sameIncidentClosure(left IncidentClosure, right IncidentClosure) bool {
+	leftMessage, leftErr := incidentClosureContract(left)
+	rightMessage, rightErr := incidentClosureContract(right)
+	return leftErr == nil && rightErr == nil && proto.Equal(leftMessage, rightMessage)
 }

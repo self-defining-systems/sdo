@@ -41,6 +41,9 @@ type RuntimeOptions struct {
 	StateBaselineStartTimeout time.Duration
 	// NativeBroker supplies the Go-owned closure path in tests and embedded runs.
 	NativeBroker *NativeIncidentBroker
+	// Dispatcher, when set, replaces the Kubernetes Job dispatcher so tests
+	// can observe what the controller dispatches without a worker cluster.
+	Dispatcher Dispatcher
 }
 
 const defaultStateBaselineStartTimeout = 30 * time.Second
@@ -123,7 +126,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
 	dispatcherCommand := flags.String("dispatcher", "", "incident responder executable")
-	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode: job (production) or local (development)")
+	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode; only job is supported")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
 	agentRegistrationDirectory := flags.String("agent-registration-directory", "", "directory of strict ProtoJSON agent registrations")
 	responderAgentID := flags.String("responder-agent-id", builtInResponderID, "registered agent ID for incident response")
@@ -240,16 +243,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *namespace == "" || *appRoot == "" {
 		return fmt.Errorf("namespace and app-root are required")
 	}
-	if *dispatcherMode == "local" && *dispatcherCommand == "" {
-		return fmt.Errorf("dispatcher is required in local mode")
+	if *dispatcherMode != "job" {
+		return fmt.Errorf("unsupported dispatcher mode %q", *dispatcherMode)
 	}
-	if *dispatcherMode == "job" && (*repositoryPVC == "" || *credentialsSecret == "") {
+	jobDispatch := options.Dispatcher == nil
+	if jobDispatch && (*repositoryPVC == "" || *credentialsSecret == "") {
 		return fmt.Errorf("repository-pvc and responder-credentials-secret are required in job mode")
 	}
-	if *dispatcherMode == "job" && *agentRegistrationDirectory == "" && (*dispatcherCommand == "" || *responderImage == "") {
+	if jobDispatch && *agentRegistrationDirectory == "" && (*dispatcherCommand == "" || *responderImage == "") {
 		return fmt.Errorf("dispatcher and responder-image are required for the built-in agent registration")
 	}
-	if *dispatcherMode == "job" && options.NativeBroker == nil {
+	if jobDispatch && options.NativeBroker == nil {
 		return errors.New("job controller requires the Go incident broker")
 	}
 	if *repairPolicy != "commit" && *repairPolicy != "recorded-actions" {
@@ -257,7 +261,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	argv := append([]string{*dispatcherCommand}, dispatcherArgs...)
 	var registeredWorkers *worker_registry.Registry
-	if *dispatcherMode == "job" {
+	if jobDispatch {
 		var registryErr error
 		if *agentRegistrationDirectory == "" {
 			registeredWorkers, registryErr = worker_registry.New(
@@ -395,16 +399,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	var dispatcher Dispatcher
-	switch *dispatcherMode {
-	case "local":
-		var environment []string
-		if proberAPI != nil && *proberURL != "" {
-			environment = append(environment, ProberURLEnvironment+"="+*proberURL)
-		}
-		environment = append(environment, ControllerStateEnvironment+"="+controllerStateLocation(*controlNamespace))
-		dispatcher = SubprocessDispatcher{Argv: argv, Env: environment, Timeout: *responseTimeout}
-	case "job":
+	dispatcher := options.Dispatcher
+	if dispatcher == nil {
 		var catalog memory.CatalogReader
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)
@@ -417,8 +413,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
 			Catalog: catalog, RequireMemorySnapshot: options.NativeBroker != nil,
 		}
-	default:
-		return fmt.Errorf("unsupported dispatcher mode %q", *dispatcherMode)
 	}
 	admission := AdmissionConfig{
 		Enabled:                     *admissionLoadHigh > 0 || *admissionBacklogHigh > 0,
@@ -456,7 +450,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if err := controller.SetIncidentBroker(*options.NativeBroker); err != nil {
 			return err
 		}
-	} else if *dispatcherMode == "job" {
+	} else if jobDispatch {
 		return errors.New("job controller requires the Go incident broker")
 	}
 	var stateTracker *StateTracker
@@ -476,13 +470,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
 	}
-	if err := attachFiringTelemetry(controller, *telemetryPath, *dispatcherMode, *repositoryMountPath); err != nil {
+	if err := attachFiringTelemetry(controller, *telemetryPath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)
 	}
-	if options.NativeBroker != nil && *dispatcherMode == "job" {
+	if options.NativeBroker != nil && jobDispatch {
 		controller.SetFiringSink(lateFindingSink{Downstream: controller.firingSink, Store: latefindings.Store{Client: bootstrapProvider.Client, Namespace: *controlNamespace}})
 	}
-	if err := attachLifecycleTelemetry(controller, *lifecyclePath, *dispatcherMode, *repositoryMountPath); err != nil {
+	if err := attachLifecycleTelemetry(controller, *lifecyclePath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)
 	}
 	if *exitAfterClosure && controller.LastAcknowledgedIncidentID() != "" {
@@ -496,7 +490,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	encoder := json.NewEncoder(stdout)
 	controller.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	controller.OnClosureFailed = func(failure ClosureFailure) {
-		if err := encoder.Encode(map[string]any{"controller_closure_failed": failure}); err != nil {
+		document, err := canonicalProtoJSON(closureFailureContract(&failure))
+		if err == nil {
+			err = encoder.Encode(map[string]any{"controller_closure_failed": json.RawMessage(document)})
+		}
+		if err != nil {
 			fmt.Fprintln(stderr, err)
 		}
 	}
@@ -908,8 +906,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 // attachFiringTelemetry connects the durable detector firing stream. Telemetry
 // is observational, so a stream that cannot be opened is reported and skipped
 // rather than stopping the controller.
-func attachFiringTelemetry(controller *Controller, path string, dispatcherMode string, mountPath string) error {
-	if path == "off" || (path == "" && dispatcherMode != "job") {
+func attachFiringTelemetry(controller *Controller, path string, defaultEnabled bool, mountPath string) error {
+	if path == "off" || (path == "" && !defaultEnabled) {
 		return nil
 	}
 	if path == "" {
@@ -931,8 +929,8 @@ func attachFiringTelemetry(controller *Controller, path string, dispatcherMode s
 // attachLifecycleTelemetry connects the durable incident lifecycle stream. Like
 // the firing stream it is observational, so a stream that cannot be opened is
 // reported and skipped rather than stopping the controller.
-func attachLifecycleTelemetry(controller *Controller, path string, dispatcherMode string, mountPath string) error {
-	if path == "off" || (path == "" && dispatcherMode != "job") {
+func attachLifecycleTelemetry(controller *Controller, path string, defaultEnabled bool, mountPath string) error {
+	if path == "off" || (path == "" && !defaultEnabled) {
 		return nil
 	}
 	if path == "" {

@@ -25,7 +25,7 @@
           "name": "geo-config"
         }
       ],
-      "playbooks": [
+      "playbook_ids": [
         "missing-configmap"
       ],
       "parameter_bindings": {

@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes/fake"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 )
 
@@ -113,35 +114,41 @@ func loadReplayFixture(t *testing.T, dir string, name string) replayFixture {
 	}
 	fixture := replayFixture{name: name, dir: dir, firings: firings}
 	fixture.lifecycle = readLifecycleStream(t, filepath.Join(dir, replayLifecycleFile))
-	if closure, ok := readReplayJSON[IncidentClosure](t, filepath.Join(dir, replayClosureFile)); ok {
+	if raw, ok := readReplayFile(t, filepath.Join(dir, replayClosureFile)); ok {
+		document := &contracts.IncidentClosure{}
+		if err := parseProtoJSON(raw, document); err != nil {
+			t.Fatalf("decode %s closure: %v", name, err)
+		}
+		closure := incidentClosureState(document)
 		fixture.closure = &closure
 	}
-	if state, ok := readReplayJSON[RuntimeState](t, filepath.Join(dir, replayStateFile)); ok {
+	if raw, ok := readReplayFile(t, filepath.Join(dir, replayStateFile)); ok {
+		state, err := decodeControllerState(raw)
+		if err != nil {
+			t.Fatalf("decode %s state: %v", name, err)
+		}
 		fixture.state = &state
 	}
-	if meta, ok := readReplayJSON[replayMeta](t, filepath.Join(dir, replayMetaFile)); ok {
-		fixture.meta = meta
+	if raw, ok := readReplayFile(t, filepath.Join(dir, replayMetaFile)); ok {
+		if err := json.Unmarshal(raw, &fixture.meta); err != nil {
+			t.Fatalf("decode %s meta: %v", name, err)
+		}
 	}
 	return fixture
 }
 
-// readReplayJSON decodes an optional JSON artifact, reporting whether it was
-// present. A present-but-malformed artifact fails loudly rather than being
-// silently skipped.
-func readReplayJSON[T any](t *testing.T, path string) (T, bool) {
+// readReplayFile reads an optional artifact, reporting whether it was present.
+// A present-but-unreadable artifact fails loudly rather than being skipped.
+func readReplayFile(t *testing.T, path string) ([]byte, bool) {
 	t.Helper()
-	var value T
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return value, false
+		return nil, false
 	}
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	if err := json.Unmarshal(raw, &value); err != nil {
-		t.Fatalf("decode %s: %v", path, err)
-	}
-	return value, true
+	return raw, true
 }
 
 // TestReplayRecordedIncidents is the suite entrypoint: every frozen fixture is
@@ -544,13 +551,13 @@ func assertFiringRecordsEqual(t *testing.T, want []FiringRecord, got []FiringRec
 // strongest faithfulness check for a durable round-trip.
 func assertStateBytesEqual(t *testing.T, want RuntimeState, got RuntimeState) {
 	t.Helper()
-	wantBytes, err := json.Marshal(want)
+	wantBytes, err := encodeControllerState(want)
 	if err != nil {
-		t.Fatalf("marshal recorded state: %v", err)
+		t.Fatalf("encode recorded state: %v", err)
 	}
-	gotBytes, err := json.Marshal(got)
+	gotBytes, err := encodeControllerState(got)
 	if err != nil {
-		t.Fatalf("marshal loaded state: %v", err)
+		t.Fatalf("encode loaded state: %v", err)
 	}
 	if string(wantBytes) != string(gotBytes) {
 		t.Fatalf("state round-trip is not byte-stable:\n recorded %s\n loaded   %s", wantBytes, gotBytes)

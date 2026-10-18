@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 )
 
@@ -27,42 +27,42 @@ const (
 var ErrStateConflict = errors.New("controller state conflict")
 
 type RuntimeState struct {
-	Version                  string                  `json:"version"`
-	SchedulerDeadlines       map[string]time.Time    `json:"scheduler_deadlines"`
-	FindingStates            map[string]FindingState `json:"finding_states"`
-	PendingBatch             BatcherState            `json:"pending_batch"`
-	History                  []DetectorEvaluation    `json:"history"`
-	IncidentOpen             bool                    `json:"incident_open"`
-	ResponderDone            bool                    `json:"responder_done"`
-	IncidentRequest          *IncidentRequest        `json:"incident_request,omitempty"`
-	IncidentResult           *IncidentResult         `json:"incident_result,omitempty"`
-	DispatchError            string                  `json:"dispatch_error,omitempty"`
-	IncidentDetectedAt       time.Time               `json:"incident_detected_at,omitempty"`
-	IncidentDispatchedAt     time.Time               `json:"incident_dispatched_at,omitempty"`
-	ResponderCompletedAt     time.Time               `json:"responder_completed_at,omitempty"`
-	DetectorReviewRequired   bool                    `json:"detector_review_required,omitempty"`
-	DetectorReviewRequiredAt time.Time               `json:"detector_review_required_at,omitempty"`
-	DetectorReviewReason     string                  `json:"detector_review_reason,omitempty"`
+	Version                  string
+	SchedulerDeadlines       map[string]time.Time
+	FindingStates            map[string]FindingState
+	PendingBatch             BatcherState
+	History                  []DetectorEvaluation
+	IncidentOpen             bool
+	ResponderDone            bool
+	IncidentRequest          *IncidentRequest
+	IncidentResult           *IncidentResult
+	DispatchError            string
+	IncidentDetectedAt       time.Time
+	IncidentDispatchedAt     time.Time
+	ResponderCompletedAt     time.Time
+	DetectorReviewRequired   bool
+	DetectorReviewRequiredAt time.Time
+	DetectorReviewReason     string
 	// DetectorClearSince is the start of each detector's current clear
 	// streak, so a restarted controller keeps HealthClearedAt exact.
-	DetectorClearSince map[string]time.Time `json:"detector_clear_since,omitempty"`
+	DetectorClearSince map[string]time.Time
 	// IncidentObservedChanges is every object seen changed while the open
 	// incident lasted, so a restart keeps first observations exact.
-	IncidentObservedChanges    []ObservedStateChange `json:"incident_observed_changes,omitempty"`
-	DispatchState              string                `json:"dispatch_state"`
-	IncidentFindingKeys        []string              `json:"incident_finding_keys"`
-	PendingClosure             *IncidentClosure      `json:"pending_closure,omitempty"`
-	ClosureState               string                `json:"closure_state,omitempty"`
-	ClosureReceipt             *ClosureReceipt       `json:"closure_receipt,omitempty"`
-	ClosureFailure             *ClosureFailure       `json:"closure_failure,omitempty"`
-	LastAcknowledgedIncidentID string                `json:"last_acknowledged_incident_id,omitempty"`
+	IncidentObservedChanges    []ObservedStateChange
+	DispatchState              string
+	IncidentFindingKeys        []string
+	PendingClosure             *IncidentClosure
+	ClosureState               string
+	ClosureReceipt             *ClosureReceipt
+	ClosureFailure             *ClosureFailure
+	LastAcknowledgedIncidentID string
 	// PendingReleases are incident IDs whose prepared worktree was stranded by a
 	// supersede and must still be reaped through the broker.
-	PendingReleases     []string                `json:"pending_releases,omitempty"`
-	EvaluationIteration int                     `json:"evaluation_iteration,omitempty"`
-	DetectorTimeline    []DetectorTimelineEntry `json:"detector_timeline,omitempty"`
+	PendingReleases     []string
+	EvaluationIteration int
+	DetectorTimeline    []DetectorTimelineEntry
 	// IncidentView is published for responders and never restored.
-	IncidentView *IncidentView `json:"incident_view,omitempty"`
+	IncidentView *IncidentView
 }
 
 func (state RuntimeState) Validate() error {
@@ -89,6 +89,28 @@ func (state RuntimeState) Validate() error {
 		return fmt.Errorf("detector review state is incomplete")
 	}
 	return nil
+}
+
+// encodeControllerState is the one persisted encoding of controller state:
+// canonical ProtoJSON of the generated ControllerState message.
+func encodeControllerState(state RuntimeState) ([]byte, error) {
+	document, err := controllerStateContract(state)
+	if err != nil {
+		return nil, fmt.Errorf("project controller state: %w", err)
+	}
+	payload, err := canonicalProtoJSON(document)
+	if err != nil {
+		return nil, fmt.Errorf("encode controller state: %w", err)
+	}
+	return payload, nil
+}
+
+func decodeControllerState(payload []byte) (RuntimeState, error) {
+	document := &contracts.ControllerState{}
+	if err := parseProtoJSON(payload, document); err != nil {
+		return RuntimeState{}, fmt.Errorf("decode controller state: %w", err)
+	}
+	return controllerStateState(document), nil
 }
 
 type StateStore interface {
@@ -139,9 +161,9 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (RuntimeState, string, e
 	if !ok {
 		return RuntimeState{}, "", fmt.Errorf("controller state ConfigMap has no %s", stateDataKey)
 	}
-	var state RuntimeState
-	if err := json.Unmarshal([]byte(payload), &state); err != nil {
-		return RuntimeState{}, "", fmt.Errorf("decode controller state: %w", err)
+	state, err := decodeControllerState([]byte(payload))
+	if err != nil {
+		return RuntimeState{}, "", err
 	}
 	if err := state.Validate(); err != nil {
 		return RuntimeState{}, "", err
@@ -162,9 +184,9 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state RuntimeState, expe
 	if err := state.Validate(); err != nil {
 		return "", err
 	}
-	payload, err := json.Marshal(state)
+	payload, err := encodeControllerState(state)
 	if err != nil {
-		return "", fmt.Errorf("encode controller state: %w", err)
+		return "", err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

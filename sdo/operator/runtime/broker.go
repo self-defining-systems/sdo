@@ -14,19 +14,19 @@ type rolloutPendingBroker interface {
 }
 
 type IncidentWorkspace struct {
-	IncidentID string `json:"incident_id"`
-	Worktree   string `json:"worktree"`
-	BaseCommit string `json:"base_commit"`
+	IncidentID string
+	Worktree   string
+	BaseCommit string
 }
 
 type ClosureReceipt struct {
-	IncidentID       string `json:"incident_id"`
-	Worktree         string `json:"worktree"`
-	BaseCommit       string `json:"base_commit"`
-	ProposalCommit   string `json:"proposal_commit,omitempty"`
-	OutcomeCommit    string `json:"outcome_commit"`
-	ReflectionCommit string `json:"reflection_commit,omitempty"`
-	AckToken         string `json:"ack_token"`
+	IncidentID       string
+	Worktree         string
+	BaseCommit       string
+	ProposalCommit   string
+	OutcomeCommit    string
+	ReflectionCommit string
+	AckToken         string
 }
 
 type IncidentBroker interface {

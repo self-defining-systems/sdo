@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"encoding/json"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -58,16 +57,8 @@ func TestIncidentWorkerEnvelopePreservesRequestAndResult(t *testing.T) {
 	if decoded.IncidentID != result.IncidentID || decoded.Status != result.Status {
 		t.Fatalf("roundtrip changed result: %#v", decoded)
 	}
-	usageJSON, err := json.Marshal(decoded.Usage)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var usage map[string]any
-	if err := json.Unmarshal(usageJSON, &usage); err != nil {
-		t.Fatal(err)
-	}
-	if usage["cache_read_input_tokens"] != float64(40) || usage["uncached_input_tokens"] != float64(50) {
-		t.Fatalf("detailed usage disappeared at the worker boundary: %s", usageJSON)
+	if decoded.Usage.GetCacheReadInputTokens() != 40 || decoded.Usage.GetUncachedInputTokens() != 50 {
+		t.Fatalf("detailed usage disappeared at the worker boundary: %v", &decoded.Usage)
 	}
 }
 
