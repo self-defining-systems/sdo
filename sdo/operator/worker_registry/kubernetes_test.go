@@ -78,8 +78,11 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	foundSession := false
 	for _, mount := range container.VolumeMounts {
-		if mount.Name == "session" {
+		if mount.MountPath == "/sdo/session" {
 			foundSession = true
+			if mount.Name != "repository" {
+				t.Fatalf("a second volume for the same PVC hangs the kubelet; mount the repository volume with another subPath: %#v", mount)
+			}
 			if mount.MountPath != "/sdo/session" || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash" || mount.ReadOnly {
 				t.Fatalf("session mount is not a narrow writable incident subPath: %#v", mount)
 			}
@@ -90,7 +93,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
 		}
-		if mount.Name == "repository" && (mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
+		if mount.Name == "repository" && mount.MountPath != "/sdo/session" && (mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
 			t.Fatalf("repository mount leaks outside proposal checkout: %#v", mount)
 		}
 	}
@@ -101,6 +104,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		t.Fatalf("worker received an unexpected Secret: %#v", container.EnvFrom)
 	}
 	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name == "session" {
+			t.Fatalf("session must reuse the repository volume, not declare a second PVC volume: %#v", volume)
+		}
 		if volume.Name == "late-findings" && (volume.ConfigMap == nil || volume.ConfigMap.Name != "sdo-late-incident") {
 			t.Fatalf("late findings volume is not a ConfigMap projection: %#v", volume)
 		}

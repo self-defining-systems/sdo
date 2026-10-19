@@ -185,8 +185,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: codexHomesVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	if e.SessionPVCSubPath != "" {
-		mounts = append(mounts, corev1.VolumeMount{Name: "session", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
-		volumes = append(volumes, corev1.Volume{Name: "session", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.RepositoryPVC}}})
+		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
+		// leave the kubelet waiting forever for the pod's volumes.
+		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
 	}
 	if e.LateFindingsConfigMap != "" {
 		mounts = append(mounts, corev1.VolumeMount{Name: "late-findings", MountPath: "/sdo/late-findings", ReadOnly: true})
