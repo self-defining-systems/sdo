@@ -23,23 +23,7 @@ func TestParseDraftTestRequiresTypedProposal(t *testing.T) {
 }
 
 func TestDraftTestCompilesTypedArtifactsWithoutEditingCheckout(t *testing.T) {
-	app := t.TempDir()
-	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app")
-	copy := exec.Command("cp", "-a", fixture+"/.", app)
-	if output, err := copy.CombinedOutput(); err != nil {
-		t.Fatalf("copy fixture: %v: %s", err, output)
-	}
-	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"}} {
-		command := exec.Command("git", args...)
-		command.Dir = app
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
-	}
-	detach := exec.Command("git", "-C", app, "checkout", "--detach", "--quiet", "HEAD")
-	if output, err := detach.CombinedOutput(); err != nil {
-		t.Fatalf("detach proposal checkout: %v: %s", err, output)
-	}
+	app := draftFixtureApp(t)
 	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{
 		Id: "draft-incident", DetectorClass: "incident", Owner: "responder", Constructor: "New", OriginatingIncident: "draft-incident", OriginatingCommit: "accepted",
 		Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Pod"}}, Interval: "30s", Firing: 1, Clearing: 1, Severity: "critical", Debounce: "500ms",
@@ -61,5 +45,108 @@ func TestDraftTestCompilesTypedArtifactsWithoutEditingCheckout(t *testing.T) {
 	output, err := status.CombinedOutput()
 	if err != nil || len(output) != 0 {
 		t.Fatalf("draft-test changed accepted checkout: %v: %s", err, output)
+	}
+}
+
+func draftFixtureApp(t *testing.T) string {
+	t.Helper()
+	app := t.TempDir()
+	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app")
+	copy := exec.Command("cp", "-a", fixture+"/.", app)
+	if output, err := copy.CombinedOutput(); err != nil {
+		t.Fatalf("copy fixture: %v: %s", err, output)
+	}
+	memory := filepath.Join(app, ".sdo")
+	for name, content := range map[string]string{
+		"schema-version":      "1\n",
+		"goal.md":             "---\nschema_version: 1\nowner: human\n---\n\nKeep the app healthy.\n",
+		"arch.md":             "---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n",
+		"playbooks/README.md": "# Playbooks\n\n- [missing-configmap](missing-configmap/README.md)\n",
+	} {
+		if err := os.WriteFile(filepath.Join(memory, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The shared fixture predates the owned-directory layout the broker enforces.
+	diagnostics := filepath.Join(memory, "diagnostics")
+	if err := os.MkdirAll(filepath.Join(diagnostics, "detectors", "incidents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(diagnostics, "detectors", "missing_configmap"), filepath.Join(diagnostics, "detectors", "incidents", "missing_configmap")); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(diagnostics, "manifest.yaml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(strings.Replace(string(manifest), "./detectors/missing_configmap", "./detectors/incidents/missing_configmap", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(memory, "playbooks", "missing-configmap", "README.md")
+	body, err := os.ReadFile(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := "---\nschema_version: 1\nowner: \"responder\"\nfault_class: \"missing-configmap\"\noriginating_incident: \"fixture\"\n---\n\n"
+	if err := os.WriteFile(existing, append([]byte(front), body...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"}} {
+		command := exec.Command("git", args...)
+		command.Dir = app
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	detach := exec.Command("git", "-C", app, "checkout", "--detach", "--quiet", "HEAD")
+	if output, err := detach.CombinedOutput(); err != nil {
+		t.Fatalf("detach proposal checkout: %v: %s", err, output)
+	}
+	return app
+}
+
+// The structured artifact schema defaults owner, class, constructor, cadence, persistence, and severity, so the
+// local check must accept a hand-written draft that relies on the same defaults.
+func TestDraftTestAppliesTheArtifactSchemaDefaults(t *testing.T) {
+	app := draftFixtureApp(t)
+	proposal := &contracts.OperationalArtifactProposal{
+		Detectors: []*contracts.ProposedDetector{{
+			Id: "draft-incident", OriginatingIncident: "draft-incident", OriginatingCommit: "accepted",
+			Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Pod"}},
+			Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package draft\nfunc New() undeclared.Type { return nil }\n"}},
+		}},
+		Playbooks: []*contracts.ProposedPlaybook{{Id: "draft-playbook", FaultClass: "draft-playbook", OriginatingIncident: "draft-incident", Markdown: "# Draft <NAMESPACE>\n"}},
+	}
+	data, err := protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalPath := filepath.Join(t.TempDir(), "draft.json")
+	if err := os.WriteFile(proposalPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: proposalPath})
+	if err == nil || !strings.Contains(err.Error(), "go test") {
+		t.Fatalf("defaults were not applied before validation: %v", err)
+	}
+}
+
+func TestDraftTestReportsTheBrokersPlaybookRules(t *testing.T) {
+	app := draftFixtureApp(t)
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{
+		Id: "draft-playbook", FaultClass: "some-other-class", OriginatingIncident: "draft-incident", Markdown: "# Draft <NAMESPACE>\n",
+	}}}
+	data, err := protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposalPath := filepath.Join(t.TempDir(), "draft.json")
+	if err := os.WriteFile(proposalPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: proposalPath})
+	if err == nil || !strings.Contains(err.Error(), "fault_class must be draft-playbook") {
+		t.Fatalf("broker playbook rule was not reported by the local check: %v", err)
 	}
 }

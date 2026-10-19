@@ -221,6 +221,10 @@ func uniqueKeys(node *yaml.Node) error {
 	return nil
 }
 
+// ValidateMemoryTree applies the broker's operational-memory checks to a checkout, so a local draft is judged by
+// the same playbook and front-matter rules the broker enforces before it commits.
+func ValidateMemoryTree(ctx context.Context, root string) error { return validateMemoryTree(ctx, root) }
+
 func validateMemoryTree(ctx context.Context, root string) error {
 	memoryRoot := filepath.Join(root, ".sdo")
 	if err := rejectMemorySymlinks(memoryRoot); err != nil {
