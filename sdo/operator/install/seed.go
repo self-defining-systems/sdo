@@ -94,8 +94,17 @@ func KubectlTarSynchronizerWithKubeconfig(repositoryPath, kubeconfig string) Rep
 		if producerErr != nil || consumerErr != nil {
 			return fmt.Errorf("synchronize accepted runtime commits: kubectl=%v tar=%v", producerErr, consumerErr)
 		}
-		return nil
+		return removeStaleUntracked(ctx, repositoryPath)
 	}
+}
+
+// removeStaleUntracked deletes what the archive overlay cannot: files that an accepted commit removed but the
+// host checkout still has on disk, which would read as uncommitted changes.
+func removeStaleUntracked(ctx context.Context, repositoryPath string) error {
+	if output, err := exec.CommandContext(ctx, "git", "-C", repositoryPath, "clean", "-fdq").CombinedOutput(); err != nil {
+		return fmt.Errorf("remove files the accepted tree deleted: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // KubectlAcceptedHeadWithKubeconfig reads HEAD from an already-ready sync Pod.
