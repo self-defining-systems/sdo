@@ -108,6 +108,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			t.Fatalf("worker mounted broker-only Secret %q", volume.Secret.SecretName)
 		}
 	}
+	if profile := job.Spec.Template.Spec.SecurityContext.SeccompProfile; profile == nil || profile.Type != corev1.SeccompProfileTypeUnconfined {
+		t.Fatalf("Codex's bubblewrap sandbox needs user namespaces, which RuntimeDefault seccomp denies: %#v", profile)
+	}
 	foundHomes := false
 	for _, mount := range container.VolumeMounts {
 		if mount.Name == "codex-homes" {

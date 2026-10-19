@@ -214,6 +214,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	for _, name := range names {
 		env = append(env, corev1.EnvVar{Name: name, Value: e.Environment[name]})
 	}
+	// Unconfined seccomp: Codex's bubblewrap sandbox needs unprivileged user namespaces, which RuntimeDefault denies
+	// (verified: `codex sandbox` fails under RuntimeDefault and runs under Unconfined). The pod stays non-root with
+	// every capability dropped and privilege escalation off.
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: e.Namespace},
 		Spec: batchv1.JobSpec{BackoffLimit: &backoffLimit, TTLSecondsAfterFinished: &ttl,
@@ -221,7 +224,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "sdo-worker", "sdo.dev/incident": jobName}},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: e.ServiceAccount,
-					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 					Containers: []corev1.Container{{
 						Name: "agent", Image: launch.GetImage(), Command: append([]string(nil), launch.GetCommand()...),
 						WorkingDir: task.GetWorkspace().GetCheckoutPath(), EnvFrom: envFrom, Env: env, VolumeMounts: mounts,
