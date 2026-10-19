@@ -38,9 +38,9 @@ from benchmarks.sregym.adapter.healthy_baseline import capture_snapshots, kubect
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
     NativeInstallConfig,
+    NativeOperatorError,
     collect_native_receipt,
     export_runtime_artifacts,
-    NativeOperatorError,
     inspect_existing,
     install_existing,
     launch_host,
