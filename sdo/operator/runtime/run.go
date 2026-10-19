@@ -641,7 +641,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := controller.PersistState(ctx); err != nil {
 		return fmt.Errorf("persist controller state: %w", err)
 	}
-	if options.NativeBroker != nil && !desired.Paused {
+	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
+	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
+	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
+	if options.NativeBroker != nil {
 		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 			return err
 		}
