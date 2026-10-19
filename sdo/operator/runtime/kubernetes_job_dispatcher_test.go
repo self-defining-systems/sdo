@@ -55,8 +55,8 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 			if mount.MountPath == root || mount.SubPath == "application" {
 				t.Fatalf("worker gained accepted checkout: %+v", mount)
 			}
-			if mount.Name == "session" {
-				if mount.MountPath != "/sdo/session" || mount.ReadOnly {
+			if mount.MountPath == "/sdo/session" {
+				if mount.Name != "repository" || mount.ReadOnly {
 					t.Fatalf("session mount is not writable and narrow: %+v", mount)
 				}
 				return mount.SubPath

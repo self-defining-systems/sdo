@@ -77,10 +77,19 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		t.Fatalf("wrong working directory: %q", container.WorkingDir)
 	}
 	foundSession := false
+	repositoryVolumes := 0
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "repo" {
+			repositoryVolumes++
+		}
+	}
+	if repositoryVolumes != 1 {
+		t.Fatalf("repository PVC must be declared once even when sessions are enabled: %#v", job.Spec.Template.Spec.Volumes)
+	}
 	for _, mount := range container.VolumeMounts {
-		if mount.Name == "session" {
+		if mount.MountPath == "/sdo/session" {
 			foundSession = true
-			if mount.MountPath != "/sdo/session" || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash" || mount.ReadOnly {
+			if mount.Name != "repository" || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash" || mount.ReadOnly {
 				t.Fatalf("session mount is not a narrow writable incident subPath: %#v", mount)
 			}
 		}
@@ -90,7 +99,8 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
 		}
-		if mount.Name == "repository" && (mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
+		if mount.Name == "repository" && mount.MountPath != "/sdo/session" &&
+			(mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
 			t.Fatalf("repository mount leaks outside proposal checkout: %#v", mount)
 		}
 	}
