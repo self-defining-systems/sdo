@@ -32,18 +32,18 @@ const (
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
-	Client               kubernetes.Interface
-	Namespace            string
-	Registry             *Registry
-	ServiceAccount       string
-	RepositoryPVC        string
-	RepositoryMountPath  string
-	RepositoryPVCSubPath string
-	SessionPVCSubPath    string
-	CredentialsSecret           string
-	LateFindingsConfigMap       string
-	Environment                 map[string]string
-	PollInterval                time.Duration
+	Client                kubernetes.Interface
+	Namespace             string
+	Registry              *Registry
+	ServiceAccount        string
+	RepositoryPVC         string
+	RepositoryMountPath   string
+	RepositoryPVCSubPath  string
+	SessionPVCSubPath     string
+	CredentialsSecret     string
+	LateFindingsConfigMap string
+	Environment           map[string]string
+	PollInterval          time.Duration
 }
 
 type JobFailedError struct{ JobName string }
@@ -176,8 +176,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	if e.SessionPVCSubPath != "" {
-		mounts = append(mounts, corev1.VolumeMount{Name: "session", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
-		volumes = append(volumes, corev1.Volume{Name: "session", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.RepositoryPVC}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
 	}
 	if e.LateFindingsConfigMap != "" {
 		mounts = append(mounts, corev1.VolumeMount{Name: "late-findings", MountPath: "/sdo/late-findings", ReadOnly: true})
