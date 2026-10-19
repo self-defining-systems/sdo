@@ -123,11 +123,11 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
-			projected, err := memory.AcceptedDiagnostics(ctx, root)
+			repository, err := openMigrationBroker(launch)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
+			return resolveAcceptedDiagnostics(ctx, root, repository)
 		},
 		PublishProber: memory.PublishProber,
 	}, *supervise, nil
