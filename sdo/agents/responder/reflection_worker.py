@@ -10,7 +10,7 @@ from typing import Protocol, cast
 
 from google.protobuf import json_format
 
-from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
     REFLECTION_GUIDANCE_MODES,
@@ -151,8 +151,8 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home()
-        prepare_claude_home()
+        prepare_codex_home(skills=AGENT_SKILLS["reflector"])
+        prepare_claude_home(skills=AGENT_SKILLS["reflector"])
         run_reflection_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

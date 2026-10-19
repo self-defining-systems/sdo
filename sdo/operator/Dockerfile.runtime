@@ -73,10 +73,15 @@ COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-runtime /go/pkg/mod /go/pkg/mod
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+# sdo/skills rides along: each worker installs its skills into the Codex and
+# Claude Code homes at startup (sdo.agents.responder.credentials).
 COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
-RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs
+RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs \
+    && test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md
 WORKDIR /opt/sdo
 
 FROM worker-runtime AS responder

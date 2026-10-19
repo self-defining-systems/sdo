@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
-from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 from sdo.agents.views import (
     OperationalArtifactDraft,  # noqa: TC001 - Pydantic resolves this field at runtime.
 )
@@ -183,7 +182,9 @@ def _logical_learning_request(
         f"{_classification_directive(classification, guidance)}\n\n"
         "Before returning an update, make sure the complete artifact_proposal is in the structured result; "
         "the broker rejects proposals that break the `sdo-operator memory check` rules.\n\n"
-        f"{DETECTOR_SDK_REFERENCE}\n"
+        "The trusted detector SDK reference is references/sdk.md of the sdo-detector-authoring skill; "
+        "read it instead of exploring outside the checkout, and ignore the skill's file-editing workflow: "
+        "return artifacts in artifact_proposal.\n"
         f"Outcome commit: {outcome_commit}\n"
         f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
         f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
