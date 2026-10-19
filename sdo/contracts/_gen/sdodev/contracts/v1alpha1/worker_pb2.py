@@ -22,13 +22,14 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 from google.protobuf import any_pb2 as google_dot_protobuf_dot_any__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as sdodev_dot_contracts_dot_v1alpha1_dot_messages__pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as sdodev_dot_contracts_dot_v1alpha1_dot_outcome__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a\'sdodev/contracts/v1alpha1/outcome.proto\"\x80\x03\n\x11\x41gentRegistration\x12%\n\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x19\n\x08\x61gent_id\x18\x02 \x01(\tR\x07\x61gentId\x12N\n\x0c\x63\x61pabilities\x18\x03 \x03(\x0b\x32*.sdodev.contracts.v1alpha1.AgentCapabilityR\x0c\x63\x61pabilities\x12 \n\x0bpermissions\x18\x04 \x03(\tR\x0bpermissions\x12W\n\x0ekubernetes_job\x18\x05 \x01(\x0b\x32..sdodev.contracts.v1alpha1.KubernetesJobLaunchH\x00R\rkubernetesJob\x12T\n\rlocal_process\x18\x06 \x01(\x0b\x32-.sdodev.contracts.v1alpha1.LocalProcessLaunchH\x00R\x0clocalProcessB\x08\n\x06launch\"\x80\x01\n\x0f\x41gentCapability\x12\x1b\n\ttask_type\x18\x01 \x01(\tR\x08taskType\x12(\n\x10request_type_url\x18\x02 \x01(\tR\x0erequestTypeUrl\x12&\n\x0fresult_type_url\x18\x03 \x01(\tR\rresultTypeUrl\"r\n\x13KubernetesJobLaunch\x12\x14\n\x05image\x18\x01 \x01(\tR\x05image\x12\x18\n\x07\x63ommand\x18\x02 \x03(\tR\x07\x63ommand\x12+\n\x11\x65nvironment_names\x18\x03 \x03(\tR\x10\x65nvironmentNames\"[\n\x12LocalProcessLaunch\x12\x18\n\x07\x63ommand\x18\x01 \x03(\tR\x07\x63ommand\x12+\n\x11\x65nvironment_names\x18\x02 \x03(\tR\x10\x65nvironmentNames\"z\n\x11ProposalWorkspace\x12\x1f\n\x0bproposal_id\x18\x01 \x01(\tR\nproposalId\x12#\n\rcheckout_path\x18\x02 \x01(\tR\x0c\x63heckoutPath\x12\x1f\n\x0b\x62\x61se_commit\x18\x03 \x01(\tR\nbaseCommit\"\xb7\x02\n\tAgentTask\x12%\n\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x17\n\x07task_id\x18\x02 \x01(\tR\x06taskId\x12\x19\n\x08\x61gent_id\x18\x03 \x01(\tR\x07\x61gentId\x12\x1b\n\ttask_type\x18\x04 \x01(\tR\x08taskType\x12.\n\x07request\x18\x05 \x01(\x0b\x32\x14.google.protobuf.AnyR\x07request\x12J\n\tworkspace\x18\x06 \x01(\x0b\x32,.sdodev.contracts.v1alpha1.ProposalWorkspaceR\tworkspace\x12\x36\n\x08\x64\x65\x61\x64line\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\x08\x64\x65\x61\x64line\"\xdd\x01\n\x0b\x41gentResult\x12%\n\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x17\n\x07task_id\x18\x02 \x01(\tR\x06taskId\x12\x16\n\x06status\x18\x03 \x01(\tR\x06status\x12\x30\n\x08response\x18\x04 \x01(\x0b\x32\x14.google.protobuf.AnyR\x08response\x12\x1f\n\x0bproposal_id\x18\x05 \x01(\tR\nproposalId\x12#\n\rerror_summary\x18\x06 \x01(\tR\x0c\x65rrorSummary\"\x8a\x04\n\x11ReflectionRequest\x12\x44\n\x07\x63losure\x18\x01 \x01(\x0b\x32*.sdodev.contracts.v1alpha1.IncidentClosureR\x07\x63losure\x12\'\n\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n\x0fmemory_snapshot\x18\x06 \x01(\x0b\x32\x34.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12!\n\x0csession_mode\x18\x07 \x01(\tR\x0bsessionMode\x12\x1a\n\x08guidance\x18\x08 \x01(\tR\x08guidance\x12\x42\n\x07outcome\x18\t \x01(\x0b\x32(.sdodev.contracts.v1alpha1.OutcomeRecordR\x07outcome\x12O\n\x0eprior_outcomes\x18\n \x03(\x0b\x32(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomesJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x0coutcome_jsonR\x12prior_outcome_json\"\x9c\x02\n\x10ReflectionResult\x12\x18\n\x07summary\x18\x01 \x01(\tR\x07summary\x12+\n\x11learning_decision\x18\x02 \x01(\tR\x10learningDecision\x12(\n\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x12\x32\n\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12\x63\n\x11\x61rtifact_proposal\x18\x05 \x01(\x0b\x32\x36.sdodev.contracts.v1alpha1.OperationalArtifactProposalR\x10\x61rtifactProposalB\xfe\x01\n\x1d\x63om.sdodev.contracts.v1alpha1B\x0bWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1b\x62uf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a\'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n\x11\x41gentRegistration\x12>\n\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n\x10sdo.dev/v1alpha1R\rschemaVersion\x12\"\n\x08\x61gent_id\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x07\x61gentId\x12X\n\x0c\x63\x61pabilities\x18\x03 \x03(\x0b\x32*.sdodev.contracts.v1alpha1.AgentCapabilityB\x08\xbaH\x05\x92\x01\x02\x08\x01R\x0c\x63\x61pabilities\x12 \n\x0bpermissions\x18\x04 \x03(\tR\x0bpermissions\x12W\n\x0ekubernetes_job\x18\x05 \x01(\x0b\x32..sdodev.contracts.v1alpha1.KubernetesJobLaunchH\x00R\rkubernetesJob\x12T\n\rlocal_process\x18\x06 \x01(\x0b\x32-.sdodev.contracts.v1alpha1.LocalProcessLaunchH\x00R\x0clocalProcess:\xb0\x01\xbaH\xac\x01\x1a\xa9\x01\n\x1eregistration.unique_task_types\x12(an agent may declare each task type once\x1a]this.capabilities.all(a, this.capabilities.filter(b, b.task_type == a.task_type).size() == 1)B\x0f\n\x06launch\x12\x05\xbaH\x02\x08\x01\"\x9b\x01\n\x0f\x41gentCapability\x12$\n\ttask_type\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x08taskType\x12\x31\n\x10request_type_url\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x0erequestTypeUrl\x12/\n\x0fresult_type_url\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\rresultTypeUrl\"\x85\x01\n\x13KubernetesJobLaunch\x12\x1d\n\x05image\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x05image\x12\"\n\x07\x63ommand\x18\x02 \x03(\tB\x08\xbaH\x05\x92\x01\x02\x08\x01R\x07\x63ommand\x12+\n\x11\x65nvironment_names\x18\x03 \x03(\tR\x10\x65nvironmentNames\"e\n\x12LocalProcessLaunch\x12\"\n\x07\x63ommand\x18\x01 \x03(\tB\x08\xbaH\x05\x92\x01\x02\x08\x01R\x07\x63ommand\x12+\n\x11\x65nvironment_names\x18\x02 \x03(\tR\x10\x65nvironmentNames\"z\n\x11ProposalWorkspace\x12\x1f\n\x0bproposal_id\x18\x01 \x01(\tR\nproposalId\x12#\n\rcheckout_path\x18\x02 \x01(\tR\x0c\x63heckoutPath\x12\x1f\n\x0b\x62\x61se_commit\x18\x03 \x01(\tR\nbaseCommit\"\xeb\x02\n\tAgentTask\x12>\n\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n\x10sdo.dev/v1alpha1R\rschemaVersion\x12 \n\x07task_id\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x06taskId\x12\"\n\x08\x61gent_id\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x07\x61gentId\x12$\n\ttask_type\x18\x04 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x08taskType\x12.\n\x07request\x18\x05 \x01(\x0b\x32\x14.google.protobuf.AnyR\x07request\x12J\n\tworkspace\x18\x06 \x01(\x0b\x32,.sdodev.contracts.v1alpha1.ProposalWorkspaceR\tworkspace\x12\x36\n\x08\x64\x65\x61\x64line\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\x08\x64\x65\x61\x64line\"\xa4\x02\n\x0b\x41gentResult\x12>\n\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n\x10sdo.dev/v1alpha1R\rschemaVersion\x12 \n\x07task_id\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x06taskId\x12;\n\x06status\x18\x03 \x01(\tB#\xbaH r\x1eR\tcompletedR\x06\x66\x61iledR\tcancelledR\x06status\x12\x30\n\x08response\x18\x04 \x01(\x0b\x32\x14.google.protobuf.AnyR\x08response\x12\x1f\n\x0bproposal_id\x18\x05 \x01(\tR\nproposalId\x12#\n\rerror_summary\x18\x06 \x01(\tR\x0c\x65rrorSummary\"\xd2\x04\n\x11ReflectionRequest\x12\x44\n\x07\x63losure\x18\x01 \x01(\x0b\x32*.sdodev.contracts.v1alpha1.IncidentClosureR\x07\x63losure\x12\'\n\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n\x0fmemory_snapshot\x18\x06 \x01(\x0b\x32\x34.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12\x39\n\x0csession_mode\x18\x07 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05\x66reshR\x06resumeR\x0bsessionMode\x12J\n\x08guidance\x18\x08 \x01(\tB.\xbaH+r)R\x00R\x08\x62\x61selineR\ngeneralizeR\x0fgeneralize-specR\x08guidance\x12\x42\n\x07outcome\x18\t \x01(\x0b\x32(.sdodev.contracts.v1alpha1.OutcomeRecordR\x07outcome\x12O\n\x0eprior_outcomes\x18\n \x03(\x0b\x32(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomesJ\x04\x08\x02\x10\x03J\x04\x08\x03\x10\x04R\x0coutcome_jsonR\x12prior_outcome_json\"\xdb\x03\n\x10ReflectionResult\x12\x18\n\x07summary\x18\x01 \x01(\tR\x07summary\x12\x46\n\x11learning_decision\x18\x02 \x01(\tB\x19\xbaH\x16r\x14R\x07updatedR\tno_changeR\x10learningDecision\x12(\n\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x12\x32\n\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12\x63\n\x11\x61rtifact_proposal\x18\x05 \x01(\x0b\x32\x36.sdodev.contracts.v1alpha1.OperationalArtifactProposalR\x10\x61rtifactProposal:\xa1\x01\xbaH\x9d\x01\x1a\x9a\x01\n\x1freflection.no_change_has_reason\x12\x31\x61 no_change reflection requires a concrete reason\x1a\x44this.learning_decision != \'no_change\' || this.no_change_reason != \'\'B\xfe\x01\n\x1d\x63om.sdodev.contracts.v1alpha1B\x0bWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -36,22 +37,66 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'sdodev.contracts.v1alpha1.w
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\035com.sdodev.contracts.v1alpha1B\013WorkerProtoP\001ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\242\002\003SCX\252\002\031Sdodev.Contracts.V1alpha1\312\002\031Sdodev\\Contracts\\V1alpha1\342\002%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\352\002\033Sdodev::Contracts::V1alpha1'
-  _globals['_AGENTREGISTRATION']._serialized_start=213
-  _globals['_AGENTREGISTRATION']._serialized_end=597
-  _globals['_AGENTCAPABILITY']._serialized_start=600
-  _globals['_AGENTCAPABILITY']._serialized_end=728
-  _globals['_KUBERNETESJOBLAUNCH']._serialized_start=730
-  _globals['_KUBERNETESJOBLAUNCH']._serialized_end=844
-  _globals['_LOCALPROCESSLAUNCH']._serialized_start=846
-  _globals['_LOCALPROCESSLAUNCH']._serialized_end=937
-  _globals['_PROPOSALWORKSPACE']._serialized_start=939
-  _globals['_PROPOSALWORKSPACE']._serialized_end=1061
-  _globals['_AGENTTASK']._serialized_start=1064
-  _globals['_AGENTTASK']._serialized_end=1375
-  _globals['_AGENTRESULT']._serialized_start=1378
-  _globals['_AGENTRESULT']._serialized_end=1599
-  _globals['_REFLECTIONREQUEST']._serialized_start=1602
-  _globals['_REFLECTIONREQUEST']._serialized_end=2124
-  _globals['_REFLECTIONRESULT']._serialized_start=2127
-  _globals['_REFLECTIONRESULT']._serialized_end=2411
+  _globals['_AGENTREGISTRATION'].oneofs_by_name['launch']._loaded_options = None
+  _globals['_AGENTREGISTRATION'].oneofs_by_name['launch']._serialized_options = b'\272H\002\010\001'
+  _globals['_AGENTREGISTRATION'].fields_by_name['schema_version']._loaded_options = None
+  _globals['_AGENTREGISTRATION'].fields_by_name['schema_version']._serialized_options = b'\272H\024r\022\n\020sdo.dev/v1alpha1'
+  _globals['_AGENTREGISTRATION'].fields_by_name['agent_id']._loaded_options = None
+  _globals['_AGENTREGISTRATION'].fields_by_name['agent_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTREGISTRATION'].fields_by_name['capabilities']._loaded_options = None
+  _globals['_AGENTREGISTRATION'].fields_by_name['capabilities']._serialized_options = b'\272H\005\222\001\002\010\001'
+  _globals['_AGENTREGISTRATION']._loaded_options = None
+  _globals['_AGENTREGISTRATION']._serialized_options = b'\272H\254\001\032\251\001\n\036registration.unique_task_types\022(an agent may declare each task type once\032]this.capabilities.all(a, this.capabilities.filter(b, b.task_type == a.task_type).size() == 1)'
+  _globals['_AGENTCAPABILITY'].fields_by_name['task_type']._loaded_options = None
+  _globals['_AGENTCAPABILITY'].fields_by_name['task_type']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTCAPABILITY'].fields_by_name['request_type_url']._loaded_options = None
+  _globals['_AGENTCAPABILITY'].fields_by_name['request_type_url']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTCAPABILITY'].fields_by_name['result_type_url']._loaded_options = None
+  _globals['_AGENTCAPABILITY'].fields_by_name['result_type_url']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_KUBERNETESJOBLAUNCH'].fields_by_name['image']._loaded_options = None
+  _globals['_KUBERNETESJOBLAUNCH'].fields_by_name['image']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_KUBERNETESJOBLAUNCH'].fields_by_name['command']._loaded_options = None
+  _globals['_KUBERNETESJOBLAUNCH'].fields_by_name['command']._serialized_options = b'\272H\005\222\001\002\010\001'
+  _globals['_LOCALPROCESSLAUNCH'].fields_by_name['command']._loaded_options = None
+  _globals['_LOCALPROCESSLAUNCH'].fields_by_name['command']._serialized_options = b'\272H\005\222\001\002\010\001'
+  _globals['_AGENTTASK'].fields_by_name['schema_version']._loaded_options = None
+  _globals['_AGENTTASK'].fields_by_name['schema_version']._serialized_options = b'\272H\024r\022\n\020sdo.dev/v1alpha1'
+  _globals['_AGENTTASK'].fields_by_name['task_id']._loaded_options = None
+  _globals['_AGENTTASK'].fields_by_name['task_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTTASK'].fields_by_name['agent_id']._loaded_options = None
+  _globals['_AGENTTASK'].fields_by_name['agent_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTTASK'].fields_by_name['task_type']._loaded_options = None
+  _globals['_AGENTTASK'].fields_by_name['task_type']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTRESULT'].fields_by_name['schema_version']._loaded_options = None
+  _globals['_AGENTRESULT'].fields_by_name['schema_version']._serialized_options = b'\272H\024r\022\n\020sdo.dev/v1alpha1'
+  _globals['_AGENTRESULT'].fields_by_name['task_id']._loaded_options = None
+  _globals['_AGENTRESULT'].fields_by_name['task_id']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_AGENTRESULT'].fields_by_name['status']._loaded_options = None
+  _globals['_AGENTRESULT'].fields_by_name['status']._serialized_options = b'\272H r\036R\tcompletedR\006failedR\tcancelled'
+  _globals['_REFLECTIONREQUEST'].fields_by_name['session_mode']._loaded_options = None
+  _globals['_REFLECTIONREQUEST'].fields_by_name['session_mode']._serialized_options = b'\272H\023r\021R\000R\005freshR\006resume'
+  _globals['_REFLECTIONREQUEST'].fields_by_name['guidance']._loaded_options = None
+  _globals['_REFLECTIONREQUEST'].fields_by_name['guidance']._serialized_options = b'\272H+r)R\000R\010baselineR\ngeneralizeR\017generalize-spec'
+  _globals['_REFLECTIONRESULT'].fields_by_name['learning_decision']._loaded_options = None
+  _globals['_REFLECTIONRESULT'].fields_by_name['learning_decision']._serialized_options = b'\272H\026r\024R\007updatedR\tno_change'
+  _globals['_REFLECTIONRESULT']._loaded_options = None
+  _globals['_REFLECTIONRESULT']._serialized_options = b'\272H\235\001\032\232\001\n\037reflection.no_change_has_reason\0221a no_change reflection requires a concrete reason\032Dthis.learning_decision != \'no_change\' || this.no_change_reason != \'\''
+  _globals['_AGENTREGISTRATION']._serialized_start=242
+  _globals['_AGENTREGISTRATION']._serialized_end=856
+  _globals['_AGENTCAPABILITY']._serialized_start=859
+  _globals['_AGENTCAPABILITY']._serialized_end=1014
+  _globals['_KUBERNETESJOBLAUNCH']._serialized_start=1017
+  _globals['_KUBERNETESJOBLAUNCH']._serialized_end=1150
+  _globals['_LOCALPROCESSLAUNCH']._serialized_start=1152
+  _globals['_LOCALPROCESSLAUNCH']._serialized_end=1253
+  _globals['_PROPOSALWORKSPACE']._serialized_start=1255
+  _globals['_PROPOSALWORKSPACE']._serialized_end=1377
+  _globals['_AGENTTASK']._serialized_start=1380
+  _globals['_AGENTTASK']._serialized_end=1743
+  _globals['_AGENTRESULT']._serialized_start=1746
+  _globals['_AGENTRESULT']._serialized_end=2038
+  _globals['_REFLECTIONREQUEST']._serialized_start=2041
+  _globals['_REFLECTIONREQUEST']._serialized_end=2635
+  _globals['_REFLECTIONRESULT']._serialized_start=2638
+  _globals['_REFLECTIONRESULT']._serialized_end=3113
 # @@protoc_insertion_point(module_scope)

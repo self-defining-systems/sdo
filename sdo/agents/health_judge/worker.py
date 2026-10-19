@@ -21,6 +21,7 @@ from sdo.agents.lifecycle import (
 )
 from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
+    SCHEMA_VERSION,
     AgentResult,
     AgentTask,
     HealthJudgeRequest,
@@ -34,12 +35,12 @@ from sdo.contracts import (
     TrafficWorkload,
     parse_json,
     to_canonical_json,
+    validate,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-TASK_TYPE = "health-judgment"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 
 
@@ -214,13 +215,7 @@ def run_judge_task(
     execute: Callable[[HealthJudgeRequest, Path], HealthJudgeResult] = author_health_diagnostics,
 ) -> AgentResult:
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    if (
-        task.schema_version != "sdo.dev/v1alpha1"
-        or not task.task_id
-        or not task.agent_id
-        or task.task_type != TASK_TYPE
-    ):
-        raise ValueError("invalid health judge task identity")
+    validate(task)
     if not task.workspace.proposal_id or not task.workspace.checkout_path or not task.workspace.base_commit:
         raise ValueError("health judge requires an accepted proposal checkout")
     request = HealthJudgeRequest()
@@ -239,7 +234,7 @@ def run_judge_task(
     if not typed.HasField("artifact_proposal") or not typed.artifact_proposal.detectors:
         raise ValueError("health judge must return typed diagnostic artifacts")
     result = AgentResult(
-        schema_version="sdo.dev/v1alpha1",
+        schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status="completed",
         proposal_id=task.workspace.proposal_id,

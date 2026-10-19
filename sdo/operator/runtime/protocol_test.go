@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
 func readContractFixture(t *testing.T, name string, message proto.Message) {
@@ -17,7 +18,7 @@ func readContractFixture(t *testing.T, name string, message proto.Message) {
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	if err := parseProtoJSON(content, message); err != nil {
+	if err := wire.Unmarshal(content, message); err != nil {
 		t.Fatalf("fixture %s is not canonical ProtoJSON: %v", name, err)
 	}
 }
@@ -73,7 +74,7 @@ func TestIncidentRequestStateChangesFixtureRoundTrip(t *testing.T) {
 		request.StateChanges.Changes[0].Fields[0].Field != "selector" || request.StateChanges.UnobservedKinds[0] != "Secret" {
 		t.Fatalf("state changes must match the proto contract: %+v", request.StateChanges)
 	}
-	if err := request.Validate(); err != nil {
+	if err := validateIncidentRequest(*request); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
 	again, err := incidentRequestContract(*request)

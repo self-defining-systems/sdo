@@ -28,9 +28,11 @@ message ControllerConfig {
   string deployed_commit = 6;
 
   // Responder dispatch.
-  string dispatcher = 7 [(buf.validate.field).string.min_len = 1];
+  // Deprecated and ignored: the controller resolves the worker through the agent
+  // registry. Kept so existing ControllerConfig documents stay wire-compatible.
+  string dispatcher = 7 [deprecated = true];
+  repeated string dispatcher_args = 9 [deprecated = true];
   string dispatcher_mode = 8 [(buf.validate.field).string = {in: ["job"]}];
-  repeated string dispatcher_args = 9;
   string responder_image = 10;
   string repository_pvc = 11;
   string repository_mount_path = 12;
@@ -75,8 +77,9 @@ message ControllerConfig {
   optional bool clean_responder_helpers = 39;
   optional bool state_baseline = 40;
 
-  // Optional external worker registry. When omitted, the built-in responder
-  // is registered from the existing responder image and command settings.
+  // Directory of agent registration manifests. When omitted the controller
+  // reads the built-in manifests baked into its image, with responder_image
+  // substituted as their launch image.
   string agent_registration_directory = 41;
   string responder_agent_id = 42;
 

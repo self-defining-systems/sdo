@@ -13,13 +13,13 @@ import (
 func TestRelevantOutcomeEvidenceSurfacesOnlyConfirmedRootCauses(t *testing.T) {
 	repository := t.TempDir()
 	outcome := `{"incident_id":"composite","source_commit":"abc","classification":"success",` +
-		`"findings":[{"detector_id":"health","rule_id":"missing","fingerprint":"missing:cfg","primary_resource":{"kind":"ConfigMap","name":"cfg"}}],` +
+		`"findings":[{"detector_id":"health","rule_id":"missing","status":"active","severity":"critical","summary":"s","evidence":"e","fingerprint":"missing:cfg","primary_resource":{"kind":"ConfigMap","name":"cfg"}}],` +
 		`"confirmed_root_causes":[{"summary":"NetworkPolicy deny-all isolates frontend","resources":[{"kind":"NetworkPolicy","name":"deny-all"}]},` +
 		`{"summary":"ConfigMap cfg deleted","resources":[{"kind":"ConfigMap","name":"cfg"}]}],` +
 		`"diagnosis_verification":[{"summary":"NetworkPolicy deny-all isolates frontend","verdict":"confirmed"},` +
 		`{"summary":"ConfigMap cfg deleted","verdict":"unattributed"}]}` + "\n" +
 		`{"incident_id":"legacy","source_commit":"abc","classification":"success",` +
-		`"findings":[{"detector_id":"health","rule_id":"missing","fingerprint":"missing:cfg","primary_resource":{"kind":"ConfigMap","name":"cfg"}}],` +
+		`"findings":[{"detector_id":"health","rule_id":"missing","status":"active","severity":"critical","summary":"s","evidence":"e","fingerprint":"missing:cfg","primary_resource":{"kind":"ConfigMap","name":"cfg"}}],` +
 		`"confirmed_root_causes":[{"summary":"legacy cause","resources":[{"kind":"ConfigMap","name":"cfg"}]}]}` + "\n"
 	recordOutcomes(t, repository, outcome)
 	findings := []sdk.Finding{{

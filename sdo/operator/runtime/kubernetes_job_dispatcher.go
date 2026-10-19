@@ -21,37 +21,28 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
-	Client                      kubernetes.Interface
-	Namespace                   string
-	Image                       string
-	Command                     []string
-	Registry                    *worker_registry.Registry
-	AgentID                     string
-	ServiceAccount              string
-	RepositoryPVC               string
-	RepositoryMountPath         string
-	RepositoryPVCSubPath        string
-	CredentialsSecret           string
-	Environment                 map[string]string
-	DispatchEnvironment         func(context.Context) map[string]string
-	PollInterval                time.Duration
-	Catalog                     memory.CatalogReader
-	RequireMemorySnapshot       bool
+	Client                kubernetes.Interface
+	Namespace             string
+	Registry              *worker_registry.Registry
+	AgentID               string
+	ServiceAccount        string
+	RepositoryPVC         string
+	RepositoryMountPath   string
+	RepositoryPVCSubPath  string
+	CredentialsSecret     string
+	Environment           map[string]string
+	DispatchEnvironment   func(context.Context) map[string]string
+	PollInterval          time.Duration
+	Catalog               memory.CatalogReader
+	RequireMemorySnapshot bool
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
-	if err := request.Validate(); err != nil {
+	if d.Registry == nil || d.AgentID == "" {
+		return IncidentResult{}, errors.New("incident dispatch requires an agent registry and responder agent ID")
+	}
+	if err := validateIncidentRequest(request); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate incident request: %w", err)
-	}
-	if d.AgentID == "" {
-		d.AgentID = builtInResponderID
-	}
-	if d.Registry == nil {
-		var err error
-		d.Registry, err = worker_registry.New(builtInResponderRegistration(d.Image, d.Command))
-		if err != nil {
-			return IncidentResult{}, fmt.Errorf("register built-in responder: %w", err)
-		}
 	}
 	var snapshotArgs []*contracts.OperationalMemorySnapshot
 	if d.RequireMemorySnapshot && d.Catalog == nil {
@@ -64,7 +55,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		snapshotArgs = append(snapshotArgs, snapshot)
 	}
-	task, _, err := encodeIncidentAgentTask(request, d.AgentID, snapshotArgs...)
+	task, _, err := encodeIncidentAgentTask(request, d.Registry, d.AgentID, snapshotArgs...)
 	if err != nil {
 		return IncidentResult{}, err
 	}
@@ -89,6 +80,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		environment["CODEX_HOME"] = "/sdo/session/codex"
 		environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		environment[latefindings.ReceiptsPathEnv] = latefindings.DefaultReceiptsPath
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
 		if err := store.Ensure(ctx, request.IncidentID); err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare logical late findings transport: %w", err)
@@ -110,11 +102,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		return IncidentResult{}, err
 	}
-	payload, err := canonicalProtoJSON(agentResult)
-	if err != nil {
-		return IncidentResult{}, fmt.Errorf("encode agent result: %w", err)
-	}
-	result, err := decodeIncidentAgentResult(payload, task, d.Registry)
+	result, err := incidentResultFromAgent(agentResult, task, d.Registry)
 	if err != nil {
 		return IncidentResult{}, err
 	}
@@ -125,7 +113,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			return IncidentResult{}, fmt.Errorf("verify logical late findings pull: %w", err)
 		}
 	}
-	if err := result.ValidateFor(request); err != nil {
+	if err := validateIncidentResultFor(result, request); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate incident result: %w", err)
 	}
 	return result, nil

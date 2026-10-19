@@ -70,7 +70,9 @@ func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (Incid
 		output, readErr := command.Output()
 		if readErr != nil {
 			var exit *exec.ExitError
-			if errors.As(readErr,&exit) { return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr))) }
+			if errors.As(readErr, &exit) {
+				return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr)))
+			}
 			return fmt.Errorf("read native incident ledger: %w", readErr)
 		}
 		data = output

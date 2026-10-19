@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 )
 
@@ -53,7 +54,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
-	responderID := flags.String("responder-agent-id", "sdo-responder", "responder agent identity")
+	responderID := flags.String("responder-agent-id", "", "responder agent identity; defaults to the agent registered for incident requests")
 	sourceCommit := flags.String("source-commit", "", "source commit")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
@@ -81,15 +82,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *duration < 0 || (*supervise && (*duration > 0 || *exitAfterClosure)) {
 		return builder.RunConfig{}, false, errors.New("supervision cannot be combined with bounded duration or exit-after-closure")
 	}
-	if *repairPolicy != "commit" && *repairPolicy != "recorded-actions" {
-		return builder.RunConfig{}, false, fmt.Errorf("unsupported repair policy %q", *repairPolicy)
-	}
-	if *reflectionSession != "fresh" && *reflectionSession != "resume" {
-		return builder.RunConfig{}, false, fmt.Errorf("unsupported reflection session mode %q", *reflectionSession)
-	}
-	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
-		return builder.RunConfig{}, false, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
-	}
 	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown <= 0 {
 		return builder.RunConfig{}, false, errors.New("follow-up limit must be at most 1000 and cooldown positive")
 	}
@@ -106,7 +98,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	launch := &contracts.ControllerConfig{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		DispatcherMode: "job",
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
@@ -119,6 +111,9 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)
+	}
+	if err := wire.Validate(launch); err != nil {
+		return builder.RunConfig{}, false, err
 	}
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,

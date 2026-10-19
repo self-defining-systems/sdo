@@ -7,6 +7,7 @@
 package contractsv1alpha1
 
 import (
+	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -779,7 +780,7 @@ var File_sdodev_contracts_v1alpha1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
+	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
 	"\x17SourceDeploymentRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -832,13 +833,13 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x16\n" +
 	"\x06source\x18\x04 \x01(\tR\x06source\x12\"\n" +
-	"\fdependencies\x18\x05 \x03(\tR\fdependencies\"\xa6\x02\n" +
+	"\fdependencies\x18\x05 \x03(\tR\fdependencies\"\xca\x02\n" +
 	"\x11HealthJudgeResult\x12\x1a\n" +
 	"\bauthored\x18\x01 \x01(\bR\bauthored\x12\x18\n" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x12(\n" +
 	"\x10agent_session_id\x18\x03 \x01(\tR\x0eagentSessionId\x12)\n" +
-	"\x10objective_digest\x18\x04 \x01(\tR\x0fobjectiveDigest\x12!\n" +
-	"\fdetector_ids\x18\x05 \x03(\tR\vdetectorIds\x12c\n" +
+	"\x10objective_digest\x18\x04 \x01(\tR\x0fobjectiveDigest\x12E\n" +
+	"\fdetector_ids\x18\x05 \x03(\tB\"\xbaH\x1f\x92\x01\x1c\"\x1ar\x182\x16^[a-z0-9][a-z0-9_.-]*$R\vdetectorIds\x12c\n" +
 	"\x11artifact_proposal\x18\x06 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalR\x10artifactProposalB\x81\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0eLifecycleProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 

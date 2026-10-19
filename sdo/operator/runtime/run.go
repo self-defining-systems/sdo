@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sdo.dev/operator/contracts/wire"
 	"strconv"
 	"strings"
 	"time"
@@ -124,17 +125,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
-	dispatcherCommand := flags.String("dispatcher", "", "incident responder executable")
 	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode; only job is supported")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
-	agentRegistrationDirectory := flags.String("agent-registration-directory", "", "directory of strict ProtoJSON agent registrations")
-	responderAgentID := flags.String("responder-agent-id", builtInResponderID, "registered agent ID for incident response")
+	agentRegistrationDirectory := flags.String("agent-registration-directory", "", "directory of strict ProtoJSON agent registrations; defaults to the built-in manifests in the controller image, launched with --responder-image")
+	responderAgentID := flags.String("responder-agent-id", "", "registered agent ID for incident response; defaults to the one agent registered for incident requests")
 	repositoryPVC := flags.String("repository-pvc", "", "application repository PVC for job mode")
 	repositoryMountPath := flags.String("repository-mount-path", "/workspace", "shared repository PVC mount root for job mode")
 	repositoryPVCSubPath := flags.String("repository-pvc-subpath", "", "optional shared repository PVC subPath for job mode")
 	credentialsSecret := flags.String("responder-credentials-secret", "", "Codex credentials Secret for job mode")
-	var dispatcherArgs repeatedFlag
-	flags.Var(&dispatcherArgs, "dispatcher-arg", "incident responder argument; may be repeated")
 	var responderEnvironment repeatedFlag
 	flags.Var(&responderEnvironment, "responder-env", "responder Job environment NAME=VALUE; may be repeated")
 	telemetryPath := flags.String(
@@ -249,8 +247,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if jobDispatch && (*repositoryPVC == "" || *credentialsSecret == "") {
 		return fmt.Errorf("repository-pvc and responder-credentials-secret are required in job mode")
 	}
-	if jobDispatch && *agentRegistrationDirectory == "" && (*dispatcherCommand == "" || *responderImage == "") {
-		return fmt.Errorf("dispatcher and responder-image are required for the built-in agent registration")
+	if jobDispatch && *agentRegistrationDirectory == "" && *responderImage == "" {
+		return fmt.Errorf("responder-image is required for the built-in agent registrations")
 	}
 	if jobDispatch && options.NativeBroker == nil {
 		return errors.New("job controller requires the Go incident broker")
@@ -258,22 +256,27 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *repairPolicy != "commit" && *repairPolicy != "recorded-actions" {
 		return fmt.Errorf("unsupported repair policy %q", *repairPolicy)
 	}
-	argv := append([]string{*dispatcherCommand}, dispatcherArgs...)
 	var registeredWorkers *worker_registry.Registry
 	if jobDispatch {
 		var registryErr error
 		if *agentRegistrationDirectory == "" {
-			registeredWorkers, registryErr = worker_registry.New(
-				builtInResponderRegistration(*responderImage, argv),
-				builtInReflectorRegistration(*responderImage),
-			)
+			registeredWorkers, registryErr = worker_registry.LoadBuiltIn("", *responderImage)
 		} else {
 			registeredWorkers, registryErr = worker_registry.LoadDirectory(*agentRegistrationDirectory)
 		}
 		if registryErr != nil {
 			return fmt.Errorf("load agent registry: %w", registryErr)
 		}
-		registration, registryErr := registeredWorkers.Resolve(*responderAgentID, incidentTaskType)
+		if *responderAgentID == "" {
+			if *responderAgentID, registryErr = registeredWorkers.AgentFor(&contractsv1alpha1.IncidentRequest{}); registryErr != nil {
+				return fmt.Errorf("select responder agent: %w", registryErr)
+			}
+		}
+		incidentTask, registryErr := registeredWorkers.TaskType(*responderAgentID, &contractsv1alpha1.IncidentRequest{})
+		if registryErr != nil {
+			return fmt.Errorf("select responder agent: %w", registryErr)
+		}
+		registration, registryErr := registeredWorkers.Resolve(*responderAgentID, incidentTask)
 		if registryErr != nil {
 			return fmt.Errorf("select responder agent: %w", registryErr)
 		}
@@ -489,7 +492,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	encoder := json.NewEncoder(stdout)
 	controller.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	controller.OnClosureFailed = func(failure ClosureFailure) {
-		document, err := canonicalProtoJSON(closureFailureContract(&failure))
+		document, err := wire.Canonical(closureFailureContract(&failure))
 		if err == nil {
 			err = encoder.Encode(map[string]any{"controller_closure_failed": json.RawMessage(document)})
 		}

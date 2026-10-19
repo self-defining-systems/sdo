@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -30,6 +31,8 @@ _GEN_ROOT = Path(__file__).resolve().parent / "_gen"
 if str(_GEN_ROOT) not in sys.path:
     sys.path.insert(0, str(_GEN_ROOT))
 
+import protovalidate
+from buf.validate import validate_pb2
 from google.protobuf import json_format
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -37,6 +40,7 @@ from sdodev.contracts.v1alpha1 import (
     common_pb2,
     controller_config_pb2,
     controller_state_pb2,
+    late_findings_pb2,
     lifecycle_pb2,
     memory_pb2,
     messages_pb2,
@@ -96,6 +100,13 @@ MemoryListing = memory_pb2.MemoryListing
 MemoryOutcomes = memory_pb2.MemoryOutcomes
 
 FiringRecord = telemetry_pb2.FiringRecord
+LifecycleEvent = telemetry_pb2.LifecycleEvent
+
+LateFinding = late_findings_pb2.LateFinding
+LateFindingsReport = late_findings_pb2.LateFindingsReport
+LateFindingsSnapshot = late_findings_pb2.LateFindingsSnapshot
+LateFindingsHistory = late_findings_pb2.LateFindingsHistory
+LateFindingsReceipt = late_findings_pb2.LateFindingsReceipt
 
 ControllerState = controller_state_pb2.ControllerState
 FindingState = controller_state_pb2.FindingState
@@ -144,6 +155,16 @@ __all__ = [
     "DetectorTimelineEntry",
     "Finding",
     "FiringRecord",
+    "LateFinding",
+    "LateFindingsHistory",
+    "LateFindingsReceipt",
+    "LateFindingsReport",
+    "LateFindingsSnapshot",
+    "LifecycleEvent",
+    "OUTCOME_CLASSIFICATIONS",
+    "OutcomeClassification",
+    "SCHEMA_VERSION",
+    "validate",
     "FollowUpContext",
     "IncidentClosure",
     "IncidentRequest",
@@ -242,3 +263,31 @@ def datetime_timestamp(value: datetime) -> Timestamp:
 def timestamp_rfc3339(value: Timestamp) -> str:
     """The RFC 3339 UTC text of a proto ``Timestamp``, the protojson form."""
     return value.ToJsonString()
+
+
+def _string_rule(message: type[Message], field: str):
+    options = message.DESCRIPTOR.fields_by_name[field].GetOptions()  # type: ignore[attr-defined]
+    return options.Extensions[validate_pb2.field].string
+
+
+# Values the proto states and Python reads from it rather than restating.
+SCHEMA_VERSION: str = _string_rule(AgentTask, "schema_version").const
+OUTCOME_CLASSIFICATIONS: tuple[str, ...] = tuple(getattr(_string_rule(OutcomeRecord, "classification"), "in"))
+# Attribute access by upper-cased name (``OutcomeClassification.SUCCESS``); the
+# members are the proto's ``in`` list, so there is no second list to drift.
+OutcomeClassification = SimpleNamespace(**{value.upper(): value for value in OUTCOME_CLASSIFICATIONS})
+
+
+def validate(message: Message) -> None:
+    """Enforce the proto's protovalidate rules, raising ``ValueError`` on violation."""
+    try:
+        protovalidate.validate(message)
+    except protovalidate.ValidationError as exc:
+        details = "; ".join(_describe(violation) for violation in exc.violations)
+        raise ValueError(f"invalid {message.DESCRIPTOR.name}: {details}") from exc
+
+
+def _describe(violation: protovalidate.Violation) -> str:
+    field = violation.proto.field
+    path = ".".join(element.field_name for element in field.elements) if field is not None else ""
+    return f"{path}: {violation.proto.message}"

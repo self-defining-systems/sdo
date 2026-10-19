@@ -1,11 +1,12 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 )
 
@@ -14,8 +15,10 @@ import (
 // memory: it never enters .sdo/, carries no benchmark labels or verdicts, and
 // is derived only from the controller's own deterministic firing state.
 
+// FiringSchemaVersion is the const rule of FiringRecord.schema_version.
+var FiringSchemaVersion = wire.StringConst(&contracts.FiringRecord{}, "schema_version")
+
 const (
-	FiringSchemaVersion = "sdo.detector-firing/v1"
 	// DefaultFiringStreamBytes bounds each stream file; with one rotated
 	// predecessor the stream never exceeds twice this size.
 	DefaultFiringStreamBytes int64 = 4 << 20
@@ -48,36 +51,11 @@ const (
 	RelationNoIncident FiringRelation = "no_incident"
 )
 
-// FiringRecord is one line of the detector firing stream.
-type FiringRecord struct {
-	SchemaVersion       string                   `json:"schema_version"`
-	EventID             string                   `json:"event_id"`
-	Event               FiringEvent              `json:"event"`
-	RecordedAt          time.Time                `json:"recorded_at"`
-	EvaluationIteration int                      `json:"evaluation_iteration"`
-	Application         string                   `json:"application"`
-	Namespace           string                   `json:"namespace"`
-	DetectorID          string                   `json:"detector_id"`
-	DetectorClass       string                   `json:"detector_class"`
-	Owner               string                   `json:"owner"`
-	RuleID              string                   `json:"rule_id"`
-	Fingerprint         string                   `json:"fingerprint"`
-	Severity            string                   `json:"severity"`
-	ParameterBindings   map[string]sdk.ObjectRef `json:"parameter_bindings"`
-	SurfacedPlaybooks   []string                 `json:"surfaced_playbooks"`
-	FiringCount         int                      `json:"firing_count"`
-	FiringThreshold     int                      `json:"firing_threshold"`
-	ClearCount          int                      `json:"clear_count"`
-	ClearThreshold      int                      `json:"clear_threshold"`
-	IncidentID          string                   `json:"incident_id"`
-	DispatchRelation    FiringRelation           `json:"dispatch_relation"`
-}
-
 // FiringSink receives firing records. Record must be idempotent in
-// FiringRecord.EventID: a controller that crashes between emitting a record and
+// FiringRecord.event_id: a controller that crashes between emitting a record and
 // persisting its state replays the same transition with the same id.
 type FiringSink interface {
-	Record(FiringRecord) error
+	Record(*contracts.FiringRecord) error
 }
 
 // firingEventID derives a content-addressed firing event id from a transition's
@@ -102,15 +80,12 @@ func NewFileFiringSink(path string, maxBytes int64) (*FileFiringSink, error) {
 	return &FileFiringSink{stream: stream}, nil
 }
 
-func (s *FileFiringSink) Record(record FiringRecord) error {
-	if record.EventID == "" {
-		return fmt.Errorf("firing record has no event id")
-	}
-	payload, err := json.Marshal(record)
+func (s *FileFiringSink) Record(record *contracts.FiringRecord) error {
+	payload, err := wire.MarshalFull(record)
 	if err != nil {
-		return fmt.Errorf("encode firing record: %w", err)
+		return err
 	}
-	return s.stream.append(record.EventID, payload)
+	return s.stream.append(record.GetEventId(), payload)
 }
 
 // StartFresh archives a stream left by an earlier controller lifecycle.
@@ -348,17 +323,17 @@ func (c *Controller) emitFiringLocked(
 	}
 	spec := c.detectorSpecs[detectorID]
 	policy := c.tracker.policy(detectorID)
-	record := FiringRecord{
-		SchemaVersion: FiringSchemaVersion, EventID: eventID, Event: event, RecordedAt: at,
-		EvaluationIteration: c.evaluationIteration,
+	record := &contracts.FiringRecord{
+		SchemaVersion: FiringSchemaVersion, EventId: eventID, Event: string(event), RecordedAt: contractTimestamp(at),
+		EvaluationIteration: int32(c.evaluationIteration),
 		Application:         c.config.Application, Namespace: c.config.Namespace,
-		DetectorID: detectorID, DetectorClass: string(spec.Class), Owner: string(spec.Owner),
-		RuleID: finding.RuleID, Fingerprint: FindingFingerprint(finding), Severity: string(finding.Severity),
-		ParameterBindings: cloneBindings(finding.ParameterBindings),
+		DetectorId: detectorID, DetectorClass: string(spec.Class), Owner: string(spec.Owner),
+		RuleId: finding.RuleID, Fingerprint: FindingFingerprint(finding), Severity: string(finding.Severity),
+		ParameterBindings: bindingsContract(finding.ParameterBindings),
 		SurfacedPlaybooks: append([]string{}, finding.Playbooks...),
-		FiringCount:       firingCount, FiringThreshold: policy.Firing,
-		ClearCount: clearCount, ClearThreshold: policy.Clearing,
-		IncidentID: incidentID, DispatchRelation: relation,
+		FiringCount:       int32(firingCount), FiringThreshold: int32(policy.Firing),
+		ClearCount: int32(clearCount), ClearThreshold: int32(policy.Clearing),
+		IncidentId: incidentID, DispatchRelation: string(relation),
 	}
 	if err := c.firingSink.Record(record); err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("record detector firing: %w", err))

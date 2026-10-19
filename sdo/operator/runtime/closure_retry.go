@@ -181,20 +181,3 @@ func ClosureFailureError(controller *Controller) error {
 	}
 	return failure
 }
-
-func validateClosureFailure(state RuntimeState) error {
-	failure := state.ClosureFailure
-	if state.ClosureState == closureStateFailed && (failure == nil || !failure.Permanent) {
-		return fmt.Errorf("failed incident closure is missing its permanent failure record")
-	}
-	if failure == nil {
-		return nil
-	}
-	if state.PendingClosure == nil || failure.IncidentID != state.PendingClosure.Request.IncidentID {
-		return fmt.Errorf("closure failure for incident %q does not match the pending closure", failure.IncidentID)
-	}
-	if failure.Permanent != (state.ClosureState == closureStateFailed) {
-		return fmt.Errorf("closure failure permanence does not match closure state %q", state.ClosureState)
-	}
-	return nil
-}

@@ -27,7 +27,7 @@ option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;co
 
 // Finding is one detector observation. Mirrors sdk.Finding.
 message Finding {
-  string detector_id = 1 [(buf.validate.field).string.min_len = 1];
+  string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   string rule_id = 2 [(buf.validate.field).string.min_len = 1];
   string status = 3 [(buf.validate.field).string = {in: ["active", "resolved"]}];
   string severity = 4 [(buf.validate.field).string = {in: ["info", "warn", "critical"]}];
@@ -35,7 +35,7 @@ message Finding {
   string evidence = 6 [(buf.validate.field).string.min_len = 1];
   ObjectRef primary_resource = 7 [(buf.validate.field).required = true];
   repeated ObjectRef related_resources = 8;
-  repeated string playbook_ids = 9;
+  repeated string playbook_ids = 9 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   map<string, ObjectRef> parameter_bindings = 10;
   string fingerprint = 11;
   google.protobuf.Struct metadata = 12;
@@ -43,7 +43,7 @@ message Finding {
 
 // DetectorEvaluation is one detector's status at a point in time.
 message DetectorEvaluation {
-  string detector_id = 1 [(buf.validate.field).string.min_len = 1];
+  string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   google.protobuf.Timestamp evaluated_at = 2 [(buf.validate.field).required = true];
   string status = 3 [(buf.validate.field).string = {in: ["firing", "clear", "error"]}];
   repeated string fingerprints = 4;
@@ -51,7 +51,7 @@ message DetectorEvaluation {
 }
 
 message SurfacedPlaybook {
-  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
+  string playbook_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z][a-z0-9_-]*$"}];
   map<string, ObjectRef> parameter_bindings = 2;
 }
 
@@ -62,7 +62,7 @@ message PriorOutcomeEvidence {
   }];
   repeated string root_cause_summaries = 3;
   repeated string repair_action_summaries = 4;
-  repeated string applied_playbook_ids = 5;
+  repeated string applied_playbook_ids = 5 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   string source_commit = 6 [(buf.validate.field).string.min_len = 1];
   bool exact_source_match = 7;
 }
@@ -110,13 +110,13 @@ message MemoryWatch {
 }
 
 message MemoryDetector {
-  string id = 1;
+  string id = 1 [(buf.validate.field).string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
   string detector_class = 2;
   string owner = 3;
   reserved 4;
   repeated MemoryWatch watches = 5;
   int32 firing = 6;
-  repeated string possible_playbook_ids = 7;
+  repeated string possible_playbook_ids = 7 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   string originating_incident = 8;
   string description = 9;
   string predicate_excerpt = 10;
@@ -129,7 +129,7 @@ message MemoryScript {
 }
 
 message MemoryPlaybook {
-  string id = 1;
+  string id = 1 [(buf.validate.field).string.pattern = "^[a-z][a-z0-9_-]*$"];
   string markdown = 2;
   repeated MemoryScript scripts = 3;
 }
@@ -226,12 +226,12 @@ message ConfirmedRootCause {
   string summary = 1 [(buf.validate.field).string.min_len = 1];
   repeated ObjectRef resources = 2 [(buf.validate.field).repeated.min_items = 1];
   repeated RootCauseEvidence evidence = 3;
-  repeated string explained_detectors = 4;
+  repeated string explained_detectors = 4 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
   repeated string static_context = 5;
 }
 
 message AppliedPlaybook {
-  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
+  string playbook_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z][a-z0-9_-]*$"}];
   map<string, ObjectRef> parameter_bindings = 2;
   repeated string script_names = 3;
 }
@@ -356,11 +356,11 @@ message IncidentResult {
 // A responder claim that it read controller-published findings during its turn.
 // The broker independently checks this against controller-owned evidence.
 message LateFindingsPull {
-  string incident_id = 1;
-  uint32 pull_count = 2;
-  repeated string detector_ids = 3;
-  repeated string playbook_ids = 4;
-  string report_digest = 5;
+  string incident_id = 1 [(buf.validate.field).string.min_len = 1];
+  uint32 pull_count = 2 [(buf.validate.field).uint32.gte = 1];
+  repeated string detector_ids = 3 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
+  repeated string playbook_ids = 4 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
+  string report_digest = 5 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
 }
 
 // IncidentView is the open incident as the controller's state ConfigMap
@@ -387,13 +387,13 @@ message DetectorTimelineEntry {
     message: "cleared_at must not precede first_activated_at"
     expression: "!has(this.cleared_at) || this.cleared_at >= this.first_activated_at"
   };
-  string detector_id = 1 [(buf.validate.field).string.min_len = 1];
+  string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   string detector_class = 2;
   string owner = 3;
   string rule_id = 4;
   string fingerprint = 5 [(buf.validate.field).string.min_len = 1];
   map<string, ObjectRef> parameter_bindings = 6;
-  repeated string surfaced_playbook_ids = 7;
+  repeated string surfaced_playbook_ids = 7 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   google.protobuf.Timestamp first_activated_at = 8 [(buf.validate.field).required = true];
   google.protobuf.Timestamp last_seen_at = 9 [(buf.validate.field).required = true];
   optional google.protobuf.Timestamp cleared_at = 10;

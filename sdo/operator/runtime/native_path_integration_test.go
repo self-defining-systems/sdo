@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
@@ -20,6 +21,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
+	"sdo.dev/operator/worker_registry/registrytest"
 )
 
 // This exercises accepted Git and outcome memory across the native lifecycle
@@ -73,7 +75,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 
 	native := NativeIncidentBroker{
 		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{},
-		Reflector:        RegisteredReflectionWorker{Executor: workers, AgentID: "sdo-reflector", Outcomes: memory.OpenReader(accepted), Timeout: time.Minute},
+		Reflector:        RegisteredReflectionWorker{Executor: workers, AgentID: "sdo-reflector", TaskType: reflectionTaskType(t), Outcomes: memory.OpenReader(accepted), Timeout: time.Minute},
 		ResponderBackend: "test", ResponderModel: "test",
 	}
 	workspace, err := native.PrepareIncident(ctx, "native-incident")
@@ -88,7 +90,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	closure.Request.DetectorHistory = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: closure.DetectedAt, Status: DetectorEvaluationFiring}}
 	closure.Result.ConfirmedRootCauses = []ConfirmedRootCause{{
 		Summary: "bad replica", Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "app"}},
-		Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: "health"}}, ExplainedDetectors: []string{"health"},
+		Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: "health", Observation: "health detector fired"}}, ExplainedDetectors: []string{"health"},
 	}}
 	closure.Result.RepairActions = []RepairActionReceipt{{
 		ActionID: "repair-1", Kind: "kubectl", Target: "Deployment/app", Summary: "restored replica", Details: "repaired source was applied", Success: true,
@@ -112,11 +114,11 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if stored.Record.GetClassification() != "success" || stored.Record.GetSourceCommit() != result.SourceCommit {
 		t.Fatalf("logical outcome lost verified source: %+v", stored.Record)
 	}
-	prior := relevantOutcomeEvidence(accepted, []sdk.Finding{{DetectorID: "health", Fingerprint: "fingerprint"}}, result.SourceCommit, nil)
+	prior := relevantOutcomeEvidence(accepted, []sdk.Finding{{DetectorID: "health", Fingerprint: "health"}}, result.SourceCommit, nil)
 	if len(prior) != 1 || prior[0].IncidentID != "native-incident" {
 		t.Fatalf("runtime could not read broker outcome: %+v", prior)
 	}
-	if len(workers.tasks) != 4 || workers.tasks[3] != "outcome-reflection" {
+	if len(workers.tasks) != 4 || workers.tasks[3] != reflectionTaskType(t) {
 		t.Fatalf("verified success did not dispatch registered typed reflection: %v", workers.tasks)
 	}
 	if err := native.AcknowledgeClosure(ctx, receipt); err != nil {
@@ -143,7 +145,7 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 	var response *anypb.Any
 	var err error
 	switch task.GetTaskType() {
-	case lifecycle.SourceDeploymentTaskType:
+	case nativeSourceTask:
 		if err = os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("deployed source\n"), 0o644); err != nil {
 			return nil, err
 		}
@@ -162,13 +164,13 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: true, Summary: "source prepared", AgentSessionId: "source-session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}})
-	case lifecycle.ArchitectureTaskType:
+	case nativeArchitectureTask:
 		request := &contracts.ArchitectureRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
 		}
 		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded demo.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
-	case lifecycle.HealthJudgeTaskType:
+	case nativeHealthJudgeTask:
 		request := &contracts.HealthJudgeRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
@@ -259,4 +261,28 @@ func (i *nativePathInstaller) Install(_ context.Context, commit, namespace strin
 	}
 	i.commit = commit
 	return nil
+}
+
+// The task types are whatever the built-in manifests declare for each request
+// message; the test restates none of them.
+var (
+	nativeSourceTask       = manifestTaskType(&contracts.SourceDeploymentRequest{})
+	nativeArchitectureTask = manifestTaskType(&contracts.ArchitectureRequest{})
+	nativeHealthJudgeTask  = manifestTaskType(&contracts.HealthJudgeRequest{})
+)
+
+func manifestTaskType(request proto.Message) string {
+	registry, err := worker_registry.LoadDirectory(registrytest.Directory())
+	if err != nil {
+		panic(err)
+	}
+	agent, err := registry.AgentFor(request)
+	if err != nil {
+		panic(err)
+	}
+	task, err := registry.TaskType(agent, request)
+	if err != nil {
+		panic(err)
+	}
+	return task
 }

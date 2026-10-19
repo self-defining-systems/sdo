@@ -18,12 +18,6 @@ import (
 	"sdo.dev/operator/worker_registry"
 )
 
-const (
-	SourceDeploymentTaskType = "source-deployment"
-	ArchitectureTaskType     = "source-architecture"
-	HealthJudgeTaskType      = "health-judgment"
-)
-
 var ErrAgentRegistration = errors.New("lifecycle agent registration")
 
 // ProposalBroker is the only authority that can publish an agent proposal.
@@ -192,35 +186,35 @@ func (c Coordinator) validate(cfg Config) error {
 	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || strings.TrimSpace(cfg.HealthObjective) == "" || cfg.MaxAttempts < 1 {
 		return errors.New("operation ID, application, namespace, objective, and positive max attempts are required")
 	}
-	for _, choice := range []struct{ id, task, request, result string }{
-		{cfg.DeployerAgentID, SourceDeploymentTaskType, "SourceDeploymentRequest", "SourceDeploymentResult"},
-		{architectureAgentID(cfg), ArchitectureTaskType, "ArchitectureRequest", "ArchitectureResult"},
-		{cfg.JudgeAgentID, HealthJudgeTaskType, "HealthJudgeRequest", "HealthJudgeResult"},
+	for _, choice := range []struct {
+		id      string
+		request proto.Message
+	}{
+		{cfg.DeployerAgentID, &contracts.SourceDeploymentRequest{}},
+		{cfg.ArchitectureAgentID, &contracts.ArchitectureRequest{}},
+		{cfg.JudgeAgentID, &contracts.HealthJudgeRequest{}},
 	} {
-		registration, err := c.Registry.Resolve(choice.id, choice.task)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrAgentRegistration, err)
-		}
-		var matched bool
-		for _, capability := range registration.GetCapabilities() {
-			if capability.GetTaskType() != choice.task {
-				continue
-			}
-			prefix := "type.googleapis.com/sdodev.contracts.v1alpha1."
-			matched = capability.GetRequestTypeUrl() == prefix+choice.request && capability.GetResultTypeUrl() == prefix+choice.result
-		}
-		if !matched {
-			return fmt.Errorf("%w: agent %q has incompatible %s protobuf messages", ErrAgentRegistration, choice.id, choice.task)
+		if _, _, err := c.target(choice.id, choice.request); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func architectureAgentID(cfg Config) string {
-	if cfg.ArchitectureAgentID != "" {
-		return cfg.ArchitectureAgentID
+// target resolves the agent and task type that serve request. An empty
+// configured ID selects the one registered agent declaring the request's
+// message type, so neither task names nor built-in IDs live in Go.
+func (c Coordinator) target(configured string, request proto.Message) (agentID, taskType string, err error) {
+	agentID = configured
+	if agentID == "" {
+		if agentID, err = c.Registry.AgentFor(request); err != nil {
+			return "", "", fmt.Errorf("%w: %v", ErrAgentRegistration, err)
+		}
 	}
-	return cfg.DeployerAgentID
+	if taskType, err = c.Registry.TaskType(agentID, request); err != nil {
+		return "", "", fmt.Errorf("%w: %v", ErrAgentRegistration, err)
+	}
+	return agentID, taskType, nil
 }
 
 func (c Coordinator) bootstrap(ctx context.Context, id string, actor broker.Actor, write func(string) error) (broker.Receipt, error) {
@@ -278,7 +272,7 @@ func (c Coordinator) deploy(ctx context.Context, id string, cfg Config, attempt 
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
 	}
 	request := &contracts.SourceDeploymentRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, CorrectionFeedback: feedback, Attempt: uint32(attempt), RegistryHost: cfg.RegistryHost}
-	task, err := newTask(id, cfg.DeployerAgentID, SourceDeploymentTaskType, proposal, request)
+	task, err := c.newTask(id, cfg.DeployerAgentID, proposal, request)
 	if err != nil {
 		return broker.Receipt{}, DeploymentReceipt{}, false, "", err
 	}
@@ -366,7 +360,7 @@ func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, at
 		return broker.Receipt{}, false, "", errors.New("accepted source inventory omitted topology fingerprint")
 	}
 	request := &contracts.ArchitectureRequest{Application: cfg.Application, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), SourceResources: facts.Resources, SourceTopologyFingerprint: facts.Fingerprint}
-	task, err := newTask(id, architectureAgentID(cfg), ArchitectureTaskType, proposal, request)
+	task, err := c.newTask(id, cfg.ArchitectureAgentID, proposal, request)
 	if err != nil {
 		return broker.Receipt{}, false, "", err
 	}
@@ -422,7 +416,7 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 		return broker.Receipt{}, false, "", errors.New("accepted source inventory omitted topology fingerprint")
 	}
 	request := &contracts.HealthJudgeRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, SourceTopologyFingerprint: facts.Fingerprint}
-	task, err := newTask(id, cfg.JudgeAgentID, HealthJudgeTaskType, proposal, request)
+	task, err := c.newTask(id, cfg.JudgeAgentID, proposal, request)
 	if err != nil {
 		return broker.Receipt{}, false, "", err
 	}
@@ -456,7 +450,11 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 	return receipt, true, "", nil
 }
 
-func newTask(id, agentID, taskType string, proposal broker.Proposal, request proto.Message) (*contracts.AgentTask, error) {
+func (c Coordinator) newTask(id, configuredAgent string, proposal broker.Proposal, request proto.Message) (*contracts.AgentTask, error) {
+	agentID, taskType, err := c.target(configuredAgent, request)
+	if err != nil {
+		return nil, err
+	}
 	packed, err := anypb.New(request)
 	if err != nil {
 		return nil, err

@@ -14,8 +14,7 @@ import "sdodev/contracts/v1alpha1/common.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
-// FiringRecord is one line of the detector firing stream. Mirrors the Go
-// runtime.FiringRecord struct.
+// FiringRecord is one line of the detector firing stream.
 message FiringRecord {
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.detector-firing/v1"];
   string event_id = 2 [(buf.validate.field).string.min_len = 1];
@@ -24,14 +23,14 @@ message FiringRecord {
   int32 evaluation_iteration = 5 [(buf.validate.field).int32.gte = 0];
   string application = 6;
   string namespace = 7;
-  string detector_id = 8 [(buf.validate.field).string.min_len = 1];
+  string detector_id = 8 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   string detector_class = 9;
   string owner = 10;
   string rule_id = 11;
   string fingerprint = 12;
   string severity = 13;
   map<string, ObjectRef> parameter_bindings = 14;
-  repeated string surfaced_playbooks = 15;
+  repeated string surfaced_playbooks = 15 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   int32 firing_count = 16 [(buf.validate.field).int32.gte = 0];
   int32 firing_threshold = 17 [(buf.validate.field).int32.gte = 0];
   int32 clear_count = 18 [(buf.validate.field).int32.gte = 0];
@@ -40,4 +39,42 @@ message FiringRecord {
   string dispatch_relation = 21 [(buf.validate.field).string = {
     in: ["before_dispatch", "after_dispatch", "no_incident"]
   }];
+}
+
+// LifecycleEvent is one line of the controller's lifecycle-events.jsonl stream:
+// its own incident transitions, joined to the firing stream by incident_id. The
+// envelope mirrors FiringRecord; the remaining fields are phase-specific.
+message LifecycleEvent {
+  string schema_version = 1 [(buf.validate.field).string.const = "sdo.lifecycle-event/v1"];
+  string event_id = 2 [(buf.validate.field).string.min_len = 1];
+  string event = 3 [(buf.validate.field).string = {
+    in: [
+      "incident_opened", "admission_deferred", "admission_resumed", "workspace_prepared",
+      "responder_dispatched", "responder_completed", "incident_superseded", "worktree_released",
+      "detector_review_required", "incident_closed", "closure_committed", "incident_acknowledged"
+    ]
+  }];
+  google.protobuf.Timestamp recorded_at = 4 [(buf.validate.field).required = true];
+  int32 evaluation_iteration = 5 [(buf.validate.field).int32.gte = 0];
+  string application = 6;
+  string namespace = 7;
+  string incident_id = 8;
+  // Follow-up chain: parent on incident_opened, child on incident_superseded.
+  string parent_incident_id = 9;
+  int32 follow_up_attempt = 10 [(buf.validate.field).int32.gte = 0];
+  string superseded_by = 11;
+  string reason = 12;
+  repeated string finding_keys = 13;
+  repeated string surfaced_playbooks = 14 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
+  string worktree = 15;
+  string base_commit = 16;
+  string proposal_commit = 17;
+  string outcome_commit = 18;
+  string reflection_commit = 19;
+  google.protobuf.Timestamp health_cleared_at = 20;
+  bool detector_review_required = 21;
+  bool dispatch_error = 22;
+  double load_pressure = 23 [(buf.validate.field).double.gte = 0];
+  double load_threshold = 24 [(buf.validate.field).double.gte = 0];
+  int32 release_backlog = 25 [(buf.validate.field).int32.gte = 0];
 }

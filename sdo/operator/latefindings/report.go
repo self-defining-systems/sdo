@@ -1,59 +1,50 @@
 // Package latefindings owns the logical, bounded incident telemetry projection.
 // Workers receive only a read-only ConfigMap projection, never controller storage.
+// The report, its history, and the worker's pull receipt are the generated
+// LateFindings* messages; this package holds no parallel Go shapes.
 package latefindings
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
-
-	"sdo.dev/operator/memory/layout"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/util/retry"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
 const ReportKey = "report.json"
 const HistoryKey = "history.json"
 
-type Snapshot struct {
-	Digest      string   `json:"digest"`
-	DetectorIDs []string `json:"detector_ids"`
-	PlaybookIDs []string `json:"playbook_ids"`
-}
+// DefaultReportPath is where the controller mounts the report in a worker.
+const DefaultReportPath = "/sdo/late-findings/report.json"
 
-type Finding struct {
-	DetectorID        string         `json:"detector_id"`
-	DetectorClass     string         `json:"detector_class,omitempty"`
-	RuleID            string         `json:"rule_id,omitempty"`
-	Fingerprint       string         `json:"fingerprint"`
-	Severity          string         `json:"severity,omitempty"`
-	ParameterBindings map[string]any `json:"parameter_bindings,omitempty"`
-	PlaybookIDs       []string       `json:"playbook_ids"`
-	ActivatedAt       string         `json:"activated_at"`
-	StillActive       bool           `json:"still_active"`
-}
+// DefaultReceiptsPath is where `sdo-operator late-findings` appends one receipt
+// per pull. The dispatcher passes it to the worker as
+// SDO_LATE_FINDINGS_RECEIPTS_PATH, so the worker reads the path from there
+// rather than carrying its own copy.
+const DefaultReceiptsPath = "/tmp/sdo-late-findings-pulls.jsonl"
 
-type Report struct {
-	SchemaVersion      string    `json:"schema_version"`
-	IncidentID         string    `json:"incident_id"`
-	TelemetryAvailable bool      `json:"telemetry_available"`
-	LateFindings       []Finding `json:"late_findings"`
-}
+// ReceiptsPathEnv and ReportPathEnv override the defaults.
+const (
+	ReceiptsPathEnv = "SDO_LATE_FINDINGS_RECEIPTS_PATH"
+	ReportPathEnv   = "SDO_LATE_FINDINGS_REPORT_PATH"
+)
 
-type Event struct {
-	IncidentID, Relation, Event, DetectorID, DetectorClass, RuleID, Fingerprint, Severity, RecordedAt string
-	ParameterBindings                                                                                 map[string]any
-	PlaybookIDs                                                                                       []string
-}
+// maxReportBytes bounds the encoded report.
+const maxReportBytes = 256 << 10
+
+// SchemaVersion is the const rule of LateFindingsReport.schema_version.
+var SchemaVersion = wire.StringConst(&contracts.LateFindingsReport{}, "schema_version")
 
 type Store struct {
 	Client    kubernetes.Interface
@@ -65,8 +56,20 @@ func ConfigMapName(incidentID string) string {
 	return "sdo-late-" + hex.EncodeToString(sum[:10])
 }
 
-func EmptyReport(incidentID string) Report {
-	return Report{SchemaVersion: "sdo.late-findings/v1", IncidentID: incidentID, TelemetryAvailable: true, LateFindings: []Finding{}}
+func EmptyReport(incidentID string) *contracts.LateFindingsReport {
+	return &contracts.LateFindingsReport{SchemaVersion: SchemaVersion, IncidentId: incidentID, TelemetryAvailable: true}
+}
+
+// ParseReport decodes and validates a report document.
+func ParseReport(data []byte) (*contracts.LateFindingsReport, error) {
+	if len(data) > maxReportBytes {
+		return nil, errors.New("late findings projection exceeds limit")
+	}
+	report := &contracts.LateFindingsReport{}
+	if err := wire.Unmarshal(data, report); err != nil {
+		return nil, err
+	}
+	return report, nil
 }
 
 func (s Store) Ensure(ctx context.Context, incidentID string) error {
@@ -74,18 +77,27 @@ func (s Store) Ensure(ctx context.Context, incidentID string) error {
 		return errors.New("late findings store requires client, namespace, and incident ID")
 	}
 	initial := EmptyReport(incidentID)
-	report, _ := json.Marshal(initial)
-	snapshot, _ := reportSnapshot(initial)
-	history, _ := json.Marshal([]Snapshot{snapshot})
+	report, err := wire.MarshalFull(initial)
+	if err != nil {
+		return err
+	}
+	snapshot, err := ReportSnapshot(initial)
+	if err != nil {
+		return err
+	}
+	history, err := wire.MarshalFull(&contracts.LateFindingsHistory{Snapshots: []*contracts.LateFindingsSnapshot{snapshot}})
+	if err != nil {
+		return err
+	}
 	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName(incidentID), Namespace: s.Namespace, Labels: map[string]string{"app.kubernetes.io/name": "sdo-late-findings"}}, Data: map[string]string{ReportKey: string(report), HistoryKey: string(history)}}
-	_, err := s.Client.CoreV1().ConfigMaps(s.Namespace).Create(ctx, cm, metav1.CreateOptions{})
+	_, err = s.Client.CoreV1().ConfigMaps(s.Namespace).Create(ctx, cm, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		prior, readErr := s.Client.CoreV1().ConfigMaps(s.Namespace).Get(ctx, cm.Name, metav1.GetOptions{})
 		if readErr != nil {
 			return readErr
 		}
-		var old Report
-		if json.Unmarshal([]byte(prior.Data[ReportKey]), &old) != nil || old.IncidentID != incidentID {
+		old, parseErr := ParseReport([]byte(prior.Data[ReportKey]))
+		if parseErr != nil || old.GetIncidentId() != incidentID {
 			return errors.New("late findings ConfigMap identity mismatch")
 		}
 		return nil
@@ -93,43 +105,42 @@ func (s Store) Ensure(ctx context.Context, incidentID string) error {
 	return err
 }
 
-func (s Store) Update(ctx context.Context, event Event) error {
-	if event.IncidentID == "" || event.DetectorID == "" || event.Fingerprint == "" {
+// Update folds one firing record into the incident's report. Only a clear, or
+// an activation after the responder was dispatched, belongs to the report.
+func (s Store) Update(ctx context.Context, record *contracts.FiringRecord) error {
+	event := record.GetEvent()
+	if record.GetIncidentId() == "" || record.GetDetectorId() == "" || record.GetFingerprint() == "" {
 		return nil
 	}
-	for _, id := range event.PlaybookIDs { if id=="" || strings.ContainsAny(id,"/\\") || strings.Contains(id, layout.Dir) { return errors.New("late findings require logical playbook IDs") } }
-	if event.Event != "cleared" && !(event.Event == "activated" && event.Relation == "after_dispatch") {
+	if event != "cleared" && !(event == "activated" && record.GetDispatchRelation() == "after_dispatch") {
 		return nil
 	}
-	if err := s.Ensure(ctx, event.IncidentID); err != nil {
+	if err := s.Ensure(ctx, record.GetIncidentId()); err != nil {
 		return err
 	}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		maps := s.Client.CoreV1().ConfigMaps(s.Namespace)
-		cm, err := maps.Get(ctx, ConfigMapName(event.IncidentID), metav1.GetOptions{})
+		cm, err := maps.Get(ctx, ConfigMapName(record.GetIncidentId()), metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
-		var report Report
-		if err := json.Unmarshal([]byte(cm.Data[ReportKey]), &report); err != nil {
+		report, err := ParseReport([]byte(cm.Data[ReportKey]))
+		if err != nil {
 			return err
 		}
-		if report.IncidentID != event.IncidentID {
+		if report.GetIncidentId() != record.GetIncidentId() {
 			return errors.New("late findings report identity mismatch")
 		}
-		index := -1
-		for i, finding := range report.LateFindings {
-			if finding.DetectorID == event.DetectorID && finding.Fingerprint == event.Fingerprint {
-				index = i
-				break
-			}
-		}
-		if event.Event == "activated" {
+		index := slices.IndexFunc(report.LateFindings, func(finding *contracts.LateFinding) bool {
+			return finding.GetDetectorId() == record.GetDetectorId() && finding.GetFingerprint() == record.GetFingerprint()
+		})
+		if event == "activated" {
 			if index < 0 {
-				if len(report.LateFindings) >= 64 {
-					return errors.New("late findings report exceeds 64 findings")
-				}
-				report.LateFindings = append(report.LateFindings, Finding{DetectorID: event.DetectorID, DetectorClass: event.DetectorClass, RuleID: event.RuleID, Fingerprint: event.Fingerprint, Severity: event.Severity, ParameterBindings: event.ParameterBindings, PlaybookIDs: append([]string(nil), event.PlaybookIDs...), ActivatedAt: event.RecordedAt, StillActive: true})
+				report.LateFindings = append(report.LateFindings, &contracts.LateFinding{
+					DetectorId: record.GetDetectorId(), DetectorClass: record.GetDetectorClass(), RuleId: record.GetRuleId(),
+					Fingerprint: record.GetFingerprint(), Severity: record.GetSeverity(), ParameterBindings: record.GetParameterBindings(),
+					PlaybookIds: slices.Clone(record.GetSurfacedPlaybooks()), ActivatedAt: record.GetRecordedAt(), StillActive: true,
+				})
 			} else {
 				report.LateFindings[index].StillActive = true
 			}
@@ -138,31 +149,32 @@ func (s Store) Update(ctx context.Context, event Event) error {
 		} else {
 			return nil
 		}
-		slices.SortFunc(report.LateFindings, func(a, b Finding) int {
-			return strings.Compare(a.ActivatedAt+"\x00"+a.DetectorID+"\x00"+a.Fingerprint, b.ActivatedAt+"\x00"+b.DetectorID+"\x00"+b.Fingerprint)
+		slices.SortFunc(report.LateFindings, func(a, b *contracts.LateFinding) int {
+			return strings.Compare(findingOrder(a), findingOrder(b))
 		})
-		data, err := json.Marshal(report)
+		data, err := wire.MarshalFull(report)
 		if err != nil {
 			return err
 		}
-		if len(data) > 256<<10 {
+		if len(data) > maxReportBytes {
 			return fmt.Errorf("late findings report exceeds 256 KiB")
 		}
-		var history []Snapshot
-		if err := json.Unmarshal([]byte(cm.Data[HistoryKey]), &history); err != nil {
+		history := &contracts.LateFindingsHistory{}
+		if err := wire.Unmarshal([]byte(cm.Data[HistoryKey]), history); err != nil {
 			return fmt.Errorf("decode late findings digest history: %w", err)
 		}
-		snapshot, err := reportSnapshot(report)
+		snapshot, err := ReportSnapshot(report)
 		if err != nil {
 			return err
 		}
-		if len(history) == 0 || history[len(history)-1].Digest != snapshot.Digest {
-			history = append(history, snapshot)
+		snapshots := history.Snapshots
+		if len(snapshots) == 0 || snapshots[len(snapshots)-1].GetDigest() != snapshot.GetDigest() {
+			snapshots = append(snapshots, snapshot)
 		}
-		if len(history) > 64 {
-			history = history[len(history)-64:]
+		if len(snapshots) > 64 {
+			snapshots = snapshots[len(snapshots)-64:]
 		}
-		historyData, err := json.Marshal(history)
+		historyData, err := wire.MarshalFull(&contracts.LateFindingsHistory{Snapshots: snapshots})
 		if err != nil {
 			return err
 		}
@@ -173,38 +185,49 @@ func (s Store) Update(ctx context.Context, event Event) error {
 	})
 }
 
-func Digest(report Report) (string, error) {
-	data, err := json.Marshal(report)
+func findingOrder(finding *contracts.LateFinding) string {
+	at := finding.GetActivatedAt()
+	return fmt.Sprintf("%020d.%09d\x00%s\x00%s", at.GetSeconds(), at.GetNanos(), finding.GetDetectorId(), finding.GetFingerprint())
+}
+
+// Digest identifies one report by the SHA-256 of its deterministic encoding,
+// so the controller and the worker-side command agree regardless of how the
+// ProtoJSON document was formatted.
+func Digest(report *contracts.LateFindingsReport) (string, error) {
+	encoded, err := wire.Digest(report)
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func reportSnapshot(report Report) (Snapshot, error) {
+// ReportSnapshot names a report version: its digest and the sorted detector and
+// playbook IDs it covers.
+func ReportSnapshot(report *contracts.LateFindingsReport) (*contracts.LateFindingsSnapshot, error) {
 	digest, err := Digest(report)
 	if err != nil {
-		return Snapshot{}, err
+		return nil, err
 	}
 	detectors := map[string]struct{}{}
 	playbooks := map[string]struct{}{}
-	for _, finding := range report.LateFindings {
-		detectors[finding.DetectorID] = struct{}{}
-		for _, id := range finding.PlaybookIDs {
+	for _, finding := range report.GetLateFindings() {
+		detectors[finding.GetDetectorId()] = struct{}{}
+		for _, id := range finding.GetPlaybookIds() {
 			playbooks[id] = struct{}{}
 		}
 	}
-	snapshot := Snapshot{Digest: digest, DetectorIDs: make([]string, 0, len(detectors)), PlaybookIDs: make([]string, 0, len(playbooks))}
-	for id := range detectors {
-		snapshot.DetectorIDs = append(snapshot.DetectorIDs, id)
-	}
-	for id := range playbooks {
-		snapshot.PlaybookIDs = append(snapshot.PlaybookIDs, id)
-	}
-	slices.Sort(snapshot.DetectorIDs)
-	slices.Sort(snapshot.PlaybookIDs)
+	snapshot := &contracts.LateFindingsSnapshot{Digest: digest, DetectorIds: sortedKeys(detectors), PlaybookIds: sortedKeys(playbooks)}
 	return snapshot, nil
+}
+
+func sortedKeys(set map[string]struct{}) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 // VerifyPull checks a worker claim against reports produced by this controller.
@@ -217,19 +240,19 @@ func (s Store) VerifyPull(ctx context.Context, incidentID string, count uint32, 
 	if err != nil {
 		return fmt.Errorf("read controller late findings report: %w", err)
 	}
-	var report Report
-	if err := json.Unmarshal([]byte(cm.Data[ReportKey]), &report); err != nil {
+	report, err := ParseReport([]byte(cm.Data[ReportKey]))
+	if err != nil {
 		return err
 	}
-	if report.IncidentID != incidentID {
+	if report.GetIncidentId() != incidentID {
 		return errors.New("late findings report incident mismatch")
 	}
-	var history []Snapshot
-	if err := json.Unmarshal([]byte(cm.Data[HistoryKey]), &history); err != nil {
+	history := &contracts.LateFindingsHistory{}
+	if err := wire.Unmarshal([]byte(cm.Data[HistoryKey]), history); err != nil {
 		return err
 	}
-	for _, snapshot := range history {
-		if snapshot.Digest == digest && slices.Equal(snapshot.DetectorIDs, detectorIDs) && slices.Equal(snapshot.PlaybookIDs, playbookIDs) {
+	for _, snapshot := range history.GetSnapshots() {
+		if snapshot.GetDigest() == digest && slices.Equal(snapshot.GetDetectorIds(), detectorIDs) && slices.Equal(snapshot.GetPlaybookIds(), playbookIDs) {
 			return nil
 		}
 	}

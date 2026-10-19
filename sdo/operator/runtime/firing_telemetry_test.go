@@ -3,7 +3,6 @@ package runtime
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,28 +10,38 @@ import (
 
 	"k8s.io/client-go/kubernetes/fake"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type memorySink struct{ records []FiringRecord }
+type memorySink struct{ records []*contracts.FiringRecord }
 
-func (s *memorySink) Record(record FiringRecord) error {
+func (s *memorySink) Record(record *contracts.FiringRecord) error {
 	s.records = append(s.records, record)
 	return nil
 }
 
-func (s *memorySink) events(event FiringEvent, detectorID string) []FiringRecord {
-	var result []FiringRecord
+func (s *memorySink) events(event FiringEvent, detectorID string) []*contracts.FiringRecord {
+	var result []*contracts.FiringRecord
 	for _, record := range s.records {
-		if record.Event == event && record.DetectorID == detectorID {
+		if record.GetEvent() == string(event) && record.GetDetectorId() == detectorID {
 			result = append(result, record)
 		}
 	}
 	return result
 }
 
-func readStream(t *testing.T, path string) []FiringRecord {
+// testFiringRecord is the smallest record the FiringRecord contract accepts.
+func testFiringRecord(eventID string) *contracts.FiringRecord {
+	return &contracts.FiringRecord{
+		SchemaVersion: FiringSchemaVersion, EventId: eventID, Event: string(FiringActivated),
+		RecordedAt: contractTimestamp(time.Unix(1, 0).UTC()), DetectorId: "d", DispatchRelation: string(RelationNoIncident),
+	}
+}
+
+func readStream(t *testing.T, path string) []*contracts.FiringRecord {
 	t.Helper()
 	file, err := os.Open(path)
 	if err != nil {
@@ -42,11 +51,11 @@ func readStream(t *testing.T, path string) []FiringRecord {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	var records []FiringRecord
+	var records []*contracts.FiringRecord
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
-		var record FiringRecord
-		if json.Unmarshal(scanner.Bytes(), &record) == nil {
+		record := &contracts.FiringRecord{}
+		if wire.DecodeLenientUnvalidated(scanner.Bytes(), record) == nil {
 			records = append(records, record)
 		}
 	}
@@ -93,9 +102,9 @@ func TestFileFiringSinkAppendsDeduplicatesAndSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := FiringRecord{SchemaVersion: FiringSchemaVersion, EventID: "a", Event: FiringActivated}
+	record := testFiringRecord("a")
 	for _, id := range []string{"a", "a", "b"} {
-		record.EventID = id
+		record.EventId = id
 		if err := sink.Record(record); err != nil {
 			t.Fatal(err)
 		}
@@ -104,17 +113,17 @@ func TestFileFiringSinkAppendsDeduplicatesAndSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record.EventID = "b"
+	record.EventId = "b"
 	if err := reopened.Record(record); err != nil {
 		t.Fatal(err)
 	}
-	record.EventID = "c"
+	record.EventId = "c"
 	if err := reopened.Record(record); err != nil {
 		t.Fatal(err)
 	}
 	ids := []string{}
 	for _, stored := range readStream(t, path) {
-		ids = append(ids, stored.EventID)
+		ids = append(ids, stored.EventId)
 	}
 	if !equalStrings(ids, []string{"a", "b", "c"}) {
 		t.Fatalf("stream ids = %v", ids)
@@ -130,11 +139,11 @@ func TestFileFiringSinkRepairsATornLastLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sink.Record(FiringRecord{EventID: "b"}); err != nil {
+	if err := sink.Record(testFiringRecord("b")); err != nil {
 		t.Fatal(err)
 	}
 	records := readStream(t, path)
-	if len(records) != 2 || records[0].EventID != "a" || records[1].EventID != "b" {
+	if len(records) != 2 || records[0].EventId != "a" || records[1].EventId != "b" {
 		t.Fatalf("records after torn line: %#v", records)
 	}
 }
@@ -147,8 +156,8 @@ func TestFileFiringSinkStaysWithinItsSizeBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := 0; index < 200; index++ {
-		record := FiringRecord{EventID: firingEventID("e", string(rune('a'+index%26)), time.Duration(index).String()),
-			Event: FiringActivated, DetectorID: "d", Fingerprint: "padding-padding-padding"}
+		record := testFiringRecord(firingEventID("e", string(rune('a'+index%26)), time.Duration(index).String()))
+		record.Fingerprint = "padding-padding-padding"
 		if err := sink.Record(record); err != nil {
 			t.Fatal(err)
 		}
@@ -175,13 +184,13 @@ func TestFileFiringSinkStaysWithinItsSizeBound(t *testing.T) {
 func TestFileFiringSinkStartFreshArchivesAnOrphanedStream(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f.jsonl")
 	sink, _ := NewFileFiringSink(path, 1<<20)
-	if err := sink.Record(FiringRecord{EventID: "a"}); err != nil {
+	if err := sink.Record(testFiringRecord("a")); err != nil {
 		t.Fatal(err)
 	}
 	if err := sink.StartFresh(); err != nil {
 		t.Fatal(err)
 	}
-	if err := sink.Record(FiringRecord{EventID: "a"}); err != nil {
+	if err := sink.Record(testFiringRecord("a")); err != nil {
 		t.Fatal(err)
 	}
 	if len(readStream(t, path)) != 1 {
@@ -256,21 +265,21 @@ func TestControllerRecordsActivationBatchingAndClearingWithDispatchRelation(t *t
 		t.Fatalf("cause activations: %#v", sink.records)
 	}
 	first := activated[0]
-	if first.DetectorClass != "incident" || first.Owner != "responder" || first.RuleID != "cause" ||
+	if first.DetectorClass != "incident" || first.Owner != "responder" || first.RuleId != "cause" ||
 		first.Fingerprint != "cause" || first.FiringCount != 2 || first.FiringThreshold != 2 ||
-		first.ClearThreshold != 2 || first.EvaluationIteration != 2 || first.DispatchRelation != RelationNoIncident ||
-		first.IncidentID != "" || !first.RecordedAt.Equal(time.Unix(1, 0).UTC()) {
+		first.ClearThreshold != 2 || first.EvaluationIteration != 2 || first.DispatchRelation != string(RelationNoIncident) ||
+		first.IncidentId != "" || !first.RecordedAt.AsTime().Equal(time.Unix(1, 0).UTC()) {
 		t.Fatalf("activation record: %#v", first)
 	}
 	batched := sink.events(FiringBatched, "cause")
-	if len(batched) != 1 || batched[0].IncidentID != request.IncidentID || batched[0].DispatchRelation != RelationBeforeDispatch {
+	if len(batched) != 1 || batched[0].IncidentId != request.IncidentID || batched[0].DispatchRelation != string(RelationBeforeDispatch) {
 		t.Fatalf("batched record: %#v", batched)
 	}
 	if len(sink.events(FiringBatched, "health")) != 0 {
 		t.Fatal("a finding below the batching severity must not be marked batched")
 	}
 	cleared := sink.events(FiringCleared, "cause")
-	if len(cleared) != 1 || cleared[0].ClearCount != 2 || cleared[0].DispatchRelation != RelationBeforeDispatch {
+	if len(cleared) != 1 || cleared[0].ClearCount != 2 || cleared[0].DispatchRelation != string(RelationBeforeDispatch) {
 		t.Fatalf("clear record: %#v", cleared)
 	}
 	if len(sink.events(FiringCleared, "health")) != 1 {
@@ -322,7 +331,7 @@ func TestControllerClassifiesAnIncidentDetectorThatActivatesWhileTheResponderRun
 	step(t, controller, 3)
 
 	activated := sink.events(FiringActivated, "late")
-	if len(activated) != 1 || activated[0].DispatchRelation != RelationAfterDispatch || activated[0].IncidentID == "" {
+	if len(activated) != 1 || activated[0].DispatchRelation != string(RelationAfterDispatch) || activated[0].IncidentId == "" {
 		t.Fatalf("late activation: %#v", sink.records)
 	}
 	before, after, onlyHealth := timelineSummary(controller.ExportState().DetectorTimeline)
@@ -406,7 +415,7 @@ func TestFiringTelemetryDoesNotDuplicateAfterRestartOrReplay(t *testing.T) {
 	}
 	var activations int
 	for _, record := range readStream(t, replayPath) {
-		if record.Event == FiringActivated {
+		if record.Event == string(FiringActivated) {
 			activations++
 		}
 	}

@@ -100,12 +100,12 @@ func TestChaosLateFindingAfterDispatchIsSurfacedExactlyOnce(t *testing.T) {
 			t.Fatalf("seed %d: late activation recorded %d times, want exactly one: %+v", seed, len(activated), activated)
 		}
 		rec := activated[0]
-		if rec.DispatchRelation != RelationAfterDispatch {
+		if rec.DispatchRelation != string(RelationAfterDispatch) {
 			t.Fatalf("seed %d: late finding (on at step %d, dispatch %d) relation=%s, want after_dispatch",
 				seed, lateOnStep, dispatchStep, rec.DispatchRelation)
 		}
-		if rec.IncidentID != incidentID {
-			t.Fatalf("seed %d: after_dispatch activation incident id %q != open incident %q", seed, rec.IncidentID, incidentID)
+		if rec.IncidentId != incidentID {
+			t.Fatalf("seed %d: after_dispatch activation incident id %q != open incident %q", seed, rec.IncidentId, incidentID)
 		}
 		// A late finding must never be mistaken for a second batched incident.
 		if batched := sink.events(FiringBatched, "late"); len(batched) != 0 {

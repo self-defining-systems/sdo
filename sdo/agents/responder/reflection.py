@@ -13,7 +13,7 @@ from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 from sdo.agents.views import (
     OperationalArtifactDraft,  # noqa: TC001 - Pydantic resolves this field at runtime.
 )
-from sdo.contracts import OutcomeClassification
+from sdo.contracts import OutcomeClassification, validate
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -28,12 +28,12 @@ if TYPE_CHECKING:
     from sdo.contracts import IncidentClosure, OutcomeRecord
 
 
-def _classification_directive(classification: OutcomeClassification, guidance: ReflectionGuidance = "baseline") -> str:
-    if classification is OutcomeClassification.FALSE_POSITIVE:
+def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
+    if classification == OutcomeClassification.FALSE_POSITIVE:
         return "tighten the over-broad detector signature and add a near-miss regression test."
-    if classification is OutcomeClassification.FALSE_NEGATIVE:
+    if classification == OutcomeClassification.FALSE_NEGATIVE:
         return "add or widen the missed detector signature and include the reproducing test that previously failed."
-    if classification is OutcomeClassification.SUCCESS:
+    if classification == OutcomeClassification.SUCCESS:
         if guidance in _GENERALIZING_GUIDANCE:
             return (
                 "Capture the confirmed signature at the level of its root-cause class, following the generalization "
@@ -163,7 +163,7 @@ def _logical_learning_request(
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
-    classification = OutcomeClassification(outcome.classification)
+    classification = outcome.classification
     return (
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot and source code. Propose reusable incident "
@@ -179,7 +179,7 @@ def _logical_learning_request(
         "Return learning_decision=updated only with a nonempty artifact_proposal. "
         "Return no_change with a specific reason and artifact_proposal=null when no safe learning exists.\n\n"
         f"{_logical_guidance(guidance)}"
-        f"For this {classification.value} outcome, "
+        f"For this {classification} outcome, "
         f"{_classification_directive(classification, guidance)}\n\n"
         "Before returning an update, make sure the complete artifact_proposal is in the structured result; "
         "the broker rejects proposals that break the `sdo-operator memory check` rules.\n\n"
@@ -265,10 +265,11 @@ class SessionReflector:
         self.guidance: ReflectionGuidance = guidance
 
     def should_reflect(self, outcome: OutcomeRecord, *, health_verified: bool, session_id: str | None) -> bool:
+        validate(outcome)
         return bool(
             health_verified
             and session_id
-            and OutcomeClassification(outcome.classification)
+            and outcome.classification
             in {
                 OutcomeClassification.SUCCESS,
                 OutcomeClassification.FALSE_POSITIVE,

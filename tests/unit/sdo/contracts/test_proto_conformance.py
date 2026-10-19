@@ -22,7 +22,7 @@ import pytest
 
 from sdo.agents.responder.codex import _incident_result_schema
 from sdo.agents.responder.result_output import ROOT_CAUSE_EVIDENCE_KINDS
-from sdo.contracts import OutcomeClassification
+from sdo.contracts import OUTCOME_CLASSIFICATIONS, OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
     BrokerLedger,
@@ -47,12 +47,13 @@ def test_outcomes_are_typed_across_the_reflection_boundary() -> None:
     assert fields["prior_outcomes"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
 
 
-def test_outcome_classification_type_matches_proto_validation() -> None:
+def test_outcome_classification_is_read_from_proto_validation() -> None:
     from buf.validate import validate_pb2
 
     field = OutcomeRecord.DESCRIPTOR.fields_by_name["classification"]
     permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
-    assert {item.value for item in OutcomeClassification} == set(permitted)
+    assert set(OUTCOME_CLASSIFICATIONS) == set(permitted)
+    assert vars(OutcomeClassification) == {value.upper(): value for value in permitted}
 
 
 def test_outcome_round_trips_through_canonical_contract() -> None:

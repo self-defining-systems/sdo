@@ -5,11 +5,10 @@ import (
 	"os"
 	"strconv"
 
-	"buf.build/go/protovalidate"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
 // LaunchConfigFlag is the controller entry point's single-argument launch mode:
@@ -27,11 +26,8 @@ func LoadControllerConfig(path string) (*contractsv1alpha1.ControllerConfig, err
 		return nil, fmt.Errorf("read controller config: %w", err)
 	}
 	config := &contractsv1alpha1.ControllerConfig{}
-	if err := protojson.Unmarshal(raw, config); err != nil {
-		return nil, fmt.Errorf("decode controller config %s: %w", path, err)
-	}
-	if err := protovalidate.Validate(config); err != nil {
-		return nil, fmt.Errorf("invalid controller config %s: %w", path, err)
+	if err := wire.Unmarshal(raw, config); err != nil {
+		return nil, fmt.Errorf("controller config %s: %w", path, err)
 	}
 	return config, nil
 }
@@ -79,9 +75,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--source-commit", config.GetSourceCommit())
 	str("--deployed-commit", config.GetDeployedCommit())
 
-	str("--dispatcher", config.GetDispatcher())
 	str("--dispatcher-mode", config.GetDispatcherMode())
-	repeated("--dispatcher-arg", config.GetDispatcherArgs())
 	str("--responder-image", config.GetResponderImage())
 	str("--agent-registration-directory", config.GetAgentRegistrationDirectory())
 	str("--responder-agent-id", config.GetResponderAgentId())
@@ -90,7 +84,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--repository-pvc-subpath", config.GetRepositoryPvcSubpath())
 	str("--responder-credentials-secret", config.GetResponderCredentialsSecret())
 	repeated("--responder-env", config.GetResponderEnv())
-
 
 	str("--firing-telemetry-path", config.GetFiringTelemetryPath())
 

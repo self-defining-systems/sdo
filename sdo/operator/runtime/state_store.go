@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"sdo.dev/operator/contracts/wire"
 	"strconv"
 	"sync"
 	"time"
@@ -18,8 +19,10 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
+// RuntimeStateVersion is the const ControllerState.version declares.
+var RuntimeStateVersion = wire.StringConst(&contracts.ControllerState{}, "version")
+
 const (
-	RuntimeStateVersion     = "sdo.controller/v1"
 	stateDataKey            = "runtime-state.json"
 	stateRevisionAnnotation = "sdo.dev/state-revision"
 )
@@ -65,30 +68,13 @@ type RuntimeState struct {
 	IncidentView *IncidentView
 }
 
-func (state RuntimeState) Validate() error {
-	if state.Version != RuntimeStateVersion {
-		return fmt.Errorf("unsupported runtime state version %q", state.Version)
+// validateRuntimeState runs the ControllerState contract's rules over state.
+func validateRuntimeState(state RuntimeState) error {
+	document, err := controllerStateContract(state)
+	if err != nil {
+		return fmt.Errorf("project controller state: %w", err)
 	}
-	if len(state.History) > 100 {
-		return fmt.Errorf("runtime history exceeds 100 entries")
-	}
-	if state.IncidentOpen && state.IncidentRequest == nil {
-		return fmt.Errorf("open incident is missing its request")
-	}
-	if state.PendingClosure != nil && state.PendingClosure.Request.IncidentID == "" {
-		return fmt.Errorf("pending incident closure is missing its incident id")
-	}
-	if len(state.DetectorTimeline) > maxTimelineEntries {
-		return fmt.Errorf("detector timeline exceeds %d entries", maxTimelineEntries)
-	}
-	if err := validateClosureFailure(state); err != nil {
-		return err
-	}
-	if state.DetectorReviewRequired && (!state.IncidentOpen || !state.ResponderDone ||
-		state.DetectorReviewRequiredAt.IsZero() || state.DetectorReviewReason == "") {
-		return fmt.Errorf("detector review state is incomplete")
-	}
-	return nil
+	return wire.Validate(document)
 }
 
 // encodeControllerState is the one persisted encoding of controller state:
@@ -98,7 +84,7 @@ func encodeControllerState(state RuntimeState) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("project controller state: %w", err)
 	}
-	payload, err := canonicalProtoJSON(document)
+	payload, err := wire.Canonical(document)
 	if err != nil {
 		return nil, fmt.Errorf("encode controller state: %w", err)
 	}
@@ -107,7 +93,7 @@ func encodeControllerState(state RuntimeState) ([]byte, error) {
 
 func decodeControllerState(payload []byte) (RuntimeState, error) {
 	document := &contracts.ControllerState{}
-	if err := parseProtoJSON(payload, document); err != nil {
+	if err := wire.Unmarshal(payload, document); err != nil {
 		return RuntimeState{}, fmt.Errorf("decode controller state: %w", err)
 	}
 	return controllerStateState(document), nil
@@ -168,9 +154,6 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (RuntimeState, string, e
 		}
 		return RuntimeState{}, "", err
 	}
-	if err := state.Validate(); err != nil {
-		return RuntimeState{}, "", err
-	}
 	revision := configMap.Annotations[stateRevisionAnnotation]
 	if _, err := strconv.ParseUint(revision, 10, 64); err != nil {
 		return RuntimeState{}, "", fmt.Errorf("invalid controller state revision %q", revision)
@@ -184,9 +167,6 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (RuntimeState, string, e
 // returned revision. After an error nothing new is known to be durable, and
 // the next Save re-reads the ConfigMap instead of trusting the cache.
 func (s *ConfigMapStateStore) Save(ctx context.Context, state RuntimeState, expectedRevision string) (string, error) {
-	if err := state.Validate(); err != nil {
-		return "", err
-	}
 	payload, err := encodeControllerState(state)
 	if err != nil {
 		return "", err

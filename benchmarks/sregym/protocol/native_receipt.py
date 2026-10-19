@@ -12,9 +12,15 @@ from benchmarks.sregym.protocol.receipt import (
     SDO_MITIGATED,
     ProductionReceiptValidationError,
 )
+from sdo.contracts import OutcomeClassification
 
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
-_ALLOWED_CLASSIFICATIONS = {"success", "cleared_without_action", "external_recovery", "false_positive"}
+_ALLOWED_CLASSIFICATIONS = {
+    OutcomeClassification.SUCCESS,
+    OutcomeClassification.CLEARED_WITHOUT_ACTION,
+    OutcomeClassification.EXTERNAL_RECOVERY,
+    OutcomeClassification.FALSE_POSITIVE,
+}
 
 
 def _object(value: object, name: str) -> dict[str, Any]:
@@ -91,7 +97,11 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
     reflection = _commit(ledger.get("reflection_commit"), "reflection commit", optional=True)
     if _commit(outcome.get("repair_commit"), "outcome repair commit", optional=True) != proposal:
         raise ProductionReceiptValidationError("native outcome repair commit disagrees with broker proposal")
-    if request["repair_policy"] == "commit" and outcome["classification"] == "success" and proposal is None:
+    if (
+        request["repair_policy"] == "commit"
+        and outcome["classification"] == OutcomeClassification.SUCCESS
+        and proposal is None
+    ):
         raise ProductionReceiptValidationError("native commit repair lacks an accepted proposal")
     for name, expected in (
         ("proposal_commit", proposal),
@@ -107,7 +117,7 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
     if closure.get("detector_review_required_at"):
         raise ProductionReceiptValidationError("native closure entered detector review")
     _timestamp(closure.get("verified_at"), "verified_at")
-    if outcome["classification"] == "success":
+    if outcome["classification"] == OutcomeClassification.SUCCESS:
         if result.get("status") != "completed":
             raise ProductionReceiptValidationError("native successful outcome lacks completed responder")
         if not _items(result.get("confirmed_root_causes"), "confirmed root causes"):
@@ -160,9 +170,9 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
     classification = outcome["classification"]
     resolution = (
         SDO_MITIGATED
-        if classification == "success"
+        if classification == OutcomeClassification.SUCCESS
         else CLEARED_WITHOUT_SDO_ACTION
-        if classification == "cleared_without_action"
+        if classification == OutcomeClassification.CLEARED_WITHOUT_ACTION
         else EXTERNAL_RECOVERY
     )
     if receipt.get("resolution") != resolution:
@@ -184,9 +194,9 @@ def native_production_receipt(
     classification = outcome.get("classification")
     resolution = (
         SDO_MITIGATED
-        if classification == "success"
+        if classification == OutcomeClassification.SUCCESS
         else CLEARED_WITHOUT_SDO_ACTION
-        if classification == "cleared_without_action"
+        if classification == OutcomeClassification.CLEARED_WITHOUT_ACTION
         else EXTERNAL_RECOVERY
     )
     receipt: dict[str, Any] = {

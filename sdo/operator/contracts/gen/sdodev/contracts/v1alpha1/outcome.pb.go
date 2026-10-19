@@ -605,21 +605,21 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xca\v\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xee\f\n" +
 	"\rOutcomeRecord\x12.\n" +
-	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12(\n" +
-	"\vincident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
+	"\vincident_id\x18\x02 \x01(\tB\v\xbaH\br\x06\x10\x012\x02\\SR\n" +
 	"incidentId\x12#\n" +
 	"\rsource_commit\x18\x03 \x01(\tR\fsourceCommit\x12'\n" +
 	"\x0fdeployed_commit\x18\x04 \x01(\tR\x0edeployedCommit\x12X\n" +
 	"\x10detector_history\x18\x05 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x0fdetectorHistory\x12>\n" +
-	"\bfindings\x18\x06 \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\bfindings\x12-\n" +
-	"\x12surfaced_playbooks\x18\a \x03(\tR\x11surfacedPlaybooks\x12/\n" +
-	"\x13inspected_playbooks\x18\b \x03(\tR\x12inspectedPlaybooks\x12/\n" +
-	"\x13confirmed_playbooks\x18\t \x03(\tR\x12confirmedPlaybooks\x12-\n" +
+	"\bfindings\x18\x06 \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\bfindings\x12M\n" +
+	"\x12surfaced_playbooks\x18\a \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11surfacedPlaybooks\x12O\n" +
+	"\x13inspected_playbooks\x18\b \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x12inspectedPlaybooks\x12O\n" +
+	"\x13confirmed_playbooks\x18\t \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x12confirmedPlaybooks\x12M\n" +
 	"\x12rejected_playbooks\x18\n" +
-	" \x03(\tR\x11rejectedPlaybooks\x12+\n" +
-	"\x11applied_playbooks\x18\v \x03(\tR\x10appliedPlaybooks\x12a\n" +
+	" \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11rejectedPlaybooks\x12K\n" +
+	"\x11applied_playbooks\x18\v \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x10appliedPlaybooks\x12a\n" +
 	"\x15confirmed_root_causes\x18\f \x03(\v2-.sdodev.contracts.v1alpha1.ConfirmedRootCauseR\x13confirmedRootCauses\x12l\n" +
 	"\x1bfinal_health_detector_state\x18\r \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x18finalHealthDetectorState\x12\x9d\x01\n" +
 	"\x0eclassification\x18\x0e \x01(\tBu\xbaHrrpR\asuccessR\apartialR\x11external_recoveryR\x16cleared_without_actionR\x0efalse_positiveR\x0efalse_negativeR\x06failedR\tcancelledR\x0eclassification\x12(\n" +

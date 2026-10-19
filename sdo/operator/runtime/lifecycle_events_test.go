@@ -2,26 +2,27 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type memoryLifecycleSink struct{ events []LifecycleEvent }
+type memoryLifecycleSink struct{ events []*contracts.LifecycleEvent }
 
-func (s *memoryLifecycleSink) RecordLifecycle(event LifecycleEvent) error {
+func (s *memoryLifecycleSink) RecordLifecycle(event *contracts.LifecycleEvent) error {
 	s.events = append(s.events, event)
 	return nil
 }
 
-func (s *memoryLifecycleSink) byPhase(phase LifecyclePhase) []LifecycleEvent {
-	var result []LifecycleEvent
+func (s *memoryLifecycleSink) byPhase(phase string) []*contracts.LifecycleEvent {
+	var result []*contracts.LifecycleEvent
 	for _, event := range s.events {
 		if event.Event == phase {
 			result = append(result, event)
@@ -30,7 +31,7 @@ func (s *memoryLifecycleSink) byPhase(phase LifecyclePhase) []LifecycleEvent {
 	return result
 }
 
-func readLifecycleStream(t *testing.T, path string) []LifecycleEvent {
+func readLifecycleStream(t *testing.T, path string) []*contracts.LifecycleEvent {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -39,13 +40,13 @@ func readLifecycleStream(t *testing.T, path string) []LifecycleEvent {
 		}
 		t.Fatal(err)
 	}
-	var events []LifecycleEvent
+	var events []*contracts.LifecycleEvent
 	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
 		if line == "" {
 			continue
 		}
-		var event LifecycleEvent
-		if json.Unmarshal([]byte(line), &event) == nil {
+		event := &contracts.LifecycleEvent{}
+		if wire.DecodeLenientUnvalidated([]byte(line), event) == nil {
 			events = append(events, event)
 		}
 	}
@@ -144,7 +145,7 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 	awaitBrokerResult(t, controller.acknowledgmentResults)
 	controller.processBrokerCompletions()
 
-	wantPhases := []LifecyclePhase{
+	wantPhases := []string{
 		PhaseOpened, PhaseWorkspacePrepared, PhaseDispatched, PhaseResponderCompleted,
 		PhaseClosed, PhaseClosureCommitted, PhaseAcknowledged,
 	}
@@ -154,12 +155,12 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 			t.Fatalf("phase %q emitted %d times, want exactly 1: %#v", phase, len(got), lifecycle.events)
 		}
 		event := got[0]
-		if event.SchemaVersion != LifecycleSchemaVersion || event.EventID == "" ||
-			event.IncidentID != request.IncidentID || event.Application != "demo" || event.Namespace != "demo" {
+		if event.SchemaVersion != LifecycleSchemaVersion || event.EventId == "" ||
+			event.IncidentId != request.IncidentID || event.Application != "demo" || event.Namespace != "demo" {
 			t.Fatalf("phase %q is not well-formed: %#v", phase, event)
 		}
-		if want := lifecycleEventID(request.IncidentID, string(phase)); event.EventID != want {
-			t.Fatalf("phase %q id %q is not the content-addressed id %q", phase, event.EventID, want)
+		if want := lifecycleEventID(request.IncidentID, string(phase)); event.EventId != want {
+			t.Fatalf("phase %q id %q is not the content-addressed id %q", phase, event.EventId, want)
 		}
 	}
 	if committed := lifecycle.byPhase(PhaseClosureCommitted)[0]; committed.OutcomeCommit != "outcome-sha" ||
@@ -174,7 +175,7 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 	// Reconstruct the incident's full timeline from the emitted streams and
 	// assert the lifecycle phases appear in order.
 	timeline := ReconstructIncidentTimeline(request.IncidentID, lifecycle.events, firing.records)
-	var phaseOrder []LifecyclePhase
+	var phaseOrder []string
 	for _, entry := range timeline {
 		if entry.Source == "lifecycle" {
 			phaseOrder = append(phaseOrder, entry.Lifecycle.Event)
@@ -212,25 +213,25 @@ func TestLifecycleStreamRecordsSupersedeAndRelease(t *testing.T) {
 	drainRelease(t, controller)
 
 	superseded := lifecycle.byPhase(PhaseSuperseded)
-	if len(superseded) != 1 || superseded[0].IncidentID != first.IncidentID || superseded[0].SupersededBy == "" {
+	if len(superseded) != 1 || superseded[0].IncidentId != first.IncidentID || superseded[0].SupersededBy == "" {
 		t.Fatalf("parent supersede not recorded exactly once: %#v", lifecycle.events)
 	}
 	childID := superseded[0].SupersededBy
-	if superseded[0].EventID != lifecycleEventID(first.IncidentID, string(PhaseSuperseded), childID) {
+	if superseded[0].EventId != lifecycleEventID(first.IncidentID, string(PhaseSuperseded), childID) {
 		t.Fatalf("supersede id is not content-addressed over the parent and child: %#v", superseded[0])
 	}
 	released := lifecycle.byPhase(PhaseWorktreeReleased)
-	if len(released) != 1 || released[0].IncidentID != first.IncidentID {
+	if len(released) != 1 || released[0].IncidentId != first.IncidentID {
 		t.Fatalf("stranded parent worktree release not recorded exactly once: %#v", lifecycle.events)
 	}
-	var childOpened *LifecycleEvent
+	var childOpened *contracts.LifecycleEvent
 	for index := range lifecycle.events {
 		event := lifecycle.events[index]
-		if event.Event == PhaseOpened && event.IncidentID == childID {
-			childOpened = &lifecycle.events[index]
+		if event.Event == PhaseOpened && event.IncidentId == childID {
+			childOpened = event
 		}
 	}
-	if childOpened == nil || childOpened.ParentIncidentID != first.IncidentID || childOpened.FollowUpAttempt != 1 {
+	if childOpened == nil || childOpened.ParentIncidentId != first.IncidentID || childOpened.FollowUpAttempt != 1 {
 		t.Fatalf("follow-up open did not link its superseded parent: %#v", lifecycle.events)
 	}
 	// The parent's timeline reconstructs through its supersede; the child's is a
@@ -251,13 +252,10 @@ func TestLifecycleFileSinkIsIdempotentAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new sink: %v", err)
 	}
-	events := []LifecycleEvent{
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("inc", string(PhaseOpened)),
-			Event: PhaseOpened, IncidentID: "inc", RecordedAt: time.Unix(1, 0).UTC()},
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("inc", string(PhaseDispatched)),
-			Event: PhaseDispatched, IncidentID: "inc", RecordedAt: time.Unix(2, 0).UTC()},
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("inc", string(PhaseAcknowledged)),
-			Event: PhaseAcknowledged, IncidentID: "inc", RecordedAt: time.Unix(3, 0).UTC()},
+	events := []*contracts.LifecycleEvent{
+		testLifecycleEvent(PhaseOpened, "inc", 1),
+		testLifecycleEvent(PhaseDispatched, "inc", 2),
+		testLifecycleEvent(PhaseAcknowledged, "inc", 3),
 	}
 	for _, event := range events {
 		if err := sink.RecordLifecycle(event); err != nil {
@@ -296,24 +294,24 @@ func TestLifecycleFileSinkIsIdempotentAcrossReopen(t *testing.T) {
 // closed.
 func TestReconstructIncidentTimelineOrdersBothStreams(t *testing.T) {
 	at := func(sec int64) time.Time { return time.Unix(sec, 0).UTC() }
-	lifecycle := []LifecycleEvent{
-		{Event: PhaseAcknowledged, IncidentID: "inc", RecordedAt: at(3)},
-		{Event: PhaseOpened, IncidentID: "inc", RecordedAt: at(1)},
-		{Event: PhaseClosed, IncidentID: "inc", RecordedAt: at(3)},
-		{Event: PhaseDispatched, IncidentID: "inc", RecordedAt: at(1)}, // same tick as opened
-		{Event: PhaseOpened, IncidentID: "other", RecordedAt: at(1)},   // different incident, dropped
+	lifecycle := []*contracts.LifecycleEvent{
+		testLifecycleEvent(PhaseAcknowledged, "inc", 3),
+		testLifecycleEvent(PhaseOpened, "inc", 1),
+		testLifecycleEvent(PhaseClosed, "inc", 3),
+		testLifecycleEvent(PhaseDispatched, "inc", 1), // same tick as opened
+		testLifecycleEvent(PhaseOpened, "other", 1),   // different incident, dropped
 	}
-	firings := []FiringRecord{
-		{Event: FiringBatched, IncidentID: "inc", RecordedAt: at(2)},
-		{Event: FiringActivated, IncidentID: "other", RecordedAt: at(2)}, // dropped
+	firings := []*contracts.FiringRecord{
+		{Event: string(FiringBatched), IncidentId: "inc", RecordedAt: contractTimestamp(at(2))},
+		{Event: string(FiringActivated), IncidentId: "other", RecordedAt: contractTimestamp(at(2))}, // dropped
 	}
 	timeline := ReconstructIncidentTimeline("inc", lifecycle, firings)
 	var kinds []string
 	for _, entry := range timeline {
-		if entry.Lifecycle != nil && entry.Lifecycle.IncidentID != "inc" {
+		if entry.Lifecycle != nil && entry.Lifecycle.IncidentId != "inc" {
 			t.Fatalf("reconstruction leaked another incident: %#v", entry.Lifecycle)
 		}
-		if entry.Firing != nil && entry.Firing.IncidentID != "inc" {
+		if entry.Firing != nil && entry.Firing.IncidentId != "inc" {
 			t.Fatalf("reconstruction leaked another incident's firing: %#v", entry.Firing)
 		}
 		kinds = append(kinds, entry.Kind)
@@ -327,7 +325,15 @@ func TestReconstructIncidentTimelineOrdersBothStreams(t *testing.T) {
 	}
 }
 
-func equalPhases(got []LifecyclePhase, want []LifecyclePhase) bool {
+// testLifecycleEvent is the smallest event the LifecycleEvent contract accepts.
+func testLifecycleEvent(phase string, incidentID string, second int64) *contracts.LifecycleEvent {
+	return &contracts.LifecycleEvent{
+		SchemaVersion: LifecycleSchemaVersion, EventId: lifecycleEventID(incidentID, phase),
+		Event: phase, IncidentId: incidentID, RecordedAt: contractTimestamp(time.Unix(second, 0).UTC()),
+	}
+}
+
+func equalPhases(got []string, want []string) bool {
 	if len(got) != len(want) {
 		return false
 	}
@@ -342,11 +348,11 @@ func equalPhases(got []LifecyclePhase, want []LifecyclePhase) bool {
 // assertLifecycleTransportNeutral fails if any emitted event carries a benchmark
 // or submission term, guarding sdo/operator/runtime's transport neutrality: the
 // stream is derived only from the controller's own lifecycle state.
-func assertLifecycleTransportNeutral(t *testing.T, events []LifecycleEvent) {
+func assertLifecycleTransportNeutral(t *testing.T, events []*contracts.LifecycleEvent) {
 	t.Helper()
 	forbidden := []string{"verdict", "benchmark", "sregym", "resolution", "oracle", "submission", "receipt"}
 	for _, event := range events {
-		payload, err := json.Marshal(event)
+		payload, err := wire.Marshal(event)
 		if err != nil {
 			t.Fatalf("marshal lifecycle event: %v", err)
 		}

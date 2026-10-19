@@ -9,10 +9,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/wire"
 	"sort"
 	"strings"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 )
@@ -31,9 +31,9 @@ func (s *JSONStore) Put(ctx context.Context, record *contracts.OutcomeRecord) (O
 	if record == nil {
 		return Outcome{}, fmt.Errorf("outcome record is required")
 	}
-	document, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(record)
+	document, err := wire.MarshalFull(record)
 	if err != nil {
-		return Outcome{}, fmt.Errorf("encode outcome contract: %w", err)
+		return Outcome{}, err
 	}
 	return s.putDocument(ctx, document)
 }
@@ -210,18 +210,23 @@ func (s *JSONStore) legacyOutcomes(ctx context.Context) ([]Outcome, error) {
 }
 
 func normalizeLegacy(data []byte) (Outcome, error) {
-	outcome, err := parse(data)
-	if err != nil {
+	record := new(contracts.OutcomeRecord)
+	if err := wire.DecodeLenientUnvalidated(data, record); err != nil {
 		return Outcome{}, err
 	}
-	ids, err := layout.PlaybookIDs(outcome.Record.GetAppliedPlaybooks())
+	for _, list := range []*[]string{
+		&record.SurfacedPlaybooks, &record.InspectedPlaybooks, &record.ConfirmedPlaybooks,
+		&record.RejectedPlaybooks, &record.AppliedPlaybooks,
+	} {
+		ids, err := layout.PlaybookIDs(*list)
+		if err != nil {
+			return Outcome{}, err
+		}
+		*list = ids
+	}
+	document, err := wire.MarshalFull(record)
 	if err != nil {
 		return Outcome{}, err
-	}
-	outcome.Record.AppliedPlaybooks = ids
-	document, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(outcome.Record)
-	if err != nil {
-		return Outcome{}, fmt.Errorf("encode outcome contract: %w", err)
 	}
 	return parse(document)
 }
@@ -255,19 +260,8 @@ func parse(document []byte) (Outcome, error) {
 		return Outcome{}, fmt.Errorf("outcome must be a JSON object")
 	}
 	record := new(contracts.OutcomeRecord)
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(document, record); err != nil {
-		return Outcome{}, fmt.Errorf("invalid outcome contract: %w", err)
-	}
-	if record.GetSchemaVersion() != 1 {
-		return Outcome{}, fmt.Errorf("unsupported outcome schema version %d", record.GetSchemaVersion())
-	}
-	if strings.TrimSpace(record.GetIncidentId()) == "" {
-		return Outcome{}, fmt.Errorf("incident ID is required")
-	}
-	switch record.GetClassification() {
-	case "success", "partial", "external_recovery", "cleared_without_action", "false_positive", "false_negative", "failed", "cancelled":
-	default:
-		return Outcome{}, fmt.Errorf("unknown outcome classification %q", record.GetClassification())
+	if err := wire.UnmarshalLenient(document, record); err != nil {
+		return Outcome{}, err
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, bytes.TrimSpace(document), "", "  "); err != nil {

@@ -27,6 +27,9 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+# The built-in agent manifests are the single source for task types and
+# launch commands; the controller reads them from worker_registry.DefaultDirectory.
+COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
 ENV HOME=/tmp \
     GOCACHE=/tmp/go-cache \
     GOMODCACHE=/go/pkg/mod \

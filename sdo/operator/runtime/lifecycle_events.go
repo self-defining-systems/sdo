@@ -1,10 +1,12 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
 // The incident lifecycle event stream makes SDO's internal lifecycle coherently
@@ -24,50 +26,52 @@ import (
 // controller-internal fact (incident ids, git commit shas, worktree paths,
 // finding keys); nothing here is transport- or benchmark-specific.
 
+// LifecycleSchemaVersion is the const rule of LifecycleEvent.schema_version.
+var LifecycleSchemaVersion = wire.StringConst(&contracts.LifecycleEvent{}, "schema_version")
+
 const (
-	LifecycleSchemaVersion = "sdo.lifecycle-event/v1"
 	// DefaultLifecycleStreamBytes bounds each stream file; with one rotated
 	// predecessor the stream never exceeds twice this size.
 	DefaultLifecycleStreamBytes int64 = 4 << 20
 )
 
-// LifecyclePhase names one incident lifecycle transition. Each (incident, phase)
+// The lifecycle phases name the values of LifecycleEvent.event, whose permitted
+// set is the `in` rule in telemetry.proto (TestLifecyclePhasesMatchProto).
+// A phase names one incident lifecycle transition. Each (incident, phase)
 // pair occurs at most once per incident, so an event id built from them is
 // stable and a replay after a crash re-derives the identical id.
-type LifecyclePhase string
-
 const (
 	// PhaseOpened: a batch of findings opened a new incident (or follow-up).
-	PhaseOpened LifecyclePhase = "incident_opened"
+	PhaseOpened = "incident_opened"
 	// PhaseAdmissionDeferred: a ready batch was held under resource pressure
 	// (load or release-backlog high watermark) before any worktree or dispatch.
-	PhaseAdmissionDeferred LifecyclePhase = "admission_deferred"
+	PhaseAdmissionDeferred = "admission_deferred"
 	// PhaseAdmissionResumed: a held incident cleared the low watermarks and
 	// proceeded to dispatch.
-	PhaseAdmissionResumed LifecyclePhase = "admission_resumed"
+	PhaseAdmissionResumed = "admission_resumed"
 	// PhaseWorkspacePrepared: the broker prepared the incident's isolated worktree.
-	PhaseWorkspacePrepared LifecyclePhase = "workspace_prepared"
+	PhaseWorkspacePrepared = "workspace_prepared"
 	// PhaseDispatched: the responder was launched for the incident.
-	PhaseDispatched LifecyclePhase = "responder_dispatched"
+	PhaseDispatched = "responder_dispatched"
 	// PhaseResponderCompleted: the responder finished (successfully or as a terminal Job failure).
-	PhaseResponderCompleted LifecyclePhase = "responder_completed"
+	PhaseResponderCompleted = "responder_completed"
 	// PhaseSuperseded: a follow-up incident replaced this one before it closed.
-	PhaseSuperseded LifecyclePhase = "incident_superseded"
+	PhaseSuperseded = "incident_superseded"
 	// PhaseWorktreeReleased: a stranded, superseded worktree was reaped by the broker.
-	PhaseWorktreeReleased LifecyclePhase = "worktree_released"
+	PhaseWorktreeReleased = "worktree_released"
 	// PhaseDetectorReviewRequired: health did not clear within the verification window.
-	PhaseDetectorReviewRequired LifecyclePhase = "detector_review_required"
+	PhaseDetectorReviewRequired = "detector_review_required"
 	// PhaseClosed: the controller cut the incident closure after verifying health.
-	PhaseClosed LifecyclePhase = "incident_closed"
+	PhaseClosed = "incident_closed"
 	// PhaseClosureCommitted: the broker committed the authoritative outcome for the closure.
-	PhaseClosureCommitted LifecyclePhase = "closure_committed"
+	PhaseClosureCommitted = "closure_committed"
 	// PhaseAcknowledged: the committed closure was acknowledged and the incident cleared.
-	PhaseAcknowledged LifecyclePhase = "incident_acknowledged"
+	PhaseAcknowledged = "incident_acknowledged"
 )
 
 // phaseRank orders phases that can share a timestamp so a reconstructed timeline
 // is deterministic. It is the natural lifecycle order.
-func (p LifecyclePhase) rank() int {
+func phaseRank(p string) int {
 	switch p {
 	case PhaseOpened:
 		return 0
@@ -98,59 +102,11 @@ func (p LifecyclePhase) rank() int {
 	}
 }
 
-// LifecycleEvent is one line of the incident lifecycle stream. The envelope
-// (schema version, event id, event, recorded-at, application, namespace,
-// incident id) mirrors FiringRecord so the two streams join cleanly; the
-// remaining fields are phase-specific and omitted when empty.
-type LifecycleEvent struct {
-	SchemaVersion       string         `json:"schema_version"`
-	EventID             string         `json:"event_id"`
-	Event               LifecyclePhase `json:"event"`
-	RecordedAt          time.Time      `json:"recorded_at"`
-	EvaluationIteration int            `json:"evaluation_iteration,omitempty"`
-	Application         string         `json:"application"`
-	Namespace           string         `json:"namespace"`
-	IncidentID          string         `json:"incident_id"`
-
-	// ParentIncidentID links a follow-up (on PhaseOpened) and a superseded parent
-	// (on PhaseSuperseded, naming the child in SupersededBy) into one chain.
-	ParentIncidentID string `json:"parent_incident_id,omitempty"`
-	FollowUpAttempt  int    `json:"follow_up_attempt,omitempty"`
-	SupersededBy     string `json:"superseded_by,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-
-	// Opened describes the batch that opened the incident. SurfacedPlaybooks
-	// contains logical playbook IDs.
-	FindingKeys       []string `json:"finding_keys,omitempty"`
-	SurfacedPlaybooks []string `json:"surfaced_playbooks,omitempty"`
-
-	// Worktree/BaseCommit record the prepared isolated worktree; the commit
-	// fields link a committed closure to its accepted outcome.
-	Worktree         string `json:"worktree,omitempty"`
-	BaseCommit       string `json:"base_commit,omitempty"`
-	ProposalCommit   string `json:"proposal_commit,omitempty"`
-	OutcomeCommit    string `json:"outcome_commit,omitempty"`
-	ReflectionCommit string `json:"reflection_commit,omitempty"`
-
-	// Closed/review summarize verification without any benchmark verdict.
-	HealthClearedAt        *time.Time `json:"health_cleared_at,omitempty"`
-	DetectorReviewRequired bool       `json:"detector_review_required,omitempty"`
-	DispatchError          bool       `json:"dispatch_error,omitempty"`
-
-	// Load/backpressure fields describe an admission decision under resource
-	// pressure (admission_deferred / admission_resumed). They carry only
-	// controller-internal load facts: the gauge reading, the governing watermark,
-	// and the stranded-worktree release backlog; never a benchmark verdict.
-	LoadPressure   float64 `json:"load_pressure,omitempty"`
-	LoadThreshold  float64 `json:"load_threshold,omitempty"`
-	ReleaseBacklog int     `json:"release_backlog,omitempty"`
-}
-
 // LifecycleSink receives lifecycle events. Record must be idempotent in
-// LifecycleEvent.EventID: a controller that crashes between emitting an event
+// LifecycleEvent.event_id: a controller that crashes between emitting an event
 // and persisting its state replays the same transition with the same id.
 type LifecycleSink interface {
-	RecordLifecycle(LifecycleEvent) error
+	RecordLifecycle(*contracts.LifecycleEvent) error
 }
 
 // lifecycleEventID derives a content-addressed id from an incident's id, the
@@ -176,15 +132,12 @@ func NewFileLifecycleSink(path string, maxBytes int64) (*FileLifecycleSink, erro
 	return &FileLifecycleSink{stream: stream}, nil
 }
 
-func (s *FileLifecycleSink) RecordLifecycle(event LifecycleEvent) error {
-	if event.EventID == "" {
-		return fmt.Errorf("lifecycle event has no event id")
-	}
-	payload, err := json.Marshal(event)
+func (s *FileLifecycleSink) RecordLifecycle(event *contracts.LifecycleEvent) error {
+	payload, err := wire.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("encode lifecycle event: %w", err)
+		return err
 	}
-	return s.stream.append(event.EventID, payload)
+	return s.stream.append(event.GetEventId(), payload)
 }
 
 // StartFresh archives a stream left by an earlier controller lifecycle.
@@ -202,16 +155,16 @@ func (c *Controller) SetLifecycleSink(sink LifecycleSink) {
 // emitLifecycleLocked records one lifecycle transition. Callers hold c.mu; the
 // sink takes its own lock, so there is no lock-order hazard. A nil sink makes
 // this a no-op, matching emitFiringLocked.
-func (c *Controller) emitLifecycleLocked(event LifecycleEvent) {
+func (c *Controller) emitLifecycleLocked(event *contracts.LifecycleEvent) {
 	if c.lifecycleSink == nil {
 		return
 	}
 	event.SchemaVersion = LifecycleSchemaVersion
 	event.Application = c.config.Application
 	event.Namespace = c.config.Namespace
-	event.EvaluationIteration = c.evaluationIteration
-	if event.EventID == "" {
-		event.EventID = lifecycleEventID(event.IncidentID, string(event.Event))
+	event.EvaluationIteration = int32(c.evaluationIteration)
+	if event.EventId == "" {
+		event.EventId = lifecycleEventID(event.IncidentId, event.Event)
 	}
 	if err := c.lifecycleSink.RecordLifecycle(event); err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("record incident lifecycle event: %w", err))
@@ -227,8 +180,8 @@ type TimelineEntry struct {
 	Kind    string
 	// Source is "lifecycle" or "firing".
 	Source    string
-	Lifecycle *LifecycleEvent
-	Firing    *FiringRecord
+	Lifecycle *contracts.LifecycleEvent
+	Firing    *contracts.FiringRecord
 }
 
 // ReconstructIncidentTimeline joins the lifecycle and firing streams for one
@@ -238,29 +191,27 @@ type TimelineEntry struct {
 // Follow-up children are distinct incident ids; a caller walks the chain by
 // following ParentIncidentID / SupersededBy on the reconstructed events.
 func ReconstructIncidentTimeline(
-	incidentID string, lifecycle []LifecycleEvent, firings []FiringRecord,
+	incidentID string, lifecycle []*contracts.LifecycleEvent, firings []*contracts.FiringRecord,
 ) []TimelineEntry {
 	var entries []TimelineEntry
 	for index := range lifecycle {
 		event := lifecycle[index]
-		if event.IncidentID != incidentID {
+		if event.GetIncidentId() != incidentID {
 			continue
 		}
-		cloned := event
 		entries = append(entries, TimelineEntry{
-			At: event.RecordedAt, EventID: event.EventID, Kind: string(event.Event),
-			Source: "lifecycle", Lifecycle: &cloned,
+			At: event.GetRecordedAt().AsTime(), EventID: event.GetEventId(), Kind: event.GetEvent(),
+			Source: "lifecycle", Lifecycle: event,
 		})
 	}
 	for index := range firings {
 		record := firings[index]
-		if record.IncidentID != incidentID {
+		if record.GetIncidentId() != incidentID {
 			continue
 		}
-		cloned := record
 		entries = append(entries, TimelineEntry{
-			At: record.RecordedAt, EventID: record.EventID, Kind: string(record.Event),
-			Source: "firing", Firing: &cloned,
+			At: record.GetRecordedAt().AsTime(), EventID: record.GetEventId(), Kind: record.GetEvent(),
+			Source: "firing", Firing: record,
 		})
 	}
 	sort.SliceStable(entries, func(left int, right int) bool {
@@ -281,8 +232,8 @@ func ReconstructIncidentTimeline(
 // opened and before it closes, which is the order the controller produced them.
 func timelineRank(entry TimelineEntry) int {
 	if entry.Lifecycle != nil {
-		return entry.Lifecycle.Event.rank()
+		return phaseRank(entry.Lifecycle.GetEvent())
 	}
 	// Any firing record: between opened and responder_completed, at the dispatch rank.
-	return PhaseDispatched.rank()
+	return phaseRank(PhaseDispatched)
 }

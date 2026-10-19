@@ -6,32 +6,33 @@ their typed incident payloads to this agent's existing Python implementation.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
+from google.protobuf import json_format
+
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
 from sdo.contracts import (
+    SCHEMA_VERSION,
     AgentResult,
     AgentTask,
     IncidentRequest,
     IncidentResult,
     LateFindingsPull,
+    LateFindingsReceipt,
     parse_json,
     to_canonical_json,
+    validate,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-TASK_TYPE = "incident-response"
-AGENT_ID = "sdo-responder"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
-DEFAULT_LATE_FINDINGS_RECEIPTS = Path("/tmp/sdo-late-findings-pulls.jsonl")
 
 
 class ResultPublisher(Protocol):
@@ -39,7 +40,10 @@ class ResultPublisher(Protocol):
 
 
 def _late_findings_pull(incident_id: str) -> LateFindingsPull | None:
-    path = Path(os.environ.get("SDO_LATE_FINDINGS_RECEIPTS_PATH", str(DEFAULT_LATE_FINDINGS_RECEIPTS)))
+    raw_path = os.environ.get("SDO_LATE_FINDINGS_RECEIPTS_PATH")
+    if not raw_path:
+        return None
+    path = Path(raw_path)
     try:
         size = path.stat().st_size
     except FileNotFoundError:
@@ -57,24 +61,18 @@ def _late_findings_pull(incident_id: str) -> LateFindingsPull | None:
     last_digest = ""
     for line in rows:
         try:
-            row = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"late-findings receipt is malformed JSON: {exc}") from exc
-        if not isinstance(row, dict) or set(row) != {"incident_id", "detector_ids", "playbook_ids", "report_digest"}:
-            raise ValueError("late-findings receipt has an invalid shape")
-        if row["incident_id"] != incident_id:
+            receipt = cast("LateFindingsReceipt", parse_json(line, LateFindingsReceipt()))
+        except json_format.ParseError as exc:
+            raise ValueError(f"late-findings receipt is malformed: {exc}") from exc
+        try:
+            validate(receipt)
+        except ValueError as exc:
+            raise ValueError(f"late-findings receipt is invalid: {exc}") from exc
+        if receipt.incident_id != incident_id:
             raise ValueError("late-findings receipt names another incident")
-        for field, collected in (("detector_ids", detector_ids), ("playbook_ids", playbook_ids)):
-            values = row[field]
-            if not isinstance(values, list) or any(
-                not isinstance(value, str) or not value or "/" in value for value in values
-            ):
-                raise ValueError(f"late-findings receipt has invalid {field}")
-            collected.update(values)
-        digest = row["report_digest"]
-        if not isinstance(digest, str) or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
-            raise ValueError("late-findings receipt has invalid report digest")
-        last_digest = digest
+        detector_ids.update(receipt.detector_ids)
+        playbook_ids.update(receipt.playbook_ids)
+        last_digest = receipt.report_digest
     if not rows:
         return None
     return LateFindingsPull(
@@ -94,10 +92,7 @@ def run_worker_task(
     executor: Callable[[IncidentRequest], IncidentResult] = execute_incident,
 ) -> AgentResult:
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id:
-        raise ValueError("worker task has invalid version or task ID")
-    if task.agent_id != AGENT_ID or task.task_type != TASK_TYPE:
-        raise ValueError(f"worker cannot handle agent {task.agent_id!r} task type {task.task_type!r}")
+    validate(task)
     request = IncidentRequest()
     if not task.request.Unpack(request):
         raise ValueError("worker task request is not an IncidentRequest")
@@ -122,7 +117,7 @@ def run_worker_task(
     if late_findings_pull is not None:
         result.late_findings_pull.CopyFrom(late_findings_pull)
     envelope = AgentResult(
-        schema_version="sdo.dev/v1alpha1",
+        schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status=result.status,
         proposal_id=task.workspace.proposal_id,

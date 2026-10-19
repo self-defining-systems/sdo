@@ -68,7 +68,7 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 	config := testControllerConfig()
 	config.RepositoryWorktree = "/workspace/demo"
 	controller := durabilityController(t, client, config, KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", CredentialsSecret: "sdo-codex",
 		PollInterval: time.Millisecond,
 	})
@@ -317,6 +317,7 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 	}
 	start := time.Unix(0, 0)
 	request := controller.incidentRequest(start, []sdk.Finding{stateFinding("fault")})
+	request.DetectorHistory = testDetectorHistory(start)
 	controller.mu.Lock()
 	controller.pendingClosure = &IncidentClosure{
 		Request: request, Result: cloneIncidentResultPointer(completedResult(request.IncidentID)),

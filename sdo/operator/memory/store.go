@@ -15,7 +15,7 @@ var ErrConflict = errors.New("outcome already exists with different content")
 // Outcome exposes the typed logical record. The repository adapter privately
 // retains the source document so unknown historical fields survive migration.
 type Outcome struct {
-	Record        *contracts.OutcomeRecord
+	Record         *contracts.OutcomeRecord
 	SchemaVersion  int
 	IncidentID     string
 	Classification string

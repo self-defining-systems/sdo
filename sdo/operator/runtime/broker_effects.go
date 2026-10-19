@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 type WorkspaceEffect struct {
@@ -262,8 +263,8 @@ func (c *Controller) handleReleaseCompletion(completion releaseCompletion) {
 		}
 	}
 	c.pendingReleases = kept
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseWorktreeReleased, RecordedAt: c.clock(), IncidentID: completion.incidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseWorktreeReleased, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.incidentID,
 		Reason: "superseded",
 	})
 	c.mu.Unlock()
@@ -287,8 +288,8 @@ func (c *Controller) handleWorkspaceCompletion(completion workspaceCompletion) {
 	c.currentIncidentRequest.RepositoryWorktree = completion.workspace.Worktree
 	c.currentIncidentRequest.RepositoryBaseCommit = completion.workspace.BaseCommit
 	c.dispatchState = "pending"
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseWorkspacePrepared, RecordedAt: c.clock(), IncidentID: completion.workspace.IncidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseWorkspacePrepared, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.workspace.IncidentID,
 		Worktree: completion.workspace.Worktree, BaseCommit: completion.workspace.BaseCommit,
 	})
 	c.mu.Unlock()
@@ -322,8 +323,8 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 	c.closureReceipt = cloneClosureReceipt(&completion.receipt)
 	c.closureFailure = nil
 	c.closureState = "committed"
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseClosureCommitted, RecordedAt: c.clock(), IncidentID: completion.receipt.IncidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseClosureCommitted, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.receipt.IncidentID,
 		Worktree: completion.receipt.Worktree, BaseCommit: completion.receipt.BaseCommit,
 		ProposalCommit: completion.receipt.ProposalCommit, OutcomeCommit: completion.receipt.OutcomeCommit,
 		ReflectionCommit: completion.receipt.ReflectionCommit,
@@ -341,8 +342,8 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 	}
 	if c.closureReceipt != nil {
 		c.lastAcknowledgedIncidentID = c.closureReceipt.IncidentID
-		c.emitLifecycleLocked(LifecycleEvent{
-			Event: PhaseAcknowledged, RecordedAt: c.clock(), IncidentID: c.closureReceipt.IncidentID,
+		c.emitLifecycleLocked(&contracts.LifecycleEvent{
+			Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: c.closureReceipt.IncidentID,
 			OutcomeCommit: c.closureReceipt.OutcomeCommit,
 		})
 	}

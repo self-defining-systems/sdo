@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/worker_registry/registrytest"
 )
 
 type reflectionTaskExecutorFunc func(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
@@ -21,9 +22,9 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 	if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
-	w := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
+	w := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: store, Timeout: time.Minute}
 	w.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
-		if task.TaskType != "outcome-reflection" || task.Workspace.CheckoutPath != "/proposal" {
+		if task.TaskType != reflectionTaskType(t) || task.Workspace.CheckoutPath != "/proposal" {
 			t.Fatalf("wrong task: %+v", task)
 		}
 		request := &contracts.ReflectionRequest{}
@@ -52,7 +53,7 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
 	store := memory.NewJSONStore(t.TempDir())
 	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
-	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: store, Timeout: time.Minute, SessionMode: "resume", Guidance: "generalize-spec"}
+	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: store, Timeout: time.Minute, SessionMode: "resume", Guidance: "generalize-spec"}
 	called := false
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		called = true
@@ -75,15 +76,27 @@ func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
 		}
 		return worker.Executor, nil
 	}
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err == nil || called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome"); err == nil || called {
 		t.Fatalf("resume without accepted session dispatched: %v", err)
 	}
 	closure.Result.ResponderSessionID = "../escape"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err == nil || called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome"); err == nil || called {
 		t.Fatalf("invalid session token dispatched: %v", err)
 	}
 	closure.Result.ResponderSessionID = "session-123"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err != nil || !called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome"); err != nil || !called {
 		t.Fatalf("valid session was not dispatched: %v", err)
 	}
+}
+
+// reflectionTaskType is the task type the built-in manifests register for
+// reflection requests.
+func reflectionTaskType(t testing.TB) string {
+	t.Helper()
+	registry := registrytest.BuiltIn(t)
+	agent, err := registry.AgentFor(&contracts.ReflectionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registrytest.TaskType(t, agent, &contracts.ReflectionRequest{})
 }

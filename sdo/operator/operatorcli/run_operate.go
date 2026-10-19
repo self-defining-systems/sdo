@@ -10,41 +10,20 @@ import (
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/worker_registry"
 )
 
-const protocolTypePrefix = "type.googleapis.com/sdodev.contracts.v1alpha1."
-
-func lifecycleRegistration(image, id, module string, taskTypes ...[3]string) *contracts.AgentRegistration {
-	capabilities := make([]*contracts.AgentCapability, 0, len(taskTypes))
-	for _, task := range taskTypes {
-		capabilities = append(capabilities, &contracts.AgentCapability{
-			TaskType: task[0], RequestTypeUrl: protocolTypePrefix + task[1], ResultTypeUrl: protocolTypePrefix + task[2],
-		})
-	}
-	return &contracts.AgentRegistration{
-		SchemaVersion: worker_registry.SchemaVersion, AgentId: id, Capabilities: capabilities,
-		Launch: &contracts.AgentRegistration_KubernetesJob{KubernetesJob: &contracts.KubernetesJobLaunch{
-			Image: image, Command: []string{"python3", "-m", module},
-		}},
-	}
-}
-
-func lifecycleRegistry(config OperateConfig) (*worker_registry.Registry, error) {
+// lifecycleRegistry loads the operator's agent registry: the mounted external
+// manifests when configured, otherwise the built-in ones from builtInDirectory
+// (empty selects the controller image's copy).
+func lifecycleRegistry(config OperateConfig, builtInDirectory string) (*worker_registry.Registry, error) {
 	if config.RegistrationDirectory != "" {
 		return worker_registry.LoadDirectory(config.RegistrationDirectory)
 	}
-	return worker_registry.New(
-		lifecycleRegistration(config.Install.ResponderImage, config.Lifecycle.DeployerAgentID, "sdo.agents.deployer.worker",
-			[3]string{lifecycle.SourceDeploymentTaskType, "SourceDeploymentRequest", "SourceDeploymentResult"},
-			[3]string{lifecycle.ArchitectureTaskType, "ArchitectureRequest", "ArchitectureResult"}),
-		lifecycleRegistration(config.Install.ResponderImage, config.Lifecycle.JudgeAgentID, "sdo.agents.health_judge.worker",
-			[3]string{lifecycle.HealthJudgeTaskType, "HealthJudgeRequest", "HealthJudgeResult"}),
-	)
+	return worker_registry.LoadBuiltIn(builtInDirectory, config.Install.ResponderImage)
 }
 
 // RunOperate performs bootstrap from the accepted PVC checkout. Every worker
@@ -63,7 +42,7 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil || proposalSubPath == "." || proposalSubPath == ".." || filepath.IsAbs(proposalSubPath) || len(proposalSubPath) >= 3 && proposalSubPath[:3] == "../" {
 		return lifecycle.Result{}, errors.New("broker proposals must be inside the shared repository mount")
 	}
-	registry, err := lifecycleRegistry(config)
+	registry, err := lifecycleRegistry(config, "")
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("load lifecycle agents: %w", err)
 	}

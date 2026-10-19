@@ -57,7 +57,7 @@ func TestControllerAttachesStateChangesAndBaselinesOnlyHealthyEvaluations(t *tes
 		len(baseline.asked) == 0 || !baseline.asked[0].Equal(start.Add(2*interval)) {
 		t.Fatalf("the dispatched request must carry the state diff taken when the incident opened: %+v", request.StateChanges)
 	}
-	if err := request.Validate(); err != nil {
+	if err := validateIncidentRequest(request); err != nil {
 		t.Fatalf("a request with state changes must validate: %v", err)
 	}
 }

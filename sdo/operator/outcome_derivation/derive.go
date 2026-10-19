@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -105,7 +106,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		DiagnosisVerification: verifications,
 	}
 	reflect := false
-	if classification == "success" {
+	if classification == outcomeclass.Success {
 		for _, verification := range verifications {
 			if verification.Verdict == "confirmed" {
 				reflect = true
@@ -149,18 +150,18 @@ func difference(left, right []string) []string {
 func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool, verifications []*contractsv1alpha1.DiagnosisVerification) string {
 	result := closure.GetResult()
 	if closure.GetRequest() == nil {
-		return "failed"
+		return outcomeclass.Failed
 	}
 	// The controller owns the missed-fault flag in prior Python closures. This
 	// proto does not carry it; no negative claim is inferred from its absence.
 	if closure.GetDispatchError() != "" || result == nil || result.GetStatus() == "failed" {
-		return "failed"
+		return outcomeclass.Failed
 	}
 	if !healthVerified {
 		if result.GetStatus() == "cancelled" {
-			return "cancelled"
+			return outcomeclass.Cancelled
 		}
-		return "partial"
+		return outcomeclass.Partial
 	}
 	if repairCommit == "" && (result.GetStatus() == "completed" || result.GetStatus() == "cancelled") {
 		hadSuccessfulAction := false
@@ -171,14 +172,14 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 			}
 		}
 		if !hadSuccessfulAction {
-			return "cleared_without_action"
+			return outcomeclass.ClearedWithoutAction
 		}
 	}
 	if result.GetStatus() == "cancelled" {
-		return "cancelled"
+		return outcomeclass.Cancelled
 	}
 	if len(result.GetConfirmedRootCauses()) == 0 {
-		return "false_positive"
+		return outcomeclass.FalsePositive
 	}
 	if len(verifications) > 0 {
 		attributed := false
@@ -189,8 +190,8 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 			}
 		}
 		if !attributed {
-			return "external_recovery"
+			return outcomeclass.ExternalRecovery
 		}
 	}
-	return "success"
+	return outcomeclass.Success
 }

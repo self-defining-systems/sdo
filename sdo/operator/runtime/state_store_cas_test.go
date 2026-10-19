@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -79,7 +80,7 @@ func equalVerbs(got []string, want ...string) bool {
 func historyState(detectorIDs ...string) RuntimeState {
 	state := RuntimeState{Version: RuntimeStateVersion}
 	for _, detectorID := range detectorIDs {
-		state.History = append(state.History, DetectorEvaluation{DetectorID: detectorID})
+		state.History = append(state.History, DetectorEvaluation{DetectorID: detectorID, EvaluatedAt: time.Unix(1, 0).UTC(), Status: DetectorEvaluationFiring})
 	}
 	return state
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
+	"sdo.dev/operator/contracts/wire"
 	"strings"
 	"syscall"
 	"time"
@@ -110,11 +112,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 	if n.Repository == nil || n.Deriver == nil || n.ResponderBackend == "" || n.ResponderModel == "" {
 		return ClosureReceipt{}, errors.New("native broker requires repository, outcome deriver, and responder identity")
 	}
-	if err := closure.Request.Validate(); err != nil {
+	if err := validateIncidentRequest(closure.Request); err != nil {
 		return ClosureReceipt{}, fmt.Errorf("invalid closure request: %w", err)
 	}
 	if closure.Result != nil {
-		if err := closure.Result.ValidateFor(closure.Request); err != nil {
+		if err := validateIncidentResultFor(*closure.Result, closure.Request); err != nil {
 			return ClosureReceipt{}, fmt.Errorf("invalid responder result: %w", err)
 		}
 		if pull := closure.Result.LateFindingsPull; pull != nil {
@@ -192,7 +194,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if derived.Record == nil || derived.Record.GetIncidentId() != id {
 				return errors.New("outcome deriver returned an invalid typed record")
 			}
-			if derived.RequiresReflection && derived.Record.GetClassification() != "success" {
+			if derived.RequiresReflection && derived.Record.GetClassification() != outcomeclass.Success {
 				return errors.New("outcome reflection requires successful classification")
 			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
@@ -567,7 +569,7 @@ func (n NativeIncidentBroker) withLock(fn func() error) error {
 // recovery step; there is deliberately no legacy decoder.
 func parseLedger(path string, data []byte) (*contracts.BrokerLedger, error) {
 	ledger := &contracts.BrokerLedger{}
-	if err := parseProtoJSON(data, ledger); err != nil {
+	if err := wire.Unmarshal(data, ledger); err != nil {
 		if isPreCutoverFormat(err) {
 			return nil, fmt.Errorf("broker ledger %s predates the ProtoJSON cutover and cannot be read (%v); archive or remove the ledger file, then restart the controller", path, err)
 		}
@@ -598,7 +600,7 @@ func (n NativeIncidentBroker) readLedger(incidentID string) (*contracts.BrokerLe
 }
 
 func (n NativeIncidentBroker) saveLedger(ledger *contracts.BrokerLedger) error {
-	data, err := canonicalProtoJSON(ledger)
+	data, err := wire.Canonical(ledger)
 	if err != nil {
 		return err
 	}

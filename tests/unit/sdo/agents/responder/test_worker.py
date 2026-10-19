@@ -18,7 +18,7 @@ class RecordingPublisher:
         self.published = (name, key, payload)
 
 
-def _task(path: Path, *, task_type: str = "incident-response") -> AgentTask:
+def _task(path: Path) -> AgentTask:
     request = parse_json((FIXTURES / "incident_request.json").read_text(), IncidentRequest())
     request.memory_snapshot.accepted_commit = request.repository_base_commit
     request.memory_snapshot.goal_markdown = "Example objective"
@@ -33,7 +33,7 @@ def _task(path: Path, *, task_type: str = "incident-response") -> AgentTask:
         schema_version="sdo.dev/v1alpha1",
         task_id="task-1",
         agent_id="sdo-responder",
-        task_type=task_type,
+        task_type="incident-response",
         request=packed,
         workspace={"proposal_id": "proposal-1", "checkout_path": request.repository_worktree},
     )
@@ -67,12 +67,14 @@ def test_worker_uses_typed_envelope_and_returns_typed_response(tmp_path: Path) -
     assert result == expected
 
 
-def test_worker_rejects_unregistered_task_type(tmp_path: Path) -> None:
+def test_worker_rejects_invalid_task_envelope(tmp_path: Path) -> None:
     path = tmp_path / "agent-task.json"
-    _task(path, task_type="source-deployment")
+    task = _task(path)
+    task.task_id = ""
+    path.write_text(to_canonical_json(task), encoding="utf-8")
     publisher = RecordingPublisher()
 
-    with pytest.raises(ValueError, match="task type"):
+    with pytest.raises(ValueError, match="task_id"):
         run_worker_task(path, "result-map", publisher, executor=lambda _: None)
 
     assert publisher.published is None

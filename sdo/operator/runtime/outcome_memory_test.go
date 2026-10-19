@@ -40,7 +40,7 @@ func recordOutcomes(t *testing.T, repository, lines string) {
 
 func TestRelevantOutcomeEvidenceSelectsCompactVerifiedMatch(t *testing.T) {
 	repository := t.TempDir()
-	outcome := `{"incident_id":"old","source_commit":"abc","classification":"success","findings":[{"detector_id":"health","rule_id":"missing","status":"active","severity":"critical","summary":"missing","evidence":"missing","primary_resource":{"kind":"ConfigMap","name":"cfg"},"fingerprint":"missing:cfg"}],"confirmed_root_causes":[{"summary":"ConfigMap absent","resources":[{"kind":"ConfigMap","name":"cfg"}]}],"applied_playbooks":[".sdo/playbooks/missing.md"],"repair_actions":[{"action_id":"apply","kind":"ConfigMap","target":"ns/cfg","summary":"restored manifest","details":"applied source","started_at":"2026-01-01T00:00:00Z","completed_at":"2026-01-01T00:00:01Z","success":true,"reversible":true}]}` + "\n"
+	outcome := `{"incident_id":"old","source_commit":"abc","classification":"success","findings":[{"detector_id":"health","rule_id":"missing","status":"active","severity":"critical","summary":"missing","evidence":"missing","primary_resource":{"kind":"ConfigMap","name":"cfg"},"fingerprint":"missing:cfg"}],"confirmed_root_causes":[{"summary":"ConfigMap absent","resources":[{"kind":"ConfigMap","name":"cfg"}]}],"applied_playbooks":["missing"],"repair_actions":[{"action_id":"apply","kind":"ConfigMap","target":"ns/cfg","summary":"restored manifest","details":"applied source","started_at":"2026-01-01T00:00:00Z","completed_at":"2026-01-01T00:00:01Z","success":true,"reversible":true}]}` + "\n"
 	recordOutcomes(t, repository, outcome)
 	findings := []sdk.Finding{{DetectorID: "health", RuleID: "missing", Fingerprint: "missing:cfg", PrimaryResource: sdk.ObjectRef{Kind: "ConfigMap", Name: "cfg"}}}
 
@@ -57,7 +57,7 @@ func TestRelevantOutcomeEvidenceSelectsCompactVerifiedMatch(t *testing.T) {
 func TestRelevantOutcomeEvidenceIgnoresFailuresAndUnrelatedFindings(t *testing.T) {
 	repository := t.TempDir()
 	lines := "{\"incident_id\":\"failed\",\"classification\":\"failed\"}\n" +
-		"{\"incident_id\":\"other\",\"source_commit\":\"abc\",\"classification\":\"success\",\"findings\":[{\"detector_id\":\"other\",\"rule_id\":\"other\",\"primary_resource\":{\"kind\":\"Pod\"}}]}\n"
+		"{\"incident_id\":\"other\",\"source_commit\":\"abc\",\"classification\":\"success\",\"findings\":[{\"detector_id\":\"other\",\"rule_id\":\"other\",\"status\":\"active\",\"severity\":\"critical\",\"summary\":\"s\",\"evidence\":\"e\",\"primary_resource\":{\"kind\":\"Pod\"}}]}\n"
 	recordOutcomes(t, repository, lines)
 
 	got := relevantOutcomeEvidence(repository, []sdk.Finding{{DetectorID: "health", RuleID: "missing", PrimaryResource: sdk.ObjectRef{Kind: "ConfigMap", Name: "cfg"}}}, "abc", nil)
@@ -72,7 +72,7 @@ func TestRelevantOutcomeEvidenceIgnoresFailuresAndUnrelatedFindings(t *testing.T
 // on timing. The learned detector's origin, on the same resource, links them.
 func TestALearnedDetectorLinksItsRepeatToTheIncidentItWasLearnedFrom(t *testing.T) {
 	repository := t.TempDir()
-	outcome := `{"incident_id":"first","source_commit":"abc","classification":"success","findings":[{"detector_id":"health-objective","rule_id":"network-policy-total-isolation","primary_resource":{"kind":"NetworkPolicy","namespace":"app","name":"deny-all"},"fingerprint":"health-objective/deny-all"}],"applied_playbooks":[]}` + "\n"
+	outcome := `{"incident_id":"first","source_commit":"abc","classification":"success","findings":[{"detector_id":"health-objective","rule_id":"network-policy-total-isolation","status":"active","severity":"critical","summary":"s","evidence":"e","primary_resource":{"kind":"NetworkPolicy","namespace":"app","name":"deny-all"},"fingerprint":"health-objective/deny-all"}],"applied_playbooks":[]}` + "\n"
 	recordOutcomes(t, repository, outcome)
 	origins := map[string]string{"deny-all-isolation": "first"}
 	repeat := []sdk.Finding{{

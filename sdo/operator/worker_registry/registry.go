@@ -9,12 +9,19 @@ import (
 	"sort"
 	"strings"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
-const SchemaVersion = "sdo.dev/v1alpha1"
+// SchemaVersion is the protocol version the contract messages declare as the
+// const of AgentTask.schema_version; the proto is its only definition.
+var SchemaVersion = wire.StringConst(&contracts.AgentTask{}, "schema_version")
+
+// TypeURL is the Any type URL of message.
+func TypeURL(message proto.Message) string {
+	return "type.googleapis.com/" + string(message.ProtoReflect().Descriptor().FullName())
+}
 
 type Registry struct {
 	byID map[string]*contracts.AgentRegistration
@@ -34,6 +41,28 @@ func New(registrations ...*contracts.AgentRegistration) (*Registry, error) {
 		registry.byID[registration.GetAgentId()] = proto.Clone(registration).(*contracts.AgentRegistration)
 	}
 	return registry, nil
+}
+
+// DefaultDirectory is where the controller and worker images carry the
+// built-in agent manifests (sdo/agents/registrations at build time).
+const DefaultDirectory = "/opt/sdo/sdo/agents/registrations"
+
+// LoadBuiltIn loads the built-in manifests from directory, or DefaultDirectory
+// when it is empty; tests point it at the checked-in manifests. A non-empty
+// image replaces their Kubernetes Job launch image, which is how a deployment
+// points them at the worker image it built.
+func LoadBuiltIn(directory, image string) (*Registry, error) {
+	if directory == "" {
+		directory = DefaultDirectory
+	}
+	registry, err := LoadDirectory(directory)
+	if err != nil {
+		return nil, fmt.Errorf("load built-in agent registrations (pass --agent-registration-directory to use another directory): %w", err)
+	}
+	if image == "" {
+		return registry, nil
+	}
+	return registry.WithLaunchImage(image)
 }
 
 // LoadDirectory reads one strict ProtoJSON registration from each JSON file.
@@ -58,7 +87,7 @@ func LoadDirectory(directory string) (*Registry, error) {
 			return nil, fmt.Errorf("read agent registration %q: %w", path, err)
 		}
 		registration := &contracts.AgentRegistration{}
-		if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(data, registration); err != nil {
+		if err := wire.Unmarshal(data, registration); err != nil {
 			return nil, fmt.Errorf("decode agent registration %q: %w", path, err)
 		}
 		registrations = append(registrations, registration)
@@ -70,36 +99,7 @@ func validateRegistration(registration *contracts.AgentRegistration) error {
 	if registration == nil {
 		return fmt.Errorf("nil agent registration")
 	}
-	id := registration.GetAgentId()
-	if registration.GetSchemaVersion() != SchemaVersion || strings.TrimSpace(id) == "" {
-		return fmt.Errorf("agent registration requires schema version %q and nonempty agent ID", SchemaVersion)
-	}
-	if len(registration.GetCapabilities()) == 0 {
-		return fmt.Errorf("agent %q declares no capabilities", id)
-	}
-	seen := make(map[string]bool)
-	for _, capability := range registration.GetCapabilities() {
-		if capability == nil || capability.GetTaskType() == "" || capability.GetRequestTypeUrl() == "" || capability.GetResultTypeUrl() == "" {
-			return fmt.Errorf("agent %q has incomplete capability", id)
-		}
-		if seen[capability.GetTaskType()] {
-			return fmt.Errorf("agent %q repeats task type %q", id, capability.GetTaskType())
-		}
-		seen[capability.GetTaskType()] = true
-	}
-	switch launch := registration.GetLaunch().(type) {
-	case *contracts.AgentRegistration_KubernetesJob:
-		if launch.KubernetesJob.GetImage() == "" || len(launch.KubernetesJob.GetCommand()) == 0 {
-			return fmt.Errorf("agent %q requires image and command", id)
-		}
-	case *contracts.AgentRegistration_LocalProcess:
-		if len(launch.LocalProcess.GetCommand()) == 0 {
-			return fmt.Errorf("agent %q requires command", id)
-		}
-	default:
-		return fmt.Errorf("agent %q requires a supported launch configuration", id)
-	}
-	return nil
+	return wire.Validate(registration)
 }
 
 // Resolve selects a worker only for a task it declared. The returned message
@@ -127,8 +127,11 @@ func capability(registration *contracts.AgentRegistration, taskType string) *con
 // ValidateTask ensures that the payload type matches the selected worker's
 // declared protobuf contract before any process or Job is launched.
 func (registry *Registry) ValidateTask(task *contracts.AgentTask) error {
-	if task == nil || task.GetSchemaVersion() != SchemaVersion || task.GetTaskId() == "" {
-		return fmt.Errorf("agent task requires schema version %q and task ID", SchemaVersion)
+	if task == nil {
+		return fmt.Errorf("nil agent task")
+	}
+	if err := wire.Validate(task); err != nil {
+		return err
 	}
 	registration, err := registry.Resolve(task.GetAgentId(), task.GetTaskType())
 	if err != nil {
@@ -147,11 +150,14 @@ func (registry *Registry) ValidateResult(task *contracts.AgentTask, result *cont
 	if err := registry.ValidateTask(task); err != nil {
 		return err
 	}
-	if result == nil || result.GetSchemaVersion() != SchemaVersion || result.GetTaskId() != task.GetTaskId() {
-		return fmt.Errorf("agent result does not match task %q", task.GetTaskId())
+	if result == nil {
+		return fmt.Errorf("nil agent result for task %q", task.GetTaskId())
 	}
-	if result.GetStatus() != "completed" && result.GetStatus() != "failed" && result.GetStatus() != "cancelled" {
-		return fmt.Errorf("agent result %q has invalid status %q", task.GetTaskId(), result.GetStatus())
+	if err := wire.Validate(result); err != nil {
+		return err
+	}
+	if result.GetTaskId() != task.GetTaskId() {
+		return fmt.Errorf("agent result does not match task %q", task.GetTaskId())
 	}
 	if result.GetStatus() == "completed" {
 		registration, _ := registry.Resolve(task.GetAgentId(), task.GetTaskType())
@@ -164,4 +170,59 @@ func (registry *Registry) ValidateResult(task *contracts.AgentTask, result *cont
 		return fmt.Errorf("agent result %q proposal ID does not match task", task.GetTaskId())
 	}
 	return nil
+}
+
+// TaskType returns the task type agentID declared for request's message type.
+// Task types are defined by the registration manifests alone; code that
+// dispatches a request names the message, never the task-type string.
+func (registry *Registry) TaskType(agentID string, request proto.Message) (string, error) {
+	registration := registry.byID[agentID]
+	if registration == nil {
+		return "", fmt.Errorf("unknown agent %q", agentID)
+	}
+	for _, candidate := range registration.GetCapabilities() {
+		if candidate.GetRequestTypeUrl() == TypeURL(request) {
+			return candidate.GetTaskType(), nil
+		}
+	}
+	return "", fmt.Errorf("agent %q declares no task for %s", agentID, request.ProtoReflect().Descriptor().FullName())
+}
+
+// AgentFor returns the one registered agent that declares a task for request's
+// message type, so a caller that needs "the responder" or "the reflector"
+// names the contract rather than an agent ID.
+func (registry *Registry) AgentFor(request proto.Message) (string, error) {
+	var found []string
+	for id, registration := range registry.byID {
+		for _, candidate := range registration.GetCapabilities() {
+			if candidate.GetRequestTypeUrl() == TypeURL(request) {
+				found = append(found, id)
+				break
+			}
+		}
+	}
+	sort.Strings(found)
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return "", fmt.Errorf("no registered agent declares a task for %s", request.ProtoReflect().Descriptor().FullName())
+	default:
+		return "", fmt.Errorf("agents %v all declare a task for %s; select one explicitly", found, request.ProtoReflect().Descriptor().FullName())
+	}
+}
+
+// WithLaunchImage returns a registry whose Kubernetes Job registrations launch
+// image. It is how a deployment points the built-in manifests at the worker
+// image it built.
+func (registry *Registry) WithLaunchImage(image string) (*Registry, error) {
+	registrations := make([]*contracts.AgentRegistration, 0, len(registry.byID))
+	for _, registration := range registry.byID {
+		clone := proto.Clone(registration).(*contracts.AgentRegistration)
+		if job := clone.GetKubernetesJob(); job != nil {
+			job.Image = image
+		}
+		registrations = append(registrations, clone)
+	}
+	return New(registrations...)
 }

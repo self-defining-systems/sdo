@@ -162,7 +162,7 @@ func TestParseResponderEnvironmentRejectsReservedAndMalformedValues(t *testing.T
 
 func TestRunRejectsExitAndRestartAfterClosureTogether(t *testing.T) {
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: []string{
-		"--namespace", "demo", "--app-root", t.TempDir(), "--dispatcher", "responder",
+		"--namespace", "demo", "--app-root", t.TempDir(),
 		"--exit-after-closure", "--restart-after-closure",
 	}, Stderr: &bytes.Buffer{}})
 	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
@@ -173,7 +173,6 @@ func TestRunRejectsExitAndRestartAfterClosureTogether(t *testing.T) {
 func TestRunRejectsInvalidControlNamespace(t *testing.T) {
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: []string{
 		"--namespace", "demo", "--control-namespace", "Not_Valid", "--app-root", t.TempDir(),
-		"--dispatcher", "responder",
 	}, Stderr: &bytes.Buffer{}})
 	if err == nil || !strings.Contains(err.Error(), "invalid control namespace") {
 		t.Fatalf("expected invalid control namespace error, got %v", err)

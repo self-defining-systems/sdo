@@ -1,15 +1,16 @@
 package runtime
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 )
 
-const ProtocolSchemaVersion = "sdo.dev/v1alpha1"
+// ProtocolSchemaVersion is the const the contract messages declare for
+// schema_version; the proto is its only definition.
+var ProtocolSchemaVersion = wire.StringConst(&contracts.IncidentRequest{}, "schema_version")
 
 type DetectorEvaluationStatus string
 
@@ -228,66 +229,4 @@ type IncidentClosure struct {
 	// CleanedHelpers are the responder helper objects the controller
 	// deleted after the responder completed, as Kind/namespace/name.
 	CleanedHelpers []string
-}
-
-func (request IncidentRequest) Validate() error {
-	if request.SchemaVersion != ProtocolSchemaVersion {
-		return fmt.Errorf("unsupported schema version %q", request.SchemaVersion)
-	}
-	if strings.TrimSpace(request.Application) == "" || strings.TrimSpace(request.Namespace) == "" {
-		return fmt.Errorf("application and namespace are required")
-	}
-	if strings.TrimSpace(request.IncidentID) == "" {
-		return fmt.Errorf("incident id is required")
-	}
-	if len(request.Findings) == 0 || len(request.DetectorHistory) == 0 {
-		return fmt.Errorf("findings and detector history are required")
-	}
-	if request.ResponseDeadline.IsZero() || strings.TrimSpace(request.CancellationToken) == "" {
-		return fmt.Errorf("response deadline and cancellation token are required")
-	}
-	if strings.TrimSpace(request.RepositoryWorktree) == "" || strings.TrimSpace(request.RepositoryBaseCommit) == "" {
-		return fmt.Errorf("repository worktree and base commit are required")
-	}
-	if request.RepairPolicy != "commit" && request.RepairPolicy != "recorded-actions" {
-		return fmt.Errorf("unsupported repair policy %q", request.RepairPolicy)
-	}
-	return nil
-}
-
-func (result IncidentResult) ValidateFor(request IncidentRequest) error {
-	if result.SchemaVersion != ProtocolSchemaVersion {
-		return fmt.Errorf("unsupported schema version %q", result.SchemaVersion)
-	}
-	if result.IncidentID != request.IncidentID {
-		return fmt.Errorf("incident id %q does not match request %q", result.IncidentID, request.IncidentID)
-	}
-	if result.Status != IncidentCompleted && result.Status != IncidentFailed && result.Status != IncidentCancelled {
-		return fmt.Errorf("unsupported incident status %q", result.Status)
-	}
-	if pull := result.LateFindingsPull; pull != nil && (pull.IncidentID != request.IncidentID || pull.PullCount == 0 || len(pull.ReportDigest) != 64) {
-		return fmt.Errorf("late findings pull has invalid incident identity or digest")
-	}
-	if result.Timing.StartedAt.IsZero() || result.Timing.CompletedAt.IsZero() {
-		return fmt.Errorf("timing is required")
-	}
-	if result.Timing.CompletedAt.Before(result.Timing.StartedAt) {
-		return fmt.Errorf("completion time is before start time")
-	}
-	actionIDs := make(map[string]struct{}, len(result.RepairActions))
-	for _, action := range result.RepairActions {
-		if strings.TrimSpace(action.ActionID) == "" || strings.TrimSpace(action.Kind) == "" ||
-			strings.TrimSpace(action.Target) == "" || strings.TrimSpace(action.Summary) == "" ||
-			strings.TrimSpace(action.Details) == "" {
-			return fmt.Errorf("repair action identity, kind, target, summary, and details are required")
-		}
-		if action.StartedAt.IsZero() || action.CompletedAt.IsZero() || action.CompletedAt.Before(action.StartedAt) {
-			return fmt.Errorf("repair action timing is invalid")
-		}
-		if _, exists := actionIDs[action.ActionID]; exists {
-			return fmt.Errorf("repair action id %q is duplicated", action.ActionID)
-		}
-		actionIDs[action.ActionID] = struct{}{}
-	}
-	return nil
 }
