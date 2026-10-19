@@ -38,6 +38,7 @@ from sdodev.contracts.v1alpha1 import (
     controller_config_pb2,
     controller_state_pb2,
     lifecycle_pb2,
+    memory_pb2,
     messages_pb2,
     outcome_pb2,
     telemetry_pb2,
@@ -87,6 +88,12 @@ OperationalMemorySnapshot = messages_pb2.OperationalMemorySnapshot
 OutcomeRecord = outcome_pb2.OutcomeRecord
 OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
 DiagnosisVerification = outcome_pb2.DiagnosisVerification
+
+MemoryDiagnostic = memory_pb2.MemoryDiagnostic
+MemoryCheckReport = memory_pb2.MemoryCheckReport
+MemoryArtifact = memory_pb2.MemoryArtifact
+MemoryListing = memory_pb2.MemoryListing
+MemoryOutcomes = memory_pb2.MemoryOutcomes
 
 FiringRecord = telemetry_pb2.FiringRecord
 
@@ -168,6 +175,11 @@ __all__ = [
     "KubernetesJobLaunch",
     "LocalProcessLaunch",
     "ObjectRef",
+    "MemoryArtifact",
+    "MemoryCheckReport",
+    "MemoryDiagnostic",
+    "MemoryListing",
+    "MemoryOutcomes",
     "OutcomeRecord",
     "OutcomeTimestamps",
     "DiagnosisVerification",

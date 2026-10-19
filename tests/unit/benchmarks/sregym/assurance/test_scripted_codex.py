@@ -23,7 +23,6 @@ from benchmarks.sregym.assurance.scripted_codex.directive import Directive
 from benchmarks.sregym.assurance.scripted_codex.usage import request_usage
 from sdo.agents.responder.codex import execute_incident
 from sdo.agents.responder.reflection import CodexSessionBackend
-from sdo.agents.views import OperationalArtifactDraft
 from sdo.contracts import AgentTask, IncidentRequest, to_canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -279,47 +278,6 @@ def test_an_unplanned_turn_is_refused_loudly(scripted: dict[str, Path]) -> None:
 
     assert completed.returncode == 3
     assert "no scripted plan" in completed.stderr
-
-
-@pytest.mark.parametrize("fault", ["network_policy_block", "missing_configmap"])
-@pytest.mark.parametrize("claimed", [False, True], ids=["confirmed-cause", "claimed-cause"])
-def test_every_scripted_memory_proposal_passes_the_detector_gateway(tmp_path: Path, fault: str, claimed: bool) -> None:
-    from google.protobuf import json_format
-
-    from benchmarks.sregym.assurance.scripted_codex.faults import PLANS, Facts
-    from sdo.contracts._gen.sdodev.contracts.v1alpha1.messages_pb2 import OperationalArtifactProposal
-
-    worktree = _memory_worktree(tmp_path)
-    plan = PLANS[fault]
-    build = plan.claimed_memory if claimed else plan.memory
-    proposal = build(Facts(namespace="", target="x"), incident_id="Hotel Reservation-1", outcome_commit="a" * 40)
-    draft = OperationalArtifactDraft.model_validate(proposal.artifact_proposal)
-    assert draft.artifact_ids() == [proposal.detector_id, proposal.playbook_id]
-    proto = json_format.ParseDict(proposal.artifact_proposal, OperationalArtifactProposal())
-    proposal_path = tmp_path / "proposal.json"
-    proposal_path.write_text(json_format.MessageToJson(proto), encoding="utf-8")
-    gateway = subprocess.run(
-        [
-            "go",
-            "run",
-            "./cmd/sdo-operator",
-            "draft-test",
-            "--app",
-            str(worktree),
-            "--proposal-json",
-            str(proposal_path),
-            "--operator-root",
-            str(REPO_ROOT / "sdo" / "operator"),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO_ROOT / "sdo" / "operator",
-    )
-    assert gateway.returncode == 0, gateway.stdout + gateway.stderr
-    assert not subprocess.run(
-        ["git", "-C", str(worktree), "status", "--porcelain"], capture_output=True, text=True, check=True
-    ).stdout
 
 
 def test_missing_configmap_rebuilds_a_script_configmap_that_has_no_manifest(tmp_path: Path) -> None:

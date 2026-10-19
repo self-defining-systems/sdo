@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         launch_native_lifecycle,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
-    from benchmarks.sregym.adapter.native_operator import inspect_existing
+    from benchmarks.sregym.adapter.native_operator import execute_operator, inspect_existing
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
@@ -53,6 +53,7 @@ _EXPORTS: dict[str, str] = {
     "launch_native_lifecycle": "driver",
     "native_install_config": "runtime",
     "ControllerInstallError": "runtime",
+    "execute_operator": "native_operator",
     "inspect_existing": "native_operator",
     "kubectl": "cluster_resources",
     "ReceiptRejectedError": "persistent",
@@ -97,6 +98,7 @@ __all__ = [
     "launch_native_lifecycle",
     "native_install_config",
     "ControllerInstallError",
+    "execute_operator",
     "inspect_existing",
     "kubectl",
     "ReceiptRejectedError",

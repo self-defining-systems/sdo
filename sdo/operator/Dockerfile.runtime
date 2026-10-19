@@ -80,8 +80,7 @@ RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs
 WORKDIR /opt/sdo
 
 FROM worker-runtime AS responder
-RUN if output="$(/usr/local/bin/sdo-operator draft-test --app /tmp --proposal-json /missing 2>&1)"; then exit 1; fi \
-    && printf '%s' "$output" | grep -q 'read typed draft'
+RUN /usr/local/bin/sdo-operator memory help | grep -q 'memory check'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]
 
 FROM responder AS sregym-responder

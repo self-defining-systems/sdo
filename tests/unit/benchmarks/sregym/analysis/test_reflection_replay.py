@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-from hashlib import sha256
 from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.sregym.analysis.reflection_replay import find_ledger, memory_delta, read_outcomes
+from benchmarks.sregym.analysis.reflection_replay import find_ledger, memory_delta
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,16 +26,6 @@ def test_find_ledger_matches_an_incident_by_suffix_in_stage_receipts(tmp_path: P
     assert find_ledger(tmp_path, "222")["incident_id"] == "app-222"
     with pytest.raises(SystemExit):
         find_ledger(tmp_path, "333")
-
-
-def test_read_outcomes_loads_the_incident_keyed_native_store(tmp_path: Path) -> None:
-    store = tmp_path / ".sdo" / "outcomes"
-    store.mkdir(parents=True)
-    for incident in ("app-111", "app-222"):
-        document = {"schema_version": 1, "incident_id": incident, "classification": "success"}
-        (store / f"{sha256(incident.encode()).hexdigest()}.json").write_text(json.dumps(document), encoding="utf-8")
-
-    assert sorted(record.incident_id for record in read_outcomes(tmp_path)) == ["app-111", "app-222"]
 
 
 def test_memory_delta_separates_new_from_widened_detectors_and_playbooks(tmp_path: Path) -> None:
