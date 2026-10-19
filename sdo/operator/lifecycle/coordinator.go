@@ -29,6 +29,10 @@ type ProposalBroker interface {
 	AcceptedCommit(context.Context, string, broker.Phase) (broker.Receipt, bool, error)
 	ChangedPaths(context.Context, string, broker.Phase) ([]string, error)
 	ReleaseProposal(string, broker.Phase) error
+	// Rejections and RecordRejection are the durable retry state for a
+	// proposal rejected by validator diagnostics.
+	Rejections(string) (*contracts.ProposalRejectionLog, error)
+	RecordRejection(string, []*contracts.MemoryDiagnostic) (*contracts.ProposalRejectionLog, error)
 }
 
 // ArtifactWriter is the storage edge for role-owned bootstrap artifacts.
@@ -387,22 +391,71 @@ func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, at
 	return receipt, true, "", nil
 }
 
+// judge dispatches the health judge until the broker accepts its diagnostics
+// or the validation retry bound is spent. Every broker rejection is recorded
+// durably, with its typed diagnostics, before the checkout is released, so the
+// attempt number derived from that log survives a restart.
 func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string) (broker.Receipt, bool, string, error) {
-	if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
-		return broker.Receipt{}, false, "", err
-	} else if ok {
-		return prior, true, "", nil
+	for {
+		if prior, ok, err := c.Broker.AcceptedCommit(ctx, id, broker.InitialPhase); err != nil {
+			return broker.Receipt{}, false, "", err
+		} else if ok {
+			return prior, true, "", nil
+		}
+		log, err := c.Broker.Rejections(id)
+		if err != nil {
+			return broker.Receipt{}, false, "", err
+		}
+		if log.GetTerminal() {
+			last := log.GetRejections()[len(log.GetRejections())-1]
+			return broker.Receipt{}, false, fmt.Sprintf("broker rejected health diagnostics %d times; last rejection: %s", len(log.GetRejections()), describeDiagnostics(last.GetDiagnostics())), nil
+		}
+		receipt, ready, nextFeedback, rejected, err := c.judgeOnce(ctx, id, cfg, attempt, sourceCommit, architectureCommit, feedback, log)
+		if err != nil || ready || rejected == nil {
+			return receipt, ready, nextFeedback, err
+		}
+		if _, err := c.Broker.RecordRejection(id, rejected); err != nil {
+			return broker.Receipt{}, false, "", err
+		}
+		if err := c.Broker.ReleaseProposal(id, broker.InitialPhase); err != nil {
+			return broker.Receipt{}, false, "", err
+		}
+	}
+}
+
+func describeDiagnostics(diagnostics []*contracts.MemoryDiagnostic) string {
+	parts := make([]string, 0, len(diagnostics))
+	for _, d := range diagnostics {
+		parts = append(parts, fmt.Sprintf("[%s] %s: %s", d.GetRule(), d.GetPath(), d.GetMessage()))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// judgeOnce runs one judge dispatch. A non-nil rejected slice means the broker
+// rejected the proposal with typed diagnostics and the caller owns the retry.
+func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, architectureCommit, feedback string, log *contracts.ProposalRejectionLog) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, error) {
+	validationAttempt := uint32(len(log.GetRejections()) + 1)
+	var previous []*contracts.MemoryDiagnostic
+	if n := len(log.GetRejections()); n > 0 {
+		previous = log.GetRejections()[n-1].GetDiagnostics()
+		// A crash may have left the rejected checkout behind.
+		if err := c.Broker.ReleaseProposal(id, broker.InitialPhase); err != nil {
+			return broker.Receipt{}, false, "", nil, err
+		}
+	}
+	fail := func(feedback string) (broker.Receipt, bool, string, []*contracts.MemoryDiagnostic, error) {
+		return broker.Receipt{}, false, feedback, nil, nil
 	}
 	proposal, err := c.Broker.CreateProposalForPhase(ctx, id, broker.InitialPhase)
 	if err != nil {
-		return broker.Receipt{}, false, "", err
+		return broker.Receipt{}, false, "", nil, err
 	}
 	if proposal.BaseCommit != architectureCommit {
-		return broker.Receipt{}, false, "", fmt.Errorf("judge proposal base %q differs from accepted architecture %q", proposal.BaseCommit, architectureCommit)
+		return broker.Receipt{}, false, "", nil, fmt.Errorf("judge proposal base %q differs from accepted architecture %q", proposal.BaseCommit, architectureCommit)
 	}
 	architectureSummary, err := c.Bootstrap.ReadArchitecture(proposal.Path)
 	if err != nil {
-		return broker.Receipt{}, false, "", err
+		return broker.Receipt{}, false, "", nil, err
 	}
 	readSourceFacts := c.SourceFacts
 	if readSourceFacts == nil {
@@ -410,44 +463,53 @@ func (c Coordinator) judge(ctx context.Context, id string, cfg Config, attempt i
 	}
 	facts, err := readSourceFacts(ctx, proposal.Path, sourceCommit)
 	if err != nil {
-		return broker.Receipt{}, false, "", fmt.Errorf("read accepted source inventory: %w", err)
+		return broker.Receipt{}, false, "", nil, fmt.Errorf("read accepted source inventory: %w", err)
 	}
 	if len(facts.Fingerprint) != 64 {
-		return broker.Receipt{}, false, "", errors.New("accepted source inventory omitted topology fingerprint")
+		return broker.Receipt{}, false, "", nil, errors.New("accepted source inventory omitted topology fingerprint")
 	}
-	request := &contracts.HealthJudgeRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, SourceTopologyFingerprint: facts.Fingerprint}
-	task, err := c.newTask(id, cfg.JudgeAgentID, proposal, request)
+	request := &contracts.HealthJudgeRequest{Application: cfg.Application, Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, AcceptedSourceCommit: sourceCommit, CorrectionFeedback: feedback, Attempt: uint32(attempt), ArchitectureSummaryMarkdown: architectureSummary, SourceResources: facts.Resources, SourceTopologyFingerprint: facts.Fingerprint, ValidationAttempt: validationAttempt, PreviousDiagnostics: previous}
+	taskID := id
+	if validationAttempt > 1 {
+		// A retry is a new task: its Job and request must not collide with the
+		// rejected attempt's.
+		taskID = fmt.Sprintf("%s-retry%d", id, validationAttempt-1)
+	}
+	task, err := c.newTask(taskID, cfg.JudgeAgentID, proposal, request)
 	if err != nil {
-		return broker.Receipt{}, false, "", err
+		return broker.Receipt{}, false, "", nil, err
 	}
 	response := &contracts.HealthJudgeResult{}
 	if err := c.execute(ctx, task, response); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		if ctx.Err() != nil {
-			return broker.Receipt{}, false, "", ctx.Err()
+			return broker.Receipt{}, false, "", nil, ctx.Err()
 		}
-		return broker.Receipt{}, false, err.Error(), nil
+		return fail(err.Error())
 	}
 	expectedDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(cfg.HealthObjective))))
 	if !response.GetAuthored() || len(response.GetDetectorIds()) == 0 ||
 		strings.TrimSpace(response.GetAgentSessionId()) == "" || response.GetObjectiveDigest() != expectedDigest {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, false, "health judge did not author detectors: " + response.GetSummary(), nil
+		return fail("health judge did not author detectors: " + response.GetSummary())
 	}
 	if response.GetArtifactProposal() == nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, false, "health judge omitted typed operational artifacts", nil
+		return fail("health judge omitted typed operational artifacts")
 	}
 	if err := c.Bootstrap.WriteArtifacts(proposal.Path, response.GetArtifactProposal(), memory.HealthJudgeArtifacts); err != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, false, "invalid health judge artifacts: " + err.Error(), nil
+		return fail("invalid health judge artifacts: " + err.Error())
 	}
 	receipt, err := c.Broker.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
 	if err != nil {
+		if diagnostics, typed := broker.RejectionDiagnostics(err); typed {
+			return broker.Receipt{}, false, "", diagnostics, nil
+		}
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return broker.Receipt{}, false, "broker rejected health diagnostics: " + err.Error(), nil
+		return fail("broker rejected health diagnostics: " + err.Error())
 	}
-	return receipt, true, "", nil
+	return receipt, true, "", nil, nil
 }
 
 func (c Coordinator) newTask(id, configuredAgent string, proposal broker.Proposal, request proto.Message) (*contracts.AgentTask, error) {

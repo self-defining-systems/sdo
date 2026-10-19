@@ -7,13 +7,14 @@ from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
+from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 from sdo.agents.views import (
     OperationalArtifactDraft,  # noqa: TC001 - Pydantic resolves this field at runtime.
 )
-from sdo.contracts import OutcomeClassification, validate
+from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -21,18 +22,15 @@ REFLECTION_GUIDANCE_MODES: tuple[ReflectionGuidance, ...] = ("baseline", "genera
 REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh")
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from agentshim import CommandExecutor
 
-    from sdo.contracts import IncidentClosure, OutcomeRecord
+    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord
 
 
 def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
-    if classification == OutcomeClassification.FALSE_POSITIVE:
-        return "tighten the over-broad detector signature and add a near-miss regression test."
-    if classification == OutcomeClassification.FALSE_NEGATIVE:
-        return "add or widen the missed detector signature and include the reproducing test that previously failed."
     if classification == OutcomeClassification.SUCCESS:
         if guidance in _GENERALIZING_GUIDANCE:
             return (
@@ -120,7 +118,6 @@ class StatefulResponderBackend(Protocol):
 
 
 #: Upper bound on the rejected diff quoted into a retry prompt.
-_MAX_REJECTED_DIFF_CHARS = 48_000
 
 #: Reasoning effort of the incident agents (responder and reflection). A
 #: benchmark comparing SDO against a stock agent declares the same effort.
@@ -198,84 +195,20 @@ def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> st
     return f"Outcome history (prior incidents, compact; raw evidence omitted):\n{json.dumps(prior, indent=2)}\n"
 
 
-def _diagnosis_directive(outcome: OutcomeRecord) -> str:
-    """Summarize SDO's deterministic diagnosis check and how learning must use it."""
-
-    if not outcome.diagnosis_verification:
-        return ""
-    lines = []
-    for verification in outcome.diagnosis_verification:
-        flipped = ", ".join(flip.detector_id for flip in verification.detectors if flip.flipped) or "none"
-        verified = ", ".join(f"{check.kind} {check.source}" for check in verification.evidence if check.verified)
-        contradicted = ", ".join(
-            f"{check.kind} {check.source}" + (f" ({check.reason})" if check.reason else "")
-            for check in verification.evidence
-            if check.HasField("verified") and not check.verified
-        )
-        verdict = getattr(verification.verdict, "value", verification.verdict)
-        line = f"- {verdict}: {verification.summary}; detectors flipped: {flipped}"
-        line += f"; verified evidence: {verified or 'none'}"
-        if contradicted:
-            line += f"; evidence not confirmed by the controller: {contradicted}"
-        if verification.HasField("repair"):
-            line += f"; repair attribution: {verification.repair.reason}"
-        lines.append(line + "\n")
-    return (
-        "Diagnosis verification (deterministic, by SDO):\n"
-        f"{''.join(lines)}"
-        "Learn only from confirmed causes: a playbook's diagnosis and any new incident detector must describe a "
-        "confirmed cause, never a contradicted, unverified, or unattributed one (an unattributed cause was not "
-        "backed by your own repair: something else restored health). Every playbook you create or refine must end "
-        "with a `## Verification` section that records how this incident confirmed the cause: the verified "
-        "evidence above, the detectors that flipped, and the check (for example `python3 -m sdo incident "
-        "status`) that proved recovery.\n\n"
-    )
-
-
-def _bounded_diff(diff: str | None) -> str:
-    if not diff or not diff.strip():
-        return "(the rejected proposal changed no files, or its diff is unavailable)\n"
-    if len(diff) <= _MAX_REJECTED_DIFF_CHARS:
-        return diff if diff.endswith("\n") else diff + "\n"
-    omitted = len(diff) - _MAX_REJECTED_DIFF_CHARS
-    return f"{diff[:_MAX_REJECTED_DIFF_CHARS]}\n[... diff truncated: {omitted} more characters omitted ...]\n"
-
-
 class SessionReflector:
     """Reflect on a verified outcome.
 
     The first attempt resumes the responder session (``session_mode="resume"``)
     or, opt-in, starts a fresh session from a compact incident brief
-    (``"fresh"``); a retry after a validation rejection is always a short fresh
-    session. ``responder_turn_log`` is the responder's per-turn usage log, the
-    source of its shell commands for the brief.
+    (``"fresh"``). A retry after a broker rejection (non-empty ``diagnostics``)
+    is always a short fresh session that carries the typed diagnostics.
     """
 
-    def __init__(
-        self,
-        backend: StatefulResponderBackend,
-        *,
-        responder_turn_log: Path | None = None,
-        guidance: ReflectionGuidance = "baseline",
-    ) -> None:
+    def __init__(self, backend: StatefulResponderBackend, *, guidance: ReflectionGuidance = "baseline") -> None:
         if guidance not in REFLECTION_GUIDANCE_MODES:
             raise ValueError(f"unsupported reflection guidance: {guidance!r}")
         self.backend = backend
-        self.responder_turn_log = responder_turn_log
         self.guidance: ReflectionGuidance = guidance
-
-    def should_reflect(self, outcome: OutcomeRecord, *, health_verified: bool, session_id: str | None) -> bool:
-        validate(outcome)
-        return bool(
-            health_verified
-            and session_id
-            and outcome.classification
-            in {
-                OutcomeClassification.SUCCESS,
-                OutcomeClassification.FALSE_POSITIVE,
-                OutcomeClassification.FALSE_NEGATIVE,
-            }
-        )
 
     def resume(
         self,
@@ -286,11 +219,10 @@ class SessionReflector:
         outcome: OutcomeRecord,
         history: list[OutcomeRecord],
         outcome_commit: str,
-        validation_feedback: str | None = None,
-        topology_review: object | None = None,
-        rejected_proposal_diff: str | None = None,
         session_mode: ReflectionSessionMode = "resume",
         closure: IncidentClosure | None = None,
+        validation_attempt: int = 1,
+        diagnostics: Sequence[MemoryDiagnostic] = (),
     ) -> ReflectionTurn:
         if session_mode not in REFLECTION_SESSION_MODES:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
@@ -304,18 +236,14 @@ class SessionReflector:
             guidance=self.guidance,
         )
         idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
-        if validation_feedback:
+        if diagnostics:
             # Re-sending the responder transcript on every model request is the
-            # dominant retry cost, and the rejected diff plus the validator's
-            # error is all the retry needs from the first attempt.
+            # dominant retry cost; the typed diagnostics are all a retry needs.
             prompt = (
-                "You are correcting an operational-memory proposal that SDO's isolated validator rejected. The "
-                "controller has independently verified incident closure and committed its authoritative outcome; "
-                "the responder's session transcript is intentionally not available.\n\n"
-                f"Validator error:\n{validation_feedback}\n\n"
-                "The rejected proposal was rolled back, so the worktree is clean at the accepted outcome commit. "
-                "Rejected proposal diff against that commit (reapply what was valid, fix every reported error):\n"
-                f"```diff\n{_bounded_diff(rejected_proposal_diff)}```\n\n"
+                "You are correcting an operational-memory proposal that SDO's broker rejected. The controller has "
+                "independently verified incident closure and committed its authoritative outcome; the responder's "
+                "session transcript is intentionally not available.\n\n"
+                f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
                 f"Original reflection request:\n{request}"
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
@@ -327,7 +255,6 @@ class SessionReflector:
             brief = incident_brief(
                 closure,
                 worktree=worktree,
-                responder_turn_log=self.responder_turn_log,
                 detector_detail=self.guidance in _GENERALIZING_GUIDANCE,
                 event_dependence=self.guidance == "generalize-spec",
             )

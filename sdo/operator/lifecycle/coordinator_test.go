@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
@@ -26,6 +27,31 @@ type fakeBroker struct {
 	lastCommit          string
 	mutatedSource       bool
 	noChange            map[string]bool
+	// rejectPublish makes the next N Publish calls for a proposal fail with
+	// typed validator diagnostics, as the real broker does.
+	rejectPublish map[string]int
+	rejections    map[string]*contracts.ProposalRejectionLog
+}
+
+func (f *fakeBroker) Rejections(id string) (*contracts.ProposalRejectionLog, error) {
+	if log, ok := f.rejections[id]; ok {
+		return log, nil
+	}
+	return &contracts.ProposalRejectionLog{ProposalId: id}, nil
+}
+func (f *fakeBroker) RecordRejection(id string, diagnostics []*contracts.MemoryDiagnostic) (*contracts.ProposalRejectionLog, error) {
+	log, _ := f.Rejections(id)
+	if log.Terminal {
+		return log, nil
+	}
+	log.Rejections = append(log.Rejections, broker.NewProposalRejection(uint32(len(log.Rejections)+1), diagnostics))
+	log.Terminal = broker.RetriesExhausted(log.Rejections)
+	if f.rejections == nil {
+		f.rejections = map[string]*contracts.ProposalRejectionLog{}
+	}
+	f.rejections[id] = log
+	f.events = append(f.events, "record-rejection:"+id)
+	return log, nil
 }
 
 func (f *fakeBroker) CreateProposalForPhase(_ context.Context, id string, phase broker.Phase) (broker.Proposal, error) {
@@ -34,6 +60,10 @@ func (f *fakeBroker) CreateProposalForPhase(_ context.Context, id string, phase 
 }
 func (f *fakeBroker) Publish(_ context.Context, id string, actor broker.Actor, phase broker.Phase) (broker.Receipt, error) {
 	f.events = append(f.events, "publish:"+id+":"+string(actor))
+	if f.rejectPublish[id] > 0 {
+		f.rejectPublish[id]--
+		return broker.Receipt{}, &validate.Failure{Diagnostics: []validate.Diagnostic{{Rule: "detector.manifest", Path: ".sdo/diagnostics/detectors/health/x/manifest.yaml", Line: 3, Message: "bad manifest", Hint: "fix it"}}}
+	}
 	r := broker.Receipt{IncidentID: id, Phase: phase, Commit: "commit-" + id, ChangedPaths: []string{"changed"}}
 	f.accepted[id] = r
 	f.lastCommit = r.Commit
@@ -481,4 +511,78 @@ func manifestTaskType(request proto.Message) string {
 		panic(err)
 	}
 	return task
+}
+
+func judgeRequests(t *testing.T, e *fakeExecutor) []*contracts.HealthJudgeRequest {
+	t.Helper()
+	var requests []*contracts.HealthJudgeRequest
+	for _, task := range e.tasks {
+		if task.GetTaskType() != healthJudgeTask {
+			continue
+		}
+		request := &contracts.HealthJudgeRequest{}
+		if err := task.GetRequest().UnmarshalTo(request); err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, request)
+	}
+	return requests
+}
+
+func TestCoordinatorRedispatchesRejectedHealthJudgeWithTypedDiagnostics(t *testing.T) {
+	c, b, e, _ := testCoordinator(t)
+	b.rejectPublish = map[string]int{"op-judge-1": 1}
+	result, err := c.Run(context.Background(), Config{OperationID: "op", Application: "demo", Namespace: "demo", HealthObjective: "serve", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Attempts != 1 {
+		t.Fatalf("a retried judge must not consume a deployment attempt: %+v", result)
+	}
+	requests := judgeRequests(t, e)
+	if len(requests) != 2 {
+		t.Fatalf("judge dispatches = %d", len(requests))
+	}
+	if requests[0].GetValidationAttempt() != 1 || len(requests[0].GetPreviousDiagnostics()) != 0 {
+		t.Fatalf("first dispatch carries feedback: %+v", requests[0])
+	}
+	retry := requests[1]
+	if retry.GetValidationAttempt() != 2 || len(retry.GetPreviousDiagnostics()) != 1 || retry.GetPreviousDiagnostics()[0].GetRule() != "detector.manifest" || retry.GetPreviousDiagnostics()[0].GetLine() != 3 {
+		t.Fatalf("retry lacks typed diagnostics: %+v", retry)
+	}
+	if retry.GetCorrectionFeedback() != "" {
+		t.Fatalf("broker diagnostics must not travel as a string: %q", retry.GetCorrectionFeedback())
+	}
+	if e.tasks[len(e.tasks)-2].GetTaskId() == e.tasks[len(e.tasks)-1].GetTaskId() {
+		t.Fatal("retry must be a distinct task")
+	}
+}
+
+func TestCoordinatorStopsRetryingHealthJudgeAfterBound(t *testing.T) {
+	c, b, e, _ := testCoordinator(t)
+	b.rejectPublish = map[string]int{"op-judge-1": 99}
+	_, err := c.Run(context.Background(), Config{OperationID: "op", Application: "demo", Namespace: "demo", HealthObjective: "serve", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1})
+	if err == nil {
+		t.Fatal("expected exhaustion")
+	}
+	if got := len(judgeRequests(t, e)); got != 1+broker.MaxValidationRetries {
+		t.Fatalf("judge dispatches = %d", got)
+	}
+	log, _ := b.Rejections("op-judge-1")
+	if !log.GetTerminal() || len(log.GetRejections()) != 1+broker.MaxValidationRetries {
+		t.Fatalf("terminal rejection not recorded: %+v", log)
+	}
+}
+
+func TestCoordinatorResumesHealthJudgeRetryCountAfterRestart(t *testing.T) {
+	c, b, e, _ := testCoordinator(t)
+	diagnostic := &contracts.MemoryDiagnostic{Rule: "detector.manifest", Message: "earlier rejection"}
+	b.rejections = map[string]*contracts.ProposalRejectionLog{"op-judge-1": {ProposalId: "op-judge-1", Rejections: []*contracts.ProposalRejection{broker.NewProposalRejection(1, []*contracts.MemoryDiagnostic{diagnostic}), broker.NewProposalRejection(2, []*contracts.MemoryDiagnostic{diagnostic})}}}
+	if _, err := c.Run(context.Background(), Config{OperationID: "op", Application: "demo", Namespace: "demo", HealthObjective: "serve", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	requests := judgeRequests(t, e)
+	if len(requests) != 1 || requests[0].GetValidationAttempt() != 3 || requests[0].GetPreviousDiagnostics()[0].GetMessage() != "earlier rejection" {
+		t.Fatalf("restart reset or duplicated attempts: %+v", requests)
+	}
 }

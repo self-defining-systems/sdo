@@ -157,3 +157,33 @@ def test_judge_rejects_missing_go_prepared_source_inventory(tmp_path: Path) -> N
     task_path.write_text(to_canonical_json(task))
     with pytest.raises(ValueError, match="source inventory"):
         run_judge_task(task_path, "result", Publisher())
+
+
+def test_judge_retry_feeds_typed_broker_diagnostics_to_the_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[str | None] = []
+
+    class Backend:
+        def run_health_judge(self, **kwargs):
+            seen.append(kwargs["correction_feedback"])
+            return SimpleNamespace(
+                round=1,
+                objective_digest=hashlib.sha256(b"stay healthy").hexdigest(),
+                source_commit="accepted-source",
+                failure_patterns=["unavailable"],
+                detector_source="package objective\nfunc New() sdk.Detector { return nil }",
+                detector_test_source="package objective\nfunc TestObjective(t *testing.T) {}",
+                traffic_files=[],
+                session_id="judge-1",
+            )
+
+    monkeypatch.setattr(judge_worker, "CodexLifecycleBackend", lambda **kwargs: Backend())
+    task = parse_json(judge_task(tmp_path).read_text(), AgentTask())
+    request = HealthJudgeRequest()
+    assert task.request.Unpack(request)
+    request.validation_attempt = 2
+    request.previous_diagnostics.add(rule="detector.manifest", path="m.yaml", line=2, message="bad", hint="fix")
+    judge_worker.author_health_diagnostics(request, tmp_path)
+    assert seen[0] is not None
+    assert "[detector.manifest] m.yaml:2: bad (hint: fix)" in seen[0]

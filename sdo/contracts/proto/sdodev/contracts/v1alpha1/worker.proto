@@ -5,6 +5,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/memory.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 
@@ -78,6 +79,11 @@ message AgentResult {
 // Reflection runs only after the broker has committed an authoritative
 // outcome. Its worker may propose file edits, but cannot publish them.
 message ReflectionRequest {
+  option (buf.validate.message).cel = {
+    id: "reflection_request.diagnostics_only_on_retry"
+    message: "previous_diagnostics are carried exactly by a retry (validation_attempt > 1)"
+    expression: "(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)"
+  };
   IncidentClosure closure = 1;
   reserved 2, 3;
   reserved "outcome_json", "prior_outcome_json";
@@ -90,6 +96,11 @@ message ReflectionRequest {
   string guidance = 8 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];
   OutcomeRecord outcome = 9;
   repeated OutcomeRecord prior_outcomes = 10;
+  // Go-owned retry feedback: the broker rejected the previous attempt's
+  // proposal. validation_attempt is 1 for the first dispatch; later attempts
+  // carry that rejection's diagnostics.
+  uint32 validation_attempt = 11;
+  repeated MemoryDiagnostic previous_diagnostics = 12;
 }
 
 message ReflectionResult {
