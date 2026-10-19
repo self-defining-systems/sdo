@@ -40,6 +40,8 @@ from benchmarks.sregym.adapter.native_operator import (
     NativeInstallConfig,
     collect_native_receipt,
     export_runtime_artifacts,
+    NativeOperatorError,
+    inspect_existing,
     install_existing,
     launch_host,
     sync_existing,
@@ -478,6 +480,21 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
+def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seconds: float = 300.0) -> None:
+    """``install-existing`` returns once the controller is created; wait until it owns a ready Pod."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            inspect_existing(install)
+            return
+        except NativeOperatorError as exc:
+            if time.monotonic() >= deadline:
+                raise
+            logger.info("waiting for the seeded controller: %s", exc)
+            time.sleep(3)
+
+
 def _has_accepted_lifecycle(repository: Path) -> bool:
     """Whether *repository* already holds an accepted SDO lifecycle (a seeded workspace)."""
 
@@ -552,6 +569,7 @@ def _launch_native_lifecycle(
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
         # detectors): install the controller over it instead of running the deployer and health judge again.
         receipt = install_existing(install)
+        _wait_for_installed_controller(install)
         return {"installed": True, "seeded": True, "reused": receipt.reused, "accepted_commit": receipt.accepted_commit}
     host = NativeHostConfig(
         install=install,

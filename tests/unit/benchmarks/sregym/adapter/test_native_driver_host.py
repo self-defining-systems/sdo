@@ -80,6 +80,17 @@ def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
         return type("Receipt", (), {"reused": False, "accepted_commit": "a" * 40})()
 
     monkeypatch.setattr(driver, "install_existing", install)
+    inspections: list[int] = []
+
+    def inspect(config: object) -> object:
+        inspections.append(1)
+        if len(inspections) < 3:
+            raise driver.NativeOperatorError("existing controller has no ready owned Pod")
+        events.append("controller-ready")
+        return object()
+
+    monkeypatch.setattr(driver, "inspect_existing", inspect)
+    monkeypatch.setattr(driver.time, "sleep", lambda _seconds: None)
     result = driver._launch_native_lifecycle(
         driver._parse_args([]),
         repository=tmp_path,
@@ -89,7 +100,7 @@ def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
         api_base="http://localhost:8000",
         persistent=True,
     )
-    assert events == ["prepare", "bridge", "install-existing"]
+    assert events == ["prepare", "bridge", "install-existing", "controller-ready"]
     assert result["seeded"] is True
 
 
