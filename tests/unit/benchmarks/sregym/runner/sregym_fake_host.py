@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-CODEX_PIN = "0.157.1"
+CODEX_PIN = "0.163.0"
 AGENTSHIM_PIN = "0.7.0"
 
 
