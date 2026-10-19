@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -92,7 +93,7 @@ func TestUpkeepMigratesLegacyRepositoryToPerDetectorManifests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Upkeep migration was rejected: %v", err)
 	}
-	if !contains(receipt.ChangedPaths, layout.LegacyDetectorManifestFile) || !contains(receipt.ChangedPaths, layout.SchemaVersionFile) {
+	if !slices.Contains(receipt.ChangedPaths, layout.LegacyDetectorManifestFile) || !slices.Contains(receipt.ChangedPaths, layout.SchemaVersionFile) {
 		t.Fatalf("migration did not retire the shared manifest: %v", receipt.ChangedPaths)
 	}
 	tree, err := layout.ReadTree(target)
@@ -134,42 +135,5 @@ func TestUpkeepCannotEditDetectorsOutsideSchemaMigration(t *testing.T) {
 	git(t, proposal.Path, "checkout", "--", layout.SchemaVersionFile)
 	if _, err := b.Publish(ctx, "sneaky", Upkeep, InitialPhase); err == nil {
 		t.Fatal("upkeep changed detectors without stamping a schema migration")
-	}
-}
-
-func TestOwnershipFollowsMemoryKindAndActor(t *testing.T) {
-	health := layout.DetectorManifestPath(layout.ClassHealth, "h")
-	incident := layout.DetectorManifestPath(layout.ClassIncident, "i")
-	for _, test := range []struct {
-		path  string
-		actor Actor
-		phase Phase
-		ok    bool
-	}{
-		{health, HealthJudge, InitialPhase, true},
-		{health, Responder, ReflectionPhase, false},
-		{incident, Responder, ReflectionPhase, true},
-		{incident, HealthJudge, InitialPhase, false},
-		{layout.LegacyDetectorManifestFile, Responder, ReflectionPhase, false},
-		{layout.LegacyDetectorManifestFile, HealthJudge, InitialPhase, false},
-		{layout.LegacyDetectorManifestFile, Upkeep, InitialPhase, true},
-		{layout.DetectorDir(layout.ClassIncident, "i") + "/detector.go", Responder, ReflectionPhase, true},
-		{layout.DetectorDir(layout.ClassHealth, "h") + "/detector.go", Responder, ReflectionPhase, false},
-		{".sdo/diagnostics/traffic/workloads/incident-x.yaml", Responder, ReflectionPhase, true},
-		{".sdo/diagnostics/traffic/workloads/health.yaml", Responder, ReflectionPhase, false},
-		{".sdo/diagnostics/traffic/workloads/health.yaml", HealthJudge, InitialPhase, true},
-		{".sdo/playbooks/p/scripts/fix.sh", Responder, ReflectionPhase, true},
-		{".sdo/playbooks/p/scripts/fix.sh", HealthJudge, InitialPhase, false},
-		{".sdo/playbooks/health-objective/README.md", HealthJudge, InitialPhase, true},
-		{".sdo/playbooks/other/README.md", HealthJudge, InitialPhase, false},
-		{layout.GoalFile, Human, InitialPhase, true},
-		{layout.GoalFile, Deployer, InitialPhase, false},
-		{layout.SchemaVersionFile, Upkeep, InitialPhase, true},
-		{".sdo/unclassified.txt", Responder, ReflectionPhase, false},
-	} {
-		err := checkOwnership(test.path, test.actor, test.phase)
-		if (err == nil) != test.ok {
-			t.Errorf("checkOwnership(%s, %s, %s) = %v, want ok=%v", test.path, test.actor, test.phase, err, test.ok)
-		}
 	}
 }

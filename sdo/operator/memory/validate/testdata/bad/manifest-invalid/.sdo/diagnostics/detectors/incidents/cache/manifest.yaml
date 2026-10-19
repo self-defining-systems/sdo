@@ -1,0 +1,21 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: cache
+constructor: New
+class: incident
+owner: responder
+watches:
+  - apiVersion: v1
+    kind: Pod
+interval: never
+persistence:
+  firing: 1
+  clearing: 1
+batching:
+  severity: warn
+  debounce: "0"
+possiblePlaybooks:
+  - base
+originatingIncident: inc-1
+originatingCommit: abc

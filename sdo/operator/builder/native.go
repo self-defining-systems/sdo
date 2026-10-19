@@ -29,18 +29,55 @@ type Workspace struct {
 	HasProber  bool
 }
 
+// StageError reports the Go toolchain stage that rejected a workspace.
+type StageError struct {
+	Stage  string
+	Output string
+	Err    error
+}
+
+func (e *StageError) Error() string {
+	return fmt.Sprintf("go %s: %v: %s", e.Stage, e.Err, e.Output)
+}
+
+func (e *StageError) Unwrap() error { return e.Err }
+
+func (workspace *Workspace) runGo(ctx context.Context, args ...string) error {
+	command := exec.CommandContext(ctx, "go", args...)
+	command.Dir = workspace.Directory
+	if output, err := command.CombinedOutput(); err != nil {
+		return &StageError{Stage: strings.Join(args, " "), Output: strings.TrimSpace(string(output)), Err: err}
+	}
+	return nil
+}
+
 // ValidateAndBuild compiles detector tests and the controller binary inside
 // the isolated workspace. The returned path is valid until Close is called.
 func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error) {
+	return workspace.validate(ctx, false)
+}
+
+// Check is ValidateAndBuild plus a package build and go vet beforehand: the
+// full detector acceptance gate.
+// A rejected stage is reported as a *StageError.
+func (workspace *Workspace) Check(ctx context.Context) error {
+	_, err := workspace.validate(ctx, true)
+	return err
+}
+
+func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, error) {
 	if workspace == nil || workspace.Directory == "" {
 		return "", errors.New("workspace is required")
 	}
 	binary := filepath.Join(workspace.Directory, "sdo-controller")
-	for _, args := range [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-buildvcs=false", "-o", binary, "./cmd/controller"}} {
-		command := exec.CommandContext(ctx, "go", args...)
-		command.Dir = workspace.Directory
-		if output, err := command.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("go %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	stages := [][]string{{"mod", "tidy"}}
+	if vet {
+		stages = append(stages, []string{"build", "-buildvcs=false", "./..."}, []string{"vet", "./..."})
+	}
+	stages = append(stages, []string{"test", "./..."}, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+	for _, args := range stages {
+		if err := workspace.runGo(ctx, args...); err != nil {
+			return "", err
 		}
 	}
 	if workspace.HasProber {

@@ -1,0 +1,20 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: elsewhere
+constructor: New
+class: health
+owner: health_judge
+watches:
+  - apiVersion: v1
+    kind: Pod
+interval: 30s
+persistence:
+  firing: 1
+  clearing: 1
+batching:
+  severity: critical
+  debounce: 500ms
+possiblePlaybooks:
+  - base
+originatingCommit: initial

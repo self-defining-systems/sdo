@@ -1,0 +1,4 @@
+.sdo/diagnostics/detectors/health/health/manifest.yaml
+.sdo/diagnostics/detectors/incidents/cache/manifest.yaml
+.sdo/diagnostics/detectors/health/health/detector.go
+.sdo/diagnostics/detectors/incidents/cache/detector.go

@@ -146,9 +146,15 @@ func classOfDir(name string) (Class, bool) {
 	return "", false
 }
 
+const (
+	// PlaybookIDPattern and DetectorIDPattern are the logical ID grammars.
+	PlaybookIDPattern = `^[a-z][a-z0-9_-]*$`
+	DetectorIDPattern = `^[a-z0-9][a-z0-9_.-]*$`
+)
+
 var (
-	playbookIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
-	detectorIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
+	playbookIDPattern = regexp.MustCompile(PlaybookIDPattern)
+	detectorIDPattern = regexp.MustCompile(DetectorIDPattern)
 	outcomeFile       = regexp.MustCompile(`^([0-9a-f]{64})\.json$`)
 )
 

@@ -12,32 +12,34 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 )
 
-type Actor string
-
-const (
-	Human       Actor = "human"
-	Deployer    Actor = "deployer"
-	HealthJudge Actor = "health_judge"
-	Responder   Actor = "responder"
-	Upkeep      Actor = "upkeep"
+// Actor and Phase are defined by the validator, which owns the ownership
+// policy over them.
+type (
+	Actor = validate.Actor
+	Phase = validate.Phase
 )
 
-type Phase string
-
 const (
-	ProposalPhase   Phase = "proposal"
-	ReflectionPhase Phase = "reflection"
-	InitialPhase    Phase = "initial"
-	OutcomePhase    Phase = "outcome"
+	Human       = validate.Human
+	Deployer    = validate.Deployer
+	HealthJudge = validate.HealthJudge
+	Responder   = validate.Responder
+	Upkeep      = validate.Upkeep
+
+	ProposalPhase   = validate.ProposalPhase
+	ReflectionPhase = validate.ReflectionPhase
+	InitialPhase    = validate.InitialPhase
+	OutcomePhase    = validate.OutcomePhase
 )
 
 // Validator validates a complete candidate tree, including manifests and
@@ -243,7 +245,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if current != proposal.BaseCommit {
 			return errors.New("proposal base is stale; re-create the proposal from accepted state")
 		}
-		paths, err := changedPaths(ctx, proposal.Path, proposal.BaseCommit)
+		paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
 		if err != nil {
 			return err
 		}
@@ -260,20 +262,14 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			if sourceChange && expectedSourceTree == "" {
 				return errors.New("initial source must use PublishVerifiedSource")
 			}
-			if expectedSourceTree != "" && (!sourceChange || contains(paths, layout.ArchitectureFile)) {
+			if expectedSourceTree != "" && (!sourceChange || slices.Contains(paths, layout.ArchitectureFile)) {
 				return errors.New("verified source publish requires source files without architecture")
 			}
 		}
-		if phase == InitialPhase && actor == HealthJudge && !changesDetectorManifest(paths) {
-			return errors.New("initial health judge proposal must install detector manifests")
-		}
-		if phase == InitialPhase && actor == Deployer && contains(paths, layout.ArchitectureFile) && len(paths) != 1 {
-			return errors.New("initial architecture must follow a separately accepted source proposal")
-		}
-		for _, path := range paths {
-			if err := checkOwnership(path, actor, phase); err != nil {
-				return err
-			}
+		// Reject unowned paths before any trusted evidence is recorded; the
+		// candidate validation below repeats this check in the staged clone.
+		if err := validateOwnership(ctx, proposal.Path, proposal.BaseCommit, actor, phase); err != nil {
+			return err
 		}
 		if expectedSourceTree != "" {
 			actualTree, err := ProposalTreeDigest(ctx, proposal.Path)
@@ -300,7 +296,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		if err := validateCandidate(ctx, stage, b.target, actor, phase, paths); err != nil {
+		if err := validateCandidate(ctx, stage, proposal.BaseCommit, actor, phase); err != nil {
 			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if err := b.validator(ctx, stage, paths); err != nil {
@@ -338,7 +334,7 @@ func (b *Broker) ChangedPaths(ctx context.Context, incidentID string, phase Phas
 	if err != nil {
 		return nil, err
 	}
-	return changedPaths(ctx, proposal.Path, proposal.BaseCommit)
+	return validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
 }
 
 // ProposalInfo returns broker-owned identity for a prepared checkout.
@@ -397,7 +393,7 @@ func (b *Broker) RecordOutcome(ctx context.Context, incidentID string, record *c
 		if err != nil {
 			return err
 		}
-		paths, err := changedPaths(ctx, stage, base)
+		paths, err := validate.ChangedPaths(ctx, stage, base)
 		if err != nil {
 			return err
 		}
@@ -596,106 +592,6 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 		return "", errors.New("candidate Git tree has invalid identity")
 	}
 	return tree, nil
-}
-
-func changedPaths(ctx context.Context, checkout, base string) ([]string, error) {
-	modified, err := runGit(ctx, checkout, "-c", "diff.external=", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", base, "--")
-	if err != nil {
-		return nil, err
-	}
-	untracked, err := runGit(ctx, checkout, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil {
-		return nil, err
-	}
-	set := make(map[string]struct{})
-	for _, raw := range [][]byte{modified, untracked} {
-		for _, part := range strings.Split(string(raw), "\x00") {
-			if part != "" {
-				set[part] = struct{}{}
-			}
-		}
-	}
-	paths := make([]string, 0, len(set))
-	for path := range set {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	return paths, nil
-}
-
-func checkOwnership(path string, actor Actor, phase Phase) error {
-	if actor != Human && actor != Deployer && actor != HealthJudge && actor != Responder && actor != Upkeep {
-		return fmt.Errorf("unknown actor %q", actor)
-	}
-	if phase == ReflectionPhase && actor != Responder {
-		return fmt.Errorf("actor %s cannot publish a reflection", actor)
-	}
-	if phase == InitialPhase && actor == Responder {
-		return errors.New("responder cannot publish initial memory")
-	}
-	if path == "" || filepath.IsAbs(path) || strings.Contains(path, "\\") || filepath.Clean(path) != path || strings.HasPrefix(path, "../") || path == ".." {
-		return fmt.Errorf("unsafe proposal path: %q", path)
-	}
-	for _, part := range strings.Split(path, "/") {
-		lower := strings.ToLower(part)
-		if lower == ".git" || lower == ".env" || strings.Contains(lower, "secret") {
-			return fmt.Errorf("secret-bearing proposal path: %q", path)
-		}
-	}
-	if !layout.IsMemoryPath(path) {
-		if phase == ReflectionPhase {
-			return fmt.Errorf("reflection may edit only operational memory: %s", path)
-		}
-		if actor != Deployer && actor != Responder {
-			return fmt.Errorf("actor %s does not own source path %s", actor, path)
-		}
-		if actor == Responder && phase != ProposalPhase {
-			return fmt.Errorf("responder source edit is only allowed in proposal phase: %s", path)
-		}
-		if actor == Deployer && phase != InitialPhase {
-			return fmt.Errorf("deployer source edit is only allowed in initial phase: %s", path)
-		}
-		return nil
-	}
-	if phase == ProposalPhase {
-		return fmt.Errorf("mitigation proposal may not edit operational memory before verification: %s", path)
-	}
-	kind, id, classified := layout.Classify(path)
-	allowed := false
-	if classified {
-		switch actor {
-		case Human:
-			allowed = kind == layout.KindGoal
-		case Deployer:
-			allowed = kind == layout.KindArchitecture
-		case Upkeep:
-			// Detector files are Upkeep's only for a schema migration; see
-			// validateUpkeepMigration.
-			allowed = kind == layout.KindArchitecture || kind == layout.KindSchemaVersion || kind == layout.KindDiagnosticsModule || kind == layout.KindLegacyDetectorManifest || kind.IsDetectorManifest() || kind.IsDetectorSource()
-		case HealthJudge:
-			allowed = kind == layout.KindHealthDetectorManifest || kind == layout.KindHealthDetectorSource ||
-				((kind == layout.KindTrafficGenerator || kind == layout.KindTrafficWorkload) && !layout.IncidentTraffic(kind, id)) ||
-				(phase == InitialPhase && (kind == layout.KindPlaybookIndex || (kind == layout.KindPlaybook && id == healthObjectivePlaybook)))
-		case Responder:
-			allowed = kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource || kind == layout.KindPlaybookIndex || kind == layout.KindPlaybook || kind == layout.KindPlaybookScript ||
-				layout.IncidentTraffic(kind, id)
-		}
-	}
-	if !allowed {
-		return fmt.Errorf("actor %s does not own %s", actor, path)
-	}
-	return nil
-}
-
-const healthObjectivePlaybook = "health-objective"
-
-func changesDetectorManifest(paths []string) bool {
-	for _, path := range paths {
-		if kind, _, ok := layout.Classify(path); ok && (kind.IsDetectorManifest() || kind == layout.KindLegacyDetectorManifest) {
-			return true
-		}
-	}
-	return false
 }
 
 func copyChange(sourceRoot, targetRoot, relative string) error {
