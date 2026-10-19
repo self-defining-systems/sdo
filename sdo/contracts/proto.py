@@ -163,6 +163,7 @@ __all__ = [
     "LifecycleEvent",
     "OUTCOME_CLASSIFICATIONS",
     "OutcomeClassification",
+    "ROOT_CAUSE_EVIDENCE_KINDS",
     "SCHEMA_VERSION",
     "validate",
     "FollowUpContext",
@@ -273,6 +274,7 @@ def _string_rule(message: type[Message], field: str):
 # Values the proto states and Python reads from it rather than restating.
 SCHEMA_VERSION: str = _string_rule(AgentTask, "schema_version").const
 OUTCOME_CLASSIFICATIONS: tuple[str, ...] = tuple(getattr(_string_rule(OutcomeRecord, "classification"), "in"))
+ROOT_CAUSE_EVIDENCE_KINDS: tuple[str, ...] = tuple(getattr(_string_rule(RootCauseEvidence, "kind"), "in"))
 # Attribute access by upper-cased name (``OutcomeClassification.SUCCESS``); the
 # members are the proto's ``in`` list, so there is no second list to drift.
 OutcomeClassification = SimpleNamespace(**{value.upper(): value for value in OUTCOME_CLASSIFICATIONS})

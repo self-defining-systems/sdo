@@ -10,7 +10,7 @@ import pytest
 from google.protobuf import json_format
 
 from sdo.agents.responder.result_output import normalize_usage, parse_incident_result, validate_incident_result
-from sdo.contracts import IncidentRequest, IncidentResult, UsageMetrics, parse_json, to_canonical_json
+from sdo.contracts import IncidentRequest, IncidentResult, UsageMetrics, parse_json, to_canonical_json, validate
 
 FIXTURE_DIR = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 USAGE = {"llm_calls": 1, "input_tokens": 10, "output_tokens": 4, "reasoning_output_tokens": 1}
@@ -71,11 +71,11 @@ def test_root_cause_evidence_must_be_live_and_static_artifacts_are_only_context(
     reply["confirmed_root_causes"][0]["evidence"] = [
         {"kind": "static-artifact", "source": "arch.md", "observation": "x"}
     ]
-    with pytest.raises(ValueError, match="evidence kind"):
+    with pytest.raises(ValueError, match=r"evidence\.kind"):
         parse_incident_result(reply, USAGE)
 
     reply["confirmed_root_causes"][0]["evidence"] = [{"kind": "state-change", "source": "Service/x"}]
-    with pytest.raises(ValueError, match="source and an observation"):
+    with pytest.raises(ValueError, match=r"evidence\.observation"):
         parse_incident_result(reply, USAGE)
 
 
@@ -166,8 +166,10 @@ class TestUsageMetrics:
         ],
     )
     def test_an_inconsistent_breakdown_is_rejected(self, fields: dict[str, int], match: str) -> None:
+        usage = self._usage(**fields)
+        normalize_usage(usage)
         with pytest.raises(ValueError, match=match):
-            normalize_usage(self._usage(**fields))
+            validate(usage)
 
 
 def test_incident_request_carries_optional_follow_up_context() -> None:

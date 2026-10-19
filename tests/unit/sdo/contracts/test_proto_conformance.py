@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 
 from sdo.agents.responder.codex import _incident_result_schema
-from sdo.agents.responder.result_output import ROOT_CAUSE_EVIDENCE_KINDS
 from sdo.contracts import OUTCOME_CLASSIFICATIONS, OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
@@ -32,7 +31,6 @@ from sdo.contracts.proto import (
     IncidentResult,
     IncidentView,
     OutcomeRecord,
-    RootCauseEvidence,
     parse_json,
     to_canonical_json,
 )
@@ -103,11 +101,3 @@ def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> No
     unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
     assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
     assert set(schema["required"]) == set(schema["properties"])
-
-
-def test_root_cause_evidence_kinds_are_the_proto_rule() -> None:
-    from buf.validate import validate_pb2
-
-    field = RootCauseEvidence.DESCRIPTOR.fields_by_name["kind"]
-    permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
-    assert set(ROOT_CAUSE_EVIDENCE_KINDS) == set(permitted)

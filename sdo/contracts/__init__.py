@@ -1,5 +1,6 @@
 from sdo.contracts.proto import (
     OUTCOME_CLASSIFICATIONS,
+    ROOT_CAUSE_EVIDENCE_KINDS,
     SCHEMA_VERSION,
     AgentCapability,
     AgentRegistration,
@@ -93,6 +94,7 @@ from sdo.contracts.proto import (
 
 __all__ = [
     "OUTCOME_CLASSIFICATIONS",
+    "ROOT_CAUSE_EVIDENCE_KINDS",
     "SCHEMA_VERSION",
     "LateFinding",
     "LateFindingsHistory",
