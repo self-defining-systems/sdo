@@ -325,6 +325,16 @@ def _application_repository() -> Path:
     return repository
 
 
+def _application_label(app_info: dict[str, Any], repository: Path) -> str:
+    """The SREGym application's display name as the Kubernetes DNS label the Go operator requires."""
+
+    raw = str(app_info.get("app_name") or repository.name)
+    label = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")[:63].strip("-")
+    if not label:
+        raise ValueError(f"application name {raw!r} cannot be converted to a Kubernetes DNS label")
+    return label
+
+
 def _in_cluster_api_base(api_base: str) -> str:
     parsed = urlsplit(api_base)
     if parsed.hostname not in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
@@ -762,7 +772,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
     app_info = get_app_info(api_base)
     repository = _application_repository()
     _configure_turn_usage_log(args.logs_dir)
-    application = str(app_info.get("app_name") or repository.name)
+    application = _application_label(app_info, repository)
     namespace = str(app_info.get("namespace") or "default")
     trusted_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or None
     if trusted_kubeconfig is not None:
@@ -847,7 +857,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     app_info = get_app_info(api_base)
     repository = _application_repository()
     _configure_turn_usage_log(args.logs_dir)
-    application = str(app_info.get("app_name") or repository.name)
+    application = _application_label(app_info, repository)
     namespace = str(app_info.get("namespace") or "default")
     lifecycle_context = _deployed_lifecycle_context(namespace)
     health_objective = lifecycle_context.health_objective
