@@ -13,10 +13,10 @@ import (
 // InspectConfig identifies a live controller without trusting a local checkout.
 type InspectConfig struct {
 	ControlNamespace, Namespace, Application string
-	RepositoryPVC, ControllerImage          string
+	RepositoryPVC, ControllerImage           string
 }
 
-// ExistingController is a read-only continuity receipt for a persistent run.
+// ExistingController is a continuity receipt for a persistent run.
 type ExistingController struct {
 	JobUID         string `json:"job_uid"`
 	PodUID         string `json:"pod_uid"`
@@ -83,6 +83,9 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 	if podUID == "" {
 		return ExistingController{}, errors.New("existing controller has no ready owned Pod")
 	}
+	if err := i.restoreApplicationGrants(ctx, cfg); err != nil {
+		return ExistingController{}, err
+	}
 	commit, err := i.ReadAcceptedCommit(ctx, SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage})
 	if err != nil {
 		return ExistingController{}, fmt.Errorf("read accepted PVC HEAD: %w", err)
@@ -109,4 +112,31 @@ func podReady(conditions []corev1.PodCondition) bool {
 		}
 	}
 	return false
+}
+
+// restoreApplicationGrants reapplies the namespace-scoped grants the controller holds in the application
+// namespace. A harness that recreates that namespace between stages deletes them, and the persistent controller
+// would then keep running without being able to observe the application.
+func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConfig) error {
+	plan, err := Resources(Config{
+		Namespace: cfg.Namespace, ControlNamespace: cfg.ControlNamespace, Application: cfg.Application,
+		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only", Model: "grants-only",
+		ControllerImage: cfg.ControllerImage, ResponderImage: cfg.ControllerImage, ValidatorImage: cfg.ControllerImage,
+		// The plan is built only for its grants; these satisfy its validation of the controller Job it never creates.
+		TimeoutSeconds: 1, AcceptedCommit: strings.Repeat("0", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
+	})
+	if err != nil {
+		return fmt.Errorf("plan application grants: %w", err)
+	}
+	for _, role := range plan.AppRoles {
+		if err := i.upsertRole(ctx, role); err != nil {
+			return err
+		}
+	}
+	for _, binding := range plan.AppBindings {
+		if err := i.upsertBinding(ctx, binding); err != nil {
+			return err
+		}
+	}
+	return nil
 }
