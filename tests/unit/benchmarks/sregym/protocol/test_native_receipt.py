@@ -83,7 +83,7 @@ def test_native_receipt_verifies_correlated_go_ledger_and_health() -> None:
         lambda ledger: ledger["receipt"].update(outcome_commit=SHA_C),
         lambda ledger: ledger["closure"]["final_detector_states"][0].update(status="firing"),
         lambda ledger: ledger["outcome_document"].update(incident_id="different"),
-        lambda ledger: ledger.update(reflection_commit=""),
+        lambda ledger: ledger.update(reflection_commit="", reflection_decision={"learning_decision": "updated"}),
     ],
 )
 def test_native_receipt_rejects_missing_or_conflicting_evidence(change: object) -> None:
@@ -91,6 +91,14 @@ def test_native_receipt_rejects_missing_or_conflicting_evidence(change: object) 
     change(ledger)  # type: ignore[operator]
     with pytest.raises(ProductionReceiptValidationError):
         _receipt(ledger)
+
+
+def test_native_receipt_accepts_no_change_reflection_without_a_commit() -> None:
+    ledger = _ledger()
+    ledger["reflection_commit"] = ""
+    ledger["receipt"]["reflection_commit"] = ""  # type: ignore[index]
+    ledger["reflection_decision"] = {"learning_decision": "no_change", "no_change_reason": "nothing reusable"}
+    validate_production_receipt(_receipt(ledger))
 
 
 def test_native_receipt_requires_verified_detector_rollout_when_expected() -> None:
