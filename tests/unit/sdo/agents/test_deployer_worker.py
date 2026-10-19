@@ -104,7 +104,6 @@ def test_deployer_receives_trusted_registry_and_rejects_other_image_host(
     with pytest.raises(ValueError, match="trusted registry"):
         propose_source(request, tmp_path)
     assert request.registry_host in prompts[0]
-    assert "third-party" in prompts[0] and "@sha256:" in prompts[0]
 
 
 def test_deployment_worker_rejects_wrong_payload_type(tmp_path: Path) -> None:

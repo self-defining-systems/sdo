@@ -103,11 +103,6 @@ The human health objective is: {request.health_objective}
 Feedback from the prior independently verified attempt: {request.correction_feedback or "none"}.
 The operator's trusted image registry is {request.registry_host!r}; every image build target must start with
 {request.registry_host + "/"!r}. Use an image path under that host in manifests as well.
-The independent adapter rejects any workload container image that is not a build target of your plan or already a
-digest-pinned reference (name@sha256:...). A tag alone is rejected, so this includes every third-party image
-(databases, caches, tracing and service-discovery sidecars): give each one an image build whose Dockerfile is just
-`FROM <that image and tag>` under the trusted registry (the trusted builder has network access; you do not), and
-reference the trusted-registry path in the manifest. Check every workload manifest, init containers included.
 
 Edit only application source and conventional deployment files. Do not edit .sdo/. Do not run kubectl apply,
 build/push images, or claim the deployment is healthy. A trusted Go adapter will build the exact candidate source,
