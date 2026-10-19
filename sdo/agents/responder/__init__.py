@@ -11,7 +11,7 @@ from sdo.agents.responder.cause_admissibility import (
     apply_cause_admissibility,
     review_confirmed_causes,
 )
-from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.incident_status import (
     IncidentStatusReport,
     IncidentStatusState,
@@ -57,6 +57,7 @@ __all__ = [
     "history_view",
     "incident_status",
     "live_incident_status",
+    "AGENT_SKILLS",
     "prepare_claude_home",
     "prepare_codex_home",
     "reflection_output_schema",

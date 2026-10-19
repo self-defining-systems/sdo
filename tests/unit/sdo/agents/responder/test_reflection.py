@@ -208,6 +208,8 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     assert "OperationalArtifactProposal" in prompt
     assert "sdo-operator memory check" in prompt
     assert "draft-test" not in prompt
+    assert "sdo-detector-authoring" in prompt
+    assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
     assert ".sdo/" not in prompt
     assert "sdo.operational_memory" not in prompt

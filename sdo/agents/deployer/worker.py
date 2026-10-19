@@ -17,7 +17,7 @@ from sdo.agents.lifecycle import (
     DeployerAssessment,
     TopologyResourceDTO,
 )
-from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
+from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     AgentResult,
     AgentTask,
@@ -269,8 +269,8 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home()
-        prepare_claude_home()
+        prepare_codex_home(skills=AGENT_SKILLS["deployer"])
+        prepare_claude_home(skills=AGENT_SKILLS["deployer"])
         task_path = Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH)))
         task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
         publisher = KubernetesResultPublisher(namespace=namespace)
