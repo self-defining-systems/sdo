@@ -59,3 +59,39 @@ def test_native_host_requires_explicit_kind_lane(monkeypatch: pytest.MonkeyPatch
             api_base="http://localhost:8000",
             persistent=True,
         )
+
+
+def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sdo = tmp_path / ".sdo"
+    (sdo / "diagnostics").mkdir(parents=True)
+    (sdo / "diagnostics" / "manifest.yaml").write_text("detectors: []\n", encoding="utf-8")
+    (sdo / "lifecycle-provenance.yaml").write_text("{}\n", encoding="utf-8")
+    events: list[str] = []
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda config, **_kwargs: events.append("prepare"))
+    monkeypatch.setattr(driver, "wait_submission_bridge", lambda *_args: events.append("bridge"))
+    monkeypatch.setattr(driver, "launch_host", lambda config: events.append("host") or {})
+
+    def install(config: object) -> object:
+        events.append("install-existing")
+        return type("Receipt", (), {"reused": False, "accepted_commit": "a" * 40})()
+
+    monkeypatch.setattr(driver, "install_existing", install)
+    result = driver._launch_native_lifecycle(
+        driver._parse_args([]),
+        repository=tmp_path,
+        namespace="demo",
+        application="demo",
+        health_objective="deployment stays healthy",
+        api_base="http://localhost:8000",
+        persistent=True,
+    )
+    assert events == ["prepare", "bridge", "install-existing"]
+    assert result["seeded"] is True
+
+
+def test_unseeded_workspace_has_no_accepted_lifecycle(tmp_path: Path) -> None:
+    assert driver._has_accepted_lifecycle(tmp_path) is False

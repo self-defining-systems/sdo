@@ -40,6 +40,7 @@ from benchmarks.sregym.adapter.native_operator import (
     NativeInstallConfig,
     collect_native_receipt,
     export_runtime_artifacts,
+    install_existing,
     launch_host,
     sync_existing,
 )
@@ -477,6 +478,13 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
+def _has_accepted_lifecycle(repository: Path) -> bool:
+    """Whether *repository* already holds an accepted SDO lifecycle (a seeded workspace)."""
+
+    sdo = repository / ".sdo"
+    return (sdo / "diagnostics" / "manifest.yaml").is_file() and (sdo / "lifecycle-provenance.yaml").is_file()
+
+
 def _launch_native_lifecycle(
     args: argparse.Namespace,
     *,
@@ -540,6 +548,11 @@ def _launch_native_lifecycle(
             f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
         ),
     )
+    if _has_accepted_lifecycle(repository):
+        # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
+        # detectors): install the controller over it instead of running the deployer and health judge again.
+        receipt = install_existing(install)
+        return {"installed": True, "seeded": True, "reused": receipt.reused, "accepted_commit": receipt.accepted_commit}
     host = NativeHostConfig(
         install=install,
         health_objective=health_objective,
