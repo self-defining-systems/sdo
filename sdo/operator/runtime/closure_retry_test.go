@@ -67,6 +67,7 @@ func newClosureRetryController(t *testing.T, policy ClosureRetryPolicy, broker I
 	}
 	controller.now = func() time.Time { return *now }
 	request := controller.incidentRequest(*now, []sdk.Finding{stateFinding("fault")})
+	request.DetectorHistory = testDetectorHistory(*now)
 	closure := IncidentClosure{
 		Request: request, Result: cloneIncidentResultPointer(completedResult(request.IncidentID)),
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear}},
@@ -206,11 +207,11 @@ func TestRuntimeStateRejectsFailedClosureWithoutFailureRecord(t *testing.T) {
 	controller := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
 	state := controller.ExportState()
 	state.ClosureState = "failed"
-	if err := state.Validate(); err == nil {
+	if err := validateRuntimeState(state); err == nil {
 		t.Fatal("failed closure without a failure record was accepted")
 	}
 	state.ClosureFailure = &ClosureFailure{IncidentID: "other", Attempts: 1, Permanent: true}
-	if err := state.Validate(); err == nil {
+	if err := validateRuntimeState(state); err == nil {
 		t.Fatal("closure failure for another incident was accepted")
 	}
 }

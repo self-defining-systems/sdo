@@ -76,7 +76,7 @@ func TestControllerPublishesTheOpenIncidentsLiveView(t *testing.T) {
 	if len(request.StateChanges.Changes) != 1 {
 		t.Fatalf("the dispatched request keeps its own snapshot: %#v", request.StateChanges)
 	}
-	if err := controller.ExportState().Validate(); err != nil {
+	if err := validateRuntimeState(controller.ExportState()); err != nil {
 		t.Fatalf("a state with a view must validate: %v", err)
 	}
 

@@ -2,49 +2,14 @@ package runtime
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/worker_registry"
 )
-
-const (
-	incidentTaskType   = "incident-response"
-	builtInResponderID = "sdo-responder"
-)
-
-func builtInResponderRegistration(image string, command []string) *contracts.AgentRegistration {
-	return &contracts.AgentRegistration{
-		SchemaVersion: ProtocolSchemaVersion,
-		AgentId:       builtInResponderID,
-		Capabilities: []*contracts.AgentCapability{{
-			TaskType:       incidentTaskType,
-			RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentRequest",
-			ResultTypeUrl:  "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentResult",
-		}},
-		Launch: &contracts.AgentRegistration_KubernetesJob{KubernetesJob: &contracts.KubernetesJobLaunch{Image: image, Command: command}},
-	}
-}
-
-func builtInReflectorRegistration(image string) *contracts.AgentRegistration {
-	return &contracts.AgentRegistration{
-		SchemaVersion: ProtocolSchemaVersion,
-		AgentId:       "sdo-reflector",
-		Capabilities: []*contracts.AgentCapability{{
-			TaskType:       "outcome-reflection",
-			RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest",
-			ResultTypeUrl:  "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult",
-		}},
-		Launch: &contracts.AgentRegistration_KubernetesJob{KubernetesJob: &contracts.KubernetesJobLaunch{
-			Image: image, Command: []string{"python3", "-m", "sdo.agents.responder.reflection_worker"},
-		}},
-	}
-}
 
 func incidentRequestToProto(request IncidentRequest) (*contracts.IncidentRequest, error) {
 	return incidentRequestContract(request)
@@ -54,7 +19,10 @@ func incidentResultToProto(result IncidentResult) (*contracts.IncidentResult, er
 	return incidentResultContract(result)
 }
 
-func encodeIncidentAgentTask(request IncidentRequest, agentID string, snapshots ...*contracts.OperationalMemorySnapshot) (*contracts.AgentTask, []byte, error) {
+// encodeIncidentAgentTask builds the validated AgentTask for one incident. The
+// task type is whatever the selected agent's registration declares for the
+// incident request message.
+func encodeIncidentAgentTask(request IncidentRequest, registry *worker_registry.Registry, agentID string, snapshots ...*contracts.OperationalMemorySnapshot) (*contracts.AgentTask, []byte, error) {
 	typedRequest, err := incidentRequestToProto(request)
 	if err != nil {
 		return nil, nil, err
@@ -68,15 +36,19 @@ func encodeIncidentAgentTask(request IncidentRequest, agentID string, snapshots 
 		}
 		typedRequest.MemorySnapshot = snapshots[0]
 	}
+	taskType, err := registry.TaskType(agentID, typedRequest)
+	if err != nil {
+		return nil, nil, err
+	}
 	packed, err := anypb.New(typedRequest)
 	if err != nil {
 		return nil, nil, fmt.Errorf("pack incident request: %w", err)
 	}
 	task := &contracts.AgentTask{
-		SchemaVersion: ProtocolSchemaVersion,
+		SchemaVersion: worker_registry.SchemaVersion,
 		TaskId:        request.IncidentID,
 		AgentId:       agentID,
-		TaskType:      incidentTaskType,
+		TaskType:      taskType,
 		Request:       packed,
 		Workspace: &contracts.ProposalWorkspace{
 			ProposalId:   request.IncidentID,
@@ -84,7 +56,7 @@ func encodeIncidentAgentTask(request IncidentRequest, agentID string, snapshots 
 			BaseCommit:   request.RepositoryBaseCommit,
 		},
 	}
-	payload, err := canonicalProtoJSON(task)
+	payload, err := wire.Canonical(task)
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode agent task: %w", err)
 	}
@@ -94,11 +66,9 @@ func encodeIncidentAgentTask(request IncidentRequest, agentID string, snapshots 
 	return task, payload, nil
 }
 
-func decodeIncidentAgentResult(payload []byte, task *contracts.AgentTask, registry *worker_registry.Registry) (IncidentResult, error) {
-	result := &contracts.AgentResult{}
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(payload, result); err != nil {
-		return IncidentResult{}, fmt.Errorf("decode agent result: %w", err)
-	}
+// incidentResultFromAgent checks a worker's AgentResult against its task and
+// unpacks the incident result it carries.
+func incidentResultFromAgent(result *contracts.AgentResult, task *contracts.AgentTask, registry *worker_registry.Registry) (IncidentResult, error) {
 	if err := registry.ValidateResult(task, result); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent result: %w", err)
 	}
@@ -109,19 +79,8 @@ func decodeIncidentAgentResult(payload []byte, task *contracts.AgentTask, regist
 	if err := result.GetResponse().UnmarshalTo(typed); err != nil {
 		return IncidentResult{}, fmt.Errorf("unpack incident result: %w", err)
 	}
+	if err := wire.Validate(typed); err != nil {
+		return IncidentResult{}, err
+	}
 	return incidentResultState(typed), nil
-}
-
-// ProtoJSON does not promise stable field order. Canonicalizing lets a
-// restarted controller compare its task with an existing ConfigMap exactly.
-func canonicalProtoJSON(message proto.Message) ([]byte, error) {
-	raw, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(message)
-	if err != nil {
-		return nil, err
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, err
-	}
-	return json.Marshal(value)
 }

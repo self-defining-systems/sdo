@@ -11,8 +11,8 @@ import (
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"sdo.dev/operator/contracts/wire"
 )
 
 // RunConfig binds a built application controller to its transport-neutral
@@ -138,5 +138,5 @@ func controllerConfigJSON(config RunConfig, prober string, built provenance) ([]
 	launch.DiagnosticsFingerprint = built.Fingerprint
 	launch.ControllerArtifactDigest = built.ArtifactDigest
 	launch.ControllerRevision = built.Revision
-	return protojson.MarshalOptions{UseProtoNames: true}.Marshal(launch)
+	return wire.Marshal(launch)
 }

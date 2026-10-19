@@ -245,8 +245,8 @@ func TestAdmissionDefersThenResumesUnderLoad(t *testing.T) {
 		t.Fatalf("expected exactly one admission_deferred event, got %d", len(deferredEvents))
 	}
 	deferral := deferredEvents[0]
-	if deferral.IncidentID != opened[0].IncidentID {
-		t.Fatalf("deferral %q not keyed to the opened incident %q", deferral.IncidentID, opened[0].IncidentID)
+	if deferral.IncidentId != opened[0].IncidentId {
+		t.Fatalf("deferral %q not keyed to the opened incident %q", deferral.IncidentId, opened[0].IncidentId)
 	}
 	if deferral.Reason != admissionReasonLoad || deferral.LoadThreshold != 80 || deferral.LoadPressure != 90 {
 		t.Fatalf("admission_deferred did not record the load decision: %+v", deferral)
@@ -277,8 +277,8 @@ func TestAdmissionDefersThenResumesUnderLoad(t *testing.T) {
 	}
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
-	if request.IncidentID != opened[0].IncidentID {
-		t.Fatalf("resumed dispatch opened a different incident: got %q want %q", request.IncidentID, opened[0].IncidentID)
+	if request.IncidentID != opened[0].IncidentId {
+		t.Fatalf("resumed dispatch opened a different incident: got %q want %q", request.IncidentID, opened[0].IncidentId)
 	}
 	if dispatcher.callCount() != 1 {
 		t.Fatalf("expected exactly one dispatch after resume, got %d", dispatcher.callCount())

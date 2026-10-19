@@ -17,7 +17,7 @@ import (
 func TestConfigMapStateStoreRoundTripAndCASConflict(t *testing.T) {
 	ctx := context.Background()
 	store := NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "sdo-controller-state")
-	state := RuntimeState{Version: RuntimeStateVersion, History: []DetectorEvaluation{{DetectorID: "health"}}}
+	state := RuntimeState{Version: RuntimeStateVersion, History: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: time.Unix(1, 0).UTC(), Status: DetectorEvaluationFiring}}}
 
 	revision, err := store.Save(ctx, state, "")
 	if err != nil {
@@ -31,7 +31,7 @@ func TestConfigMapStateStoreRoundTripAndCASConflict(t *testing.T) {
 		t.Fatalf("unexpected loaded state %#v revision %q", loaded, loadedRevision)
 	}
 	changed := loaded
-	changed.History = append(changed.History, DetectorEvaluation{DetectorID: "incident"})
+	changed.History = append(changed.History, DetectorEvaluation{DetectorID: "incident", EvaluatedAt: time.Unix(2, 0).UTC(), Status: DetectorEvaluationFiring})
 	if _, err := store.Save(ctx, changed, revision); err != nil {
 		t.Fatalf("update state: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -57,8 +58,8 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt
 	}
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseDispatched, RecordedAt: c.incidentDispatchedAt, IncidentID: effect.Request.IncidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseDispatched, RecordedAt: contractTimestamp(c.incidentDispatchedAt), IncidentId: effect.Request.IncidentID,
 		Worktree: effect.Request.RepositoryWorktree, BaseCommit: effect.Request.RepositoryBaseCommit,
 	})
 	c.mu.Unlock()

@@ -2914,9 +2914,9 @@ var File_sdodev_contracts_v1alpha1_messages_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
-	"(sdodev/contracts/v1alpha1/messages.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a'sdodev/contracts/v1alpha1/traffic.proto\"\x83\x06\n" +
-	"\aFinding\x12(\n" +
-	"\vdetector_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"(sdodev/contracts/v1alpha1/messages.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a'sdodev/contracts/v1alpha1/traffic.proto\"\xbb\x06\n" +
+	"\aFinding\x12@\n" +
+	"\vdetector_id\x18\x01 \x01(\tB\x1f\xbaH\x1cr\x1a\x10\x012\x16^[a-z0-9][a-z0-9_.-]*$R\n" +
 	"detectorId\x12 \n" +
 	"\arule_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06ruleId\x12/\n" +
 	"\x06status\x18\x03 \x01(\tB\x17\xbaH\x14r\x12R\x06activeR\bresolvedR\x06status\x127\n" +
@@ -2924,37 +2924,37 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\asummary\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\asummary\x12#\n" +
 	"\bevidence\x18\x06 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bevidence\x12W\n" +
 	"\x10primary_resource\x18\a \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x0fprimaryResource\x12Q\n" +
-	"\x11related_resources\x18\b \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x10relatedResources\x12!\n" +
-	"\fplaybook_ids\x18\t \x03(\tR\vplaybookIds\x12h\n" +
+	"\x11related_resources\x18\b \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x10relatedResources\x12A\n" +
+	"\fplaybook_ids\x18\t \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\vplaybookIds\x12h\n" +
 	"\x12parameter_bindings\x18\n" +
 	" \x03(\v29.sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntryR\x11parameterBindings\x12 \n" +
 	"\vfingerprint\x18\v \x01(\tR\vfingerprint\x123\n" +
 	"\bmetadata\x18\f \x01(\v2\x17.google.protobuf.StructR\bmetadata\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\x83\x02\n" +
-	"\x12DetectorEvaluation\x12(\n" +
-	"\vdetector_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\x9b\x02\n" +
+	"\x12DetectorEvaluation\x12@\n" +
+	"\vdetector_id\x18\x01 \x01(\tB\x1f\xbaH\x1cr\x1a\x10\x012\x16^[a-z0-9][a-z0-9_.-]*$R\n" +
 	"detectorId\x12E\n" +
 	"\fevaluated_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vevaluatedAt\x123\n" +
 	"\x06status\x18\x03 \x01(\tB\x1b\xbaH\x18r\x16R\x06firingR\x05clearR\x05errorR\x06status\x12\"\n" +
 	"\ffingerprints\x18\x04 \x03(\tR\ffingerprints\x12\x19\n" +
 	"\x05error\x18\x05 \x01(\tH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error\"\x9b\x02\n" +
-	"\x10SurfacedPlaybook\x12(\n" +
-	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"\x06_error\"\xaf\x02\n" +
+	"\x10SurfacedPlaybook\x12<\n" +
+	"\vplaybook_id\x18\x01 \x01(\tB\x1b\xbaH\x18r\x16\x10\x012\x12^[a-z][a-z0-9_-]*$R\n" +
 	"playbookId\x12q\n" +
 	"\x12parameter_bindings\x18\x02 \x03(\v2B.sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntryR\x11parameterBindings\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xab\x03\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xcb\x03\n" +
 	"\x14PriorOutcomeEvidence\x12(\n" +
 	"\vincident_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"incidentId\x12q\n" +
 	"\fmatch_reason\x18\x02 \x01(\tBN\xbaHKrIR\x11exact-fingerprintR\x17learned-detector-originR\x1bdetector-rule-resource-kindR\vmatchReason\x120\n" +
 	"\x14root_cause_summaries\x18\x03 \x03(\tR\x12rootCauseSummaries\x126\n" +
-	"\x17repair_action_summaries\x18\x04 \x03(\tR\x15repairActionSummaries\x120\n" +
-	"\x14applied_playbook_ids\x18\x05 \x03(\tR\x12appliedPlaybookIds\x12,\n" +
+	"\x17repair_action_summaries\x18\x04 \x03(\tR\x15repairActionSummaries\x12P\n" +
+	"\x14applied_playbook_ids\x18\x05 \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x12appliedPlaybookIds\x12,\n" +
 	"\rsource_commit\x18\x06 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\fsourceCommit\x12,\n" +
 	"\x12exact_source_match\x18\a \x01(\bR\x10exactSourceMatch\"~\n" +
 	"\x10StateFieldChange\x12\x1d\n" +
@@ -2991,14 +2991,14 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\vMemoryWatch\x12\x1f\n" +
 	"\vapi_version\x18\x01 \x01(\tR\n" +
 	"apiVersion\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\"\x96\x03\n" +
-	"\x0eMemoryDetector\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\"\xd5\x03\n" +
+	"\x0eMemoryDetector\x12-\n" +
+	"\x02id\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x182\x16^[a-z0-9][a-z0-9_.-]*$R\x02id\x12%\n" +
 	"\x0edetector_class\x18\x02 \x01(\tR\rdetectorClass\x12\x14\n" +
 	"\x05owner\x18\x03 \x01(\tR\x05owner\x12@\n" +
 	"\awatches\x18\x05 \x03(\v2&.sdodev.contracts.v1alpha1.MemoryWatchR\awatches\x12\x16\n" +
-	"\x06firing\x18\x06 \x01(\x05R\x06firing\x122\n" +
-	"\x15possible_playbook_ids\x18\a \x03(\tR\x13possiblePlaybookIds\x121\n" +
+	"\x06firing\x18\x06 \x01(\x05R\x06firing\x12R\n" +
+	"\x15possible_playbook_ids\x18\a \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x13possiblePlaybookIds\x121\n" +
 	"\x14originating_incident\x18\b \x01(\tR\x13originatingIncident\x12 \n" +
 	"\vdescription\x18\t \x01(\tR\vdescription\x12+\n" +
 	"\x11predicate_excerpt\x18\n" +
@@ -3006,9 +3006,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\freads_events\x18\v \x01(\bR\vreadsEventsJ\x04\b\x04\x10\x05\"<\n" +
 	"\fMemoryScript\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\x7f\n" +
-	"\x0eMemoryPlaybook\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\x9a\x01\n" +
+	"\x0eMemoryPlaybook\x12)\n" +
+	"\x02id\x18\x01 \x01(\tB\x19\xbaH\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x02id\x12\x1a\n" +
 	"\bmarkdown\x18\x02 \x01(\tR\bmarkdown\x12A\n" +
 	"\ascripts\x18\x03 \x03(\v2'.sdodev.contracts.v1alpha1.MemoryScriptR\ascripts\"\xe8\x02\n" +
 	"\x19OperationalMemorySnapshot\x12'\n" +
@@ -3081,15 +3081,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +
-	"\vobservation\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vobservation\"\xa7\x02\n" +
+	"\vobservation\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vobservation\"\xcb\x02\n" +
 	"\x12ConfirmedRootCause\x12!\n" +
 	"\asummary\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\asummary\x12L\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\b\xbaH\x05\x92\x01\x02\b\x01R\tresources\x12H\n" +
-	"\bevidence\x18\x03 \x03(\v2,.sdodev.contracts.v1alpha1.RootCauseEvidenceR\bevidence\x12/\n" +
-	"\x13explained_detectors\x18\x04 \x03(\tR\x12explainedDetectors\x12%\n" +
-	"\x0estatic_context\x18\x05 \x03(\tR\rstaticContext\"\xbc\x02\n" +
-	"\x0fAppliedPlaybook\x12(\n" +
-	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"\bevidence\x18\x03 \x03(\v2,.sdodev.contracts.v1alpha1.RootCauseEvidenceR\bevidence\x12S\n" +
+	"\x13explained_detectors\x18\x04 \x03(\tB\"\xbaH\x1f\x92\x01\x1c\"\x1ar\x182\x16^[a-z0-9][a-z0-9_.-]*$R\x12explainedDetectors\x12%\n" +
+	"\x0estatic_context\x18\x05 \x03(\tR\rstaticContext\"\xd0\x02\n" +
+	"\x0fAppliedPlaybook\x12<\n" +
+	"\vplaybook_id\x18\x01 \x01(\tB\x1b\xbaH\x18r\x16\x10\x012\x12^[a-z][a-z0-9_-]*$R\n" +
 	"playbookId\x12p\n" +
 	"\x12parameter_bindings\x18\x02 \x03(\v2A.sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntryR\x11parameterBindings\x12!\n" +
 	"\fscript_names\x18\x03 \x03(\tR\vscriptNames\x1aj\n" +
@@ -3169,15 +3169,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12late_findings_pull\x18\x0f \x01(\v2+.sdodev.contracts.v1alpha1.LateFindingsPullR\x10lateFindingsPull:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
 	"\x15_responder_session_idB\b\n" +
-	"\x06_error\"\xbd\x01\n" +
-	"\x10LateFindingsPull\x12\x1f\n" +
-	"\vincident_id\x18\x01 \x01(\tR\n" +
-	"incidentId\x12\x1d\n" +
+	"\x06_error\"\xaa\x02\n" +
+	"\x10LateFindingsPull\x12(\n" +
+	"\vincident_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"incidentId\x12&\n" +
 	"\n" +
-	"pull_count\x18\x02 \x01(\rR\tpullCount\x12!\n" +
-	"\fdetector_ids\x18\x03 \x03(\tR\vdetectorIds\x12!\n" +
-	"\fplaybook_ids\x18\x04 \x03(\tR\vplaybookIds\x12#\n" +
-	"\rreport_digest\x18\x05 \x01(\tR\freportDigest\"\x9c\x03\n" +
+	"pull_count\x18\x02 \x01(\rB\a\xbaH\x04*\x02(\x01R\tpullCount\x12E\n" +
+	"\fdetector_ids\x18\x03 \x03(\tB\"\xbaH\x1f\x92\x01\x1c\"\x1ar\x182\x16^[a-z0-9][a-z0-9_.-]*$R\vdetectorIds\x12A\n" +
+	"\fplaybook_ids\x18\x04 \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\vplaybookIds\x12:\n" +
+	"\rreport_digest\x18\x05 \x01(\tB\x15\xbaH\x12r\x102\x0e^[0-9a-f]{64}$R\freportDigest\"\x9c\x03\n" +
 	"\fIncidentView\x12(\n" +
 	"\vincident_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"incidentId\x12C\n" +
@@ -3186,16 +3186,16 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12blocking_detectors\x18\x03 \x03(\tR\x11blockingDetectors\x12O\n" +
 	"\x11blocking_findings\x18\x04 \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\x10blockingFindings\x12O\n" +
 	"\x11clearing_findings\x18\x05 \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\x10clearingFindings\x12L\n" +
-	"\rstate_changes\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.StateChangesR\fstateChanges\"\xdd\b\n" +
-	"\x15DetectorTimelineEntry\x12(\n" +
-	"\vdetector_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"\rstate_changes\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.StateChangesR\fstateChanges\"\x95\t\n" +
+	"\x15DetectorTimelineEntry\x12@\n" +
+	"\vdetector_id\x18\x01 \x01(\tB\x1f\xbaH\x1cr\x1a\x10\x012\x16^[a-z0-9][a-z0-9_.-]*$R\n" +
 	"detectorId\x12%\n" +
 	"\x0edetector_class\x18\x02 \x01(\tR\rdetectorClass\x12\x14\n" +
 	"\x05owner\x18\x03 \x01(\tR\x05owner\x12\x17\n" +
 	"\arule_id\x18\x04 \x01(\tR\x06ruleId\x12)\n" +
 	"\vfingerprint\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vfingerprint\x12v\n" +
-	"\x12parameter_bindings\x18\x06 \x03(\v2G.sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntryR\x11parameterBindings\x122\n" +
-	"\x15surfaced_playbook_ids\x18\a \x03(\tR\x13surfacedPlaybookIds\x12P\n" +
+	"\x12parameter_bindings\x18\x06 \x03(\v2G.sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntryR\x11parameterBindings\x12R\n" +
+	"\x15surfaced_playbook_ids\x18\a \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x13surfacedPlaybookIds\x12P\n" +
 	"\x12first_activated_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\x10firstActivatedAt\x12D\n" +
 	"\flast_seen_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"lastSeenAt\x12>\n" +

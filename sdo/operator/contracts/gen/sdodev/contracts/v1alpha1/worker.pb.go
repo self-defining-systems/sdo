@@ -7,6 +7,7 @@
 package contractsv1alpha1
 
 import (
+	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -470,7 +471,7 @@ type AgentResult struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SchemaVersion string                 `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
 	TaskId        string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	// completed, failed, or cancelled. The broker still validates the diff.
+	// The broker still validates the diff.
 	Status        string     `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
 	Response      *anypb.Any `protobuf:"bytes,4,opt,name=response,proto3" json:"response,omitempty"`
 	ProposalId    string     `protobuf:"bytes,5,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"`
@@ -735,64 +736,70 @@ var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\x80\x03\n" +
-	"\x11AgentRegistration\x12%\n" +
-	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x19\n" +
-	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12N\n" +
-	"\fcapabilities\x18\x03 \x03(\v2*.sdodev.contracts.v1alpha1.AgentCapabilityR\fcapabilities\x12 \n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
+	"\x11AgentRegistration\x12>\n" +
+	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
+	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12\"\n" +
+	"\bagent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aagentId\x12X\n" +
+	"\fcapabilities\x18\x03 \x03(\v2*.sdodev.contracts.v1alpha1.AgentCapabilityB\b\xbaH\x05\x92\x01\x02\b\x01R\fcapabilities\x12 \n" +
 	"\vpermissions\x18\x04 \x03(\tR\vpermissions\x12W\n" +
 	"\x0ekubernetes_job\x18\x05 \x01(\v2..sdodev.contracts.v1alpha1.KubernetesJobLaunchH\x00R\rkubernetesJob\x12T\n" +
-	"\rlocal_process\x18\x06 \x01(\v2-.sdodev.contracts.v1alpha1.LocalProcessLaunchH\x00R\flocalProcessB\b\n" +
-	"\x06launch\"\x80\x01\n" +
-	"\x0fAgentCapability\x12\x1b\n" +
-	"\ttask_type\x18\x01 \x01(\tR\btaskType\x12(\n" +
-	"\x10request_type_url\x18\x02 \x01(\tR\x0erequestTypeUrl\x12&\n" +
-	"\x0fresult_type_url\x18\x03 \x01(\tR\rresultTypeUrl\"r\n" +
-	"\x13KubernetesJobLaunch\x12\x14\n" +
-	"\x05image\x18\x01 \x01(\tR\x05image\x12\x18\n" +
-	"\acommand\x18\x02 \x03(\tR\acommand\x12+\n" +
-	"\x11environment_names\x18\x03 \x03(\tR\x10environmentNames\"[\n" +
-	"\x12LocalProcessLaunch\x12\x18\n" +
-	"\acommand\x18\x01 \x03(\tR\acommand\x12+\n" +
+	"\rlocal_process\x18\x06 \x01(\v2-.sdodev.contracts.v1alpha1.LocalProcessLaunchH\x00R\flocalProcess:\xb0\x01\xbaH\xac\x01\x1a\xa9\x01\n" +
+	"\x1eregistration.unique_task_types\x12(an agent may declare each task type once\x1a]this.capabilities.all(a, this.capabilities.filter(b, b.task_type == a.task_type).size() == 1)B\x0f\n" +
+	"\x06launch\x12\x05\xbaH\x02\b\x01\"\x9b\x01\n" +
+	"\x0fAgentCapability\x12$\n" +
+	"\ttask_type\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\btaskType\x121\n" +
+	"\x10request_type_url\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x0erequestTypeUrl\x12/\n" +
+	"\x0fresult_type_url\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\rresultTypeUrl\"\x85\x01\n" +
+	"\x13KubernetesJobLaunch\x12\x1d\n" +
+	"\x05image\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05image\x12\"\n" +
+	"\acommand\x18\x02 \x03(\tB\b\xbaH\x05\x92\x01\x02\b\x01R\acommand\x12+\n" +
+	"\x11environment_names\x18\x03 \x03(\tR\x10environmentNames\"e\n" +
+	"\x12LocalProcessLaunch\x12\"\n" +
+	"\acommand\x18\x01 \x03(\tB\b\xbaH\x05\x92\x01\x02\b\x01R\acommand\x12+\n" +
 	"\x11environment_names\x18\x02 \x03(\tR\x10environmentNames\"z\n" +
 	"\x11ProposalWorkspace\x12\x1f\n" +
 	"\vproposal_id\x18\x01 \x01(\tR\n" +
 	"proposalId\x12#\n" +
 	"\rcheckout_path\x18\x02 \x01(\tR\fcheckoutPath\x12\x1f\n" +
 	"\vbase_commit\x18\x03 \x01(\tR\n" +
-	"baseCommit\"\xb7\x02\n" +
-	"\tAgentTask\x12%\n" +
-	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x17\n" +
-	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x19\n" +
-	"\bagent_id\x18\x03 \x01(\tR\aagentId\x12\x1b\n" +
-	"\ttask_type\x18\x04 \x01(\tR\btaskType\x12.\n" +
+	"baseCommit\"\xeb\x02\n" +
+	"\tAgentTask\x12>\n" +
+	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
+	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12 \n" +
+	"\atask_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06taskId\x12\"\n" +
+	"\bagent_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aagentId\x12$\n" +
+	"\ttask_type\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\btaskType\x12.\n" +
 	"\arequest\x18\x05 \x01(\v2\x14.google.protobuf.AnyR\arequest\x12J\n" +
 	"\tworkspace\x18\x06 \x01(\v2,.sdodev.contracts.v1alpha1.ProposalWorkspaceR\tworkspace\x126\n" +
-	"\bdeadline\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xdd\x01\n" +
-	"\vAgentResult\x12%\n" +
-	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x17\n" +
-	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x16\n" +
-	"\x06status\x18\x03 \x01(\tR\x06status\x120\n" +
+	"\bdeadline\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\"\xa4\x02\n" +
+	"\vAgentResult\x12>\n" +
+	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
+	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12 \n" +
+	"\atask_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06taskId\x12;\n" +
+	"\x06status\x18\x03 \x01(\tB#\xbaH r\x1eR\tcompletedR\x06failedR\tcancelledR\x06status\x120\n" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\x8a\x04\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xd2\x04\n" +
 	"\x11ReflectionRequest\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
 	"\x0eoutcome_commit\x18\x05 \x01(\tR\routcomeCommit\x12]\n" +
-	"\x0fmemory_snapshot\x18\x06 \x01(\v24.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12!\n" +
-	"\fsession_mode\x18\a \x01(\tR\vsessionMode\x12\x1a\n" +
-	"\bguidance\x18\b \x01(\tR\bguidance\x12B\n" +
+	"\x0fmemory_snapshot\x18\x06 \x01(\v24.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x129\n" +
+	"\fsession_mode\x18\a \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\vsessionMode\x12J\n" +
+	"\bguidance\x18\b \x01(\tB.\xbaH+r)R\x00R\bbaselineR\n" +
+	"generalizeR\x0fgeneralize-specR\bguidance\x12B\n" +
 	"\aoutcome\x18\t \x01(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\aoutcome\x12O\n" +
 	"\x0eprior_outcomes\x18\n" +
-	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomesJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\x9c\x02\n" +
+	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomesJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xdb\x03\n" +
 	"\x10ReflectionResult\x12\x18\n" +
-	"\asummary\x18\x01 \x01(\tR\asummary\x12+\n" +
-	"\x11learning_decision\x18\x02 \x01(\tR\x10learningDecision\x12(\n" +
+	"\asummary\x18\x01 \x01(\tR\asummary\x12F\n" +
+	"\x11learning_decision\x18\x02 \x01(\tB\x19\xbaH\x16r\x14R\aupdatedR\tno_changeR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x122\n" +
 	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12c\n" +
-	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalR\x10artifactProposalB\xfe\x01\n" +
+	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalR\x10artifactProposal:\xa1\x01\xbaH\x9d\x01\x1a\x9a\x01\n" +
+	"\x1freflection.no_change_has_reason\x121a no_change reflection requires a concrete reason\x1aDthis.learning_decision != 'no_change' || this.no_change_reason != ''B\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

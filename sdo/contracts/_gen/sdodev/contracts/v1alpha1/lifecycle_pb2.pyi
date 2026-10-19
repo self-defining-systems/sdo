@@ -1,3 +1,4 @@
+from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from google.protobuf.internal import containers as _containers

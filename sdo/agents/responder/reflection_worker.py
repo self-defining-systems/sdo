@@ -22,6 +22,7 @@ from sdo.agents.responder.reflection import (
     SessionReflector,
 )
 from sdo.contracts import (
+    SCHEMA_VERSION,
     AgentResult,
     AgentTask,
     IncidentClosure,
@@ -30,10 +31,9 @@ from sdo.contracts import (
     ReflectionResult,
     parse_json,
     to_canonical_json,
+    validate,
 )
 
-AGENT_ID = "sdo-reflector"
-TASK_TYPE = "outcome-reflection"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 _SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 
@@ -65,10 +65,7 @@ def run_reflection_task(
     reflector: Reflector | None = None,
 ) -> AgentResult:
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id:
-        raise ValueError("reflection task has invalid version or task ID")
-    if task.agent_id != AGENT_ID or task.task_type != TASK_TYPE:
-        raise ValueError(f"reflection worker cannot handle agent {task.agent_id!r} task type {task.task_type!r}")
+    validate(task)
     request = ReflectionRequest()
     if not task.request.Unpack(request):
         raise ValueError("reflection task request is not a ReflectionRequest")
@@ -134,7 +131,7 @@ def run_reflection_task(
             json_format.ParseDict(turn.artifact_proposal.model_dump(mode="json"), OperationalArtifactProposal())
         )
     result = AgentResult(
-        schema_version="sdo.dev/v1alpha1",
+        schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status="completed",
         proposal_id=task.workspace.proposal_id,

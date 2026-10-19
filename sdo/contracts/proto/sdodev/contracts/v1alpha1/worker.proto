@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package sdodev.contracts.v1alpha1;
 
+import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
@@ -12,31 +13,37 @@ option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;co
 // Registration describes a worker's external contract and launch mechanism.
 // Its language, agent framework, and internal session code are private to it.
 message AgentRegistration {
-  string schema_version = 1;
-  string agent_id = 2;
-  repeated AgentCapability capabilities = 3;
+  option (buf.validate.message).cel = {
+    id: "registration.unique_task_types"
+    message: "an agent may declare each task type once"
+    expression: "this.capabilities.all(a, this.capabilities.filter(b, b.task_type == a.task_type).size() == 1)"
+  };
+  string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
+  string agent_id = 2 [(buf.validate.field).string.min_len = 1];
+  repeated AgentCapability capabilities = 3 [(buf.validate.field).repeated.min_items = 1];
   repeated string permissions = 4;
   oneof launch {
+    option (buf.validate.oneof).required = true;
     KubernetesJobLaunch kubernetes_job = 5;
     LocalProcessLaunch local_process = 6;
   }
 }
 
 message AgentCapability {
-  string task_type = 1;
-  string request_type_url = 2;
-  string result_type_url = 3;
+  string task_type = 1 [(buf.validate.field).string.min_len = 1];
+  string request_type_url = 2 [(buf.validate.field).string.min_len = 1];
+  string result_type_url = 3 [(buf.validate.field).string.min_len = 1];
 }
 
 // A worker image is an executable artifact, not a language designation.
 message KubernetesJobLaunch {
-  string image = 1;
-  repeated string command = 2;
+  string image = 1 [(buf.validate.field).string.min_len = 1];
+  repeated string command = 2 [(buf.validate.field).repeated.min_items = 1];
   repeated string environment_names = 3;
 }
 
 message LocalProcessLaunch {
-  repeated string command = 1;
+  repeated string command = 1 [(buf.validate.field).repeated.min_items = 1];
   repeated string environment_names = 2;
 }
 
@@ -49,20 +56,20 @@ message ProposalWorkspace {
 }
 
 message AgentTask {
-  string schema_version = 1;
-  string task_id = 2;
-  string agent_id = 3;
-  string task_type = 4;
+  string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
+  string task_id = 2 [(buf.validate.field).string.min_len = 1];
+  string agent_id = 3 [(buf.validate.field).string.min_len = 1];
+  string task_type = 4 [(buf.validate.field).string.min_len = 1];
   google.protobuf.Any request = 5;
   ProposalWorkspace workspace = 6;
   google.protobuf.Timestamp deadline = 7;
 }
 
 message AgentResult {
-  string schema_version = 1;
-  string task_id = 2;
-  // completed, failed, or cancelled. The broker still validates the diff.
-  string status = 3;
+  string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
+  string task_id = 2 [(buf.validate.field).string.min_len = 1];
+  // The broker still validates the diff.
+  string status = 3 [(buf.validate.field).string = {in: ["completed", "failed", "cancelled"]}];
   google.protobuf.Any response = 4;
   string proposal_id = 5;
   string error_summary = 6;
@@ -78,16 +85,21 @@ message ReflectionRequest {
   string outcome_commit = 5;
   OperationalMemorySnapshot memory_snapshot = 6;
   // Empty selects a fresh reflection. Resume requires a valid prior responder session.
-  string session_mode = 7;
+  string session_mode = 7 [(buf.validate.field).string = {in: ["", "fresh", "resume"]}];
   // Empty selects baseline. Other modes are generalize and generalize-spec.
-  string guidance = 8;
+  string guidance = 8 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];
   OutcomeRecord outcome = 9;
   repeated OutcomeRecord prior_outcomes = 10;
 }
 
 message ReflectionResult {
+  option (buf.validate.message).cel = {
+    id: "reflection.no_change_has_reason"
+    message: "a no_change reflection requires a concrete reason"
+    expression: "this.learning_decision != 'no_change' || this.no_change_reason != ''"
+  };
   string summary = 1;
-  string learning_decision = 2;
+  string learning_decision = 2 [(buf.validate.field).string = {in: ["updated", "no_change"]}];
   string no_change_reason = 3;
   repeated string proposed_artifact_ids = 4;
   OperationalArtifactProposal artifact_proposal = 5;

@@ -32,13 +32,13 @@ type Extension interface {
 }
 
 type Installer struct {
-	Client         kubernetes.Interface
-	SeedRepository RepositorySeeder
-	SyncRepository RepositorySynchronizer
+	Client             kubernetes.Interface
+	SeedRepository     RepositorySeeder
+	SyncRepository     RepositorySynchronizer
 	ReadAcceptedCommit func(context.Context, SyncConfig) (string, error)
-	Extension      Extension
-	PollInterval   time.Duration
-	SyncTimeout    time.Duration
+	Extension          Extension
+	PollInterval       time.Duration
+	SyncTimeout        time.Duration
 }
 
 type Result struct {

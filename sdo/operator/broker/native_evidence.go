@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/contracts/wire"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -51,7 +51,7 @@ func ValidateNativeLedger(data []byte, incidentID string) (json.RawMessage, erro
 		return nil, errors.New("native ledger evidence is empty or exceeds limit")
 	}
 	ledger := &contracts.BrokerLedger{}
-	if err := protojson.Unmarshal(data, ledger); err != nil {
+	if err := wire.Unmarshal(data, ledger); err != nil {
 		return nil, fmt.Errorf("decode native ledger: %w", err)
 	}
 	if ledger.GetIncidentId() != incidentID {

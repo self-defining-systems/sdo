@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/latefindings"
 )
 
@@ -15,22 +16,12 @@ type lateFindingSink struct {
 	Store      latefindings.Store
 }
 
-func (s lateFindingSink) Record(record FiringRecord) error {
+func (s lateFindingSink) Record(record *contracts.FiringRecord) error {
 	var downstreamErr error
 	if s.Downstream != nil {
 		downstreamErr = s.Downstream.Record(record)
 	}
-	bindings := make(map[string]any, len(record.ParameterBindings))
-	for name, value := range record.ParameterBindings {
-		bindings[name] = value
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	projectionErr := s.Store.Update(ctx, latefindings.Event{
-		IncidentID: record.IncidentID, Relation: string(record.DispatchRelation), Event: string(record.Event),
-		DetectorID: record.DetectorID, DetectorClass: record.DetectorClass, RuleID: record.RuleID,
-		Fingerprint: record.Fingerprint, Severity: record.Severity, RecordedAt: record.RecordedAt.UTC().Format(time.RFC3339Nano),
-		ParameterBindings: bindings, PlaybookIDs: append([]string(nil), record.SurfacedPlaybooks...),
-	})
-	return errors.Join(downstreamErr, projectionErr)
+	return errors.Join(downstreamErr, s.Store.Update(ctx, record))
 }

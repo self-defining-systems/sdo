@@ -2,7 +2,7 @@
   "closure_failure": {
     "attempts": 1,
     "first_failed_at": "2026-01-02T03:04:05.000000006Z",
-    "incident_id": "incident-wire",
+    "incident_id": "demo-1000000000",
     "last_error": "x",
     "last_failed_at": "2026-01-02T03:04:05.000000006Z",
     "max_attempts": 3

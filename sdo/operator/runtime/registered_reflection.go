@@ -9,13 +9,14 @@ import (
 	"regexp"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/worker_registry"
 )
 
 type ReflectionTaskExecutor interface {
@@ -28,6 +29,7 @@ type ReflectionTaskExecutor interface {
 type RegisteredReflectionWorker struct {
 	Executor    ReflectionTaskExecutor
 	AgentID     string
+	TaskType    string
 	Outcomes    memory.Reader
 	Catalog     memory.CatalogReader
 	Timeout     time.Duration
@@ -41,8 +43,8 @@ type RegisteredReflectionWorker struct {
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
 func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string) (ReflectionDecision, error) {
-	if w.Executor == nil || w.Outcomes == nil || w.AgentID == "" || w.Timeout <= 0 {
-		return ReflectionDecision{}, errors.New("registered reflection worker requires executor, outcome store, agent ID, and timeout")
+	if w.Executor == nil || w.Outcomes == nil || w.AgentID == "" || w.TaskType == "" || w.Timeout <= 0 {
+		return ReflectionDecision{}, errors.New("registered reflection worker requires executor, outcome store, agent ID, task type, and timeout")
 	}
 	if workspace.IncidentID != closure.Request.IncidentID || workspace.Worktree == "" || workspace.BaseCommit == "" || outcomeCommit == "" {
 		return ReflectionDecision{}, errors.New("reflection workspace and outcome commit are required")
@@ -51,15 +53,9 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if mode == "" {
 		mode = "fresh"
 	}
-	if mode != "fresh" && mode != "resume" {
-		return ReflectionDecision{}, fmt.Errorf("unsupported reflection session mode %q", mode)
-	}
 	guidance := w.Guidance
 	if guidance == "" {
 		guidance = "baseline"
-	}
-	if guidance != "baseline" && guidance != "generalize" && guidance != "generalize-spec" {
-		return ReflectionDecision{}, fmt.Errorf("unsupported reflection guidance %q", guidance)
 	}
 	if mode == "resume" && (closure.Result == nil || !resumableSessionID.MatchString(closure.Result.ResponderSessionID)) {
 		return ReflectionDecision{}, errors.New("resumed reflection requires a valid responder session ID in the accepted closure")
@@ -109,7 +105,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("reflection memory snapshot differs from broker proposal base commit")
 		}
 		request.MemorySnapshot = snapshot
-		currentWire, err := protojson.Marshal(current)
+		currentWire, err := wire.Marshal(current)
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
@@ -117,21 +113,24 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("physical operational memory path in outcome evidence")
 		}
 		for _, priorOutcome := range history {
-			wire, err := protojson.Marshal(priorOutcome)
+			priorWire, err := wire.Marshal(priorOutcome)
 			if err != nil {
 				return ReflectionDecision{}, err
 			}
-			if bytes.Contains(wire, []byte(layout.PhysicalPathMarker)) {
+			if bytes.Contains(priorWire, []byte(layout.PhysicalPathMarker)) {
 				return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
 			}
 		}
-		wire, err := protojson.Marshal(request)
+		requestWire, err := wire.Marshal(request)
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
-		if bytes.Contains(wire, []byte(layout.PhysicalPathMarker)) {
+		if bytes.Contains(requestWire, []byte(layout.PhysicalPathMarker)) {
 			return ReflectionDecision{}, errors.New("physical operational memory path leaked into reflection task")
 		}
+	}
+	if err := wire.Validate(request); err != nil {
+		return ReflectionDecision{}, err
 	}
 	payload, err := anypb.New(request)
 	if err != nil {
@@ -140,7 +139,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace.IncidentID+"\x00"+outcomeCommit)))
 	proposalID := "reflection-" + identity
 	task := &contracts.AgentTask{
-		SchemaVersion: "sdo.dev/v1alpha1", TaskId: proposalID, AgentId: w.AgentID, TaskType: "outcome-reflection",
+		SchemaVersion: worker_registry.SchemaVersion, TaskId: proposalID, AgentId: w.AgentID, TaskType: w.TaskType,
 		Request: payload, Workspace: &contracts.ProposalWorkspace{ProposalId: proposalID, CheckoutPath: workspace.Worktree, BaseCommit: workspace.BaseCommit},
 		Deadline: timestamppb.New(time.Now().Add(w.Timeout)),
 	}
@@ -148,8 +147,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
-	if result == nil || result.GetSchemaVersion() != task.SchemaVersion || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID || result.GetStatus() != "completed" {
+	if result == nil || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID || result.GetStatus() != "completed" {
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
+	}
+	if err := wire.Validate(result); err != nil {
+		return ReflectionDecision{}, err
 	}
 	if result.GetResponse() == nil {
 		return ReflectionDecision{}, errors.New("reflection worker omitted typed result")
@@ -158,11 +160,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err := result.GetResponse().UnmarshalTo(response); err != nil {
 		return ReflectionDecision{}, fmt.Errorf("reflection result contract: %w", err)
 	}
-	if response.GetLearningDecision() != "updated" && response.GetLearningDecision() != "no_change" {
-		return ReflectionDecision{}, errors.New("reflection result requires an explicit learning decision")
-	}
-	if response.GetLearningDecision() == "no_change" && response.GetNoChangeReason() == "" {
-		return ReflectionDecision{}, errors.New("no-change reflection requires a concrete reason")
+	if err := wire.Validate(response); err != nil {
+		return ReflectionDecision{}, err
 	}
 	if w.Catalog != nil {
 		if err := memory.RequireCleanProposalCheckout(ctx, workspace.Worktree); err != nil {

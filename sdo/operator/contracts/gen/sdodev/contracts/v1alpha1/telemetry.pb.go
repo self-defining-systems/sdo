@@ -30,8 +30,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// FiringRecord is one line of the detector firing stream. Mirrors the Go
-// runtime.FiringRecord struct.
+// FiringRecord is one line of the detector firing stream.
 type FiringRecord struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	SchemaVersion       string                 `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
@@ -236,11 +235,251 @@ func (x *FiringRecord) GetDispatchRelation() string {
 	return ""
 }
 
+// LifecycleEvent is one line of the controller's lifecycle-events.jsonl stream:
+// its own incident transitions, joined to the firing stream by incident_id. The
+// envelope mirrors FiringRecord; the remaining fields are phase-specific.
+type LifecycleEvent struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	SchemaVersion       string                 `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	EventId             string                 `protobuf:"bytes,2,opt,name=event_id,json=eventId,proto3" json:"event_id,omitempty"`
+	Event               string                 `protobuf:"bytes,3,opt,name=event,proto3" json:"event,omitempty"`
+	RecordedAt          *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=recorded_at,json=recordedAt,proto3" json:"recorded_at,omitempty"`
+	EvaluationIteration int32                  `protobuf:"varint,5,opt,name=evaluation_iteration,json=evaluationIteration,proto3" json:"evaluation_iteration,omitempty"`
+	Application         string                 `protobuf:"bytes,6,opt,name=application,proto3" json:"application,omitempty"`
+	Namespace           string                 `protobuf:"bytes,7,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	IncidentId          string                 `protobuf:"bytes,8,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
+	// Follow-up chain: parent on incident_opened, child on incident_superseded.
+	ParentIncidentId       string                 `protobuf:"bytes,9,opt,name=parent_incident_id,json=parentIncidentId,proto3" json:"parent_incident_id,omitempty"`
+	FollowUpAttempt        int32                  `protobuf:"varint,10,opt,name=follow_up_attempt,json=followUpAttempt,proto3" json:"follow_up_attempt,omitempty"`
+	SupersededBy           string                 `protobuf:"bytes,11,opt,name=superseded_by,json=supersededBy,proto3" json:"superseded_by,omitempty"`
+	Reason                 string                 `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
+	FindingKeys            []string               `protobuf:"bytes,13,rep,name=finding_keys,json=findingKeys,proto3" json:"finding_keys,omitempty"`
+	SurfacedPlaybooks      []string               `protobuf:"bytes,14,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
+	Worktree               string                 `protobuf:"bytes,15,opt,name=worktree,proto3" json:"worktree,omitempty"`
+	BaseCommit             string                 `protobuf:"bytes,16,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
+	ProposalCommit         string                 `protobuf:"bytes,17,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
+	OutcomeCommit          string                 `protobuf:"bytes,18,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
+	ReflectionCommit       string                 `protobuf:"bytes,19,opt,name=reflection_commit,json=reflectionCommit,proto3" json:"reflection_commit,omitempty"`
+	HealthClearedAt        *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=health_cleared_at,json=healthClearedAt,proto3" json:"health_cleared_at,omitempty"`
+	DetectorReviewRequired bool                   `protobuf:"varint,21,opt,name=detector_review_required,json=detectorReviewRequired,proto3" json:"detector_review_required,omitempty"`
+	DispatchError          bool                   `protobuf:"varint,22,opt,name=dispatch_error,json=dispatchError,proto3" json:"dispatch_error,omitempty"`
+	LoadPressure           float64                `protobuf:"fixed64,23,opt,name=load_pressure,json=loadPressure,proto3" json:"load_pressure,omitempty"`
+	LoadThreshold          float64                `protobuf:"fixed64,24,opt,name=load_threshold,json=loadThreshold,proto3" json:"load_threshold,omitempty"`
+	ReleaseBacklog         int32                  `protobuf:"varint,25,opt,name=release_backlog,json=releaseBacklog,proto3" json:"release_backlog,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *LifecycleEvent) Reset() {
+	*x = LifecycleEvent{}
+	mi := &file_sdodev_contracts_v1alpha1_telemetry_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LifecycleEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LifecycleEvent) ProtoMessage() {}
+
+func (x *LifecycleEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_telemetry_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LifecycleEvent.ProtoReflect.Descriptor instead.
+func (*LifecycleEvent) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_telemetry_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *LifecycleEvent) GetSchemaVersion() string {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetEventId() string {
+	if x != nil {
+		return x.EventId
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetEvent() string {
+	if x != nil {
+		return x.Event
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetRecordedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RecordedAt
+	}
+	return nil
+}
+
+func (x *LifecycleEvent) GetEvaluationIteration() int32 {
+	if x != nil {
+		return x.EvaluationIteration
+	}
+	return 0
+}
+
+func (x *LifecycleEvent) GetApplication() string {
+	if x != nil {
+		return x.Application
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetIncidentId() string {
+	if x != nil {
+		return x.IncidentId
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetParentIncidentId() string {
+	if x != nil {
+		return x.ParentIncidentId
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetFollowUpAttempt() int32 {
+	if x != nil {
+		return x.FollowUpAttempt
+	}
+	return 0
+}
+
+func (x *LifecycleEvent) GetSupersededBy() string {
+	if x != nil {
+		return x.SupersededBy
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetFindingKeys() []string {
+	if x != nil {
+		return x.FindingKeys
+	}
+	return nil
+}
+
+func (x *LifecycleEvent) GetSurfacedPlaybooks() []string {
+	if x != nil {
+		return x.SurfacedPlaybooks
+	}
+	return nil
+}
+
+func (x *LifecycleEvent) GetWorktree() string {
+	if x != nil {
+		return x.Worktree
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetBaseCommit() string {
+	if x != nil {
+		return x.BaseCommit
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetProposalCommit() string {
+	if x != nil {
+		return x.ProposalCommit
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetOutcomeCommit() string {
+	if x != nil {
+		return x.OutcomeCommit
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetReflectionCommit() string {
+	if x != nil {
+		return x.ReflectionCommit
+	}
+	return ""
+}
+
+func (x *LifecycleEvent) GetHealthClearedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.HealthClearedAt
+	}
+	return nil
+}
+
+func (x *LifecycleEvent) GetDetectorReviewRequired() bool {
+	if x != nil {
+		return x.DetectorReviewRequired
+	}
+	return false
+}
+
+func (x *LifecycleEvent) GetDispatchError() bool {
+	if x != nil {
+		return x.DispatchError
+	}
+	return false
+}
+
+func (x *LifecycleEvent) GetLoadPressure() float64 {
+	if x != nil {
+		return x.LoadPressure
+	}
+	return 0
+}
+
+func (x *LifecycleEvent) GetLoadThreshold() float64 {
+	if x != nil {
+		return x.LoadThreshold
+	}
+	return 0
+}
+
+func (x *LifecycleEvent) GetReleaseBacklog() int32 {
+	if x != nil {
+		return x.ReleaseBacklog
+	}
+	return 0
+}
+
 var File_sdodev_contracts_v1alpha1_telemetry_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/telemetry.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\"\x89\t\n" +
+	")sdodev/contracts/v1alpha1/telemetry.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\"\xc1\t\n" +
 	"\fFiringRecord\x12D\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\n" +
 	"\x16sdo.detector-firing/v1R\rschemaVersion\x12\"\n" +
@@ -250,8 +489,8 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"recordedAt\x12:\n" +
 	"\x14evaluation_iteration\x18\x05 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x13evaluationIteration\x12 \n" +
 	"\vapplication\x18\x06 \x01(\tR\vapplication\x12\x1c\n" +
-	"\tnamespace\x18\a \x01(\tR\tnamespace\x12(\n" +
-	"\vdetector_id\x18\b \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"\tnamespace\x18\a \x01(\tR\tnamespace\x12@\n" +
+	"\vdetector_id\x18\b \x01(\tB\x1f\xbaH\x1cr\x1a\x10\x012\x16^[a-z0-9][a-z0-9_.-]*$R\n" +
 	"detectorId\x12%\n" +
 	"\x0edetector_class\x18\t \x01(\tR\rdetectorClass\x12\x14\n" +
 	"\x05owner\x18\n" +
@@ -259,8 +498,8 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\arule_id\x18\v \x01(\tR\x06ruleId\x12 \n" +
 	"\vfingerprint\x18\f \x01(\tR\vfingerprint\x12\x1a\n" +
 	"\bseverity\x18\r \x01(\tR\bseverity\x12m\n" +
-	"\x12parameter_bindings\x18\x0e \x03(\v2>.sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntryR\x11parameterBindings\x12-\n" +
-	"\x12surfaced_playbooks\x18\x0f \x03(\tR\x11surfacedPlaybooks\x12*\n" +
+	"\x12parameter_bindings\x18\x0e \x03(\v2>.sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntryR\x11parameterBindings\x12M\n" +
+	"\x12surfaced_playbooks\x18\x0f \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11surfacedPlaybooks\x12*\n" +
 	"\ffiring_count\x18\x10 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\vfiringCount\x122\n" +
 	"\x10firing_threshold\x18\x11 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x0ffiringThreshold\x12(\n" +
 	"\vclear_count\x18\x12 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\n" +
@@ -271,7 +510,38 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11dispatch_relation\x18\x15 \x01(\tB3\xbaH0r.R\x0fbefore_dispatchR\x0eafter_dispatchR\vno_incidentR\x10dispatchRelation\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01B\x81\x02\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\x84\v\n" +
+	"\x0eLifecycleEvent\x12D\n" +
+	"\x0eschema_version\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\n" +
+	"\x16sdo.lifecycle-event/v1R\rschemaVersion\x12\"\n" +
+	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\x92\x02\n" +
+	"\x05event\x18\x03 \x01(\tB\xfb\x01\xbaH\xf7\x01r\xf4\x01R\x0fincident_openedR\x12admission_deferredR\x11admission_resumedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x13incident_supersededR\x11worktree_releasedR\x18detector_review_requiredR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
+	"\vrecorded_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
+	"recordedAt\x12:\n" +
+	"\x14evaluation_iteration\x18\x05 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x13evaluationIteration\x12 \n" +
+	"\vapplication\x18\x06 \x01(\tR\vapplication\x12\x1c\n" +
+	"\tnamespace\x18\a \x01(\tR\tnamespace\x12\x1f\n" +
+	"\vincident_id\x18\b \x01(\tR\n" +
+	"incidentId\x12,\n" +
+	"\x12parent_incident_id\x18\t \x01(\tR\x10parentIncidentId\x123\n" +
+	"\x11follow_up_attempt\x18\n" +
+	" \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x0ffollowUpAttempt\x12#\n" +
+	"\rsuperseded_by\x18\v \x01(\tR\fsupersededBy\x12\x16\n" +
+	"\x06reason\x18\f \x01(\tR\x06reason\x12!\n" +
+	"\ffinding_keys\x18\r \x03(\tR\vfindingKeys\x12M\n" +
+	"\x12surfaced_playbooks\x18\x0e \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11surfacedPlaybooks\x12\x1a\n" +
+	"\bworktree\x18\x0f \x01(\tR\bworktree\x12\x1f\n" +
+	"\vbase_commit\x18\x10 \x01(\tR\n" +
+	"baseCommit\x12'\n" +
+	"\x0fproposal_commit\x18\x11 \x01(\tR\x0eproposalCommit\x12%\n" +
+	"\x0eoutcome_commit\x18\x12 \x01(\tR\routcomeCommit\x12+\n" +
+	"\x11reflection_commit\x18\x13 \x01(\tR\x10reflectionCommit\x12F\n" +
+	"\x11health_cleared_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\x0fhealthClearedAt\x128\n" +
+	"\x18detector_review_required\x18\x15 \x01(\bR\x16detectorReviewRequired\x12%\n" +
+	"\x0edispatch_error\x18\x16 \x01(\bR\rdispatchError\x123\n" +
+	"\rload_pressure\x18\x17 \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00R\floadPressure\x125\n" +
+	"\x0eload_threshold\x18\x18 \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00R\rloadThreshold\x120\n" +
+	"\x0frelease_backlog\x18\x19 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x0ereleaseBacklogB\x81\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0eTelemetryProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -286,22 +556,25 @@ func file_sdodev_contracts_v1alpha1_telemetry_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_telemetry_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_sdodev_contracts_v1alpha1_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_sdodev_contracts_v1alpha1_telemetry_proto_goTypes = []any{
 	(*FiringRecord)(nil),          // 0: sdodev.contracts.v1alpha1.FiringRecord
-	nil,                           // 1: sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntry
-	(*timestamppb.Timestamp)(nil), // 2: google.protobuf.Timestamp
-	(*ObjectRef)(nil),             // 3: sdodev.contracts.v1alpha1.ObjectRef
+	(*LifecycleEvent)(nil),        // 1: sdodev.contracts.v1alpha1.LifecycleEvent
+	nil,                           // 2: sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntry
+	(*timestamppb.Timestamp)(nil), // 3: google.protobuf.Timestamp
+	(*ObjectRef)(nil),             // 4: sdodev.contracts.v1alpha1.ObjectRef
 }
 var file_sdodev_contracts_v1alpha1_telemetry_proto_depIdxs = []int32{
-	2, // 0: sdodev.contracts.v1alpha1.FiringRecord.recorded_at:type_name -> google.protobuf.Timestamp
-	1, // 1: sdodev.contracts.v1alpha1.FiringRecord.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntry
-	3, // 2: sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3, // 0: sdodev.contracts.v1alpha1.FiringRecord.recorded_at:type_name -> google.protobuf.Timestamp
+	2, // 1: sdodev.contracts.v1alpha1.FiringRecord.parameter_bindings:type_name -> sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntry
+	3, // 2: sdodev.contracts.v1alpha1.LifecycleEvent.recorded_at:type_name -> google.protobuf.Timestamp
+	3, // 3: sdodev.contracts.v1alpha1.LifecycleEvent.health_cleared_at:type_name -> google.protobuf.Timestamp
+	4, // 4: sdodev.contracts.v1alpha1.FiringRecord.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_telemetry_proto_init() }
@@ -316,7 +589,7 @@ func file_sdodev_contracts_v1alpha1_telemetry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

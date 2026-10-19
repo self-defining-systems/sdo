@@ -8,11 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry"
+	"sdo.dev/operator/worker_registry/registrytest"
 )
 
 type fakeBroker struct {
@@ -116,14 +118,14 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 	var response *anypb.Any
 	var err error
 	switch task.GetTaskType() {
-	case SourceDeploymentTaskType:
+	case sourceDeploymentTask:
 		proposed := len(f.tasks) > f.deployFailures
 		raw, packErr := anypb.New(&contracts.RawManifestStrategy{ManifestPaths: []string{"deploy/app.yaml"}, ExpectedWorkloadIds: []string{"Deployment/demo"}})
 		if packErr != nil {
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: proposed, Summary: "prepared", AgentSessionId: "session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: raw}})
-	case ArchitectureTaskType:
+	case architectureTask:
 		if f.archFailures > 0 {
 			f.archFailures--
 			return nil, errors.New("architecture worker interrupted")
@@ -133,7 +135,7 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 			return nil, err
 		}
 		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded layout.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
-	case HealthJudgeTaskType:
+	case healthJudgeTask:
 		request := &contracts.HealthJudgeRequest{}
 		if err := task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
@@ -201,9 +203,9 @@ func testCoordinator(t *testing.T) (Coordinator, *fakeBroker, *fakeExecutor, *[]
 	t.Helper()
 	capabilities := map[string][]*contracts.AgentCapability{}
 	for _, item := range []struct{ id, task, request, result string }{
-		{"source-agent", SourceDeploymentTaskType, "SourceDeploymentRequest", "SourceDeploymentResult"},
-		{"source-agent", ArchitectureTaskType, "ArchitectureRequest", "ArchitectureResult"},
-		{"judge-agent", HealthJudgeTaskType, "HealthJudgeRequest", "HealthJudgeResult"},
+		{"source-agent", sourceDeploymentTask, "SourceDeploymentRequest", "SourceDeploymentResult"},
+		{"source-agent", architectureTask, "ArchitectureRequest", "ArchitectureResult"},
+		{"judge-agent", healthJudgeTask, "HealthJudgeRequest", "HealthJudgeResult"},
 	} {
 		capabilities[item.id] = append(capabilities[item.id], &contracts.AgentCapability{TaskType: item.task, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1." + item.request, ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1." + item.result})
 	}
@@ -249,7 +251,7 @@ func TestCoordinatorPublishesEachRoleBeforeIndependentVerification(t *testing.T)
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("wrong broker sequence: got %v, want %v", got, want)
 	}
-	if len(e.tasks) != 3 || e.tasks[0].GetTaskType() != SourceDeploymentTaskType || e.tasks[1].GetTaskType() != ArchitectureTaskType || e.tasks[2].GetTaskType() != HealthJudgeTaskType {
+	if len(e.tasks) != 3 || e.tasks[0].GetTaskType() != sourceDeploymentTask || e.tasks[1].GetTaskType() != architectureTask || e.tasks[2].GetTaskType() != healthJudgeTask {
 		t.Fatalf("wrong worker sequence: %#v", e.tasks)
 	}
 	if e.tasks[0].GetWorkspace().GetCheckoutPath() != "/workspace/proposals/init-1-source-1" {
@@ -417,8 +419,8 @@ func TestCoordinatorRejectsUnknownWorkerBeforeCreatingProposals(t *testing.T) {
 func TestCoordinatorRejectsMismatchedRoleTypesBeforeCreatingProposals(t *testing.T) {
 	c, b, _, _ := testCoordinator(t)
 	wrong, err := worker_registry.New(
-		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "source-agent", Capabilities: []*contracts.AgentCapability{{TaskType: SourceDeploymentTaskType, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult"}, {TaskType: ArchitectureTaskType, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
-		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "judge-agent", Capabilities: []*contracts.AgentCapability{{TaskType: HealthJudgeTaskType, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
+		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "source-agent", Capabilities: []*contracts.AgentCapability{{TaskType: sourceDeploymentTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult"}, {TaskType: architectureTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ArchitectureResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
+		&contracts.AgentRegistration{SchemaVersion: worker_registry.SchemaVersion, AgentId: "judge-agent", Capabilities: []*contracts.AgentCapability{{TaskType: healthJudgeTask, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeResult"}}, Launch: &contracts.AgentRegistration_LocalProcess{LocalProcess: &contracts.LocalProcessLaunch{Command: []string{"worker"}}}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -455,4 +457,28 @@ func TestCoordinatorRejectsWrongWorkerResultBeforeBrokerPublish(t *testing.T) {
 			t.Fatal("published mismatched worker result")
 		}
 	}
+}
+
+// The task types are whatever the built-in manifests declare for each request
+// message; the tests restate none of them.
+var (
+	sourceDeploymentTask = manifestTaskType(&contracts.SourceDeploymentRequest{})
+	architectureTask     = manifestTaskType(&contracts.ArchitectureRequest{})
+	healthJudgeTask      = manifestTaskType(&contracts.HealthJudgeRequest{})
+)
+
+func manifestTaskType(request proto.Message) string {
+	registry, err := worker_registry.LoadDirectory(registrytest.Directory())
+	if err != nil {
+		panic(err)
+	}
+	agent, err := registry.AgentFor(request)
+	if err != nil {
+		panic(err)
+	}
+	task, err := registry.TaskType(agent, request)
+	if err != nil {
+		panic(err)
+	}
+	return task
 }

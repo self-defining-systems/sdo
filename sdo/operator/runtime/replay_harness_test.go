@@ -38,8 +38,11 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 )
 
@@ -74,8 +77,8 @@ type replayMeta struct {
 type replayFixture struct {
 	name      string
 	dir       string
-	firings   []FiringRecord
-	lifecycle []LifecycleEvent
+	firings   []*contracts.FiringRecord
+	lifecycle []*contracts.LifecycleEvent
 	closure   *IncidentClosure
 	state     *RuntimeState
 	meta      replayMeta
@@ -112,11 +115,20 @@ func loadReplayFixture(t *testing.T, dir string, name string) replayFixture {
 	if len(firings) == 0 {
 		t.Fatalf("fixture %s: %s is missing or empty", name, replayFiringsFile)
 	}
+	// Streams frozen before playbook references became logical IDs carry
+	// physical paths; translate them the way the controller does at its edge.
+	for _, record := range firings {
+		ids, err := layout.PlaybookIDs(record.SurfacedPlaybooks)
+		if err != nil {
+			t.Fatalf("fixture %s: firing %s: %v", name, record.EventId, err)
+		}
+		record.SurfacedPlaybooks = ids
+	}
 	fixture := replayFixture{name: name, dir: dir, firings: firings}
 	fixture.lifecycle = readLifecycleStream(t, filepath.Join(dir, replayLifecycleFile))
 	if raw, ok := readReplayFile(t, filepath.Join(dir, replayClosureFile)); ok {
 		document := &contracts.IncidentClosure{}
-		if err := parseProtoJSON(raw, document); err != nil {
+		if err := protojson.Unmarshal(raw, document); err != nil {
 			t.Fatalf("decode %s closure: %v", name, err)
 		}
 		closure := incidentClosureState(document)
@@ -201,7 +213,7 @@ func replayFiringStreamDurable(t *testing.T, fx replayFixture) {
 	}
 	for _, record := range fx.firings {
 		if err := sink.Record(record); err != nil {
-			t.Fatalf("record %s: %v", record.EventID, err)
+			t.Fatalf("record %s: %v", record.EventId, err)
 		}
 	}
 	got := readStream(t, path)
@@ -219,7 +231,7 @@ func replayFiringStreamDurable(t *testing.T, fx replayFixture) {
 	}
 	for _, record := range fx.firings {
 		if err := restart.Record(record); err != nil {
-			t.Fatalf("replay record %s after restart: %v", record.EventID, err)
+			t.Fatalf("replay record %s after restart: %v", record.EventId, err)
 		}
 	}
 	after, err := os.ReadFile(path)
@@ -245,39 +257,39 @@ func replayEventIDAttribution(t *testing.T, fx replayFixture) {
 	activated := map[string]int{}
 	cleared := map[string]int{}
 	notPersisted := map[string]int{}
-	seen := map[string]FiringRecord{}
+	seen := map[string]*contracts.FiringRecord{}
 
 	for _, record := range fx.firings {
-		key := FindingStateKey(record.DetectorID, record.Fingerprint)
+		key := FindingStateKey(record.DetectorId, record.Fingerprint)
 		var want string
-		switch record.Event {
+		switch FiringEvent(record.Event) {
 		case FiringActivated:
 			activated[key]++
-			want = firingEventID(record.DetectorID, record.Fingerprint, string(record.Event), strconv.Itoa(activated[key]))
+			want = firingEventID(record.DetectorId, record.Fingerprint, record.Event, strconv.Itoa(activated[key]))
 		case FiringCleared:
 			cleared[key]++
-			want = firingEventID(record.DetectorID, record.Fingerprint, string(record.Event), strconv.Itoa(cleared[key]))
+			want = firingEventID(record.DetectorId, record.Fingerprint, record.Event, strconv.Itoa(cleared[key]))
 		case FiringNotPersisted:
 			notPersisted[key]++
-			want = firingEventID(record.DetectorID, record.Fingerprint, string(record.Event), strconv.Itoa(notPersisted[key]))
+			want = firingEventID(record.DetectorId, record.Fingerprint, record.Event, strconv.Itoa(notPersisted[key]))
 		case FiringBatched:
-			want = firingEventID(record.IncidentID, record.DetectorID, record.Fingerprint, string(FiringBatched))
+			want = firingEventID(record.IncidentId, record.DetectorId, record.Fingerprint, string(FiringBatched))
 		default:
-			t.Fatalf("record %s has unknown event %q", record.EventID, record.Event)
+			t.Fatalf("record %s has unknown event %q", record.EventId, record.Event)
 		}
-		if want != record.EventID {
+		if want != record.EventId {
 			t.Fatalf("event id for %s/%s %s mismatch: recorded %s, re-derived %s",
-				record.DetectorID, record.Fingerprint, record.Event, record.EventID, want)
+				record.DetectorId, record.Fingerprint, record.Event, record.EventId, want)
 		}
-		if again := want; again != record.EventID {
-			t.Fatalf("event id derivation is not stable for %s", record.EventID)
+		if again := want; again != record.EventId {
+			t.Fatalf("event id derivation is not stable for %s", record.EventId)
 		}
-		if prior, dup := seen[record.EventID]; dup {
+		if prior, dup := seen[record.EventId]; dup {
 			t.Fatalf("event id %s is not unique: %s/%s %s and %s/%s %s",
-				record.EventID, prior.DetectorID, prior.Fingerprint, prior.Event,
-				record.DetectorID, record.Fingerprint, record.Event)
+				record.EventId, prior.DetectorId, prior.Fingerprint, prior.Event,
+				record.DetectorId, record.Fingerprint, record.Event)
 		}
-		seen[record.EventID] = record
+		seen[record.EventId] = record
 	}
 }
 
@@ -362,7 +374,7 @@ func TestReplayStateRoundTripContract(t *testing.T) {
 		SchedulerDeadlines: map[string]time.Time{"health-objective": now},
 		FindingStates: map[string]FindingState{
 			"health-objective/deployment-unavailable/hotel-reservation/geo": {
-				DetectorID: "health-objective", FiringCount: 2, Active: true,
+				DetectorID: "health-objective", Finding: stateFinding("health-objective"), FiringCount: 2, Active: true,
 				FirstSeenAt: now, Activations: 1,
 			},
 		},
@@ -374,7 +386,7 @@ func TestReplayStateRoundTripContract(t *testing.T) {
 			FirstActivatedAt: now, LastSeenAt: now, Relation: RelationBeforeDispatch, Activations: 1,
 		}},
 	}
-	if err := state.Validate(); err != nil {
+	if err := validateRuntimeState(state); err != nil {
 		t.Fatalf("representative state must be valid: %v", err)
 	}
 	replayStateRoundTrip(t, replayFixture{name: "state-round-trip-contract", state: &state})
@@ -394,7 +406,7 @@ func replayLifecycleStreamDurable(t *testing.T, fx replayFixture) {
 	}
 	for _, event := range fx.lifecycle {
 		if err := sink.RecordLifecycle(event); err != nil {
-			t.Fatalf("record %s: %v", event.EventID, err)
+			t.Fatalf("record %s: %v", event.EventId, err)
 		}
 	}
 	got := readLifecycleStream(t, path)
@@ -410,7 +422,7 @@ func replayLifecycleStreamDurable(t *testing.T, fx replayFixture) {
 	}
 	for _, event := range fx.lifecycle {
 		if err := restart.RecordLifecycle(event); err != nil {
-			t.Fatalf("replay event %s after restart: %v", event.EventID, err)
+			t.Fatalf("replay event %s after restart: %v", event.EventId, err)
 		}
 	}
 	after, err := os.ReadFile(path)
@@ -429,21 +441,21 @@ func replayLifecycleStreamDurable(t *testing.T, fx replayFixture) {
 // re-emitting a transition reproduces the identical id and the sink drops it.
 func replayLifecycleEventIDAttribution(t *testing.T, fx replayFixture) {
 	t.Helper()
-	seen := map[string]LifecycleEvent{}
+	seen := map[string]*contracts.LifecycleEvent{}
 	for _, event := range fx.lifecycle {
-		want := lifecycleEventID(event.IncidentID, string(event.Event))
+		want := lifecycleEventID(event.IncidentId, event.Event)
 		if event.Event == PhaseSuperseded {
-			want = lifecycleEventID(event.IncidentID, string(event.Event), event.SupersededBy)
+			want = lifecycleEventID(event.IncidentId, event.Event, event.SupersededBy)
 		}
-		if want != event.EventID {
+		if want != event.EventId {
 			t.Fatalf("lifecycle id for %s/%s mismatch: recorded %s, re-derived %s",
-				event.IncidentID, event.Event, event.EventID, want)
+				event.IncidentId, event.Event, event.EventId, want)
 		}
-		if prior, dup := seen[event.EventID]; dup {
+		if prior, dup := seen[event.EventId]; dup {
 			t.Fatalf("lifecycle id %s is not unique: %s/%s and %s/%s",
-				event.EventID, prior.IncidentID, prior.Event, event.IncidentID, event.Event)
+				event.EventId, prior.IncidentId, prior.Event, event.IncidentId, event.Event)
 		}
-		seen[event.EventID] = event
+		seen[event.EventId] = event
 	}
 }
 
@@ -454,8 +466,8 @@ func replayIncidentTimeline(t *testing.T, fx replayFixture) {
 	t.Helper()
 	incidentIDs := map[string]struct{}{}
 	for _, event := range fx.lifecycle {
-		if event.IncidentID != "" {
-			incidentIDs[event.IncidentID] = struct{}{}
+		if event.IncidentId != "" {
+			incidentIDs[event.IncidentId] = struct{}{}
 		}
 	}
 	for incidentID := range incidentIDs {
@@ -475,10 +487,10 @@ func replayIncidentTimeline(t *testing.T, fx replayFixture) {
 				t.Fatalf("incident %s timeline goes backwards in time at %d", incidentID, index)
 			}
 			switch {
-			case timeline[index].Lifecycle != nil && timeline[index].Lifecycle.IncidentID != incidentID:
-				t.Fatalf("incident %s timeline leaked lifecycle event for %s", incidentID, timeline[index].Lifecycle.IncidentID)
-			case timeline[index].Firing != nil && timeline[index].Firing.IncidentID != incidentID:
-				t.Fatalf("incident %s timeline leaked firing for %s", incidentID, timeline[index].Firing.IncidentID)
+			case timeline[index].Lifecycle != nil && timeline[index].Lifecycle.IncidentId != incidentID:
+				t.Fatalf("incident %s timeline leaked lifecycle event for %s", incidentID, timeline[index].Lifecycle.IncidentId)
+			case timeline[index].Firing != nil && timeline[index].Firing.IncidentId != incidentID:
+				t.Fatalf("incident %s timeline leaked firing for %s", incidentID, timeline[index].Firing.IncidentId)
 			}
 		}
 	}
@@ -486,13 +498,13 @@ func replayIncidentTimeline(t *testing.T, fx replayFixture) {
 
 // assertLifecycleEventsEqual asserts two lifecycle streams are equal
 // event-by-event in order, reporting the first divergence.
-func assertLifecycleEventsEqual(t *testing.T, want []LifecycleEvent, got []LifecycleEvent) {
+func assertLifecycleEventsEqual(t *testing.T, want []*contracts.LifecycleEvent, got []*contracts.LifecycleEvent) {
 	t.Helper()
 	if len(want) != len(got) {
 		t.Fatalf("lifecycle stream length mismatch: recorded %d, durable %d", len(want), len(got))
 	}
 	for index := range want {
-		if !reflect.DeepEqual(want[index], got[index]) {
+		if !proto.Equal(want[index], got[index]) {
 			t.Fatalf("lifecycle event %d diverged after a durable round-trip:\n recorded %+v\n durable  %+v",
 				index, want[index], got[index])
 		}
@@ -507,24 +519,26 @@ func assertLifecycleEventsEqual(t *testing.T, want []LifecycleEvent, got []Lifec
 // captured, dropping it in as lifecycle-events.jsonl replays here unchanged.
 func TestReplayLifecycleContract(t *testing.T) {
 	at := func(sec int64) time.Time { return time.Unix(1_790_931_114+sec, 0).UTC() }
-	lifecycle := []LifecycleEvent{
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("demo-1", string(PhaseOpened)),
-			Event: PhaseOpened, IncidentID: "demo-1", Application: "demo", Namespace: "demo", RecordedAt: at(0)},
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("demo-1", string(PhaseSuperseded), "demo-1-f1"),
-			Event: PhaseSuperseded, IncidentID: "demo-1", Application: "demo", Namespace: "demo",
-			SupersededBy: "demo-1-f1", Reason: "follow_up", RecordedAt: at(1)},
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("demo-1", string(PhaseWorktreeReleased)),
-			Event: PhaseWorktreeReleased, IncidentID: "demo-1", Application: "demo", Namespace: "demo", RecordedAt: at(2)},
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("demo-1-f1", string(PhaseOpened)),
-			Event: PhaseOpened, IncidentID: "demo-1-f1", Application: "demo", Namespace: "demo",
-			ParentIncidentID: "demo-1", FollowUpAttempt: 1, RecordedAt: at(1)},
-		{SchemaVersion: LifecycleSchemaVersion, EventID: lifecycleEventID("demo-1-f1", string(PhaseAcknowledged)),
-			Event: PhaseAcknowledged, IncidentID: "demo-1-f1", Application: "demo", Namespace: "demo",
-			OutcomeCommit: "outcome-sha", RecordedAt: at(3)},
+	envelope := func(phase string, incident string, second int64) *contracts.LifecycleEvent {
+		return &contracts.LifecycleEvent{
+			SchemaVersion: LifecycleSchemaVersion, EventId: lifecycleEventID(incident, phase), Event: phase,
+			IncidentId: incident, Application: "demo", Namespace: "demo", RecordedAt: contractTimestamp(at(second)),
+		}
 	}
-	firings := []FiringRecord{
-		{SchemaVersion: FiringSchemaVersion, EventID: firingEventID("demo-1-f1", "health", "fp", string(FiringBatched)),
-			Event: FiringBatched, IncidentID: "demo-1-f1", RecordedAt: at(1)},
+	superseded := envelope(PhaseSuperseded, "demo-1", 1)
+	superseded.EventId = lifecycleEventID("demo-1", PhaseSuperseded, "demo-1-f1")
+	superseded.SupersededBy, superseded.Reason = "demo-1-f1", "follow_up"
+	followUp := envelope(PhaseOpened, "demo-1-f1", 1)
+	followUp.ParentIncidentId, followUp.FollowUpAttempt = "demo-1", 1
+	acknowledged := envelope(PhaseAcknowledged, "demo-1-f1", 3)
+	acknowledged.OutcomeCommit = "outcome-sha"
+	lifecycle := []*contracts.LifecycleEvent{
+		envelope(PhaseOpened, "demo-1", 0), superseded, envelope(PhaseWorktreeReleased, "demo-1", 2), followUp, acknowledged,
+	}
+	firings := []*contracts.FiringRecord{
+		{SchemaVersion: FiringSchemaVersion, EventId: firingEventID("demo-1-f1", "health", "fp", string(FiringBatched)),
+			Event: string(FiringBatched), IncidentId: "demo-1-f1", DetectorId: "health", RecordedAt: contractTimestamp(at(1)),
+			DispatchRelation: string(RelationBeforeDispatch)},
 	}
 	fx := replayFixture{name: "lifecycle-contract", lifecycle: lifecycle, firings: firings}
 	replayLifecycleStreamDurable(t, fx)
@@ -534,13 +548,13 @@ func TestReplayLifecycleContract(t *testing.T) {
 
 // assertFiringRecordsEqual asserts two firing streams are equal record-by-record
 // in order, reporting the first divergence.
-func assertFiringRecordsEqual(t *testing.T, want []FiringRecord, got []FiringRecord) {
+func assertFiringRecordsEqual(t *testing.T, want []*contracts.FiringRecord, got []*contracts.FiringRecord) {
 	t.Helper()
 	if len(want) != len(got) {
 		t.Fatalf("stream length mismatch: recorded %d, durable %d", len(want), len(got))
 	}
 	for index := range want {
-		if !reflect.DeepEqual(want[index], got[index]) {
+		if !proto.Equal(want[index], got[index]) {
 			t.Fatalf("record %d diverged after a durable round-trip:\n recorded %+v\n durable  %+v",
 				index, want[index], got[index])
 		}

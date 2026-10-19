@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -13,8 +12,6 @@ import (
 	"time"
 	"unicode"
 
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
 const (
@@ -83,7 +81,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if e.PollInterval <= 0 {
 		e.PollInterval = time.Second
 	}
-	payload, err := canonicalJSON(task)
+	payload, err := wire.Canonical(task)
 	if err != nil {
 		return nil, fmt.Errorf("encode agent task: %w", err)
 	}
@@ -112,7 +110,7 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 				return nil, fmt.Errorf("result ConfigMap %q has no %s", resultName, ResultDataKey)
 			}
 			result := &contracts.AgentResult{}
-			if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal([]byte(data), result); err != nil {
+			if err := wire.Unmarshal([]byte(data), result); err != nil {
 				return nil, fmt.Errorf("decode agent result: %w", err)
 			}
 			if err := e.Registry.ValidateResult(task, result); err != nil {
@@ -225,18 +223,6 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		return fmt.Errorf("create agent Job: %w", err)
 	}
 	return nil
-}
-
-func canonicalJSON(message proto.Message) ([]byte, error) {
-	raw, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(message)
-	if err != nil {
-		return nil, err
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, err
-	}
-	return json.Marshal(value)
 }
 
 func jobFailed(job *batchv1.Job) bool {

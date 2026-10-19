@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -32,7 +33,7 @@ var goContractFixtureDir = filepath.Join("..", "..", "..", "tests", "fixtures", 
 
 func checkGoContractFixture(t *testing.T, name string, message proto.Message) {
 	t.Helper()
-	compact, err := canonicalProtoJSON(message)
+	compact, err := wire.Canonical(message)
 	if err != nil {
 		t.Fatalf("marshal %s: %v", name, err)
 	}
@@ -228,6 +229,7 @@ func TestGoContractFixtures(t *testing.T) {
 	checkGoContractFixture(t, "closure_own_edit.json", mustProject(t, incidentClosureContract, ownEdit))
 	open := wireState()
 	open.PendingClosure = &repaired
+	open.ClosureFailure.IncidentID = repaired.Request.IncidentID
 	openRequest := repaired.Request
 	open.IncidentRequest = &openRequest
 	open.IncidentResult = repaired.Result

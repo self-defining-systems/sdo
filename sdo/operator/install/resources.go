@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,8 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 )
 
 const (
@@ -146,16 +149,16 @@ func (c Config) validate() error {
 	if !commitID.MatchString(c.AcceptedCommit) {
 		return errors.New("native install requires a full accepted commit ID")
 	}
-	if c.RepairPolicy != "" && c.RepairPolicy != "commit" && c.RepairPolicy != "recorded-actions" {
+	if c.RepairPolicy != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "repair_policy"), c.RepairPolicy) {
 		return errors.New("invalid repair policy")
 	}
 	if c.AgentProvider != "" && c.AgentProvider != "codex" && c.AgentProvider != "claude" {
 		return errors.New("invalid agent provider")
 	}
-	if c.ReflectionSession != "" && c.ReflectionSession != "fresh" && c.ReflectionSession != "resume" {
+	if c.ReflectionSession != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_session"), c.ReflectionSession) {
 		return errors.New("invalid reflection session")
 	}
-	if c.ReflectionGuidance != "" && c.ReflectionGuidance != "baseline" && c.ReflectionGuidance != "generalize" && c.ReflectionGuidance != "generalize-spec" {
+	if c.ReflectionGuidance != "" && !slices.Contains(wire.StringIn(&contracts.ControllerConfig{}, "reflection_guidance"), c.ReflectionGuidance) {
 		return errors.New("invalid reflection guidance")
 	}
 	if c.LateFindings != "" && c.LateFindings != "off" && c.LateFindings != "pull" {

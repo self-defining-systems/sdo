@@ -15,7 +15,7 @@ depends_on = []
 
 [[modules]]
 path = "benchmarks.sregym.protocol"
-depends_on = []
+depends_on = ["sdo.contracts"]
 
 [[modules]]
 path = "sdo.contracts"

@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/install"
-	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/worker_registry/registrytest"
 )
 
 func installConfigForTest() install.Config {
@@ -71,14 +73,22 @@ func TestOperateLaunchKeepsAgentRegistrationMountTogether(t *testing.T) {
 }
 
 func TestBuiltInLifecycleWorkersHaveTypedCapabilities(t *testing.T) {
-	registry, err := lifecycleRegistry(OperateConfig{Lifecycle: lifecycle.Config{DeployerAgentID: "sdo-deployer", JudgeAgentID: "sdo-health-judge"}, Install: installConfigForTest()})
+	registry, err := lifecycleRegistry(OperateConfig{Install: installConfigForTest()}, registrytest.Directory())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, choice := range [][2]string{{"sdo-deployer", lifecycle.SourceDeploymentTaskType}, {"sdo-deployer", lifecycle.ArchitectureTaskType}, {"sdo-health-judge", lifecycle.HealthJudgeTaskType}} {
-		registration, err := registry.Resolve(choice[0], choice[1])
+	for _, request := range []proto.Message{&contracts.SourceDeploymentRequest{}, &contracts.ArchitectureRequest{}, &contracts.HealthJudgeRequest{}} {
+		agent, err := registry.AgentFor(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task, err := registry.TaskType(agent, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		registration, err := registry.Resolve(agent, task)
 		if err != nil || registration.GetKubernetesJob().GetImage() != "agent:test" {
-			t.Fatalf("registration %v: %v", choice, err)
+			t.Fatalf("registration %s/%s: %v", agent, task, err)
 		}
 	}
 }

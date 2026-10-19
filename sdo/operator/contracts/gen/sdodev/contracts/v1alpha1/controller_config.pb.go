@@ -45,9 +45,14 @@ type ControllerConfig struct {
 	SourceCommit     string `protobuf:"bytes,5,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
 	DeployedCommit   string `protobuf:"bytes,6,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
 	// Responder dispatch.
-	Dispatcher                 string   `protobuf:"bytes,7,opt,name=dispatcher,proto3" json:"dispatcher,omitempty"`
-	DispatcherMode             string   `protobuf:"bytes,8,opt,name=dispatcher_mode,json=dispatcherMode,proto3" json:"dispatcher_mode,omitempty"`
+	// Deprecated and ignored: the controller resolves the worker through the agent
+	// registry. Kept so existing ControllerConfig documents stay wire-compatible.
+	//
+	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
+	Dispatcher string `protobuf:"bytes,7,opt,name=dispatcher,proto3" json:"dispatcher,omitempty"`
+	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
 	DispatcherArgs             []string `protobuf:"bytes,9,rep,name=dispatcher_args,json=dispatcherArgs,proto3" json:"dispatcher_args,omitempty"`
+	DispatcherMode             string   `protobuf:"bytes,8,opt,name=dispatcher_mode,json=dispatcherMode,proto3" json:"dispatcher_mode,omitempty"`
 	ResponderImage             string   `protobuf:"bytes,10,opt,name=responder_image,json=responderImage,proto3" json:"responder_image,omitempty"`
 	RepositoryPvc              string   `protobuf:"bytes,11,opt,name=repository_pvc,json=repositoryPvc,proto3" json:"repository_pvc,omitempty"`
 	RepositoryMountPath        string   `protobuf:"bytes,12,opt,name=repository_mount_path,json=repositoryMountPath,proto3" json:"repository_mount_path,omitempty"`
@@ -84,8 +89,9 @@ type ControllerConfig struct {
 	ProberUrl               string               `protobuf:"bytes,38,opt,name=prober_url,json=proberUrl,proto3" json:"prober_url,omitempty"`
 	CleanResponderHelpers   *bool                `protobuf:"varint,39,opt,name=clean_responder_helpers,json=cleanResponderHelpers,proto3,oneof" json:"clean_responder_helpers,omitempty"`
 	StateBaseline           *bool                `protobuf:"varint,40,opt,name=state_baseline,json=stateBaseline,proto3,oneof" json:"state_baseline,omitempty"`
-	// Optional external worker registry. When omitted, the built-in responder
-	// is registered from the existing responder image and command settings.
+	// Directory of agent registration manifests. When omitted the controller
+	// reads the built-in manifests baked into its image, with responder_image
+	// substituted as their launch image.
 	AgentRegistrationDirectory string `protobuf:"bytes,41,opt,name=agent_registration_directory,json=agentRegistrationDirectory,proto3" json:"agent_registration_directory,omitempty"`
 	ResponderAgentId           string `protobuf:"bytes,42,opt,name=responder_agent_id,json=responderAgentId,proto3" json:"responder_agent_id,omitempty"`
 	// Build provenance carried into the running controller. Native broker
@@ -186,6 +192,7 @@ func (x *ControllerConfig) GetDeployedCommit() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
 func (x *ControllerConfig) GetDispatcher() string {
 	if x != nil {
 		return x.Dispatcher
@@ -193,18 +200,19 @@ func (x *ControllerConfig) GetDispatcher() string {
 	return ""
 }
 
-func (x *ControllerConfig) GetDispatcherMode() string {
-	if x != nil {
-		return x.DispatcherMode
-	}
-	return ""
-}
-
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/controller_config.proto.
 func (x *ControllerConfig) GetDispatcherArgs() []string {
 	if x != nil {
 		return x.DispatcherArgs
 	}
 	return nil
+}
+
+func (x *ControllerConfig) GetDispatcherMode() string {
+	if x != nil {
+		return x.DispatcherMode
+	}
+	return ""
 }
 
 func (x *ControllerConfig) GetResponderImage() string {
@@ -512,20 +520,20 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe4\x15\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe3\x15\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
 	"\bapp_root\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aappRoot\x12 \n" +
 	"\vapplication\x18\x04 \x01(\tR\vapplication\x12#\n" +
 	"\rsource_commit\x18\x05 \x01(\tR\fsourceCommit\x12'\n" +
-	"\x0fdeployed_commit\x18\x06 \x01(\tR\x0edeployedCommit\x12'\n" +
+	"\x0fdeployed_commit\x18\x06 \x01(\tR\x0edeployedCommit\x12\"\n" +
 	"\n" +
-	"dispatcher\x18\a \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
-	"dispatcher\x123\n" +
+	"dispatcher\x18\a \x01(\tB\x02\x18\x01R\n" +
+	"dispatcher\x12+\n" +
+	"\x0fdispatcher_args\x18\t \x03(\tB\x02\x18\x01R\x0edispatcherArgs\x123\n" +
 	"\x0fdispatcher_mode\x18\b \x01(\tB\n" +
 	"\xbaH\ar\x05R\x03jobR\x0edispatcherMode\x12'\n" +
-	"\x0fdispatcher_args\x18\t \x03(\tR\x0edispatcherArgs\x12'\n" +
 	"\x0fresponder_image\x18\n" +
 	" \x01(\tR\x0eresponderImage\x12%\n" +
 	"\x0erepository_pvc\x18\v \x01(\tR\rrepositoryPvc\x122\n" +

@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package sdodev.contracts.v1alpha1;
 
+import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 
@@ -90,6 +91,6 @@ message HealthJudgeResult {
   string summary = 2;
   string agent_session_id = 3;
   string objective_digest = 4;
-  repeated string detector_ids = 5;
+  repeated string detector_ids = 5 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
   OperationalArtifactProposal artifact_proposal = 6;
 }

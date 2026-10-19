@@ -73,8 +73,8 @@ func TestChaosTelemetryEventIDsStableAcrossCrashPoint(t *testing.T) {
 		seen := map[string]int{}
 		activations := 0
 		for _, r := range records {
-			seen[r.EventID]++
-			if r.Event == FiringActivated && r.DetectorID == "cause" {
+			seen[r.EventId]++
+			if r.Event == string(FiringActivated) && r.DetectorId == "cause" {
 				activations++
 			}
 		}

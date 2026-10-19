@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sort"
 	"strings"
 	"sync"
@@ -509,10 +510,10 @@ func (c *Controller) reassessDeferredAdmission(now time.Time) {
 	}
 	c.dispatchState = next
 	c.admissionRecheckAt = time.Time{}
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseAdmissionResumed, RecordedAt: now.UTC(), IncidentID: c.currentIncidentRequest.IncidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseAdmissionResumed, RecordedAt: contractTimestamp(now.UTC()), IncidentId: c.currentIncidentRequest.IncidentID,
 		LoadPressure: assessment.Pressure, LoadThreshold: assessment.Threshold,
-		ReleaseBacklog: assessment.ReleaseBacklog, Reason: assessment.Reason,
+		ReleaseBacklog: int32(assessment.ReleaseBacklog), Reason: assessment.Reason,
 	})
 }
 
@@ -520,10 +521,10 @@ func (c *Controller) reassessDeferredAdmission(now time.Time) {
 // Callers hold c.mu. Each (incident, admission_deferred) pair is emitted at most
 // once, so the event id is stable and a crash-replay drops the duplicate.
 func (c *Controller) emitAdmissionDeferredLocked(now time.Time, incidentID string, assessment admissionAssessment) {
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseAdmissionDeferred, RecordedAt: now.UTC(), IncidentID: incidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseAdmissionDeferred, RecordedAt: contractTimestamp(now.UTC()), IncidentId: incidentID,
 		LoadPressure: assessment.Pressure, LoadThreshold: assessment.Threshold,
-		ReleaseBacklog: assessment.ReleaseBacklog, Reason: assessment.Reason,
+		ReleaseBacklog: int32(assessment.ReleaseBacklog), Reason: assessment.Reason,
 	})
 }
 
@@ -595,8 +596,8 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time) error {
 	c.incidentFindingKeys = findingKeys(batch)
 	c.noteBatchedLocked(request.IncidentID, batch)
 	c.pruneTimelineLocked(batch)
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseOpened, RecordedAt: c.incidentDetectedAt, IncidentID: request.IncidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseOpened, RecordedAt: contractTimestamp(c.incidentDetectedAt), IncidentId: request.IncidentID,
 		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
 	})
 	if assessment.Defer {
@@ -870,8 +871,8 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.resetDispatchRetryLocked()
 	}
 	if c.responderDone {
-		c.emitLifecycleLocked(LifecycleEvent{
-			Event: PhaseResponderCompleted, RecordedAt: c.responderCompletedAt, IncidentID: completion.incidentID,
+		c.emitLifecycleLocked(&contracts.LifecycleEvent{
+			Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(c.responderCompletedAt), IncidentId: completion.incidentID,
 			DispatchError: c.dispatchError != "",
 		})
 	}
@@ -925,9 +926,9 @@ func (c *Controller) maybeCloseIncident(now time.Time) {
 				"health detectors did not clear within %s after responder completion",
 				c.config.VerificationTimeout,
 			)
-			c.emitLifecycleLocked(LifecycleEvent{
-				Event: PhaseDetectorReviewRequired, RecordedAt: c.detectorReviewRequiredAt,
-				IncidentID: c.currentIncidentRequest.IncidentID, Reason: c.detectorReviewReason,
+			c.emitLifecycleLocked(&contracts.LifecycleEvent{
+				Event: PhaseDetectorReviewRequired, RecordedAt: contractTimestamp(c.detectorReviewRequiredAt),
+				IncidentId: c.currentIncidentRequest.IncidentID, Reason: c.detectorReviewReason,
 				DetectorReviewRequired: true,
 			})
 		}
@@ -960,9 +961,9 @@ func (c *Controller) maybeCloseIncident(now time.Time) {
 	sortTimeline(closure.DetectorTimeline)
 	closure.IncidentDetectorFiredBeforeDispatch, closure.IncidentDetectorFiredAfterDispatch,
 		closure.NoIncidentDetectorFired = timelineSummary(closure.DetectorTimeline)
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseClosed, RecordedAt: verifiedAt, IncidentID: closure.Request.IncidentID,
-		HealthClearedAt: closure.HealthClearedAt, DetectorReviewRequired: closure.DetectorReviewRequiredAt != nil,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
+		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt), DetectorReviewRequired: closure.DetectorReviewRequiredAt != nil,
 		DispatchError: closure.DispatchError != "",
 	})
 	c.timeline = nil
@@ -1059,14 +1060,14 @@ func (c *Controller) startFollowUpLocked(now time.Time) bool {
 		c.enqueueReleaseLocked(parent.IncidentID)
 	}
 	supersededAt := now.UTC()
-	c.emitLifecycleLocked(LifecycleEvent{
-		EventID: lifecycleEventID(parent.IncidentID, string(PhaseSuperseded), request.IncidentID),
-		Event:   PhaseSuperseded, RecordedAt: supersededAt, IncidentID: parent.IncidentID,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		EventId: lifecycleEventID(parent.IncidentID, string(PhaseSuperseded), request.IncidentID),
+		Event:   PhaseSuperseded, RecordedAt: contractTimestamp(supersededAt), IncidentId: parent.IncidentID,
 		SupersededBy: request.IncidentID, Reason: "follow_up",
 	})
-	c.emitLifecycleLocked(LifecycleEvent{
-		Event: PhaseOpened, RecordedAt: supersededAt, IncidentID: request.IncidentID,
-		ParentIncidentID: parent.IncidentID, FollowUpAttempt: request.FollowUp.Attempt,
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseOpened, RecordedAt: contractTimestamp(supersededAt), IncidentId: request.IncidentID,
+		ParentIncidentId: parent.IncidentID, FollowUpAttempt: int32(request.FollowUp.Attempt),
 		FindingKeys: findingKeys(residual), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
 	})
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
@@ -1313,7 +1314,7 @@ func (c *Controller) ExportState() RuntimeState {
 }
 
 func (c *Controller) RestoreState(state RuntimeState) error {
-	if err := state.Validate(); err != nil {
+	if err := validateRuntimeState(state); err != nil {
 		return err
 	}
 	if err := c.scheduler.RestoreDeadlines(state.SchedulerDeadlines); err != nil {

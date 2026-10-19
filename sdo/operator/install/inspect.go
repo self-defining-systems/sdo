@@ -13,7 +13,7 @@ import (
 // InspectConfig identifies a live controller without trusting a local checkout.
 type InspectConfig struct {
 	ControlNamespace, Namespace, Application string
-	RepositoryPVC, ControllerImage          string
+	RepositoryPVC, ControllerImage           string
 }
 
 // ExistingController is a read-only continuity receipt for a persistent run.

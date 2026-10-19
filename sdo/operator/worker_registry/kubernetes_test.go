@@ -2,6 +2,7 @@ package worker_registry
 
 import (
 	"context"
+	"sdo.dev/operator/contracts/wire"
 	"testing"
 	"time"
 
@@ -123,7 +124,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		t.Fatal(err)
 	}
 	wireResult := &contracts.AgentResult{SchemaVersion: SchemaVersion, TaskId: task.TaskId, Status: "completed", ProposalId: task.Workspace.ProposalId, Response: response}
-	data, err := canonicalJSON(wireResult)
+	data, err := wire.Canonical(wireResult)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,12 +6,12 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/worker_registry"
+	"sdo.dev/operator/contracts/wire"
 )
 
 func TestIncidentWorkerEnvelopePreservesRequestAndResult(t *testing.T) {
 	request := goldenRequest(t)
-	task, payload, err := encodeIncidentAgentTask(request, "sdo-responder")
+	task, payload, err := encodeIncidentAgentTask(request, testIncidentRegistry(t, ""), testIncidentAgentID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,11 +46,11 @@ func TestIncidentWorkerEnvelopePreservesRequestAndResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := worker_registry.New(builtInResponderRegistration("test/image", []string{"/worker"}))
-	if err != nil {
+	agentResult := &contracts.AgentResult{}
+	if err := wire.Unmarshal(resultPayload, agentResult); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := decodeIncidentAgentResult(resultPayload, task, registry)
+	decoded, err := incidentResultFromAgent(agentResult, task, testIncidentRegistry(t, "test/image"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestIncidentWorkerEnvelopePreservesRequestAndResult(t *testing.T) {
 func TestIncidentTaskCarriesLogicalMemoryAtBrokerBase(t *testing.T) {
 	request := goldenRequest(t)
 	snapshot := &contracts.OperationalMemorySnapshot{AcceptedCommit: request.RepositoryBaseCommit, GoalMarkdown: "# Goal", Playbooks: []*contracts.MemoryPlaybook{{Id: "repair-cache", Markdown: "# Repair"}}}
-	task, _, err := encodeIncidentAgentTask(request, "sdo-responder", snapshot)
+	task, _, err := encodeIncidentAgentTask(request, testIncidentRegistry(t, ""), testIncidentAgentID(t), snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestIncidentTaskCarriesLogicalMemoryAtBrokerBase(t *testing.T) {
 		t.Fatal("logical memory omitted from task")
 	}
 	snapshot.AcceptedCommit = "different"
-	if _, _, err := encodeIncidentAgentTask(request, "sdo-responder", snapshot); err == nil {
+	if _, _, err := encodeIncidentAgentTask(request, testIncidentRegistry(t, ""), testIncidentAgentID(t), snapshot); err == nil {
 		t.Fatal("stale logical memory accepted")
 	}
 }

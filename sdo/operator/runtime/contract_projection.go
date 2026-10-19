@@ -170,7 +170,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RelevantOutcomes: make([]*contracts.PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)),
 		SourceCommit:     request.SourceCommit, DeployedCommit: request.DeployedCommit,
 		RepositoryWorktree: request.RepositoryWorktree, RepositoryBaseCommit: request.RepositoryBaseCommit,
-		ResponseDeadline: contractTimestamp(request.ResponseDeadline), CancellationToken: request.CancellationToken,
+		ResponseDeadline: optionalTimestamp(request.ResponseDeadline), CancellationToken: request.CancellationToken,
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 	}
 	for _, finding := range request.Findings {
@@ -213,7 +213,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		FinalDetectorStates:  evaluationsContract(result.FinalDetectorStates),
 		VerificationEvidence: make([]*contracts.VerificationEvidence, 0, len(result.VerificationEvidence)),
 		Usage:                proto.Clone(&result.Usage).(*contracts.UsageMetrics),
-		Timing:               &contracts.TimingMetrics{StartedAt: contractTimestamp(result.Timing.StartedAt), CompletedAt: contractTimestamp(result.Timing.CompletedAt)},
+		Timing:               &contracts.TimingMetrics{StartedAt: optionalTimestamp(result.Timing.StartedAt), CompletedAt: optionalTimestamp(result.Timing.CompletedAt)},
 	}
 	for _, cause := range result.ConfirmedRootCauses {
 		item := &contracts.ConfirmedRootCause{
@@ -244,8 +244,8 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, action := range result.RepairActions {
 		message.RepairActions = append(message.RepairActions, &contracts.RepairActionReceipt{
 			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
-			Summary: action.Summary, Details: action.Details, StartedAt: contractTimestamp(action.StartedAt),
-			CompletedAt: contractTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible,
+			Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
+			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible,
 		})
 	}
 	for _, evidence := range result.VerificationEvidence {
@@ -751,10 +751,6 @@ func controllerStateState(message *contracts.ControllerState) RuntimeState {
 // error, not a legacy parser.
 func isPreCutoverFormat(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "unknown field")
-}
-
-func parseProtoJSON(data []byte, message proto.Message) error {
-	return (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(data, message)
 }
 
 func rolloutExpectationContract(expectation *ControllerRolloutExpectation) *contracts.ControllerRolloutExpectation {

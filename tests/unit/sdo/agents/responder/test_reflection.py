@@ -77,9 +77,9 @@ def _outcome() -> OutcomeRecord:
         (OutcomeClassification.CANCELLED, False),
     ],
 )
-def test_reflection_gate_uses_typed_classification(classification: OutcomeClassification, expected: bool) -> None:
+def test_reflection_gate_uses_typed_classification(classification: str, expected: bool) -> None:
     outcome = _outcome()
-    outcome.classification = classification.value
+    outcome.classification = classification
     reflected = SessionReflector(_CapturingBackend()).should_reflect(
         outcome, health_verified=True, session_id="session"
     )
@@ -89,7 +89,7 @@ def test_reflection_gate_uses_typed_classification(classification: OutcomeClassi
 def test_reflection_gate_rejects_unknown_classification() -> None:
     outcome = _outcome()
     outcome.classification = "sucess"
-    with pytest.raises(ValueError, match="sucess"):
+    with pytest.raises(ValueError, match="classification"):
         SessionReflector(_CapturingBackend()).should_reflect(outcome, health_verified=True, session_id="session")
 
 

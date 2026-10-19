@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sort"
 	"time"
 
@@ -31,7 +32,7 @@ func relevantOutcomeEvidence(
 
 	records := make([]*contracts.OutcomeRecord, 0)
 	for _, outcome := range stored {
-		if outcome.Record.GetClassification() == "success" {
+		if outcome.Record.GetClassification() == outcomeclass.Success {
 			records = append(records, outcome.Record)
 		}
 	}

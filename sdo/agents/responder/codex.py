@@ -13,8 +13,9 @@ from google.protobuf import json_format
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
-from sdo.agents.responder.result_output import ROOT_CAUSE_EVIDENCE_KINDS, parse_incident_result
+from sdo.agents.responder.result_output import parse_incident_result
 from sdo.contracts import (
+    ROOT_CAUSE_EVIDENCE_KINDS,
     DetectorEvaluation,
     Finding,
     IncidentRequest,

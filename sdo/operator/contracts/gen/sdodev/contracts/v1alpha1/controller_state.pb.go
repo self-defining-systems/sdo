@@ -7,6 +7,7 @@
 package contractsv1alpha1
 
 import (
+	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -1032,7 +1033,7 @@ var File_sdodev_contracts_v1alpha1_controller_state_proto protoreflect.FileDescr
 
 const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\n" +
-	"0sdodev/contracts/v1alpha1/controller_state.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe8\x02\n" +
+	"0sdodev/contracts/v1alpha1/controller_state.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe8\x02\n" +
 	"\fFindingState\x12\x1f\n" +
 	"\vdetector_id\x18\x01 \x01(\tR\n" +
 	"detectorId\x12<\n" +
@@ -1073,13 +1074,14 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x0elast_failed_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\flastFailedAt\x12B\n" +
 	"\x0fnext_attempt_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\rnextAttemptAt\x12\x1c\n" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
-	"\x06action\x18\t \x01(\tR\x06action\"\xd6\x12\n" +
-	"\x0fControllerState\x12\x18\n" +
-	"\aversion\x18\x01 \x01(\tR\aversion\x12s\n" +
+	"\x06action\x18\t \x01(\tR\x06action\"\xd9\x1a\n" +
+	"\x0fControllerState\x122\n" +
+	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
+	"\x11sdo.controller/v1R\aversion\x12s\n" +
 	"\x13scheduler_deadlines\x18\x02 \x03(\v2B.sdodev.contracts.v1alpha1.ControllerState.SchedulerDeadlinesEntryR\x12schedulerDeadlines\x12d\n" +
 	"\x0efinding_states\x18\x03 \x03(\v2=.sdodev.contracts.v1alpha1.ControllerState.FindingStatesEntryR\rfindingStates\x12L\n" +
-	"\rpending_batch\x18\x04 \x01(\v2'.sdodev.contracts.v1alpha1.BatcherStateR\fpendingBatch\x12G\n" +
-	"\ahistory\x18\x05 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\ahistory\x12#\n" +
+	"\rpending_batch\x18\x04 \x01(\v2'.sdodev.contracts.v1alpha1.BatcherStateR\fpendingBatch\x12Q\n" +
+	"\ahistory\x18\x05 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationB\b\xbaH\x05\x92\x01\x02\x10dR\ahistory\x12#\n" +
 	"\rincident_open\x18\x06 \x01(\bR\fincidentOpen\x12%\n" +
 	"\x0eresponder_done\x18\a \x01(\bR\rresponderDone\x12U\n" +
 	"\x10incident_request\x18\b \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestR\x0fincidentRequest\x12R\n" +
@@ -1102,8 +1104,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x0fclosure_failure\x18\x18 \x01(\v2).sdodev.contracts.v1alpha1.ClosureFailureR\x0eclosureFailure\x12A\n" +
 	"\x1dlast_acknowledged_incident_id\x18\x19 \x01(\tR\x1alastAcknowledgedIncidentId\x12)\n" +
 	"\x10pending_releases\x18\x1a \x03(\tR\x0fpendingReleases\x121\n" +
-	"\x14evaluation_iteration\x18\x1b \x01(\x05R\x13evaluationIteration\x12]\n" +
-	"\x11detector_timeline\x18\x1c \x03(\v20.sdodev.contracts.v1alpha1.DetectorTimelineEntryR\x10detectorTimeline\x12L\n" +
+	"\x14evaluation_iteration\x18\x1b \x01(\x05R\x13evaluationIteration\x12g\n" +
+	"\x11detector_timeline\x18\x1c \x03(\v20.sdodev.contracts.v1alpha1.DetectorTimelineEntryB\b\xbaH\x05\x92\x01\x02\x10@R\x10detectorTimeline\x12L\n" +
 	"\rincident_view\x18\x1d \x01(\v2'.sdodev.contracts.v1alpha1.IncidentViewR\fincidentView\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
@@ -1113,9 +1115,13 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2'.sdodev.contracts.v1alpha1.FindingStateR\x05value:\x028\x01\x1aa\n" +
 	"\x17DetectorClearSinceEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
-	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\"k\n" +
-	"\x12ReflectionDecision\x12+\n" +
-	"\x11learning_decision\x18\x01 \x01(\tR\x10learningDecision\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xd2\a\xbaH\xce\a\x1a{\n" +
+	"\x1fstate.open_incident_has_request\x12%an open incident requires its request\x1a1!this.incident_open || has(this.incident_request)\x1a\x9c\x02\n" +
+	"\x1estate.detector_review_complete\x12\\detector review requires an open incident whose responder finished, plus a time and a reason\x1a\x9b\x01!this.detector_review_required || (this.incident_open && this.responder_done && has(this.detector_review_required_at) && this.detector_review_reason != '')\x1a\xc5\x01\n" +
+	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1a_this.closure_state != 'failed' || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe7\x02\n" +
+	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xcf\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 'failed'))\"\x86\x01\n" +
+	"\x12ReflectionDecision\x12F\n" +
+	"\x11learning_decision\x18\x01 \x01(\tB\x19\xbaH\x16r\x14R\aupdatedR\tno_changeR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\"\xea\x01\n" +
 	"\x1cControllerRolloutExpectation\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +

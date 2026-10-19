@@ -69,7 +69,12 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if config == nil || client == nil || registry == nil {
 		return errors.New("native reflector requires typed launch config, Kubernetes client, and agent registry")
 	}
-	if _, err := registry.Resolve("sdo-reflector", "outcome-reflection"); err != nil {
+	reflectorID, err := registry.AgentFor(&contracts.ReflectionRequest{})
+	if err != nil {
+		return fmt.Errorf("native reflection agent registration: %w", err)
+	}
+	reflectionTask, err := registry.TaskType(reflectorID, &contracts.ReflectionRequest{})
+	if err != nil {
 		return fmt.Errorf("native reflection agent registration: %w", err)
 	}
 	if timeout <= 0 {
@@ -87,7 +92,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	}
 	native.Reflector = RegisteredReflectionWorker{
 		Executor: freshExecutor,
-		AgentID:  "sdo-reflector", Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
+		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
 		SessionMode: config.GetReflectionSession(),
 		Guidance:    config.GetReflectionGuidance(),
 		Catalog:     memory.OpenCatalogReader(config.GetAppRoot()),

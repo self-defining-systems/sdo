@@ -21,8 +21,7 @@ from typing import Any
 import pytest
 
 from sdo.agents.responder.codex import _incident_result_schema
-from sdo.agents.responder.result_output import ROOT_CAUSE_EVIDENCE_KINDS
-from sdo.contracts import OutcomeClassification
+from sdo.contracts import OUTCOME_CLASSIFICATIONS, OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
     BrokerLedger,
@@ -32,7 +31,6 @@ from sdo.contracts.proto import (
     IncidentResult,
     IncidentView,
     OutcomeRecord,
-    RootCauseEvidence,
     parse_json,
     to_canonical_json,
 )
@@ -47,12 +45,13 @@ def test_outcomes_are_typed_across_the_reflection_boundary() -> None:
     assert fields["prior_outcomes"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
 
 
-def test_outcome_classification_type_matches_proto_validation() -> None:
+def test_outcome_classification_is_read_from_proto_validation() -> None:
     from buf.validate import validate_pb2
 
     field = OutcomeRecord.DESCRIPTOR.fields_by_name["classification"]
     permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
-    assert {item.value for item in OutcomeClassification} == set(permitted)
+    assert set(OUTCOME_CLASSIFICATIONS) == set(permitted)
+    assert vars(OutcomeClassification) == {value.upper(): value for value in permitted}
 
 
 def test_outcome_round_trips_through_canonical_contract() -> None:
@@ -102,11 +101,3 @@ def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> No
     unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
     assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
     assert set(schema["required"]) == set(schema["properties"])
-
-
-def test_root_cause_evidence_kinds_are_the_proto_rule() -> None:
-    from buf.validate import validate_pb2
-
-    field = RootCauseEvidence.DESCRIPTOR.fields_by_name["kind"]
-    permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
-    assert set(ROOT_CAUSE_EVIDENCE_KINDS) == set(permitted)

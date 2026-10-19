@@ -76,12 +76,14 @@ deferral.
   `sdo/operator/runtime/contract_conformance_test.go`). The one piece CEL cannot do —
   the `UsageMetrics` cache-read alias *normalization* (a mutation) — stays a thin
   hand step at the seam, noted in `messages.proto`.
-- The Python gencode imports `buf.validate` for those field options. `protovalidate`
-  on PyPI (v2+) ships only the newer `protobuf-py` runtime form, incompatible with the
-  classic `google.protobuf` runtime this repo uses, so `scripts/gen_proto.sh` vendors
-  the classic `buf/validate/validate_pb2.py` into `sdo/contracts/_gen/buf`
-  (via `buf.gen.validate.yaml`). The Python agent edge parses protobuf with unknown-field rejection. Running the
-  same CEL rules in Python remains a separate validation improvement.
+- Every rule is enforced on both sides. Go uses `buf.build/go/protovalidate` through
+  `sdo/operator/contracts/wire` (task encode, result decode, outcome store, ledger and
+  state); Python uses `protovalidate` through `sdo.contracts.validate`. Go reads
+  proto-stated values (`const`, `in`, `pattern`) from the descriptors with
+  `wire.StringConst/StringIn/StringPattern`, and Python from `SCHEMA_VERSION` and
+  `OUTCOME_CLASSIFICATIONS`, so no hand-written copy of a rule exists.
+- The Python gencode imports `buf.validate`; `scripts/gen_proto.sh` vendors the classic
+  `buf/validate/validate_pb2.py` into `sdo/contracts/_gen/buf` (via `buf.gen.validate.yaml`).
 - Do **not** add gRPC services here — SDO currently exchanges ProtoJSON through
   Job ConfigMaps and uses Git for proposals. A future transport can reuse the
   same task/result messages.
@@ -94,10 +96,8 @@ The repo runs the classic `google.protobuf` runtime (`protobuf==6.33.4`), while 
 current `protovalidate` tooling targets the newer `protobuf-py` runtime. Three choices
 bridge that gap today while keeping a single classic runtime:
 
-1. **CEL is checked on the Go side only.** `buf.build/go/protovalidate` validates the
-   generated Go messages; `protovalidate` is deliberately *not* in `uv.lock` because v2+
-   would drag in the incompatible `protobuf-py` runtime. A future
-   classic-compatible Python validator can close this asymmetry.
+1. **Python validates with `protovalidate`.** It accepts classic `google.protobuf`
+   messages, so the same CEL runs on both sides.
 2. **Vendored `buf/validate/validate_pb2.py`.** The proto field options force the Python
    gencode to `import buf.validate`; `gen_proto.sh` vendors the classic form into
    `sdo/contracts/_gen/buf`. If a future validator ships a classic `buf.validate`, drop the

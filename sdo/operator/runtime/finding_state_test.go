@@ -124,3 +124,9 @@ func stateFinding(fingerprint string) sdk.Finding {
 		Fingerprint:     fingerprint,
 	}
 }
+
+// testDetectorHistory is the minimal evaluation history an IncidentRequest
+// contract accepts (at least one evaluation).
+func testDetectorHistory(at time.Time) []DetectorEvaluation {
+	return []DetectorEvaluation{{DetectorID: "fault", EvaluatedAt: at, Status: DetectorEvaluationFiring}}
+}

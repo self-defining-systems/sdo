@@ -9,7 +9,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/worker_registry"
+	"sdo.dev/operator/worker_registry/registrytest"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,7 +32,7 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	request.RepositoryWorktree = root + "/proposals/incident-one"
 	request.IncidentID = "incident-one"
 	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root,
 		Environment: map[string]string{"CODEX_HOME": "/workspace/.sdo-runtime/codex"},
 		Catalog:     fixedMemoryCatalog{commit: request.RepositoryBaseCommit}, RequireMemorySnapshot: true,
@@ -74,7 +76,7 @@ func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	request := goldenRequest(t)
 	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 		RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "shared", PollInterval: time.Millisecond,
 		Environment: map[string]string{"SDO_SREGYM_API_BASE": "http://host.docker.internal:8123"},
@@ -125,7 +127,7 @@ func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
 		secondError <- err
 	}()
 	result := completedResult(request.IncidentID)
-	payload, err := testAgentResultPayload(request, result)
+	payload, err := testAgentResultPayload(t, request, result)
 	if err != nil {
 		t.Fatalf("encode result: %v", err)
 	}
@@ -159,7 +161,7 @@ func TestKubernetesJobDispatcherDoesNotCompleteUntilResponderJobCompletes(t *tes
 	client := fake.NewSimpleClientset()
 	request := goldenRequest(t)
 	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
 	}
@@ -173,7 +175,7 @@ func TestKubernetesJobDispatcherDoesNotCompleteUntilResponderJobCompletes(t *tes
 	jobName := IncidentJobName(request.IncidentID)
 	job := awaitJob(t, client, jobName)
 	result := completedResult(request.IncidentID)
-	payload, err := testAgentResultPayload(request, result)
+	payload, err := testAgentResultPayload(t, request, result)
 	if err != nil {
 		t.Fatalf("encode result: %v", err)
 	}
@@ -215,8 +217,8 @@ func containsEnvironment(environment []corev1.EnvVar, name string, value string)
 	return false
 }
 
-func testAgentResultPayload(request IncidentRequest, result IncidentResult) ([]byte, error) {
-	task, _, err := encodeIncidentAgentTask(request, builtInResponderID)
+func testAgentResultPayload(t testing.TB, request IncidentRequest, result IncidentResult) ([]byte, error) {
+	task, _, err := encodeIncidentAgentTask(request, testIncidentRegistry(t, ""), testIncidentAgentID(t))
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +230,7 @@ func testAgentResultPayload(request IncidentRequest, result IncidentResult) ([]b
 	if err != nil {
 		return nil, err
 	}
-	return canonicalProtoJSON(&contracts.AgentResult{
+	return wire.Canonical(&contracts.AgentResult{
 		SchemaVersion: ProtocolSchemaVersion, TaskId: task.GetTaskId(), Status: string(result.Status),
 		ProposalId: task.GetWorkspace().GetProposalId(), Response: packed,
 	})
@@ -237,7 +239,7 @@ func testAgentResultPayload(request IncidentRequest, result IncidentResult) ([]b
 func TestKubernetesJobDispatcherUsesRegisteredWorker(t *testing.T) {
 	registration := &contracts.AgentRegistration{
 		SchemaVersion: ProtocolSchemaVersion, AgentId: "custom-responder",
-		Capabilities: []*contracts.AgentCapability{{TaskType: incidentTaskType, RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentResult"}},
+		Capabilities: []*contracts.AgentCapability{{TaskType: testIncidentTaskType(t), RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentRequest", ResultTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentResult"}},
 		Launch:       &contracts.AgentRegistration_KubernetesJob{KubernetesJob: &contracts.KubernetesJobLaunch{Image: "example/custom:1", Command: []string{"/custom-worker"}}},
 	}
 	registry, err := worker_registry.New(registration)
@@ -276,7 +278,7 @@ func TestKubernetesJobDispatcherAddsDispatchTimeEnvironment(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	request := goldenRequest(t)
 	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
 		Environment: map[string]string{"SDO_SREGYM_API_BASE": "http://bridge:18000"},
@@ -303,7 +305,7 @@ func TestKubernetesJobDispatcherReturnsFailedJob(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	request := goldenRequest(t)
 	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
 	}
@@ -332,7 +334,7 @@ func TestKubernetesJobDispatcherRejectsWorktreeOutsideSharedMount(t *testing.T) 
 	request := goldenRequest(t)
 	request.RepositoryWorktree = "/private/host/worktree"
 	dispatcher := KubernetesJobDispatcher{
-		Client: fake.NewSimpleClientset(), Namespace: "demo", Image: "sdo-responder:test", Command: []string{"/responder"},
+		Client: fake.NewSimpleClientset(), Namespace: "demo", Registry: testIncidentRegistry(t, "sdo-responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
 	}
@@ -353,4 +355,35 @@ func awaitJob(t *testing.T, client *fake.Clientset, name string) *batchv1.Job {
 	}
 	t.Fatalf("timed out waiting for Job %q", name)
 	return nil
+}
+
+// testIncidentRegistry is the checked-in built-in manifests; a non-empty image
+// replaces their launch image the way a deployment's responder image does.
+func testIncidentRegistry(t testing.TB, image string) *worker_registry.Registry {
+	t.Helper()
+	registry := registrytest.BuiltIn(t)
+	if image == "" {
+		return registry
+	}
+	registry, err := registry.WithLaunchImage(image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
+// testIncidentAgentID and testIncidentTaskType name what the manifests register
+// for incident requests, so no test restates them.
+func testIncidentAgentID(t testing.TB) string {
+	t.Helper()
+	id, err := registrytest.BuiltIn(t).AgentFor(&contracts.IncidentRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func testIncidentTaskType(t testing.TB) string {
+	t.Helper()
+	return registrytest.TaskType(t, testIncidentAgentID(t), &contracts.IncidentRequest{})
 }

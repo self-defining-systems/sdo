@@ -2,8 +2,8 @@ package runtime
 
 import (
 	"bufio"
-	"io"
 	"context"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 )
@@ -207,7 +208,7 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 			return false
 		}
 		document := &contracts.ControllerState{}
-		if parseProtoJSON([]byte(configMap.Data[stateDataKey]), document) != nil || document.GetIncidentView() == nil {
+		if wire.Unmarshal([]byte(configMap.Data[stateDataKey]), document) != nil || document.GetIncidentView() == nil {
 			return false
 		}
 		view = document.GetIncidentView()

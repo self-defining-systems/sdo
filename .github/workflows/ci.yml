@@ -142,6 +142,9 @@ jobs:
           - module: core
             directory: sdo/operator/core
             go-version: "1.24.5"
+          - module: contracts
+            directory: sdo/operator/contracts
+            go-version: "1.26.8"
           - module: runtime
             directory: sdo/operator/runtime
             go-version: "1.26.8"

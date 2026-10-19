@@ -34,9 +34,7 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		Application:                "hotel-reservation",
 		SourceCommit:               "abc123",
 		DeployedCommit:             "def456",
-		Dispatcher:                 "/usr/local/bin/responder",
 		DispatcherMode:             "job",
-		DispatcherArgs:             []string{"--model", "luna"},
 		ResponderImage:             "registry/responder:latest",
 		AgentRegistrationDirectory: "/etc/sdo/agents",
 		ResponderAgentId:           "custom-responder",
@@ -94,7 +92,6 @@ func TestLoadControllerConfigRejectsInvalid(t *testing.T) {
 	cases := map[string]func(*contractsv1alpha1.ControllerConfig){
 		"empty namespace":     func(c *contractsv1alpha1.ControllerConfig) { c.Namespace = "" },
 		"empty app_root":      func(c *contractsv1alpha1.ControllerConfig) { c.AppRoot = "" },
-		"empty dispatcher":    func(c *contractsv1alpha1.ControllerConfig) { c.Dispatcher = "" },
 		"bad dispatcher_mode": func(c *contractsv1alpha1.ControllerConfig) { c.DispatcherMode = "cluster" },
 		"bad repair_policy":   func(c *contractsv1alpha1.ControllerConfig) { c.RepairPolicy = "yolo" },
 		"negative follow_ups": func(c *contractsv1alpha1.ControllerConfig) { c.MaxFollowUps = -1 },
@@ -151,7 +148,6 @@ func TestControllerConfigFlagsAreAllDefined(t *testing.T) {
 	minimal := &contractsv1alpha1.ControllerConfig{
 		Namespace:      "hotel-reservation",
 		AppRoot:        "/workspace/app",
-		Dispatcher:     "/usr/local/bin/responder",
 		DispatcherMode: "job",
 		RepairPolicy:   "commit",
 	}
@@ -193,7 +189,7 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		t.Fatalf("expected --exit-after-closure in args: %v", args)
 	}
 	// Repeated fields expand once per element as --flag=value.
-	for _, flag := range []string{"--dispatcher-arg=--model", "--dispatcher-arg=luna", "--responder-env=FOO=bar", "--responder-env=BAZ=qux"} {
+	for _, flag := range []string{"--responder-env=FOO=bar", "--responder-env=BAZ=qux"} {
 		if !contains(args, flag) {
 			t.Fatalf("expected %q in args: %v", flag, args)
 		}
@@ -207,7 +203,6 @@ func TestControllerConfigOmitsUnsetFields(t *testing.T) {
 	minimal := &contractsv1alpha1.ControllerConfig{
 		Namespace:      "hotel-reservation",
 		AppRoot:        "/workspace/app",
-		Dispatcher:     "/usr/local/bin/responder",
 		DispatcherMode: "job",
 		RepairPolicy:   "commit",
 	}
@@ -236,7 +231,6 @@ func TestLoadControllerConfigRejectsUnknownField(t *testing.T) {
 	raw := []byte(`{
 		"namespace": "hotel-reservation",
 		"app_root": "/workspace/app",
-		"dispatcher": "/usr/local/bin/responder",
 		"dispatcher_mode": "job",
 		"repair_policy": "commit",
 		"closeout_state_gate": true

@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package sdodev.contracts.v1alpha1;
 
+import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
@@ -60,11 +61,36 @@ message ClosureFailure {
 // ProtoJSON in the controller state ConfigMap. incident_view is published for
 // responders (`sdo incident status`) and never restored.
 message ControllerState {
-  string version = 1;
+  option (buf.validate.message).cel = {
+    id: "state.open_incident_has_request"
+    message: "an open incident requires its request"
+    expression: "!this.incident_open || has(this.incident_request)"
+  };
+  option (buf.validate.message).cel = {
+    id: "state.detector_review_complete"
+    message: "detector review requires an open incident whose responder finished, plus a time and a reason"
+    expression:
+      "!this.detector_review_required || (this.incident_open && this.responder_done && "
+      "has(this.detector_review_required_at) && this.detector_review_reason != '')"
+  };
+  option (buf.validate.message).cel = {
+    id: "state.failed_closure_has_permanent_failure"
+    message: "a failed closure requires its permanent failure record"
+    expression: "this.closure_state != 'failed' || (has(this.closure_failure) && this.closure_failure.permanent)"
+  };
+  option (buf.validate.message).cel = {
+    id: "state.closure_failure_matches_pending_closure"
+    message: "a closure failure must belong to the pending closure and its permanence must match the closure state"
+    expression:
+      "!has(this.closure_failure) || (has(this.pending_closure) && "
+      "this.closure_failure.incident_id == this.pending_closure.request.incident_id && "
+      "this.closure_failure.permanent == (this.closure_state == 'failed'))"
+  };
+  string version = 1 [(buf.validate.field).string.const = "sdo.controller/v1"];
   map<string, google.protobuf.Timestamp> scheduler_deadlines = 2;
   map<string, FindingState> finding_states = 3;
   BatcherState pending_batch = 4;
-  repeated DetectorEvaluation history = 5;
+  repeated DetectorEvaluation history = 5 [(buf.validate.field).repeated.max_items = 100];
   bool incident_open = 6;
   bool responder_done = 7;
   IncidentRequest incident_request = 8;
@@ -88,14 +114,14 @@ message ControllerState {
   string last_acknowledged_incident_id = 25;
   repeated string pending_releases = 26;
   int32 evaluation_iteration = 27;
-  repeated DetectorTimelineEntry detector_timeline = 28;
+  repeated DetectorTimelineEntry detector_timeline = 28 [(buf.validate.field).repeated.max_items = 64];
   IncidentView incident_view = 29;
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
 // incident.
 message ReflectionDecision {
-  string learning_decision = 1;
+  string learning_decision = 1 [(buf.validate.field).string = {in: ["updated", "no_change"]}];
   string no_change_reason = 2;
 }
 

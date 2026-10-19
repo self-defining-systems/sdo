@@ -180,6 +180,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 		t.Fatalf("new controller: %v", err)
 	}
 	request := controller.incidentRequest(start, []sdk.Finding{stateFinding("fault")})
+	request.DetectorHistory = testDetectorHistory(start)
 	closure := IncidentClosure{
 		Request: request, Result: cloneIncidentResultPointer(completedResult(request.IncidentID)),
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear}},

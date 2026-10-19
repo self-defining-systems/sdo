@@ -19,6 +19,7 @@ from sdo.agents.lifecycle import (
 )
 from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
+    SCHEMA_VERSION,
     AgentResult,
     AgentTask,
     ArchitectureRequest,
@@ -30,13 +31,12 @@ from sdo.contracts import (
     SourceDeploymentResult,
     parse_json,
     to_canonical_json,
+    validate,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-TASK_TYPE = "source-deployment"
-ARCHITECTURE_TASK_TYPE = "source-architecture"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 
 
@@ -201,13 +201,7 @@ def run_deployment_task(
     execute: Callable[[SourceDeploymentRequest, Path], SourceDeploymentResult] = propose_source,
 ) -> AgentResult:
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    if (
-        task.schema_version != "sdo.dev/v1alpha1"
-        or not task.task_id
-        or not task.agent_id
-        or task.task_type != TASK_TYPE
-    ):
-        raise ValueError("invalid source deployment task identity")
+    validate(task)
     if not task.workspace.proposal_id or not task.workspace.checkout_path:
         raise ValueError("source deployment requires a proposal checkout")
     request = SourceDeploymentRequest()
@@ -223,7 +217,7 @@ def run_deployment_task(
         raise ValueError("source deployment request is incomplete")
     typed = execute(request, Path(task.workspace.checkout_path))
     result = AgentResult(
-        schema_version="sdo.dev/v1alpha1",
+        schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status="completed",
         proposal_id=task.workspace.proposal_id,
@@ -241,9 +235,8 @@ def run_architecture_task(
     execute: Callable[[ArchitectureRequest, Path], ArchitectureResult] = describe_architecture,
 ) -> AgentResult:
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
-    if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id or not task.agent_id:
-        raise ValueError("invalid architecture task identity")
-    if task.task_type != ARCHITECTURE_TASK_TYPE or not task.workspace.proposal_id or not task.workspace.checkout_path:
+    validate(task)
+    if not task.workspace.proposal_id or not task.workspace.checkout_path:
         raise ValueError("architecture requires a source proposal workspace")
     request = ArchitectureRequest()
     if not task.request.Unpack(request):
@@ -252,7 +245,7 @@ def run_architecture_task(
         raise ValueError("architecture request does not match accepted source")
     typed = execute(request, Path(task.workspace.checkout_path))
     result = AgentResult(
-        schema_version="sdo.dev/v1alpha1",
+        schema_version=SCHEMA_VERSION,
         task_id=task.task_id,
         status="completed",
         proposal_id=task.workspace.proposal_id,
@@ -274,12 +267,12 @@ def main() -> int:
         task_path = Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH)))
         task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
         publisher = KubernetesResultPublisher(namespace=namespace)
-        if task.task_type == TASK_TYPE:
+        if task.request.Is(SourceDeploymentRequest.DESCRIPTOR):
             run_deployment_task(task_path, result_name, publisher)
-        elif task.task_type == ARCHITECTURE_TASK_TYPE:
+        elif task.request.Is(ArchitectureRequest.DESCRIPTOR):
             run_architecture_task(task_path, result_name, publisher)
         else:
-            raise ValueError(f"unsupported deployer task type {task.task_type!r}")
+            raise ValueError(f"unsupported deployer request type {task.request.TypeName()!r}")
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

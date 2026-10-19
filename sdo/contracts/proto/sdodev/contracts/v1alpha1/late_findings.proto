@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+// The late-findings channel. The controller projects findings that activate
+// after a responder dispatch into a per-incident, read-only report the worker
+// pulls with `sdo-operator late-findings`; each pull appends one receipt that
+// the worker folds into IncidentResult.late_findings_pull, and the controller
+// checks against its own report history. All of them are ProtoJSON.
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/common.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+message LateFinding {
+  string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
+  string detector_class = 2;
+  string rule_id = 3;
+  string fingerprint = 4 [(buf.validate.field).string.min_len = 1];
+  string severity = 5;
+  map<string, ObjectRef> parameter_bindings = 6;
+  repeated string playbook_ids = 7 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
+  google.protobuf.Timestamp activated_at = 8 [(buf.validate.field).required = true];
+  bool still_active = 9;
+}
+
+// LateFindingsReport is the controller-authored projection mounted in the worker.
+message LateFindingsReport {
+  string schema_version = 1 [(buf.validate.field).string.const = "sdo.late-findings/v1"];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  bool telemetry_available = 3;
+  repeated LateFinding late_findings = 4 [(buf.validate.field).repeated.max_items = 64];
+}
+
+// LateFindingsSnapshot identifies one published version of a report.
+message LateFindingsSnapshot {
+  string digest = 1 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+  repeated string detector_ids = 2 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
+  repeated string playbook_ids = 3 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
+}
+
+// LateFindingsHistory is the controller's record of every report it published.
+message LateFindingsHistory {
+  repeated LateFindingsSnapshot snapshots = 1 [(buf.validate.field).repeated.max_items = 64];
+}
+
+// LateFindingsReceipt is one worker pull: one line of the receipts JSONL.
+message LateFindingsReceipt {
+  string incident_id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated string detector_ids = 2 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
+  repeated string playbook_ids = 3 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
+  string report_digest = 4 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+}

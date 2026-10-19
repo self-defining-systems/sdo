@@ -27,6 +27,9 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+# The built-in agent manifests are the single source for task types and
+# launch commands; the controller reads them from worker_registry.DefaultDirectory.
+COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
 ENV HOME=/tmp \
     GOCACHE=/tmp/go-cache \
     GOMODCACHE=/go/pkg/mod \
@@ -53,7 +56,10 @@ RUN npm install --global "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-
 RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
       agentshim==0.7.0 \
       annotated-types==0.7.0 \
+      protobuf-py-ext==0.6.0 \
+      protobuf-py==0.6.0 \
       protobuf==6.33.4 \
+      protovalidate==2.0.0 \
       pydantic==2.12.5 \
       pydantic-core==2.41.5 \
       pyyaml==6.0.3 \
