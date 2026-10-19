@@ -568,8 +568,14 @@ func TestResponderCannotChangeJudgeManifestRegistration(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "interval: 30s", "interval: 20s", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Publish(context.Background(), "inc-protected", Responder, ReflectionPhase); err == nil {
+	_, err = b.Publish(context.Background(), "inc-protected", Responder, ReflectionPhase)
+	if err == nil {
 		t.Fatal("responder changed judge registration")
+	}
+	for _, want := range []string{"ownership.denied", "ownership.protected-detector", "health/health/manifest.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("rejection does not carry the validator diagnostics (missing %q): %v", want, err)
+		}
 	}
 }
 

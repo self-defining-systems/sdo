@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/builder"
-	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 )
 
 func ParseValidateLaunch(args []string) (builder.Config, error) {
@@ -45,20 +45,15 @@ func ParseValidateLaunch(args []string) (builder.Config, error) {
 	return builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot, HealthyBaseline: *healthyBaseline}, nil
 }
 
+// RunValidate is the validation Job's body: the shared validator's compile
+// layer over the staged candidate. The broker has already run the read-only
+// layers in its own process.
 func RunValidate(ctx context.Context, config builder.Config) error {
-	projection, err := memory.CandidateDiagnostics(config.ApplicationRoot)
-	if err != nil {
-		if errors.Is(err, memory.ErrDiagnosticsNotBootstrapped) {
-			return nil
-		}
-		return err
-	}
-	config.DiagnosticsRoot = projection
-	workspace, err := builder.BuildWorkspace(ctx, config)
+	diagnostics, err := validate.Validate(ctx, validate.Request{
+		Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
+	})
 	if err != nil {
 		return err
 	}
-	defer workspace.Close()
-	_, err = workspace.ValidateAndBuild(ctx)
-	return err
+	return validate.Err(diagnostics)
 }
