@@ -950,3 +950,16 @@ def test_a_stage_stopped_before_its_drain_keeps_responder_tokens_from_its_stage_
 
     assert only.responder == replace(TokenUsage.from_mapping(responder), requests=1)
     assert only.incident_resolution_seconds == 42.0
+
+
+def test_native_receipt_responder_usage_comes_from_the_ledger_closure_result() -> None:
+    from benchmarks.sregym.analysis.incident_cost import receipt_responder_usage
+
+    receipt = {
+        "native_ledger": {
+            "closure": {"result": {"usage": {"input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 50}}}
+        }
+    }
+    usage = receipt_responder_usage(receipt)
+    assert (usage.input_tokens, usage.cached_input_tokens, usage.output_tokens) == (1000, 800, 50)
+    assert receipt_responder_usage({}).input_tokens == 0

@@ -58,6 +58,7 @@ from benchmarks.sregym.analysis.incident_cost import (
     pipeline_stage_dirs,
     problem_results_dirs,
     read_result_row,
+    receipt_responder_usage,
     read_verdict,
     rollout_turn_usages,
     with_mitigation_applied,
@@ -347,8 +348,9 @@ def _check_sdo_tokens(results: Path, receipt: dict[str, Any] | None) -> Check:
         return Check("tokens", "not_recorded", "no strict receipt to reconcile")
     session = receipt.get("responder_session_id")
     sources: dict[str, tuple[int, int, int]] = {}
-    if isinstance(receipt.get("usage"), dict):
-        sources["receipt usage"] = _triple(TokenUsage.from_mapping(receipt["usage"]))
+    recorded = receipt_responder_usage(receipt)
+    if recorded.input_tokens:
+        sources["receipt usage"] = _triple(recorded)
     if isinstance(session, str) and session:
         rollouts = [
             path
