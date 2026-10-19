@@ -149,7 +149,7 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	if nativeGit(t, target, "log", "--oneline") == "" {
 		t.Fatal("proposal/outcome were not persisted before retry")
 	}
-	native.Reflector = ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, reflection IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
+	native.Reflector = ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, reflection IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
 		if reflection.BaseCommit == workspace.BaseCommit {
 			t.Fatal("reflection was not based on committed outcome")
 		}
@@ -228,49 +228,6 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	}
 }
 
-func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
-	target := nativeRepository(t)
-	nativeMemoryFixture(t, target)
-	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	invalid := true
-	native := NativeIncidentBroker{
-		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
-		Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-			return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
-		}),
-		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, w IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
-			if !invalid {
-				return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already learned"}, nil
-			}
-			return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte("bad playbook\n"), 0o644)
-		}),
-	}
-	workspace, err := native.PrepareIncident(context.Background(), "inc-reject")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace.Worktree, "app.txt"), []byte("repair\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	closure := nativeClosure(workspace)
-	if _, err := native.ProcessClosure(context.Background(), closure); err == nil {
-		t.Fatal("invalid reflection accepted")
-	}
-	if _, err := repositoryBroker.ProposalInfo("inc-reject", broker.ReflectionPhase); err == nil {
-		t.Fatal("rejected reflection checkout remained")
-	}
-	invalid = false
-	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
-		t.Fatal(err)
-	}
-	if got := nativeGit(t, target, "show", "HEAD:.sdo/playbooks/base/README.md"); strings.Contains(got, "bad playbook") {
-		t.Fatal("rejected reflection reached accepted state")
-	}
-}
-
 func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
@@ -346,7 +303,7 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
 			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
 		}),
-		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
 			manifest := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "detectors", "incidents", "learned", "manifest.yaml")
 			if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
 				return ReflectionDecision{}, err

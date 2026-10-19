@@ -10,6 +10,7 @@ from sdo.contracts import (
     AgentResult,
     AgentTask,
     IncidentClosure,
+    MemoryDiagnostic,
     OperationalMemorySnapshot,
     ReflectionRequest,
     ReflectionResult,
@@ -296,3 +297,32 @@ def test_reflection_worker_rejects_false_origin(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="origin"):
         run_reflection_task(path, "result-map", publisher, reflector=WrongOriginReflector())
     assert publisher.payload is None
+
+
+def test_reflection_worker_forwards_go_retry_diagnostics(tmp_path: Path) -> None:
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=_outcome(closure.request.incident_id),
+        outcome_commit="outcome-commit",
+        validation_attempt=2,
+        previous_diagnostics=[MemoryDiagnostic(rule="detector.manifest", message="bad id")],
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1-retry1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "retry-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+    assert reflector.kwargs["validation_attempt"] == 2
+    assert [d.rule for d in reflector.kwargs["diagnostics"]] == ["detector.manifest"]  # type: ignore[attr-defined]

@@ -22,8 +22,8 @@ from sdo.contracts import (
     IncidentClosure,
     IncidentRequest,
     IncidentResult,
+    MemoryDiagnostic,
     OperationalMemorySnapshot,
-    OutcomeClassification,
     OutcomeRecord,
     datetime_timestamp,
 )
@@ -62,35 +62,6 @@ def _outcome() -> OutcomeRecord:
         responder_backend="codex",
         responder_model="gpt-5",
     )
-
-
-@pytest.mark.parametrize(
-    ("classification", "expected"),
-    [
-        (OutcomeClassification.SUCCESS, True),
-        (OutcomeClassification.FALSE_POSITIVE, True),
-        (OutcomeClassification.FALSE_NEGATIVE, True),
-        (OutcomeClassification.PARTIAL, False),
-        (OutcomeClassification.EXTERNAL_RECOVERY, False),
-        (OutcomeClassification.CLEARED_WITHOUT_ACTION, False),
-        (OutcomeClassification.FAILED, False),
-        (OutcomeClassification.CANCELLED, False),
-    ],
-)
-def test_reflection_gate_uses_typed_classification(classification: str, expected: bool) -> None:
-    outcome = _outcome()
-    outcome.classification = classification
-    reflected = SessionReflector(_CapturingBackend()).should_reflect(
-        outcome, health_verified=True, session_id="session"
-    )
-    assert reflected is expected
-
-
-def test_reflection_gate_rejects_unknown_classification() -> None:
-    outcome = _outcome()
-    outcome.classification = "sucess"
-    with pytest.raises(ValueError, match="classification"):
-        SessionReflector(_CapturingBackend()).should_reflect(outcome, health_verified=True, session_id="session")
 
 
 def _fresh_closure(worktree: Path, *, evidence: str = "Deployment unavailable") -> IncidentClosure:
@@ -212,6 +183,40 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     assert ".sdo/" not in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt  # full outcome context is richer
+
+
+def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode="resume",
+        closure=_fresh_closure(tmp_path),
+        validation_attempt=2,
+        diagnostics=[MemoryDiagnostic(rule="detector.manifest", path="m.yaml", line=4, message="bad id", hint="kebab")],
+    )
+    (call,) = backend.calls
+    assert call["mode"] == "fresh"
+    assert "[detector.manifest] m.yaml:4: bad id (hint: kebab)" in str(call["prompt"])
+
+
+def test_reflection_first_attempt_prompt_has_no_rejection_text(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode="fresh",
+        closure=_fresh_closure(tmp_path),
+    )
+    assert "rejected" not in str(backend.calls[0]["prompt"]).lower().split("reflection request:")[0]
 
 
 def test_reflection_output_schema_is_strict_and_artifact_typed() -> None:

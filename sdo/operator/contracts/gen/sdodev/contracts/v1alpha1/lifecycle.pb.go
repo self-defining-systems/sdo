@@ -518,8 +518,13 @@ type HealthJudgeRequest struct {
 	ArchitectureSummaryMarkdown string                 `protobuf:"bytes,7,opt,name=architecture_summary_markdown,json=architectureSummaryMarkdown,proto3" json:"architecture_summary_markdown,omitempty"`
 	SourceResources             []*SourceResource      `protobuf:"bytes,8,rep,name=source_resources,json=sourceResources,proto3" json:"source_resources,omitempty"`
 	SourceTopologyFingerprint   string                 `protobuf:"bytes,9,opt,name=source_topology_fingerprint,json=sourceTopologyFingerprint,proto3" json:"source_topology_fingerprint,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	// Go-owned retry feedback for the diagnostics proposal: validation_attempt is
+	// 1 for the first dispatch; later attempts carry the broker's rejection
+	// diagnostics. Distinct from attempt, which counts whole deployment attempts.
+	ValidationAttempt   uint32              `protobuf:"varint,10,opt,name=validation_attempt,json=validationAttempt,proto3" json:"validation_attempt,omitempty"`
+	PreviousDiagnostics []*MemoryDiagnostic `protobuf:"bytes,11,rep,name=previous_diagnostics,json=previousDiagnostics,proto3" json:"previous_diagnostics,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *HealthJudgeRequest) Reset() {
@@ -613,6 +618,20 @@ func (x *HealthJudgeRequest) GetSourceTopologyFingerprint() string {
 		return x.SourceTopologyFingerprint
 	}
 	return ""
+}
+
+func (x *HealthJudgeRequest) GetValidationAttempt() uint32 {
+	if x != nil {
+		return x.ValidationAttempt
+	}
+	return 0
+}
+
+func (x *HealthJudgeRequest) GetPreviousDiagnostics() []*MemoryDiagnostic {
+	if x != nil {
+		return x.PreviousDiagnostics
+	}
+	return nil
 }
 
 // Application source facts prepared from the accepted source commit by Go.
@@ -780,7 +799,7 @@ var File_sdodev_contracts_v1alpha1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\n" +
-	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
+	")sdodev/contracts/v1alpha1/lifecycle.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\"\xf4\x01\n" +
 	"\x17SourceDeploymentRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -817,7 +836,7 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\x10summary_markdown\x18\x01 \x01(\tR\x0fsummaryMarkdown\x121\n" +
 	"\x14topology_fingerprint\x18\x02 \x01(\tR\x13topologyFingerprint\x12#\n" +
 	"\rsource_commit\x18\x03 \x01(\tR\fsourceCommit\x12(\n" +
-	"\x10agent_session_id\x18\x04 \x01(\tR\x0eagentSessionId\"\xda\x03\n" +
+	"\x10agent_session_id\x18\x04 \x01(\tR\x0eagentSessionId\"\xb9\x06\n" +
 	"\x12HealthJudgeRequest\x12 \n" +
 	"\vapplication\x18\x01 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12)\n" +
@@ -827,7 +846,11 @@ const file_sdodev_contracts_v1alpha1_lifecycle_proto_rawDesc = "" +
 	"\aattempt\x18\x06 \x01(\rR\aattempt\x12B\n" +
 	"\x1darchitecture_summary_markdown\x18\a \x01(\tR\x1barchitectureSummaryMarkdown\x12T\n" +
 	"\x10source_resources\x18\b \x03(\v2).sdodev.contracts.v1alpha1.SourceResourceR\x0fsourceResources\x12>\n" +
-	"\x1bsource_topology_fingerprint\x18\t \x01(\tR\x19sourceTopologyFingerprint\"\x92\x01\n" +
+	"\x1bsource_topology_fingerprint\x18\t \x01(\tR\x19sourceTopologyFingerprint\x12-\n" +
+	"\x12validation_attempt\x18\n" +
+	" \x01(\rR\x11validationAttempt\x12^\n" +
+	"\x14previous_diagnostics\x18\v \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics:\xcd\x01\xbaH\xc9\x01\x1a\xc6\x01\n" +
+	".health_judge_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)\"\x92\x01\n" +
 	"\x0eSourceResource\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1c\n" +
@@ -868,7 +891,8 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_goTypes = []any{
 	(*SourceResource)(nil),              // 8: sdodev.contracts.v1alpha1.SourceResource
 	(*HealthJudgeResult)(nil),           // 9: sdodev.contracts.v1alpha1.HealthJudgeResult
 	(*anypb.Any)(nil),                   // 10: google.protobuf.Any
-	(*OperationalArtifactProposal)(nil), // 11: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*MemoryDiagnostic)(nil),            // 11: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 12: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
 	2,  // 0: sdodev.contracts.v1alpha1.SourceDeploymentResult.plan:type_name -> sdodev.contracts.v1alpha1.DeploymentPlan
@@ -876,12 +900,13 @@ var file_sdodev_contracts_v1alpha1_lifecycle_proto_depIdxs = []int32{
 	4,  // 2: sdodev.contracts.v1alpha1.RawManifestStrategy.image_builds:type_name -> sdodev.contracts.v1alpha1.ImageBuild
 	8,  // 3: sdodev.contracts.v1alpha1.ArchitectureRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
 	8,  // 4: sdodev.contracts.v1alpha1.HealthJudgeRequest.source_resources:type_name -> sdodev.contracts.v1alpha1.SourceResource
-	11, // 5: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	6,  // [6:6] is the sub-list for method output_type
-	6,  // [6:6] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	11, // 5: sdodev.contracts.v1alpha1.HealthJudgeRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	12, // 6: sdodev.contracts.v1alpha1.HealthJudgeResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	7,  // [7:7] is the sub-list for method output_type
+	7,  // [7:7] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_lifecycle_proto_init() }
@@ -889,6 +914,7 @@ func file_sdodev_contracts_v1alpha1_lifecycle_proto_init() {
 	if File_sdodev_contracts_v1alpha1_lifecycle_proto != nil {
 		return
 	}
+	file_sdodev_contracts_v1alpha1_memory_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{

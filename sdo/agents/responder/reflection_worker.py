@@ -103,6 +103,8 @@ def run_reflection_task(
         outcome_commit=request.outcome_commit,
         session_mode=cast("ReflectionSessionMode", session_mode),
         closure=closure,
+        validation_attempt=request.validation_attempt or 1,
+        diagnostics=list(request.previous_diagnostics),
     )
     if turn.proposed_changes:
         raise ValueError("logical reflection cannot return physical paths")

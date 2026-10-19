@@ -1,5 +1,6 @@
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
+from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
@@ -94,7 +95,7 @@ class ArchitectureResult(_message.Message):
     def __init__(self, summary_markdown: _Optional[str] = ..., topology_fingerprint: _Optional[str] = ..., source_commit: _Optional[str] = ..., agent_session_id: _Optional[str] = ...) -> None: ...
 
 class HealthJudgeRequest(_message.Message):
-    __slots__ = ("application", "namespace", "health_objective", "accepted_source_commit", "correction_feedback", "attempt", "architecture_summary_markdown", "source_resources", "source_topology_fingerprint")
+    __slots__ = ("application", "namespace", "health_objective", "accepted_source_commit", "correction_feedback", "attempt", "architecture_summary_markdown", "source_resources", "source_topology_fingerprint", "validation_attempt", "previous_diagnostics")
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     HEALTH_OBJECTIVE_FIELD_NUMBER: _ClassVar[int]
@@ -104,6 +105,8 @@ class HealthJudgeRequest(_message.Message):
     ARCHITECTURE_SUMMARY_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     SOURCE_RESOURCES_FIELD_NUMBER: _ClassVar[int]
     SOURCE_TOPOLOGY_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    VALIDATION_ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
     application: str
     namespace: str
     health_objective: str
@@ -113,7 +116,9 @@ class HealthJudgeRequest(_message.Message):
     architecture_summary_markdown: str
     source_resources: _containers.RepeatedCompositeFieldContainer[SourceResource]
     source_topology_fingerprint: str
-    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., source_topology_fingerprint: _Optional[str] = ...) -> None: ...
+    validation_attempt: int
+    previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
+    def __init__(self, application: _Optional[str] = ..., namespace: _Optional[str] = ..., health_objective: _Optional[str] = ..., accepted_source_commit: _Optional[str] = ..., correction_feedback: _Optional[str] = ..., attempt: _Optional[int] = ..., architecture_summary_markdown: _Optional[str] = ..., source_resources: _Optional[_Iterable[_Union[SourceResource, _Mapping]]] = ..., source_topology_fingerprint: _Optional[str] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
 
 class SourceResource(_message.Message):
     __slots__ = ("kind", "name", "namespace", "source", "dependencies")

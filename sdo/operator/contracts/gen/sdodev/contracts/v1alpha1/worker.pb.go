@@ -566,8 +566,13 @@ type ReflectionRequest struct {
 	Guidance      string           `protobuf:"bytes,8,opt,name=guidance,proto3" json:"guidance,omitempty"`
 	Outcome       *OutcomeRecord   `protobuf:"bytes,9,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	PriorOutcomes []*OutcomeRecord `protobuf:"bytes,10,rep,name=prior_outcomes,json=priorOutcomes,proto3" json:"prior_outcomes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Go-owned retry feedback: the broker rejected the previous attempt's
+	// proposal. validation_attempt is 1 for the first dispatch; later attempts
+	// carry that rejection's diagnostics.
+	ValidationAttempt   uint32              `protobuf:"varint,11,opt,name=validation_attempt,json=validationAttempt,proto3" json:"validation_attempt,omitempty"`
+	PreviousDiagnostics []*MemoryDiagnostic `protobuf:"bytes,12,rep,name=previous_diagnostics,json=previousDiagnostics,proto3" json:"previous_diagnostics,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ReflectionRequest) Reset() {
@@ -656,6 +661,20 @@ func (x *ReflectionRequest) GetPriorOutcomes() []*OutcomeRecord {
 	return nil
 }
 
+func (x *ReflectionRequest) GetValidationAttempt() uint32 {
+	if x != nil {
+		return x.ValidationAttempt
+	}
+	return 0
+}
+
+func (x *ReflectionRequest) GetPreviousDiagnostics() []*MemoryDiagnostic {
+	if x != nil {
+		return x.PreviousDiagnostics
+	}
+	return nil
+}
+
 type ReflectionResult struct {
 	state               protoimpl.MessageState       `protogen:"open.v1"`
 	Summary             string                       `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
@@ -736,7 +755,7 @@ var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
 	"\x11AgentRegistration\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12\"\n" +
@@ -781,7 +800,7 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xd2\x04\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xaf\a\n" +
 	"\x11ReflectionRequest\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
@@ -792,7 +811,10 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"generalizeR\x0fgeneralize-specR\bguidance\x12B\n" +
 	"\aoutcome\x18\t \x01(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\aoutcome\x12O\n" +
 	"\x0eprior_outcomes\x18\n" +
-	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomesJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xdb\x03\n" +
+	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomes\x12-\n" +
+	"\x12validation_attempt\x18\v \x01(\rR\x11validationAttempt\x12^\n" +
+	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
+	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xdb\x03\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12F\n" +
 	"\x11learning_decision\x18\x02 \x01(\tB\x19\xbaH\x16r\x14R\aupdatedR\tno_changeR\x10learningDecision\x12(\n" +
@@ -830,7 +852,8 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*IncidentClosure)(nil),             // 11: sdodev.contracts.v1alpha1.IncidentClosure
 	(*OperationalMemorySnapshot)(nil),   // 12: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
 	(*OutcomeRecord)(nil),               // 13: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*OperationalArtifactProposal)(nil), // 14: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*MemoryDiagnostic)(nil),            // 14: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*OperationalArtifactProposal)(nil), // 15: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
@@ -844,12 +867,13 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	12, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
 	13, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
 	13, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	14, // 11: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	12, // [12:12] is the sub-list for method output_type
-	12, // [12:12] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	14, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	15, // 12: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }
@@ -857,6 +881,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_init() {
 	if File_sdodev_contracts_v1alpha1_worker_proto != nil {
 		return
 	}
+	file_sdodev_contracts_v1alpha1_memory_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	file_sdodev_contracts_v1alpha1_outcome_proto_init()
 	file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[0].OneofWrappers = []any{

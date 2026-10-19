@@ -19,6 +19,7 @@ from sdo.agents.lifecycle import (
     DeployerAssessment,
     TopologyResourceDTO,
 )
+from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     SCHEMA_VERSION,
@@ -115,7 +116,7 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
         deployer=deployer,
         round_index=1,
         previous=None,
-        correction_feedback=request.correction_feedback or None,
+        correction_feedback=_judge_feedback(request),
     )
     _validate_judge_draft(
         artifact, health_objective=request.health_objective, source_commit=request.accepted_source_commit
@@ -129,6 +130,16 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
         detector_ids=["health-objective"],
         artifact_proposal=proposal,
     )
+
+
+def _judge_feedback(request: HealthJudgeRequest) -> str | None:
+    """Whole-attempt verifier feedback plus Go's typed broker rejection diagnostics."""
+
+    parts = [
+        request.correction_feedback,
+        render_validation_feedback(request.validation_attempt or 1, request.previous_diagnostics),
+    ]
+    return "\n".join(part for part in parts if part) or None
 
 
 def _validate_judge_draft(artifact: _JudgeDraft, *, health_objective: str, source_commit: str) -> None:

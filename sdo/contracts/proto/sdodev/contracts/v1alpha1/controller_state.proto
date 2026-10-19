@@ -4,6 +4,7 @@ package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/memory.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 
@@ -125,6 +126,24 @@ message ReflectionDecision {
   string no_change_reason = 2;
 }
 
+// ProposalRejection is one broker rejection of an agent proposal, with the
+// typed diagnostics the next attempt receives.
+message ProposalRejection {
+  // 1-based attempt that was rejected.
+  uint32 attempt = 1 [(buf.validate.field).uint32.gte = 1];
+  repeated MemoryDiagnostic diagnostics = 2 [(buf.validate.field).repeated.min_items = 1];
+  google.protobuf.Timestamp rejected_at = 3;
+}
+
+// ProposalRejectionLog is the broker's durable retry state for one proposal
+// that has no incident ledger (for example the health judge's diagnostics).
+message ProposalRejectionLog {
+  string proposal_id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated ProposalRejection rejections = 2;
+  // True once the retry bound is spent; the last rejection is final.
+  bool terminal = 3;
+}
+
 message ControllerRolloutExpectation {
   string incident_id = 1;
   string reflection_commit = 2;
@@ -146,6 +165,11 @@ message ControllerRolloutReceipt {
 // BrokerLedger is the Go incident broker's durable per-incident record, stored
 // as ProtoJSON under the worktree root's native-ledger directory.
 message BrokerLedger {
+  option (buf.validate.message).cel = {
+    id: "broker_ledger.terminal_rejection_has_record"
+    message: "a terminal reflection rejection requires a recorded rejection and no reflection commit"
+    expression: "!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')"
+  };
   string incident_id = 1;
   IncidentClosure closure = 2;
   string proposal_commit = 3;
@@ -160,4 +184,10 @@ message BrokerLedger {
   ClosureReceipt receipt = 12;
   bool acknowledged = 13;
   google.protobuf.Timestamp acknowledged_at = 14;
+  // Broker rejections of reflection proposals, one per rejected attempt. The
+  // count is the retry state, so a restart neither resets nor repeats attempts.
+  repeated ProposalRejection reflection_rejections = 15;
+  // True once the retry bound is spent: the closure completes without a
+  // reflection commit and the last rejection is the terminal record.
+  bool reflection_rejected = 16;
 }

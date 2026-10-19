@@ -42,7 +42,7 @@ type RegisteredReflectionWorker struct {
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
-func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string) (ReflectionDecision, error) {
+func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure IncidentClosure, workspace IncidentWorkspace, outcome *contracts.OutcomeRecord, proposalCommit, outcomeCommit string, feedback ReflectionFeedback) (ReflectionDecision, error) {
 	if w.Executor == nil || w.Outcomes == nil || w.AgentID == "" || w.TaskType == "" || w.Timeout <= 0 {
 		return ReflectionDecision{}, errors.New("registered reflection worker requires executor, outcome store, agent ID, task type, and timeout")
 	}
@@ -95,7 +95,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			history = append(history, proto.Clone(record.Record).(*contracts.OutcomeRecord))
 		}
 	}
-	request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance}
+	attempt := feedback.Attempt
+	if attempt == 0 {
+		attempt = 1
+	}
+	request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics}
 	if w.Catalog != nil {
 		snapshot, err := w.Catalog.Snapshot(ctx)
 		if err != nil {
@@ -138,6 +142,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	}
 	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace.IncidentID+"\x00"+outcomeCommit)))
 	proposalID := "reflection-" + identity
+	if attempt > 1 {
+		// A retry is a new task: its Job and request ConfigMap must not collide
+		// with the rejected attempt's.
+		proposalID = fmt.Sprintf("%s-retry%d", proposalID, attempt-1)
+	}
 	task := &contracts.AgentTask{
 		SchemaVersion: worker_registry.SchemaVersion, TaskId: proposalID, AgentId: w.AgentID, TaskType: w.TaskType,
 		Request: payload, Workspace: &contracts.ProposalWorkspace{ProposalId: proposalID, CheckoutPath: workspace.Worktree, BaseCommit: workspace.BaseCommit},

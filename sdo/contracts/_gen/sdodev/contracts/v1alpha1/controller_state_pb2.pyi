@@ -2,6 +2,7 @@ import datetime
 
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
+from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
 from google.protobuf.internal import containers as _containers
@@ -182,6 +183,26 @@ class ReflectionDecision(_message.Message):
     no_change_reason: str
     def __init__(self, learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ...) -> None: ...
 
+class ProposalRejection(_message.Message):
+    __slots__ = ("attempt", "diagnostics", "rejected_at")
+    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+    REJECTED_AT_FIELD_NUMBER: _ClassVar[int]
+    attempt: int
+    diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
+    rejected_at: _timestamp_pb2.Timestamp
+    def __init__(self, attempt: _Optional[int] = ..., diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., rejected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class ProposalRejectionLog(_message.Message):
+    __slots__ = ("proposal_id", "rejections", "terminal")
+    PROPOSAL_ID_FIELD_NUMBER: _ClassVar[int]
+    REJECTIONS_FIELD_NUMBER: _ClassVar[int]
+    TERMINAL_FIELD_NUMBER: _ClassVar[int]
+    proposal_id: str
+    rejections: _containers.RepeatedCompositeFieldContainer[ProposalRejection]
+    terminal: bool
+    def __init__(self, proposal_id: _Optional[str] = ..., rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., terminal: _Optional[bool] = ...) -> None: ...
+
 class ControllerRolloutExpectation(_message.Message):
     __slots__ = ("incident_id", "reflection_commit", "before_detector_fingerprint", "after_detector_fingerprint")
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
@@ -211,7 +232,7 @@ class ControllerRolloutReceipt(_message.Message):
     def __init__(self, expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., build_artifact: _Optional[str] = ..., controller_revision: _Optional[str] = ..., observed_detector_fingerprint: _Optional[str] = ..., success: _Optional[bool] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class BrokerLedger(_message.Message):
-    __slots__ = ("incident_id", "closure", "proposal_commit", "outcome_document", "requires_reflection", "outcome_commit", "reflection_processed", "reflection_decision", "reflection_commit", "rollout_expectation", "rollout_receipts", "receipt", "acknowledged", "acknowledged_at")
+    __slots__ = ("incident_id", "closure", "proposal_commit", "outcome_document", "requires_reflection", "outcome_commit", "reflection_processed", "reflection_decision", "reflection_commit", "rollout_expectation", "rollout_receipts", "receipt", "acknowledged", "acknowledged_at", "reflection_rejections", "reflection_rejected")
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     CLOSURE_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_COMMIT_FIELD_NUMBER: _ClassVar[int]
@@ -226,6 +247,8 @@ class BrokerLedger(_message.Message):
     RECEIPT_FIELD_NUMBER: _ClassVar[int]
     ACKNOWLEDGED_FIELD_NUMBER: _ClassVar[int]
     ACKNOWLEDGED_AT_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_REJECTIONS_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_REJECTED_FIELD_NUMBER: _ClassVar[int]
     incident_id: str
     closure: _messages_pb2.IncidentClosure
     proposal_commit: str
@@ -240,4 +263,6 @@ class BrokerLedger(_message.Message):
     receipt: ClosureReceipt
     acknowledged: bool
     acknowledged_at: _timestamp_pb2.Timestamp
-    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    reflection_rejections: _containers.RepeatedCompositeFieldContainer[ProposalRejection]
+    reflection_rejected: bool
+    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ...) -> None: ...
