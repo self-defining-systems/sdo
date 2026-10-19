@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+import "sdodev/contracts/v1alpha1/outcome.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// FindingState is the controller's firing-streak bookkeeping for one finding.
+message FindingState {
+  string detector_id = 1;
+  Finding finding = 2;
+  int32 firing_count = 3;
+  int32 clear_count = 4;
+  bool active = 5;
+  // First observation since the finding last cleared.
+  google.protobuf.Timestamp first_seen_at = 6;
+  // Completed transitions; they make telemetry event ids a pure function of
+  // durable state.
+  int32 activations = 7;
+  int32 clears = 8;
+  int32 not_persisted = 9;
+}
+
+// BatcherState is the findings waiting for their debounce deadline.
+message BatcherState {
+  repeated Finding findings = 1;
+  map<string, google.protobuf.Timestamp> deadlines = 2;
+  google.protobuf.Timestamp deadline = 3;
+}
+
+// ClosureReceipt is the broker's durable proof that a closure was committed.
+message ClosureReceipt {
+  string incident_id = 1;
+  string worktree = 2;
+  string base_commit = 3;
+  string proposal_commit = 4;
+  string outcome_commit = 5;
+  string reflection_commit = 6;
+  string ack_token = 7;
+}
+
+// ClosureFailure is the durable record of broker rejections of the pending
+// closure. Permanent means the retry budget is spent.
+message ClosureFailure {
+  string incident_id = 1;
+  int32 attempts = 2;
+  int32 max_attempts = 3;
+  string last_error = 4;
+  google.protobuf.Timestamp first_failed_at = 5;
+  google.protobuf.Timestamp last_failed_at = 6;
+  google.protobuf.Timestamp next_attempt_at = 7;
+  bool permanent = 8;
+  string action = 9;
+}
+
+// ControllerState is the controller's restartable state, persisted as
+// ProtoJSON in the controller state ConfigMap. incident_view is published for
+// responders (`sdo incident status`) and never restored.
+message ControllerState {
+  string version = 1;
+  map<string, google.protobuf.Timestamp> scheduler_deadlines = 2;
+  map<string, FindingState> finding_states = 3;
+  BatcherState pending_batch = 4;
+  repeated DetectorEvaluation history = 5;
+  bool incident_open = 6;
+  bool responder_done = 7;
+  IncidentRequest incident_request = 8;
+  IncidentResult incident_result = 9;
+  string dispatch_error = 10;
+  google.protobuf.Timestamp incident_detected_at = 11;
+  google.protobuf.Timestamp incident_dispatched_at = 12;
+  google.protobuf.Timestamp responder_completed_at = 13;
+  bool detector_review_required = 14;
+  google.protobuf.Timestamp detector_review_required_at = 15;
+  string detector_review_reason = 16;
+  // Start of each detector's current clear streak.
+  map<string, google.protobuf.Timestamp> detector_clear_since = 17;
+  repeated ObservedStateChange incident_observed_changes = 18;
+  string dispatch_state = 19;
+  repeated string incident_finding_keys = 20;
+  IncidentClosure pending_closure = 21;
+  string closure_state = 22;
+  ClosureReceipt closure_receipt = 23;
+  ClosureFailure closure_failure = 24;
+  string last_acknowledged_incident_id = 25;
+  repeated string pending_releases = 26;
+  int32 evaluation_iteration = 27;
+  repeated DetectorTimelineEntry detector_timeline = 28;
+  IncidentView incident_view = 29;
+}
+
+// ReflectionDecision is the learning decision the broker recorded for an
+// incident.
+message ReflectionDecision {
+  string learning_decision = 1;
+  string no_change_reason = 2;
+}
+
+message ControllerRolloutExpectation {
+  string incident_id = 1;
+  string reflection_commit = 2;
+  string before_detector_fingerprint = 3;
+  string after_detector_fingerprint = 4;
+}
+
+// ControllerRolloutReceipt comes from trusted installation code after it
+// builds and observes the restarted controller's detector revision.
+message ControllerRolloutReceipt {
+  ControllerRolloutExpectation expectation = 1;
+  string build_artifact = 2;
+  string controller_revision = 3;
+  string observed_detector_fingerprint = 4;
+  bool success = 5;
+  google.protobuf.Timestamp verified_at = 6;
+}
+
+// BrokerLedger is the Go incident broker's durable per-incident record, stored
+// as ProtoJSON under the worktree root's native-ledger directory.
+message BrokerLedger {
+  string incident_id = 1;
+  IncidentClosure closure = 2;
+  string proposal_commit = 3;
+  OutcomeRecord outcome_document = 4;
+  bool requires_reflection = 5;
+  string outcome_commit = 6;
+  bool reflection_processed = 7;
+  ReflectionDecision reflection_decision = 8;
+  string reflection_commit = 9;
+  ControllerRolloutExpectation rollout_expectation = 10;
+  repeated ControllerRolloutReceipt rollout_receipts = 11;
+  ClosureReceipt receipt = 12;
+  bool acknowledged = 13;
+  google.protobuf.Timestamp acknowledged_at = 14;
+}

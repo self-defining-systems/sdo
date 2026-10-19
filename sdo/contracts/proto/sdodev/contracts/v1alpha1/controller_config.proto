@@ -29,7 +29,7 @@ message ControllerConfig {
 
   // Responder dispatch.
   string dispatcher = 7 [(buf.validate.field).string.min_len = 1];
-  string dispatcher_mode = 8 [(buf.validate.field).string = {in: ["job", "local"]}];
+  string dispatcher_mode = 8 [(buf.validate.field).string = {in: ["job"]}];
   repeated string dispatcher_args = 9;
   string responder_image = 10;
   string repository_pvc = 11;

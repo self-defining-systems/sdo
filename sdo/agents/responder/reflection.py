@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
+from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
@@ -24,8 +25,7 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor
 
-    from sdo.agents.views import BrokerClosure
-    from sdo.contracts import OutcomeRecord
+    from sdo.contracts import IncidentClosure, OutcomeRecord
 
 
 def _classification_directive(classification: OutcomeClassification, guidance: ReflectionGuidance = "baseline") -> str:
@@ -157,12 +157,12 @@ def _logical_learning_request(
     outcome: OutcomeRecord,
     history: list[OutcomeRecord],
     outcome_commit: str,
-    closure: BrokerClosure,
+    closure: IncidentClosure,
     guidance: ReflectionGuidance,
 ) -> str:
-    snapshot = closure.request.memory_snapshot
-    if snapshot is None:
+    if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
+    snapshot = closure.request.memory_snapshot
     classification = OutcomeClassification(outcome.classification)
     return (
         "The controller verified this incident and committed its outcome. "
@@ -189,7 +189,7 @@ def _logical_learning_request(
         "Remove the temporary file after the check; return the same complete proposal in the structured result.\n\n"
         f"{DETECTOR_SDK_REFERENCE}\n"
         f"Outcome commit: {outcome_commit}\n"
-        f"Operational memory snapshot:\n{snapshot.model_dump_json(indent=2)}\n\n"
+        f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
         f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
         f"{_history_section(outcome, history)}"
     )
@@ -293,11 +293,11 @@ class SessionReflector:
         topology_review: object | None = None,
         rejected_proposal_diff: str | None = None,
         session_mode: ReflectionSessionMode = "resume",
-        closure: BrokerClosure | None = None,
+        closure: IncidentClosure | None = None,
     ) -> ReflectionTurn:
         if session_mode not in REFLECTION_SESSION_MODES:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
-        if closure is None or closure.request.memory_snapshot is None:
+        if closure is None or not closure.request.HasField("memory_snapshot"):
             raise ValueError("reflection requires a logical memory snapshot")
         request = _logical_learning_request(
             outcome=outcome,

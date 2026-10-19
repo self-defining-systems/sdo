@@ -121,18 +121,18 @@ func (s *FileFiringSink) StartFresh() error {
 // DetectorTimelineEntry summarizes one finding's firing history within the
 // current incident window. It is carried in the incident closure.
 type DetectorTimelineEntry struct {
-	DetectorID          string                   `json:"detector_id"`
-	DetectorClass       string                   `json:"detector_class"`
-	Owner               string                   `json:"owner"`
-	RuleID              string                   `json:"rule_id"`
-	Fingerprint         string                   `json:"fingerprint"`
-	ParameterBindings   map[string]sdk.ObjectRef `json:"parameter_bindings"`
-	SurfacedPlaybookIDs []string                 `json:"surfaced_playbook_ids"`
-	FirstActivatedAt    time.Time                `json:"first_activated_at"`
-	LastSeenAt          time.Time                `json:"last_seen_at"`
-	ClearedAt           *time.Time               `json:"cleared_at,omitempty"`
-	Relation            FiringRelation           `json:"relation"`
-	Activations         int                      `json:"activations"`
+	DetectorID          string
+	DetectorClass       string
+	Owner               string
+	RuleID              string
+	Fingerprint         string
+	ParameterBindings   map[string]sdk.ObjectRef
+	SurfacedPlaybookIDs []string
+	FirstActivatedAt    time.Time
+	LastSeenAt          time.Time
+	ClearedAt           *time.Time
+	Relation            FiringRelation
+	Activations         int
 }
 
 func (entry DetectorTimelineEntry) key() string {

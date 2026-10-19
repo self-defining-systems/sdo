@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -14,57 +13,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
-
-func TestCloneIncidentResultPreservesEmptyCollectionsForBrokerProtocol(t *testing.T) {
-	result := completedResult("incident-empty-collections")
-	result.AppliedPlaybooks = []AppliedPlaybook{{PlaybookID: "health-objective", ScriptNames: []string{}}}
-	result.FinalDetectorStates = []DetectorEvaluation{}
-	result.ProposedArtifactIDs = []string{}
-	result.RepairActions = []RepairActionReceipt{}
-
-	payload, err := json.Marshal(cloneIncidentResult(&result))
-	if err != nil {
-		t.Fatalf("marshal cloned result: %v", err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatalf("decode cloned result: %v", err)
-	}
-	if decoded["final_detector_states"] == nil || decoded["proposed_artifact_ids"] == nil ||
-		decoded["repair_actions"] == nil {
-		t.Fatalf("empty result collections became null: %s", payload)
-	}
-	applied := decoded["applied_playbooks"].([]any)[0].(map[string]any)
-	if applied["script_names"] == nil {
-		t.Fatalf("empty applied playbook scripts became null: %s", payload)
-	}
-}
-
-// A clean closing view has no changes. The broker's schema requires a list,
-// so a persisted closure must say "changes":[] and never "changes":null,
-// or every broker attempt fails and the closure fails permanently.
-func TestCloneIncidentClosureKeepsAnEmptyClosingViewDiffAList(t *testing.T) {
-	closure := IncidentClosure{
-		FinalStateChanges: &StateChanges{BaselineAt: time.Unix(0, 0).UTC(), ObservedAt: time.Unix(1, 0).UTC(), Changes: []StateChange{}},
-	}
-	encoded, err := json.Marshal(cloneIncidentClosure(&closure))
-	if err != nil {
-		t.Fatalf("marshal closure: %v", err)
-	}
-	var decoded struct {
-		FinalStateChanges map[string]json.RawMessage `json:"final_state_changes"`
-	}
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("unmarshal closure: %v", err)
-	}
-	if got := string(decoded.FinalStateChanges["changes"]); got != "[]" {
-		t.Fatalf("an empty closing-view diff must encode as [], got %s", got)
-	}
-	view := cloneIncidentView(&IncidentView{StateChanges: closure.FinalStateChanges})
-	if view.StateChanges.Changes == nil {
-		t.Fatal("an empty live-view diff must stay a list, not null")
-	}
-}
 
 func TestConfigMapStateStoreRoundTripAndCASConflict(t *testing.T) {
 	ctx := context.Background()

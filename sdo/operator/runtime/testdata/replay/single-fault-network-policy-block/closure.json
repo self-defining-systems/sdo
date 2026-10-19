@@ -12,7 +12,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "link-reachability.frontend.recommendation.8085",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     }

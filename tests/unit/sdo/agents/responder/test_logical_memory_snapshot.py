@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from google.protobuf import json_format
+
 from sdo.agents.responder import codex
-from sdo.agents.views import (
-    IncidentRequest,
-)
+from sdo.contracts import IncidentRequest
+from tests.proto_messages import evolve
 
 
 def _request() -> IncidentRequest:
@@ -14,12 +15,8 @@ def _request() -> IncidentRequest:
     raw = json.loads(fixture.read_text(encoding="utf-8"))
     for finding in raw["findings"]:
         finding["playbook_ids"] = ["missing-configmap"]
-        finding.pop("playbooks", None)
     for playbook in raw["surfaced_playbooks"]:
         playbook["playbook_id"] = "missing-configmap"
-        playbook.pop("path", None)
-    raw.pop("architecture_summary_path", None)
-    raw.pop("health_objective_path", None)
     raw["memory_snapshot"] = {
         "accepted_commit": raw["repository_base_commit"],
         "goal_markdown": "The checkout-independent health objective.",
@@ -52,7 +49,7 @@ def _request() -> IncidentRequest:
             "applied_playbook_ids": ["missing-configmap"],
         }
     ]
-    return IncidentRequest.model_validate(raw)
+    return json_format.ParseDict(raw, IncidentRequest())
 
 
 def test_responder_uses_logical_snapshot_without_loading_memory_files() -> None:
@@ -72,22 +69,11 @@ def test_reflection_brief_uses_logical_snapshot_without_loading_memory_files(tmp
 
     request = _request()
     closure = _fresh_closure(tmp_path)
-    closure.request = request.model_copy(update={"repository_worktree": str(tmp_path)})
-    assert closure.result is not None
-    closure.result = closure.result.model_copy(
-        update={
-            "applied_playbooks": [
-                item.model_copy(
-                    update={
-                        "playbook_id": "missing-configmap",
-                        "script_names": ["verify.sh"],
-                    }
-                )
-                for item in closure.result.applied_playbooks
-            ],
-            "proposed_artifact_ids": [],
-        }
-    )
+    closure.request.CopyFrom(evolve(request, repository_worktree=str(tmp_path)))
+    for playbook in closure.result.applied_playbooks:
+        playbook.playbook_id = "missing-configmap"
+        playbook.script_names[:] = ["verify.sh"]
+    del closure.result.proposed_artifact_ids[:]
 
     brief = reflection_brief.incident_brief(closure, worktree=tmp_path, detector_detail=True)
     assert "trusted logical snapshot" in brief

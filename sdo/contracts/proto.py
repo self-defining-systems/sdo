@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 _GEN_ROOT = Path(__file__).resolve().parent / "_gen"
@@ -30,10 +31,12 @@ if str(_GEN_ROOT) not in sys.path:
     sys.path.insert(0, str(_GEN_ROOT))
 
 from google.protobuf import json_format
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from sdodev.contracts.v1alpha1 import (
     common_pb2,
     controller_config_pb2,
+    controller_state_pb2,
     lifecycle_pb2,
     messages_pb2,
     outcome_pb2,
@@ -67,7 +70,7 @@ UsageMetrics = messages_pb2.UsageMetrics
 TimingMetrics = messages_pb2.TimingMetrics
 RepairActionReceipt = messages_pb2.RepairActionReceipt
 IncidentResult = messages_pb2.IncidentResult
-ProtoLateFindingsPull = messages_pb2.LateFindingsPull
+LateFindingsPull = messages_pb2.LateFindingsPull
 IncidentView = messages_pb2.IncidentView
 DetectorTimelineEntry = messages_pb2.DetectorTimelineEntry
 IncidentClosure = messages_pb2.IncidentClosure
@@ -76,19 +79,31 @@ ProposedDetector = messages_pb2.ProposedDetector
 ProposedGoSource = messages_pb2.ProposedGoSource
 ProposedPlaybook = messages_pb2.ProposedPlaybook
 ProposedTrafficGenerator = messages_pb2.ProposedTrafficGenerator
-ProtoMemoryWatch = messages_pb2.MemoryWatch
-ProtoMemoryScript = messages_pb2.MemoryScript
+MemoryWatch = messages_pb2.MemoryWatch
+MemoryScript = messages_pb2.MemoryScript
+MemoryDetector = messages_pb2.MemoryDetector
+MemoryPlaybook = messages_pb2.MemoryPlaybook
+OperationalMemorySnapshot = messages_pb2.OperationalMemorySnapshot
 OutcomeRecord = outcome_pb2.OutcomeRecord
 OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
 DiagnosisVerification = outcome_pb2.DiagnosisVerification
 
 FiringRecord = telemetry_pb2.FiringRecord
 
+ControllerState = controller_state_pb2.ControllerState
+FindingState = controller_state_pb2.FindingState
+BatcherState = controller_state_pb2.BatcherState
+ClosureReceipt = controller_state_pb2.ClosureReceipt
+ClosureFailure = controller_state_pb2.ClosureFailure
+BrokerLedger = controller_state_pb2.BrokerLedger
+ReflectionDecision = controller_state_pb2.ReflectionDecision
+ControllerRolloutExpectation = controller_state_pb2.ControllerRolloutExpectation
+ControllerRolloutReceipt = controller_state_pb2.ControllerRolloutReceipt
+
 TrafficSLO = traffic_pb2.TrafficSLO
 TrafficWorkloadScenario = traffic_pb2.TrafficWorkloadScenario
 TrafficLink = traffic_pb2.TrafficLink
 TrafficWorkload = traffic_pb2.TrafficWorkload
-ProtoTrafficWorkload = traffic_pb2.TrafficWorkload
 
 AgentRegistration = worker_pb2.AgentRegistration
 AgentCapability = worker_pb2.AgentCapability
@@ -126,7 +141,29 @@ __all__ = [
     "IncidentClosure",
     "IncidentRequest",
     "IncidentResult",
-    "ProtoLateFindingsPull",
+    "LateFindingsPull",
+    "MemoryDetector",
+    "MemoryPlaybook",
+    "MemoryScript",
+    "MemoryWatch",
+    "OperationalMemorySnapshot",
+    "OperationalArtifactProposal",
+    "ProposedDetector",
+    "ProposedGoSource",
+    "ProposedPlaybook",
+    "ProposedTrafficGenerator",
+    "BatcherState",
+    "BrokerLedger",
+    "ClosureFailure",
+    "ClosureReceipt",
+    "ControllerRolloutExpectation",
+    "ControllerRolloutReceipt",
+    "ControllerState",
+    "FindingState",
+    "ReflectionDecision",
+    "datetime_timestamp",
+    "timestamp_datetime",
+    "timestamp_rfc3339",
     "IncidentView",
     "KubernetesJobLaunch",
     "LocalProcessLaunch",
@@ -176,3 +213,20 @@ def to_canonical_json(message: Message) -> str:
 def parse_json(text: str, message: Message) -> Message:
     """Parse protojson ``text`` into ``message`` (populated in place and returned)."""
     return json_format.Parse(text, message)
+
+
+def timestamp_datetime(value: Timestamp) -> datetime:
+    """The timezone-aware UTC ``datetime`` of a proto ``Timestamp``."""
+    return value.ToDatetime(tzinfo=timezone.utc)
+
+
+def datetime_timestamp(value: datetime) -> Timestamp:
+    """A proto ``Timestamp`` for ``value``; a naive ``datetime`` is taken as UTC."""
+    stamp = Timestamp()
+    stamp.FromDatetime(value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc))
+    return stamp
+
+
+def timestamp_rfc3339(value: Timestamp) -> str:
+    """The RFC 3339 UTC text of a proto ``Timestamp``, the protojson form."""
+    return value.ToJsonString()

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from agentshim.providers.codex import CodexSandboxConfig, parse_sandbox
+from google.protobuf import json_format
 
 from sdo.agents.responder.reflection import (
     ClaudeSessionBackend,
@@ -17,13 +18,16 @@ from sdo.agents.responder.reflection import (
     SessionReflector,
     reflection_output_schema,
 )
-from sdo.agents.views import (
-    BrokerClosure,
+from sdo.contracts import (
+    IncidentClosure,
     IncidentRequest,
     IncidentResult,
     OperationalMemorySnapshot,
+    OutcomeClassification,
+    OutcomeRecord,
+    datetime_timestamp,
 )
-from sdo.contracts import OutcomeClassification, OutcomeRecord
+from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
@@ -89,25 +93,24 @@ def test_reflection_gate_rejects_unknown_classification() -> None:
         SessionReflector(_CapturingBackend()).should_reflect(outcome, health_verified=True, session_id="session")
 
 
-def _fresh_closure(worktree: Path, *, evidence: str = "Deployment unavailable") -> BrokerClosure:
+def _fresh_closure(worktree: Path, *, evidence: str = "Deployment unavailable") -> IncidentClosure:
     root = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "sdo" / "contracts"
-    request = IncidentRequest.model_validate_json((root / "incident_request.json").read_text(encoding="utf-8"))
-    finding = request.findings[0].model_copy(update={"evidence": evidence})
+    request = json_format.Parse((root / "incident_request.json").read_text(encoding="utf-8"), IncidentRequest())
+    finding = evolve(request.findings[0], evidence=evidence)
     assert request.repository_base_commit
-    request = request.model_copy(
-        update={
-            "findings": [finding],
-            "repository_worktree": str(worktree),
-            "memory_snapshot": OperationalMemorySnapshot(
-                accepted_commit=request.repository_base_commit,
-                goal_markdown="The system remains healthy.",
-                architecture_markdown="Accepted architecture summary.",
-            ),
-        }
+    request = evolve(
+        request,
+        findings=[finding],
+        repository_worktree=str(worktree),
+        memory_snapshot=OperationalMemorySnapshot(
+            accepted_commit=request.repository_base_commit,
+            goal_markdown="The system remains healthy.",
+            architecture_markdown="Accepted architecture summary.",
+        ),
     )
-    result = IncidentResult.model_validate_json((root / "incident_result.json").read_text(encoding="utf-8"))
-    at = datetime(2026, 7, 9, 18, 0, tzinfo=timezone.utc)
-    return BrokerClosure(
+    result = json_format.Parse((root / "incident_result.json").read_text(encoding="utf-8"), IncidentResult())
+    at = datetime_timestamp(datetime(2026, 7, 9, 18, 0, tzinfo=timezone.utc))
+    return IncidentClosure(
         request=request,
         result=result,
         final_detector_states=result.final_detector_states,

@@ -27,7 +27,6 @@ const (
 )
 
 // ObjectRef identifies a Kubernetes object a finding or repair refers to.
-// The agent-local Pydantic view is sdo.agents.views.models.ObjectRef.
 type ObjectRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ApiVersion    string                 `protobuf:"bytes,1,opt,name=api_version,json=apiVersion,proto3" json:"api_version,omitempty"`

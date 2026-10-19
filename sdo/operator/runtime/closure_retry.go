@@ -63,15 +63,15 @@ func (p ClosureRetryPolicy) backoff(attempts int) time.Duration {
 // closure. Permanent means the retry budget is spent and the closure is left
 // for an operator; the pending closure keeps its evidence.
 type ClosureFailure struct {
-	IncidentID    string    `json:"incident_id"`
-	Attempts      int       `json:"attempts"`
-	MaxAttempts   int       `json:"max_attempts"`
-	LastError     string    `json:"last_error"`
-	FirstFailedAt time.Time `json:"first_failed_at"`
-	LastFailedAt  time.Time `json:"last_failed_at"`
-	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
-	Permanent     bool      `json:"permanent"`
-	Action        string    `json:"action,omitempty"`
+	IncidentID    string
+	Attempts      int
+	MaxAttempts   int
+	LastError     string
+	FirstFailedAt time.Time
+	LastFailedAt  time.Time
+	NextAttemptAt time.Time
+	Permanent     bool
+	Action        string
 }
 
 func (f ClosureFailure) Error() string {

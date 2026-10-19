@@ -4,27 +4,29 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
+
+from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
-from sdo.agents.views import (
-    ROOT_CAUSE_EVIDENCE_KINDS,
+from sdo.agents.responder.result_output import ROOT_CAUSE_EVIDENCE_KINDS, parse_incident_result
+from sdo.contracts import (
     DetectorEvaluation,
-    DetectorEvaluationStatus,
     Finding,
-    FindingStatus,
     IncidentRequest,
     IncidentResult,
     MemoryDetector,
     StateFieldChange,
+    timestamp_datetime,
 )
 
 if TYPE_CHECKING:
     from agentshim import CommandExecutor
+    from google.protobuf.timestamp_pb2 import Timestamp
 
 
 class ResponderExecutionError(RuntimeError):
@@ -33,8 +35,8 @@ class ResponderExecutionError(RuntimeError):
 
 def main() -> int:
     try:
-        request = IncidentRequest.model_validate_json(sys.stdin.read())
-    except ValueError as exc:
+        request = json_format.Parse(sys.stdin.read(), IncidentRequest())
+    except (ValueError, json_format.ParseError) as exc:
         print(f"invalid incident request: {exc}", file=sys.stderr)
         return 2
 
@@ -43,7 +45,7 @@ def main() -> int:
     except ResponderExecutionError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(result.model_dump_json(exclude_none=True))
+    print(json_format.MessageToJson(result, preserving_proto_field_name=True))
     return 0
 
 
@@ -71,13 +73,11 @@ def execute_incident(
     except StructuredTurnError as exc:
         raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
     try:
-        payload = json.loads(completed.output_json)
-        payload["usage"] = turn_usage(completed)
-        result = IncidentResult.model_validate(payload)
+        result = parse_incident_result(json.loads(completed.output_json), turn_usage(completed))
     except (OSError, ValueError) as exc:
         raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-    if result.responder_session_id is None:
-        result = result.model_copy(update={"responder_session_id": completed.session_id})
+    if not result.HasField("responder_session_id"):
+        result.responder_session_id = completed.session_id
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
     # Withhold weakly-evidenced causes before the result reaches the broker;
@@ -267,7 +267,7 @@ def _logical_warm_playbooks(request: IncidentRequest) -> list[WarmPlaybook]:
     """Select validated warm memory using stable IDs and broker-supplied content."""
 
     snapshot = request.memory_snapshot
-    if snapshot is None or snapshot.accepted_commit != request.repository_base_commit:
+    if not request.HasField("memory_snapshot") or snapshot.accepted_commit != request.repository_base_commit:
         return []
     exact = [
         item
@@ -285,7 +285,7 @@ def _logical_warm_playbooks(request: IncidentRequest) -> list[WarmPlaybook]:
         if detector.detector_class != "incident" or detector.owner != "responder":
             continue
         findings = tuple(
-            item for item in request.findings if item.status == FindingStatus.ACTIVE and item.detector_id == detector.id
+            item for item in request.findings if item.status == "active" and item.detector_id == detector.id
         )
         finding_ids = {item for finding in findings for item in finding.playbook_ids}
         for playbook_id in detector.possible_playbook_ids:
@@ -331,13 +331,13 @@ def _detector_evidence(request: IncidentRequest) -> str:
 
     latest: dict[str, DetectorEvaluation] = {}
     latest_firing: dict[str, DetectorEvaluation] = {}
-    for evaluation in sorted(request.detector_history, key=lambda item: item.evaluated_at):
+    for evaluation in sorted(request.detector_history, key=lambda item: item.evaluated_at.ToNanoseconds()):
         latest[evaluation.detector_id] = evaluation
-        if evaluation.status == DetectorEvaluationStatus.FIRING:
+        if evaluation.status == "firing":
             latest_firing[evaluation.detector_id] = evaluation
 
     def line(evaluation: DetectorEvaluation) -> str:
-        text = f"{evaluation.detector_id}: {evaluation.status.value} at {_timestamp(evaluation.evaluated_at)}"
+        text = f"{evaluation.detector_id}: {evaluation.status} at {_timestamp(evaluation.evaluated_at)}"
         if evaluation.fingerprints:
             text += f" [{', '.join(evaluation.fingerprints)}]"
         if evaluation.error:
@@ -353,13 +353,13 @@ def _detector_evidence(request: IncidentRequest) -> str:
     return "Latest detector evidence (compacted from detector_history):\n" + "".join(lines)
 
 
-def _timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+def _timestamp(value: Timestamp) -> str:
+    return timestamp_datetime(value).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _inlined_health_objective(request: IncidentRequest) -> str:
     snapshot = request.memory_snapshot
-    if snapshot is None:
+    if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
     text = snapshot.goal_markdown
     if text and len(text) <= _GOAL_INLINE_MAX_CHARS:
@@ -375,7 +375,7 @@ _ARCH_INLINE_MAX_CHARS = 8_000
 
 def _inlined_architecture_summary(request: IncidentRequest) -> str:
     snapshot = request.memory_snapshot
-    if snapshot is None:
+    if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
     text = snapshot.architecture_markdown
     if text and len(text) <= _ARCH_INLINE_MAX_CHARS:
@@ -397,7 +397,7 @@ def _cold_surfaced_playbook_context(request: IncidentRequest) -> str:
     """Inline bounded broker-supplied playbook content when no warm match exists."""
 
     snapshot = request.memory_snapshot
-    if snapshot is None:
+    if not request.HasField("memory_snapshot"):
         return ""
     relevant_ids = {
         *[item.playbook_id for item in request.surfaced_playbooks],
@@ -484,9 +484,9 @@ def _warm_instructions(playbooks: list[WarmPlaybook], namespace: str) -> str:
 
 
 def _field_change(field: StateFieldChange) -> str:
-    if field.before is None and field.after is None:
+    if not field.HasField("before") and not field.HasField("after"):
         return field.field
-    if field.before is None:
+    if not field.HasField("before"):
         return f"{field.field}: {field.after}"
     return f"{field.field}: {field.before} -> {field.after or '(none)'}"
 
@@ -495,7 +495,7 @@ def _state_changes_section(request: IncidentRequest) -> str:
     """Render the controller's configuration diff against the last healthy baseline."""
 
     changes = request.state_changes
-    if changes is None:
+    if not request.HasField("state_changes"):
         return ""
     window = f"baseline {_timestamp(changes.baseline_at)}, observed {_timestamp(changes.observed_at)}"
     unobserved = (
@@ -623,7 +623,7 @@ def follow_up_guidance(request: IncidentRequest) -> str:
     """Scope paragraph for a follow-up request; empty for an ordinary incident."""
 
     follow_up = request.follow_up
-    if follow_up is None:
+    if not request.HasField("follow_up"):
         return ""
     return (
         f"This is follow-up {follow_up.attempt} of at most {follow_up.max_follow_ups} for incident "
@@ -634,8 +634,17 @@ def follow_up_guidance(request: IncidentRequest) -> str:
     )
 
 
+def _prompt_request(request: IncidentRequest) -> dict[str, object]:
+    """The request as the prompt shows it; the bulky sections are rendered separately."""
+
+    document = json_format.MessageToDict(request, preserving_proto_field_name=True)
+    for omitted in ("detector_history", "state_changes", "memory_snapshot"):
+        document.pop(omitted, None)
+    return document
+
+
 def _responder_prompt(request: IncidentRequest) -> str:
-    if request.memory_snapshot is None:
+    if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
     extra_instructions = os.getenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "").strip()
     additional_context = (
@@ -649,8 +658,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "a separate reflection task may later propose logical memory artifacts. "
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
-    excluded_request_fields = {"detector_history", "state_changes", "memory_snapshot"}
-    request_json = request.model_dump_json(indent=2, exclude=excluded_request_fields)
+    request_json = json.dumps(_prompt_request(request), indent=2)
     return (
         f"You are the SDO incident responder for incident {request.incident_id}.\n\n"
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "

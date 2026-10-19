@@ -1,16 +1,13 @@
-"""Agent-view conformance ratchet for the canonical Python protobuf schema.
+"""Conformance ratchet for the canonical Python protobuf schema.
 
 The proto messages in ``sdo/contracts/proto/sdodev/contracts/v1alpha1`` are the single schema
-SOURCE for the controller<->responder tree. This test proves the generated
-Python proto types faithfully model BOTH producers of the wire:
+SOURCE for the controller<->responder tree, and the generated Python messages are what
+the responder, reflection worker, and status command use directly. This test proves they
+parse every value the Go controller writes, via the golden fixtures under
+``tests/fixtures/sdo/contracts/go/`` (pinned by the Go ``TestGoContractFixtures``).
 
-- the Go controller, via the golden fixtures under
-  ``tests/fixtures/sdo/contracts/go/`` (pinned by the Go
-  ``TestGoContractFixtures``), and
-- the agent-local Pydantic views in ``sdo.agents.views``, via their JSON serialization.
-
-``json_format.Parse`` rejects unknown fields, so a field either definition grows
-without the proto schema fails here — drift is a test failure, not a run-time
+``json_format.Parse`` rejects unknown fields, so a field the Go encoding grows
+without the proto schema fails here: drift is a test failure, not a run-time
 surprise ten minutes into an experiment. The Go conformance test
 (``sdo/operator/runtime/contract_conformance_test.go``) additionally checks the
 protovalidate CEL mirrors the hand-written invariants.
@@ -18,28 +15,24 @@ protovalidate CEL mirrors the hand-written invariants.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from sdo.agents.views import (
-    IncidentRequest as PydIncidentRequest,
-)
-from sdo.agents.views import (
-    IncidentResult as PydIncidentResult,
-)
-from sdo.agents.views import (
-    IncidentView as PydIncidentView,
-)
+from sdo.agents.responder.codex import _incident_result_schema
+from sdo.agents.responder.result_output import ROOT_CAUSE_EVIDENCE_KINDS
 from sdo.contracts import OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
+    BrokerLedger,
+    ControllerState,
     IncidentClosure,
     IncidentRequest,
     IncidentResult,
     IncidentView,
     OutcomeRecord,
+    RootCauseEvidence,
     parse_json,
     to_canonical_json,
 )
@@ -78,6 +71,8 @@ def test_outcome_round_trips_through_canonical_contract() -> None:
         ("incident_view_populated.json", IncidentView),
         ("closure_repaired.json", IncidentClosure),
         ("closure_own_edit.json", IncidentClosure),
+        ("controller_state.json", ControllerState),
+        ("broker_ledger.json", BrokerLedger),
     ],
 )
 def test_proto_schema_models_every_go_fixture(name: str, message_type: type) -> None:
@@ -86,45 +81,32 @@ def test_proto_schema_models_every_go_fixture(name: str, message_type: type) -> 
     parse_json(raw, message_type())
 
 
-def test_proto_schema_models_pydantic_request_serialization() -> None:
-    # Load a real request through the strict Pydantic model, re-serialize it the
-    # way Python writes the wire, and parse that into the proto type.
-    raw = json.loads((GO_FIXTURES / "incident_request.json").read_text(encoding="utf-8"))
-    pyd = PydIncidentRequest.model_validate(raw)
-    parse_json(pyd.model_dump_json(), IncidentRequest())
+def _assert_schema_fields_exist(schema: dict[str, Any], descriptor: Any, path: str) -> None:
+    """Every property of the model-output schema names a field of the proto message, recursively."""
+
+    for name, spec in schema["properties"].items():
+        field = descriptor.fields_by_name.get(name)
+        assert field is not None, f"{path}.{name} is not a field of {descriptor.full_name}"
+        child = spec["items"] if spec.get("type") == "array" else spec
+        if child.get("type") == "object" and "properties" in child:
+            assert field.message_type is not None, f"{path}.{name} is not a message field"
+            _assert_schema_fields_exist(child, field.message_type, f"{path}.{name}")
 
 
-def test_proto_schema_models_pydantic_view_serialization() -> None:
-    raw = json.loads((GO_FIXTURES / "incident_view_populated.json").read_text(encoding="utf-8"))
-    pyd = PydIncidentView.model_validate(raw)
-    parse_json(pyd.model_dump_json(), IncidentView())
+def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> None:
+    schema = _incident_result_schema()
+
+    _assert_schema_fields_exist(schema, IncidentResult.DESCRIPTOR, "$")
+    # The model supplies everything except what the worker owns: schema version, usage, session, error, late pull.
+    owned = {"schema_version", "usage", "responder_session_id", "error", "late_findings_pull"}
+    unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
+    assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
+    assert set(schema["required"]) == set(schema["properties"])
 
 
-def test_proto_schema_models_pydantic_result_serialization() -> None:
-    # IncidentResult is produced by the Python responder; no standalone Go
-    # fixture carries it, so build a minimal valid instance via the Pydantic
-    # model and confirm the proto type reads its serialization.
-    pyd = PydIncidentResult.model_validate(
-        {
-            "incident_id": "demo-1",
-            "status": "completed",
-            "usage": {"llm_calls": 1, "input_tokens": 10, "output_tokens": 4, "reasoning_output_tokens": 1},
-            "timing": {"started_at": "1970-01-01T00:00:01Z", "completed_at": "1970-01-01T00:00:02Z"},
-            "repair_actions": [
-                {
-                    "action_id": "a1",
-                    "kind": "kubectl",
-                    "target": "Service/frontend",
-                    "summary": "s",
-                    "details": "d",
-                    "started_at": "1970-01-01T00:00:01Z",
-                    "completed_at": "1970-01-01T00:00:02Z",
-                    "success": True,
-                    "reversible": True,
-                }
-            ],
-        }
-    )
-    result = parse_json(pyd.model_dump_json(), IncidentResult())
-    assert result.incident_id == "demo-1"
-    assert result.repair_actions[0].action_id == "a1"
+def test_root_cause_evidence_kinds_are_the_proto_rule() -> None:
+    from buf.validate import validate_pb2
+
+    field = RootCauseEvidence.DESCRIPTOR.fields_by_name["kind"]
+    permitted = getattr(field.GetOptions().Extensions[validate_pb2.field].string, "in")
+    assert set(ROOT_CAUSE_EVIDENCE_KINDS) == set(permitted)

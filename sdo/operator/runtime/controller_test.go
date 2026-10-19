@@ -3,7 +3,6 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -475,12 +474,12 @@ func TestResponderCompletionDoesNotCloseIncidentUntilAllHealthFindingsClear(t *t
 		t.Fatalf("verified closure was not persisted for outcome handling: %#v", pending)
 	}
 	// An in-time verification must not carry a (zero) detector review time.
-	encoded, err := json.Marshal(closure)
+	message, err := incidentClosureContract(closure)
 	if err != nil {
-		t.Fatalf("encode closure: %v", err)
+		t.Fatalf("project closure: %v", err)
 	}
-	if strings.Contains(string(encoded), "detector_review") {
-		t.Fatalf("in-time closure carries a detector review marker: %s", encoded)
+	if message.DetectorReviewRequiredAt != nil || message.DetectorReviewReason != nil {
+		t.Fatalf("in-time closure carries a detector review marker: %v", message)
 	}
 }
 

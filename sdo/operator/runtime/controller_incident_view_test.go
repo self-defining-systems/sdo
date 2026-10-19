@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -92,10 +90,8 @@ func TestControllerPublishesTheOpenIncidentsLiveView(t *testing.T) {
 	if view == nil || len(view.BlockingDetectors) != 0 || len(view.BlockingFindings) != 0 {
 		t.Fatalf("cleared health detectors no longer block: %#v", view)
 	}
-	encoded, err := json.Marshal(view)
-	if err != nil || !strings.Contains(string(encoded), `"blocking_detectors":[]`) ||
-		!strings.Contains(string(encoded), `"blocking_findings":[]`) {
-		t.Fatalf("empty lists must encode as [] for the responder's schema: %s (%v)", encoded, err)
+	if _, err := incidentViewContract(view); err != nil {
+		t.Fatalf("project incident view: %v", err)
 	}
 	close(dispatcher.release)
 }

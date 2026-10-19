@@ -6,15 +6,15 @@ import (
 )
 
 type WorkspaceEffect struct {
-	IncidentID string `json:"incident_id"`
+	IncidentID string
 }
 
 type ClosureEffect struct {
-	Closure IncidentClosure `json:"closure"`
+	Closure IncidentClosure
 }
 
 type ClosureAcknowledgmentEffect struct {
-	Receipt ClosureReceipt `json:"receipt"`
+	Receipt ClosureReceipt
 }
 
 func (c *Controller) PendingWorkspaceEffect() (WorkspaceEffect, bool) {
@@ -58,7 +58,7 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 }
 
 type ReleaseEffect struct {
-	IncidentID string `json:"incident_id"`
+	IncidentID string
 }
 
 // PendingReleaseEffect reports the next stranded worktree to reap. Releases are
@@ -131,7 +131,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	}
 	if err := c.requireDurableLocked("incident closure", func(state RuntimeState) bool {
 		return state.ClosureState == "pending" && state.PendingClosure != nil &&
-			sameJSON(*state.PendingClosure, effect.Closure)
+			sameIncidentClosure(*state.PendingClosure, effect.Closure)
 	}); err != nil {
 		c.mu.Unlock()
 		cancel()

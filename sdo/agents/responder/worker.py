@@ -12,21 +12,15 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from google.protobuf import json_format
-
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
-from sdo.agents.views import (
-    IncidentRequest,
-    IncidentResult,
-    LateFindingsPull,
-)
 from sdo.contracts import (
     AgentResult,
     AgentTask,
-    ProtoIncidentRequest,
-    ProtoIncidentResult,
+    IncidentRequest,
+    IncidentResult,
+    LateFindingsPull,
     parse_json,
     to_canonical_json,
 )
@@ -104,16 +98,10 @@ def run_worker_task(
         raise ValueError("worker task has invalid version or task ID")
     if task.agent_id != AGENT_ID or task.task_type != TASK_TYPE:
         raise ValueError(f"worker cannot handle agent {task.agent_id!r} task type {task.task_type!r}")
-    typed_request = ProtoIncidentRequest()
-    if not task.request.Unpack(typed_request):
+    request = IncidentRequest()
+    if not task.request.Unpack(request):
         raise ValueError("worker task request is not an IncidentRequest")
-    # The existing responder model is the agent's internal representation.
-    request = IncidentRequest.model_validate_json(
-        json_format.MessageToJson(
-            typed_request, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
-        )
-    )
-    if request.memory_snapshot is None:
+    if not request.HasField("memory_snapshot"):
         raise ValueError("incident worker requires a logical memory snapshot")
     if request.memory_snapshot.accepted_commit != request.repository_base_commit:
         raise ValueError("incident memory snapshot is not bound to accepted base commit")
@@ -132,15 +120,14 @@ def run_worker_task(
         raise ResponderExecutionError("native responder must return logical artifact IDs")
     late_findings_pull = _late_findings_pull(request.incident_id)
     if late_findings_pull is not None:
-        result = result.model_copy(update={"late_findings_pull": late_findings_pull})
-    typed_result = json_format.Parse(result.model_dump_json(exclude_none=True), ProtoIncidentResult())
+        result.late_findings_pull.CopyFrom(late_findings_pull)
     envelope = AgentResult(
         schema_version="sdo.dev/v1alpha1",
         task_id=task.task_id,
-        status=result.status.value,
+        status=result.status,
         proposal_id=task.workspace.proposal_id,
     )
-    envelope.response.Pack(typed_result)
+    envelope.response.Pack(result)
     publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(envelope))
     return envelope
 

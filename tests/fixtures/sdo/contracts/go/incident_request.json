@@ -1,59 +1,57 @@
 {
-  "schema_version": "sdo.dev/v1alpha1",
   "application": "demo",
-  "namespace": "demo",
-  "incident_id": "demo-1000000000",
-  "findings": [
-    {
-      "detector_id": "cause",
-      "rule_id": "cause",
-      "status": "active",
-      "severity": "warn",
-      "summary": "fault",
-      "evidence": "evidence",
-      "primary_resource": {
-        "kind": "Deployment",
-        "name": "cause"
-      },
-      "fingerprint": "cause"
-    }
-  ],
+  "cancellation_token": "cancel-demo-1000000000",
+  "deployed_commit": "deployed",
   "detector_history": [
     {
       "detector_id": "cause",
       "evaluated_at": "1970-01-01T00:00:00Z",
-      "status": "firing",
       "fingerprints": [
         "cause"
-      ]
+      ],
+      "status": "firing"
     },
     {
       "detector_id": "cause",
       "evaluated_at": "1970-01-01T00:00:01Z",
-      "status": "firing",
       "fingerprints": [
         "cause"
-      ]
+      ],
+      "status": "firing"
     }
   ],
-  "surfaced_playbooks": [],
-  "relevant_outcomes": [],
-  "source_commit": "source",
-  "deployed_commit": "deployed",
-  "repository_worktree": "/tmp/demo",
-  "repository_base_commit": "source",
-  "response_deadline": "1970-01-01T00:01:01Z",
-  "cancellation_token": "cancel-demo-1000000000",
+  "findings": [
+    {
+      "detector_id": "cause",
+      "evidence": "evidence",
+      "fingerprint": "cause",
+      "primary_resource": {
+        "kind": "Deployment",
+        "name": "cause"
+      },
+      "rule_id": "cause",
+      "severity": "warn",
+      "status": "active",
+      "summary": "fault"
+    }
+  ],
+  "incident_id": "demo-1000000000",
+  "namespace": "demo",
   "repair_policy": "recorded-actions",
+  "repository_base_commit": "source",
+  "repository_worktree": "/tmp/demo",
+  "response_deadline": "1970-01-01T00:01:01Z",
+  "schema_version": "sdo.dev/v1alpha1",
+  "source_commit": "source",
   "state_changes": {
     "baseline_at": "1970-01-01T00:00:00Z",
-    "observed_at": "1970-01-01T00:00:01Z",
     "changes": [
       {
+        "change": "modified",
         "kind": "Service",
-        "name": "frontend",
-        "change": "modified"
+        "name": "frontend"
       }
-    ]
+    ],
+    "observed_at": "1970-01-01T00:00:01Z"
   }
 }

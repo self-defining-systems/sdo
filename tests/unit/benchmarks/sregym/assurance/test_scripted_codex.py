@@ -23,13 +23,8 @@ from benchmarks.sregym.assurance.scripted_codex.directive import Directive
 from benchmarks.sregym.assurance.scripted_codex.usage import request_usage
 from sdo.agents.responder.codex import execute_incident
 from sdo.agents.responder.reflection import CodexSessionBackend
-from sdo.agents.views import (
-    IncidentRequest,
-    OperationalArtifactDraft,
-)
-from sdo.contracts import AgentTask
-from sdo.contracts.proto import IncidentRequest as ProtoIncidentRequest
-from sdo.contracts.proto import to_canonical_json
+from sdo.agents.views import OperationalArtifactDraft
+from sdo.contracts import AgentTask, IncidentRequest, to_canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SEED = REPO_ROOT / "tests" / "fixtures" / "sdo" / "contracts" / "incident_request.json"
@@ -121,15 +116,14 @@ def _request(worktree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
                     "detector_id": "traffic-health",
                     "rule_id": "scenario-slo.hotel-recommendations",
                     "summary": "hotel-recommendations fails its SLO",
-                    "playbooks": [],
                     "fingerprint": "traffic-health/hotel-recommendations",
                 }
             ],
         }
     )
-    request = IncidentRequest.model_validate(payload)
+    request = json_format.ParseDict(payload, IncidentRequest())
     packed = ProtoAny()
-    packed.Pack(json_format.Parse(request.model_dump_json(), ProtoIncidentRequest(), ignore_unknown_fields=True))
+    packed.Pack(request)
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
         task_id="task-1",
@@ -176,7 +170,7 @@ def test_scripted_responder_repairs_through_the_real_structured_turn(
 
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
 
-    assert result.status.value == "completed"
+    assert result.status == "completed"
     (cause,) = result.confirmed_root_causes
     assert {(ref.kind, ref.name) for ref in cause.resources} >= {("NetworkPolicy", POLICY)}
     assert cause.explained_detectors == ["traffic-health"]
@@ -209,7 +203,7 @@ def test_wrong_then_correct_reports_the_failed_attempt_and_the_repair(
 
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
 
-    assert result.status.value == "completed"
+    assert result.status == "completed"
     assert [(action.action_id, action.success) for action in result.repair_actions] == [
         ("wrong-repair", False),
         ("repair-1", True),
@@ -223,13 +217,13 @@ def test_wrong_only_honest_fails_and_claimed_lies_about_verification(
     request = _request(worktree, scripted["tmp"], monkeypatch)
     _directive(scripted["store"], mitigation="wrong_only_honest")
     honest = execute_incident(request, model="gpt-6-luna", provider="codex")
-    assert honest.status.value == "failed"
+    assert honest.status == "failed"
     assert honest.confirmed_root_causes == []
 
     shutil.rmtree(scripted["store"] / "bindings")
     _directive(scripted["store"], mitigation="wrong_only_claimed")
     claimed = execute_incident(request, model="gpt-6-luna", provider="codex")
-    assert claimed.status.value == "completed"
+    assert claimed.status == "completed"
     assert claimed.verification_evidence[0].passed is True
     assert not (scripted["state"] / "deleted").exists()
     # The wrong repair truthfully records that it restarted frontend, not the NetworkPolicy.
@@ -366,7 +360,7 @@ def test_a_failed_plan_records_why_it_stopped(scripted: dict[str, Path], monkeyp
 
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
 
-    assert result.status.value == "failed"
+    assert result.status == "failed"
     (turn,) = _turn_records(scripted["store"])
     assert turn["outcome"] == "failed"
     assert "scripted plan stopped" in str(turn["plan_error"])
@@ -381,7 +375,7 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
     request = _request(worktree, scripted["tmp"], monkeypatch)
     _directive(scripted["store"], mitigation="healed_noop", status_attempts=2)
     unhealed = execute_incident(request, model="gpt-6-luna", provider="codex")
-    assert unhealed.status.value == "failed"
+    assert unhealed.status == "failed"
     assert unhealed.repair_actions == []
 
     shutil.rmtree(scripted["store"] / "bindings")
@@ -389,7 +383,7 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
     _directive(scripted["store"], mitigation="healed_noop", status_attempts=2)
     healed = execute_incident(request, model="gpt-6-luna", provider="codex")
 
-    assert healed.status.value == "completed"
+    assert healed.status == "completed"
     assert healed.repair_actions == []
     assert healed.confirmed_root_causes == []
     assert healed.verification_evidence[0].passed is True

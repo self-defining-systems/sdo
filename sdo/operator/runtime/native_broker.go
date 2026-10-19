@@ -1,10 +1,8 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -45,8 +43,8 @@ type ReflectionWorker interface {
 }
 
 type ReflectionDecision struct {
-	LearningDecision string `json:"learning_decision"`
-	NoChangeReason   string `json:"no_change_reason,omitempty"`
+	LearningDecision string
+	NoChangeReason   string
 }
 
 type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error)
@@ -73,21 +71,21 @@ type NativeIncidentBroker struct {
 }
 
 type ControllerRolloutExpectation struct {
-	IncidentID                string `json:"incident_id"`
-	ReflectionCommit          string `json:"reflection_commit"`
-	BeforeDetectorFingerprint string `json:"before_detector_fingerprint"`
-	AfterDetectorFingerprint  string `json:"after_detector_fingerprint"`
+	IncidentID                string
+	ReflectionCommit          string
+	BeforeDetectorFingerprint string
+	AfterDetectorFingerprint  string
 }
 
 // ControllerRolloutReceipt comes from trusted installation code after build
 // and observation of the restarted controller's detector revision.
 type ControllerRolloutReceipt struct {
-	Expectation                 ControllerRolloutExpectation `json:"expectation"`
-	BuildArtifact               string                       `json:"build_artifact"`
-	ControllerRevision          string                       `json:"controller_revision"`
-	ObservedDetectorFingerprint string                       `json:"observed_detector_fingerprint"`
-	Success                     bool                         `json:"success"`
-	VerifiedAt                  time.Time                    `json:"verified_at"`
+	Expectation                 ControllerRolloutExpectation
+	BuildArtifact               string
+	ControllerRevision          string
+	ObservedDetectorFingerprint string
+	Success                     bool
+	VerifiedAt                  time.Time
 }
 
 // ControllerRolloutHandoff is durable evidence for the supervisor to restart
@@ -95,23 +93,6 @@ type ControllerRolloutReceipt struct {
 type ControllerRolloutHandoff struct {
 	Expectation ControllerRolloutExpectation
 	Receipt     ClosureReceipt
-}
-
-type nativeLedger struct {
-	IncidentID          string                        `json:"incident_id"`
-	Closure             json.RawMessage               `json:"closure,omitempty"`
-	ProposalCommit      string                        `json:"proposal_commit,omitempty"`
-	OutcomeDocument     json.RawMessage               `json:"outcome_document,omitempty"`
-	RequiresReflection  bool                          `json:"requires_reflection,omitempty"`
-	OutcomeCommit       string                        `json:"outcome_commit,omitempty"`
-	ReflectionProcessed bool                          `json:"reflection_processed,omitempty"`
-	ReflectionDecision  *ReflectionDecision           `json:"reflection_decision,omitempty"`
-	ReflectionCommit    string                        `json:"reflection_commit,omitempty"`
-	RolloutExpectation  *ControllerRolloutExpectation `json:"rollout_expectation,omitempty"`
-	RolloutReceipts     []ControllerRolloutReceipt    `json:"rollout_receipts,omitempty"`
-	Receipt             *ClosureReceipt               `json:"receipt,omitempty"`
-	Acknowledged        bool                          `json:"acknowledged,omitempty"`
-	AcknowledgedAt      time.Time                     `json:"acknowledged_at,omitempty"`
 }
 
 func (n NativeIncidentBroker) PrepareIncident(ctx context.Context, incidentID string) (IncidentWorkspace, error) {
@@ -152,11 +133,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if err != nil {
 			return err
 		}
-		encoded, err := json.Marshal(closure)
+		projected, err := incidentClosureContract(closure)
 		if err != nil {
-			return err
+			return fmt.Errorf("project closure: %w", err)
 		}
-		if len(ledger.Closure) > 0 && !bytes.Equal(ledger.Closure, encoded) {
+		if ledger.Closure != nil && !proto.Equal(ledger.Closure, projected) {
 			return errors.New("closure differs from persisted broker evidence")
 		}
 		prepared, err := n.Repository.ProposalInfo(id, broker.ProposalPhase)
@@ -166,14 +147,14 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if err == nil && (closure.Request.RepositoryWorktree != prepared.Path || closure.Request.RepositoryBaseCommit != prepared.BaseCommit) {
 			return errors.New("closure workspace does not match broker-prepared proposal")
 		}
-		if len(ledger.Closure) == 0 {
-			ledger.Closure = encoded
+		if ledger.Closure == nil {
+			ledger.Closure = projected
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
 		}
 		if ledger.Receipt != nil {
-			receipt = *ledger.Receipt
+			receipt = *closureReceiptState(ledger.Receipt)
 			return nil
 		}
 
@@ -203,7 +184,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 		}
 
-		if len(ledger.OutcomeDocument) == 0 {
+		if ledger.OutcomeDocument == nil {
 			derived, err := n.Deriver.Derive(ctx, closure, ledger.ProposalCommit, n.ResponderBackend, n.ResponderModel)
 			if err != nil {
 				return fmt.Errorf("derive independent outcome: %w", err)
@@ -214,22 +195,14 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if derived.RequiresReflection && derived.Record.GetClassification() != "success" {
 				return errors.New("outcome reflection requires successful classification")
 			}
-			encoded, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(derived.Record)
-			if err != nil {
-				return fmt.Errorf("encode outcome ledger: %w", err)
-			}
-			ledger.OutcomeDocument = encoded
+			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.RequiresReflection = derived.RequiresReflection
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
 		}
 		if ledger.OutcomeCommit == "" {
-			record := new(contracts.OutcomeRecord)
-			if err := protojson.Unmarshal(ledger.OutcomeDocument, record); err != nil {
-				return fmt.Errorf("decode outcome ledger: %w", err)
-			}
-			accepted, err := n.Repository.RecordOutcome(ctx, id, record)
+			accepted, err := n.Repository.RecordOutcome(ctx, id, proto.Clone(ledger.OutcomeDocument).(*contracts.OutcomeRecord))
 			if err != nil {
 				return err
 			}
@@ -261,15 +234,12 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				}
 				if len(paths) == 0 {
 					workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
-					record := new(contracts.OutcomeRecord)
-					if err := protojson.Unmarshal(ledger.OutcomeDocument, record); err != nil {
-						return fmt.Errorf("decode reflection outcome: %w", err)
-					}
+					record := proto.Clone(ledger.OutcomeDocument).(*contracts.OutcomeRecord)
 					decision, err := n.Reflector.Reflect(ctx, closure, workspace, record, ledger.ProposalCommit, ledger.OutcomeCommit)
 					if err != nil {
 						return fmt.Errorf("reflection worker: %w", err)
 					}
-					ledger.ReflectionDecision = &decision
+					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason}
 					if err := n.saveLedger(ledger); err != nil {
 						return err
 					}
@@ -285,7 +255,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					return errors.New("reflection changes lack a durable worker decision; proposal reset")
 				}
 				if len(paths) > 0 {
-					if ledger.ReflectionDecision.LearningDecision != "updated" {
+					if ledger.ReflectionDecision.GetLearningDecision() != "updated" {
 						if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
 							return err
 						}
@@ -304,11 +274,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					}
 					ledger.ReflectionCommit = accepted.Commit
 					reflectionPaths = accepted.ChangedPaths
-				} else if ledger.ReflectionDecision.LearningDecision != "no_change" || strings.TrimSpace(ledger.ReflectionDecision.NoChangeReason) == "" {
+				} else if ledger.ReflectionDecision.GetLearningDecision() != "no_change" || strings.TrimSpace(ledger.ReflectionDecision.GetNoChangeReason()) == "" {
 					return errors.New("no-op reflection requires no_change decision and concrete reason")
 				}
 			}
-			if err := n.setRolloutExpectation(ctx, &ledger, reflectionPaths); err != nil {
+			if err := n.setRolloutExpectation(ctx, ledger, reflectionPaths); err != nil {
 				return err
 			}
 			ledger.ReflectionProcessed = true
@@ -326,7 +296,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		}
 		digest := sha256.Sum256([]byte(strings.Join([]string{id, receipt.ProposalCommit, receipt.OutcomeCommit, receipt.ReflectionCommit}, "\x00")))
 		receipt.AckToken = fmt.Sprintf("%x", digest)
-		ledger.Receipt = &receipt
+		ledger.Receipt = closureReceiptContract(&receipt)
 		return n.saveLedger(ledger)
 	})
 	return receipt, err
@@ -338,10 +308,10 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 		if err != nil {
 			return err
 		}
-		if ledger.Receipt == nil || *ledger.Receipt != receipt {
+		if ledger.Receipt == nil || *closureReceiptState(ledger.Receipt) != receipt {
 			return errors.New("closure receipt does not match durable broker state")
 		}
-		if ledger.RolloutExpectation != nil && !successfulRollout(ledger.RolloutReceipts) {
+		if ledger.RolloutExpectation != nil && !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 			return errors.New("controller rollout has not been independently verified")
 		}
 		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ProposalPhase); err != nil {
@@ -351,8 +321,8 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 			return err
 		}
 		ledger.Acknowledged = true
-		if ledger.AcknowledgedAt.IsZero() {
-			ledger.AcknowledgedAt = time.Now().UTC()
+		if ledger.AcknowledgedAt == nil {
+			ledger.AcknowledgedAt = contractTimestamp(time.Now().UTC())
 		}
 		if err := n.saveLedger(ledger); err != nil {
 			return err
@@ -383,20 +353,21 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 			if !strings.HasSuffix(entry.Name(), ".json") || !entry.Type().IsRegular() {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(n.LedgerRoot, entry.Name()))
+			path := filepath.Join(n.LedgerRoot, entry.Name())
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			var ledger nativeLedger
-			if err := json.Unmarshal(data, &ledger); err != nil {
+			ledger, err := parseLedger(path, data)
+			if err != nil {
 				return fmt.Errorf("read session retention ledger %s: %w", entry.Name(), err)
 			}
-			if ledger.IncidentID == "" || filepath.Base(n.ledgerPath(ledger.IncidentID)) != entry.Name() {
+			if ledger.IncidentId == "" || filepath.Base(n.ledgerPath(ledger.IncidentId)) != entry.Name() {
 				return fmt.Errorf("session retention ledger %s has mismatched identity", entry.Name())
 			}
-			if ledger.Acknowledged && !ledger.AcknowledgedAt.IsZero() && !now.Before(ledger.AcknowledgedAt.Add(retention)) {
-				if err := memory.RemoveIncidentSession(n.SessionRoot, ledger.IncidentID); err != nil {
-					return fmt.Errorf("prune session for %s: %w", ledger.IncidentID, err)
+			if ledger.Acknowledged && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
+				if err := memory.RemoveIncidentSession(n.SessionRoot, ledger.IncidentId); err != nil {
+					return fmt.Errorf("prune session for %s: %w", ledger.IncidentId, err)
 				}
 			}
 		}
@@ -404,7 +375,7 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 	})
 }
 
-func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger *nativeLedger, paths []string) error {
+func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger *contracts.BrokerLedger, paths []string) error {
 	if !layout.RequiresControllerRollout(paths) {
 		return nil
 	}
@@ -422,12 +393,12 @@ func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger 
 	if before == after {
 		return errors.New("detector update did not change diagnostics tree")
 	}
-	expected := ControllerRolloutExpectation{IncidentID: ledger.IncidentID, ReflectionCommit: ledger.ReflectionCommit, BeforeDetectorFingerprint: before, AfterDetectorFingerprint: after}
-	if ledger.RolloutExpectation != nil && *ledger.RolloutExpectation != expected {
+	expected := ControllerRolloutExpectation{IncidentID: ledger.IncidentId, ReflectionCommit: ledger.ReflectionCommit, BeforeDetectorFingerprint: before, AfterDetectorFingerprint: after}
+	if ledger.RolloutExpectation != nil && *rolloutExpectationState(ledger.RolloutExpectation) != expected {
 		return errors.New("durable controller rollout expectation changed")
 	}
-	ledger.RolloutExpectation = &expected
-	return n.saveLedger(*ledger)
+	ledger.RolloutExpectation = rolloutExpectationContract(&expected)
+	return n.saveLedger(ledger)
 }
 
 // PendingControllerRollout reports an accepted detector change until its
@@ -444,12 +415,13 @@ func (n NativeIncidentBroker) PendingControllerRollout(reflectionCommit string) 
 			if !strings.HasSuffix(entry.Name(), ".json") {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(n.LedgerRoot, entry.Name()))
+			path := filepath.Join(n.LedgerRoot, entry.Name())
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			var ledger nativeLedger
-			if err := json.Unmarshal(data, &ledger); err != nil {
+			ledger, err := parseLedger(path, data)
+			if err != nil {
 				return err
 			}
 			if ledger.ReflectionCommit != reflectionCommit || ledger.RolloutExpectation == nil {
@@ -458,8 +430,8 @@ func (n NativeIncidentBroker) PendingControllerRollout(reflectionCommit string) 
 			if pending {
 				return errors.New("multiple incidents require the same reflection rollout")
 			}
-			if !successfulRollout(ledger.RolloutReceipts) {
-				expected, pending = *ledger.RolloutExpectation, true
+			if !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
+				expected, pending = *rolloutExpectationState(ledger.RolloutExpectation), true
 			}
 		}
 		return nil
@@ -497,24 +469,25 @@ func (n NativeIncidentBroker) PendingControllerRollouts() ([]ControllerRolloutHa
 			if !strings.HasSuffix(entry.Name(), ".json") {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(n.LedgerRoot, entry.Name()))
+			path := filepath.Join(n.LedgerRoot, entry.Name())
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			var ledger nativeLedger
-			if err := json.Unmarshal(data, &ledger); err != nil {
+			ledger, err := parseLedger(path, data)
+			if err != nil {
 				return fmt.Errorf("broker ledger %s: %w", entry.Name(), err)
 			}
-			if ledger.IncidentID == "" || filepath.Base(n.ledgerPath(ledger.IncidentID)) != entry.Name() {
+			if ledger.IncidentId == "" || filepath.Base(n.ledgerPath(ledger.IncidentId)) != entry.Name() {
 				return fmt.Errorf("broker ledger %s has mismatched identity", entry.Name())
 			}
-			if ledger.RolloutExpectation == nil || ledger.Receipt == nil || successfulRollout(ledger.RolloutReceipts) {
+			if ledger.RolloutExpectation == nil || ledger.Receipt == nil || successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				continue
 			}
-			if ledger.RolloutExpectation.IncidentID != ledger.IncidentID || ledger.RolloutExpectation.ReflectionCommit != ledger.Receipt.ReflectionCommit || ledger.Receipt.OutcomeCommit == "" || ledger.Receipt.AckToken == "" {
+			if ledger.RolloutExpectation.IncidentId != ledger.IncidentId || ledger.RolloutExpectation.ReflectionCommit != ledger.Receipt.ReflectionCommit || ledger.Receipt.OutcomeCommit == "" || ledger.Receipt.AckToken == "" {
 				return fmt.Errorf("broker ledger %s has incomplete rollout handoff", entry.Name())
 			}
-			handoffs = append(handoffs, ControllerRolloutHandoff{Expectation: *ledger.RolloutExpectation, Receipt: *ledger.Receipt})
+			handoffs = append(handoffs, ControllerRolloutHandoff{Expectation: *rolloutExpectationState(ledger.RolloutExpectation), Receipt: *closureReceiptState(ledger.Receipt)})
 		}
 		return nil
 	})
@@ -529,7 +502,7 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 		if err != nil {
 			return err
 		}
-		if ledger.RolloutExpectation == nil || *ledger.RolloutExpectation != receipt.Expectation {
+		if ledger.RolloutExpectation == nil || *rolloutExpectationState(ledger.RolloutExpectation) != receipt.Expectation {
 			return errors.New("controller rollout receipt does not match accepted detector transition")
 		}
 		if receipt.VerifiedAt.IsZero() {
@@ -539,11 +512,11 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint {
 				return errors.New("successful rollout lacks matching build and restarted detector fingerprint")
 			}
-			if successfulRollout(ledger.RolloutReceipts) {
+			if successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 				return errors.New("controller rollout already succeeded")
 			}
 		}
-		ledger.RolloutReceipts = append(ledger.RolloutReceipts, receipt)
+		ledger.RolloutReceipts = append(ledger.RolloutReceipts, rolloutReceiptContract(receipt))
 		return n.saveLedger(ledger)
 	})
 }
@@ -563,7 +536,7 @@ func (n NativeIncidentBroker) ReleaseIncident(_ context.Context, incidentID stri
 		if err != nil {
 			return err
 		}
-		if len(ledger.Closure) > 0 {
+		if ledger.Closure != nil {
 			return nil
 		}
 		return n.Repository.ReleaseProposal(incidentID, broker.ProposalPhase)
@@ -589,29 +562,43 @@ func (n NativeIncidentBroker) withLock(fn func() error) error {
 	return fn()
 }
 
-func (n NativeIncidentBroker) readLedger(incidentID string) (nativeLedger, error) {
-	if strings.TrimSpace(incidentID) == "" {
-		return nativeLedger{}, errors.New("incident ID is required")
-	}
-	ledger := nativeLedger{IncidentID: incidentID}
-	data, err := os.ReadFile(n.ledgerPath(incidentID))
-	if os.IsNotExist(err) {
-		return ledger, nil
-	}
-	if err != nil {
-		return ledger, err
-	}
-	if err := json.Unmarshal(data, &ledger); err != nil {
-		return nativeLedger{}, fmt.Errorf("broker ledger: %w", err)
-	}
-	if ledger.IncidentID != incidentID {
-		return nativeLedger{}, errors.New("broker ledger incident ID mismatch")
+// parseLedger decodes the ProtoJSON ledger stored at path. A document that
+// predates the ProtoJSON cutover fails with a message naming the file and the
+// recovery step; there is deliberately no legacy decoder.
+func parseLedger(path string, data []byte) (*contracts.BrokerLedger, error) {
+	ledger := &contracts.BrokerLedger{}
+	if err := parseProtoJSON(data, ledger); err != nil {
+		if isPreCutoverFormat(err) {
+			return nil, fmt.Errorf("broker ledger %s predates the ProtoJSON cutover and cannot be read (%v); archive or remove the ledger file, then restart the controller", path, err)
+		}
+		return nil, err
 	}
 	return ledger, nil
 }
 
-func (n NativeIncidentBroker) saveLedger(ledger nativeLedger) error {
-	data, err := json.Marshal(ledger)
+func (n NativeIncidentBroker) readLedger(incidentID string) (*contracts.BrokerLedger, error) {
+	if strings.TrimSpace(incidentID) == "" {
+		return nil, errors.New("incident ID is required")
+	}
+	data, err := os.ReadFile(n.ledgerPath(incidentID))
+	if os.IsNotExist(err) {
+		return &contracts.BrokerLedger{IncidentId: incidentID}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ledger, err := parseLedger(n.ledgerPath(incidentID), data)
+	if err != nil {
+		return nil, fmt.Errorf("broker ledger: %w", err)
+	}
+	if ledger.IncidentId != incidentID {
+		return nil, errors.New("broker ledger incident ID mismatch")
+	}
+	return ledger, nil
+}
+
+func (n NativeIncidentBroker) saveLedger(ledger *contracts.BrokerLedger) error {
+	data, err := canonicalProtoJSON(ledger)
 	if err != nil {
 		return err
 	}
@@ -631,7 +618,7 @@ func (n NativeIncidentBroker) saveLedger(ledger nativeLedger) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(file.Name(), n.ledgerPath(ledger.IncidentID)); err != nil {
+	if err := os.Rename(file.Name(), n.ledgerPath(ledger.IncidentId)); err != nil {
 		return err
 	}
 	directory, err := os.Open(n.LedgerRoot)

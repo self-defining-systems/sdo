@@ -26,14 +26,15 @@ from typing import TYPE_CHECKING, Any
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from sdo.agents.views import (
+from sdo.contracts import (
+    AgentTask,
+    ControllerState,
     Finding,
-    FindingStatus,
     IncidentRequest,
     IncidentView,
     StateChange,
+    timestamp_datetime,
 )
-from sdo.contracts import AgentTask, ProtoIncidentRequest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -143,12 +144,12 @@ class IncidentStatusReport:
             "burst": None if self.burst is None else self.burst.model_dump(mode="json"),
             "controller": {
                 "detail": self.controller_detail,
-                "observed_at": None if self.view is None else self.view.observed_at.isoformat(),
+                "observed_at": None if self.view is None else _observed_at(self.view),
                 "blocking_detectors": sorted({finding.detector_id for finding in self.blocking_findings}),
-                "blocking_findings": [finding.model_dump(mode="json") for finding in self.blocking_findings],
+                "blocking_findings": [_message_dict(finding) for finding in self.blocking_findings],
                 "clearing_detectors": sorted({finding.detector_id for finding in self.clearing_findings}),
-                "clearing_findings": [finding.model_dump(mode="json") for finding in self.clearing_findings],
-                "new_state_changes": [change.model_dump(mode="json") for change in self.new_state_changes],
+                "clearing_findings": [_message_dict(finding) for finding in self.clearing_findings],
+                "new_state_changes": [_message_dict(change) for change in self.new_state_changes],
             },
         }
 
@@ -209,13 +210,21 @@ class IncidentStatusReport:
             if self.blocking_findings and self.view is not None:
                 lines.append(
                     "The controller will not close this incident while its health detectors still fire, even when "
-                    f"traffic is healthy. This is its evaluation at {self.view.observed_at.isoformat()}. Once the "
+                    f"traffic is healthy. This is its evaluation at {_observed_at(self.view)}. Once the "
                     "cause is repaired it re-checks these detectors every second and confirms them clear within a "
                     "few seconds; run `python3 -m sdo.agents.responder.status_cli` again before submitting "
                     "mitigation or "
                     "returning the result."
                 )
         return "\n".join(lines)
+
+
+def _message_dict(message: Finding | StateChange) -> dict[str, Any]:
+    return json_format.MessageToDict(message, preserving_proto_field_name=True)
+
+
+def _observed_at(view: IncidentView) -> str:
+    return timestamp_datetime(view.observed_at).isoformat()
 
 
 Opener = Callable[..., Any]
@@ -345,26 +354,25 @@ def _controller_view(
     if not location:
         return None, f"{CONTROLLER_STATE_ENVIRONMENT} is not set"
     try:
-        state = json.loads(read(location))
-        raw = state.get("incident_view") if isinstance(state, dict) else None
-        if raw is None:
-            return None, f"the controller reports no open incident ({location})"
-        view = IncidentView.model_validate(raw)
+        state = json_format.Parse(read(location), ControllerState())
     except ControllerViewError as exc:
         return None, f"controller state unreadable: {exc}"
-    except (ValueError, ValidationError) as exc:
+    except (ValueError, json_format.ParseError) as exc:
         return None, f"controller state invalid: {exc}"
+    if not state.HasField("incident_view"):
+        return None, f"the controller reports no open incident ({location})"
+    view = state.incident_view
     request = _load_request(request_path)
     if request is not None and request.incident_id != view.incident_id:
         return None, f"the controller's open incident is {view.incident_id}, not {request.incident_id}"
-    return view, f"controller view of {view.incident_id} at {view.observed_at.isoformat()}"
+    return view, f"controller view of {view.incident_id} at {_observed_at(view)}"
 
 
 def _new_state_changes(request: IncidentRequest | None, view: IncidentView) -> tuple[StateChange, ...]:
-    if view.state_changes is None:
+    if not view.HasField("state_changes"):
         return ()
     known = set()
-    if request is not None and request.state_changes is not None:
+    if request is not None and request.HasField("state_changes"):
         known = {(change.kind, change.name, change.change) for change in request.state_changes.changes}
     return tuple(
         change for change in view.state_changes.changes if (change.kind, change.name, change.change) not in known
@@ -376,14 +384,10 @@ def _load_request(request_path: Path | None) -> IncidentRequest | None:
         return None
     try:
         task = json_format.Parse(request_path.read_text(encoding="utf-8"), AgentTask())
-        typed = ProtoIncidentRequest()
-        if not task.request.Unpack(typed):
+        request = IncidentRequest()
+        if not task.request.Unpack(request):
             return None
-        return IncidentRequest.model_validate_json(
-            json_format.MessageToJson(
-                typed, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
-            )
-        )
+        return request
     except (OSError, ValueError, json_format.Error):
         return None
 
@@ -397,7 +401,7 @@ def _incident_scenarios(request_path: Path | None) -> tuple[str, ...]:
             {
                 finding.rule_id.removeprefix(SCENARIO_RULE_PREFIX)
                 for finding in request.findings
-                if finding.status == FindingStatus.ACTIVE and finding.rule_id.startswith(SCENARIO_RULE_PREFIX)
+                if finding.status == "active" and finding.rule_id.startswith(SCENARIO_RULE_PREFIX)
             }
         )
     )

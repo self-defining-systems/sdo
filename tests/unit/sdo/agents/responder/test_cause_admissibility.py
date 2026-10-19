@@ -13,7 +13,7 @@ from sdo.agents.responder.cause_admissibility import (
     is_admissible,
     review_confirmed_causes,
 )
-from sdo.agents.views import (
+from sdo.contracts import (
     ConfirmedRootCause,
     DetectorEvaluation,
     Finding,
@@ -21,17 +21,18 @@ from sdo.agents.views import (
     IncidentResult,
     ObjectRef,
     RootCauseEvidence,
+    datetime_timestamp,
 )
 
-_NOW = datetime(2026, 7, 9, 18, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime_timestamp(datetime(2026, 7, 9, 18, 0, 0, tzinfo=timezone.utc))
 
 
 def _finding(detector_id: str, *, status: str = "active") -> Finding:
     return Finding(
         detector_id=detector_id,
         rule_id=detector_id,
-        status=status,  # type: ignore[arg-type]
-        severity="critical",  # type: ignore[arg-type]
+        status=status,
+        severity="critical",
         summary=f"{detector_id} fired",
         evidence="evidence",
         primary_resource=ObjectRef(kind="Deployment", name="geo", namespace="demo"),
@@ -46,10 +47,9 @@ def _request(*, firing: tuple[str, ...] = ("missing-configmap",)) -> IncidentReq
         incident_id="inc-1",
         findings=[_finding(first)],
         detector_history=[
-            DetectorEvaluation(detector_id=detector, evaluated_at=_NOW, status="firing")  # type: ignore[arg-type]
-            for detector in firing
+            DetectorEvaluation(detector_id=detector, evaluated_at=_NOW, status="firing") for detector in firing
         ]
-        or [DetectorEvaluation(detector_id="health", evaluated_at=_NOW, status="firing")],  # type: ignore[arg-type]
+        or [DetectorEvaluation(detector_id="health", evaluated_at=_NOW, status="firing")],
         source_commit="a" * 40,
         deployed_commit="b" * 40,
         repository_worktree="/workspace/app",
@@ -81,10 +81,11 @@ def _cause(
 def _result(causes: list[ConfirmedRootCause]) -> IncidentResult:
     return IncidentResult(
         incident_id="inc-1",
-        status="completed",  # type: ignore[arg-type]
+        schema_version="sdo.dev/v1alpha1",
+        status="completed",
         confirmed_root_causes=causes,
-        usage={"llm_calls": 1, "input_tokens": 1, "output_tokens": 1},  # type: ignore[arg-type]
-        timing={"started_at": _NOW, "completed_at": _NOW},  # type: ignore[arg-type]
+        usage={"llm_calls": 1, "input_tokens": 1, "output_tokens": 1},
+        timing={"started_at": _NOW, "completed_at": _NOW},
     )
 
 
@@ -208,7 +209,7 @@ def test_on_mode_drops_the_weakly_evidenced_cause_from_the_result() -> None:
 
     gated = apply_cause_admissibility(_result([weak]), _request(), policy=CauseAdmissibilityPolicy(mode="on"))
 
-    assert gated.confirmed_root_causes == []
+    assert list(gated.confirmed_root_causes) == []
 
 
 def test_policy_reads_the_environment_and_defaults_off(monkeypatch) -> None:

@@ -25,8 +25,7 @@ import "sdodev/contracts/v1alpha1/traffic.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
-// Finding is one detector observation. Mirrors sdk.Finding and
-// sdo.agents.views.models.Finding.
+// Finding is one detector observation. Mirrors sdk.Finding.
 message Finding {
   string detector_id = 1 [(buf.validate.field).string.min_len = 1];
   string rule_id = 2 [(buf.validate.field).string.min_len = 1];
@@ -376,8 +375,7 @@ message IncidentView {
 }
 
 // DetectorTimelineEntry summarizes one finding's firing history within an
-// incident window; carried in the incident closure. Mirrors
-// sdo.agents.views.models.DetectorTimelineEntry and the Go runtime struct.
+// incident window; carried in the incident closure. Mirrors the Go runtime struct.
 message DetectorTimelineEntry {
   option (buf.validate.message).cel = {
     id: "timeline.last_seen_after_first"

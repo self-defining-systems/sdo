@@ -19,7 +19,7 @@
       },
       "relation": "before_dispatch",
       "rule_id": "empty-network-policy-direction",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/empty-network-policy-direction/README.md"
       ]
     },
@@ -42,7 +42,7 @@
       },
       "relation": "before_dispatch",
       "rule_id": "readiness-probe-port-mismatch",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/readiness-probe-port-mismatch/README.md"
       ]
     },
@@ -71,7 +71,7 @@
       },
       "relation": "before_dispatch",
       "rule_id": "required-configmap-missing",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/missing-required-configmap/README.md"
       ]
     },
@@ -87,7 +87,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "configmap-missing",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     },
@@ -103,7 +103,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "deployment-unavailable",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     },
@@ -119,7 +119,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "deployment-unavailable",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     },
@@ -135,7 +135,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "network-policy-direction-isolation",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     },
@@ -151,7 +151,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "service-without-ready-endpoints",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     },
@@ -167,7 +167,7 @@
       "parameter_bindings": {},
       "relation": "before_dispatch",
       "rule_id": "service-without-ready-endpoints",
-      "surfaced_playbooks": [
+      "surfaced_playbook_ids": [
         ".sdo/playbooks/health-objective/README.md"
       ]
     }

@@ -15,9 +15,9 @@ type Batcher struct {
 }
 
 type BatcherState struct {
-	Findings  []sdk.Finding        `json:"findings"`
-	Deadlines map[string]time.Time `json:"deadlines,omitempty"`
-	Deadline  time.Time            `json:"deadline,omitempty"`
+	Findings  []sdk.Finding
+	Deadlines map[string]time.Time
+	Deadline  time.Time
 }
 
 func NewBatcher() *Batcher {

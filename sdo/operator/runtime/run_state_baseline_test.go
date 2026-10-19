@@ -2,13 +2,9 @@ package runtime
 
 import (
 	"bufio"
-	"context"
-	"encoding/json"
-	"fmt"
 	"io"
-	"os"
+	"context"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,42 +14,17 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 )
 
-// helperRequestEnvironment names the file the helper dispatcher writes the
-// incident request it received to. The helper runs as this test binary.
-const helperRequestEnvironment = "SDO_TEST_HELPER_DISPATCHER_REQUEST"
+// capturingDispatcher records the incident request the controller dispatches.
+type capturingDispatcher struct{ requests chan IncidentRequest }
 
-// TestRunHelperDispatcher is not a test: it is the local-mode responder the
-// run.go liveness test dispatches, re-executing this test binary.
-func TestRunHelperDispatcher(t *testing.T) {
-	output := os.Getenv(helperRequestEnvironment)
-	if output == "" {
-		t.Skip("helper process for TestRunAttachesStateChangesMadeAfterStartupToIncident")
-	}
-	payload, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	var request IncidentRequest
-	if err := json.Unmarshal(payload, &request); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	if err := os.WriteFile(output+".controller-state", []byte(os.Getenv(ControllerStateEnvironment)), 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	if err := os.WriteFile(output, payload, 0o600); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
-	result, _ := json.Marshal(completedResult(request.IncidentID))
-	fmt.Println(string(result))
-	os.Exit(0)
+func (d capturingDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.requests <- request
+	return completedResult(request.IncidentID), nil
 }
 
 type lockedLines struct {
@@ -139,8 +110,7 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 		objects = append(objects, &readyFrontend()[index])
 	}
 	client := fake.NewSimpleClientset(objects...)
-	requestPath := filepath.Join(t.TempDir(), "request.json")
-	t.Setenv(helperRequestEnvironment, requestPath)
+	dispatcher := capturingDispatcher{requests: make(chan IncidentRequest, 1)}
 	startTimeout := 300 * time.Millisecond
 
 	detector := servicehealth.NewReadyEndpointsDetector(sdk.DetectorSpec{
@@ -165,11 +135,10 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 			Args: []string{
 				"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", gitRepository(t),
 				"--application", "hotel",
-				"--dispatcher", os.Args[0], "--dispatcher-arg", "-test.run=^TestRunHelperDispatcher$",
-				"--dispatcher-mode", "local", "--synthetic-traffic=false", "--lease-duration", "3s",
+				"--synthetic-traffic=false", "--lease-duration", "3s",
 			},
 			Stdout: stdoutWriter, Stderr: stderrWriter,
-			Client: client, StateBaselineStartTimeout: startTimeout,
+			Client: client, StateBaselineStartTimeout: startTimeout, Dispatcher: dispatcher,
 		})
 	}()
 	t.Cleanup(func() {
@@ -209,16 +178,10 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	}
 
 	var request IncidentRequest
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		payload, readErr := os.ReadFile(requestPath)
-		if readErr == nil && json.Unmarshal(payload, &request) == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no incident was dispatched; controller output:\n%s\n%s", lines, errors)
-		}
-		time.Sleep(50 * time.Millisecond)
+	select {
+	case request = <-dispatcher.requests:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("no incident was dispatched; controller output:\n%s\n%s", lines, errors)
 	}
 	if request.StateChanges == nil {
 		t.Fatalf("the incident carries no state diff: %+v", request)
@@ -233,30 +196,25 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 		}
 	}
 
-	// The responder learns where the controller publishes its live view.
-	location, err := os.ReadFile(requestPath + ".controller-state")
-	if err != nil || string(location) != hotel+"-sdo/sdo-controller-state" {
-		t.Fatalf("the responder must be told where the controller state lives, got %q (%v)", location, err)
-	}
 	// A second fault after dispatch appears in the live view, not the request.
 	if err := client.CoreV1().ConfigMaps(hotel).Delete(ctx, "mongo-geo-script", metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	var view *IncidentView
+	var view *contracts.IncidentView
 	eventually(t, "the live view to name the second fault", func() bool {
 		configMap, getErr := client.CoreV1().ConfigMaps(hotel+"-sdo").Get(ctx, "sdo-controller-state", metav1.GetOptions{})
 		if getErr != nil {
 			return false
 		}
-		var state RuntimeState
-		if json.Unmarshal([]byte(configMap.Data[stateDataKey]), &state) != nil || state.IncidentView == nil {
+		document := &contracts.ControllerState{}
+		if parseProtoJSON([]byte(configMap.Data[stateDataKey]), document) != nil || document.GetIncidentView() == nil {
 			return false
 		}
-		view = state.IncidentView
-		return view.StateChanges != nil && findChange(view.StateChanges, "ConfigMap", "mongo-geo-script") != nil
+		view = document.GetIncidentView()
+		return view.GetStateChanges() != nil && findChange(stateChangesState(view.GetStateChanges()), "ConfigMap", "mongo-geo-script") != nil
 	})
-	if view.IncidentID != request.IncidentID || len(view.BlockingDetectors) != 1 ||
-		view.BlockingDetectors[0] != "service-endpoints" {
+	if view.GetIncidentId() != request.IncidentID || len(view.GetBlockingDetectors()) != 1 ||
+		view.GetBlockingDetectors()[0] != "service-endpoints" {
 		t.Fatalf("the view must name the open incident and its blocking health detector: %+v", view)
 	}
 	if findChange(request.StateChanges, "ConfigMap", "mongo-geo-script") != nil {

@@ -512,7 +512,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xeb\x15\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe4\x15\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -522,8 +522,9 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x0fdeployed_commit\x18\x06 \x01(\tR\x0edeployedCommit\x12'\n" +
 	"\n" +
 	"dispatcher\x18\a \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
-	"dispatcher\x12:\n" +
-	"\x0fdispatcher_mode\x18\b \x01(\tB\x11\xbaH\x0er\fR\x03jobR\x05localR\x0edispatcherMode\x12'\n" +
+	"dispatcher\x123\n" +
+	"\x0fdispatcher_mode\x18\b \x01(\tB\n" +
+	"\xbaH\ar\x05R\x03jobR\x0edispatcherMode\x12'\n" +
 	"\x0fdispatcher_args\x18\t \x03(\tR\x0edispatcherArgs\x12'\n" +
 	"\x0fresponder_image\x18\n" +
 	" \x01(\tR\x0eresponderImage\x12%\n" +

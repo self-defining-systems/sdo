@@ -7,6 +7,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"google.golang.org/protobuf/encoding/protojson"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 const DefaultNativeWorktreeRoot = "/workspace/worktrees"
@@ -39,34 +43,22 @@ func NativeLedgerFile(root, incidentID string) (string, error) {
 	return filepath.Join(root, fmt.Sprintf("%x.json", sum)), nil
 }
 
-// ValidateNativeLedger rejects a mismatched incident before evidence leaves
-// broker storage. The payload remains raw for benchmark-specific analysis.
+// ValidateNativeLedger parses the ledger as the canonical ProtoJSON
+// BrokerLedger and rejects a mismatched incident before evidence leaves broker
+// storage. The payload stays raw ProtoJSON for benchmark-specific analysis.
 func ValidateNativeLedger(data []byte, incidentID string) (json.RawMessage, error) {
 	if len(data) == 0 || len(data) > 2<<20 {
 		return nil, errors.New("native ledger evidence is empty or exceeds limit")
 	}
-	var record struct {
-		IncidentID string          `json:"incident_id"`
-		Closure    json.RawMessage `json:"closure"`
-	}
-	if err := json.Unmarshal(data, &record); err != nil {
+	ledger := &contracts.BrokerLedger{}
+	if err := protojson.Unmarshal(data, ledger); err != nil {
 		return nil, fmt.Errorf("decode native ledger: %w", err)
 	}
-	if record.IncidentID != incidentID {
+	if ledger.GetIncidentId() != incidentID {
 		return nil, errors.New("native ledger incident ID mismatch")
 	}
-	if len(record.Closure) > 0 {
-		var closure struct {
-			Request struct {
-				IncidentID string `json:"incident_id"`
-			} `json:"request"`
-		}
-		if err := json.Unmarshal(record.Closure, &closure); err != nil {
-			return nil, fmt.Errorf("decode native closure: %w", err)
-		}
-		if closure.Request.IncidentID != incidentID {
-			return nil, errors.New("native closure incident ID mismatch")
-		}
+	if ledger.GetClosure() != nil && ledger.GetClosure().GetRequest().GetIncidentId() != incidentID {
+		return nil, errors.New("native closure incident ID mismatch")
 	}
 	return append(json.RawMessage(nil), data...), nil
 }

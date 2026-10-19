@@ -40,8 +40,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Finding is one detector observation. Mirrors sdk.Finding and
-// sdo.agents.views.models.Finding.
+// Finding is one detector observation. Mirrors sdk.Finding.
 type Finding struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	DetectorId        string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
@@ -2588,8 +2587,7 @@ func (x *IncidentView) GetStateChanges() *StateChanges {
 }
 
 // DetectorTimelineEntry summarizes one finding's firing history within an
-// incident window; carried in the incident closure. Mirrors
-// sdo.agents.views.models.DetectorTimelineEntry and the Go runtime struct.
+// incident window; carried in the incident closure. Mirrors the Go runtime struct.
 type DetectorTimelineEntry struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	DetectorId          string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`

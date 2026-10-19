@@ -201,16 +201,16 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 		t.Fatal(err)
 	}
 	ledger, err = native.readLedger(workspace.IncidentID)
-	if err != nil || ledger.AcknowledgedAt.IsZero() {
+	if err != nil || ledger.AcknowledgedAt == nil {
 		t.Fatalf("acknowledgment timestamp not durable: %+v %v", ledger, err)
 	}
-	if err := native.PruneIncidentSessions(ledger.AcknowledgedAt.Add(59 * time.Minute)); err != nil {
+	if err := native.PruneIncidentSessions(ledger.AcknowledgedAt.AsTime().Add(59 * time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(sessions, ".sdo-runtime", "sessions", entries[0].Name())); err != nil {
 		t.Fatalf("session pruned before retention expiry: %v", err)
 	}
-	if err := native.PruneIncidentSessions(ledger.AcknowledgedAt.Add(time.Hour)); err != nil {
+	if err := native.PruneIncidentSessions(ledger.AcknowledgedAt.AsTime().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	entries, err = os.ReadDir(filepath.Join(sessions, ".sdo-runtime", "sessions"))

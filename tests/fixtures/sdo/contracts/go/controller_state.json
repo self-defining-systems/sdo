@@ -1,0 +1,379 @@
+{
+  "closure_failure": {
+    "attempts": 1,
+    "first_failed_at": "2026-01-02T03:04:05.000000006Z",
+    "incident_id": "incident-wire",
+    "last_error": "x",
+    "last_failed_at": "2026-01-02T03:04:05.000000006Z",
+    "max_attempts": 3
+  },
+  "dispatch_state": "pending",
+  "finding_states": {
+    "health/fp": {
+      "activations": 1,
+      "active": true,
+      "detector_id": "health",
+      "finding": {
+        "detector_id": "health",
+        "evidence": "e",
+        "fingerprint": "fp",
+        "metadata": {
+          "count": 2
+        },
+        "primary_resource": {
+          "kind": "Service",
+          "name": "web"
+        },
+        "rule_id": "rule",
+        "severity": "critical",
+        "status": "active",
+        "summary": "s"
+      },
+      "firing_count": 2,
+      "first_seen_at": "2026-01-02T03:04:05.000000006Z"
+    }
+  },
+  "history": [
+    {
+      "detector_id": "health",
+      "evaluated_at": "2026-01-02T03:04:05.000000006Z",
+      "fingerprints": [
+        "fp"
+      ],
+      "status": "firing"
+    }
+  ],
+  "incident_detected_at": "2026-01-02T03:04:05.000000006Z",
+  "incident_finding_keys": [
+    "health/fp"
+  ],
+  "incident_open": true,
+  "incident_request": {
+    "application": "demo",
+    "cancellation_token": "cancel-demo-1000000000",
+    "deployed_commit": "deployed",
+    "detector_history": [
+      {
+        "detector_id": "cause",
+        "evaluated_at": "1970-01-01T00:00:00Z",
+        "fingerprints": [
+          "cause"
+        ],
+        "status": "firing"
+      },
+      {
+        "detector_id": "cause",
+        "evaluated_at": "1970-01-01T00:00:01Z",
+        "fingerprints": [
+          "cause"
+        ],
+        "status": "firing"
+      }
+    ],
+    "findings": [
+      {
+        "detector_id": "cause",
+        "evidence": "evidence",
+        "fingerprint": "cause",
+        "primary_resource": {
+          "kind": "Deployment",
+          "name": "cause"
+        },
+        "rule_id": "cause",
+        "severity": "warn",
+        "status": "active",
+        "summary": "fault"
+      }
+    ],
+    "incident_id": "demo-1000000000",
+    "namespace": "demo",
+    "repair_policy": "recorded-actions",
+    "repository_base_commit": "source",
+    "repository_worktree": "/tmp/demo",
+    "response_deadline": "1970-01-01T00:01:01Z",
+    "schema_version": "sdo.dev/v1alpha1",
+    "source_commit": "source",
+    "state_changes": {
+      "baseline_at": "1970-01-01T00:00:00Z",
+      "changes": [
+        {
+          "change": "modified",
+          "kind": "Service",
+          "name": "frontend"
+        }
+      ],
+      "observed_at": "1970-01-01T00:00:01Z"
+    }
+  },
+  "incident_result": {
+    "confirmed_root_causes": [
+      {
+        "evidence": [
+          {
+            "kind": "state-change",
+            "observation": "selector gained a label",
+            "source": "Service/frontend"
+          }
+        ],
+        "explained_detectors": [
+          "cause"
+        ],
+        "resources": [
+          {
+            "kind": "Service",
+            "name": "frontend"
+          }
+        ],
+        "summary": "frontend's selector matches no pods"
+      }
+    ],
+    "incident_id": "demo-1000000000",
+    "repair_actions": [
+      {
+        "action_id": "restore-selector",
+        "completed_at": "1970-01-01T00:00:01.600Z",
+        "details": "kubectl apply",
+        "kind": "kubectl",
+        "resources": [
+          {
+            "kind": "Service",
+            "name": "frontend"
+          }
+        ],
+        "reversible": true,
+        "started_at": "1970-01-01T00:00:01.500Z",
+        "success": true,
+        "summary": "restore the selector",
+        "target": "Service/frontend"
+      }
+    ],
+    "schema_version": "sdo.dev/v1alpha1",
+    "status": "completed",
+    "timing": {
+      "completed_at": "1970-01-01T00:00:02Z",
+      "started_at": "1970-01-01T00:00:01Z"
+    },
+    "usage": {},
+    "verification_evidence": [
+      {
+        "details": "healthy",
+        "name": "sdo-incident-status",
+        "observed_at": "1970-01-01T00:00:02Z",
+        "passed": true
+      }
+    ]
+  },
+  "incident_view": {
+    "blocking_detectors": [
+      "health"
+    ],
+    "blocking_findings": [
+      {
+        "detector_id": "health",
+        "evidence": "e",
+        "fingerprint": "fp",
+        "metadata": {
+          "count": 2
+        },
+        "primary_resource": {
+          "kind": "Service",
+          "name": "web"
+        },
+        "rule_id": "rule",
+        "severity": "critical",
+        "status": "active",
+        "summary": "s"
+      }
+    ],
+    "incident_id": "incident-wire",
+    "observed_at": "2026-01-02T03:04:05.000000006Z"
+  },
+  "pending_batch": {
+    "deadline": "2026-01-02T03:04:05.000000006Z",
+    "deadlines": {
+      "health/fp": "2026-01-02T03:04:05.000000006Z"
+    },
+    "findings": [
+      {
+        "detector_id": "health",
+        "evidence": "e",
+        "fingerprint": "fp",
+        "metadata": {
+          "count": 2
+        },
+        "primary_resource": {
+          "kind": "Service",
+          "name": "web"
+        },
+        "rule_id": "rule",
+        "severity": "critical",
+        "status": "active",
+        "summary": "s"
+      }
+    ]
+  },
+  "pending_closure": {
+    "detected_at": "1970-01-01T00:00:01Z",
+    "detector_timeline": [
+      {
+        "activations": 1,
+        "cleared_at": "1970-01-01T00:00:03Z",
+        "detector_id": "cause",
+        "fingerprint": "cause",
+        "first_activated_at": "1970-01-01T00:00:01Z",
+        "last_seen_at": "1970-01-01T00:00:01Z",
+        "relation": "before_dispatch",
+        "rule_id": "cause"
+      }
+    ],
+    "dispatched_at": "1970-01-01T00:00:01Z",
+    "final_detector_states": [
+      {
+        "detector_id": "cause",
+        "evaluated_at": "1970-01-01T00:00:03Z",
+        "status": "clear"
+      }
+    ],
+    "final_state_changes": {
+      "baseline_at": "1970-01-01T00:00:00Z",
+      "observed_at": "1970-01-01T00:00:03Z"
+    },
+    "health_cleared_at": "1970-01-01T00:00:02Z",
+    "incident_detector_fired_before_dispatch": true,
+    "incident_detector_states": [
+      {
+        "detector_id": "cause",
+        "evaluated_at": "1970-01-01T00:00:03Z",
+        "status": "clear"
+      }
+    ],
+    "observed_state_changes": [
+      {
+        "first_observed_at": "1970-01-01T00:00:01Z",
+        "kind": "Service",
+        "name": "frontend"
+      }
+    ],
+    "request": {
+      "application": "demo",
+      "cancellation_token": "cancel-demo-1000000000",
+      "deployed_commit": "deployed",
+      "detector_history": [
+        {
+          "detector_id": "cause",
+          "evaluated_at": "1970-01-01T00:00:00Z",
+          "fingerprints": [
+            "cause"
+          ],
+          "status": "firing"
+        },
+        {
+          "detector_id": "cause",
+          "evaluated_at": "1970-01-01T00:00:01Z",
+          "fingerprints": [
+            "cause"
+          ],
+          "status": "firing"
+        }
+      ],
+      "findings": [
+        {
+          "detector_id": "cause",
+          "evidence": "evidence",
+          "fingerprint": "cause",
+          "primary_resource": {
+            "kind": "Deployment",
+            "name": "cause"
+          },
+          "rule_id": "cause",
+          "severity": "warn",
+          "status": "active",
+          "summary": "fault"
+        }
+      ],
+      "incident_id": "demo-1000000000",
+      "namespace": "demo",
+      "repair_policy": "recorded-actions",
+      "repository_base_commit": "source",
+      "repository_worktree": "/tmp/demo",
+      "response_deadline": "1970-01-01T00:01:01Z",
+      "schema_version": "sdo.dev/v1alpha1",
+      "source_commit": "source",
+      "state_changes": {
+        "baseline_at": "1970-01-01T00:00:00Z",
+        "changes": [
+          {
+            "change": "modified",
+            "kind": "Service",
+            "name": "frontend"
+          }
+        ],
+        "observed_at": "1970-01-01T00:00:01Z"
+      }
+    },
+    "responder_completed_at": "1970-01-01T00:00:02Z",
+    "result": {
+      "confirmed_root_causes": [
+        {
+          "evidence": [
+            {
+              "kind": "state-change",
+              "observation": "selector gained a label",
+              "source": "Service/frontend"
+            }
+          ],
+          "explained_detectors": [
+            "cause"
+          ],
+          "resources": [
+            {
+              "kind": "Service",
+              "name": "frontend"
+            }
+          ],
+          "summary": "frontend's selector matches no pods"
+        }
+      ],
+      "incident_id": "demo-1000000000",
+      "repair_actions": [
+        {
+          "action_id": "restore-selector",
+          "completed_at": "1970-01-01T00:00:01.600Z",
+          "details": "kubectl apply",
+          "kind": "kubectl",
+          "resources": [
+            {
+              "kind": "Service",
+              "name": "frontend"
+            }
+          ],
+          "reversible": true,
+          "started_at": "1970-01-01T00:00:01.500Z",
+          "success": true,
+          "summary": "restore the selector",
+          "target": "Service/frontend"
+        }
+      ],
+      "schema_version": "sdo.dev/v1alpha1",
+      "status": "completed",
+      "timing": {
+        "completed_at": "1970-01-01T00:00:02Z",
+        "started_at": "1970-01-01T00:00:01Z"
+      },
+      "usage": {},
+      "verification_evidence": [
+        {
+          "details": "healthy",
+          "name": "sdo-incident-status",
+          "observed_at": "1970-01-01T00:00:02Z",
+          "passed": true
+        }
+      ]
+    },
+    "verified_at": "1970-01-01T00:00:03Z"
+  },
+  "scheduler_deadlines": {
+    "health": "2026-01-02T03:04:05.000000006Z"
+  },
+  "version": "sdo.controller/v1"
+}

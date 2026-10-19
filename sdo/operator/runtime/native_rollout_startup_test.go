@@ -31,7 +31,7 @@ func TestNativeRolloutHandoffRequiresObservedNewRevision(t *testing.T) {
 	}
 	expectation := ControllerRolloutExpectation{IncidentID: "inc-handoff", ReflectionCommit: revision, BeforeDetectorFingerprint: "old-tree", AfterDetectorFingerprint: fingerprint}
 	receipt := ClosureReceipt{IncidentID: "inc-handoff", ReflectionCommit: revision, OutcomeCommit: "outcome", AckToken: "token"}
-	if err := native.saveLedger(nativeLedger{IncidentID: receipt.IncidentID, ReflectionCommit: revision, RolloutExpectation: &expectation, Receipt: &receipt}); err != nil {
+	if err := native.saveLedger(&contractsv1alpha1.BrokerLedger{IncidentId: receipt.IncidentID, ReflectionCommit: revision, RolloutExpectation: rolloutExpectationContract(&expectation), Receipt: closureReceiptContract(&receipt)}); err != nil {
 		t.Fatal(err)
 	}
 	launch := &contractsv1alpha1.ControllerConfig{DiagnosticsFingerprint: fingerprint, ControllerArtifactDigest: "sha256:binary", ControllerRevision: revision}

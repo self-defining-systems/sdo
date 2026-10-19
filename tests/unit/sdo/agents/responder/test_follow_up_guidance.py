@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from google.protobuf import json_format
+
 from sdo.agents.responder.codex import _responder_prompt
-from sdo.agents.views import (
-    FollowUpContext,
-    IncidentRequest,
-)
+from sdo.contracts import FollowUpContext, IncidentRequest
+from tests.proto_messages import evolve
 
 _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "incident_request.json"
 
@@ -17,8 +17,8 @@ _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts
 def _request(**update: object) -> IncidentRequest:
     raw = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     raw["memory_snapshot"] = {"accepted_commit": raw["repository_base_commit"]}
-    request = IncidentRequest.model_validate(raw)
-    return request.model_copy(update=update) if update else request
+    request = json_format.ParseDict(raw, IncidentRequest())
+    return evolve(request, **update) if update else request
 
 
 def test_prompt_without_follow_up_context_has_no_follow_up_guidance() -> None:

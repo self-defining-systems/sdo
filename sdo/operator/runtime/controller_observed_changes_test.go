@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -109,12 +107,12 @@ func TestClosureRecordsEveryChangeObservedWhileTheIncidentWasOpen(t *testing.T) 
 	if closure.FinalStateChanges == nil || len(closure.FinalStateChanges.Changes) != 0 {
 		t.Fatalf("both faults were reverted; the closing view must be empty: %+v", closure.FinalStateChanges)
 	}
-	encoded, err := json.Marshal(closure)
+	message, err := incidentClosureContract(closure)
 	if err != nil {
-		t.Fatalf("marshal closure: %v", err)
+		t.Fatalf("project closure: %v", err)
 	}
-	if !strings.Contains(string(encoded), `"observed_state_changes":[`) {
-		t.Fatalf("closure JSON must carry observed_state_changes: %s", encoded)
+	if len(message.GetObservedStateChanges()) == 0 {
+		t.Fatalf("closure must carry observed_state_changes: %v", message)
 	}
 }
 
@@ -170,11 +168,11 @@ func TestNoBaselineRecordsNoObservedChanges(t *testing.T) {
 		}
 	}
 	closure := <-closed
-	encoded, err := json.Marshal(closure)
+	message, err := incidentClosureContract(closure)
 	if err != nil {
-		t.Fatalf("marshal closure: %v", err)
+		t.Fatalf("project closure: %v", err)
 	}
-	if strings.Contains(string(encoded), "observed_state_changes") {
-		t.Fatalf("a closure without a baseline must omit observed_state_changes: %s", encoded)
+	if len(message.GetObservedStateChanges()) != 0 {
+		t.Fatalf("a closure without a baseline must omit observed_state_changes: %v", message)
 	}
 }
