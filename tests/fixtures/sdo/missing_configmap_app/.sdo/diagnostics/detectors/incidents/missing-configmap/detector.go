@@ -8,7 +8,7 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-const playbookPath = ".sdo/playbooks/missing-configmap/README.md"
+const playbookPath = "missing-configmap"
 
 type Detector struct{}
 

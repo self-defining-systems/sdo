@@ -45,7 +45,7 @@ func repository(t *testing.T) string {
 func memoryFixture(t *testing.T, root string) {
 	t.Helper()
 	files := map[string]string{
-		".sdo/schema-version":           "2\n",
+		".sdo/schema-version":           "3\n",
 		".sdo/goal.md":                  "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
 		".sdo/arch.md":                  "---\nschema_version: 1\ngenerated_at_commit: base\ngenerated_at: 2026-01-01T00:00:00Z\napplication: test\ntopology_fingerprint: abc\n---\nArchitecture\n",
 		".sdo/playbooks/README.md":      "# Playbooks\n\n- [base](base/README.md)\n",
@@ -82,7 +82,7 @@ func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
 			".sdo/goal.md": "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
 		}},
 		{"bootstrap-metadata", Upkeep, map[string]string{
-			".sdo/schema-version": "2\n", ".sdo/diagnostics/go.mod": "module app-diagnostics\n\ngo 1.24\n",
+			".sdo/schema-version": "3\n", ".sdo/diagnostics/go.mod": "module app-diagnostics\n\ngo 1.24\n",
 		}},
 		{"bootstrap-source", Deployer, map[string]string{
 			"app.txt": "deployed source\n",

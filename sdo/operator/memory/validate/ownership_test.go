@@ -166,7 +166,7 @@ func TestOwnershipTable(t *testing.T) {
 			write(t, r, cacheDetector, "package cache\n\n// x\n")
 		}, []string{RuleUpkeepMigration}},
 		{"upkeep stamps schema alone", Upkeep, InitialPhase, func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "2\n")
+			write(t, r, layout.SchemaVersionFile, "3\n")
 			write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 		}, nil},
 		{"unknown actor", Actor("intern"), InitialPhase, func(t *testing.T, r string) {
@@ -260,13 +260,13 @@ func TestUpkeepMayMigrateLegacyDetectorsButNotRewriteThem(t *testing.T) {
 	if got := ruleSet(diagnose(t, request(root))); !same(got, []string{RuleUpkeepMigration}) {
 		t.Fatalf("rewriting migration: rules = %v", got)
 	}
-	// Without a legacy manifest in the baseline there is nothing to migrate.
+	// A schema stamp does not license edits to accepted detector source.
 	current := goodTree(t)
 	commit(t, current, "base")
 	write(t, current, cacheDetector, "package cache\n\n// x\n")
-	write(t, current, layout.SchemaVersionFile, "2\n\n")
+	write(t, current, layout.SchemaVersionFile, "3\n\n")
 	if got := ruleSet(diagnose(t, request(current))); !same(got, []string{RuleUpkeepMigration}) {
-		t.Fatalf("detector edit without legacy baseline: rules = %v", got)
+		t.Fatalf("detector source edit during a schema stamp: rules = %v", got)
 	}
 }
 

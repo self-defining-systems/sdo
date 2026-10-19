@@ -13,12 +13,11 @@ import (
 const Version = "dev"
 
 type RuntimeOptions struct {
-	Args             []string
-	Stdout           io.Writer
-	Stderr           io.Writer
-	Provider         SnapshotProvider
-	Sink             Sink
-	PlaybookResolver PlaybookResolver
+	Args     []string
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Provider SnapshotProvider
+	Sink     Sink
 }
 
 func Run(detectors []sdk.Detector) {
@@ -68,11 +67,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if sink == nil {
 		sink = JSONSink{Writer: stdout}
 	}
-	resolver := options.PlaybookResolver
-	if resolver == nil {
-		resolver = logicalPlaybookIDs
-	}
-	sink = PlaybookResolvingSink{Inner: sink, Resolve: resolver}
 	provider := options.Provider
 	if provider == nil {
 		kubernetesProvider, err := NewKubernetesSnapshotProvider(*namespace)

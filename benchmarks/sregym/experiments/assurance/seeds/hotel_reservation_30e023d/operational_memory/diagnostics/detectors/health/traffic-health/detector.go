@@ -18,7 +18,7 @@ func New() sdk.Detector {
 		Owner:       sdk.DetectorOwnerHealthJudge,
 		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
 		Batching:    sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
-		Playbooks:   []string{".sdo/playbooks/health-objective/README.md"},
+		Playbooks:   []string{"health-objective"},
 		OriginatingCommit: "lifecycle-bootstrap",
 		Watches:     []sdk.WatchKind{traffic.Watch},
 		Interval:    10 * time.Second,

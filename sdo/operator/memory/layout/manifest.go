@@ -96,8 +96,8 @@ func (m DetectorManifest) Validate() error {
 	}
 	playbooks := map[string]bool{}
 	for _, playbook := range m.PossiblePlaybooks {
-		if _, err := PlaybookID(playbook); err != nil {
-			return fmt.Errorf("detector %s has unsafe playbook %q", m.ID, playbook)
+		if !ValidPlaybookID(playbook) {
+			return fmt.Errorf("detector %s has invalid playbook ID %q", m.ID, playbook)
 		}
 		if playbooks[playbook] {
 			return fmt.Errorf("detector %s has duplicate possiblePlaybooks", m.ID)

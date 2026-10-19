@@ -3,11 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"sdo.dev/operator/latefindings"
-	"sdo.dev/operator/memory/layout"
 )
 
 // lateFindingSink projects controller-authored telemetry into the incident's
@@ -26,15 +24,13 @@ func (s lateFindingSink) Record(record FiringRecord) error {
 	for name, value := range record.ParameterBindings {
 		bindings[name] = value
 	}
-	playbookIDs, err := layout.PlaybookIDs(record.SurfacedPlaybooks)
-	if err != nil { return errors.Join(downstreamErr, fmt.Errorf("project logical late findings playbooks: %w", err)) }
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	projectionErr := s.Store.Update(ctx, latefindings.Event{
 		IncidentID: record.IncidentID, Relation: string(record.DispatchRelation), Event: string(record.Event),
 		DetectorID: record.DetectorID, DetectorClass: record.DetectorClass, RuleID: record.RuleID,
 		Fingerprint: record.Fingerprint, Severity: record.Severity, RecordedAt: record.RecordedAt.UTC().Format(time.RFC3339Nano),
-		ParameterBindings: bindings, PlaybookIDs: playbookIDs,
+		ParameterBindings: bindings, PlaybookIDs: append([]string(nil), record.SurfacedPlaybooks...),
 	})
 	return errors.Join(downstreamErr, projectionErr)
 }

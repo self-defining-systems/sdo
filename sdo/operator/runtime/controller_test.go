@@ -133,7 +133,7 @@ func TestControllerSuppressesTransientAndBatchesPersistentFindingsExactlyOnce(t 
 func TestControllerSurfacesDetectorPlaybooksWhenFindingOmitsThem(t *testing.T) {
 	start := time.Unix(0, 0)
 	detector := controllerDetector("health", time.Second, stateFinding("fault"))
-	detector.spec.Playbooks = []string{".sdo/playbooks/health-objective/README.md"}
+	detector.spec.Playbooks = []string{"health-objective"}
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	config := testControllerConfig()
 	config.FiringThreshold = 1

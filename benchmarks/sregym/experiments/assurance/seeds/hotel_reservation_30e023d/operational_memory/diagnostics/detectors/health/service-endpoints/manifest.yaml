@@ -22,5 +22,5 @@ batching:
     severity: critical
     debounce: 500ms
 possiblePlaybooks:
-    - .sdo/playbooks/health-objective/README.md
+    - health-objective
 originatingCommit: lifecycle-bootstrap

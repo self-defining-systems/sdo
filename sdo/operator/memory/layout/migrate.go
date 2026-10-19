@@ -8,6 +8,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -41,9 +43,13 @@ type migrationStep struct {
 // Schema version 1 kept every detector in .sdo/diagnostics/manifest.yaml.
 // Version 2 gives each detector <detector dir>/manifest.yaml. Migration splits
 // the shared manifest, moves a package whose directory differs from its detector
-// ID to the canonical directory, removes the shared manifest, and stamps the new schema version. It plans
-// every step before touching the checkout, so an ambiguous repository is left
-// unchanged.
+// ID to the canonical directory, and removes the shared manifest.
+//
+// Version 3 refers to playbooks only by logical ID. Migration rewrites physical
+// playbook paths in detector Go source and manifests to IDs (see
+// RewritePlaybookReferences) and stamps the schema version. Every step is planned,
+// including all rewritten contents, before the checkout is touched, so an
+// ambiguous repository is left unchanged.
 func Migrate(root string) (bool, error) {
 	version, err := readSchemaVersion(root)
 	if err != nil {
@@ -56,11 +62,11 @@ func Migrate(root string) (bool, error) {
 		return false, fmt.Errorf("read legacy detector manifest: %w", legacyErr)
 	}
 	switch {
-	case version == CurrentSchemaVersion && !hasLegacy:
-		return false, nil
+	case version >= 2 && hasLegacy:
+		return false, fmt.Errorf("schema version %d repository still has a legacy detector manifest", version)
 	case version == CurrentSchemaVersion:
-		return false, errors.New("schema version 2 repository still has a legacy detector manifest")
-	case version != 0 && version != 1:
+		return false, nil
+	case version < 0 || version > CurrentSchemaVersion:
 		return false, fmt.Errorf("cannot migrate operational memory schema version %d", version)
 	}
 	var steps []migrationStep
@@ -68,6 +74,10 @@ func Migrate(root string) (bool, error) {
 		if steps, err = planMigration(root, legacyData); err != nil {
 			return false, err
 		}
+	}
+	rewrites, err := planPlaybookRewrites(root, steps)
+	if err != nil {
+		return false, err
 	}
 	for _, step := range steps {
 		if step.from != step.to {
@@ -87,11 +97,132 @@ func Migrate(root string) (bool, error) {
 			return false, err
 		}
 	}
+	for _, rewrite := range rewrites {
+		if err := os.WriteFile(rewrite.path, rewrite.data, rewrite.mode); err != nil {
+			return false, err
+		}
+	}
 	target := filepath.Join(root, filepath.FromSlash(SchemaVersionFile))
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return false, err
 	}
 	return true, os.WriteFile(target, []byte(strconv.Itoa(CurrentSchemaVersion)+"\n"), 0o644)
+}
+
+type fileRewrite struct {
+	path string
+	data []byte
+	mode fs.FileMode
+}
+
+var (
+	quotedPlaybookReadme = regexp.MustCompile(`"\.sdo/playbooks/([a-z][a-z0-9_-]*)/README\.md"`)
+	rawPlaybookReadme    = regexp.MustCompile("`\\.sdo/playbooks/([a-z][a-z0-9_-]*)/README\\.md`")
+)
+
+// RewritePlaybookReferences replaces physical playbook paths in detector source
+// with logical references: a string literal holding exactly a playbook README
+// path becomes the playbook ID, any other embedded README path becomes the ID,
+// and an embedded script path becomes script:<id>/<name>. Other physical paths
+// are left for `memory check` to report.
+func RewritePlaybookReferences(source string) string {
+	source = quotedPlaybookReadme.ReplaceAllString(source, `"$1"`)
+	source = rawPlaybookReadme.ReplaceAllString(source, "`$1`")
+	source = embeddedScriptPath.ReplaceAllString(source, "script:$1/$2")
+	return embeddedPlaybookPath.ReplaceAllString(source, "$1")
+}
+
+// planPlaybookRewrites computes the version 3 contents of every detector
+// manifest and Go source file. Detectors that version 1 migration moves are read
+// from their current location and written to their final one.
+func planPlaybookRewrites(root string, steps []migrationStep) ([]fileRewrite, error) {
+	type location struct{ from, to string }
+	var locations []location
+	if len(steps) > 0 {
+		for _, step := range steps {
+			locations = append(locations, location{step.from, step.to})
+		}
+	} else {
+		for _, class := range []Class{ClassHealth, ClassIncident} {
+			parent := filepath.Join(root, filepath.FromSlash(DetectorsDir), class.Dir())
+			entries, err := os.ReadDir(parent)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				dir := filepath.Join(parent, entry.Name())
+				locations = append(locations, location{dir, dir})
+			}
+		}
+	}
+	var rewrites []fileRewrite
+	for _, loc := range locations {
+		if info, err := os.Lstat(loc.from); err != nil || !info.IsDir() {
+			if err == nil {
+				err = errors.New("not a directory")
+			}
+			return nil, fmt.Errorf("detector package %s: %w", loc.from, err)
+		}
+		err := filepath.WalkDir(loc.from, func(p string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.Type()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("detector package contains symlink %s", p)
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			rel, _ := filepath.Rel(loc.from, p)
+			target := filepath.Join(loc.to, rel)
+			switch {
+			case strings.HasSuffix(entry.Name(), ".go"):
+			case rel == ManifestFileName && len(steps) == 0:
+			default:
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			var updated []byte
+			if rel == ManifestFileName {
+				manifest, err := ParseDetectorManifest(data)
+				if err != nil {
+					return fmt.Errorf("%s: %w", p, err)
+				}
+				ids, err := PlaybookIDs(manifest.PossiblePlaybooks)
+				if err != nil {
+					return fmt.Errorf("%s: %w", p, err)
+				}
+				if slices.Equal(ids, manifest.PossiblePlaybooks) {
+					return nil
+				}
+				manifest.PossiblePlaybooks = ids
+				if updated, err = MarshalDetectorManifest(manifest); err != nil {
+					return err
+				}
+			} else {
+				updated = []byte(RewritePlaybookReferences(string(data)))
+				if bytes.Equal(updated, data) {
+					return nil
+				}
+			}
+			rewrites = append(rewrites, fileRewrite{path: target, data: updated, mode: info.Mode().Perm()})
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return rewrites, nil
 }
 
 func readSchemaVersion(root string) (int, error) {
@@ -127,6 +258,50 @@ func LegacyDetectors(root string) ([]DetectorManifest, error) {
 	manifests := make([]DetectorManifest, 0, len(legacy))
 	for _, detector := range legacy {
 		manifests = append(manifests, currentHeader(detector.DetectorManifest))
+	}
+	return manifests, nil
+}
+
+// AcceptedDetectors returns the detector registrations of a repository of any
+// supported schema version as migration to CurrentSchemaVersion would write
+// them: legacy or per-detector manifests, read without validation, with
+// playbook references reduced to logical IDs. Upkeep ownership uses it to
+// check that a migration preserved the accepted detectors.
+func AcceptedDetectors(root string) ([]DetectorManifest, error) {
+	manifests, err := LegacyDetectors(root)
+	if err != nil {
+		return nil, err
+	}
+	if manifests == nil {
+		for _, class := range []Class{ClassHealth, ClassIncident} {
+			parent := filepath.Join(root, filepath.FromSlash(DetectorsDir), class.Dir())
+			entries, err := os.ReadDir(parent)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range entries {
+				data, err := os.ReadFile(filepath.Join(parent, entry.Name(), ManifestFileName))
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				manifest, err := ParseDetectorManifest(data)
+				if err != nil {
+					return nil, fmt.Errorf("detector %s: %w", entry.Name(), err)
+				}
+				manifests = append(manifests, manifest)
+			}
+		}
+	}
+	for i := range manifests {
+		if manifests[i].PossiblePlaybooks, err = PlaybookIDs(manifests[i].PossiblePlaybooks); err != nil {
+			return nil, fmt.Errorf("detector %s: %w", manifests[i].ID, err)
+		}
 	}
 	return manifests, nil
 }
@@ -184,6 +359,9 @@ func planMigration(root string, data []byte) ([]migrationStep, error) {
 			}
 		}
 		manifest := currentHeader(detector.DetectorManifest)
+		if manifest.PossiblePlaybooks, err = PlaybookIDs(manifest.PossiblePlaybooks); err != nil {
+			return nil, fmt.Errorf("legacy detector %s: %w", detector.ID, err)
+		}
 		steps = append(steps, migrationStep{from: from, to: to, manifest: manifest, class: class})
 	}
 	return steps, nil

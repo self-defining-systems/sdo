@@ -61,6 +61,8 @@ func TestStructuralAndSemanticRules(t *testing.T) {
 		{"script-unreferenced", []string{RuleScriptUnreferenced}, ".sdo/playbooks/base/scripts/other.sh", 0},
 		{"script-syntax", []string{RuleScriptSyntax}, ".sdo/playbooks/base/scripts/fix.sh", 0},
 		{"physical-path", []string{RulePhysicalPath}, ".sdo/playbooks/base/README.md", 7},
+		{"detector-physical-path", []string{RulePhysicalPath}, ".sdo/diagnostics/detectors/incidents/cache/detector.go", 3},
+		{"manifest-playbook-path", []string{RuleManifestInvalid}, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

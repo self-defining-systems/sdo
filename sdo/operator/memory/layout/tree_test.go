@@ -34,7 +34,7 @@ func sampleManifest(class Class, id string) DetectorManifest {
 
 func writeTree(t *testing.T, root string) {
 	t.Helper()
-	writeFile(t, root, ".sdo/schema-version", "2\n")
+	writeFile(t, root, ".sdo/schema-version", "3\n")
 	writeFile(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\n---\n# Goal\n")
 	writeFile(t, root, ".sdo/arch.md", "---\nschema_version: 1\n---\nArchitecture\n")
 	writeFile(t, root, ".sdo/playbooks/README.md", "# Operational playbooks\n")
@@ -54,7 +54,7 @@ func TestReadTreeParsesEveryKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tree.SchemaVersion != 2 {
+	if tree.SchemaVersion != 3 {
 		t.Errorf("schema version = %d", tree.SchemaVersion)
 	}
 	if tree.Goal.Meta["owner"] != "human" || !strings.Contains(tree.Goal.Body, "# Goal") {

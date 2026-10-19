@@ -154,6 +154,6 @@ Use trajectories to explain hypotheses, commands, tool failures, and detours. Do
 
 Native worker task/result payloads use logical `playbook_id`, `script_names`, and `proposed_artifact_ids`; a reflection result may include a typed detector/playbook `artifact_proposal`. Resolve those IDs through the accepted-commit memory catalog and broker commit when investigating learning. Old Python-run receipts may still contain `.sdo/` paths in `playbooks`, `scripts`, or `proposed_memory_changes`; treat these as legacy transport values rather than extra artifacts. The worker's proposed IDs are claims until the Go memory edge materializes them and the broker accepts the resulting diff.
 
-## Operational memory layout (schema version 2)
+## Operational memory layout (schema version 3)
 
-Detectors are registered by per-detector manifests at `.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml` (the directory name is the detector ID). The former single `.sdo/diagnostics/manifest.yaml` index exists only in schema version 1 repositories; Upkeep migrates it. Readers must enumerate detector manifests instead of parsing one index.
+Detectors are registered by per-detector manifests at `.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml` (the directory name is the detector ID). The former single `.sdo/diagnostics/manifest.yaml` index exists only in schema version 1 repositories; Upkeep migrates it. Schema version 3 also stores playbook references (`possiblePlaybooks`, detector `Playbooks`) as logical IDs; version 2 repositories used `.sdo/playbooks/<id>/README.md` paths. Readers must enumerate detector manifests instead of parsing one index.

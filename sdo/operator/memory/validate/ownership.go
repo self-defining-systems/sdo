@@ -196,7 +196,8 @@ func (s *run) candidateManifests() map[string]*detector {
 
 // upkeepMigration lets Upkeep touch detectors only as part of a schema
 // migration: the same change must stamp the new schema version, and the
-// accepted detector registrations must survive it unchanged.
+// accepted detector registrations must survive it unchanged, modulo the
+// normalization of playbook references to logical IDs.
 func (s *run) upkeepMigration(base string) error {
 	fail := func(message string) {
 		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
@@ -205,11 +206,23 @@ func (s *run) upkeepMigration(base string) error {
 		fail("upkeep may change detectors only together with a schema-version migration")
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(base, layout.LegacyDetectorManifestFile)); err != nil {
-		fail("upkeep detector migration needs a legacy detector manifest in the accepted baseline")
-		return nil
+	_, legacyErr := os.Stat(filepath.Join(base, layout.LegacyDetectorManifestFile))
+	if legacyErr != nil {
+		// Detectors stay where they are, so their Go source may change only by
+		// the playbook-reference rewrite that migration performs.
+		for _, det := range s.sortedDetectors() {
+			for _, file := range det.files {
+				if !strings.HasSuffix(file.path, ".go") {
+					continue
+				}
+				accepted, err := os.ReadFile(filepath.Join(base, filepath.FromSlash(file.path)))
+				if err != nil || string(file.content) != layout.RewritePlaybookReferences(string(accepted)) {
+					s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: file.path, Message: "migration may change detector source only by rewriting playbook paths to logical IDs"})
+				}
+			}
+		}
 	}
-	legacy, err := layout.LegacyDetectors(base)
+	legacy, err := layout.AcceptedDetectors(base)
 	if err != nil {
 		return fmt.Errorf("baseline manifest: %w", err)
 	}

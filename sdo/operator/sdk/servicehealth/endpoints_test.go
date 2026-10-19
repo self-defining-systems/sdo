@@ -24,7 +24,7 @@ func spec() sdk.DetectorSpec {
 		Interval:    15 * time.Second,
 		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
 		Batching:    sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
-		Playbooks:   []string{".sdo/playbooks/health-objective/README.md"}, OriginatingCommit: "lifecycle-bootstrap",
+		Playbooks:   []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
 	}
 }
 

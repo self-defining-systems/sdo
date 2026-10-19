@@ -18,14 +18,15 @@ type Detector interface {
 }
 
 type DetectorSpec struct {
-	ID                  string
-	Class               DetectorClass
-	Owner               DetectorOwner
-	Description         string
-	Watches             []WatchKind
-	Interval            time.Duration
-	Persistence         PersistencePolicy
-	Batching            BatchingPolicy
+	ID          string
+	Class       DetectorClass
+	Owner       DetectorOwner
+	Description string
+	Watches     []WatchKind
+	Interval    time.Duration
+	Persistence PersistencePolicy
+	Batching    BatchingPolicy
+	// Playbooks are logical playbook IDs (for example "cache-pressure"), never paths.
 	Playbooks           []string
 	OriginatingIncident string
 	OriginatingCommit   string
@@ -102,14 +103,15 @@ func ObjectRefFrom(kind string, apiVersion string, object metav1.Object) ObjectR
 }
 
 type Finding struct {
-	DetectorID        string               `json:"detector_id,omitempty"`
-	RuleID            string               `json:"rule_id"`
-	Status            FindingStatus        `json:"status"`
-	Severity          FindingSeverity      `json:"severity"`
-	Summary           string               `json:"summary"`
-	Evidence          string               `json:"evidence"`
-	PrimaryResource   ObjectRef            `json:"primary_resource"`
-	RelatedResources  []ObjectRef          `json:"related_resources,omitempty"`
+	DetectorID       string          `json:"detector_id,omitempty"`
+	RuleID           string          `json:"rule_id"`
+	Status           FindingStatus   `json:"status"`
+	Severity         FindingSeverity `json:"severity"`
+	Summary          string          `json:"summary"`
+	Evidence         string          `json:"evidence"`
+	PrimaryResource  ObjectRef       `json:"primary_resource"`
+	RelatedResources []ObjectRef     `json:"related_resources,omitempty"`
+	// Playbooks are logical playbook IDs.
 	Playbooks         []string             `json:"playbooks,omitempty"`
 	ParameterBindings map[string]ObjectRef `json:"parameter_bindings,omitempty"`
 	Fingerprint       string               `json:"fingerprint,omitempty"`
