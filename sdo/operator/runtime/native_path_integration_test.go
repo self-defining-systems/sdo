@@ -145,7 +145,7 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 	var response *anypb.Any
 	var err error
 	switch task.GetTaskType() {
-	case nativeSourceTask:
+	case nativeSourceTask():
 		if err = os.WriteFile(filepath.Join(checkout, "app.txt"), []byte("deployed source\n"), 0o644); err != nil {
 			return nil, err
 		}
@@ -164,13 +164,13 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 			return nil, packErr
 		}
 		response, err = anypb.New(&contracts.SourceDeploymentResult{Proposed: true, Summary: "source prepared", AgentSessionId: "source-session", Plan: &contracts.DeploymentPlan{StrategyId: "raw-manifests-v1", StrategyConfig: config}})
-	case nativeArchitectureTask:
+	case nativeArchitectureTask():
 		request := &contracts.ArchitectureRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
 		}
 		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded demo.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
-	case nativeHealthJudgeTask:
+	case nativeHealthJudgeTask():
 		request := &contracts.HealthJudgeRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
@@ -265,11 +265,9 @@ func (i *nativePathInstaller) Install(_ context.Context, commit, namespace strin
 
 // The task types are whatever the built-in manifests declare for each request
 // message; the test restates none of them.
-var (
-	nativeSourceTask       = manifestTaskType(&contracts.SourceDeploymentRequest{})
-	nativeArchitectureTask = manifestTaskType(&contracts.ArchitectureRequest{})
-	nativeHealthJudgeTask  = manifestTaskType(&contracts.HealthJudgeRequest{})
-)
+func nativeSourceTask() string { return manifestTaskType(&contracts.SourceDeploymentRequest{}) }
+func nativeArchitectureTask() string { return manifestTaskType(&contracts.ArchitectureRequest{}) }
+func nativeHealthJudgeTask() string { return manifestTaskType(&contracts.HealthJudgeRequest{}) }
 
 func manifestTaskType(request proto.Message) string {
 	registry, err := worker_registry.LoadDirectory(registrytest.Directory())
