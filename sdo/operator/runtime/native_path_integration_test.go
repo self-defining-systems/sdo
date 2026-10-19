@@ -265,9 +265,9 @@ func (i *nativePathInstaller) Install(_ context.Context, commit, namespace strin
 
 // The task types are whatever the built-in manifests declare for each request
 // message; the test restates none of them.
-func nativeSourceTask() string { return manifestTaskType(&contracts.SourceDeploymentRequest{}) }
+func nativeSourceTask() string       { return manifestTaskType(&contracts.SourceDeploymentRequest{}) }
 func nativeArchitectureTask() string { return manifestTaskType(&contracts.ArchitectureRequest{}) }
-func nativeHealthJudgeTask() string { return manifestTaskType(&contracts.HealthJudgeRequest{}) }
+func nativeHealthJudgeTask() string  { return manifestTaskType(&contracts.HealthJudgeRequest{}) }
 
 func manifestTaskType(request proto.Message) string {
 	registry, err := worker_registry.LoadDirectory(registrytest.Directory())
