@@ -36,7 +36,7 @@ def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.
         if command[:3] == ["kind", "get", "nodes"]:
             return subprocess.CompletedProcess(command, 0, "node-a\nnode-b\n", "")
         if command[:3] == ["docker", "exec", "node-a"] or command[:3] == ["docker", "exec", "node-b"]:
-            image = command[-1].removeprefix("docker.io/library/")
+            image = command[-1].removeprefix("name==").removeprefix("docker.io/library/")
             return subprocess.CompletedProcess(command, 0, f"image @{'@' if False else ''}{digests[image]}\n", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -49,7 +49,7 @@ def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.
         "node-b": digests,
     }
     assert ["kind", "load", "docker-image", "--name", "sregym-w0", *digests] in calls
-    assert sum(command[:2] == ["docker", "exec"] for command in calls) == 4
+    assert sum(command[:2] == ["docker", "exec"] for command in calls) == 8  # crictl and ctr per node and image
 
 
 def test_kind_image_preflight_rejects_stale_node_digest(monkeypatch: pytest.MonkeyPatch) -> None:
