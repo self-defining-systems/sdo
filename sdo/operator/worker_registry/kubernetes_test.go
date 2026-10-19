@@ -108,6 +108,27 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			t.Fatalf("worker mounted broker-only Secret %q", volume.Secret.SecretName)
 		}
 	}
+	foundHomes := false
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "codex-homes" {
+			foundHomes = mount.MountPath == "/sdo/codex-homes" && !mount.ReadOnly
+		}
+	}
+	homesEnv := ""
+	for _, variable := range container.Env {
+		if variable.Name == "SDO_CODEX_HOME_ROOT" {
+			homesEnv = variable.Value
+		}
+	}
+	homesVolume := false
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name == "codex-homes" {
+			homesVolume = volume.EmptyDir != nil
+		}
+	}
+	if !foundHomes || !homesVolume || homesEnv != "/sdo/codex-homes" {
+		t.Fatalf("Codex turns need a private writable home root outside /tmp and the checkout: mount=%v volume=%v env=%q", foundHomes, homesVolume, homesEnv)
+	}
 	response, err := anypb.New(&contracts.ReflectionResult{Summary: "learned", LearningDecision: "no_change", NoChangeReason: "already covered"})
 	if err != nil {
 		t.Fatal(err)
