@@ -24,8 +24,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
     STRICT_RECEIPT_FILENAME,
@@ -39,6 +37,7 @@ from benchmarks.sregym.assurance.scripted_codex.directive import (
     SCRIPTED_LABEL,
     TURN_KEY,
 )
+from benchmarks.sregym.detector_manifests import DETECTORS_DIR, workspace_detector_manifests
 from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
@@ -142,15 +141,7 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _manifest_detectors(workspace: Path) -> set[str]:
-    manifest = workspace / ".sdo" / "diagnostics" / "manifest.yaml"
-    if not manifest.is_file():
-        return set()
-    return _detector_ids(manifest.read_text(encoding="utf-8"))
-
-
-def _detector_ids(manifest: str) -> set[str]:
-    document = yaml.safe_load(manifest) or {}
-    return {str(item.get("id")) for item in document.get("detectors") or [] if isinstance(item, dict)}
+    return {str(item.get("id")) for item in workspace_detector_manifests(workspace)}
 
 
 def _outcome_file(incident_id: str) -> str:
@@ -375,14 +366,12 @@ class ScriptedAgent:
                 "idle" if settled else f"still open after {SETTLE_TIMEOUT_SECONDS}s: {_open_summary(state)}",
             )
         )
-        manifest = self._operational_file(".sdo/diagnostics/manifest.yaml")
+        detector_ids = self._operational_detector_ids()
         outcome_text = self._operational_file(_outcome_file(incident_id)) if incident_id else None
         record.checks.append(
-            Check("operational-repository-readable", manifest is not None and outcome_text is not None, "via pod")
+            Check("operational-repository-readable", detector_ids is not None and outcome_text is not None, "via pod")
         )
-        record.checks.extend(
-            self._memory_checks(spec, incident_id, None if manifest is None else _detector_ids(manifest))
-        )
+        record.checks.extend(self._memory_checks(spec, incident_id, detector_ids))
         if incident_id:
             turns = self._turns_for(incident_id)
             record.turns = turns
@@ -452,8 +441,8 @@ class ScriptedAgent:
                 return candidate
         return None
 
-    def _operational_file(self, relative: str) -> str | None:
-        """A file of the operational repository as the controller pod sees it.
+    def _controller_exec(self, command: list[str]) -> str | None:
+        """Run a command in the controller pod, or ``None`` when it is absent or fails.
 
         The host workspace is synced only when a receipt is collected, so an
         abandoned incident's outcome and memory exist only in the pod until then.
@@ -466,12 +455,22 @@ class ScriptedAgent:
         ).stdout.split()
         if not pods:
             return None
-        completed = kubectl(
-            ["exec", pods[0], "-c", "controller", "--", "cat", f"/workspace/application/{relative}"],
-            namespace=self._control,
-            check=False,
-        )
+        completed = kubectl(["exec", pods[0], "-c", "controller", "--", *command], namespace=self._control, check=False)
         return completed.stdout if completed.returncode == 0 else None
+
+    def _operational_file(self, relative: str) -> str | None:
+        """A file of the operational repository as the controller pod sees it."""
+
+        return self._controller_exec(["cat", f"/workspace/application/{relative}"])
+
+    def _operational_detector_ids(self) -> set[str] | None:
+        """Registered detector IDs as the controller pod sees them (a detector's directory is its ID)."""
+
+        listing = self._controller_exec(
+            ["find", f"/workspace/application/{DETECTORS_DIR}", "-mindepth", "2", "-maxdepth", "2", "-type", "d"]
+        )
+        ids = {Path(line).name for line in (listing or "").splitlines() if line.strip()}
+        return ids or None
 
     def _memory_checks(
         self, spec: IncidentSpec, incident_id: str | None, detectors: set[str] | None = None

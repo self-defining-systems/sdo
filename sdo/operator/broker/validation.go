@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,48 +15,16 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 var placeholder = regexp.MustCompile(`<\w*[A-Z][A-Z0-9_]+>`)
 var markdownLink = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
 
-type detectorManifest struct {
-	APIVersion string                 `yaml:"apiVersion"`
-	Kind       string                 `yaml:"kind"`
-	SDKVersion string                 `yaml:"sdkVersion"`
-	Detectors  []detectorRegistration `yaml:"detectors"`
-}
-
-type detectorRegistration struct {
-	ID          string `yaml:"id"`
-	Package     string `yaml:"package"`
-	Constructor string `yaml:"constructor"`
-	Class       string `yaml:"class"`
-	Owner       string `yaml:"owner"`
-	Watches     []struct {
-		APIVersion string `yaml:"apiVersion"`
-		Kind       string `yaml:"kind"`
-		Namespace  string `yaml:"namespace"`
-	} `yaml:"watches"`
-	Interval    string `yaml:"interval"`
-	Persistence struct {
-		Firing   int `yaml:"firing"`
-		Clearing int `yaml:"clearing"`
-	} `yaml:"persistence"`
-	Batching struct {
-		Severity string `yaml:"severity"`
-		Debounce string `yaml:"debounce"`
-	} `yaml:"batching"`
-	PossiblePlaybooks   []string `yaml:"possiblePlaybooks"`
-	OriginatingIncident string   `yaml:"originatingIncident"`
-	OriginatingCommit   string   `yaml:"originatingCommit"`
-}
-
 func validateCandidate(ctx context.Context, candidate, baseline string, actor Actor, phase Phase, paths []string) error {
 	memoryChanged := false
 	for _, relative := range paths {
-		if strings.HasPrefix(relative, ".sdo/") {
+		if layout.IsMemoryPath(relative) {
 			memoryChanged = true
 		}
 		path := filepath.Join(candidate, relative)
@@ -85,15 +52,63 @@ func validateCandidate(ctx context.Context, candidate, baseline string, actor Ac
 	if !memoryChanged {
 		return nil
 	}
-	if phase == InitialPhase && actor != HealthJudge {
+	if actor == Upkeep && changesDetectors(paths) {
+		if err := validateUpkeepMigration(candidate, baseline, paths); err != nil {
+			return err
+		}
+	}
+	if phase == InitialPhase && actor != HealthJudge && !(actor == Upkeep && changesDetectors(paths)) {
 		return validateInitialStage(ctx, candidate, baseline, actor, paths)
 	}
 	if err := validateMemoryTree(ctx, candidate); err != nil {
 		return err
 	}
-	if contains(paths, ".sdo/diagnostics/manifest.yaml") {
-		if err := validateManifestOwnership(candidate, baseline, actor, phase); err != nil {
+	if changesDetectorManifest(paths) {
+		if err := validateDetectorOwnership(candidate, baseline, actor, phase); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func changesDetectors(paths []string) bool {
+	for _, path := range paths {
+		if kind, _, ok := layout.Classify(path); ok && (kind.IsDetectorManifest() || kind.IsDetectorSource() || kind == layout.KindLegacyDetectorManifest) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateUpkeepMigration lets Upkeep touch detectors only as part of a schema
+// migration: the same change must stamp the new schema version, and the
+// accepted detector registrations must survive it unchanged.
+func validateUpkeepMigration(candidate, baseline string, paths []string) error {
+	if !contains(paths, layout.SchemaVersionFile) {
+		return errors.New("upkeep may change detectors only together with a schema-version migration")
+	}
+	if _, err := os.Stat(filepath.Join(baseline, layout.LegacyDetectorManifestFile)); err != nil {
+		return errors.New("upkeep detector migration needs a legacy detector manifest in the accepted baseline")
+	}
+	legacy, err := layout.LegacyDetectors(baseline)
+	if err != nil {
+		return fmt.Errorf("baseline manifest: %w", err)
+	}
+	after, err := layout.ReadDetectors(filepath.Join(candidate, layout.DiagnosticsDir))
+	if err != nil {
+		return err
+	}
+	if len(legacy) != len(after) {
+		return fmt.Errorf("migration changed the detector count from %d to %d", len(legacy), len(after))
+	}
+	before := map[string]layout.DetectorManifest{}
+	for _, manifest := range legacy {
+		before[manifest.ID] = manifest
+	}
+	for _, detector := range after {
+		prior, ok := before[detector.Manifest.ID]
+		if !ok || !reflect.DeepEqual(prior, detector.Manifest) {
+			return fmt.Errorf("migration changed detector %s", detector.Manifest.ID)
 		}
 	}
 	return nil
@@ -102,18 +117,18 @@ func validateCandidate(ctx context.Context, candidate, baseline string, actor Ac
 // Initial memory is accepted in role-owned stages. Validate each stage's
 // durable files immediately; the health-judge stage validates the full tree.
 func validateInitialStage(ctx context.Context, root, baseline string, actor Actor, paths []string) error {
-	memoryRoot := filepath.Join(root, ".sdo")
-	if err := rejectMemorySymlinks(memoryRoot); err != nil {
+	if err := rejectMemorySymlinks(filepath.Join(root, layout.Dir)); err != nil {
 		return err
 	}
 	for _, path := range paths {
-		switch path {
-		case ".sdo/goal.md":
-			if err := validateMarkdown(filepath.Join(root, path), "human", "", false); err != nil {
+		kind, _, _ := layout.Classify(path)
+		switch kind {
+		case layout.KindGoal:
+			if err := validateDocument(filepath.Join(root, path), "human"); err != nil {
 				return fmt.Errorf("goal: %w", err)
 			}
-		case ".sdo/arch.md":
-			if err := validateMarkdown(filepath.Join(root, path), "", "", false); err != nil {
+		case layout.KindArchitecture:
+			if err := validateDocument(filepath.Join(root, path), ""); err != nil {
 				return fmt.Errorf("architecture: %w", err)
 			}
 			if actor == Deployer {
@@ -121,14 +136,14 @@ func validateInitialStage(ctx context.Context, root, baseline string, actor Acto
 					return err
 				}
 			}
-		case ".sdo/schema-version":
+		case layout.KindSchemaVersion:
 			version, err := os.ReadFile(filepath.Join(root, path))
-			if err != nil || strings.TrimSpace(string(version)) != "1" {
-				return errors.New("operational memory schema-version must be 1")
+			if err != nil || strings.TrimSpace(string(version)) != fmt.Sprint(layout.CurrentSchemaVersion) {
+				return fmt.Errorf("operational memory schema-version must be %d", layout.CurrentSchemaVersion)
 			}
 		}
 	}
-	if actor == Human && !contains(paths, ".sdo/goal.md") {
+	if actor == Human && !contains(paths, layout.GoalFile) {
 		return errors.New("human initial proposal must include goal.md")
 	}
 	return nil
@@ -152,7 +167,7 @@ func validateInitialArchitecture(ctx context.Context, candidate, baseline string
 	}
 	hasSource := false
 	for _, path := range strings.Split(changed, "\n") {
-		if path != "" && !strings.HasPrefix(path, ".sdo/") {
+		if path != "" && !layout.IsMemoryPath(path) {
 			hasSource = true
 			break
 		}
@@ -160,7 +175,7 @@ func validateInitialArchitecture(ctx context.Context, candidate, baseline string
 	if !hasSource {
 		return errors.New("initial architecture has no accepted deployer source commit")
 	}
-	data, err := os.ReadFile(filepath.Join(candidate, ".sdo", "arch.md"))
+	data, err := os.ReadFile(filepath.Join(candidate, layout.ArchitectureFile))
 	if err != nil {
 		return err
 	}
@@ -188,59 +203,43 @@ func validateYAML(path string) error {
 	if bytes.Contains(data, []byte("{{")) {
 		return nil
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	for {
-		var node yaml.Node
-		if err := decoder.Decode(&node); errors.Is(err, io.EOF) {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("invalid YAML: %w", err)
-		}
-		if err := uniqueKeys(&node); err != nil {
-			return err
-		}
-	}
+	return layout.RejectDuplicateKeys(data)
 }
 
-func uniqueKeys(node *yaml.Node) error {
-	if node.Kind == yaml.MappingNode {
-		seen := make(map[string]bool)
-		for i := 0; i < len(node.Content); i += 2 {
-			key := node.Content[i].Value
-			if seen[key] {
-				return fmt.Errorf("duplicate YAML key %q at line %d", key, node.Content[i].Line)
-			}
-			seen[key] = true
-		}
+func validateDocument(path, owner string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
 	}
-	for _, child := range node.Content {
-		if err := uniqueKeys(child); err != nil {
-			return err
-		}
+	document, err := layout.ParseDocument(data)
+	if err != nil {
+		return err
+	}
+	if owner != "" && document.Meta["owner"] != owner {
+		return fmt.Errorf("owner must be %s", owner)
 	}
 	return nil
 }
 
 func validateMemoryTree(ctx context.Context, root string) error {
-	memoryRoot := filepath.Join(root, ".sdo")
+	memoryRoot := filepath.Join(root, layout.Dir)
 	if err := rejectMemorySymlinks(memoryRoot); err != nil {
 		return err
 	}
-	version, err := os.ReadFile(filepath.Join(memoryRoot, "schema-version"))
-	if err != nil || strings.TrimSpace(string(version)) != "1" {
-		return errors.New("operational memory schema-version must be 1")
-	}
-	if err := validateMarkdown(filepath.Join(memoryRoot, "goal.md"), "human", "", false); err != nil {
-		return fmt.Errorf("goal: %w", err)
-	}
-	if err := validateMarkdown(filepath.Join(memoryRoot, "arch.md"), "", "", false); err != nil {
-		return fmt.Errorf("architecture: %w", err)
-	}
-	if err := validatePlaybooks(ctx, memoryRoot); err != nil {
+	tree, err := layout.ReadTree(root)
+	if err != nil {
 		return err
 	}
-	_, err = readManifest(memoryRoot)
-	return err
+	if tree.Goal == nil || tree.Goal.Meta["owner"] != "human" {
+		return errors.New("goal: owner must be human")
+	}
+	if tree.Architecture == nil {
+		return errors.New("architecture: missing")
+	}
+	if err := validatePlaybooks(ctx, tree); err != nil {
+		return err
+	}
+	return validateDetectors(tree)
 }
 
 func rejectMemorySymlinks(memoryRoot string) error {
@@ -255,55 +254,12 @@ func rejectMemorySymlinks(memoryRoot string) error {
 	})
 }
 
-func validateMarkdown(path, owner, faultClass string, requirePlaceholder bool) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
+func validatePlaybooks(ctx context.Context, tree *layout.Tree) error {
+	if tree.PlaybookIndex == "" {
+		return errors.New("playbook index is required")
 	}
-	parts := strings.SplitN(string(data), "---\n", 3)
-	if len(parts) != 3 || parts[0] != "" {
-		return errors.New("markdown front matter is required")
-	}
-	var metadata map[string]any
-	if err := yaml.Unmarshal([]byte(parts[1]), &metadata); err != nil {
-		return fmt.Errorf("front matter: %w", err)
-	}
-	if metadata["schema_version"] != 1 {
-		return errors.New("schema_version must be 1")
-	}
-	if owner != "" && metadata["owner"] != owner {
-		return fmt.Errorf("owner must be %s", owner)
-	}
-	if faultClass != "" {
-		if metadata["fault_class"] != faultClass {
-			return fmt.Errorf("fault_class must be %s", faultClass)
-		}
-		if strings.TrimSpace(fmt.Sprint(metadata["originating_incident"])) == "" || metadata["originating_incident"] == nil {
-			return errors.New("originating_incident is required")
-		}
-	}
-	if strings.TrimSpace(parts[2]) == "" {
-		return errors.New("body must not be empty")
-	}
-	if requirePlaceholder && !placeholder.MatchString(parts[2]) {
-		return errors.New("playbook must use a role placeholder")
-	}
-	return nil
-}
-
-func validatePlaybooks(ctx context.Context, memoryRoot string) error {
-	root := filepath.Join(memoryRoot, "playbooks")
-	index, err := os.ReadFile(filepath.Join(root, "README.md"))
-	if err != nil {
-		return fmt.Errorf("playbook index is required: %w", err)
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	count := 0
 	linked := make(map[string]bool)
-	for _, match := range markdownLink.FindAllStringSubmatch(string(index), -1) {
+	for _, match := range markdownLink.FindAllStringSubmatch(tree.PlaybookIndex, -1) {
 		link := strings.SplitN(match[1], "#", 2)[0]
 		if strings.Contains(link, "://") {
 			continue
@@ -312,177 +268,152 @@ func validatePlaybooks(ctx context.Context, memoryRoot string) error {
 		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
 			return fmt.Errorf("playbook index link escapes root: %s", link)
 		}
-		if !strings.HasSuffix(clean, "README.md") {
-			clean = filepath.Join(clean, "README.md")
+		if !strings.HasSuffix(clean, layout.PlaybookFileName) {
+			clean = filepath.Join(clean, layout.PlaybookFileName)
 		}
 		linked[filepath.ToSlash(clean)] = true
-		if _, err := os.Stat(filepath.Join(root, clean)); err != nil {
+		if !hasPlaybookFile(tree, filepath.ToSlash(clean)) {
 			return fmt.Errorf("playbook index link does not exist: %s", link)
 		}
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	for _, playbook := range tree.Playbooks {
+		if !linked[playbook.ID+"/"+layout.PlaybookFileName] {
+			return fmt.Errorf("playbook %s is missing from index", playbook.ID)
 		}
-		count++
-		path := filepath.Join(root, entry.Name(), "README.md")
-		if !linked[filepath.ToSlash(filepath.Join(entry.Name(), "README.md"))] {
-			return fmt.Errorf("playbook %s is missing from index", entry.Name())
-		}
-		owner, faultClass := "responder", entry.Name()
-		if entry.Name() == "health-objective" {
+		faultClass := playbook.ID
+		if playbook.ID == healthObjectivePlaybook {
 			faultClass = "health-objective-failure"
 		}
-		if err := validateMarkdown(path, owner, faultClass, true); err != nil {
-			return fmt.Errorf("playbook %s: %w", entry.Name(), err)
+		if err := validatePlaybookDocument(playbook.Document, faultClass); err != nil {
+			return fmt.Errorf("playbook %s: %w", playbook.ID, err)
 		}
-		scripts, err := os.ReadDir(filepath.Join(root, entry.Name(), "scripts"))
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		for _, script := range scripts {
-			if script.IsDir() || filepath.Ext(script.Name()) != ".sh" {
-				return fmt.Errorf("playbook script must be a .sh file: %s", script.Name())
-			}
-			cmd := exec.CommandContext(ctx, "bash", "-n", filepath.Join(root, entry.Name(), "scripts", script.Name()))
+		for _, script := range playbook.Scripts {
+			cmd := exec.CommandContext(ctx, "bash", "-n")
+			cmd.Stdin = bytes.NewReader(script.Content)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				return fmt.Errorf("invalid shell syntax: %s: %w", strings.TrimSpace(string(out)), err)
 			}
 		}
 	}
-	if count == 0 {
+	if len(tree.Playbooks) == 0 {
 		return errors.New("at least one playbook is required")
 	}
 	return nil
 }
 
-func readManifest(memoryRoot string) (detectorManifest, error) {
-	path := filepath.Join(memoryRoot, "diagnostics", "manifest.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return detectorManifest{}, fmt.Errorf("diagnostics manifest: %w", err)
-	}
-	if err := validateYAML(path); err != nil {
-		return detectorManifest{}, err
-	}
-	var manifest detectorManifest
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&manifest); err != nil {
-		return detectorManifest{}, fmt.Errorf("diagnostics manifest: %w", err)
-	}
-	if manifest.APIVersion != "sdo.dev/v1alpha1" || manifest.Kind != "DetectorManifest" || manifest.SDKVersion == "" || len(manifest.Detectors) == 0 {
-		return detectorManifest{}, errors.New("invalid diagnostics manifest header or empty detectors")
-	}
-	ids := map[string]bool{}
-	for _, d := range manifest.Detectors {
-		if d.ID == "" || ids[d.ID] {
-			return detectorManifest{}, fmt.Errorf("empty or duplicate detector ID %q", d.ID)
-		}
-		ids[d.ID] = true
-		expectedDir, owner := "health", "health_judge"
-		if d.Class == "incident" {
-			expectedDir, owner = "incidents", "responder"
-		} else if d.Class != "health" {
-			return detectorManifest{}, fmt.Errorf("invalid detector class %q", d.Class)
-		}
-		if d.Owner != owner {
-			return detectorManifest{}, fmt.Errorf("detector %s has wrong owner", d.ID)
-		}
-		packagePath := filepath.Clean(strings.TrimPrefix(d.Package, "./"))
-		if filepath.IsAbs(packagePath) || !strings.HasPrefix(filepath.ToSlash(packagePath), "detectors/"+expectedDir+"/") || strings.Contains(packagePath, "..") {
-			return detectorManifest{}, fmt.Errorf("detector %s package escapes owned directory", d.ID)
-		}
-		files, err := filepath.Glob(filepath.Join(memoryRoot, "diagnostics", packagePath, "*.go"))
-		if err != nil || len(files) == 0 {
-			return detectorManifest{}, fmt.Errorf("detector %s package has no Go source", d.ID)
-		}
-		if d.Class == "incident" && d.OriginatingIncident == "" {
-			return detectorManifest{}, fmt.Errorf("incident detector %s must identify origin", d.ID)
-		}
-		if d.OriginatingCommit == "" || d.Interval == "" || d.Persistence.Firing < 1 || d.Persistence.Clearing < 1 || len(d.Watches) == 0 {
-			return detectorManifest{}, fmt.Errorf("incomplete detector %s", d.ID)
-		}
-		for _, playbook := range d.PossiblePlaybooks {
-			id, err := memory.PlaybookID(playbook)
-			if err != nil {
-				return detectorManifest{}, fmt.Errorf("detector %s has unsafe playbook", d.ID)
-			}
-			storedPath := playbook
-			if storedPath == id {
-				storedPath, err = memory.PlaybookPath(id)
-				if err != nil {
-					return detectorManifest{}, fmt.Errorf("detector %s has unsafe playbook: %w", d.ID, err)
-				}
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(memoryRoot), storedPath)); err != nil {
-				return detectorManifest{}, fmt.Errorf("detector %s playbook does not exist: %s", d.ID, playbook)
-			}
+func hasPlaybookFile(tree *layout.Tree, relative string) bool {
+	for _, playbook := range tree.Playbooks {
+		if playbook.ID+"/"+layout.PlaybookFileName == relative {
+			return true
 		}
 	}
-	return manifest, nil
+	return false
 }
 
-func validateManifestOwnership(candidate, baseline string, actor Actor, phase Phase) error {
+func validatePlaybookDocument(document layout.Document, faultClass string) error {
+	if document.Meta["owner"] != "responder" {
+		return errors.New("owner must be responder")
+	}
+	if document.Meta["fault_class"] != faultClass {
+		return fmt.Errorf("fault_class must be %s", faultClass)
+	}
+	if document.Meta["originating_incident"] == nil || strings.TrimSpace(fmt.Sprint(document.Meta["originating_incident"])) == "" {
+		return errors.New("originating_incident is required")
+	}
+	if !placeholder.MatchString(document.Body) {
+		return errors.New("playbook must use a role placeholder")
+	}
+	return nil
+}
+
+func validateDetectors(tree *layout.Tree) error {
+	if len(tree.Detectors) == 0 {
+		return errors.New("memory registers no detectors")
+	}
+	playbooks := map[string]bool{}
+	for _, playbook := range tree.Playbooks {
+		playbooks[playbook.ID] = true
+	}
+	ids := map[string]bool{}
+	for _, detector := range tree.Detectors {
+		manifest := detector.Manifest
+		if ids[manifest.ID] {
+			return fmt.Errorf("empty or duplicate detector ID %q", manifest.ID)
+		}
+		ids[manifest.ID] = true
+		hasGo := false
+		for _, file := range detector.Files {
+			hasGo = hasGo || (!strings.Contains(file.Name, "/") && strings.HasSuffix(file.Name, ".go"))
+		}
+		if !hasGo {
+			return fmt.Errorf("detector %s package has no Go source", manifest.ID)
+		}
+		for _, reference := range manifest.PossiblePlaybooks {
+			id, err := layout.PlaybookID(reference)
+			if err != nil || !playbooks[id] {
+				return fmt.Errorf("detector %s playbook does not exist: %s", manifest.ID, reference)
+			}
+		}
+	}
+	return nil
+}
+
+// validateDetectorOwnership compares the candidate's detector registrations
+// with the accepted baseline: each actor may add or change only detectors of
+// its own class, and responders may not rewrite provenance.
+func validateDetectorOwnership(candidate, baseline string, actor Actor, phase Phase) error {
 	if actor != Responder && actor != HealthJudge {
 		return nil
 	}
-	if phase == InitialPhase && actor == HealthJudge {
-		if _, err := os.Stat(filepath.Join(baseline, ".sdo", "diagnostics", "manifest.yaml")); errors.Is(err, os.ErrNotExist) {
-			after, err := readManifest(filepath.Join(candidate, ".sdo"))
-			if err != nil {
-				return err
-			}
-			for _, detector := range after.Detectors {
-				if detector.Class != "health" {
-					return fmt.Errorf("initial health judge cannot add %s detector %s", detector.Class, detector.ID)
-				}
-			}
-			return nil
-		}
-	}
-	before, err := readManifest(filepath.Join(baseline, ".sdo"))
-	if err != nil {
-		return fmt.Errorf("baseline manifest: %w", err)
-	}
-	after, err := readManifest(filepath.Join(candidate, ".sdo"))
+	after, err := layout.ReadDetectors(filepath.Join(candidate, layout.DiagnosticsDir))
 	if err != nil {
 		return err
 	}
-	if before.APIVersion != after.APIVersion || before.Kind != after.Kind || before.SDKVersion != after.SDKVersion {
-		return errors.New("agent changed shared diagnostics manifest metadata")
+	hadDetectors, err := layout.HasDetectors(baseline)
+	if err != nil {
+		return err
 	}
-	protected := "health"
+	if phase == InitialPhase && actor == HealthJudge && !hadDetectors {
+		for _, detector := range after {
+			if detector.Class != layout.ClassHealth {
+				return fmt.Errorf("initial health judge cannot add %s detector %s", detector.Class, detector.Manifest.ID)
+			}
+		}
+		return nil
+	}
+	before, err := layout.ReadDetectors(filepath.Join(baseline, layout.DiagnosticsDir))
+	if err != nil {
+		return fmt.Errorf("baseline manifest: %w", err)
+	}
+	protected := layout.ClassHealth
 	if actor == HealthJudge {
-		protected = "incident"
+		protected = layout.ClassIncident
 	}
-	old := map[string]detectorRegistration{}
-	for _, detector := range before.Detectors {
-		old[detector.ID] = detector
+	old := map[string]layout.DetectorManifest{}
+	for _, detector := range before {
+		old[detector.Manifest.ID] = detector.Manifest
 	}
 	seen := map[string]bool{}
-	for _, detector := range after.Detectors {
-		seen[detector.ID] = true
-		prior, existed := old[detector.ID]
-		if existed && prior.Class == protected && !reflect.DeepEqual(prior, detector) {
-			return fmt.Errorf("actor %s changed protected %s detector %s", actor, protected, detector.ID)
+	for _, detector := range after {
+		current := detector.Manifest
+		seen[current.ID] = true
+		prior, existed := old[current.ID]
+		if existed && prior.DetectorClass() == protected && !reflect.DeepEqual(prior, current) {
+			return fmt.Errorf("actor %s changed protected %s detector %s", actor, protected, current.ID)
 		}
 		if !existed && detector.Class == protected {
-			return fmt.Errorf("actor %s added protected %s detector %s", actor, protected, detector.ID)
+			return fmt.Errorf("actor %s added protected %s detector %s", actor, protected, current.ID)
 		}
-		if existed && actor == Responder && prior.Class == "incident" && (prior.OriginatingIncident != detector.OriginatingIncident || prior.OriginatingCommit != detector.OriginatingCommit) {
-			return fmt.Errorf("responder rewrote detector %s provenance", detector.ID)
+		if existed && actor == Responder && prior.DetectorClass() == layout.ClassIncident && (prior.OriginatingIncident != current.OriginatingIncident || prior.OriginatingCommit != current.OriginatingCommit) {
+			return fmt.Errorf("responder rewrote detector %s provenance", current.ID)
 		}
-		if actor == Responder && detector.Class == "incident" && (!existed || !reflect.DeepEqual(prior, detector)) && detector.Persistence.Firing != 1 {
-			return fmt.Errorf("new or changed incident detector %s must fire on first match", detector.ID)
+		if actor == Responder && detector.Class == layout.ClassIncident && (!existed || !reflect.DeepEqual(prior, current)) && current.Persistence.Firing != 1 {
+			return fmt.Errorf("new or changed incident detector %s must fire on first match", current.ID)
 		}
 	}
-	for _, detector := range before.Detectors {
-		if detector.Class == protected && !seen[detector.ID] {
-			return fmt.Errorf("actor %s removed protected %s detector %s", actor, protected, detector.ID)
+	for _, detector := range before {
+		if detector.Class == protected && !seen[detector.Manifest.ID] {
+			return fmt.Errorf("actor %s removed protected %s detector %s", actor, protected, detector.Manifest.ID)
 		}
 	}
 	return nil

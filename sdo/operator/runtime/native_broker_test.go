@@ -77,13 +77,13 @@ func nativeRepository(t *testing.T) string {
 func nativeMemoryFixture(t *testing.T, root string) {
 	t.Helper()
 	files := map[string]string{
-		".sdo/schema-version":            "1\n",
+		".sdo/schema-version":            "2\n",
 		".sdo/goal.md":                   "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
 		".sdo/arch.md":                   "---\nschema_version: 1\ngenerated_at_commit: base\ngenerated_at: 2026-01-01T00:00:00Z\napplication: test\ntopology_fingerprint: abc\n---\nArchitecture\n",
 		".sdo/playbooks/README.md":       "# Playbooks\n\n- [base](base/README.md)\n",
 		".sdo/playbooks/base/README.md":  "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>\n",
-		".sdo/diagnostics/manifest.yaml": "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors:\n  - id: health\n    package: ./detectors/health/objective\n    constructor: New\n    class: health\n    owner: health_judge\n    watches:\n      - apiVersion: v1\n        kind: Pod\n    interval: 30s\n    persistence:\n      firing: 1\n      clearing: 1\n    batching:\n      severity: critical\n      debounce: 500ms\n    possiblePlaybooks:\n      - .sdo/playbooks/base/README.md\n    originatingCommit: initial\n",
-		".sdo/diagnostics/detectors/health/objective/detector.go": "package objective\n",
+		".sdo/diagnostics/detectors/health/health/manifest.yaml": nativeDetectorManifest("health", "health", "initial"),
+		".sdo/diagnostics/detectors/health/health/detector.go": "package objective\n",
 	}
 	for name, content := range files {
 		path := filepath.Join(root, name)
@@ -347,13 +347,11 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
 		}),
 		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
-			manifest := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "manifest.yaml")
-			data, err := os.ReadFile(manifest)
-			if err != nil {
+			manifest := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "detectors", "incidents", "learned", "manifest.yaml")
+			if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
 				return ReflectionDecision{}, err
 			}
-			addition := "  - id: learned\n    package: ./detectors/incidents/learned\n    constructor: New\n    class: incident\n    owner: responder\n    watches:\n      - apiVersion: v1\n        kind: Pod\n    interval: 30s\n    persistence:\n      firing: 1\n      clearing: 1\n    batching:\n      severity: critical\n      debounce: 500ms\n    possiblePlaybooks:\n      - .sdo/playbooks/base/README.md\n    originatingIncident: inc-rollout\n    originatingCommit: initial\n"
-			if err := os.WriteFile(manifest, append(data, []byte(addition)...), 0o644); err != nil {
+			if err := os.WriteFile(manifest, []byte(nativeDetectorManifest("incident", "learned", "inc-rollout")), 0o644); err != nil {
 				return ReflectionDecision{}, err
 			}
 			path := filepath.Join(workspace.Worktree, ".sdo", "diagnostics", "detectors", "incidents", "learned", "detector.go")
@@ -404,4 +402,12 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 	if err := native.AcknowledgeClosure(context.Background(), receipt); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func nativeDetectorManifest(class, id, incident string) string {
+	owner, origin := "health_judge", ""
+	if class == "incident" {
+		owner, origin = "responder", "originatingIncident: "+incident+"\n"
+	}
+	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: " + class + "\nowner: " + owner + "\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: 1\n  clearing: 1\nbatching:\n  severity: critical\n  debounce: 500ms\npossiblePlaybooks:\n  - base\n" + origin + "originatingCommit: initial\n"
 }

@@ -9,17 +9,11 @@ import (
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 )
 
 func TestMaterializeJudgeProposalOwnsPhysicalLayout(t *testing.T) {
 	root := t.TempDir()
-	manifest := filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")
-	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(manifest, []byte("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors: []\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	proposal := &contracts.OperationalArtifactProposal{
 		Detectors: []*contracts.ProposedDetector{{Id: "health-objective", DetectorClass: "health", Owner: "health_judge", Constructor: "New", Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Pod"}}, Interval: "30s", Firing: 2, Clearing: 2, Severity: "critical", Debounce: "500ms", PossiblePlaybookIds: []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package objective\n"}, {Name: "detector_test.go", Content: "package objective\n"}}}},
 		Playbooks: []*contracts.ProposedPlaybook{{Id: "health-objective", Owner: "responder", FaultClass: "health-objective-failure", OriginatingIncident: "lifecycle-bootstrap", Markdown: "# Restore <AFFECTED_RESOURCE>\n"}},
@@ -27,12 +21,18 @@ func TestMaterializeJudgeProposalOwnsPhysicalLayout(t *testing.T) {
 	if err := MaterializeArtifacts(root, proposal, HealthJudgeArtifacts); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(manifest)
+	data, err := os.ReadFile(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "package: ./detectors/health/health-objective") || !strings.Contains(string(data), "possiblePlaybooks:") || !strings.Contains(string(data), "- health-objective") || strings.Contains(string(data), ".sdo/playbooks/") {
+	if !strings.Contains(string(data), "id: health-objective") || !strings.Contains(string(data), "possiblePlaybooks:") || !strings.Contains(string(data), "- health-objective") || strings.Contains(string(data), "package:") || strings.Contains(string(data), ".sdo/playbooks/") {
 		t.Fatalf("incomplete manifest: %s", data)
+	}
+	if _, err := os.Stat(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "service-endpoints"))); err != nil {
+		t.Fatalf("operator-owned detector has no manifest: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, layout.LegacyDetectorManifestFile)); !os.IsNotExist(err) {
+		t.Fatalf("shared manifest must not be written: %v", err)
 	}
 	for _, name := range []string{".sdo/diagnostics/detectors/health/health-objective/detector.go", ".sdo/diagnostics/detectors/health/service-endpoints/detector.go", ".sdo/playbooks/health-objective/README.md", ".sdo/playbooks/README.md"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
@@ -80,13 +80,13 @@ func TestMaterializeRejectsPhysicalReferencesInWorkerContent(t *testing.T) {
 	}
 }
 
-func TestMaterializeJudgeBootstrapsAbsentManifest(t *testing.T) {
+func TestMaterializeJudgeBootstrapsAbsentDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "health-objective", DetectorClass: "health", Owner: "health_judge", Constructor: "New", OriginatingCommit: "lifecycle-bootstrap", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package objective\n"}}}}, Playbooks: []*contracts.ProposedPlaybook{{Id: "health-objective", Owner: "responder", FaultClass: "health-objective-failure", OriginatingIncident: "lifecycle-bootstrap", Markdown: "# Restore <AFFECTED_RESOURCE>"}}}
 	if err := MaterializeArtifacts(root, proposal, HealthJudgeArtifacts); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective"))); err != nil {
 		t.Fatal(err)
 	}
 }

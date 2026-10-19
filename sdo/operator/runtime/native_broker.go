@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -404,7 +405,7 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 }
 
 func (n NativeIncidentBroker) setRolloutExpectation(ctx context.Context, ledger *nativeLedger, paths []string) error {
-	if !memory.RequiresControllerRollout(paths) {
+	if !layout.RequiresControllerRollout(paths) {
 		return nil
 	}
 	if ledger.OutcomeCommit == "" || ledger.ReflectionCommit == "" {

@@ -8,14 +8,12 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -24,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
+	"sdo.dev/operator/memory/layout"
 )
 
 var gitTreeID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -295,19 +294,12 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 }
 
 func candidateHasIncidentDetector(candidate string) (bool, error) {
-	data, err := os.ReadFile(filepath.Join(candidate, ".sdo", "diagnostics", "manifest.yaml"))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
+	detectors, err := layout.ReadDetectors(filepath.Join(candidate, layout.DiagnosticsDir))
 	if err != nil {
 		return false, err
 	}
-	var manifest detectorManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return false, err
-	}
-	for _, detector := range manifest.Detectors {
-		if detector.Class == "incident" {
+	for _, detector := range detectors {
+		if detector.Class == layout.ClassIncident {
 			return true, nil
 		}
 	}
@@ -316,7 +308,7 @@ func candidateHasIncidentDetector(candidate string) (bool, error) {
 
 func baselineGateRequired(candidate string, changedPaths []string) (bool, error) {
 	for _, path := range changedPaths {
-		if strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/") {
+		if kind, _, ok := layout.Classify(path); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
 			return candidateHasIncidentDetector(candidate)
 		}
 	}

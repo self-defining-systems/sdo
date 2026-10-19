@@ -108,11 +108,13 @@ def _sdo_stage(
             json.dumps({"duration_seconds": 900.0, "usage": lifecycle}) + "\n", encoding="utf-8"
         )
     sdo = stage / "application_workspace" / ".sdo"
-    (sdo / "diagnostics").mkdir(parents=True)
     detectors = [{"id": "health-objective", "class": "health"}] + [
         {"id": f"incident-{n}", "class": "incident"} for n in range(incident_detectors)
     ]
-    (sdo / "diagnostics" / "manifest.yaml").write_text(yaml.safe_dump({"detectors": detectors}), encoding="utf-8")
+    for detector in detectors:
+        directory = sdo / "diagnostics" / "detectors" / ("health" if detector["class"] == "health" else "incidents")
+        (directory / detector["id"]).mkdir(parents=True)
+        (directory / detector["id"] / "manifest.yaml").write_text(yaml.safe_dump(detector), encoding="utf-8")
     for playbook in ["health-objective"] + [f"incident-{n}" for n in range(incident_detectors)]:
         (sdo / "playbooks" / playbook).mkdir(parents=True)
         (sdo / "playbooks" / playbook / "README.md").write_text("# playbook\n", encoding="utf-8")

@@ -18,7 +18,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.bd9c7da4e47f44eb"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.7d619f0ca7ab2391"
 
 type repeatable []string
 
@@ -123,11 +123,11 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	return builder.RunConfig{
 		Build: builder.Config{ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		ResolveDiagnostics: func(ctx context.Context, root string) (builder.DiagnosticsProjection, error) {
-			projected, err := memory.AcceptedDiagnostics(ctx, root)
+			repository, err := openMigrationBroker(launch)
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
+			return resolveAcceptedDiagnostics(ctx, root, repository)
 		},
 		PublishProber: memory.PublishProber,
 	}, *supervise, nil

@@ -10,9 +10,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
-	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory/layout"
 )
 
 // Config identifies the application to build and the installed operator's Go
@@ -62,40 +61,7 @@ func (workspace *Workspace) Close() error {
 	return os.RemoveAll(workspace.Directory)
 }
 
-type manifest struct {
-	APIVersion string     `yaml:"apiVersion"`
-	Kind       string     `yaml:"kind"`
-	SDKVersion string     `yaml:"sdkVersion"`
-	Detectors  []detector `yaml:"detectors"`
-}
-type detector struct {
-	ID          string `yaml:"id"`
-	Package     string `yaml:"package"`
-	Constructor string `yaml:"constructor"`
-	Class       string `yaml:"class"`
-	Owner       string `yaml:"owner"`
-	Watches     []struct {
-		APIVersion string `yaml:"apiVersion"`
-		Kind       string `yaml:"kind"`
-		Namespace  string `yaml:"namespace"`
-	} `yaml:"watches"`
-	Interval    string `yaml:"interval"`
-	Persistence struct {
-		Firing   int `yaml:"firing"`
-		Clearing int `yaml:"clearing"`
-	} `yaml:"persistence"`
-	Batching struct {
-		Severity string `yaml:"severity"`
-		Debounce string `yaml:"debounce"`
-	} `yaml:"batching"`
-	PossiblePlaybooks   []string `yaml:"possiblePlaybooks"`
-	OriginatingIncident string   `yaml:"originatingIncident"`
-	OriginatingCommit   string   `yaml:"originatingCommit"`
-}
-
 var modulePattern = regexp.MustCompile(`(?m)^module\s+(\S+)\s*$`)
-var detectorIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
-var identifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // BuildWorkspace stages an opaque diagnostics projection and generates the
 // controller and, when configured, its traffic prober in an isolated workspace.
@@ -113,17 +79,11 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 		}
 	}
 	diagnostics := config.DiagnosticsRoot
-	data, err := os.ReadFile(filepath.Join(diagnostics, "manifest.yaml"))
+	detectors, err := layout.ReadDetectors(diagnostics)
 	if err != nil {
-		return nil, fmt.Errorf("read diagnostics manifest: %w", err)
+		return nil, fmt.Errorf("read diagnostics: %w", err)
 	}
-	var parsed manifest
-	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("parse diagnostics manifest: %w", err)
-	}
-	if err := validateManifest(parsed, diagnostics); err != nil {
+	if err := validateDetectors(detectors); err != nil {
 		return nil, err
 	}
 	directory, err := os.MkdirTemp("", "sdo-operator-build-")
@@ -160,20 +120,16 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	}
 	imports := []string{"\t\"sdo.dev/operator/sdk\""}
 	constructors := []string{}
-	for index, item := range parsed.Detectors {
+	for index, item := range detectors {
 		alias := fmt.Sprintf("d%d", index)
-		imports = append(imports, fmt.Sprintf("\t%s %q", alias, module+"/"+strings.TrimPrefix(item.Package, "./")))
-		constructor := item.Constructor
-		if constructor == "" {
-			constructor = "New"
-		}
-		constructors = append(constructors, fmt.Sprintf("\t\t%s.%s(),", alias, constructor))
+		imports = append(imports, fmt.Sprintf("\t%s %q", alias, module+"/"+item.Package()))
+		constructors = append(constructors, fmt.Sprintf("\t\t%s.%s(),", alias, item.Manifest.ConstructorName()))
 	}
 	source := "package generated\n\nimport (\n" + strings.Join(imports, "\n") + "\n)\n\nfunc All() []sdk.Detector {\n\treturn []sdk.Detector{\n" + strings.Join(constructors, "\n") + "\n\t}\n}\n"
 	if err := os.WriteFile(filepath.Join(directory, "generated", "detectors.go"), []byte(source), 0o644); err != nil {
 		return nil, err
 	}
-	if err := generateRegistrationTest(directory, parsed); err != nil {
+	if err := generateRegistrationTest(directory, detectors); err != nil {
 		return nil, err
 	}
 	if err := generateExternalNameTest(config.ApplicationRoot, directory); err != nil {
@@ -195,88 +151,17 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber}, nil
 }
 
-func validateManifest(value manifest, diagnostics string) error {
-	if value.APIVersion != "sdo.dev/v1alpha1" || value.Kind != "DetectorManifest" || value.SDKVersion == "" || len(value.Detectors) == 0 {
-		return errors.New("invalid diagnostics manifest header or empty detectors")
+func validateDetectors(detectors []layout.Detector) error {
+	if len(detectors) == 0 {
+		return errors.New("diagnostics register no detectors")
 	}
-	ids := map[string]bool{}
-	for _, item := range value.Detectors {
-		if !detectorIDPattern.MatchString(item.ID) || ids[item.ID] {
-			return fmt.Errorf("invalid or duplicate detector id %q", item.ID)
-		}
-		ids[item.ID] = true
-		constructor := item.Constructor
-		if constructor == "" {
-			constructor = "New"
-		}
-		if !identifierPattern.MatchString(constructor) {
-			return fmt.Errorf("detector %s has invalid constructor", item.ID)
-		}
-		expectedOwner := "health_judge"
-		if item.Class == "incident" {
-			expectedOwner = "responder"
-			if item.OriginatingIncident == "" {
-				return fmt.Errorf("incident detector %s needs originatingIncident", item.ID)
-			}
-		} else if item.Class != "health" {
-			return fmt.Errorf("detector %s has invalid class", item.ID)
-		}
-		if item.Owner != expectedOwner {
-			return fmt.Errorf("detector %s owner must be %s", item.ID, expectedOwner)
-		}
-		if item.OriginatingCommit == "" {
-			return fmt.Errorf("detector %s needs originatingCommit", item.ID)
-		}
-		if item.PossiblePlaybooks == nil {
-			return fmt.Errorf("detector %s needs possiblePlaybooks", item.ID)
-		}
-		playbooks := map[string]bool{}
-		for _, playbook := range item.PossiblePlaybooks {
-			if playbooks[playbook] {
-				return fmt.Errorf("detector %s has duplicate possiblePlaybooks", item.ID)
-			}
-			playbooks[playbook] = true
-		}
-		watches := map[string]bool{}
-		for _, watch := range item.Watches {
-			if watch.APIVersion == "" || watch.Kind == "" {
-				return fmt.Errorf("detector %s has invalid watch", item.ID)
-			}
-			key := watch.APIVersion + "\x00" + watch.Kind + "\x00" + watch.Namespace
-			if watches[key] {
-				return fmt.Errorf("detector %s has duplicate watches", item.ID)
-			}
-			watches[key] = true
-		}
-		if duration, err := time.ParseDuration(item.Interval); err != nil || duration <= 0 {
-			return fmt.Errorf("detector %s has invalid interval", item.ID)
-		}
-		if item.Persistence.Firing < 1 || item.Persistence.Clearing < 1 ||
-			item.Batching.Severity != "info" && item.Batching.Severity != "warn" && item.Batching.Severity != "critical" {
-			return fmt.Errorf("detector %s has invalid persistence or batching", item.ID)
-		}
-		if item.Batching.Debounce != "0" {
-			if duration, err := time.ParseDuration(item.Batching.Debounce); err != nil || duration <= 0 {
-				return fmt.Errorf("detector %s has invalid debounce", item.ID)
-			}
-		}
-		packagePath := filepath.Clean(strings.TrimPrefix(item.Package, "./"))
-		if item.Package == "" || filepath.IsAbs(packagePath) || packagePath == ".." || strings.HasPrefix(packagePath, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("detector %s package escapes diagnostics", item.ID)
-		}
-		path := filepath.Join(diagnostics, packagePath)
-		files, err := os.ReadDir(path)
-		if err != nil {
-			return fmt.Errorf("detector %s package: %w", item.ID, err)
-		}
+	for _, detector := range detectors {
 		hasGo := false
-		for _, file := range files {
-			if !file.IsDir() && strings.HasSuffix(file.Name(), ".go") {
-				hasGo = true
-			}
+		for _, file := range detector.Files {
+			hasGo = hasGo || (!strings.Contains(file.Name, "/") && strings.HasSuffix(file.Name, ".go"))
 		}
 		if !hasGo {
-			return fmt.Errorf("detector %s package has no Go files", item.ID)
+			return fmt.Errorf("detector %s package has no Go files", detector.Manifest.ID)
 		}
 	}
 	return nil

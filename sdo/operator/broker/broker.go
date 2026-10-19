@@ -18,6 +18,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 type Actor string
@@ -216,11 +217,12 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
-		if phase == InitialPhase {
-			if _, err := os.Stat(filepath.Join(b.target, ".sdo", "diagnostics", "manifest.yaml")); err == nil {
-				return errors.New("initial phase is closed after the diagnostics manifest is accepted")
-			} else if !errors.Is(err, os.ErrNotExist) {
+		// Upkeep stays open after bootstrap: it carries schema migrations.
+		if phase == InitialPhase && actor != Upkeep {
+			if registered, err := layout.HasDetectors(b.target); err != nil {
 				return fmt.Errorf("inspect initial memory: %w", err)
+			} else if registered {
+				return errors.New("initial phase is closed after detector manifests are accepted")
 			}
 		}
 		if phase == ReflectionPhase {
@@ -250,7 +252,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		sourceChange := false
 		for _, path := range paths {
-			if !strings.HasPrefix(path, ".sdo/") {
+			if !layout.IsMemoryPath(path) {
 				sourceChange = true
 			}
 		}
@@ -258,14 +260,14 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			if sourceChange && expectedSourceTree == "" {
 				return errors.New("initial source must use PublishVerifiedSource")
 			}
-			if expectedSourceTree != "" && (!sourceChange || contains(paths, ".sdo/arch.md")) {
+			if expectedSourceTree != "" && (!sourceChange || contains(paths, layout.ArchitectureFile)) {
 				return errors.New("verified source publish requires source files without architecture")
 			}
 		}
-		if phase == InitialPhase && actor == HealthJudge && !contains(paths, ".sdo/diagnostics/manifest.yaml") {
-			return errors.New("initial health judge proposal must install the diagnostics manifest")
+		if phase == InitialPhase && actor == HealthJudge && !changesDetectorManifest(paths) {
+			return errors.New("initial health judge proposal must install detector manifests")
 		}
-		if phase == InitialPhase && actor == Deployer && contains(paths, ".sdo/arch.md") && len(paths) != 1 {
+		if phase == InitialPhase && actor == Deployer && contains(paths, layout.ArchitectureFile) && len(paths) != 1 {
 			return errors.New("initial architecture must follow a separately accepted source proposal")
 		}
 		for _, path := range paths {
@@ -355,7 +357,7 @@ func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (str
 	if commit == "" {
 		return "", errors.New("commit is required")
 	}
-	return gitText(ctx, b.target, "rev-parse", commit+":.sdo/diagnostics")
+	return gitText(ctx, b.target, "rev-parse", commit+":"+layout.DiagnosticsDir)
 }
 
 // ReleaseProposal removes a proposal checkout after acknowledgement or a
@@ -640,7 +642,7 @@ func checkOwnership(path string, actor Actor, phase Phase) error {
 			return fmt.Errorf("secret-bearing proposal path: %q", path)
 		}
 	}
-	if !strings.HasPrefix(path, ".sdo/") {
+	if !layout.IsMemoryPath(path) {
 		if phase == ReflectionPhase {
 			return fmt.Errorf("reflection may edit only operational memory: %s", path)
 		}
@@ -658,18 +660,26 @@ func checkOwnership(path string, actor Actor, phase Phase) error {
 	if phase == ProposalPhase {
 		return fmt.Errorf("mitigation proposal may not edit operational memory before verification: %s", path)
 	}
+	kind, id, classified := layout.Classify(path)
 	allowed := false
-	switch actor {
-	case Human:
-		allowed = path == ".sdo/goal.md"
-	case Deployer:
-		allowed = path == ".sdo/arch.md"
-	case Upkeep:
-		allowed = path == ".sdo/arch.md" || path == ".sdo/schema-version" || path == ".sdo/diagnostics/go.mod" || path == ".sdo/diagnostics/go.sum"
-	case HealthJudge:
-		allowed = path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/diagnostics/detectors/health/") || (strings.HasPrefix(path, ".sdo/diagnostics/traffic/") && !incidentTraffic(path)) || (phase == InitialPhase && (path == ".sdo/playbooks/README.md" || path == ".sdo/playbooks/health-objective/README.md"))
-	case Responder:
-		allowed = path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/playbooks/") || strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/") || incidentTraffic(path)
+	if classified {
+		switch actor {
+		case Human:
+			allowed = kind == layout.KindGoal
+		case Deployer:
+			allowed = kind == layout.KindArchitecture
+		case Upkeep:
+			// Detector files are Upkeep's only for a schema migration; see
+			// validateUpkeepMigration.
+			allowed = kind == layout.KindArchitecture || kind == layout.KindSchemaVersion || kind == layout.KindDiagnosticsModule || kind == layout.KindLegacyDetectorManifest || kind.IsDetectorManifest() || kind.IsDetectorSource()
+		case HealthJudge:
+			allowed = kind == layout.KindHealthDetectorManifest || kind == layout.KindHealthDetectorSource ||
+				((kind == layout.KindTrafficGenerator || kind == layout.KindTrafficWorkload) && !layout.IncidentTraffic(kind, id)) ||
+				(phase == InitialPhase && (kind == layout.KindPlaybookIndex || (kind == layout.KindPlaybook && id == healthObjectivePlaybook)))
+		case Responder:
+			allowed = kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource || kind == layout.KindPlaybookIndex || kind == layout.KindPlaybook || kind == layout.KindPlaybookScript ||
+				layout.IncidentTraffic(kind, id)
+		}
 	}
 	if !allowed {
 		return fmt.Errorf("actor %s does not own %s", actor, path)
@@ -677,8 +687,15 @@ func checkOwnership(path string, actor Actor, phase Phase) error {
 	return nil
 }
 
-func incidentTraffic(path string) bool {
-	return strings.HasPrefix(path, ".sdo/diagnostics/traffic/generators/incident/") || strings.HasPrefix(path, ".sdo/diagnostics/traffic/workloads/incident-")
+const healthObjectivePlaybook = "health-objective"
+
+func changesDetectorManifest(paths []string) bool {
+	for _, path := range paths {
+		if kind, _, ok := layout.Classify(path); ok && (kind.IsDetectorManifest() || kind == layout.KindLegacyDetectorManifest) {
+			return true
+		}
+	}
+	return false
 }
 
 func copyChange(sourceRoot, targetRoot, relative string) error {

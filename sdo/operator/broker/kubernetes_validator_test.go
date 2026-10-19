@@ -145,11 +145,11 @@ func TestKubernetesValidatorProjectsHealthyBaselineOnlyForIncidentGate(t *testin
 
 func TestHealthyBaselineGateWaitsForAnIncidentDetectorProposal(t *testing.T) {
 	candidate := t.TempDir()
-	manifest := filepath.Join(candidate, ".sdo", "diagnostics", "manifest.yaml")
+	manifest := filepath.Join(candidate, ".sdo", "diagnostics", "detectors", "incidents", "fault", "manifest.yaml")
 	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(manifest, []byte("detectors:\n  - id: fault\n    class: incident\n"), 0o644); err != nil {
+	if err := os.WriteFile(manifest, []byte(detectorYAML("incident", "fault", 1, "base")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if needed, err := baselineGateRequired(candidate, []string{".sdo/diagnostics/detectors/health/objective/detector.go"}); err != nil || needed {

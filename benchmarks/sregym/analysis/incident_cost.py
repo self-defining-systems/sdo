@@ -77,10 +77,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
 from agentshim import ModelPricing, PricingTable, TokenWeights, cost_usd, default_pricing, price_for
 from agentshim import TokenUsage as NormalizedUsage
 from agentshim.providers.claude import ClaudeStreamParser
+
+from benchmarks.sregym.detector_manifests import workspace_detector_manifests
 
 
 def incident_worktree_dirname(incident_id: str) -> str:
@@ -871,11 +872,7 @@ def memory_size(workspace: Path) -> MemorySize | None:
     sdo = workspace / ".sdo"
     if not sdo.is_dir():
         return None
-    detectors: list[dict[str, Any]] = []
-    manifest = sdo / "diagnostics" / "manifest.yaml"
-    if manifest.is_file():
-        document = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        detectors = [item for item in document.get("detectors") or [] if isinstance(item, dict)]
+    detectors = workspace_detector_manifests(workspace)
     playbooks = list((sdo / "playbooks").glob("*/README.md"))
     return MemorySize(
         detectors=len(detectors),

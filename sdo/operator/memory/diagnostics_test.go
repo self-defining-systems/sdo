@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 func TestAcceptedDiagnosticsProjectsPhysicalStorage(t *testing.T) {
@@ -15,7 +17,11 @@ func TestAcceptedDiagnosticsProjectsPhysicalStorage(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "manifest.yaml"), []byte("kind: DetectorManifest\n"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(repository, layout.DetectorDir(layout.ClassHealth, "objective")), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(repository, layout.DetectorManifestPath(layout.ClassHealth, "objective"))
+	if err := os.WriteFile(manifest, []byte("id: objective\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitCommand(t, repository, "add", ".")
@@ -27,7 +33,7 @@ func TestAcceptedDiagnosticsProjectsPhysicalStorage(t *testing.T) {
 	if projection.Directory != root || projection.Fingerprint == "" || projection.AcceptedRevision == "" {
 		t.Fatalf("incomplete diagnostics projection: %+v", projection)
 	}
-	if err := os.WriteFile(filepath.Join(root, "manifest.yaml"), []byte("changed"), 0o644); err != nil {
+	if err := os.WriteFile(manifest, []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AcceptedDiagnostics(context.Background(), repository); err == nil {

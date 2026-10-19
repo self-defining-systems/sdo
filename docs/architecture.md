@@ -43,7 +43,7 @@ Native incident and reflection tasks carry an accepted-commit-bound `Operational
 | `sdo/contracts/proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
-| `sdo/operator/broker/`, `memory/`, `outcome_derivation/` | Go commit authority, logical snapshot and artifact materialization edge, outcome store with physical JSON adapter, and controller-derived typed outcomes |
+| `sdo/operator/broker/`, `memory/` (including `memory/layout`), `outcome_derivation/` | Go commit authority, logical snapshot and artifact materialization edge, outcome store with physical JSON adapter, and controller-derived typed outcomes |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector SDK, deterministic execution, controller state and its typed contract projection, builder/supervisor, and Kubernetes installation |
 | `benchmarks/sregym/` | First-party benchmark adapter, protocol, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
@@ -87,6 +87,8 @@ The application repository is the shared durable memory. Five artifact classes l
 | Outcomes | Controller through the broker | Immutable, versioned incident outcome documents and evidence |
 
 The logical outcome contract is `OutcomeRecord` in `sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto`. The controller derives it, the broker alone receives `memory.Writer`, and `memory.Reader` exposes `Get` and `List` by incident ID. Reflection receives the accepted record and prior records as typed protobuf fields. The Go JSON storage adapter alone maps an incident ID to `.sdo/outcomes/<sha256(incident_id)>.json`, stores the versioned document, and can import the prior `.sdo/outcomes.jsonl` stream once, deleting that stream only after every record is accepted. Consumers never infer physical filenames. Broker-owned source deployment evidence lives outside `.sdo/` in its own durable ledger and is bound to an accepted commit.
+
+`sdo/operator/memory/layout` is the only Go package that knows these physical paths: it owns the path constants and builders, `Classify(path)` (kind, ID, ok), the per-kind parsers and typed `Tree`, and the single detector manifest type. Each detector carries its own `manifest.yaml` at `.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml`; the directory name is the detector ID. Schema version 2 introduced this layout; a version 1 repository (single `.sdo/diagnostics/manifest.yaml`) is converted by `layout.Migrate`, which the Upkeep actor commits through the broker. The controller does this at every start (operation `memory-v<N>-schema`, idempotent) before its first memory read, and `operate` does it as its schema step.
 
 `schema-version` and `lifecycle-provenance.yaml` are validation metadata. They do not change the five ownership classes. Lifecycle provenance may attest an exact diagnostics-tree digest against an immutable validator image identity; only that exact pair can reuse a prior successful compilation, while any detector or validator change forces isolated validation again.
 
@@ -186,7 +188,8 @@ Status meanings:
 | `.sdo/diagnostics/traffic/generators/`, `traffic/workloads/` | Health judge | Health judge lifecycle | Workloads and generators obey engine limits and isolated validation. |
 | `.sdo/diagnostics/traffic/generators/incident/`, `traffic/workloads/incident-*.yaml` | Responder | Responder | Incident-scoped traffic only; health acceptance remains judge-owned. |
 | Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | `OutcomeRecord` is the logical schema; versioned per-incident documents are broker owned. The storage edge imports retired JSONL streams; no agent has writer capability. |
-| `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. |
+| `.sdo/diagnostics/detectors/<class>/<id>/manifest.yaml` | Owner of the detector class | Owner of the detector class | One manifest per detector; its class, ID, and package must match its location. |
+| `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema version 1 to 2, rewriting detector manifests and moving packages. |
 
 ## Repository scope matrix
 

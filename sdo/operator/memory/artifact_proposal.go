@@ -8,60 +8,21 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 )
 
 type ArtifactRole string
-
-var detectorIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
 const (
 	HealthJudgeArtifacts ArtifactRole = "health_judge"
 	ResponderArtifacts   ArtifactRole = "responder"
 )
-
-type artifactManifest struct {
-	APIVersion string             `yaml:"apiVersion"`
-	Kind       string             `yaml:"kind"`
-	SDKVersion string             `yaml:"sdkVersion"`
-	Detectors  []artifactDetector `yaml:"detectors"`
-}
-
-type artifactDetector struct {
-	ID                  string              `yaml:"id"`
-	Package             string              `yaml:"package"`
-	Constructor         string              `yaml:"constructor"`
-	Class               string              `yaml:"class"`
-	Owner               string              `yaml:"owner"`
-	Watches             []artifactWatch     `yaml:"watches"`
-	Interval            string              `yaml:"interval"`
-	Persistence         artifactPersistence `yaml:"persistence"`
-	Batching            artifactBatching    `yaml:"batching"`
-	PossiblePlaybooks   []string            `yaml:"possiblePlaybooks"`
-	OriginatingIncident string              `yaml:"originatingIncident,omitempty"`
-	OriginatingCommit   string              `yaml:"originatingCommit,omitempty"`
-}
-
-type artifactWatch struct {
-	APIVersion string `yaml:"apiVersion"`
-	Kind       string `yaml:"kind"`
-	Namespace  string `yaml:"namespace,omitempty"`
-}
-type artifactPersistence struct {
-	Firing   int32 `yaml:"firing"`
-	Clearing int32 `yaml:"clearing"`
-}
-type artifactBatching struct {
-	Severity string `yaml:"severity"`
-	Debounce string `yaml:"debounce"`
-}
 
 // MaterializeArtifacts is the only edge that maps worker-owned logical artifacts
 // to the current repository layout. Broker validation still decides acceptance.
@@ -72,75 +33,60 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 	if err := validateArtifactProposal(proposal, role); err != nil {
 		return err
 	}
-	if err := rejectArtifactSymlinks(filepath.Join(root, ".sdo")); err != nil {
+	if err := rejectArtifactSymlinks(filepath.Join(root, layout.Dir)); err != nil {
 		return err
 	}
-	manifestPath := filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")
-	data, err := os.ReadFile(manifestPath)
-	if os.IsNotExist(err) && role == HealthJudgeArtifacts {
-		data = []byte("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors: []\n")
-	} else if err != nil {
-		return fmt.Errorf("read accepted detector manifest: %w", err)
+	detectors, err := layout.ReadDetectors(filepath.Join(root, layout.DiagnosticsDir))
+	if err != nil {
+		return fmt.Errorf("read accepted detectors: %w", err)
 	}
-	var manifest artifactManifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("decode detector manifest: %w", err)
-	}
-	if manifest.APIVersion != "sdo.dev/v1alpha1" || manifest.Kind != "DetectorManifest" {
-		return errors.New("invalid accepted detector manifest")
-	}
-	byID := make(map[string]artifactDetector, len(manifest.Detectors))
-	for _, item := range manifest.Detectors {
-		if _, exists := byID[item.ID]; exists {
-			return fmt.Errorf("duplicate accepted detector %q", item.ID)
+	byID := make(map[string]layout.Detector, len(detectors))
+	for _, item := range detectors {
+		if _, exists := byID[item.Manifest.ID]; exists {
+			return fmt.Errorf("duplicate accepted detector %q", item.Manifest.ID)
 		}
-		byID[item.ID] = item
+		byID[item.Manifest.ID] = item
 	}
 	for _, id := range proposal.GetDeleteDetectorIds() {
 		prior, exists := byID[id]
-		if !exists || prior.Owner != string(role) || !safeDetectorPackage(prior.Package) {
+		if !exists || prior.Manifest.Owner != string(role) {
 			return fmt.Errorf("cannot delete detector %q outside %s-owned diagnostics", id, role)
 		}
 	}
 	for _, item := range proposal.GetDetectors() {
-		if prior, exists := byID[item.GetId()]; exists && (prior.Owner != string(role) || !safeDetectorPackage(prior.Package)) {
+		if prior, exists := byID[item.GetId()]; exists && prior.Manifest.Owner != string(role) {
 			return fmt.Errorf("cannot replace detector %q outside %s-owned diagnostics", item.GetId(), role)
 		}
 	}
 	for _, id := range proposal.GetDeleteDetectorIds() {
-		prior, exists := byID[id]
-		if !exists {
-			return fmt.Errorf("cannot delete unknown detector %q", id)
-		}
-		if err := os.RemoveAll(filepath.Join(root, ".sdo", "diagnostics", filepath.Clean(prior.Package))); err != nil {
+		prior := byID[id]
+		if err := layout.RemoveDetector(root, prior.Class, id); err != nil {
 			return err
 		}
 		delete(byID, id)
 	}
+	class := layout.ClassIncident
+	if role == HealthJudgeArtifacts {
+		class = layout.ClassHealth
+	}
 	for _, item := range proposal.GetDetectors() {
-		classDir := "incidents"
-		if role == HealthJudgeArtifacts {
-			classDir = "health"
+		manifest := layout.DetectorManifest{
+			APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion,
+			ID: item.GetId(), Constructor: item.GetConstructor(), Class: item.GetDetectorClass(), Owner: item.GetOwner(), Interval: item.GetInterval(),
+			Persistence:       layout.Persistence{Firing: int(item.GetFiring()), Clearing: int(item.GetClearing())},
+			Batching:          layout.Batching{Severity: item.GetSeverity(), Debounce: item.GetDebounce()},
+			OriginatingCommit: item.GetOriginatingCommit(), OriginatingIncident: item.GetOriginatingIncident(),
+			PossiblePlaybooks: append([]string{}, item.GetPossiblePlaybookIds()...),
 		}
-		packagePath := filepath.Join("detectors", classDir, item.GetId())
-		if prior, exists := byID[item.GetId()]; exists {
-			packagePath = strings.TrimPrefix(filepath.Clean(prior.Package), "./")
-		}
-		entry := artifactDetector{ID: item.GetId(), Package: "./" + filepath.ToSlash(packagePath), Constructor: item.GetConstructor(), Class: item.GetDetectorClass(), Owner: item.GetOwner(), Interval: item.GetInterval(), Persistence: artifactPersistence{item.GetFiring(), item.GetClearing()}, Batching: artifactBatching{item.GetSeverity(), item.GetDebounce()}, OriginatingCommit: item.GetOriginatingCommit(), OriginatingIncident: item.GetOriginatingIncident()}
 		for _, watch := range item.GetWatches() {
-			entry.Watches = append(entry.Watches, artifactWatch{APIVersion: watch.GetApiVersion(), Kind: watch.GetKind()})
+			manifest.Watches = append(manifest.Watches, layout.Watch{APIVersion: watch.GetApiVersion(), Kind: watch.GetKind()})
 		}
-		for _, id := range item.GetPossiblePlaybookIds() {
-			entry.PossiblePlaybooks = append(entry.PossiblePlaybooks, id)
-		}
-		base := filepath.Join(root, ".sdo", "diagnostics", packagePath)
-		if err := os.MkdirAll(base, 0o755); err != nil {
-			return err
-		}
+		entry := layout.Detector{Class: class, Manifest: manifest}
 		for _, source := range item.GetSources() {
-			if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
-				return err
-			}
+			entry.Files = append(entry.Files, layout.File{Name: source.GetName(), Content: []byte(source.GetContent())})
+		}
+		if err := layout.WriteDetector(root, entry); err != nil {
+			return err
 		}
 		byID[item.GetId()] = entry
 	}
@@ -149,26 +95,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 			return err
 		}
 	}
-	manifest.Detectors = manifest.Detectors[:0]
-	ids := make([]string, 0, len(byID))
-	for id := range byID {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		manifest.Detectors = append(manifest.Detectors, byID[id])
-	}
-	encoded, err := yaml.Marshal(manifest)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(manifestPath, encoded, 0o644); err != nil {
-		return err
-	}
-	playbookRoot := filepath.Join(root, ".sdo", "playbooks")
+	playbookRoot := filepath.Join(root, layout.PlaybooksDir)
 	for _, id := range proposal.GetDeletePlaybookIds() {
 		if err := os.RemoveAll(filepath.Join(playbookRoot, id)); err != nil {
 			return err
@@ -195,7 +122,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 		}
 	}
 	for _, generator := range proposal.GetTrafficGenerators() {
-		base := filepath.Join(root, ".sdo", "diagnostics", "traffic", "generators")
+		base := filepath.Join(root, layout.TrafficGeneratorsDir)
 		if generator.GetId() != "application" {
 			base = filepath.Join(base, generator.GetId())
 		}
@@ -221,7 +148,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 		if err != nil {
 			return err
 		}
-		base := filepath.Join(root, ".sdo", "diagnostics", "traffic", "workloads")
+		base := filepath.Join(root, layout.TrafficWorkloadsDir)
 		if err := os.MkdirAll(base, 0o755); err != nil {
 			return err
 		}
@@ -235,7 +162,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, role ArtifactRole) error {
 	seen := map[string]bool{}
 	checkID := func(id string) error {
-		if !playbookIDPattern.MatchString(id) {
+		if !layout.ValidPlaybookID(id) {
 			return fmt.Errorf("invalid logical artifact ID %q", id)
 		}
 		if seen[id] {
@@ -248,7 +175,7 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		if item == nil {
 			return errors.New("nil detector proposal")
 		}
-		if !detectorIDPattern.MatchString(item.GetId()) {
+		if !layout.ValidDetectorID(item.GetId()) {
 			return fmt.Errorf("invalid logical detector ID %q", item.GetId())
 		}
 		if seen[item.GetId()] {
@@ -267,7 +194,7 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		}
 		foundSource := false
 		for _, id := range item.GetPossiblePlaybookIds() {
-			if !playbookIDPattern.MatchString(id) {
+			if !layout.ValidPlaybookID(id) {
 				return fmt.Errorf("invalid playbook ID %q", id)
 			}
 		}
@@ -292,7 +219,7 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		if err := rejectPhysicalMemoryPath(item.GetMarkdown()); err != nil {
 			return fmt.Errorf("playbook %q: %w", item.GetId(), err)
 		}
-		if item.GetOwner() != "responder" || !playbookIDPattern.MatchString(item.GetFaultClass()) || strings.TrimSpace(item.GetOriginatingIncident()) == "" || strings.ContainsAny(item.GetOriginatingIncident(), "\r\n") || strings.TrimSpace(item.GetMarkdown()) == "" || strings.HasPrefix(strings.TrimSpace(item.GetMarkdown()), "---") {
+		if item.GetOwner() != "responder" || !layout.ValidPlaybookID(item.GetFaultClass()) || strings.TrimSpace(item.GetOriginatingIncident()) == "" || strings.ContainsAny(item.GetOriginatingIncident(), "\r\n") || strings.TrimSpace(item.GetMarkdown()) == "" || strings.HasPrefix(strings.TrimSpace(item.GetMarkdown()), "---") {
 			return fmt.Errorf("invalid playbook %q", item.GetId())
 		}
 		if role == HealthJudgeArtifacts && item.GetId() != "health-objective" {
@@ -310,7 +237,7 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		}
 	}
 	for _, id := range append(append([]string{}, proposal.GetDeleteDetectorIds()...), proposal.GetDeletePlaybookIds()...) {
-		if !playbookIDPattern.MatchString(id) {
+		if !layout.ValidPlaybookID(id) {
 			return fmt.Errorf("invalid deletion ID %q", id)
 		}
 	}
@@ -338,7 +265,7 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		}
 	}
 	for _, item := range proposal.GetTrafficWorkloads() {
-		if item == nil || !playbookIDPattern.MatchString(item.GetName()) || item.GetApiVersion() != "sdo.dev/v1alpha1" || item.GetKind() != "TrafficWorkload" {
+		if item == nil || !layout.ValidPlaybookID(item.GetName()) || item.GetApiVersion() != "sdo.dev/v1alpha1" || item.GetKind() != "TrafficWorkload" {
 			return errors.New("invalid typed traffic workload")
 		}
 	}
@@ -359,7 +286,7 @@ func validateGoSource(source *contracts.ProposedGoSource) error {
 }
 
 func rejectPhysicalMemoryPath(content string) error {
-	if strings.Contains(content, ".sdo/") || strings.Contains(content, `.sdo\`) {
+	if layout.ContainsPhysicalPath(content) {
 		return errors.New("physical operational memory path is forbidden in worker content; use logical artifact IDs")
 	}
 	return nil
@@ -373,18 +300,13 @@ func refreshPlaybookIndex(root string) error {
 	lines := []string{"# Operational playbooks", ""}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			if !playbookIDPattern.MatchString(entry.Name()) {
+			if !layout.ValidPlaybookID(entry.Name()) {
 				return fmt.Errorf("invalid playbook directory %q", entry.Name())
 			}
 			lines = append(lines, fmt.Sprintf("- [%s](%s/README.md)", entry.Name(), entry.Name()))
 		}
 	}
 	return os.WriteFile(filepath.Join(root, "README.md"), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
-}
-
-func safeDetectorPackage(value string) bool {
-	clean := filepath.Clean(value)
-	return clean != "." && !filepath.IsAbs(clean) && clean != ".." && !strings.HasPrefix(clean, ".."+string(filepath.Separator)) && strings.HasPrefix(filepath.ToSlash(clean), "detectors/")
 }
 
 func rejectArtifactSymlinks(root string) error {

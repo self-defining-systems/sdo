@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory/layout"
 )
 
-func generateRegistrationTest(root string, manifest manifest) error {
+func generateRegistrationTest(root string, detectors []layout.Detector) error {
 	linkProbes := map[string]bool{}
 	workloads, err := loadTrafficWorkloads(filepath.Join(root, "traffic", "workloads"))
 	if err != nil {
@@ -37,7 +38,8 @@ import (
 func TestRegistrationContracts(t *testing.T) {
     detectors := All()
 `)
-	for index, item := range manifest.Detectors {
+	for index, detector := range detectors {
+		item := detector.Manifest
 		interval, _ := time.ParseDuration(item.Interval)
 		debounce, _ := time.ParseDuration(item.Batching.Debounce)
 		watches := []string{}

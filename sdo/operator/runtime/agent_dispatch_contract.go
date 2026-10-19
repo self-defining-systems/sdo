@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -87,7 +88,7 @@ func encodeIncidentAgentTask(request IncidentRequest, agentID string, snapshots 
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode agent task: %w", err)
 	}
-	if len(snapshots) == 1 && bytes.Contains(payload, []byte(".sdo/")) {
+	if len(snapshots) == 1 && bytes.Contains(payload, []byte(layout.PhysicalPathMarker)) {
 		return nil, nil, fmt.Errorf("physical operational memory path leaked into native incident task")
 	}
 	return task, payload, nil

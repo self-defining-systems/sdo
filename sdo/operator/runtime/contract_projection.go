@@ -10,7 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 )
 
@@ -73,7 +73,7 @@ func bindingsState(bindings map[string]*contracts.ObjectRef) map[string]sdk.Obje
 }
 
 func findingContract(finding sdk.Finding) (*contracts.Finding, error) {
-	playbooks, err := memory.PlaybookIDs(finding.Playbooks)
+	playbooks, err := layout.PlaybookIDs(finding.Playbooks)
 	if err != nil {
 		return nil, err
 	}
@@ -184,14 +184,14 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		result.Findings = append(result.Findings, item)
 	}
 	for _, surfaced := range request.SurfacedPlaybooks {
-		id, err := memory.PlaybookID(surfaced.PlaybookID)
+		id, err := layout.PlaybookID(surfaced.PlaybookID)
 		if err != nil {
 			return nil, err
 		}
 		result.SurfacedPlaybooks = append(result.SurfacedPlaybooks, &contracts.SurfacedPlaybook{PlaybookId: id, ParameterBindings: bindingsContract(surfaced.ParameterBindings)})
 	}
 	for _, prior := range request.RelevantOutcomes {
-		ids, err := memory.PlaybookIDs(prior.AppliedPlaybookIDs)
+		ids, err := layout.PlaybookIDs(prior.AppliedPlaybookIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -234,13 +234,13 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		message.ConfirmedRootCauses = append(message.ConfirmedRootCauses, item)
 	}
 	for _, playbook := range result.AppliedPlaybooks {
-		id, err := memory.PlaybookID(playbook.PlaybookID)
+		id, err := layout.PlaybookID(playbook.PlaybookID)
 		if err != nil {
 			return nil, err
 		}
 		item := &contracts.AppliedPlaybook{PlaybookId: id, ParameterBindings: bindingsContract(playbook.ParameterBindings), ScriptNames: make([]string, 0, len(playbook.ScriptNames))}
 		for _, script := range playbook.ScriptNames {
-			name, err := memory.PlaybookScriptName(id, script)
+			name, err := layout.PlaybookScriptName(id, script)
 			if err != nil {
 				return nil, err
 			}
@@ -261,10 +261,10 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		})
 	}
 	for _, reference := range result.ProposedArtifactIDs {
-		if reference == ".sdo/outcomes.jsonl" {
+		if reference == layout.LegacyOutcomesFile {
 			continue
 		}
-		id, err := memory.ArtifactID(reference)
+		id, err := layout.ArtifactID(reference)
 		if err != nil {
 			return nil, err
 		}
@@ -373,7 +373,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		message.DetectorReviewReason = &closure.DetectorReviewReason
 	}
 	for _, entry := range closure.DetectorTimeline {
-		playbooks, err := memory.PlaybookIDs(entry.SurfacedPlaybookIDs)
+		playbooks, err := layout.PlaybookIDs(entry.SurfacedPlaybookIDs)
 		if err != nil {
 			return nil, fmt.Errorf("timeline playbooks: %w", err)
 		}

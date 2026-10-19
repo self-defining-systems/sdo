@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,13 +45,13 @@ func repository(t *testing.T) string {
 func memoryFixture(t *testing.T, root string) {
 	t.Helper()
 	files := map[string]string{
-		".sdo/schema-version":            "1\n",
-		".sdo/goal.md":                   "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
-		".sdo/arch.md":                   "---\nschema_version: 1\ngenerated_at_commit: base\ngenerated_at: 2026-01-01T00:00:00Z\napplication: test\ntopology_fingerprint: abc\n---\nArchitecture\n",
-		".sdo/playbooks/README.md":       "# Playbooks\n\n- [base](base/README.md)\n",
-		".sdo/playbooks/base/README.md":  "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>\n",
-		".sdo/diagnostics/manifest.yaml": "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors:\n  - id: health\n    package: ./detectors/health/objective\n    constructor: New\n    class: health\n    owner: health_judge\n    watches:\n      - apiVersion: v1\n        kind: Pod\n    interval: 30s\n    persistence:\n      firing: 1\n      clearing: 1\n    batching:\n      severity: critical\n      debounce: 500ms\n    possiblePlaybooks:\n      - .sdo/playbooks/base/README.md\n    originatingCommit: initial\n",
-		".sdo/diagnostics/detectors/health/objective/detector.go": "package objective\n",
+		".sdo/schema-version":           "2\n",
+		".sdo/goal.md":                  "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
+		".sdo/arch.md":                  "---\nschema_version: 1\ngenerated_at_commit: base\ngenerated_at: 2026-01-01T00:00:00Z\napplication: test\ntopology_fingerprint: abc\n---\nArchitecture\n",
+		".sdo/playbooks/README.md":      "# Playbooks\n\n- [base](base/README.md)\n",
+		".sdo/playbooks/base/README.md": "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>\n",
+		".sdo/diagnostics/detectors/health/health/manifest.yaml": detectorYAML("health", "health", 1, "base"),
+		".sdo/diagnostics/detectors/health/health/detector.go":   "package objective\n",
 	}
 	for path, contents := range files {
 		absolute := filepath.Join(root, path)
@@ -81,7 +82,7 @@ func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
 			".sdo/goal.md": "---\nschema_version: 1\nowner: human\napplication: test\n---\nGoal\n",
 		}},
 		{"bootstrap-metadata", Upkeep, map[string]string{
-			".sdo/schema-version": "1\n", ".sdo/diagnostics/go.mod": "module app-diagnostics\n\ngo 1.24\n",
+			".sdo/schema-version": "2\n", ".sdo/diagnostics/go.mod": "module app-diagnostics\n\ngo 1.24\n",
 		}},
 		{"bootstrap-source", Deployer, map[string]string{
 			"app.txt": "deployed source\n",
@@ -90,10 +91,10 @@ func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
 			".sdo/arch.md": "---\nschema_version: 1\ngenerated_at_commit: SOURCE_COMMIT\napplication: test\n---\nArchitecture\n",
 		}},
 		{"bootstrap-health", HealthJudge, map[string]string{
-			".sdo/playbooks/README.md":                                "# Playbooks\n\n- [Health objective](health-objective/README.md)\n",
-			".sdo/playbooks/health-objective/README.md":               "---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\nRepair <AFFECTED_RESOURCE>\n",
-			".sdo/diagnostics/manifest.yaml":                          "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors:\n  - id: health-objective\n    package: ./detectors/health/objective\n    constructor: New\n    class: health\n    owner: health_judge\n    watches:\n      - apiVersion: v1\n        kind: Pod\n    interval: 30s\n    persistence:\n      firing: 2\n      clearing: 2\n    batching:\n      severity: critical\n      debounce: 500ms\n    possiblePlaybooks:\n      - .sdo/playbooks/health-objective/README.md\n    originatingCommit: lifecycle-bootstrap\n",
-			".sdo/diagnostics/detectors/health/objective/detector.go": "package objective\n",
+			".sdo/playbooks/README.md":                                         "# Playbooks\n\n- [Health objective](health-objective/README.md)\n",
+			".sdo/playbooks/health-objective/README.md":                        "---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\nRepair <AFFECTED_RESOURCE>\n",
+			".sdo/diagnostics/detectors/health/health-objective/manifest.yaml": detectorYAML("health", "health-objective", 2, "health-objective"),
+			".sdo/diagnostics/detectors/health/health-objective/detector.go":   "package objective\n",
 		}},
 	}
 	for _, step := range steps {
@@ -559,7 +560,7 @@ func TestResponderCannotChangeJudgeManifestRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(p.Path, ".sdo", "diagnostics", "manifest.yaml")
+	path := filepath.Join(p.Path, ".sdo", "diagnostics", "detectors", "health", "health", "manifest.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -570,4 +571,14 @@ func TestResponderCannotChangeJudgeManifestRegistration(t *testing.T) {
 	if _, err := b.Publish(context.Background(), "inc-protected", Responder, ReflectionPhase); err == nil {
 		t.Fatal("responder changed judge registration")
 	}
+}
+
+// detectorYAML is one detector's manifest. possiblePlaybook names a logical
+// playbook that must exist in the tree the manifest is validated against.
+func detectorYAML(class, id string, firing int, possiblePlaybook string) string {
+	owner, origin := "health_judge", ""
+	if class == "incident" {
+		owner, origin = "responder", "originatingIncident: inc\n"
+	}
+	return fmt.Sprintf("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: %s\nconstructor: New\nclass: %s\nowner: %s\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: %d\n  clearing: 1\nbatching:\n  severity: critical\n  debounce: 500ms\npossiblePlaybooks:\n  - %s\n%soriginatingCommit: initial\n", id, class, owner, firing, possiblePlaybook, origin)
 }

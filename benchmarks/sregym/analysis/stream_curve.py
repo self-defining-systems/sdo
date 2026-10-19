@@ -26,8 +26,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from benchmarks.sregym.analysis.incident_cost import (
     RECEIPT_NAME,
     ArmPricing,
@@ -41,6 +39,7 @@ from benchmarks.sregym.analysis.incident_cost import (
     load_sdo_pipeline,
     pipeline_stage_dirs,
 )
+from benchmarks.sregym.detector_manifests import git_detector_manifests
 
 WINDOW = 6
 KINDS = ("first", "novel", "exact", "variant")
@@ -171,10 +170,9 @@ def _git_show(repo: Path, rev: str, path: str) -> str | None:
 def memory_at(repo: Path, rev: str) -> tuple[int, int, int] | None:
     """(detectors, incident detectors, playbooks) registered in ``.sdo/`` at commit ``rev``."""
 
-    manifest = _git_show(repo, rev, ".sdo/diagnostics/manifest.yaml")
-    if manifest is None:
+    detectors = git_detector_manifests(repo, rev)
+    if detectors is None:
         return None
-    detectors = [d for d in (yaml.safe_load(manifest) or {}).get("detectors") or [] if isinstance(d, dict)]
     listing = subprocess.run(
         ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", rev, ".sdo/playbooks"],
         capture_output=True,
@@ -206,8 +204,7 @@ def _firing_streams(pipeline_dir: Path) -> list[list[dict[str, Any]]]:
 
 
 def _detector_origins(repo: Path, rev: str) -> dict[str, str | None]:
-    manifest = _git_show(repo, rev, ".sdo/diagnostics/manifest.yaml") or ""
-    detectors = (yaml.safe_load(manifest) or {}).get("detectors") or []
+    detectors = git_detector_manifests(repo, rev) or []
     return {
         str(d.get("id") or d.get("name")): d.get("originatingIncident")
         for d in detectors

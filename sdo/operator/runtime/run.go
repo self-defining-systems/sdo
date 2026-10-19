@@ -21,6 +21,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/worker_registry"
@@ -103,7 +104,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		args = append(controllerConfigToArgs(config), args[2:]...)
 	}
 	if len(args) > 0 && args[0] == "--run-once" {
-		return core.RunWithOptions(ctx, detectors, core.RuntimeOptions{Args: args[1:], Stdout: stdout, Stderr: stderr, PlaybookResolver: memory.PlaybookIDs})
+		return core.RunWithOptions(ctx, detectors, core.RuntimeOptions{Args: args[1:], Stdout: stdout, Stderr: stderr, PlaybookResolver: layout.PlaybookIDs})
 	}
 	if len(args) > 0 && args[0] == "--evaluate-once" {
 		return evaluateOnce(ctx, detectors, args[1:], stdout, stderr, options.Provider)
