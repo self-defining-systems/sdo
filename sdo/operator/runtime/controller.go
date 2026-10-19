@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/core"
-	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 )
 
@@ -323,15 +322,6 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 				errored = true
 				break
 			}
-			ids, err := layout.PlaybookIDs(finding.Playbooks)
-			if err != nil {
-				c.resetGate(spec.ID)
-				c.recordDetectorError(spec.ID, now, err)
-				valid = false
-				errored = true
-				break
-			}
-			finding.Playbooks = ids
 			validFindings = append(validFindings, finding)
 		}
 		if !valid {

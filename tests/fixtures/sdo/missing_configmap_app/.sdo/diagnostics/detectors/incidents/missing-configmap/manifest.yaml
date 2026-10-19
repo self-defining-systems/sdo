@@ -18,6 +18,6 @@ batching:
     severity: critical
     debounce: 500ms
 possiblePlaybooks:
-    - .sdo/playbooks/missing-configmap/README.md
+    - missing-configmap
 originatingIncident: missing-configmap-fixture
 originatingCommit: fixture123

@@ -74,10 +74,6 @@ func bindingsState(bindings map[string]*contracts.ObjectRef) map[string]sdk.Obje
 }
 
 func findingContract(finding sdk.Finding) (*contracts.Finding, error) {
-	playbooks, err := layout.PlaybookIDs(finding.Playbooks)
-	if err != nil {
-		return nil, err
-	}
 	var metadata *structpb.Struct
 	if finding.Metadata != nil {
 		encoded, err := json.Marshal(finding.Metadata)
@@ -92,7 +88,7 @@ func findingContract(finding sdk.Finding) (*contracts.Finding, error) {
 	return &contracts.Finding{
 		DetectorId: finding.DetectorID, RuleId: finding.RuleID, Status: string(finding.Status), Severity: string(finding.Severity),
 		Summary: finding.Summary, Evidence: finding.Evidence, PrimaryResource: objectRefContract(finding.PrimaryResource),
-		RelatedResources: objectRefsContract(finding.RelatedResources), PlaybookIds: playbooks,
+		RelatedResources: objectRefsContract(finding.RelatedResources), PlaybookIds: append([]string{}, finding.Playbooks...),
 		ParameterBindings: bindingsContract(finding.ParameterBindings), Fingerprint: finding.Fingerprint, Metadata: metadata,
 	}, nil
 }
@@ -185,11 +181,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		result.Findings = append(result.Findings, item)
 	}
 	for _, surfaced := range request.SurfacedPlaybooks {
-		id, err := layout.PlaybookID(surfaced.PlaybookID)
-		if err != nil {
-			return nil, err
-		}
-		result.SurfacedPlaybooks = append(result.SurfacedPlaybooks, &contracts.SurfacedPlaybook{PlaybookId: id, ParameterBindings: bindingsContract(surfaced.ParameterBindings)})
+		result.SurfacedPlaybooks = append(result.SurfacedPlaybooks, &contracts.SurfacedPlaybook{PlaybookId: surfaced.PlaybookID, ParameterBindings: bindingsContract(surfaced.ParameterBindings)})
 	}
 	for _, prior := range request.RelevantOutcomes {
 		ids, err := layout.PlaybookIDs(prior.AppliedPlaybookIDs)
@@ -371,10 +363,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	if closure.DetectorReviewReason != "" {
 		message.DetectorReviewReason = &closure.DetectorReviewReason
 	}
-	message.DetectorTimeline, err = detectorTimelineContract(closure.DetectorTimeline)
-	if err != nil {
-		return nil, err
-	}
+	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)
 	message.ObservedStateChanges = observedStateChangesContract(closure.ObservedStateChanges)
 	return message, nil
 }
@@ -506,22 +495,18 @@ func observedStateChangesState(changes []*contracts.ObservedStateChange) []Obser
 	return result
 }
 
-func detectorTimelineContract(timeline []DetectorTimelineEntry) ([]*contracts.DetectorTimelineEntry, error) {
+func detectorTimelineContract(timeline []DetectorTimelineEntry) []*contracts.DetectorTimelineEntry {
 	result := make([]*contracts.DetectorTimelineEntry, 0, len(timeline))
 	for _, entry := range timeline {
-		playbooks, err := layout.PlaybookIDs(entry.SurfacedPlaybookIDs)
-		if err != nil {
-			return nil, fmt.Errorf("timeline playbooks: %w", err)
-		}
 		result = append(result, &contracts.DetectorTimelineEntry{
 			DetectorId: entry.DetectorID, DetectorClass: entry.DetectorClass, Owner: entry.Owner, RuleId: entry.RuleID,
 			Fingerprint: entry.Fingerprint, ParameterBindings: bindingsContract(entry.ParameterBindings),
-			SurfacedPlaybookIds: playbooks, FirstActivatedAt: contractTimestamp(entry.FirstActivatedAt),
+			SurfacedPlaybookIds: append([]string{}, entry.SurfacedPlaybookIDs...), FirstActivatedAt: contractTimestamp(entry.FirstActivatedAt),
 			LastSeenAt: contractTimestamp(entry.LastSeenAt), ClearedAt: optionalContractTimestamp(entry.ClearedAt),
 			Relation: string(entry.Relation), Activations: int32(entry.Activations),
 		})
 	}
-	return result, nil
+	return result
 }
 
 func detectorTimelineState(timeline []*contracts.DetectorTimelineEntry) []DetectorTimelineEntry {
@@ -684,10 +669,7 @@ func controllerStateContract(state RuntimeState) (*contracts.ControllerState, er
 	if err != nil {
 		return nil, fmt.Errorf("pending batch: %w", err)
 	}
-	timeline, err := detectorTimelineContract(state.DetectorTimeline)
-	if err != nil {
-		return nil, err
-	}
+	timeline := detectorTimelineContract(state.DetectorTimeline)
 	view, err := incidentViewContract(state.IncidentView)
 	if err != nil {
 		return nil, err

@@ -3,11 +3,16 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/traffic"
 )
+
+// logicalPlaybookID is the grammar of a playbook reference in a detector spec
+// or finding: a logical ID, never a repository path.
+var logicalPlaybookID = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func ValidateDetectors(detectors []sdk.Detector) error {
 	seen := make(map[string]struct{}, len(detectors))
@@ -99,8 +104,8 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 	}
 	seenPlaybooks := make(map[string]struct{}, len(spec.Playbooks))
 	for index, playbook := range spec.Playbooks {
-		if strings.TrimSpace(playbook) == "" {
-			return fmt.Errorf("playbook %d reference is required", index)
+		if !logicalPlaybookID.MatchString(playbook) {
+			return fmt.Errorf("playbook %d must be a logical playbook ID, got %q", index, playbook)
 		}
 		if _, ok := seenPlaybooks[playbook]; ok {
 			return fmt.Errorf("duplicate declared playbook %q", playbook)

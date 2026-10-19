@@ -23,13 +23,13 @@ func TestCatalogSnapshotExposesLogicalPlaybooksAndAcceptedCommit(t *testing.T) {
 		}
 	}
 	const goal = "---\nschema_version: 1\nowner: human\n---\n# Goal\n"
-	write(".sdo/schema-version", "2\n")
+	write(".sdo/schema-version", "3\n")
 	write(".sdo/goal.md", goal)
 	write(".sdo/arch.md", "---\nschema_version: 1\n---\n# Architecture\n")
 	write(".sdo/playbooks/README.md", "# Index\n")
 	write(".sdo/playbooks/cache-pressure/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: cache-pressure\noriginating_incident: i\n---\n# Fix cache with .sdo/playbooks/cache-pressure/scripts/diagnose.sh\n")
 	write(".sdo/playbooks/cache-pressure/scripts/diagnose.sh", "#!/bin/sh\nexit 0\n")
-	err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Files: []layout.File{{Name: "detector.go", Content: []byte("package cache\n// .sdo/playbooks/cache-pressure/README.md\nfunc (d Detector) Detect() {}\n")}}, Manifest: layout.DetectorManifest{
+	err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Files: []layout.File{{Name: "detector.go", Content: []byte("package cache\n// cache-pressure\nfunc (d Detector) Detect() {}\n")}}, Manifest: layout.DetectorManifest{
 		APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion,
 		ID: "cache-pressure", Constructor: "New", Class: "incident", Owner: "responder",
 		Watches: []layout.Watch{{APIVersion: "v1", Kind: "Pod"}}, Interval: "10s",

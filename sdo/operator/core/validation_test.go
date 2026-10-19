@@ -106,7 +106,7 @@ func TestValidateFindingRejectsMalformedOutput(t *testing.T) {
 	spec := sdk.DetectorSpec{
 		ID:        "missing-configmap",
 		Interval:  time.Second,
-		Playbooks: []string{".sdo/playbooks/missing-configmap/README.md"},
+		Playbooks: []string{"missing-configmap"},
 	}
 	valid := validFinding()
 	tests := []struct {
@@ -140,11 +140,11 @@ func TestValidateFindingRejectsMalformedOutput(t *testing.T) {
 
 func TestValidateFindingRejectsUndeclaredPlaybook(t *testing.T) {
 	finding := validFinding()
-	finding.Playbooks = []string{".sdo/playbooks/other/README.md"}
+	finding.Playbooks = []string{"other"}
 	spec := sdk.DetectorSpec{
 		ID:        "missing-configmap",
 		Interval:  time.Second,
-		Playbooks: []string{".sdo/playbooks/missing-configmap/README.md"},
+		Playbooks: []string{"missing-configmap"},
 	}
 
 	if err := ValidateFinding(spec, finding); err == nil {
@@ -162,7 +162,7 @@ func validFinding() sdk.Finding {
 		Summary:         "required ConfigMap is absent",
 		Evidence:        "Deployment demo/api references ConfigMap demo/api-config",
 		PrimaryResource: resource,
-		Playbooks:       []string{".sdo/playbooks/missing-configmap/README.md"},
+		Playbooks:       []string{"missing-configmap"},
 		ParameterBindings: map[string]sdk.ObjectRef{
 			"target": resource,
 		},

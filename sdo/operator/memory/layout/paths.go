@@ -47,8 +47,9 @@ const (
 
 	// CurrentSchemaVersion is the operational-memory schema this package reads
 	// and writes. Version 1 kept every detector in LegacyDetectorManifestFile;
-	// version 2 keeps one manifest per detector.
-	CurrentSchemaVersion = 2
+	// version 2 keeps one manifest per detector; version 3 refers to playbooks by
+	// logical ID only.
+	CurrentSchemaVersion = 3
 )
 
 // Kind names a class of file in operational memory.

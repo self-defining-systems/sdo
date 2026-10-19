@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -78,73 +77,31 @@ func TestRunnerEmitsFindingsAsJSON(t *testing.T) {
 	}
 }
 
-func TestRunWithOptionsUsesInjectedLogicalPlaybookResolver(t *testing.T) {
+func TestRunWithOptionsEmitsLogicalPlaybookIDs(t *testing.T) {
 	var stdout bytes.Buffer
-	const legacy = ".sdo/playbooks/service-endpoints/README.md"
 	err := RunWithOptions(context.Background(), []sdk.Detector{
-		findingsDetector{id: "missing-endpoints", playbooks: []string{legacy}, findings: []sdk.Finding{{
+		findingsDetector{id: "missing-endpoints", playbooks: []string{"service-endpoints"}, findings: []sdk.Finding{{
 			RuleID: "missing-endpoints", Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
-			Summary: "test finding", Evidence: "test evidence", Playbooks: []string{legacy},
+			Summary: "test finding", Evidence: "test evidence", Playbooks: []string{"service-endpoints"},
 			PrimaryResource: sdk.ObjectRef{Kind: "Service", Name: "api"},
 		}}},
 	}, RuntimeOptions{
 		Args: []string{}, Stdout: &stdout, Provider: StaticSnapshotProvider{SnapshotValue: sdktest.Snapshot{NamespaceName: "demo"}},
-		PlaybookResolver: func(references []string) ([]string, error) {
-			if len(references) != 1 || references[0] != legacy {
-				t.Fatalf("resolver received wrong references: %v", references)
-			}
-			return []string{"service-endpoints"}, nil
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(stdout.Bytes(), []byte(`"playbooks":["service-endpoints"]`)) || bytes.Contains(stdout.Bytes(), []byte(".sdo/")) {
+	if !bytes.Contains(stdout.Bytes(), []byte(`"playbooks":["service-endpoints"]`)) {
 		t.Fatalf("core did not emit logical IDs: %s", stdout.String())
 	}
 }
 
-func TestRunWithOptionsWithoutResolverRejectsPhysicalPlaybook(t *testing.T) {
-	const legacy = ".sdo/playbooks/service-endpoints/README.md"
-	err := RunWithOptions(context.Background(), []sdk.Detector{
-		findingsDetector{id: "missing-endpoints", playbooks: []string{legacy}, findings: []sdk.Finding{{
-			RuleID: "missing-endpoints", Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
-			Summary: "test finding", Evidence: "test evidence", Playbooks: []string{legacy},
-			PrimaryResource: sdk.ObjectRef{Kind: "Service", Name: "api"},
-		}}},
-	}, RuntimeOptions{Args: []string{}, Provider: StaticSnapshotProvider{SnapshotValue: sdktest.Snapshot{NamespaceName: "demo"}}})
-	if err == nil {
-		t.Fatal("core emitted a physical playbook reference without a storage-edge resolver")
-	}
-}
-
-func TestRunWithOptionsRejectsInvalidFindingPlaybook(t *testing.T) {
-	err := RunWithOptions(context.Background(), []sdk.Detector{
-		findingsDetector{
-			id:        "missing-endpoints",
-			playbooks: []string{".sdo/playbooks/missing/README.md"},
-			findings: []sdk.Finding{
-				{
-					RuleID:    "missing-endpoints",
-					Status:    sdk.FindingActive,
-					Severity:  sdk.SeverityWarning,
-					Summary:   "test finding",
-					Evidence:  "test evidence",
-					Playbooks: []string{".sdo/playbooks/missing/README.md"},
-					PrimaryResource: sdk.ObjectRef{
-						Kind: "Service",
-						Name: "api",
-					},
-				},
-			},
-		},
-	}, RuntimeOptions{
-		Args:             []string{},
-		Provider:         StaticSnapshotProvider{SnapshotValue: sdktest.Snapshot{NamespaceName: "demo"}},
-		PlaybookResolver: func([]string) ([]string, error) { return nil, errors.New("unknown playbook ID") },
-	})
-	if err == nil {
-		t.Fatal("expected missing playbook error")
+func TestValidateDetectorsRejectsPhysicalPlaybookReferences(t *testing.T) {
+	for _, reference := range []string{".sdo/playbooks/service-endpoints/README.md", "Service_Endpoints", "../escape", ""} {
+		err := ValidateDetectors([]sdk.Detector{findingsDetector{id: "missing-endpoints", playbooks: []string{reference}}})
+		if err == nil {
+			t.Errorf("playbook reference %q was accepted", reference)
+		}
 	}
 }
 

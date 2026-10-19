@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	incidentPlaybook = ".sdo/playbooks/missing-init-configmap/README.md"
-	healthPlaybook   = ".sdo/playbooks/health-objective/README.md"
+	incidentPlaybook = "missing-init-configmap"
+	healthPlaybook   = "health-objective"
 )
 
 // configMapPresenceDetector fires while the named ConfigMap is absent from the

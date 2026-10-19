@@ -144,7 +144,7 @@ func (Detector) Spec() sdk.DetectorSpec {
 		},
 		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
 		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
-		Playbooks: []string{".sdo/playbooks/health-objective/README.md"},
+		Playbooks: []string{"health-objective"},
 		OriginatingCommit: "lifecycle-bootstrap",
 	}
 }
@@ -287,7 +287,7 @@ func healthFinding(ruleID string, summary string, evidence string, resource sdk.
 		DetectorID: "health-objective", RuleID: ruleID, Status: sdk.FindingActive,
 		Severity: sdk.SeverityCritical, Summary: summary, Evidence: evidence,
 		PrimaryResource: resource,
-		Playbooks: []string{".sdo/playbooks/health-objective/README.md"},
+		Playbooks: []string{"health-objective"},
 		Fingerprint: "health-objective/" + ruleID + "/" + resource.Namespace + "/" + resource.Name,
 	}
 }

@@ -301,7 +301,7 @@ func detectMissingConfigMaps(_ context.Context, snapshot sdk.DetectionContext) (
 				RelatedResources: []sdk.ObjectRef{
 					configMapRef,
 				},
-				Playbooks: []string{".sdo/playbooks/missing-configmap/README.md"},
+				Playbooks: []string{"missing-configmap"},
 				ParameterBindings: map[string]sdk.ObjectRef{
 					"target_resource":    deploymentRef,
 					"missing_config_map": configMapRef,

@@ -177,11 +177,10 @@ func (s *run) detectorRules() {
 			continue
 		}
 		for _, reference := range det.manifest.PossiblePlaybooks {
-			id, err := layout.PlaybookID(reference)
-			if err != nil {
+			if !layout.ValidPlaybookID(reference) {
 				continue
 			}
-			if book := s.playbooks[id]; book == nil || !book.hasReadme {
+			if book := s.playbooks[reference]; book == nil || !book.hasReadme {
 				s.add(Semantic, Diagnostic{Rule: RuleUnknownPlaybook, Path: det.manifestAt, Line: firstLine(det.manifestText, func(line string) bool { return strings.Contains(line, reference) }), Message: fmt.Sprintf("detector %s names playbook %q, which does not exist", det.id, reference), Hint: "create the playbook or remove it from possiblePlaybooks"})
 			}
 		}
@@ -240,8 +239,8 @@ func bashSyntax(ctx context.Context, script []byte) error {
 
 // physicalPaths rejects physical memory paths in the text that agents author
 // and other agents read: the architecture, the playbook index and playbooks,
-// and playbook scripts. Detector source is exempt because the SDK addresses
-// playbooks from detector code by path.
+// playbook scripts, and detector Go source. Detector code addresses playbooks by
+// logical ID, never by path.
 func (s *run) physicalPaths() {
 	check := func(file textFile) {
 		if line := firstLine(file.content, layout.ContainsPhysicalPath); line > 0 {
@@ -263,6 +262,13 @@ func (s *run) physicalPaths() {
 	}
 	if s.arch != nil {
 		check(textFile{path: s.arch.path, content: []byte(s.arch.doc.Source)})
+	}
+	for _, det := range s.sortedDetectors() {
+		for _, file := range det.files {
+			if strings.HasSuffix(file.path, ".go") {
+				check(file)
+			}
+		}
 	}
 }
 
