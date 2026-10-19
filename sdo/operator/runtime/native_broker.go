@@ -353,11 +353,12 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 			if !strings.HasSuffix(entry.Name(), ".json") || !entry.Type().IsRegular() {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(n.LedgerRoot, entry.Name()))
+			path := filepath.Join(n.LedgerRoot, entry.Name())
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			ledger, err := parseLedger(data)
+			ledger, err := parseLedger(path, data)
 			if err != nil {
 				return fmt.Errorf("read session retention ledger %s: %w", entry.Name(), err)
 			}
@@ -414,11 +415,12 @@ func (n NativeIncidentBroker) PendingControllerRollout(reflectionCommit string) 
 			if !strings.HasSuffix(entry.Name(), ".json") {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(n.LedgerRoot, entry.Name()))
+			path := filepath.Join(n.LedgerRoot, entry.Name())
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			ledger, err := parseLedger(data)
+			ledger, err := parseLedger(path, data)
 			if err != nil {
 				return err
 			}
@@ -467,11 +469,12 @@ func (n NativeIncidentBroker) PendingControllerRollouts() ([]ControllerRolloutHa
 			if !strings.HasSuffix(entry.Name(), ".json") {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(n.LedgerRoot, entry.Name()))
+			path := filepath.Join(n.LedgerRoot, entry.Name())
+			data, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			ledger, err := parseLedger(data)
+			ledger, err := parseLedger(path, data)
 			if err != nil {
 				return fmt.Errorf("broker ledger %s: %w", entry.Name(), err)
 			}
@@ -559,9 +562,15 @@ func (n NativeIncidentBroker) withLock(fn func() error) error {
 	return fn()
 }
 
-func parseLedger(data []byte) (*contracts.BrokerLedger, error) {
+// parseLedger decodes the ProtoJSON ledger stored at path. A document that
+// predates the ProtoJSON cutover fails with a message naming the file and the
+// recovery step; there is deliberately no legacy decoder.
+func parseLedger(path string, data []byte) (*contracts.BrokerLedger, error) {
 	ledger := &contracts.BrokerLedger{}
 	if err := parseProtoJSON(data, ledger); err != nil {
+		if isPreCutoverFormat(err) {
+			return nil, fmt.Errorf("broker ledger %s predates the ProtoJSON cutover and cannot be read (%v); archive or remove the ledger file, then restart the controller", path, err)
+		}
 		return nil, err
 	}
 	return ledger, nil
@@ -578,7 +587,7 @@ func (n NativeIncidentBroker) readLedger(incidentID string) (*contracts.BrokerLe
 	if err != nil {
 		return nil, err
 	}
-	ledger, err := parseLedger(data)
+	ledger, err := parseLedger(n.ledgerPath(incidentID), data)
 	if err != nil {
 		return nil, fmt.Errorf("broker ledger: %w", err)
 	}

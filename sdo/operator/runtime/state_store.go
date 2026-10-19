@@ -163,6 +163,9 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (RuntimeState, string, e
 	}
 	state, err := decodeControllerState([]byte(payload))
 	if err != nil {
+		if isPreCutoverFormat(err) {
+			return RuntimeState{}, "", fmt.Errorf("runtime-state ConfigMap %s/%s predates the ProtoJSON cutover and cannot be read (%w); delete the ConfigMap (kubectl -n %s delete configmap %s) and restart the controller so it recreates its state", s.namespace, s.name, err, s.namespace, s.name)
+		}
 		return RuntimeState{}, "", err
 	}
 	if err := state.Validate(); err != nil {

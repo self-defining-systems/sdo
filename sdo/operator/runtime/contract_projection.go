@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -759,6 +760,15 @@ func controllerStateState(message *contracts.ControllerState) RuntimeState {
 		state.PendingClosure = &closure
 	}
 	return state
+}
+
+// isPreCutoverFormat reports whether a strict ProtoJSON decode failed on a
+// field the generated message does not define. Documents written before the
+// ProtoJSON cutover used the Go structs' ad hoc encoding, whose extra and
+// renamed keys surface this way; the check is a substring test on the decode
+// error, not a legacy parser.
+func isPreCutoverFormat(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unknown field")
 }
 
 func parseProtoJSON(data []byte, message proto.Message) error {

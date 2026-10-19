@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,5 +145,39 @@ func TestBrokerLedgerIsPersistedAsProtoJSON(t *testing.T) {
 	}
 	if !proto.Equal(read, ledger) {
 		t.Fatalf("ledger changed across a save and read: %v vs %v", read, ledger)
+	}
+}
+
+func TestStateStoreNamesThePreCutoverConfigMapAndTheRecovery(t *testing.T) {
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "sdo-controller-state", Namespace: "demo", Annotations: map[string]string{stateRevisionAnnotation: "1"}},
+		Data:       map[string]string{stateDataKey: `{"version":"sdo.controller/v1","dispatch_state":"idle","playbooks":["old"]}`},
+	})
+	_, _, err := NewConfigMapStateStore(client, "demo", "sdo-controller-state").Load(context.Background())
+	if err == nil {
+		t.Fatal("a pre-cutover state document must not load")
+	}
+	for _, want := range []string{"demo/sdo-controller-state", "predates the ProtoJSON cutover", "delete the ConfigMap"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestBrokerLedgerNamesThePreCutoverFileAndTheRecovery(t *testing.T) {
+	root := t.TempDir()
+	n := NativeIncidentBroker{LedgerRoot: root}
+	path := n.ledgerPath("incident-old")
+	if err := os.WriteFile(path, []byte(`{"incident_id":"incident-old","closure":{"request":{"playbooks":["old"]}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := n.readLedger("incident-old")
+	if err == nil {
+		t.Fatal("a pre-cutover ledger must not load")
+	}
+	for _, want := range []string{path, "predates the ProtoJSON cutover", "archive or remove the ledger"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not mention %q", err, want)
+		}
 	}
 }
