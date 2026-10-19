@@ -1,7 +1,10 @@
 package deployment
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,5 +37,25 @@ func TestObservedDeploymentRequiresCurrentReadyGeneration(t *testing.T) {
 	base["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "registry.example/app:latest"
 	if _, err := parseObservedWorkload("Deployment/default/app", encode()); err == nil {
 		t.Fatal("mutable observed image accepted")
+	}
+}
+
+func TestApplyTakesOverFieldsOwnedByAnotherManager(t *testing.T) {
+	dir := t.TempDir()
+	record := filepath.Join(dir, "args")
+	script := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$@\" > "+record+"\ncat >/dev/null\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := (CommandBackend{KubectlBinary: script}).Apply(context.Background(), []byte("kind: ConfigMap")); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The benchmark (or an operator) may have deployed the workload with kubectl first; SDO adopts it.
+	if !strings.Contains(string(args), "--server-side") || !strings.Contains(string(args), "--force-conflicts") {
+		t.Fatalf("apply must take over fields owned by other managers: %s", args)
 	}
 }

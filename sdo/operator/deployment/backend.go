@@ -74,7 +74,7 @@ func (b CommandBackend) Apply(ctx context.Context, documents []byte) error {
 	if len(documents) == 0 {
 		return errors.New("deployment manifests are empty")
 	}
-	args := b.kubectlArgs("apply", "--server-side", "--field-manager=sdo", "--filename=-")
+	args := b.kubectlArgs("apply", "--server-side", "--force-conflicts", "--field-manager=sdo", "--filename=-")
 	command := exec.CommandContext(ctx, b.kubectl(), args...)
 	command.Stdin = bytes.NewReader(documents)
 	output, err := command.CombinedOutput()
