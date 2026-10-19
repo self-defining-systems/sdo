@@ -31,7 +31,7 @@ func notIncidentTraffic(kind layout.Kind, id string) bool { return !layout.Incid
 func incidentTraffic(kind layout.Kind, id string) bool { return layout.IncidentTraffic(kind, id) }
 
 func healthObjectiveOnly(kind layout.Kind, id string) bool {
-	return kind != layout.KindPlaybook || id == healthObjectivePlaybook
+	return kind != layout.KindPlaybook || id == layout.HealthObjectivePlaybook
 }
 
 // grants is the whole ownership policy, kind by actor by phase.

@@ -20,9 +20,11 @@ import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
-from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from google.protobuf import json_format
+from google.protobuf.json_format import ParseError
 
 from benchmarks.sregym.adapter import (
     REJECTED_RECEIPT_FILENAME,
@@ -37,8 +39,17 @@ from benchmarks.sregym.assurance.scripted_codex.directive import (
     SCRIPTED_LABEL,
     TURN_KEY,
 )
-from benchmarks.sregym.detector_manifests import DETECTORS_DIR, workspace_detector_manifests
+from benchmarks.sregym.memory_cli import (
+    artifact_ids,
+    listing_arguments,
+    outcomes_arguments,
+    parse_listing,
+    parse_outcomes,
+    read_listing,
+    read_outcomes,
+)
 from benchmarks.sregym.protocol import receipt_resolution
+from sdo.contracts import OutcomeRecord
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +61,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ASSURANCE_FILENAME = "assurance.jsonl"
+#: The operational repository inside the controller pod.
+_POD_REPOSITORY = "/workspace/application"
 #: How long an abandoned (unverified) incident may take to settle after the harness recovered its fault.
 SETTLE_TIMEOUT_SECONDS = 900.0
 
@@ -141,40 +154,30 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _manifest_detectors(workspace: Path) -> set[str]:
-    return {str(item.get("id")) for item in workspace_detector_manifests(workspace)}
+    return set(artifact_ids(read_listing(workspace), "detector"))
 
 
-def _outcome_file(incident_id: str) -> str:
-    """Locate one accepted native outcome by its opaque incident ID."""
-
-    return f".sdo/outcomes/{sha256(incident_id.encode('utf-8')).hexdigest()}.json"
+def _outcome_for(outcomes: list[OutcomeRecord], incident_id: str) -> OutcomeRecord | None:
+    return next((outcome for outcome in outcomes if outcome.incident_id == incident_id), None)
 
 
-def _read_outcome_text(text: str | None, incident_id: str) -> dict[str, Any] | None:
+def _outcome_from_cli(text: str | None, incident_id: str) -> OutcomeRecord | None:
+    """One incident's outcome from ``memory outcomes --json`` output, or ``None`` when absent or malformed."""
+
     if text is None:
         return None
     try:
-        document = json.loads(text)
-    except json.JSONDecodeError:
+        return _outcome_for(parse_outcomes(text), incident_id)
+    except ParseError:
         return None
-    if not isinstance(document, dict) or document.get("incident_id") != incident_id:
-        return None
-    return document
 
 
-def _read_outcome(workspace: Path, incident_id: str) -> dict[str, Any] | None:
-    path = workspace / _outcome_file(incident_id)
-    if not path.is_file():
-        return None
-    return _read_outcome_text(path.read_text(encoding="utf-8"), incident_id)
-
-
-def _evidenced_outcome(evidence: dict[str, Any], workspace: Path, incident_id: str) -> dict[str, Any] | None:
+def _evidenced_outcome(evidence: dict[str, Any], workspace: Path, incident_id: str) -> OutcomeRecord | None:
     ledger = evidence.get("native_ledger")
     document = ledger.get("outcome_document") if isinstance(ledger, dict) else None
     if isinstance(document, dict) and document.get("incident_id") == incident_id:
-        return document
-    return _read_outcome(workspace, incident_id)
+        return json_format.ParseDict(document, OutcomeRecord(), ignore_unknown_fields=True)
+    return _outcome_for(read_outcomes(workspace), incident_id)
 
 
 def _git(workspace: Path, *args: str) -> str:
@@ -367,7 +370,7 @@ class ScriptedAgent:
             )
         )
         detector_ids = self._operational_detector_ids()
-        outcome_text = self._operational_file(_outcome_file(incident_id)) if incident_id else None
+        outcome_text = self._operational_outcomes() if incident_id else None
         record.checks.append(
             Check("operational-repository-readable", detector_ids is not None and outcome_text is not None, "via pod")
         )
@@ -375,8 +378,8 @@ class ScriptedAgent:
         if incident_id:
             turns = self._turns_for(incident_id)
             record.turns = turns
-            outcome = _read_outcome_text(outcome_text, incident_id)
-            classes = [outcome.get("classification")] if outcome is not None else []
+            outcome = _outcome_from_cli(outcome_text, incident_id)
+            classes = [outcome.classification] if outcome is not None else []
             record.metrics["outcome_classifications"] = classes
             if spec.expect.classification is not None:
                 record.checks.append(
@@ -458,18 +461,21 @@ class ScriptedAgent:
         completed = kubectl(["exec", pods[0], "-c", "controller", "--", *command], namespace=self._control, check=False)
         return completed.stdout if completed.returncode == 0 else None
 
-    def _operational_file(self, relative: str) -> str | None:
-        """A file of the operational repository as the controller pod sees it."""
+    def _operational_outcomes(self) -> str | None:
+        """Every stored outcome as the controller pod's ``sdo-operator memory outcomes`` prints it."""
 
-        return self._controller_exec(["cat", f"/workspace/application/{relative}"])
+        return self._controller_exec(["sdo-operator", *outcomes_arguments(_POD_REPOSITORY)])
 
     def _operational_detector_ids(self) -> set[str] | None:
-        """Registered detector IDs as the controller pod sees them (a detector's directory is its ID)."""
+        """Registered detector IDs as the controller pod's ``sdo-operator memory ls`` prints them."""
 
-        listing = self._controller_exec(
-            ["find", f"/workspace/application/{DETECTORS_DIR}", "-mindepth", "2", "-maxdepth", "2", "-type", "d"]
-        )
-        ids = {Path(line).name for line in (listing or "").splitlines() if line.strip()}
+        text = self._controller_exec(["sdo-operator", *listing_arguments(_POD_REPOSITORY)])
+        if text is None:
+            return None
+        try:
+            ids = set(artifact_ids(parse_listing(text), "detector"))
+        except ParseError:
+            return None
         return ids or None
 
     def _memory_checks(
@@ -526,7 +532,7 @@ class ScriptedAgent:
 
         outcome_document = _evidenced_outcome(evidence, self._workspace, incident_id)
         checks.append(Check("one-outcome-record", outcome_document is not None, "native incident outcome"))
-        classification = outcome_document.get("classification") if outcome_document else None
+        classification = outcome_document.classification if outcome_document else None
         record.metrics["classification"] = classification
         if expect.resolution == "mitigated":
             checks.append(Check("classified-success", classification == "success", str(classification)))
@@ -617,17 +623,7 @@ class ScriptedAgent:
             line.split(": ", 1) for line in _git(self._workspace, "count-objects", "-v").splitlines() if ": " in line
         )
         sample["git_size_kb"] = int(objects.get("size", 0)) + int(objects.get("size-pack", 0))
-        ids: list[str] = []
-        for path in (sdo / "outcomes").glob("*.json"):
-            try:
-                document = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(document, dict) or not isinstance(document.get("incident_id"), str):
-                continue
-            incident_id = document["incident_id"]
-            if path.name == Path(_outcome_file(incident_id)).name:
-                ids.append(incident_id)
+        ids = [outcome.incident_id for outcome in read_outcomes(self._workspace)]
         sample["outcomes"] = len(ids)
         sample["duplicate_outcomes"] = sorted({i for i in ids if ids.count(i) > 1})
         return sample

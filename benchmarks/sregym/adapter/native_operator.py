@@ -173,7 +173,7 @@ class NativeExistingReceipt:
     accepted_commit: str
 
 
-def _operator_command() -> tuple[list[str], Path | None]:
+def operator_command() -> tuple[list[str], Path | None]:
     specified = os.environ.get("SDO_OPERATOR_BIN", "").strip()
     if specified:
         path = Path(specified)
@@ -188,8 +188,8 @@ def _operator_command() -> tuple[list[str], Path | None]:
     return ["go", "run", "-mod=mod", "./cmd/sdo-operator"], _OPERATOR_MODULE
 
 
-def _execute(command: str, args: list[str], *, timeout: int) -> str:
-    prefix, cwd = _operator_command()
+def execute_operator(command: str, args: list[str], *, timeout: int) -> str:
+    prefix, cwd = operator_command()
     argv = [*prefix, command, *args]
     try:
         result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
@@ -202,7 +202,7 @@ def _execute(command: str, args: list[str], *, timeout: int) -> str:
 
 
 def _run(command: str, args: list[str], *, timeout: int) -> dict[str, Any]:
-    stdout = _execute(command, args, timeout=timeout)
+    stdout = execute_operator(command, args, timeout=timeout)
     try:
         value = json.loads(stdout)
     except json.JSONDecodeError as exc:
@@ -225,7 +225,7 @@ def sync_existing(config: NativeInstallConfig) -> None:
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
-    output = _execute("sync-existing", args, timeout=600)
+    output = execute_operator("sync-existing", args, timeout=600)
     if output.strip():
         raise NativeOperatorError("Go sync-existing returned unexpected stdout")
 
@@ -244,7 +244,7 @@ def set_maintenance(
     args = ["--control-namespace", control_namespace, f"--paused={str(paused).lower()}", "--generation", generation]
     if kubeconfig is not None:
         args.extend(("--kubeconfig", str(kubeconfig)))
-    output = _execute("maintenance", args, timeout=120)
+    output = execute_operator("maintenance", args, timeout=120)
     if output.strip():
         raise NativeOperatorError("Go maintenance returned unexpected stdout")
 

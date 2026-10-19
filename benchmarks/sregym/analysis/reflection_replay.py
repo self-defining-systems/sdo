@@ -26,6 +26,7 @@ from typing import Any
 from google.protobuf import json_format
 
 from benchmarks.sregym.analysis.incident_cost import RECEIPT_NAME
+from benchmarks.sregym.memory_cli import read_outcomes
 from libs.agent_cli.structured import run_structured_turn, turn_usage
 from sdo.agents.responder import (
     INCIDENT_REASONING_EFFORT,
@@ -35,7 +36,7 @@ from sdo.agents.responder import (
     SessionReflector,
     reflection_output_schema,
 )
-from sdo.contracts import IncidentClosure, OutcomeRecord
+from sdo.contracts import IncidentClosure
 
 
 class _ScopedBackend(CodexSessionBackend):
@@ -70,15 +71,6 @@ def find_ledger(stage: Path, suffix: str) -> dict[str, Any]:
         if isinstance(ledger, dict) and str(ledger.get("incident_id", "")).endswith(suffix):
             return ledger
     raise SystemExit(f"no native ledger ending in {suffix!r} under {stage}")
-
-
-def read_outcomes(repository: Path) -> list[OutcomeRecord]:
-    """Every outcome in the repository's incident-keyed native store."""
-
-    return [
-        json_format.Parse(path.read_text(encoding="utf-8"), OutcomeRecord(), ignore_unknown_fields=True)
-        for path in sorted((repository / ".sdo" / "outcomes").glob("*.json"))
-    ]
 
 
 def memory_delta(clone: Path) -> dict[str, list[str]]:

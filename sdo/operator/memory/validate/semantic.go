@@ -15,11 +15,6 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-const (
-	healthObjectivePlaybook = "health-objective"
-	healthObjectiveFault    = "health-objective-failure"
-)
-
 var (
 	rolePlaceholder = regexp.MustCompile(`<\w*[A-Z][A-Z0-9_]+>`)
 	markdownLink    = regexp.MustCompile(`\[[^]]+\]\(([^)]+)\)`)
@@ -87,10 +82,7 @@ func (s *run) documents() {
 		if doc.Meta["owner"] != "responder" {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookOwner, Path: at, Message: "playbook owner must be responder"})
 		}
-		fault := book.id
-		if book.id == healthObjectivePlaybook {
-			fault = healthObjectiveFault
-		}
+		fault := layout.PlaybookFaultClass(book.id)
 		if doc.Meta["fault_class"] != fault {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookFaultClass, Path: at, Message: fmt.Sprintf("fault_class must be %s", fault)})
 		}

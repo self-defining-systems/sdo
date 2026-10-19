@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+// Operational-memory tooling contracts: the output of `sdo-operator memory
+// check|ls|outcomes --json`. The validator that produces MemoryDiagnostic is
+// shared by the commit broker and by agent self-checks.
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "sdodev/contracts/v1alpha1/outcome.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// One validation finding. `rule` is a stable rule ID; `path` is repository
+// relative; `line` is zero when the finding is not tied to a line.
+message MemoryDiagnostic {
+  string rule = 1 [(buf.validate.field).string.min_len = 1];
+  string path = 2;
+  int32 line = 3 [(buf.validate.field).int32.gte = 0];
+  string message = 4 [(buf.validate.field).string.min_len = 1];
+  string hint = 5;
+}
+
+// Result of `memory check`.
+message MemoryCheckReport {
+  repeated MemoryDiagnostic diagnostics = 1;
+  string root = 2;
+  string actor = 3;
+  string phase = 4;
+  string base = 5;
+}
+
+// One artifact of operational memory, identified by its logical ID.
+message MemoryArtifact {
+  string kind = 1 [(buf.validate.field).string.min_len = 1];
+  string id = 2;
+  string path = 3 [(buf.validate.field).string.min_len = 1];
+  // Detector class (health or incident); empty for other kinds.
+  string detector_class = 4;
+}
+
+// Result of `memory ls`.
+message MemoryListing {
+  repeated MemoryArtifact artifacts = 1;
+}
+
+// Result of `memory outcomes`: every stored outcome record.
+message MemoryOutcomes {
+  repeated OutcomeRecord outcomes = 1;
+}
