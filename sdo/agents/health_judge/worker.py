@@ -25,13 +25,13 @@ from sdo.contracts import (
     AgentTask,
     HealthJudgeRequest,
     HealthJudgeResult,
+    MemoryWatch,
     OperationalArtifactProposal,
     ProposedDetector,
     ProposedGoSource,
     ProposedPlaybook,
     ProposedTrafficGenerator,
-    ProtoMemoryWatch,
-    ProtoTrafficWorkload,
+    TrafficWorkload,
     parse_json,
     to_canonical_json,
 )
@@ -158,7 +158,7 @@ def _judge_proposal(artifact: _JudgeDraft) -> OperationalArtifactProposal:
             detector_class="health",
             owner="health_judge",
             constructor="New",
-            watches=[ProtoMemoryWatch(api_version=api, kind=kind) for api, kind in HEALTH_OBJECTIVE_WATCHES],
+            watches=[MemoryWatch(api_version=api, kind=kind) for api, kind in HEALTH_OBJECTIVE_WATCHES],
             interval="30s",
             firing=2,
             clearing=2,
@@ -195,7 +195,7 @@ def _judge_proposal(artifact: _JudgeDraft) -> OperationalArtifactProposal:
             document = yaml.safe_load(file.content)
             if not isinstance(document, dict):
                 raise ValueError("traffic workload must be a YAML object")
-            workload = json_format.ParseDict(document, ProtoTrafficWorkload())
+            workload = json_format.ParseDict(document, TrafficWorkload())
             if workload.name != relative.stem:
                 raise ValueError("traffic workload logical ID differs from authored name")
             proposal.traffic_workloads.append(workload)

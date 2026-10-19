@@ -35,10 +35,7 @@ from sdo.agents.responder import (
     SessionReflector,
     reflection_output_schema,
 )
-from sdo.agents.views import (
-    BrokerClosure,
-)
-from sdo.contracts import OutcomeRecord
+from sdo.contracts import IncidentClosure, OutcomeRecord
 
 
 class _ScopedBackend(CodexSessionBackend):
@@ -115,18 +112,18 @@ def replay(workspace: Path, suffix: str, guidance: str, out: Path, *, model: str
     _git(clone, "checkout", "--quiet", "--detach", ledger["outcome_commit"])
     records = read_outcomes(clone)
     outcome = next(r for r in reversed(records) if r.incident_id == ledger["incident_id"])
-    closure = BrokerClosure.model_validate(ledger["closure"])
+    closure = json_format.ParseDict(ledger["closure"], IncidentClosure(), ignore_unknown_fields=True)
     reflector = SessionReflector(
         _ScopedBackend(model=model, reasoning_effort=INCIDENT_REASONING_EFFORT, timeout_seconds=timeout),
         guidance=guidance,  # type: ignore[arg-type]
     )
     turn = reflector.resume(
-        session_id=str(ledger.get("responder_session_id") or ""),
+        session_id=closure.result.responder_session_id if closure.HasField("result") else "",
         incident_id=outcome.incident_id,
         worktree=clone,
         outcome=outcome,
         history=records,
-        outcome_commit=ledger["outcome_commit"],
+        outcome_commit=ledger.outcome_commit,
         session_mode="fresh",
         closure=closure,
     )

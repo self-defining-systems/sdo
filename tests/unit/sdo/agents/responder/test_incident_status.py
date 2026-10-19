@@ -25,12 +25,7 @@ from sdo.agents.responder.incident_status import (
     incident_status,
     run_incident_status_cli,
 )
-from sdo.agents.views import (
-    IncidentRequest,
-)
-from sdo.contracts import AgentTask
-from sdo.contracts.proto import IncidentRequest as ProtoIncidentRequest
-from sdo.contracts.proto import to_canonical_json
+from sdo.contracts import AgentTask, IncidentRequest, parse_json, to_canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -109,7 +104,7 @@ def _write_task(path: Path, request: IncidentRequest) -> None:
     """The file the controller mounts: an AgentTask envelope around the IncidentRequest."""
 
     packed = ProtoAny()
-    packed.Pack(json_format.Parse(request.model_dump_json(), ProtoIncidentRequest(), ignore_unknown_fields=True))
+    packed.Pack(request)
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
         task_id="task-1",
@@ -122,20 +117,19 @@ def _write_task(path: Path, request: IncidentRequest) -> None:
 
 def _read_request(path: Path) -> IncidentRequest:
     task = json_format.Parse(path.read_text(encoding="utf-8"), AgentTask())
-    typed = ProtoIncidentRequest()
-    assert task.request.Unpack(typed)
-    return IncidentRequest.model_validate_json(
-        json_format.MessageToJson(typed, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
-    )
+    request = IncidentRequest()
+    assert task.request.Unpack(request)
+    return request
 
 
 def _traffic_request(tmp_path: Path) -> Path:
-    request = IncidentRequest.model_validate_json((FIXTURE_DIR / "incident_request.json").read_text(encoding="utf-8"))
-    finding = request.findings[0].model_copy(
-        update={"detector_id": "traffic-health", "rule_id": "scenario-slo.search-hotels"}
-    )
+    request = parse_json((FIXTURE_DIR / "incident_request.json").read_text(encoding="utf-8"), IncidentRequest())
+    finding = request.findings[0]
+    finding.detector_id = "traffic-health"
+    finding.rule_id = "scenario-slo.search-hotels"
+    del request.findings[1:]
     path = tmp_path / "agent-task.json"
-    _write_task(path, request.model_copy(update={"findings": [finding]}))
+    _write_task(path, request)
     return path
 
 
@@ -424,13 +418,13 @@ def test_changes_after_the_request_was_taken_are_reported(prober: tuple[_FakePro
 
     _, url = prober
     request_path = _traffic_request(tmp_path)
-    request = json.loads(_read_request(request_path).model_dump_json())
+    request = json_format.MessageToDict(_read_request(request_path), preserving_proto_field_name=True)
     request["state_changes"] = {
         "baseline_at": "2026-09-28T09:58:00Z",
         "observed_at": "2026-09-28T10:00:00Z",
         "changes": [{"kind": "ConfigMap", "name": "mongo-geo-script", "change": "removed"}],
     }
-    _write_task(request_path, IncidentRequest.model_validate(request))
+    _write_task(request_path, json_format.ParseDict(request, IncidentRequest()))
     payload = _view(
         request_path,
         findings=[],
@@ -447,6 +441,27 @@ def test_changes_after_the_request_was_taken_are_reported(prober: tuple[_FakePro
     assert [(change.kind, change.name) for change in status.new_state_changes] == [("ConfigMap", "mongo-rate-script")]
     assert "ConfigMap/mongo-rate-script removed" in status.render()
     assert status.to_json()["controller"]["new_state_changes"][0]["name"] == "mongo-rate-script"
+
+
+def test_a_state_with_fields_outside_the_contract_is_not_trusted(
+    prober: tuple[_FakeProber, str], tmp_path: Path
+) -> None:
+    _, url = prober
+    request_path = _traffic_request(tmp_path)
+    payload = json.loads(
+        _view(request_path, findings=[_finding("health-objective", "deployment-unavailable", "Deployment", "geo")])
+    )
+    payload["IncidentView"] = payload["incident_view"]
+
+    status = incident_status(
+        prober_url=url,
+        request_path=request_path,
+        controller_state="ns/cm",
+        controller_reader=_reader(json.dumps(payload)),
+    )
+
+    assert status.blocking_findings == ()
+    assert "controller state invalid" in status.controller_detail
 
 
 def test_the_cli_reads_the_controller_state_the_controller_names(

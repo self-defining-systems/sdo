@@ -182,7 +182,7 @@ def _prompt(history: list[OutcomeRecord], current: OutcomeRecord, tmp_path: Path
 
     backend = _Backend()
     closure = _fresh_closure(tmp_path)
-    closure.request = closure.request.model_copy(update={"incident_id": current.incident_id})
+    closure.request.incident_id = current.incident_id
     try:
         SessionReflector(backend).resume(  # type: ignore[arg-type]
             session_id="s",

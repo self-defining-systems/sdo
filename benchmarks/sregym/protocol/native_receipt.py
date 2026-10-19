@@ -41,6 +41,9 @@ def _commit(value: object, name: str, *, optional: bool = False) -> str | None:
 
 
 def _items(value: object, name: str) -> list[dict[str, Any]]:
+    # ProtoJSON omits an empty repeated field.
+    if value is None:
+        return []
     if not isinstance(value, list):
         raise ProductionReceiptValidationError(f"native {name} must be a list of objects")
     candidate = cast("list[object]", value)
@@ -99,7 +102,7 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
             raise ProductionReceiptValidationError(f"native closure receipt {name} disagrees with broker ledger")
     _nonempty(broker_receipt.get("ack_token"), "acknowledgment token")
     states = _items(closure.get("final_detector_states"), "final detector states")
-    if not states or any(state.get("status") != "clear" or state.get("fingerprints") != [] for state in states):
+    if not states or any(state.get("status") != "clear" or state.get("fingerprints") for state in states):
         raise ProductionReceiptValidationError("native closure lacks independently clear health detectors")
     if closure.get("detector_review_required_at"):
         raise ProductionReceiptValidationError("native closure entered detector review")

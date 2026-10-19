@@ -3,10 +3,11 @@
 Single source of truth for the structured contracts that cross SDO's seams:
 controller↔worker tasks and results, worker registrations, reflection, outcomes,
 firing telemetry, controller config, and traffic workloads. The Go controller
-projects internal state into generated messages. Built-in Python agents adapt
-generated messages to local prompt and model-output views in `sdo/agents/views/`;
-those views do not define the cross-component wire. Reflection reads generated
-outcome messages directly.
+projects internal state into generated messages, and persists its runtime state
+and broker ledger as canonical ProtoJSON of `ControllerState` and `BrokerLedger`.
+Built-in Python agents use the generated messages directly; the one hand-written
+model-output schema (`_incident_result_schema`) is pinned to `IncidentResult` by a
+parity test. Reflection reads generated outcome messages directly.
 
 ## Layout
 
@@ -79,8 +80,7 @@ deferral.
   on PyPI (v2+) ships only the newer `protobuf-py` runtime form, incompatible with the
   classic `google.protobuf` runtime this repo uses, so `scripts/gen_proto.sh` vendors
   the classic `buf/validate/validate_pb2.py` into `sdo/contracts/_gen/buf`
-  (via `buf.gen.validate.yaml`). The Python agent edge validates its local views
-  with Pydantic and parses protobuf with unknown-field rejection. Running the
+  (via `buf.gen.validate.yaml`). The Python agent edge parses protobuf with unknown-field rejection. Running the
   same CEL rules in Python remains a separate validation improvement.
 - Do **not** add gRPC services here — SDO currently exchanges ProtoJSON through
   Job ConfigMaps and uses Git for proposals. A future transport can reuse the

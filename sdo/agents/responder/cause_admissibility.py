@@ -14,8 +14,8 @@ for the verifier, and it can never cause a confirmation the verifier would
 not otherwise make.
 
 Admissibility is decided only from the production contracts (the responder's
-own :class:`~sdo.contracts.IncidentResult` and the controller's
-:class:`~sdo.contracts.IncidentRequest`). It inspects evidence *kinds* and
+own :class:`~sdo.contracts.proto.IncidentResult` and the controller's
+:class:`~sdo.contracts.proto.IncidentRequest`). It inspects evidence *kinds* and
 whether an explained detector actually fired for this incident; it never
 reads benchmark verdicts and encodes no fault-specific knowledge.
 
@@ -42,16 +42,12 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sdo.agents.views import (
-    DetectorEvaluationStatus,
-    FindingStatus,
-)
+from sdo.contracts import IncidentResult
 
 if TYPE_CHECKING:
-    from sdo.agents.views import (
+    from sdo.contracts import (
         ConfirmedRootCause,
         IncidentRequest,
-        IncidentResult,
     )
 
 #: Environment variable selecting the gate mode on the responder Job.
@@ -130,10 +126,10 @@ def firing_detector_ids(request: IncidentRequest) -> frozenset[str]:
 
     ids: set[str] = set()
     for finding in request.findings:
-        if finding.status == FindingStatus.ACTIVE:
+        if finding.status == "active":
             ids.add(finding.detector_id)
     for evaluation in request.detector_history:
-        if evaluation.status == DetectorEvaluationStatus.FIRING:
+        if evaluation.status == "firing":
             ids.add(evaluation.detector_id)
     return frozenset(ids)
 
@@ -194,4 +190,8 @@ def apply_cause_admissibility(
             f"cause-admissibility: withheld root cause {decision.summary!r}: {decision.reason}",
             file=sys.stderr,
         )
-    return result.model_copy(update={"confirmed_root_causes": list(review.admitted)})
+    admitted = IncidentResult()
+    admitted.CopyFrom(result)
+    del admitted.confirmed_root_causes[:]
+    admitted.confirmed_root_causes.extend(review.admitted)
+    return admitted

@@ -9,7 +9,6 @@ package sdodev.contracts.v1alpha1;
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
 // ObjectRef identifies a Kubernetes object a finding or repair refers to.
-// The agent-local Pydantic view is sdo.agents.views.models.ObjectRef.
 message ObjectRef {
   string api_version = 1;
   string kind = 2;      // required, non-empty (enforced via protovalidate in Stage 2)

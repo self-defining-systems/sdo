@@ -11,13 +11,14 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
 // Cross-language contract fixtures. The Go controller writes each message as
-// canonical ProtoJSON that Python parses into tests/fixtures/sdo/contracts/go/, and Python's strict
-// models parse the same files (tests/unit/sdo/contracts/
+// canonical ProtoJSON into tests/fixtures/sdo/contracts/go/, and Python parses the same files
+// into the generated messages (tests/unit/sdo/contracts/
 // test_go_contract_fixtures.py, the broker and the SREGym receipt tests).
 // Any Go encoding change fails here until the fixtures are regenerated with
 //
@@ -225,6 +226,25 @@ func TestGoContractFixtures(t *testing.T) {
 		)
 	})
 	checkGoContractFixture(t, "closure_own_edit.json", mustProject(t, incidentClosureContract, ownEdit))
+	open := wireState()
+	open.PendingClosure = &repaired
+	openRequest := repaired.Request
+	open.IncidentRequest = &openRequest
+	open.IncidentResult = repaired.Result
+	state, err := controllerStateContract(open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGoContractFixture(t, "controller_state.json", state)
+	closure, err := incidentClosureContract(repaired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGoContractFixture(t, "broker_ledger.json", &contracts.BrokerLedger{
+		IncidentId: closure.GetRequest().GetIncidentId(), Closure: closure, ProposalCommit: "abc", OutcomeCommit: "def",
+		Receipt:      &contracts.ClosureReceipt{IncidentId: closure.GetRequest().GetIncidentId(), OutcomeCommit: "def", AckToken: "token"},
+		Acknowledged: true,
+	})
 	if len(ownEdit.ObservedStateChanges) != 1 || !ownEdit.ObservedStateChanges[0].FirstObservedAt.Equal(time.Unix(2, 0).UTC()) {
 		t.Fatalf("the restart must first be observed after the repair started: %+v", ownEdit.ObservedStateChanges)
 	}

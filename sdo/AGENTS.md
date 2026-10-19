@@ -9,7 +9,7 @@
 | `agents/deployer/`, `agents/health_judge/`, `agents/responder/` | Built-in agent implementations. They receive typed tasks, work in proposal checkouts, and return typed results. Their Codex/Claude choices are local implementation details. |
 | `agents/registrations/` | Example capability and launch manifests for built-in agents; the Go registry accepts other implementations that obey the same contracts. |
 | `agents/lifecycle/` | Shared source architecture and health judge agent prompts and DTOs; operational decisions remain in Go. |
-| `agents/views/` | Agent-local Pydantic views used inside built-in sessions; they are not the cross-component contract. |
+| `agents/views/` | The reflection artifact-draft model (`OperationalArtifactDraft`), retired with the artifact-proposal flow. Contract messages are the generated protobuf classes exported by `sdo.contracts`. |
 | `contracts/`, `contracts/proto/` | Generated Python/Go protobuf contracts and their shared schema. Agent task/result envelopes use ProtoJSON and typed `Any` payloads whose URLs are checked against registration. |
 | `operator/worker_registry/` | Go registration validation, capability selection, and generic Kubernetes worker execution. Unknown agents or task/result types fail closed. |
 | `operator/lifecycle/`, `operator/deployment/`, `operator/artifacts/` | Go lifecycle coordinator, trusted deployment strategies, and the physical bootstrap-artifact writer. |

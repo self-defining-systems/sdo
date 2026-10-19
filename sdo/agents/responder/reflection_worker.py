@@ -21,13 +21,10 @@ from sdo.agents.responder.reflection import (
     ReflectionTurn,
     SessionReflector,
 )
-from sdo.agents.views import (
-    BrokerClosure,
-    OperationalMemorySnapshot,
-)
 from sdo.contracts import (
     AgentResult,
     AgentTask,
+    IncidentClosure,
     OperationalArtifactProposal,
     ReflectionRequest,
     ReflectionResult,
@@ -83,25 +80,17 @@ def run_reflection_task(
         raise ValueError("reflection task requires a logical memory snapshot")
     outcome = request.outcome
     history = list(request.prior_outcomes)
-    closure = BrokerClosure.model_validate_json(
-        json_format.MessageToJson(
-            request.closure,
-            preserving_proto_field_name=True,
-            always_print_fields_with_no_presence=True,
-        )
-    )
-    snapshot = OperationalMemorySnapshot.model_validate(
-        json_format.MessageToDict(request.memory_snapshot, preserving_proto_field_name=True)
-    )
-    if snapshot.accepted_commit != request.outcome_commit:
+    closure = IncidentClosure()
+    closure.CopyFrom(request.closure)
+    if request.memory_snapshot.accepted_commit != request.outcome_commit:
         raise ValueError("reflection memory snapshot is not bound to committed outcome")
-    closure.request = closure.request.model_copy(update={"memory_snapshot": snapshot})
+    closure.request.memory_snapshot.CopyFrom(request.memory_snapshot)
     if closure.request.incident_id != outcome.incident_id:
         raise ValueError("reflection outcome incident does not match closure")
     session_mode = request.session_mode or "fresh"
     if session_mode not in {"fresh", "resume"}:
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
-    prior_session = closure.result.responder_session_id if closure.result is not None else ""
+    prior_session = closure.result.responder_session_id if closure.HasField("result") else ""
     if session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or ""):
         raise ValueError("resume reflection requires a valid responder session")
     guidance = request.guidance or "baseline"

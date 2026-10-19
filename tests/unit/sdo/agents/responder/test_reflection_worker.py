@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import pytest
@@ -7,31 +6,31 @@ from google.protobuf.any_pb2 import Any
 
 from sdo.agents.responder.reflection import ReflectionTurn
 from sdo.agents.responder.reflection_worker import run_reflection_task
-from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, ReflectionResult
-from sdo.contracts.proto import IncidentClosure, parse_json, to_canonical_json
+from sdo.contracts import (
+    AgentResult,
+    AgentTask,
+    IncidentClosure,
+    OperationalMemorySnapshot,
+    ReflectionRequest,
+    ReflectionResult,
+    parse_json,
+    to_canonical_json,
+)
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "go" / "closure_repaired.json"
 
 
 def _closure() -> IncidentClosure:
-    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    request = raw["request"]
-    request.pop("architecture_summary_path", None)
-    request.pop("health_objective_path", None)
-    request["memory_snapshot"] = {
-        "accepted_commit": request["repository_base_commit"],
-        "goal_markdown": "Health objective",
-        "architecture_markdown": "Architecture",
-    }
-    for finding in request["findings"]:
-        finding["playbook_ids"] = finding.pop("playbooks", [])
-    for playbook in request["surfaced_playbooks"]:
-        playbook["playbook_id"] = playbook.pop("path")
-    for entry in raw["detector_timeline"]:
-        if "surfaced_playbooks" in entry:
-            entry["surfaced_playbook_ids"] = entry.pop("surfaced_playbooks")
-    return json_format.ParseDict(raw, IncidentClosure())
+    closure = json_format.Parse(FIXTURE.read_text(encoding="utf-8"), IncidentClosure())
+    closure.request.memory_snapshot.CopyFrom(
+        OperationalMemorySnapshot(
+            accepted_commit=closure.request.repository_base_commit,
+            goal_markdown="Health objective",
+            architecture_markdown="Architecture",
+        )
+    )
+    return closure
 
 
 class Publisher:

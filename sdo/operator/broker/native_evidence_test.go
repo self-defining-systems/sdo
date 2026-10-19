@@ -24,6 +24,9 @@ func TestNativeLedgerEdgeValidatesIncidentAndPath(t *testing.T) {
 	if _, err := ValidateNativeLedger([]byte(`{"incident_id":"incident-1","closure":{"request":{"incident_id":"other"}}}`), "incident-1"); err == nil {
 		t.Fatal("cross-incident closure accepted")
 	}
+	if _, err := ValidateNativeLedger([]byte(`{"incident_id":"incident-1","IncidentID":"incident-1"}`), "incident-1"); err == nil {
+		t.Fatal("a ledger outside the BrokerLedger contract was accepted")
+	}
 	var decoded map[string]any
 	if err := json.Unmarshal(valid, &decoded); err != nil {
 		t.Fatal(err)

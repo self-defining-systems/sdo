@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from agentshim.providers.codex import CodexSandboxConfig, parse_sandbox
 from agentshim.testing import FakeRun
+from google.protobuf import json_format
 
 from sdo.agents.responder.codex import (
     ResponderExecutionError,
@@ -13,7 +14,7 @@ from sdo.agents.responder.codex import (
     _responder_prompt,
     execute_incident,
 )
-from sdo.agents.views import (
+from sdo.contracts import (
     ConfirmedRootCause,
     IncidentRequest,
     IncidentResult,
@@ -24,6 +25,7 @@ from sdo.agents.views import (
     PriorOutcomeEvidence,
     RootCauseEvidence,
 )
+from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, failure
 
 
@@ -41,12 +43,22 @@ def _fixture(name: str) -> str:
     return json.dumps(request)
 
 
+def _request(name: str = "incident_request.json") -> IncidentRequest:
+    return json_format.Parse(_fixture(name), IncidentRequest())
+
+
+def _result() -> IncidentResult:
+    return json_format.Parse(_fixture("incident_result.json"), IncidentResult())
+
+
+def _reply(result: IncidentResult) -> dict[str, object]:
+    return json_format.MessageToDict(result, preserving_proto_field_name=True)
+
+
 def test_codex_responder_captures_resumable_session_id() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    result = IncidentResult.model_validate_json(_fixture("incident_result.json")).model_copy(
-        update={"responder_session_id": None}
-    )
-    message = {"type": "agent_message", "id": "msg", "text": result.model_dump_json(exclude_none=True)}
+    request = _request()
+    result = evolve(_result(), responder_session_id=None)
+    message = {"type": "agent_message", "id": "msg", "text": json.dumps(_reply(result))}
     agent = ScriptedAgent(
         lambda _request: FakeRun(
             stdout=[
@@ -75,15 +87,13 @@ def test_codex_responder_captures_resumable_session_id() -> None:
 
 
 def test_claude_responder_captures_resumable_session_id() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    result = IncidentResult.model_validate_json(_fixture("incident_result.json")).model_copy(
-        update={"responder_session_id": None}
-    )
+    request = _request()
+    result = evolve(_result(), responder_session_id=None)
     event = {
         "type": "result",
         "session_id": "session-from-claude",
         "is_error": False,
-        "structured_output": result.model_dump(mode="json", exclude_none=True),
+        "structured_output": _reply(result),
         "num_turns": 4,
         "total_cost_usd": 0.25,
         "usage": {
@@ -114,7 +124,7 @@ def test_claude_responder_captures_resumable_session_id() -> None:
 
 
 def test_responder_cannot_reflect_before_controller_verification(monkeypatch) -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
+    request = _request()
 
     prompt = _responder_prompt(request)
 
@@ -136,7 +146,7 @@ def test_responder_cannot_reflect_before_controller_verification(monkeypatch) ->
 
 
 def test_codex_failure_reports_structured_events_and_stderr() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
+    request = _request()
 
     agent = ScriptedAgent(
         lambda _request: failure(stdout='{"type":"error","message":"schema rejected"}\n', stderr="PATH warning\n")
@@ -178,9 +188,7 @@ def test_codex_output_schema_is_strict_and_requires_defaulted_fields() -> None:
 
 
 def test_recorded_actions_policy_is_explicit_in_responder_prompt() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json")).model_copy(
-        update={"repair_policy": "recorded-actions"}
-    )
+    request = evolve(_request(), repair_policy="recorded-actions")
 
     prompt = _responder_prompt(request)
 
@@ -189,7 +197,7 @@ def test_recorded_actions_policy_is_explicit_in_responder_prompt() -> None:
 
 
 def test_prompt_tells_the_responder_to_cancel_an_already_healed_finding() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
+    request = _request()
 
     prompt = _responder_prompt(request)
 
@@ -202,46 +210,43 @@ def test_prompt_tells_the_responder_to_cancel_an_already_healed_finding() -> Non
 def _exact_match_outcome(match_reason: str = "exact-fingerprint") -> PriorOutcomeEvidence:
     return PriorOutcomeEvidence(
         incident_id="inc-prior",
-        match_reason=match_reason,  # type: ignore[arg-type]
+        match_reason=match_reason,
         root_cause_summaries=["geo required the absent geo-config ConfigMap"],
         repair_action_summaries=["restored geo-config from source"],
-        applied_playbooks=["missing-configmap"],
+        applied_playbook_ids=["missing-configmap"],
         source_commit="1111111111111111111111111111111111111111",
         exact_source_match=True,
     )
 
 
 def _warm_request(worktree: Path, *, match_reason: str = "exact-fingerprint") -> IncidentRequest:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    assert request.memory_snapshot is not None
-    snapshot = request.memory_snapshot.model_copy(
-        update={
-            "detectors": [
-                MemoryDetector(
-                    id="missing-configmap",
-                    detector_class="incident",
-                    owner="responder",
-                    watches=[MemoryWatch(api_version="apps/v1", kind="Deployment")],
-                    firing=1,
-                    possible_playbook_ids=["missing-configmap"],
-                    originating_incident="incident-seed",
-                )
-            ],
-            "playbooks": [
-                MemoryPlaybook(
-                    id="missing-configmap",
-                    markdown="Restore `<MISSING_CONFIG_MAP>` from source.",
-                    scripts=[MemoryScript(name="verify.sh", content='kubectl -n "$1" get configmap geo-config')],
-                )
-            ],
-        }
+    request = _request()
+    snapshot = evolve(
+        request.memory_snapshot,
+        detectors=[
+            MemoryDetector(
+                id="missing-configmap",
+                detector_class="incident",
+                owner="responder",
+                watches=[MemoryWatch(api_version="apps/v1", kind="Deployment")],
+                firing=1,
+                possible_playbook_ids=["missing-configmap"],
+                originating_incident="incident-seed",
+            )
+        ],
+        playbooks=[
+            MemoryPlaybook(
+                id="missing-configmap",
+                markdown="Restore `<MISSING_CONFIG_MAP>` from source.",
+                scripts=[MemoryScript(name="verify.sh", content='kubectl -n "$1" get configmap geo-config')],
+            )
+        ],
     )
-    return request.model_copy(
-        update={
-            "repository_worktree": str(worktree),
-            "relevant_outcomes": [_exact_match_outcome(match_reason)],
-            "memory_snapshot": snapshot,
-        }
+    return evolve(
+        request,
+        repository_worktree=str(worktree),
+        relevant_outcomes=[_exact_match_outcome(match_reason)],
+        memory_snapshot=snapshot,
     )
 
 
@@ -252,18 +257,15 @@ def _not_yet_fired_request(worktree: Path, *, prior_incident: str = "incident-se
     """Only the health detector fired; the incident detector learned from the exact prior has not."""
 
     request = _warm_request(worktree)
-    health = request.findings[0].model_copy(
-        update={
-            "detector_id": "health-objective",
-            "rule_id": "required-configmap-missing",
-            "playbook_ids": ["health-objective"],
-            "fingerprint": "health-objective/required-configmap-missing/hotel-reservation/geo-config",
-        }
+    health = evolve(
+        request.findings[0],
+        detector_id="health-objective",
+        rule_id="required-configmap-missing",
+        playbook_ids=["health-objective"],
+        fingerprint="health-objective/required-configmap-missing/hotel-reservation/geo-config",
     )
-    prior = request.relevant_outcomes[0].model_copy(
-        update={"incident_id": prior_incident, "applied_playbooks": ["health-objective"]}
-    )
-    return request.model_copy(update={"findings": [health], "surfaced_playbooks": [], "relevant_outcomes": [prior]})
+    prior = evolve(request.relevant_outcomes[0], incident_id=prior_incident, applied_playbook_ids=["health-objective"])
+    return evolve(request, findings=[health], surfaced_playbooks=[], relevant_outcomes=[prior])
 
 
 def test_exact_match_on_incident_detector_inlines_playbook_and_fast_procedure(tmp_path: Path) -> None:
@@ -301,14 +303,13 @@ def test_registered_but_not_fired_incident_detector_gets_precondition_sanity_che
 
 def test_cold_prompt_is_unchanged_without_exact_incident_detector_match(tmp_path: Path) -> None:
     registered = tmp_path / "registered"
-    no_prior = IncidentRequest.model_validate_json(_fixture("incident_request.json")).model_copy(
-        update={"repository_worktree": str(registered)}
-    )
+    no_prior = evolve(_request(), repository_worktree=str(registered))
     cold_requests = [
         no_prior,
         _warm_request(registered, match_reason="detector-rule-resource-kind"),
-        _warm_request(registered).model_copy(
-            update={"memory_snapshot": _warm_request(registered).memory_snapshot.model_copy(update={"detectors": []})}
+        evolve(
+            _warm_request(registered),
+            memory_snapshot=evolve(_warm_request(registered).memory_snapshot, detectors=[]),
         ),
         _not_yet_fired_request(registered, prior_incident="unrelated-incident"),
     ]
@@ -321,20 +322,18 @@ def test_cold_prompt_is_unchanged_without_exact_incident_detector_match(tmp_path
 
 
 def test_cold_prompt_inlines_surfaced_logical_playbook_without_memory_file_read() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    assert request.memory_snapshot is not None
-    snapshot = request.memory_snapshot.model_copy(
-        update={
-            "playbooks": [
-                MemoryPlaybook(
-                    id="missing-configmap",
-                    markdown="Restore the source-backed configuration safely.",
-                    scripts=[MemoryScript(name="verify.sh", content="kubectl get configmap")],
-                )
-            ]
-        }
+    request = _request()
+    snapshot = evolve(
+        request.memory_snapshot,
+        playbooks=[
+            MemoryPlaybook(
+                id="missing-configmap",
+                markdown="Restore the source-backed configuration safely.",
+                scripts=[MemoryScript(name="verify.sh", content="kubectl get configmap")],
+            )
+        ],
     )
-    request = request.model_copy(update={"memory_snapshot": snapshot})
+    request = evolve(request, memory_snapshot=snapshot)
 
     prompt = _responder_prompt(request)
 
@@ -345,7 +344,7 @@ def test_cold_prompt_inlines_surfaced_logical_playbook_without_memory_file_read(
 
 
 def test_every_path_verifies_with_incident_status_before_submitting(tmp_path: Path) -> None:
-    cold = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
+    cold = _request()
 
     for prompt in (_responder_prompt(cold), _responder_prompt(_warm_request(tmp_path))):
         assert "`python3 -m sdo.agents.responder.status_cli`" in prompt
@@ -367,7 +366,7 @@ def test_every_path_prefers_one_blocking_wait_over_manual_poll_turns(tmp_path: P
     turn to check again; each such turn cost about as much context as any other turn in the session.
     The prompt should steer the responder toward a single command that blocks until done instead.
     """
-    cold = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
+    cold = _request()
 
     for prompt in (_responder_prompt(cold), _responder_prompt(_warm_request(tmp_path))):
         assert "one blocking command" in prompt
@@ -377,14 +376,14 @@ def test_every_path_prefers_one_blocking_wait_over_manual_poll_turns(tmp_path: P
 
 
 def test_prompt_requires_helper_objects_to_carry_the_cleanup_label() -> None:
-    prompt = _responder_prompt(IncidentRequest.model_validate_json(_fixture("incident_request.json")))
+    prompt = _responder_prompt(_request())
 
     assert "sdo.dev/responder-helper=true" in prompt
     assert "deletes them when you finish" in prompt
 
 
 def test_prompt_requires_live_evidence_for_every_root_cause() -> None:
-    prompt = _responder_prompt(IncidentRequest.model_validate_json(_fixture("incident_request.json")))
+    prompt = _responder_prompt(_request())
 
     assert "Every confirmed root cause needs live evidence" in prompt
     assert "static_context" in prompt
@@ -395,7 +394,7 @@ def test_prompt_requires_live_evidence_for_every_root_cause() -> None:
 def test_prompt_states_the_cause_admissibility_bar_only_when_enabled(monkeypatch) -> None:
     monkeypatch.setenv("SDO_CAUSE_ADMISSIBILITY", "on")
 
-    prompt = _responder_prompt(IncidentRequest.model_validate_json(_fixture("incident_request.json")))
+    prompt = _responder_prompt(_request())
 
     assert "Admissibility of a confirmed root cause" in prompt
     assert "benign drift" in prompt
@@ -410,7 +409,7 @@ def test_default_off_keeps_the_prompt_free_of_the_admissibility_bar(monkeypatch)
     # Default (environment unset) and explicit off both omit the bar, so the
     # prompt is byte-identical to the pre-gate responder prompt.
     monkeypatch.delenv("SDO_CAUSE_ADMISSIBILITY", raising=False)
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
+    request = _request()
     assert "Admissibility of a confirmed root cause" not in _responder_prompt(request)
 
     monkeypatch.setenv("SDO_CAUSE_ADMISSIBILITY", "off")
@@ -419,24 +418,23 @@ def test_default_off_keeps_the_prompt_free_of_the_admissibility_bar(monkeypatch)
 
 def test_execute_incident_withholds_a_weakly_evidenced_cause(monkeypatch) -> None:
     monkeypatch.setenv("SDO_CAUSE_ADMISSIBILITY", "on")
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    result = IncidentResult.model_validate_json(_fixture("incident_result.json"))
-    weak = result.confirmed_root_causes[0].model_copy(
-        update={
-            "summary": "benign image drift",
-            "evidence": [
-                RootCauseEvidence(
-                    kind="live-observation",
-                    source="kubectl get deploy",
-                    observation="image tag differs from a prior build",
-                )
-            ],
-            "explained_detectors": ["phantom-detector"],
-        }
+    request = _request()
+    result = _result()
+    weak = evolve(
+        result.confirmed_root_causes[0],
+        summary="benign image drift",
+        evidence=[
+            RootCauseEvidence(
+                kind="live-observation",
+                source="kubectl get deploy",
+                observation="image tag differs from a prior build",
+            )
+        ],
+        explained_detectors=["phantom-detector"],
     )
     assert isinstance(weak, ConfirmedRootCause)
-    payload = result.model_copy(update={"confirmed_root_causes": [*result.confirmed_root_causes, weak]})
-    message = {"type": "agent_message", "id": "msg", "text": payload.model_dump_json(exclude_none=True)}
+    payload = evolve(result, confirmed_root_causes=[*result.confirmed_root_causes, weak])
+    message = {"type": "agent_message", "id": "msg", "text": json.dumps(_reply(payload))}
     agent = ScriptedAgent(
         lambda _request: FakeRun(
             stdout=[
@@ -459,23 +457,22 @@ def test_execute_incident_default_off_keeps_every_proposed_cause(monkeypatch) ->
     # With the gate at its default (off), execute_incident does not touch the
     # agent's confirmed_root_causes: behavior is byte-identical to pre-gate.
     monkeypatch.delenv("SDO_CAUSE_ADMISSIBILITY", raising=False)
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    result = IncidentResult.model_validate_json(_fixture("incident_result.json"))
-    weak = result.confirmed_root_causes[0].model_copy(
-        update={
-            "summary": "benign image drift",
-            "evidence": [
-                RootCauseEvidence(
-                    kind="live-observation",
-                    source="kubectl get deploy",
-                    observation="image tag differs from a prior build",
-                )
-            ],
-            "explained_detectors": ["phantom-detector"],
-        }
+    request = _request()
+    result = _result()
+    weak = evolve(
+        result.confirmed_root_causes[0],
+        summary="benign image drift",
+        evidence=[
+            RootCauseEvidence(
+                kind="live-observation",
+                source="kubectl get deploy",
+                observation="image tag differs from a prior build",
+            )
+        ],
+        explained_detectors=["phantom-detector"],
     )
-    payload = result.model_copy(update={"confirmed_root_causes": [*result.confirmed_root_causes, weak]})
-    message = {"type": "agent_message", "id": "msg", "text": payload.model_dump_json(exclude_none=True)}
+    payload = evolve(result, confirmed_root_causes=[*result.confirmed_root_causes, weak])
+    message = {"type": "agent_message", "id": "msg", "text": json.dumps(_reply(payload))}
     agent = ScriptedAgent(
         lambda _request: FakeRun(
             stdout=[
@@ -494,7 +491,7 @@ def test_execute_incident_default_off_keeps_every_proposed_cause(monkeypatch) ->
 
 
 def test_prompt_lists_changes_since_the_healthy_baseline_once() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request_state_changes.json"))
+    request = _request("incident_request_state_changes.json")
 
     prompt = _responder_prompt(request)
 
@@ -515,30 +512,21 @@ def test_prompt_lists_changes_since_the_healthy_baseline_once() -> None:
 
 
 def test_prompt_says_when_nothing_changed_since_the_healthy_baseline() -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request_state_changes.json"))
-    assert request.state_changes is not None
-    unchanged = request.model_copy(
-        update={
-            "state_changes": request.state_changes.model_copy(
-                update={"changes": [], "omitted": None, "unobserved_kinds": None}
-            )
-        }
+    request = _request("incident_request_state_changes.json")
+    unchanged = evolve(
+        request,
+        state_changes=evolve(request.state_changes, changes=[], omitted=None, unobserved_kinds=[]),
     )
 
     prompt = _responder_prompt(unchanged)
 
     assert "No Service, workload, NetworkPolicy, ConfigMap, Secret, or RBAC object changed" in prompt
-    assert "Changes since the last healthy state" not in _responder_prompt(
-        IncidentRequest.model_validate_json(_fixture("incident_request.json"))
-    )
+    assert "Changes since the last healthy state" not in _responder_prompt(_request())
 
 
 def test_warm_path_requires_the_incident_playbook_to_exist(tmp_path: Path) -> None:
     request = _warm_request(tmp_path)
-    assert request.memory_snapshot is not None
-    request = request.model_copy(
-        update={"memory_snapshot": request.memory_snapshot.model_copy(update={"playbooks": []})}
-    )
+    request = evolve(request, memory_snapshot=evolve(request.memory_snapshot, playbooks=[]))
     prompt = _responder_prompt(request)
 
     assert "Warm path" not in prompt
@@ -546,12 +534,12 @@ def test_warm_path_requires_the_incident_playbook_to_exist(tmp_path: Path) -> No
 
 def test_warm_path_caps_inlined_playbook_text(tmp_path: Path) -> None:
     request = _warm_request(tmp_path)
-    assert request.memory_snapshot is not None
-    playbook = request.memory_snapshot.playbooks[0].model_copy(
-        update={"markdown": "Restore `<MISSING_CONFIG_MAP>` from source.\n" + "x" * 50_000 + "TAIL-MARKER\n"}
+    playbook = evolve(
+        request.memory_snapshot.playbooks[0],
+        markdown="Restore `<MISSING_CONFIG_MAP>` from source.\n" + "x" * 50_000 + "TAIL-MARKER\n",
     )
-    snapshot = request.memory_snapshot.model_copy(update={"playbooks": [playbook]})
-    prompt = _responder_prompt(request.model_copy(update={"memory_snapshot": snapshot}))
+    snapshot = evolve(request.memory_snapshot, playbooks=[playbook])
+    prompt = _responder_prompt(evolve(request, memory_snapshot=snapshot))
 
     assert "Warm path" in prompt
     assert "TAIL-MARKER" not in prompt
@@ -560,9 +548,7 @@ def test_warm_path_caps_inlined_playbook_text(tmp_path: Path) -> None:
 
 
 def test_prompt_compacts_detector_history_to_latest_evidence(tmp_path: Path) -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json")).model_copy(
-        update={"repository_worktree": str(tmp_path)}
-    )
+    request = evolve(_request(), repository_worktree=str(tmp_path))
 
     prompt = _responder_prompt(request)
 
@@ -573,16 +559,10 @@ def test_prompt_compacts_detector_history_to_latest_evidence(tmp_path: Path) -> 
 
 
 def test_prompt_inlines_a_small_health_objective(tmp_path: Path) -> None:
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json")).model_copy(
-        update={"repository_worktree": str(tmp_path)}
-    )
-    assert request.memory_snapshot is not None
-    request = request.model_copy(
-        update={
-            "memory_snapshot": request.memory_snapshot.model_copy(
-                update={"goal_markdown": "The application serves successful requests."}
-            )
-        }
+    request = evolve(_request(), repository_worktree=str(tmp_path))
+    request = evolve(
+        request,
+        memory_snapshot=evolve(request.memory_snapshot, goal_markdown="The application serves successful requests."),
     )
 
     prompt = _responder_prompt(request)
@@ -590,22 +570,18 @@ def test_prompt_inlines_a_small_health_objective(tmp_path: Path) -> None:
     assert "The application serves successful requests." in prompt
     assert "trusted memory snapshot" in prompt
 
-    large = request.memory_snapshot.model_copy(update={"goal_markdown": "y" * 20_000})
-    assert "y" * 5_000 not in _responder_prompt(request.model_copy(update={"memory_snapshot": large}))
+    large = evolve(request.memory_snapshot, goal_markdown="y" * 20_000)
+    assert "y" * 5_000 not in _responder_prompt(evolve(request, memory_snapshot=large))
 
 
 def test_prompt_inlines_a_small_architecture_summary(tmp_path: Path) -> None:
     """The accepted architecture summary is supplied by the logical memory snapshot."""
-    request = IncidentRequest.model_validate_json(_fixture("incident_request.json")).model_copy(
-        update={"repository_worktree": str(tmp_path)}
-    )
-    assert request.memory_snapshot is not None
-    request = request.model_copy(
-        update={
-            "memory_snapshot": request.memory_snapshot.model_copy(
-                update={"architecture_markdown": "The entrypoint uses the configuration service."}
-            )
-        }
+    request = evolve(_request(), repository_worktree=str(tmp_path))
+    request = evolve(
+        request,
+        memory_snapshot=evolve(
+            request.memory_snapshot, architecture_markdown="The entrypoint uses the configuration service."
+        ),
     )
 
     prompt = _responder_prompt(request)
@@ -613,5 +589,5 @@ def test_prompt_inlines_a_small_architecture_summary(tmp_path: Path) -> None:
     assert "The entrypoint uses the configuration service." in prompt
     assert "trusted memory snapshot" in prompt
 
-    large = request.memory_snapshot.model_copy(update={"architecture_markdown": "y" * 20_000})
-    assert "y" * 5_000 not in _responder_prompt(request.model_copy(update={"memory_snapshot": large}))
+    large = evolve(request.memory_snapshot, architecture_markdown="y" * 20_000)
+    assert "y" * 5_000 not in _responder_prompt(evolve(request, memory_snapshot=large))

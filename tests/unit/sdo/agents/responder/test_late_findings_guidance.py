@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 
 import pytest
+from google.protobuf import json_format
 
 from sdo.agents.responder.codex import _responder_prompt, late_findings_guidance
-from sdo.agents.views import (
-    IncidentRequest,
-)
+from sdo.contracts import IncidentRequest
+from tests.proto_messages import evolve
 
 _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "incident_request.json"
 
@@ -18,8 +18,8 @@ _FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts
 def _request(**update: object) -> IncidentRequest:
     raw = json.loads(_FIXTURE.read_text(encoding="utf-8"))
     raw["memory_snapshot"] = {"accepted_commit": raw["repository_base_commit"]}
-    request = IncidentRequest.model_validate(raw)
-    return request.model_copy(update=update) if update else request
+    request = json_format.ParseDict(raw, IncidentRequest())
+    return evolve(request, **update) if update else request
 
 
 def test_prompt_is_unchanged_when_the_flag_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
