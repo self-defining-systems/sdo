@@ -17,6 +17,9 @@ type IncidentWorkspace struct {
 	IncidentID string `json:"incident_id"`
 	Worktree   string `json:"worktree"`
 	BaseCommit string `json:"base_commit"`
+	// ReflectionAttempt counts reflections the broker already rejected for this incident, so a retry gets its own
+	// agent Job instead of reusing the rejected attempt's request and result.
+	ReflectionAttempt int `json:"-"`
 }
 
 type ClosureReceipt struct {

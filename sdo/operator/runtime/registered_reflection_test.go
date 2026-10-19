@@ -87,3 +87,32 @@ func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
 		t.Fatalf("valid session was not dispatched: %v", err)
 	}
 }
+
+func TestRegisteredReflectionRetryUsesANewTaskIdentity(t *testing.T) {
+	store := memory.NewJSONStore(t.TempDir())
+	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
+	var ids []string
+	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		ids = append(ids, task.TaskId)
+		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	})
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}
+	closure := nativeClosure(workspace)
+	record := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}
+	for _, attempt := range []int{0, 0, 1} {
+		workspace.ReflectionAttempt = attempt
+		if _, err := worker.Reflect(context.Background(), closure, workspace, record, "repair", "outcome"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ids[0] != ids[1] {
+		t.Fatalf("the same attempt must keep its identity so a restart resumes its Job: %v", ids)
+	}
+	if ids[2] == ids[0] {
+		t.Fatalf("a retry after a rejected reflection must not reuse the rejected attempt's Job and result: %v", ids)
+	}
+}

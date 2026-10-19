@@ -136,7 +136,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
-	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace.IncidentID+"\x00"+outcomeCommit)))
+	identityInput := workspace.IncidentID + "\x00" + outcomeCommit
+	if workspace.ReflectionAttempt > 0 {
+		identityInput += fmt.Sprintf("\x00attempt-%d", workspace.ReflectionAttempt)
+	}
+	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(identityInput)))
 	proposalID := "reflection-" + identity
 	task := &contracts.AgentTask{
 		SchemaVersion: "sdo.dev/v1alpha1", TaskId: proposalID, AgentId: w.AgentID, TaskType: "outcome-reflection",
