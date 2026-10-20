@@ -15,6 +15,7 @@ import (
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	structpb "google.golang.org/protobuf/types/known/structpb"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -756,16 +757,17 @@ func (x *RestartRollout) GetReason() string {
 	return ""
 }
 
-// ProgramRun and PlanApplication are available for future outcome records.
 type ProgramRun struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ProgramId     string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
-	Bindings      []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
-	Verdict       *Verdict               `protobuf:"bytes,3,opt,name=verdict,proto3" json:"verdict,omitempty"`
-	Duration      *durationpb.Duration   `protobuf:"bytes,4,opt,name=duration,proto3" json:"duration,omitempty"`
-	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ProgramId          string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Bindings           []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
+	Verdict            *Verdict               `protobuf:"bytes,3,opt,name=verdict,proto3" json:"verdict,omitempty"`
+	Duration           *durationpb.Duration   `protobuf:"bytes,4,opt,name=duration,proto3" json:"duration,omitempty"`
+	Error              string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	FindingFingerprint string                 `protobuf:"bytes,6,opt,name=finding_fingerprint,json=findingFingerprint,proto3" json:"finding_fingerprint,omitempty"`
+	ProgramRevision    string                 `protobuf:"bytes,7,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ProgramRun) Reset() {
@@ -833,12 +835,30 @@ func (x *ProgramRun) GetError() string {
 	return ""
 }
 
+func (x *ProgramRun) GetFindingFingerprint() string {
+	if x != nil {
+		return x.FindingFingerprint
+	}
+	return ""
+}
+
+func (x *ProgramRun) GetProgramRevision() string {
+	if x != nil {
+		return x.ProgramRevision
+	}
+	return ""
+}
+
 type PlanApplication struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Plan          *Plan                  `protobuf:"bytes,1,opt,name=plan,proto3" json:"plan,omitempty"`
 	Applied       bool                   `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
 	DryRun        bool                   `protobuf:"varint,3,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
 	Verification  *Verdict               `protobuf:"bytes,4,opt,name=verification,proto3" json:"verification,omitempty"`
+	ApplicationId string                 `protobuf:"bytes,5,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
+	ProgramIds    []string               `protobuf:"bytes,6,rep,name=program_ids,json=programIds,proto3" json:"program_ids,omitempty"`
+	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	Duration      *durationpb.Duration   `protobuf:"bytes,8,opt,name=duration,proto3" json:"duration,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -901,11 +921,115 @@ func (x *PlanApplication) GetVerification() *Verdict {
 	return nil
 }
 
+func (x *PlanApplication) GetApplicationId() string {
+	if x != nil {
+		return x.ApplicationId
+	}
+	return ""
+}
+
+func (x *PlanApplication) GetProgramIds() []string {
+	if x != nil {
+		return x.ProgramIds
+	}
+	return nil
+}
+
+func (x *PlanApplication) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *PlanApplication) GetDuration() *durationpb.Duration {
+	if x != nil {
+		return x.Duration
+	}
+	return nil
+}
+
+type ProgramToolCall struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Command       string                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"`
+	At            *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
+	RequestJson   string                 `protobuf:"bytes,3,opt,name=request_json,json=requestJson,proto3" json:"request_json,omitempty"`
+	ResponseJson  string                 `protobuf:"bytes,4,opt,name=response_json,json=responseJson,proto3" json:"response_json,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProgramToolCall) Reset() {
+	*x = ProgramToolCall{}
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProgramToolCall) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProgramToolCall) ProtoMessage() {}
+
+func (x *ProgramToolCall) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProgramToolCall.ProtoReflect.Descriptor instead.
+func (*ProgramToolCall) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ProgramToolCall) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+func (x *ProgramToolCall) GetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.At
+	}
+	return nil
+}
+
+func (x *ProgramToolCall) GetRequestJson() string {
+	if x != nil {
+		return x.RequestJson
+	}
+	return ""
+}
+
+func (x *ProgramToolCall) GetResponseJson() string {
+	if x != nil {
+		return x.ResponseJson
+	}
+	return ""
+}
+
+func (x *ProgramToolCall) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_program_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/program.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a&sdodev/contracts/v1alpha1/common.proto\"d\n" +
+	"'sdodev/contracts/v1alpha1/program.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\"d\n" +
 	"\vProgramSpec\x12\x17\n" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12<\n" +
 	"\x06params\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ParamSpecR\x06params\"a\n" +
@@ -955,7 +1079,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x06reason\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"q\n" +
 	"\x0eRestartRollout\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
-	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\x8f\x02\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xeb\x02\n" +
 	"\n" +
 	"ProgramRun\x12&\n" +
 	"\n" +
@@ -963,12 +1087,25 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bbindings\x18\x02 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12D\n" +
 	"\averdict\x18\x03 \x01(\v2\".sdodev.contracts.v1alpha1.VerdictB\x06\xbaH\x03\xc8\x01\x01R\averdict\x12=\n" +
 	"\bduration\x18\x04 \x01(\v2\x19.google.protobuf.DurationB\x06\xbaH\x03\xc8\x01\x01R\bduration\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xc9\x01\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12/\n" +
+	"\x13finding_fingerprint\x18\x06 \x01(\tR\x12findingFingerprint\x12)\n" +
+	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\"\xde\x02\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
 	"\adry_run\x18\x03 \x01(\bR\x06dryRun\x12F\n" +
-	"\fverification\x18\x04 \x01(\v2\".sdodev.contracts.v1alpha1.VerdictR\fverificationB\xff\x01\n" +
+	"\fverification\x18\x04 \x01(\v2\".sdodev.contracts.v1alpha1.VerdictR\fverification\x12%\n" +
+	"\x0eapplication_id\x18\x05 \x01(\tR\rapplicationId\x12\x1f\n" +
+	"\vprogram_ids\x18\x06 \x03(\tR\n" +
+	"programIds\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\x125\n" +
+	"\bduration\x18\b \x01(\v2\x19.google.protobuf.DurationR\bduration\"\xb5\x01\n" +
+	"\x0fProgramToolCall\x12\x18\n" +
+	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +
+	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +
+	"\frequest_json\x18\x03 \x01(\tR\vrequestJson\x12#\n" +
+	"\rresponse_json\x18\x04 \x01(\tR\fresponseJson\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05errorB\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fProgramProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -984,52 +1121,56 @@ func file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP() []byte {
 }
 
 var file_sdodev_contracts_v1alpha1_program_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_sdodev_contracts_v1alpha1_program_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_sdodev_contracts_v1alpha1_program_proto_goTypes = []any{
-	(Verdict_Result)(0),         // 0: sdodev.contracts.v1alpha1.Verdict.Result
-	(*ProgramSpec)(nil),         // 1: sdodev.contracts.v1alpha1.ProgramSpec
-	(*ParamSpec)(nil),           // 2: sdodev.contracts.v1alpha1.ParamSpec
-	(*Binding)(nil),             // 3: sdodev.contracts.v1alpha1.Binding
-	(*Verdict)(nil),             // 4: sdodev.contracts.v1alpha1.Verdict
-	(*Evidence)(nil),            // 5: sdodev.contracts.v1alpha1.Evidence
-	(*Plan)(nil),                // 6: sdodev.contracts.v1alpha1.Plan
-	(*Action)(nil),              // 7: sdodev.contracts.v1alpha1.Action
-	(*ReconcileFromSource)(nil), // 8: sdodev.contracts.v1alpha1.ReconcileFromSource
-	(*Rollback)(nil),            // 9: sdodev.contracts.v1alpha1.Rollback
-	(*SetField)(nil),            // 10: sdodev.contracts.v1alpha1.SetField
-	(*RestartRollout)(nil),      // 11: sdodev.contracts.v1alpha1.RestartRollout
-	(*ProgramRun)(nil),          // 12: sdodev.contracts.v1alpha1.ProgramRun
-	(*PlanApplication)(nil),     // 13: sdodev.contracts.v1alpha1.PlanApplication
-	(*ObjectRef)(nil),           // 14: sdodev.contracts.v1alpha1.ObjectRef
-	(*structpb.Value)(nil),      // 15: google.protobuf.Value
-	(*durationpb.Duration)(nil), // 16: google.protobuf.Duration
+	(Verdict_Result)(0),           // 0: sdodev.contracts.v1alpha1.Verdict.Result
+	(*ProgramSpec)(nil),           // 1: sdodev.contracts.v1alpha1.ProgramSpec
+	(*ParamSpec)(nil),             // 2: sdodev.contracts.v1alpha1.ParamSpec
+	(*Binding)(nil),               // 3: sdodev.contracts.v1alpha1.Binding
+	(*Verdict)(nil),               // 4: sdodev.contracts.v1alpha1.Verdict
+	(*Evidence)(nil),              // 5: sdodev.contracts.v1alpha1.Evidence
+	(*Plan)(nil),                  // 6: sdodev.contracts.v1alpha1.Plan
+	(*Action)(nil),                // 7: sdodev.contracts.v1alpha1.Action
+	(*ReconcileFromSource)(nil),   // 8: sdodev.contracts.v1alpha1.ReconcileFromSource
+	(*Rollback)(nil),              // 9: sdodev.contracts.v1alpha1.Rollback
+	(*SetField)(nil),              // 10: sdodev.contracts.v1alpha1.SetField
+	(*RestartRollout)(nil),        // 11: sdodev.contracts.v1alpha1.RestartRollout
+	(*ProgramRun)(nil),            // 12: sdodev.contracts.v1alpha1.ProgramRun
+	(*PlanApplication)(nil),       // 13: sdodev.contracts.v1alpha1.PlanApplication
+	(*ProgramToolCall)(nil),       // 14: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*ObjectRef)(nil),             // 15: sdodev.contracts.v1alpha1.ObjectRef
+	(*structpb.Value)(nil),        // 16: google.protobuf.Value
+	(*durationpb.Duration)(nil),   // 17: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil), // 18: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
 	2,  // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
-	14, // 1: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	15, // 1: sdodev.contracts.v1alpha1.Binding.object:type_name -> sdodev.contracts.v1alpha1.ObjectRef
 	0,  // 2: sdodev.contracts.v1alpha1.Verdict.result:type_name -> sdodev.contracts.v1alpha1.Verdict.Result
 	5,  // 3: sdodev.contracts.v1alpha1.Verdict.evidence:type_name -> sdodev.contracts.v1alpha1.Evidence
-	14, // 4: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	15, // 4: sdodev.contracts.v1alpha1.Evidence.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
 	7,  // 5: sdodev.contracts.v1alpha1.Plan.actions:type_name -> sdodev.contracts.v1alpha1.Action
 	8,  // 6: sdodev.contracts.v1alpha1.Action.reconcile_from_source:type_name -> sdodev.contracts.v1alpha1.ReconcileFromSource
 	9,  // 7: sdodev.contracts.v1alpha1.Action.rollback:type_name -> sdodev.contracts.v1alpha1.Rollback
 	10, // 8: sdodev.contracts.v1alpha1.Action.set_field:type_name -> sdodev.contracts.v1alpha1.SetField
 	11, // 9: sdodev.contracts.v1alpha1.Action.restart_rollout:type_name -> sdodev.contracts.v1alpha1.RestartRollout
-	14, // 10: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	14, // 11: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	14, // 12: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	15, // 13: sdodev.contracts.v1alpha1.SetField.value:type_name -> google.protobuf.Value
-	14, // 14: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	15, // 10: sdodev.contracts.v1alpha1.ReconcileFromSource.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	15, // 11: sdodev.contracts.v1alpha1.Rollback.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	15, // 12: sdodev.contracts.v1alpha1.SetField.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	16, // 13: sdodev.contracts.v1alpha1.SetField.value:type_name -> google.protobuf.Value
+	15, // 14: sdodev.contracts.v1alpha1.RestartRollout.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
 	3,  // 15: sdodev.contracts.v1alpha1.ProgramRun.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
 	4,  // 16: sdodev.contracts.v1alpha1.ProgramRun.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
-	16, // 17: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
+	17, // 17: sdodev.contracts.v1alpha1.ProgramRun.duration:type_name -> google.protobuf.Duration
 	6,  // 18: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
 	4,  // 19: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	17, // 20: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
+	18, // 21: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_program_proto_init() }
@@ -1050,7 +1191,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_program_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_program_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

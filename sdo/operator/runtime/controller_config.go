@@ -91,7 +91,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--responder-credentials-secret", config.GetResponderCredentialsSecret())
 	repeated("--responder-env", config.GetResponderEnv())
 
-
 	str("--firing-telemetry-path", config.GetFiringTelemetryPath())
 
 	dur("--duration", config.GetDuration())
@@ -100,6 +99,10 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxFollowUps() > 0 {
 		args = append(args, "--max-follow-ups", strconv.Itoa(int(config.GetMaxFollowUps())))
 	}
+	if config.GetMaxResponseLoops() > 0 {
+		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
+	}
+	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
 	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())
 

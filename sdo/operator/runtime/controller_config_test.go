@@ -51,6 +51,7 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		ResponseTimeout:            durationpb.New(1800000000000), // 30m
 		VerificationTimeout:        durationpb.New(120000000000),  // 2m
 		MaxFollowUps:               3,
+		MaxResponseLoops:           4,
 		FollowUpCooldown:           durationpb.New(30000000000), // 30s
 		RepairPolicy:               "recorded-actions",
 		LeaseName:                  "sdo-controller",
@@ -167,14 +168,15 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	pairs := argPairs(args)
 
 	wantValue := map[string]string{
-		"--namespace":         "hotel-reservation",
-		"--control-namespace": "sdo-system",
-		"--app-root":          "/workspace/app",
-		"--dispatcher-mode":   "job",
-		"--repair-policy":     "recorded-actions",
-		"--max-follow-ups":    "3",
-		"--response-timeout":  "30m0s",
-		"--lease-duration":    "1m0s",
+		"--namespace":          "hotel-reservation",
+		"--control-namespace":  "sdo-system",
+		"--app-root":           "/workspace/app",
+		"--dispatcher-mode":    "job",
+		"--repair-policy":      "recorded-actions",
+		"--max-follow-ups":     "3",
+		"--max-response-loops": "4",
+		"--response-timeout":   "30m0s",
+		"--lease-duration":     "1m0s",
 	}
 	for flag, want := range wantValue {
 		if got := pairs[flag]; got != want {

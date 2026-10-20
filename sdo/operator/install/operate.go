@@ -120,6 +120,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.MaxFollowUps > 0 {
 		args = append(args, "--max-follow-ups", fmt.Sprint(cfg.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(cfg)))
 	}
+	if cfg.MaxResponseLoops > 0 {
+		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
+	}
 	if cfg.RegistryHost != "" {
 		args = append(args, "--registry-host", cfg.RegistryHost)
 	}

@@ -84,6 +84,29 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	}
 }
 
+func TestDerivePreservesResponderProgramEvidenceAsProtoJSON(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.ProgramToolCalls = []*contractsv1alpha1.ProgramToolCall{{Command: "apply", At: timestamppb.Now(), RequestJson: `{"plan_ids":["plan-1"]}`}}
+	closure.Result.ProgramRuns = []*contractsv1alpha1.ProgramRun{{ProgramId: "targetport", Verdict: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_NO_MATCH}}}
+	closure.Result.PlanApplications = []*contractsv1alpha1.PlanApplication{{ApplicationId: "application-1", ProgramIds: []string{"targetport"}, Applied: true, Verification: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_NO_MATCH}}}
+	closure.Result.ResponseLoopsUsed = 1
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := protojson.Marshal(result.Record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := new(contractsv1alpha1.OutcomeRecord)
+	if err := protojson.Unmarshal(encoded, recorded); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded.GetProgramToolCalls()) != 1 || len(recorded.GetProgramRuns()) != 1 || len(recorded.GetPlanApplications()) != 1 || recorded.GetResponseLoopsUsed() != 1 {
+		t.Fatalf("program outcome evidence lost: %+v", recorded)
+	}
+}
+
 func TestDeriveRejectsExternalRecoveryAndNoAction(t *testing.T) {
 	for _, tc := range []struct {
 		name           string

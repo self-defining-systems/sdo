@@ -105,4 +105,6 @@ message ControllerConfig {
   // Replays incident detectors on benchmark-supplied healthy snapshots. The
   // validator receives only the bounded snapshot directory, read-only.
   bool healthy_baseline = 54;
+  int32 max_response_loops = 55 [(buf.validate.field).int32.gte = 0];
+  google.protobuf.Duration diagnosis_deadline = 56;
 }

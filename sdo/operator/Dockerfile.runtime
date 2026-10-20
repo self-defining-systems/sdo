@@ -80,6 +80,8 @@ RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs
 WORKDIR /opt/sdo
 
 FROM worker-runtime AS responder
+RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > /usr/local/bin/sdo \
+    && chmod 755 /usr/local/bin/sdo
 RUN if output="$(/usr/local/bin/sdo-operator draft-test --app /tmp --proposal-json /missing 2>&1)"; then exit 1; fi \
     && printf '%s' "$output" | grep -q 'read typed draft'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]

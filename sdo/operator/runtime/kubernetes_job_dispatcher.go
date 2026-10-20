@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -36,7 +38,9 @@ type KubernetesJobDispatcher struct {
 	DispatchEnvironment   func(context.Context) map[string]string
 	PollInterval          time.Duration
 	Catalog               memory.CatalogReader
+	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
+	LoopFactory           func(IncidentRequest) *ResponderLoop
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
@@ -45,6 +49,28 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	}
 	if d.AgentID == "" {
 		d.AgentID = builtInResponderID
+	}
+	var loop *ResponderLoop
+	if d.LoopFactory != nil {
+		loop = d.LoopFactory(request)
+		if loop != nil {
+			if d.Outcomes != nil {
+				stored, readErr := d.Outcomes.List(ctx)
+				if readErr != nil {
+					return IncidentResult{}, fmt.Errorf("read program trust outcomes: %w", readErr)
+				}
+				records := make([]*contracts.OutcomeRecord, 0, len(stored))
+				for _, outcome := range stored {
+					if outcome.Record != nil {
+						records = append(records, outcome.Record)
+					}
+				}
+				loop.Trust = ProgramTrustStats(records)
+			}
+			request.InitialProgramRuns = loop.InitialDiagnose(ctx)
+			fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+			request.MaxResponseLoops = loop.MaxBatches
+		}
 	}
 	if d.Registry == nil {
 		var err error
@@ -96,6 +122,25 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		lateConfigMap = latefindings.ConfigMapName(request.IncidentID)
 	}
+	if loop != nil && sessionSubPath != "" {
+		base := d.RepositoryPVCSubPath
+		if base == "" {
+			base = "."
+		}
+		relative, pathErr := filepath.Rel(base, sessionSubPath)
+		if pathErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return IncidentResult{}, fmt.Errorf("incident tool session is outside repository mount")
+		}
+		directory := filepath.Join(d.RepositoryMountPath, relative, "tools")
+		toolCtx, stopTools := context.WithCancel(ctx)
+		defer stopTools()
+		server := SessionToolServer{Directory: directory, Handle: loop.Handle}
+		if err := server.Prepare(); err != nil {
+			return IncidentResult{}, fmt.Errorf("prepare responder tools: %w", err)
+		}
+		go func() { _ = server.Serve(toolCtx) }()
+		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+	}
 	executor := worker_registry.KubernetesExecutor{
 		Client: d.Client, Namespace: d.Namespace, Registry: d.Registry,
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
@@ -118,6 +163,20 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	result, err := decodeIncidentAgentResult(payload, task, d.Registry)
 	if err != nil {
 		return IncidentResult{}, err
+	}
+	if loop != nil {
+		result.ProgramToolCalls = loop.ToolCalls()
+		result.ProgramRuns = loop.ProgramRuns()
+		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+		result.PlanApplications = loop.PlanApplications()
+		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
+		result.ProgramFailureSignals = loop.FailureSignals()
+		result.ResponseLoopsUsed = loop.LoopsUsed()
+		result.ResponseLoopExhausted = loop.Exhausted()
+		if result.ResponseLoopExhausted {
+			result.Status = IncidentFailed
+			result.Error = "response loop budget exhausted with unresolved findings"
+		}
 	}
 	if d.RequireMemorySnapshot && result.LateFindingsPull != nil {
 		pull := result.LateFindingsPull

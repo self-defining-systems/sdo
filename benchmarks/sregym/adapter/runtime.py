@@ -51,6 +51,7 @@ class RuntimeConfig:
     reflection_guidance: str = "baseline"
     late_findings: str = "off"
     max_follow_ups: int = 0
+    max_response_loops: int = 5
     follow_up_cooldown_seconds: int = 30
     healthy_baseline: bool = False
     controller_namespace: str | None = None
@@ -93,7 +94,7 @@ class RuntimeConfig:
             raise ValueError("invalid reflection_guidance")
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0:
+        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
             raise ValueError("invalid follow-up limit or cooldown")
         if self.max_deployment_attempts <= 0:
             raise ValueError("max_deployment_attempts must be positive")
@@ -138,6 +139,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_guidance=config.reflection_guidance,
         healthy_baseline=config.healthy_baseline,
         max_follow_ups=config.max_follow_ups,
+        max_response_loops=config.max_response_loops,
         follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,
