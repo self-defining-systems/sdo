@@ -84,6 +84,8 @@ class DiagnosisGrade(BaseModel):
     judge_tokens: TokenCounts = Field(default_factory=TokenCounts)
     latency_seconds: float = Field(default=0.0, ge=0)
     error: str | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 def _seconds(start: datetime | None, end: datetime | None) -> float | None:
@@ -146,6 +148,11 @@ class IncidentRecord(_PersistedModel):
     incident_wall_seconds: float | None = None
     incident_id: str | None = None
     artifacts_dir: str | None = None
+    program_diagnoses: int | None = None
+    program_verdicts: dict[str, int] = Field(default_factory=dict)
+    program_tool_calls: int | None = None
+    tool_commands: dict[str, int] = Field(default_factory=dict)
+    response_loops_used: int | None = None
     error: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]

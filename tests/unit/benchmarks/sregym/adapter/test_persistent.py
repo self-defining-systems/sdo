@@ -12,6 +12,7 @@ from benchmarks.sregym.adapter.persistent import (
     RESOLUTION_FILENAME,
     STRICT_RECEIPT_FILENAME,
     Clock,
+    ClosureFailedError,
     ControllerPod,
     DetectionMissError,
     DetectorReviewRequiredError,
@@ -702,10 +703,11 @@ def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Pa
 
 
 def test_a_timeout_behind_a_permanently_failed_closure_says_so(tmp_path: Path) -> None:
-    with pytest.raises(PersistentControllerError) as raised:
+    with pytest.raises(ClosureFailedError) as raised:
         _run(tmp_path, _ClosureFailedOps(), "s0", [])
 
-    assert "closure of 'incident-0' failed permanently: broker exited 1" in str(raised.value)
+    assert "incident 'incident-0' closure permanently failed" in str(raised.value)
+    assert "broker exited 1" in str(raised.value)
 
 
 def test_an_unverified_incident_timeout_names_the_open_incident_and_why_it_is_stuck(tmp_path: Path) -> None:

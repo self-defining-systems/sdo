@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
+    ClosureFailedError,
     DetectorReviewRequiredError,
     PersistentControllerError,
     PersistentState,
@@ -276,6 +277,19 @@ class CompositeSdoAgent(SdoPersistentAgent):
         try:
             try:
                 first = super().resolve(index, problem_id, tracked_inject)
+            except ClosureFailedError as stage_error:
+                if not injected:
+                    raise
+                first = self._failed_closure_outcome(
+                    AgentOutcome(
+                        injection=injected[0],
+                        artifacts_dir=str(settings.results_dir / f"{index:03d}_{problem_id}"),
+                    ),
+                    self._ops.runtime_state(control),
+                    stage_error,
+                )
+                stop_reason = "closure_failed"
+                wedged = True
             except PersistentControllerError as stage_error:
                 if not injected:
                     raise
@@ -307,7 +321,21 @@ class CompositeSdoAgent(SdoPersistentAgent):
             known = {str(first.incident_id)}
             lifecycle = self._lifecycle_inputs()
             while not wedged:
-                self._drain_last(first_label=f"composite-{index:03d}")
+                if self._reflection_started_at is None:
+                    self._reflection_started_at = self._clock.now()
+                try:
+                    self._drain_last(first_label=f"composite-{index:03d}")
+                except ClosureFailedError as exc:
+                    failed = replace(
+                        self._failed_closure_outcome(outcomes[-1], self._ops.runtime_state(control), exc),
+                        reflection_started_at=self._reflection_started_at,
+                        reflection_finished_at=self._clock.now(),
+                    )
+                    outcomes[-1] = failed
+                    self._incidents[-1]["outcome"] = failed
+                    stop_reason = "closure_failed"
+                    wedged = True
+                    break
                 if tracker.all_resolved_at() is not None or self._wait_resolved(tracker, composite):
                     stop_reason = "all_faults_resolved"
                     break
@@ -341,7 +369,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if "poll_start" in marks:
                 poller.__exit__(None, None, None)
             try:
-                if stop_reason in {"detector_review_required", "no_closure_within_deadline"}:
+                if stop_reason in {"detector_review_required", "no_closure_within_deadline", "closure_failed"}:
                     # The controller stopped itself; nothing will acknowledge a pause.
                     self._ops.set_maintenance(control, paused=True, generation=f"composite-{index:03d}-wedged")
                 else:
@@ -371,6 +399,36 @@ class CompositeSdoAgent(SdoPersistentAgent):
             )
             write_composite_report(self._report_dir / f"composite_{index:03d}_{problem_id}.json", report)
         return self._merge(outcomes)
+
+    @staticmethod
+    def _failed_closure_outcome(first: AgentOutcome, state: dict[str, Any], exc: ClosureFailedError) -> AgentOutcome:
+        from benchmarks.sregym.fastloop.sdo_agent import (
+            _last_successful_repair,
+            _program_metrics,
+            _summaries,
+            _timestamp,
+        )
+
+        closure = state.get("pending_closure")
+        closure = closure if isinstance(closure, dict) else {}
+        raw_result = closure.get("result") or state.get("incident_result")
+        result = raw_result if isinstance(raw_result, dict) else {}
+        return replace(
+            first,
+            incident_id=first.incident_id or str((closure.get("request") or {}).get("incident_id") or "unknown"),
+            detected_at=first.detected_at
+            or _timestamp(closure.get("detected_at") or state.get("incident_detected_at")),
+            responder_started_at=first.responder_started_at or _timestamp(closure.get("dispatched_at")),
+            responder_finished_at=first.responder_finished_at or _timestamp(closure.get("responder_completed_at")),
+            mitigation_applied_at=first.mitigation_applied_at or _last_successful_repair(result.get("repair_actions")),
+            resolved_at=first.resolved_at or _timestamp(closure.get("verified_at")),
+            diagnosis=first.diagnosis or _summaries(result.get("confirmed_root_causes")),
+            mitigation=first.mitigation or _summaries(result.get("repair_actions"), successful_only=True),
+            responder_tokens=TokenCounts.from_usage(result.get("usage")),
+            **_program_metrics(result),
+            error=f"closure failed permanently: {exc}",
+            terminal_error=True,
+        )
 
     def _wedged_outcome(
         self, index: int, problem_id: str, window: InjectionWindow, wedge: DetectorReviewRequiredError
@@ -486,6 +544,14 @@ class CompositeSdoAgent(SdoPersistentAgent):
             mitigation=" || ".join(item.mitigation for item in outcomes if item.mitigation),
             incident_id=last.incident_id,
             artifacts_dir=last.artifacts_dir,
+            responder_tokens=last.responder_tokens,
+            program_diagnoses=last.program_diagnoses,
+            program_verdicts=last.program_verdicts,
+            program_tool_calls=last.program_tool_calls,
+            tool_commands=last.tool_commands,
+            response_loops_used=last.response_loops_used,
+            error=last.error,
+            terminal_error=last.terminal_error,
         )
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
@@ -511,6 +577,13 @@ class CompositeSdoAgent(SdoPersistentAgent):
         usage = TokenCounts()
         reflection = TokenCounts()
         attempts = 0
+        from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+
+        diagnoses = 0
+        calls = 0
+        verdicts: dict[str, int] = {}
+        commands: dict[str, int] = {}
+        loops = 0
         warm = False
         reasons: list[str] = []
         receipts_seen = 0
@@ -534,6 +607,14 @@ class CompositeSdoAgent(SdoPersistentAgent):
                         rebuild_verified = verified
             outcome_document = ledger.get("outcome_document")
             outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
+            metrics = _program_metrics(outcome_document)
+            diagnoses += metrics["program_diagnoses"] or 0
+            calls += metrics["program_tool_calls"] or 0
+            loops += metrics["response_loops_used"] or 0
+            for name, count in metrics["program_verdicts"].items():
+                verdicts[name] = verdicts.get(name, 0) + count
+            for name, count in metrics["tool_commands"].items():
+                commands[name] = commands.get(name, 0) + count
             usage = _add(usage, TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")))
             reflection = _add(reflection, TokenCounts.from_usage(receipt.get("reflection_usage")))
             raw_attempts = receipt.get("reflection_attempts")
@@ -556,6 +637,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
             reflection_started_at=self._reflection_started_at or observed_at,
             reflection_finished_at=self._clock.now(),
             rebuild_done_at=rebuild_verified or self._clock.now(),
+            program_diagnoses=diagnoses,
+            program_verdicts=verdicts,
+            program_tool_calls=calls,
+            tool_commands=commands,
+            response_loops_used=loops,
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

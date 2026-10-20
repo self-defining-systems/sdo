@@ -83,6 +83,12 @@ class AgentOutcome:
     previous_reflection_drain_seconds: float | None = None
     incident_id: str | None = None
     artifacts_dir: str | None = None
+    program_diagnoses: int | None = None
+    program_verdicts: dict[str, int] = field(default_factory=dict)
+    program_tool_calls: int | None = None
+    tool_commands: dict[str, int] = field(default_factory=dict)
+    response_loops_used: int | None = None
+    terminal_error: bool = False
     #: A non-fatal problem the agent reports alongside its evidence (for example a rejected receipt).
     error: str | None = None
 
@@ -175,7 +181,10 @@ def run_incidents(
             append_record(config.results_path, record)
             records.append(record)
             if pool is not None and grader is not None:
-                pending[pool.submit(grader.grade, ids, record.diagnosis)] = record
+                if record.diagnosis.strip():
+                    pending[pool.submit(grader.grade, ids, record.diagnosis)] = record
+                else:
+                    record.diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
             logger.info(
                 "incident %d %s: oracle=%s wall=%.1fs error=%s",
                 index,
@@ -256,11 +265,13 @@ def _run_one(
     recovery_seconds: float | None = None
     recovered = bool(windows)
     diagnosis_grade: DiagnosisGrade | None = None
-    if windows and grader is not None:
+    if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
         try:
             diagnosis_grade = grader.grade(problem_ids, outcome.diagnosis if outcome else "")
         except Exception as exc:
             diagnosis_grade = DiagnosisGrade(error=_describe(exc))
+    elif windows and grader is not None:
+        diagnosis_grade = DiagnosisGrade(skipped=True, skip_reason="no diagnosis text")
     if windows:
 
         def grade() -> OracleVerdict:
@@ -296,7 +307,9 @@ def _run_one(
             recovered = False
 
     learning_complete = True
-    if outcome is not None and recovered:
+    if outcome is not None and outcome.terminal_error:
+        learning_complete = False
+    elif outcome is not None and recovered:
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:
@@ -357,4 +370,9 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "previous_reflection_drain_seconds": outcome.previous_reflection_drain_seconds,
         "incident_id": outcome.incident_id,
         "artifacts_dir": outcome.artifacts_dir,
+        "program_diagnoses": outcome.program_diagnoses,
+        "program_verdicts": outcome.program_verdicts,
+        "program_tool_calls": outcome.program_tool_calls,
+        "tool_commands": outcome.tool_commands,
+        "response_loops_used": outcome.response_loops_used,
     }

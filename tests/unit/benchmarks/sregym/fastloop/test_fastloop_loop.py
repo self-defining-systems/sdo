@@ -280,6 +280,66 @@ def test_inline_diagnosis_grading_finishes_before_recovery(tmp_path: Path) -> No
     assert records[0].diagnosis_grade.success is False
 
 
+def test_missing_diagnosis_skips_deferred_grading(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class EmptyAgent(FakeAgent):
+        def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
+            return AgentOutcome(injection=inject(), error="closure failed")
+
+    class Judge:
+        def grade(self, problem_ids: tuple[str, ...], diagnosis: str) -> DiagnosisGrade:
+            pytest.fail("empty diagnosis must not be graded")
+
+    records = run_incidents(
+        EmptyAgent(clock),
+        FakeDriver(clock),
+        _config(tmp_path, 1),
+        monotonic=clock.monotonic,
+        grader=Judge(),
+        diagnosis_grading="deferred",
+    )
+    assert records[0].diagnosis_grade is not None
+    assert records[0].diagnosis_grade.skipped is True
+    assert records[0].diagnosis_grade.skip_reason == "no diagnosis text"
+
+
+def test_terminal_closure_error_records_evidence_and_stops_stream(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class FailedAgent(FakeAgent):
+        def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
+            return AgentOutcome(
+                injection=inject(),
+                detected_at=T0 + timedelta(seconds=6),
+                responder_started_at=T0 + timedelta(seconds=7),
+                responder_finished_at=T0 + timedelta(seconds=9),
+                mitigation_applied_at=T0 + timedelta(seconds=8),
+                resolved_at=T0 + timedelta(seconds=10),
+                diagnosis="bad image",
+                responder_tokens=TokenCounts(input_tokens=500, output_tokens=50),
+                program_diagnoses=2,
+                program_verdicts={"RESULT_MATCH": 1, "RESULT_NO_MATCH": 1},
+                program_tool_calls=1,
+                tool_commands={"verify": 1},
+                response_loops_used=1,
+                error="closure failed permanently",
+                terminal_error=True,
+            )
+
+    agent = FailedAgent(clock)
+    records = run_incidents(agent, FakeDriver(clock), _config(tmp_path, 2), monotonic=clock.monotonic)
+    assert len(records) == 1
+    record = load_records(tmp_path / "incidents.jsonl")[0]
+    assert record.detected_at == T0 + timedelta(seconds=6)
+    assert record.responder_tokens.input_tokens == 500
+    assert record.program_diagnoses == 2
+    assert record.tool_commands == {"verify": 1}
+    assert record.response_loops_used == 1
+    assert "closure failed permanently" in (record.error or "")
+    assert agent.events == ["close"]
+
+
 def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_path: Path) -> None:
     clock = FakeClock()
 

@@ -606,6 +606,8 @@ def collect_followup_incident(
         )
     except DetectorReviewRequiredError:
         raise
+    except ClosureFailedError:
+        raise
     except PersistentControllerError:
         return None
     config = replace(inputs.runtime_config, persistent=True, wait_for_completion=False)
@@ -973,6 +975,7 @@ def _wait_for_verified_incident(
     state: dict[str, Any] = {}
     while clock.monotonic() < deadline:
         state = ops.runtime_state(control)
+        _raise_if_closure_failed(state)
         detected = detected or _new_incident_opened(state, known)
         if detection_timeout is not None and not detected and clock.monotonic() - started >= detection_timeout:
             raise DetectionMissError(
@@ -1094,14 +1097,15 @@ def _wait_for_reflection_drain(
     raise PersistentControllerError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")
 
 
-def _raise_if_closure_failed(state: dict[str, Any], incident_id: str) -> None:
+def _raise_if_closure_failed(state: dict[str, Any], incident_id: str | None = None) -> None:
     """Stop waiting once the controller has given up the incident's closure; it never retries it again."""
 
     failure = state.get("closure_failure")
     if state.get("closure_state") != "failed" or not isinstance(failure, dict):
         return
-    if failure.get("incident_id") != incident_id:
+    if not failure.get("permanent") or (incident_id is not None and failure.get("incident_id") != incident_id):
         return
+    incident_id = str(failure.get("incident_id") or incident_id or "unknown")
     raise ClosureFailedError(
         f"incident {incident_id!r} closure permanently failed after {failure.get('attempts')} broker attempts: "
         f"{failure.get('last_error')}; {failure.get('action')}"

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
-from benchmarks.sregym.adapter.persistent import Clock, ControllerPod, control_namespace_for
+from benchmarks.sregym.adapter.persistent import Clock, ClosureFailedError, ControllerPod, control_namespace_for
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, CompositeSettings, TrackedAgent
 from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
@@ -291,6 +291,49 @@ def test_run_stops_when_no_further_incident_arrives_while_a_fault_remains(tmp_pa
     assert report["faults_resolved"] == 2
     assert report["resolved_s"]["network_policy:recommendation"] is None
     assert len(report["incidents"]) == 1
+
+
+def test_failed_closure_keeps_pending_outcome_evidence_and_stops(tmp_path: Path) -> None:
+    ops = FakeOps(second_incident=False)
+    agent = _agent(tmp_path, ops)
+    runtime_state = ops.runtime_state
+
+    def failed_state(control: str) -> dict[str, Any]:
+        state = ops.states[control]
+        return state if state.get("closure_state") == "failed" else runtime_state(control)
+
+    ops.runtime_state = failed_state  # type: ignore[method-assign]
+
+    def fail_drain(*, first_label: str) -> None:
+        state = ops.states[agent._settings.runtime_config.control_namespace]
+        closure = state["pending_closure"]
+        closure["result"].update(
+            {
+                "usage": {"input_tokens": 500, "cached_input_tokens": 400, "output_tokens": 50},
+                "program_runs": [{"verdict": {"result": "RESULT_NO_MATCH"}}],
+                "program_tool_calls": [{"command": "verify"}],
+                "response_loops_used": 1,
+            }
+        )
+        state["closure_state"] = "failed"
+        raise ClosureFailedError("reflection rejected the outcome")
+
+    agent._drain_last = fail_drain  # type: ignore[method-assign]
+    outcome = agent.resolve(0, PROBLEM, _inject)
+
+    assert outcome.terminal_error is True
+    assert outcome.error is not None
+    assert "reflection rejected" in outcome.error
+    assert outcome.detected_at is not None
+    assert outcome.responder_finished_at is not None
+    assert outcome.reflection_started_at is not None
+    assert outcome.reflection_finished_at is not None
+    assert outcome.responder_tokens.input_tokens == 500
+    assert outcome.program_diagnoses == 1
+    assert outcome.program_verdicts == {"RESULT_NO_MATCH": 1}
+    assert outcome.tool_commands == {"verify": 1}
+    report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text(encoding="utf-8"))
+    assert report["stop_reason"] == "closure_failed"
 
 
 @dataclass
