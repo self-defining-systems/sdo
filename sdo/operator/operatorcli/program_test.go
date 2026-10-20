@@ -3,7 +3,6 @@ package operatorcli
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +67,16 @@ func TestProgramProposeAssemblesTypedProposalWithIncident(t *testing.T) {
 	}
 }
 
+func TestProgramProposeAcceptsLocalDraftRoots(t *testing.T) {
+	config, err := ParseProgramPropose([]string{"program", "propose", "--dir", "scratch", "--incident", "inc-42", "--app", "accepted", "--operator-root", "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.App != "accepted" || config.OperatorRoot != "operator" {
+		t.Fatalf("draft roots: %+v", config)
+	}
+}
+
 func TestProgramProposeRunsDraftTest(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "targetport")
 	if err := RunProgramScaffold(ProgramScaffoldConfig{FaultClass: "targetport", Params: []ProgramParam{{Name: "service", Kind: "Service"}}, Out: dir}); err != nil {
@@ -87,18 +96,7 @@ func TestProgramProposeEmitsValidatedFixture(t *testing.T) {
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOSUMDB", "off")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
-	app := t.TempDir()
-	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
-	if output, err := exec.Command("cp", "-a", fixture+"/.", app).CombinedOutput(); err != nil {
-		t.Fatalf("copy fixture: %v: %s", err, output)
-	}
-	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"}} {
-		command := exec.Command("git", args...)
-		command.Dir = app
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
-	}
+	app := draftFixtureAppFrom(t, "playbook_program_app")
 	config := ProgramProposeConfig{Dir: filepath.Join(app, ".sdo", "playbooks", "service-targetport-mismatch"), Corpus: []string{filepath.Join(app, ".sdo", "corpus", "targetport-mismatch")}, Incident: "inc-42", App: app, OperatorRoot: ".."}
 	var output strings.Builder
 	if err := RunProgramPropose(context.Background(), config, &output); err != nil {

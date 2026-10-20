@@ -135,13 +135,15 @@ func ParseProgramPropose(args []string) (ProgramProposeConfig, error) {
 	flags.Var(&corpus, "corpus", "corpus case directory")
 	dir := flags.String("dir", "", "playbook directory")
 	incident := flags.String("incident", "", "originating incident ID")
+	app := flags.String("app", ".", "accepted application checkout")
+	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "operator sources")
 	if err := flags.Parse(args[2:]); err != nil {
 		return ProgramProposeConfig{}, err
 	}
 	if flags.NArg() != 0 || *dir == "" || *incident == "" {
 		return ProgramProposeConfig{}, errors.New("propose requires --dir and --incident")
 	}
-	return ProgramProposeConfig{Dir: *dir, Libraries: libs, Corpus: corpus, Incident: *incident, App: ".", OperatorRoot: "/opt/sdo/sdo/operator"}, nil
+	return ProgramProposeConfig{Dir: *dir, Libraries: libs, Corpus: corpus, Incident: *incident, App: *app, OperatorRoot: *operatorRoot}, nil
 }
 
 func AssembleProgramProposal(config ProgramProposeConfig) (*contracts.OperationalArtifactProposal, error) {
