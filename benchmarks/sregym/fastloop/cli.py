@@ -39,6 +39,7 @@ from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter import ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
+    from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
 
 logger = logging.getLogger(__name__)
@@ -246,7 +247,7 @@ def _sdo_agent(
     results_dir: Path,
     *,
     composite: bool = False,
-    stream: tuple[tuple[str, ...], ...] = (),
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
 ) -> IncidentAgent:
     from benchmarks.sregym.adapter import (
         RuntimeConfig,
@@ -302,7 +303,6 @@ def _sdo_agent(
     }
     if composite:
         from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, reader_for
-        from benchmarks.sregym.fastloop.fault_tracker import stream_faults
 
         return CompositeSdoAgent(
             settings,
@@ -310,7 +310,7 @@ def _sdo_agent(
             reader=reader_for(environment.namespace, environment.kubeconfig),
             report_dir=results_dir,
             composite=_composite_settings(args),
-            stream_faults={"+".join(ids): stream_faults(ids) for ids in stream if len(ids) > 1},
+            stream_faults=stream_faults,
         )
     return SdoPersistentAgent(settings, **agent_arguments)
 
@@ -329,10 +329,17 @@ def _run(args: argparse.Namespace) -> int:
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
     if stream:
-        from benchmarks.sregym.fastloop.fault_tracker import composite_faults
+        from benchmarks.sregym.fastloop.fault_tracker import composite_faults, describe_sregym_faults, stream_faults
 
-        registered_composites = any(composite_faults(ids[0]) for ids in stream if len(ids) == 1)
+        tracked = [ids for ids in stream if len(ids) > 1 or ids[0].startswith("mf__")]
+        tracked_ids = tuple(dict.fromkeys(problem_id for ids in tracked for problem_id in ids))
+        catalog = describe_sregym_faults(tracked_ids, sregym_dir=environment.sregym_dir)
+        faults_by_incident = {"+".join(ids): stream_faults(ids, catalog=catalog) for ids in tracked}
+        registered_composites = bool(faults_by_incident) or any(
+            composite_faults(ids[0]) for ids in stream if len(ids) == 1
+        )
     else:
+        faults_by_incident = {}
         registered_composites = _is_composite(problems)
     config = LoopConfig(
         run_id=run_id,
@@ -355,8 +362,8 @@ def _run(args: argparse.Namespace) -> int:
                     args,
                     environment,
                     results_dir,
-                    composite=any(len(ids) > 1 for ids in stream) or registered_composites,
-                    stream=stream,
+                    composite=registered_composites,
+                    stream_faults=faults_by_incident,
                 ),
                 driver,
                 config,
@@ -364,7 +371,9 @@ def _run(args: argparse.Namespace) -> int:
                 diagnosis_grading=grading_mode,
             )
         else:
-            records = _run_codex(args, environment, results_dir, worker, driver, config, grader, grading_mode)
+            records = _run_codex(
+                args, environment, results_dir, worker, driver, config, grader, grading_mode, faults_by_incident
+            )
     _print_summary(records)
     print(f"results: {config.results_path}")
     return (
@@ -388,6 +397,7 @@ def _run_codex(
     config: LoopConfig,
     grader: DiagnosisGrader | None = None,
     grading_mode: str = "off",
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
 ) -> list[IncidentRecord]:
     from benchmarks.sregym.fastloop.codex_agent import CodexBaselineAgent, CodexSettings, SubmissionStub
 
@@ -426,7 +436,7 @@ def _run_codex(
         if config.stream:
             from benchmarks.sregym.fastloop.fault_tracker import composite_faults
 
-            registered = any(composite_faults(ids[0]) for ids in config.stream if len(ids) == 1)
+            registered = bool(stream_faults) or any(composite_faults(ids[0]) for ids in config.stream if len(ids) == 1)
         else:
             registered = _is_composite(config.problems)
         if registered:
@@ -437,6 +447,7 @@ def _run_codex(
                 reader=reader_for(environment.namespace, environment.kubeconfig),
                 report_dir=results_dir,
                 settings=_composite_settings(args),
+                stream_faults=stream_faults,
             )
         return run_incidents(agent, driver, config, grader=grader, diagnosis_grading=grading_mode)
 

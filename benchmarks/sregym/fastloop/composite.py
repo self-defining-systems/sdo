@@ -127,11 +127,13 @@ class TrackedAgent:
         reader: Callable[[str, str], dict[str, Any] | None],
         report_dir: Path,
         settings: CompositeSettings | None = None,
+        stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
     ) -> None:
         self._inner = inner
         self._reader = reader
         self._report_dir = report_dir
         self._settings = settings or CompositeSettings()
+        self._stream_faults = stream_faults or {}
 
     @property
     def name(self) -> AgentName:
@@ -142,7 +144,7 @@ class TrackedAgent:
         return self._inner.model
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
-        tracker = make_tracker(problem_id, self._reader, self._settings)
+        tracker = make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
         if tracker is None:
             return self._inner.resolve(index, problem_id, inject)
         poller = BackgroundPoller(tracker, interval_seconds=self._settings.poll_seconds)

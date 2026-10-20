@@ -14,15 +14,16 @@ change is not counted as resolved early.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
-    from pathlib import Path
 
 NETWORK_POLICY_LABEL_KEY = "io.kompose.service"
 
@@ -31,6 +32,8 @@ NETWORK_POLICY_LABEL_KEY = "io.kompose.service"
 class FaultSpec:
     kind: str
     component: str
+    policy_name: str | None = None
+    pod_label_key: str = NETWORK_POLICY_LABEL_KEY
 
     @property
     def name(self) -> str:
@@ -74,19 +77,51 @@ def composite_faults(problem_id: str) -> tuple[FaultSpec, ...]:
     return COMPOSITE_FAULTS.get(problem_id, ())
 
 
-def stream_faults(problem_ids: tuple[str, ...]) -> tuple[FaultSpec, ...]:
-    """Map the registered hotel single-fault variants used in explicit streams to probes."""
+def describe_sregym_faults(problem_ids: tuple[str, ...], *, sregym_dir: Path) -> dict[str, tuple[FaultSpec, ...]]:
+    """Resolve probe targets from SREGym's registered problem instances without cluster calls."""
 
+    if not problem_ids:
+        return {}
+    root = Path(__file__).resolve().parents[3]
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH", "")))),
+    }
+    completed = subprocess.run(
+        ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.fastloop.fault_spec_worker"],
+        input=json.dumps(problem_ids),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ValueError(f"SREGym fault description failed: {(completed.stderr or completed.stdout)[-2000:]}")
+    described = json.loads(completed.stdout)
+    if set(described) != set(problem_ids):
+        raise ValueError("SREGym returned incomplete fault descriptions")
+    return {problem_id: tuple(FaultSpec(**item) for item in items) for problem_id, items in described.items()}
+
+
+def stream_faults(
+    problem_ids: tuple[str, ...], *, catalog: Mapping[str, tuple[FaultSpec, ...]] | None = None
+) -> tuple[FaultSpec, ...]:
+    """Build probes in the worker's injection order from resolved SREGym problems."""
+
+    catalog = (
+        catalog
+        if catalog is not None
+        else describe_sregym_faults(
+            problem_ids, sregym_dir=Path(__file__).resolve().parents[3] / "third_party" / "sregym"
+        )
+    )
     faults: list[FaultSpec] = []
     for problem_id in problem_ids:
-        if problem_id.startswith("k8s_target_port_misconfig__v_hotel_reservation_"):
-            component = problem_id.removeprefix("k8s_target_port_misconfig__v_hotel_reservation_").split("_")[0]
-            faults.append(FaultSpec("target_port", component))
-        elif problem_id.startswith("incorrect_image__v_hotel_reservation_"):
-            component = problem_id.removeprefix("incorrect_image__v_hotel_reservation_").split("_")[0]
-            faults.append(FaultSpec("incorrect_image", component))
-        else:
+        resolved = catalog.get(problem_id)
+        if not resolved:
             raise ValueError(f"no fastloop probe for {problem_id!r}")
+        faults.extend(resolved)
     return tuple(faults)
 
 
@@ -108,13 +143,15 @@ def _deployment_available(read: Callable[[str, str], dict[str, Any] | None], nam
     )
 
 
-def _network_policy_open(read: Callable[[str, str], dict[str, Any] | None], component: str) -> bool:
-    policy = read("networkpolicy", f"deny-all-{component}")
+def _network_policy_open(
+    read: Callable[[str, str], dict[str, Any] | None], component: str, name: str, label_key: str
+) -> bool:
+    policy = read("networkpolicy", name)
     if not policy:
         return True
     spec = policy.get("spec") or {}
     selector = ((spec.get("podSelector") or {}).get("matchLabels")) or {}
-    targets_component = selector.get(NETWORK_POLICY_LABEL_KEY) == component
+    targets_component = selector.get(label_key) == component
     still_denies = not spec.get("ingress") and not spec.get("egress")
     return not (targets_component and still_denies)
 
@@ -154,8 +191,10 @@ def probes_for(
         elif fault.kind == "target_port":
             probes[fault.name] = lambda component=component: _target_port_matches(read, component)
         elif fault.kind == "network_policy":
-            probes[fault.name] = lambda component=component: (
-                _network_policy_open(read, component) and (_deployment_available(read, component))
+            name = fault.policy_name or f"deny-all-{component}"
+            label_key = fault.pod_label_key
+            probes[fault.name] = lambda component=component, name=name, label_key=label_key: (
+                _network_policy_open(read, component, name, label_key) and (_deployment_available(read, component))
             )
         elif fault.kind == "wrong_selector":
             probes[fault.name] = lambda component=component: _service_has_endpoints(read, component)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,8 +9,11 @@ from benchmarks.sregym.fastloop.fault_tracker import (
     COMPOSITE_FAULTS,
     FaultTracker,
     composite_faults,
+    describe_sregym_faults,
     probes_for,
+    stream_faults,
 )
+from benchmarks.sregym.fastloop.stream import load_stream
 
 
 class _Clock:
@@ -179,6 +183,37 @@ def test_unknown_fault_kind_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="no probe"):
         probes_for((FaultSpec("mystery", "x"),), _reader({}))
+
+
+def test_all_playbook_stream_ids_resolve_to_registered_fault_probes_without_a_cluster() -> None:
+    root = Path(__file__).resolve().parents[5]
+    streams = [
+        load_stream(root / "benchmarks" / "sregym" / "experiments" / "fastloop" / f"pbprog_{name}.json")
+        for name in ("smoke", "explicit", "repeat", "compose")
+    ]
+    problem_ids = tuple(dict.fromkeys(problem_id for stream in streams for ids in stream for problem_id in ids))
+    catalog = describe_sregym_faults(problem_ids, sregym_dir=root / "third_party" / "sregym")
+
+    for stream in streams:
+        for ids in stream:
+            faults = stream_faults(ids, catalog=catalog)
+            assert faults
+            assert len(probes_for(faults, _reader({}))) == len(faults)
+            if ids[0].startswith("mf__"):
+                assert len(faults) == 2
+
+    policy = catalog["network_policy_block__v_hotel_reservation_search_both_descriptive"][0]
+    assert policy.policy_name == "deny-all-search"
+    objects = {
+        ("deployment", "search"): _deployment(1),
+        ("networkpolicy", policy.policy_name): {
+            "spec": {"podSelector": {"matchLabels": {policy.pod_label_key: "search"}}, "ingress": [], "egress": []}
+        },
+    }
+    probe = probes_for((policy,), _reader(objects))[policy.name]
+    assert probe() is False
+    objects[("networkpolicy", policy.policy_name)] = None
+    assert probe() is True
 
 
 def test_restart_makes_now_time_zero_and_drops_earlier_samples() -> None:

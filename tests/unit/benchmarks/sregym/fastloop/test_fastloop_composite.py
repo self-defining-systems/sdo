@@ -10,6 +10,7 @@ from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycl
 from benchmarks.sregym.adapter.persistent import Clock, ControllerPod, control_namespace_for
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, CompositeSettings, TrackedAgent
+from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import TokenCounts
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings
@@ -340,6 +341,22 @@ def test_tracked_agent_passes_single_fault_problems_through(tmp_path: Path) -> N
     outcome = agent.resolve(0, "missing_configmap_hotel_reservation", _inject)
     assert outcome.injection == _inject()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_tracked_agent_uses_resolved_stream_faults(tmp_path: Path) -> None:
+    problem_id = "mf__example"
+    agent = TrackedAgent(
+        _Inner(),
+        reader=lambda kind, name: None,
+        report_dir=tmp_path,
+        settings=FAST,
+        stream_faults={problem_id: (FaultSpec("target_port", "geo"), FaultSpec("incorrect_image", "rate"))},
+    )
+
+    agent.resolve(0, problem_id, _inject)
+
+    report = json.loads((tmp_path / f"composite_000_{problem_id}.json").read_text(encoding="utf-8"))
+    assert report["faults"] == ["target_port:geo", "incorrect_image:rate"]
 
 
 def test_a_controller_that_stops_for_detector_review_is_reported_not_waited_on(tmp_path: Path) -> None:

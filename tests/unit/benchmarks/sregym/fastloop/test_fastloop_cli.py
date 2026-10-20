@@ -168,6 +168,59 @@ def test_playbook_experiment_streams_defer_diagnosis_grading() -> None:
         assert config.judge_model_id == "codex-gpt-6-luna"
 
 
+def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    root = Path(__file__).resolve().parents[5]
+    stream = root / "benchmarks" / "sregym" / "experiments" / "fastloop" / "pbprog_smoke.json"
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fastloop-w0",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="Hotel Reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=root / "third_party" / "sregym",
+        private_tmp=None,
+    )
+    monkeypatch.setattr(FastloopEnvironment, "load", lambda _path: environment)
+
+    class Worker:
+        def __enter__(self) -> Worker:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def request(self, op: str, **_kwargs: object) -> dict[str, object]:
+            assert op == "deploy"
+            return {}
+
+    captured: dict[str, object] = {}
+
+    def agent(*_args: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(cli, "_worker", lambda _env: Worker())
+    monkeypatch.setattr(cli, "SregymFaultDriver", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(cli, "_sdo_agent", agent)
+    monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])
+
+    assert (
+        main(
+            ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--stream", str(stream), "--diagnosis-grading", "off"]
+        )
+        == 1
+    )
+    assert captured["composite"] is True
+    faults = captured["stream_faults"]
+    assert {key: len(value) for key, value in faults.items()} == {
+        "mf__hotel_reservation__n2__s1773744812__v_": 2,
+        "mf__hotel_reservation__n2__s1085951852__v_": 2,
+    }
+
+
 @pytest.mark.parametrize("content", ["[]", "[[]]", '["a", ["a", "a"]]', "[4]"])
 def test_stream_rejects_invalid_incidents(tmp_path: Path, content: str) -> None:
     stream = tmp_path / "stream.json"
