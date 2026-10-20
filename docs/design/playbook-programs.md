@@ -119,14 +119,22 @@ A playbook program is accepted only if:
   `net`, `os` writes, `unsafe`). Libraries follow the same rules.
 - Its bindings type-check: every required parameter is bound, kinds match, and
   no parameter is unused.
-- It contains no incident literals: names, ports and images taken from the
-  incident's findings and repair actions do not appear in code, constants or
-  the fault class.
+- It passes rename-invariance replay: resource names, label and selector
+  values, container and port names, image repositories and tags, and ports are
+  consistently remapped across snapshots, recordings and bindings. `Diagnose`
+  still returns `Match` for renamed incident open, `NoMatch` after the renamed
+  fix, and `NoMatch` for a renamed healthy peer.
 - It passes the generalization tests on corpus fixtures. `Diagnose` returns
   `Match` at incident open, `NoMatch` after the fix, and `NoMatch` for a
   healthy peer of the same kind. `Mitigate` returns a non-empty plan on the
   broken fixture and an empty plan on the fixed one.
 - The README contains no shell commands.
+
+Rename replay keeps namespace names, IP addresses, image digests, binary
+ConfigMap data, and HTTP probe paths unchanged. The corpus has no safe
+substitute for those opaque or externally resolved values. Existing library
+`metadata.yaml` files are tolerated during validation but are no longer
+written or used as outcome provenance.
 
 Corpus mapping replay is a broker gate for any change to detectors, programs
 or the SDK. Every detector runs on every corpus snapshot, and every candidate
@@ -278,7 +286,7 @@ rarely needed programs are the long-tail knowledge memory exists to keep.
    and `Locator`; record-and-replay `ReadView` and the corpus fixture format
    in `sdktest`; a module layout that lets detectors and playbook programs
    both import `.sdo/lib`; validator support (import allowlist, binding
-   type-check, incident-literal check, generalization tests); protobuf
+   type-check, rename-invariance replay, generalization tests); protobuf
    messages for `Verdict` and `Plan`.
 2. **Controller and loop:** candidate selection, parallel `Diagnose` under a
    deadline, the plan executor through the repair policy, verification,

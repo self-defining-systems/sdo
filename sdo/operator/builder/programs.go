@@ -14,8 +14,6 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -27,17 +25,6 @@ type compiledProgram struct {
 var programID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var shellLine = regexp.MustCompile(`(?i)^\s*(kubectl|curl|bash)(\s|$)`)
 var shellFence = regexp.MustCompile(`(?i)^(?:` + "```" + `|~~~)[ \t]*(bash|sh|zsh|shell|console|terminal|powershell)(\s|$)`)
-var incidentPort = regexp.MustCompile(`\b[0-9]{1,5}\b`)
-var incidentImage = regexp.MustCompile(`(?i)\bimage\s*(?:=|:|\s)\s*["']?([a-z0-9./:_-]+)`)
-
-var ignoredIncidentLiterals = map[string]bool{
-	"service": true, "deployment": true, "pod": true, "statefulset": true,
-	"daemonset": true, "replicaset": true, "configmap": true, "secret": true,
-	"ingress": true, "job": true, "cronjob": true, "namespace": true,
-	"node": true, "persistentvolumeclaim": true, "http": true, "https": true,
-	"tcp": true, "udp": true, "grpc": true, "port": true, "image": true,
-	"name": true, "kind": true,
-}
 
 func stagePrograms(ctx context.Context, config Config, workspace, module string) error {
 	root := filepath.Join(config.ApplicationRoot, ".sdo")
@@ -52,20 +39,20 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 			return err
 		}
 	}
-	programs, err := validatePrograms(ctx, root, workspace, module)
+	programs, err := validatePrograms(workspace, module)
 	if err != nil {
 		return err
 	}
 	return generatePrograms(workspace, module, programs)
 }
 
-func validatePrograms(ctx context.Context, root, workspace, module string) ([]compiledProgram, error) {
+func validatePrograms(workspace, module string) ([]compiledProgram, error) {
 	for _, part := range []string{"detectors", "playbooks", "lib"} {
 		if err := checkProgramImports(filepath.Join(workspace, part), module); err != nil {
 			return nil, err
 		}
 	}
-	if err := validateLibraries(ctx, root, filepath.Join(workspace, "lib")); err != nil {
+	if err := validateLibraries(filepath.Join(workspace, "lib")); err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(filepath.Join(workspace, "playbooks"))
@@ -118,22 +105,13 @@ func validatePrograms(ctx context.Context, root, workspace, module string) ([]co
 			return nil, fmt.Errorf("playbook %s README: %w", id, err)
 		}
 		var metadata struct {
-			FaultClass          string `yaml:"fault_class"`
-			OriginatingIncident string `yaml:"originating_incident"`
+			FaultClass string `yaml:"fault_class"`
 		}
 		if err := parseProgramFrontmatter(readme, &metadata); err != nil {
 			return nil, fmt.Errorf("playbook %s README: %w", id, err)
 		}
 		if metadata.FaultClass != id {
 			return nil, fmt.Errorf("playbook %s fault_class must match its ID", id)
-		}
-		outcome, err := memory.OpenReader(configRoot(root)).Get(ctx, metadata.OriginatingIncident)
-		if err != nil {
-			return nil, fmt.Errorf("playbook %s needs accepted outcome for incident %q: %w", id, metadata.OriginatingIncident, err)
-		}
-		literals := outcomeLiterals(outcome.Record)
-		if err := checkIncidentLiterals(filepath.Join(workspace, "playbooks", id), filepath.Join(workspace, "lib"), id, literals); err != nil {
-			return nil, err
 		}
 		methods := map[string]map[string]bool{}
 		for _, path := range files {
@@ -237,7 +215,7 @@ func checkCorpusLabels(root string, programs []compiledProgram) error {
 	return nil
 }
 
-func validateLibraries(ctx context.Context, memoryRoot, libRoot string) error {
+func validateLibraries(libRoot string) error {
 	return filepath.WalkDir(libRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if os.IsNotExist(walkErr) {
 			return nil
@@ -251,29 +229,9 @@ func validateLibraries(ctx context.Context, memoryRoot, libRoot string) error {
 			}
 			return nil
 		}
-		files, err := filepath.Glob(filepath.Join(path, "*.go"))
-		if err != nil || len(files) == 0 {
-			return err
-		}
-		data, err := os.ReadFile(filepath.Join(path, "metadata.yaml"))
-		if err != nil {
-			return fmt.Errorf("shared library %s needs originating_incident metadata: %w", path, err)
-		}
-		var metadata struct {
-			OriginatingIncident string `yaml:"originating_incident"`
-		}
-		if err := yaml.Unmarshal(data, &metadata); err != nil || metadata.OriginatingIncident == "" {
-			return fmt.Errorf("shared library %s needs valid originating_incident metadata: %v", path, err)
-		}
-		outcome, err := memory.OpenReader(configRoot(memoryRoot)).Get(ctx, metadata.OriginatingIncident)
-		if err != nil {
-			return fmt.Errorf("shared library %s needs accepted outcome for incident %q: %w", path, metadata.OriginatingIncident, err)
-		}
-		return checkSourceLiterals(path, outcomeLiterals(outcome.Record))
+		return nil
 	})
 }
-
-func configRoot(memoryRoot string) string { return filepath.Dir(memoryRoot) }
 
 func receiverName(value ast.Expr) string {
 	if pointer, ok := value.(*ast.StarExpr); ok {
@@ -341,181 +299,6 @@ func parseProgramFrontmatter(body []byte, target any) error {
 	return nil
 }
 
-func outcomeLiterals(record *contracts.OutcomeRecord) []string {
-	values := map[string]bool{}
-	add := func(value string) {
-		if relevantIncidentLiteral(value) {
-			values[value] = true
-		}
-	}
-	addRef := func(ref *contracts.ObjectRef) {
-		if ref != nil {
-			add(ref.GetName())
-		}
-	}
-	scan := func(value string) {
-		for _, port := range incidentPort.FindAllString(value, -1) {
-			add(port)
-		}
-		for _, match := range incidentImage.FindAllStringSubmatch(value, -1) {
-			add(match[1])
-		}
-	}
-	for _, finding := range record.GetFindings() {
-		addRef(finding.GetPrimaryResource())
-		for _, ref := range finding.GetRelatedResources() {
-			addRef(ref)
-		}
-		scan(finding.GetSummary())
-		scan(finding.GetEvidence())
-		if finding.GetMetadata() != nil {
-			var visit func(string, any)
-			visit = func(key string, value any) {
-				switch value := value.(type) {
-				case map[string]any:
-					for name, child := range value {
-						visit(name, child)
-					}
-				case []any:
-					for _, child := range value {
-						visit(key, child)
-					}
-				case string:
-					scan(value)
-					lower := strings.ToLower(key)
-					if strings.Contains(lower, "image") || strings.Contains(lower, "name") {
-						add(value)
-					}
-				case float64:
-					if strings.Contains(strings.ToLower(key), "port") {
-						add(strconv.FormatInt(int64(value), 10))
-					}
-				}
-			}
-			visit("", finding.GetMetadata().AsMap())
-		}
-	}
-	for _, action := range record.GetRepairActions() {
-		for _, ref := range action.GetResources() {
-			addRef(ref)
-		}
-		add(action.GetTarget())
-		scan(action.GetSummary())
-		scan(action.GetDetails())
-		scan(action.GetTarget())
-	}
-	result := make([]string, 0, len(values))
-	for value := range values {
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func checkIncidentLiterals(programRoot, libRoot, faultClass string, literals []string) error {
-	for _, literal := range literals {
-		if relevantIncidentLiteral(literal) && containsIncidentToken(faultClass, literal) {
-			return fmt.Errorf("fault class %q contains incident literal %q; use a role-based name", faultClass, literal)
-		}
-	}
-	for _, root := range []string{programRoot, libRoot} {
-		if err := checkSourceLiterals(root, literals); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkSourceLiterals(root string, literals []string) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if os.IsNotExist(walkErr) {
-			return nil
-		}
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
-		if err != nil {
-			return fmt.Errorf("parse %s for incident literals: %w", path, err)
-		}
-		var found string
-		ast.Inspect(file, func(node ast.Node) bool {
-			value, ok := node.(*ast.BasicLit)
-			if !ok {
-				return true
-			}
-			for _, literal := range literals {
-				if !relevantIncidentLiteral(literal) {
-					continue
-				}
-				switch value.Kind {
-				case token.STRING:
-					unquoted, err := strconv.Unquote(value.Value)
-					if err == nil && containsIncidentToken(unquoted, literal) {
-						found = literal
-					}
-				case token.INT:
-					if isPortLiteral(literal) {
-						port, _ := strconv.ParseInt(literal, 10, 64)
-						integer, err := strconv.ParseInt(value.Value, 0, 64)
-						if err == nil && integer == port {
-							found = literal
-						}
-					}
-				}
-				if found != "" {
-					return false
-				}
-			}
-			return true
-		})
-		if found != "" {
-			return fmt.Errorf("%s contains incident literal %q; bind resources and derive ports or images from the ReadView", path, found)
-		}
-		return nil
-	})
-}
-
-func relevantIncidentLiteral(value string) bool {
-	return (len(value) >= 3 || isPortLiteral(value)) && !ignoredIncidentLiterals[strings.ToLower(value)]
-}
-
-func isPortLiteral(value string) bool {
-	if value == "" {
-		return false
-	}
-	for _, character := range value {
-		if character < '0' || character > '9' {
-			return false
-		}
-	}
-	port, err := strconv.ParseUint(value, 10, 16)
-	return err == nil && port > 0
-}
-
-func containsIncidentToken(value, literal string) bool {
-	for offset := 0; offset < len(value); {
-		index := strings.Index(value[offset:], literal)
-		if index < 0 {
-			return false
-		}
-		index += offset
-		end := index + len(literal)
-		if (index == 0 || !incidentTokenChar(value[index-1])) && (end == len(value) || !incidentTokenChar(value[end])) {
-			return true
-		}
-		offset = index + 1
-	}
-	return false
-}
-
-func incidentTokenChar(character byte) bool {
-	return character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character >= '0' && character <= '9'
-}
-
 func corpusCasesFor(root, programID string) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
@@ -568,7 +351,7 @@ func generatePrograms(root, module string, programs []compiledProgram) error {
 	for _, item := range programs {
 		fmt.Fprintf(&test, "\t{\n\t\tp, ok := registry.Diagnoser(%q)\n\t\tif !ok { t.Fatal(%q) }\n\t\tif p.Spec().ID != %q { t.Fatalf(\"program ID mismatch: %%s\", p.Spec().ID) }\n", item.id, "missing diagnoser "+item.id, item.id)
 		for _, caseID := range item.cases {
-			fmt.Fprintf(&test, "\t\t{\n\t\t\tc, err := sdktest.LoadCorpusCase(filepath.Join(\"..\", \"corpus\", %q))\n\t\t\tif err != nil { t.Fatal(err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil { t.Fatalf(\"case %s binding: %%v\", err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.PeerBindings); err != nil { t.Fatalf(\"case %s peer binding: %%v\", err) }\n\t\t\tsdktest.CheckGeneralization(t, p, c, c.PeerBindings)\n\t\t\tif m, ok := registry.Mitigator(%q); ok { sdktest.CheckMitigatorGeneralization(t, m, c) }\n\t\t}\n", caseID, caseID, caseID, item.id)
+			fmt.Fprintf(&test, "\t\t{\n\t\t\tc, err := sdktest.LoadCorpusCase(filepath.Join(\"..\", \"corpus\", %q))\n\t\t\tif err != nil { t.Fatal(err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil { t.Fatalf(\"case %s binding: %%v\", err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.PeerBindings); err != nil { t.Fatalf(\"case %s peer binding: %%v\", err) }\n\t\t\tsdktest.CheckGeneralization(t, p, c, c.PeerBindings)\n\t\t\tsdktest.CheckRenameInvariance(t, p, c)\n\t\t\tif m, ok := registry.Mitigator(%q); ok { sdktest.CheckMitigatorGeneralization(t, m, c) }\n\t\t}\n", caseID, caseID, caseID, item.id)
 		}
 		test.WriteString("\t}\n")
 	}

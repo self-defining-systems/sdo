@@ -24,7 +24,7 @@ func TestMaterializeProgramAndSharedLibrary(t *testing.T) {
 	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"playbooks/targetport/diagnose.go", "corpus/case-1/open.json", "corpus/case-1/fixed.json", "corpus/case-1/healthy.json", "corpus/case-1/recordings.json", "corpus/case-1/labels.json", "lib/ports/ports.go", "lib/ports/metadata.yaml"} {
+	for _, path := range []string{"playbooks/targetport/diagnose.go", "corpus/case-1/open.json", "corpus/case-1/fixed.json", "corpus/case-1/healthy.json", "corpus/case-1/recordings.json", "corpus/case-1/labels.json", "lib/ports/ports.go"} {
 		if _, err := os.Stat(filepath.Join(root, ".sdo", path)); err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
@@ -46,13 +46,23 @@ func TestMaterializeRejectsUnsafeProgramPathsBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestSharedLibraryRequiresPlaybookIncidentProvenance(t *testing.T) {
+func TestSharedLibraryDoesNotRequirePlaybookIncidentProvenance(t *testing.T) {
 	root := t.TempDir()
-	proposal := &contracts.OperationalArtifactProposal{Libraries: []*contracts.ProposedLibrary{{Package: "ports", Sources: []*contracts.ProposedGoSource{{Name: "ports.go", Content: "package ports\n"}}}}}
-	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err == nil {
-		t.Fatal("library without originating playbook accepted")
+	manifest := filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".sdo")); !os.IsNotExist(err) {
-		t.Fatalf("proposal changed checkout: %v", err)
+	if err := os.WriteFile(manifest, []byte("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal := &contracts.OperationalArtifactProposal{Libraries: []*contracts.ProposedLibrary{{Package: "ports", Sources: []*contracts.ProposedGoSource{{Name: "ports.go", Content: "package ports\n"}}}}}
+	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sdo", "lib", "ports", "ports.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sdo", "lib", "ports", "metadata.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected incident metadata: %v", err)
 	}
 }

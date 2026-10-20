@@ -39,6 +39,47 @@ func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
 	}
 }
 
+func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
+	for _, tc := range []struct {
+		name, old, replacement string
+		port                   bool
+	}{
+		{"service name", "ref := b[\"service\"]", "ref := b[\"service\"]\nif ref.Name != \"front\" { return program.Verdict{Result: program.NoMatch}, nil }", false},
+		{"port 8087", "target := port.TargetPort", "target := port.TargetPort\nif target.Type == intstr.Int && target.IntVal != 8087 { return program.Verdict{Result: program.NoMatch}, nil }", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := programFixture(t)
+			path := filepath.Join(root, ".sdo", "playbooks", "service-targetport-mismatch", "diagnose.go")
+			source, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(strings.Replace(string(source), tc.old, tc.replacement, 1)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.port {
+				open := filepath.Join(root, ".sdo", "corpus", "targetport-mismatch", "open.json")
+				data, err := os.ReadFile(open)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(open, []byte(strings.Replace(string(data), `"targetPort":9999`, `"targetPort":8087`, 1)), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w, err := buildProgramFixture(t, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Close()
+			_, err = w.ValidateAndBuild(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "matched only under original names") || !strings.Contains(err.Error(), "service-targetport-mismatch") {
+				t.Fatalf("hard-coded %s: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 	for _, tc := range []struct{ name, path, old, replacement, want string }{
 		{"network import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"net/http\"", "may not import"},
@@ -51,9 +92,6 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 		{"plugin import", ".sdo/lib/ports/ports.go", "import (", "import (\n\t\"plugin\"", "may not import"},
 		{"missing diagnoser", ".sdo/playbooks/service-targetport-mismatch/diagnose.go", "func (Program) Diagnose", "func (Program) Inspect", "exactly one Diagnoser"},
 		{"bad binding", ".sdo/corpus/targetport-mismatch/labels.json", `"kind":"Service"`, `"kind":"Pod"`, "binding"},
-		{"incident literal", ".sdo/lib/ports/ports.go", "\nfunc Matches", "\nconst incidentName = \"front\"\nfunc Matches", "incident literal"},
-		{"incident port", ".sdo/playbooks/service-targetport-mismatch/diagnose.go", "\n// Program checks", "\nconst incidentPort = 9999\n// Program checks", "incident literal"},
-		{"incident image", ".sdo/lib/ports/ports.go", "\nfunc Matches", "\nconst incidentImage = \"registry.example/demo:v1\"\nfunc Matches", "incident literal"},
 		{"shell guidance", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "kubectl get services\nCheck the", "shell command"},
 		{"shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "```bash\n```\nCheck the", "shell command"},
 		{"spaced shell fence", ".sdo/playbooks/service-targetport-mismatch/README.md", "Check the", "``` bash\n```\nCheck the", "shell command"},
@@ -78,60 +116,6 @@ func TestProgramValidationRejectsUnsafeMemory(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestSourceIncidentLiteralBoundaries(t *testing.T) {
-	for _, tc := range []struct {
-		name, filename, source string
-		literals               []string
-		wantRejected           bool
-	}{
-		{"identifiers and comments", "program.go", "package sample\n// rate geo search user\nconst generate, iterate, geometry, research = 1, 2, 3, 4\n", []string{"rate", "geo", "search", "user"}, false},
-		{"embedded words", "program.go", "package sample\nconst note = \"generate iterate geometry research\"\n", []string{"rate", "geo", "search", "user"}, false},
-		{"exact resource string", "program.go", "package sample\nconst name = \"rate\"\n", []string{"rate"}, true},
-		{"resource path token", "program.go", "package sample\nconst name = \"svc/rate\"\n", []string{"rate"}, true},
-		{"resource suffix token", "program.go", "package sample\nconst name = \"rate-db\"\n", []string{"rate"}, true},
-		{"port prefix in integer", "program.go", "package sample\nconst port = 8080\n", []string{"80"}, false},
-		{"port prefix in string", "program.go", "package sample\nconst port = \"8080\"\n", []string{"80"}, false},
-		{"exact incident port", "program.go", "package sample\nconst port = 8083\n", []string{"8083"}, true},
-		{"test source", "program_test.go", "package sample\nconst name = \"rate\"\n", []string{"rate"}, false},
-		{"short name", "program.go", "package sample\nconst name = \"db\"\n", []string{"db"}, false},
-		{"kind and field words", "program.go", "package sample\nconst kinds = \"Service Deployment Pod http tcp grpc\"\n", []string{"Service", "Deployment", "Pod", "http", "tcp", "grpc"}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, tc.filename), []byte(tc.source), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			err := checkSourceLiterals(root, tc.literals)
-			if (err != nil) != tc.wantRejected {
-				t.Fatalf("check source: got %v, want rejection %t", err, tc.wantRejected)
-			}
-		})
-	}
-}
-
-func TestFaultClassIncidentLiteralBoundaries(t *testing.T) {
-	for _, tc := range []struct {
-		name, faultClass string
-		literals         []string
-		wantRejected     bool
-	}{
-		{"whole segment", "rate-targetport", []string{"rate"}, true},
-		{"slash segment", "service/rate", []string{"rate"}, true},
-		{"embedded word", "generate-targetport", []string{"rate"}, false},
-		{"embedded port", "port-8080", []string{"80"}, false},
-		{"short name", "db-targetport", []string{"db"}, false},
-		{"kind name", "service-targetport", []string{"Service"}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			err := checkIncidentLiterals(root, root, tc.faultClass, tc.literals)
-			if (err != nil) != tc.wantRejected {
-				t.Fatalf("check fault class: got %v, want rejection %t", err, tc.wantRejected)
 			}
 		})
 	}
@@ -208,92 +192,6 @@ func TestProgramMustCompile(t *testing.T) {
 	defer w.Close()
 	if _, err := w.ValidateAndBuild(context.Background()); err == nil || !strings.Contains(err.Error(), "go test") {
 		t.Fatalf("compile failure: %v", err)
-	}
-}
-
-func TestSharedLibraryChecksItsOriginatingOutcomeWithoutProgram(t *testing.T) {
-	root := programFixture(t)
-	if err := os.RemoveAll(filepath.Join(root, ".sdo", "playbooks", "service-targetport-mismatch")); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, ".sdo", "lib", "ports", "ports.go")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(data, []byte("\nconst incidentName = \"front\"\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	w, err := buildProgramFixture(t, root)
-	if w != nil {
-		defer w.Close()
-	}
-	if err == nil {
-		_, err = w.ValidateAndBuild(context.Background())
-	}
-	if err == nil || !strings.Contains(err.Error(), "incident literal") {
-		t.Fatalf("library literal accepted: %v", err)
-	}
-}
-
-func TestProgramFaultClassCannotContainIncidentName(t *testing.T) {
-	root := programFixture(t)
-	old := filepath.Join(root, ".sdo", "playbooks", "service-targetport-mismatch")
-	newPath := filepath.Join(root, ".sdo", "playbooks", "service-front-targetport")
-	if err := os.Rename(old, newPath); err != nil {
-		t.Fatal(err)
-	}
-	readme := filepath.Join(newPath, "README.md")
-	data, err := os.ReadFile(readme)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(readme, []byte(strings.Replace(string(data), "fault_class: service-targetport-mismatch", "fault_class: service-front-targetport", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	w, err := buildProgramFixture(t, root)
-	if w != nil {
-		defer w.Close()
-	}
-	if err == nil {
-		_, err = w.ValidateAndBuild(context.Background())
-	}
-	if err == nil || !strings.Contains(err.Error(), "fault class") || !strings.Contains(err.Error(), "incident literal") {
-		t.Fatalf("literal fault class accepted: %v", err)
-	}
-}
-
-func TestProgramRejectsImageFromFindingMetadata(t *testing.T) {
-	root := programFixture(t)
-	outcomes, err := filepath.Glob(filepath.Join(root, ".sdo", "outcomes", "*.json"))
-	if err != nil || len(outcomes) != 1 {
-		t.Fatalf("fixture outcome: %v", err)
-	}
-	data, err := os.ReadFile(outcomes[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	updated := strings.Replace(string(data), `"findings": [{`, `"findings": [{"metadata":{"image":"registry.example/metadata:v2"},`, 1)
-	if err := os.WriteFile(outcomes[0], []byte(updated), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(root, ".sdo", "playbooks", "service-targetport-mismatch", "diagnose.go")
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(source, []byte("\nconst incidentImage = \"registry.example/metadata:v2\"\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	w, err := buildProgramFixture(t, root)
-	if w != nil {
-		defer w.Close()
-	}
-	if err == nil {
-		_, err = w.ValidateAndBuild(context.Background())
-	}
-	if err == nil || !strings.Contains(err.Error(), "incident literal") {
-		t.Fatalf("metadata image accepted: %v", err)
 	}
 }
 
