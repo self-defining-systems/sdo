@@ -58,3 +58,33 @@ func TestSessionToolServerRejectsSymlinkedRequestDirectory(t *testing.T) {
 		t.Fatal("symlinked tool directory accepted")
 	}
 }
+
+func TestSessionToolServerRepreparesSharedWorkerDirectories(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "tools")
+	server := SessionToolServer{Directory: directory, Handle: func(context.Context, ToolRequest) ToolResponse { return ToolResponse{} }}
+	if err := server.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{directory, filepath.Join(directory, "requests"), filepath.Join(directory, "responses")} {
+		if err := os.Chmod(path, 02770); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := server.Prepare(); err != nil {
+		t.Fatalf("reprepare shared directories: %v", err)
+	}
+}
+
+func TestSessionToolServerRejectsWorldWritableDirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "tools")
+	server := SessionToolServer{Directory: directory, Handle: func(context.Context, ToolRequest) ToolResponse { return ToolResponse{} }}
+	if err := server.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(directory, "responses"), 0777); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Prepare(); err == nil {
+		t.Fatal("world-writable response directory accepted")
+	}
+}

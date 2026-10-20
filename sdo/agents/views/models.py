@@ -291,6 +291,7 @@ class ProgramRun(ContractModel):
     duration: str = ""
     error: str = ""
     finding_fingerprint: str = ""
+    binding_source: str = ""
     program_revision: str = ""
 
 

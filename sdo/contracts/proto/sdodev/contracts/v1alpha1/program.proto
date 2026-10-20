@@ -99,6 +99,7 @@ message ProgramRun {
   string error = 5;
   string finding_fingerprint = 6;
   string program_revision = 7;
+  string binding_source = 8 [(buf.validate.field).string = {in: ["", "finding", "hint", "sweep"]}];
 }
 
 message PlanApplication {
