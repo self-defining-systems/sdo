@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+// Playbook program inputs, decisions, and plans exchanged across process
+// boundaries. Execution and outcome integration are defined separately.
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "sdodev/contracts/v1alpha1/common.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+message ProgramSpec {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated ParamSpec params = 2;
+}
+
+message ParamSpec {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  string kind = 2 [(buf.validate.field).string.min_len = 1];
+  bool required = 3;
+}
+
+message Binding {
+  string name = 1 [(buf.validate.field).string.min_len = 1];
+  ObjectRef object = 2 [(buf.validate.field).required = true];
+}
+
+message Verdict {
+  option (buf.validate.message).cel = {
+    id: "verdict.question_for_judgement"
+    message: "question is required only for needs judgement"
+    expression: "this.result == 4 ? this.question != '' : this.question == ''"
+  };
+
+  enum Result {
+    RESULT_UNSPECIFIED = 0;
+    RESULT_MATCH = 1;
+    RESULT_NO_MATCH = 2;
+    RESULT_UNKNOWN = 3;
+    RESULT_NEEDS_JUDGEMENT = 4;
+  }
+
+  Result result = 1 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  repeated Evidence evidence = 2;
+  string question = 3;
+}
+
+message Evidence {
+  ObjectRef resource = 1 [(buf.validate.field).required = true];
+  string fact = 2 [(buf.validate.field).string.min_len = 1];
+  string observed = 3;
+  string expected = 4;
+}
+
+message Plan {
+  repeated Action actions = 1;
+  string rationale = 2;
+}
+
+message Action {
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    ReconcileFromSource reconcile_from_source = 1;
+    Rollback rollback = 2;
+    SetField set_field = 3;
+    RestartRollout restart_rollout = 4;
+  }
+}
+
+message ReconcileFromSource {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+}
+
+message Rollback {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string to_revision = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message SetField {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string path = 2 [(buf.validate.field).string.min_len = 1];
+  google.protobuf.Value value = 3 [(buf.validate.field).required = true];
+  string reason = 4 [(buf.validate.field).string.min_len = 1];
+}
+
+message RestartRollout {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// ProgramRun and PlanApplication are available for future outcome records.
+message ProgramRun {
+  string program_id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated Binding bindings = 2;
+  Verdict verdict = 3 [(buf.validate.field).required = true];
+  google.protobuf.Duration duration = 4 [(buf.validate.field).required = true];
+  string error = 5;
+}
+
+message PlanApplication {
+  Plan plan = 1 [(buf.validate.field).required = true];
+  bool applied = 2;
+  bool dry_run = 3;
+  Verdict verification = 4;
+}

@@ -37,6 +37,7 @@ from sdodev.contracts.v1alpha1 import (
     lifecycle_pb2,
     messages_pb2,
     outcome_pb2,
+    program_pb2,
     telemetry_pb2,
     traffic_pb2,
     worker_pb2,
@@ -46,6 +47,20 @@ if TYPE_CHECKING:
     from google.protobuf.message import Message
 
 ObjectRef = common_pb2.ObjectRef
+
+ProgramSpec = program_pb2.ProgramSpec
+ParamSpec = program_pb2.ParamSpec
+Binding = program_pb2.Binding
+Verdict = program_pb2.Verdict
+Evidence = program_pb2.Evidence
+Plan = program_pb2.Plan
+Action = program_pb2.Action
+ReconcileFromSource = program_pb2.ReconcileFromSource
+Rollback = program_pb2.Rollback
+SetField = program_pb2.SetField
+RestartRollout = program_pb2.RestartRollout
+ProgramRun = program_pb2.ProgramRun
+PlanApplication = program_pb2.PlanApplication
 
 ControllerConfig = controller_config_pb2.ControllerConfig
 
@@ -111,15 +126,18 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "Action",
     "AgentCapability",
     "AgentRegistration",
     "AgentResult",
     "AgentTask",
     "AppliedPlaybook",
+    "Binding",
     "ConfirmedRootCause",
     "ControllerConfig",
     "DetectorEvaluation",
     "DetectorTimelineEntry",
+    "Evidence",
     "Finding",
     "FiringRecord",
     "FollowUpContext",
@@ -131,6 +149,11 @@ __all__ = [
     "KubernetesJobLaunch",
     "LocalProcessLaunch",
     "ObjectRef",
+    "ParamSpec",
+    "Plan",
+    "PlanApplication",
+    "ProgramRun",
+    "ProgramSpec",
     "OutcomeRecord",
     "OutcomeTimestamps",
     "DiagnosisVerification",
@@ -150,10 +173,14 @@ __all__ = [
     "HealthJudgeResult",
     "SourceResource",
     "RepairActionReceipt",
+    "ReconcileFromSource",
+    "RestartRollout",
+    "Rollback",
     "RootCauseEvidence",
     "StateChange",
     "StateChanges",
     "StateFieldChange",
+    "SetField",
     "SurfacedPlaybook",
     "TimingMetrics",
     "TrafficLink",
@@ -161,6 +188,7 @@ __all__ = [
     "TrafficWorkload",
     "TrafficWorkloadScenario",
     "UsageMetrics",
+    "Verdict",
     "VerificationEvidence",
     "parse_json",
     "to_canonical_json",
