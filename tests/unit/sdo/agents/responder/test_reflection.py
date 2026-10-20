@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 from agentshim.providers.codex import CodexSandboxConfig, parse_sandbox
+from agentshim.testing import scripted_resume_failure
 
 from sdo.agents.responder.reflection import (
     ClaudeSessionBackend,
     CodexSessionBackend,
     ReflectionTurn,
+    ResponderSessionUnavailable,
     SessionReflector,
     reflection_output_schema,
 )
@@ -24,7 +26,7 @@ from sdo.agents.views import (
     OperationalMemorySnapshot,
 )
 from sdo.contracts import OutcomeClassification, OutcomeRecord
-from tests.structured_turns import ScriptedAgent, reply
+from tests.structured_turns import ScriptedAgent, failure, reply
 
 if TYPE_CHECKING:
     from agentshim import CommandRequest
@@ -213,7 +215,7 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
 def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     class MissingSession(_CapturingBackend):
         def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
-            raise RuntimeError("session not found")
+            raise ResponderSessionUnavailable("session not found")
 
     backend = MissingSession()
     turn = SessionReflector(backend).resume(
@@ -228,6 +230,46 @@ def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, caps
     assert turn.learning_decision == "no_change"
     assert backend.calls[0]["mode"] == "fresh"
     assert "session not found" in capsys.readouterr().err
+
+
+def test_generic_resume_failure_propagates_without_fresh_retry(tmp_path: Path) -> None:
+    error = RuntimeError("model unavailable")
+
+    class FailingBackend(_CapturingBackend):
+        def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            self.calls.append({"mode": "resume"})
+            raise error
+
+    backend = FailingBackend()
+    with pytest.raises(RuntimeError) as caught:
+        SessionReflector(backend).resume(
+            session_id="session-1",
+            incident_id="inc-1",
+            worktree=tmp_path,
+            outcome=_outcome(),
+            history=[],
+            outcome_commit="outcome-sha",
+            closure=_fresh_closure(tmp_path),
+        )
+    assert caught.value is error
+    assert backend.calls == [{"mode": "resume"}]
+
+
+def test_claude_model_failure_is_not_classified_as_missing_session(tmp_path: Path) -> None:
+    backend = ClaudeSessionBackend(
+        executor=ScriptedAgent(lambda _request: failure(stderr="model unavailable")).executor
+    )
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        backend.resume(session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="key")
+
+
+@pytest.mark.parametrize(
+    ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
+)
+def test_provider_missing_session_raises_typed_error(provider: str, backend_type: type, tmp_path: Path) -> None:
+    backend = backend_type(executor=ScriptedAgent(lambda _request: scripted_resume_failure(provider)).executor)
+    with pytest.raises(ResponderSessionUnavailable):
+        backend.resume(session_id="missing", worktree=tmp_path, prompt="reflect", idempotency_key="key")
 
 
 def test_reflection_output_schema_is_strict_and_artifact_typed() -> None:
