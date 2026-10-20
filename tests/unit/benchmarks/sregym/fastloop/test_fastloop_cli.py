@@ -8,7 +8,7 @@ import pytest
 from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, format_summary, main
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
-from benchmarks.sregym.fastloop.stream import load_stream
+from benchmarks.sregym.fastloop.stream import load_stream, load_stream_config
 
 T0 = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -136,6 +136,36 @@ def test_stream_accepts_ordered_single_and_composed_incidents(tmp_path: Path) ->
     stream.write_text('["single", ["target-port", "incorrect-image"]]', encoding="utf-8")
 
     assert load_stream(stream) == (("single",), ("target-port", "incorrect-image"))
+
+
+def test_stream_config_sets_grading_mode_and_cli_can_override(tmp_path: Path) -> None:
+    stream = tmp_path / "stream.json"
+    stream.write_text(
+        '{"diagnosis_grading":"deferred","judge_model_id":"codex-gpt-6-luna","incidents":["one",["two","three"]]}',
+        encoding="utf-8",
+    )
+
+    config = load_stream_config(stream)
+    assert config.incidents == (("one",), ("two", "three"))
+    assert config.diagnosis_grading == "deferred"
+    args = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--diagnosis-grading", "inline"])
+    assert args.diagnosis_grading == "inline"
+    assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"]).diagnosis_grading is None
+
+
+def test_stream_config_rejects_unknown_grading_mode(tmp_path: Path) -> None:
+    stream = tmp_path / "stream.json"
+    stream.write_text('{"diagnosis_grading":"later","incidents":["one"]}', encoding="utf-8")
+    with pytest.raises(ValueError, match="diagnosis_grading"):
+        load_stream_config(stream)
+
+
+def test_playbook_experiment_streams_defer_diagnosis_grading() -> None:
+    root = Path(__file__).resolve().parents[5]
+    for name in ("pbprog_smoke.json", "pbprog_explicit.json"):
+        config = load_stream_config(root / "benchmarks" / "sregym" / "experiments" / "fastloop" / name)
+        assert config.diagnosis_grading == "deferred"
+        assert config.judge_model_id == "codex-gpt-6-luna"
 
 
 @pytest.mark.parametrize("content", ["[]", "[[]]", '["a", ["a", "a"]]', "[4]"])

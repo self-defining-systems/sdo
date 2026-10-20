@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -7,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
-from benchmarks.sregym.fastloop.records import OracleVerdict, TokenCounts, load_records
+from benchmarks.sregym.fastloop.records import DiagnosisGrade, OracleVerdict, TokenCounts, load_records
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -196,6 +198,69 @@ def test_oracle_failure_is_recorded_and_recovery_finishes_before_next_injection(
     assert len(records) == 2
     assert all(record.error == "oracle reported failure" for record in records)
     assert all(record.oracle_finished_at is not None and record.recovery_finished_at is not None for record in records)
+
+
+def test_deferred_diagnosis_grading_does_not_gate_next_injection_and_merges_results(tmp_path: Path) -> None:
+    import threading
+
+    grading_started = threading.Event()
+    next_injected = threading.Event()
+
+    class Driver(FakeDriver):
+        def inject(self, problem_id: str) -> InjectionWindow:
+            if problem_id == "p2":
+                next_injected.set()
+            return super().inject(problem_id)
+
+    class Judge:
+        def grade(self, problem_ids: tuple[str, ...], diagnosis: str) -> DiagnosisGrade:
+            if problem_ids == ("p1",):
+                grading_started.set()
+                assert next_injected.wait(2)
+            return DiagnosisGrade(
+                success=True, accuracy=100.0, judge_tokens=TokenCounts(input_tokens=3), latency_seconds=0.1
+            )
+
+    clock = FakeClock()
+    records = run_incidents(
+        FakeAgent(clock),
+        Driver(clock),
+        _config(tmp_path, 2, ("p1", "p2")),
+        monotonic=clock.monotonic,
+        grader=Judge(),
+        diagnosis_grading="deferred",
+    )
+
+    assert grading_started.is_set()
+    assert all(record.diagnosis_grade and record.diagnosis_grade.success for record in records)
+    assert [
+        record.diagnosis_grade.judge_tokens.input_tokens for record in load_records(tmp_path / "incidents.jsonl")
+    ] == [3, 3]
+    with (tmp_path / "incidents.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [json.loads(row["diagnosis_grade"])["judge_tokens"]["input_tokens"] for row in rows] == [3, 3]
+
+
+def test_inline_diagnosis_grading_finishes_before_recovery(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class Judge:
+        def grade(self, problem_ids: tuple[str, ...], diagnosis: str) -> DiagnosisGrade:
+            driver.events.append("diagnosis-grade")
+            return DiagnosisGrade(success=False, accuracy=0.0, latency_seconds=0.2)
+
+    records = run_incidents(
+        FakeAgent(clock),
+        driver,
+        _config(tmp_path, 1),
+        monotonic=clock.monotonic,
+        grader=Judge(),
+        diagnosis_grading="inline",
+    )
+    assert driver.events == ["inject:p1", "diagnosis-grade", "oracle", "recover", "oracle"]
+    assert records[0].diagnosis_grade is not None
+    assert records[0].diagnosis_grade.success is False
 
 
 def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_path: Path) -> None:
