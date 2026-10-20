@@ -29,7 +29,7 @@ def sregym_dir(tmp_path: Path) -> Path:
     directory = tmp_path / "third_party" / "sregym"
     directory.mkdir(parents=True)
     (directory / "main.py").write_text("# fake", encoding="utf-8")
-    (directory / "agents.yaml").write_text("agents:\n  - name: codex\n    agent_version: '0.157.1'\n", encoding="utf-8")
+    (directory / "agents.yaml").write_text("agents:\n  - name: codex\n    agent_version: '0.163.0'\n", encoding="utf-8")
     return directory
 
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -71,6 +72,7 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(data, proposal); err != nil {
 		return fmt.Errorf("decode typed artifact draft: %w", err)
 	}
+	applyArtifactSchemaDefaults(proposal)
 	app, err := filepath.Abs(config.ApplicationRoot)
 	if err != nil {
 		return err
@@ -98,6 +100,9 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	if err := memory.MaterializeArtifacts(scratch, proposal, memory.ResponderArtifacts); err != nil {
 		return fmt.Errorf("materialize typed artifact draft: %w", err)
 	}
+	if err := broker.ValidateMemoryTree(ctx, scratch); err != nil {
+		return fmt.Errorf("validate typed artifact draft: %w", err)
+	}
 	diagnostics, err := memory.CandidateDiagnostics(scratch)
 	if err != nil {
 		return err
@@ -120,4 +125,38 @@ func gitDraft(ctx context.Context, root string, args ...string) (string, error) 
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// applyArtifactSchemaDefaults fills the fields that the agent-facing structured artifact schema
+// (sdo/agents/views/artifact_proposal.py) defaults, so a hand-written ProtoJSON draft is checked exactly as the
+// structured result the agent returns will be. Identity and provenance fields have no default.
+func applyArtifactSchemaDefaults(proposal *contracts.OperationalArtifactProposal) {
+	for _, detector := range proposal.GetDetectors() {
+		if detector == nil {
+			continue
+		}
+		defaultString(&detector.DetectorClass, "incident")
+		defaultString(&detector.Owner, "responder")
+		defaultString(&detector.Constructor, "New")
+		defaultString(&detector.Interval, "30s")
+		defaultString(&detector.Severity, "warn")
+		defaultString(&detector.Debounce, "500ms")
+		if detector.Firing == 0 {
+			detector.Firing = 1
+		}
+		if detector.Clearing == 0 {
+			detector.Clearing = 2
+		}
+	}
+	for _, playbook := range proposal.GetPlaybooks() {
+		if playbook != nil {
+			defaultString(&playbook.Owner, "responder")
+		}
+	}
+}
+
+func defaultString(field *string, value string) {
+	if *field == "" {
+		*field = value
+	}
 }

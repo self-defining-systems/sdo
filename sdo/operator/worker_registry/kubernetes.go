@@ -32,18 +32,18 @@ const (
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
-	Client               kubernetes.Interface
-	Namespace            string
-	Registry             *Registry
-	ServiceAccount       string
-	RepositoryPVC        string
-	RepositoryMountPath  string
-	RepositoryPVCSubPath string
-	SessionPVCSubPath    string
-	CredentialsSecret           string
-	LateFindingsConfigMap       string
-	Environment                 map[string]string
-	PollInterval                time.Duration
+	Client                kubernetes.Interface
+	Namespace             string
+	Registry              *Registry
+	ServiceAccount        string
+	RepositoryPVC         string
+	RepositoryMountPath   string
+	RepositoryPVCSubPath  string
+	SessionPVCSubPath     string
+	CredentialsSecret     string
+	LateFindingsConfigMap string
+	Environment           map[string]string
+	PollInterval          time.Duration
 }
 
 type JobFailedError struct{ JobName string }
@@ -157,6 +157,13 @@ func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload str
 	return nil
 }
 
+const (
+	codexHomesVolume = "codex-homes"
+	// CodexHomesMountPath is the private writable directory for per-turn Codex homes. Codex rejects a home under
+	// /tmp or the checkout, and the worker's root filesystem is read-only.
+	CodexHomesMountPath = "/sdo/codex-homes"
+)
+
 func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName, requestName, resultName, proposalSubPath string) error {
 	backoffLimit := int32(0)
 	ttl := int32(3600)
@@ -169,15 +176,18 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "request", MountPath: "/sdo/request", ReadOnly: true},
 		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath},
 		{Name: "scratch", MountPath: "/tmp"},
+		{Name: codexHomesVolume, MountPath: CodexHomesMountPath},
 	}
 	volumes := []corev1.Volume{
 		{Name: "request", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: requestName}}}},
 		{Name: "repository", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.RepositoryPVC}}},
 		{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: codexHomesVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	if e.SessionPVCSubPath != "" {
-		mounts = append(mounts, corev1.VolumeMount{Name: "session", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
-		volumes = append(volumes, corev1.Volume{Name: "session", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.RepositoryPVC}}})
+		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
+		// leave the kubelet waiting forever for the pod's volumes.
+		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
 	}
 	if e.LateFindingsConfigMap != "" {
 		mounts = append(mounts, corev1.VolumeMount{Name: "late-findings", MountPath: "/sdo/late-findings", ReadOnly: true})
@@ -192,8 +202,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "SDO_REQUEST_CONFIGMAP", Value: requestName},
 		{Name: "SDO_RESULT_CONFIGMAP", Value: resultName},
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
+		{Name: "SDO_CODEX_HOME_ROOT", Value: CodexHomesMountPath},
 	}
-	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true}
+	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_CODEX_HOME_ROOT": true}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -204,6 +215,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	for _, name := range names {
 		env = append(env, corev1.EnvVar{Name: name, Value: e.Environment[name]})
 	}
+	// Unconfined seccomp: Codex's bubblewrap sandbox needs unprivileged user namespaces, which RuntimeDefault denies
+	// (verified: `codex sandbox` fails under RuntimeDefault and runs under Unconfined). The pod stays non-root with
+	// every capability dropped and privilege escalation off.
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: e.Namespace},
 		Spec: batchv1.JobSpec{BackoffLimit: &backoffLimit, TTLSecondsAfterFinished: &ttl,
@@ -211,7 +225,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "sdo-worker", "sdo.dev/incident": jobName}},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: e.ServiceAccount,
-					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 					Containers: []corev1.Container{{
 						Name: "agent", Image: launch.GetImage(), Command: append([]string(nil), launch.GetCommand()...),
 						WorkingDir: task.GetWorkspace().GetCheckoutPath(), EnvFrom: envFrom, Env: env, VolumeMounts: mounts,

@@ -55,6 +55,33 @@ def _memory_worktree(tmp_path: Path) -> Path:
 
     worktree = tmp_path / "worktree"
     shutil.copytree(REPO_ROOT / "tests" / "fixtures" / "sdo" / "missing_configmap_app", worktree)
+    memory = worktree / ".sdo"
+    (memory / "schema-version").write_text("1\n", encoding="utf-8")
+    (memory / "goal.md").write_text(
+        "---\nschema_version: 1\nowner: human\n---\n\nKeep the app healthy.\n", encoding="utf-8"
+    )
+    (memory / "arch.md").write_text(
+        "---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n", encoding="utf-8"
+    )
+    (memory / "playbooks" / "README.md").write_text(
+        "# Playbooks\n\n- [missing-configmap](missing-configmap/README.md)\n", encoding="utf-8"
+    )
+    incidents = memory / "diagnostics" / "detectors" / "incidents"
+    incidents.mkdir()
+    (incidents.parent / "missing_configmap").rename(incidents / "missing_configmap")
+    manifest = memory / "diagnostics" / "manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            "./detectors/missing_configmap", "./detectors/incidents/missing_configmap", 1
+        ),
+        encoding="utf-8",
+    )
+    playbook = memory / "playbooks" / "missing-configmap" / "README.md"
+    playbook.write_text(
+        "---\nschema_version: 1\nowner: responder\nfault_class: missing-configmap\n"
+        "originating_incident: fixture\n---\n\n" + playbook.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     subprocess.run(["git", "init", "-q", str(worktree)], check=True)
     subprocess.run(["git", "-C", str(worktree), "add", "-A"], check=True)
     subprocess.run(

@@ -78,8 +78,11 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	foundSession := false
 	for _, mount := range container.VolumeMounts {
-		if mount.Name == "session" {
+		if mount.MountPath == "/sdo/session" {
 			foundSession = true
+			if mount.Name != "repository" {
+				t.Fatalf("a second volume for the same PVC hangs the kubelet; mount the repository volume with another subPath: %#v", mount)
+			}
 			if mount.MountPath != "/sdo/session" || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash" || mount.ReadOnly {
 				t.Fatalf("session mount is not a narrow writable incident subPath: %#v", mount)
 			}
@@ -90,7 +93,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
 		}
-		if mount.Name == "repository" && (mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
+		if mount.Name == "repository" && mount.MountPath != "/sdo/session" && (mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
 			t.Fatalf("repository mount leaks outside proposal checkout: %#v", mount)
 		}
 	}
@@ -101,12 +104,39 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		t.Fatalf("worker received an unexpected Secret: %#v", container.EnvFrom)
 	}
 	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name == "session" {
+			t.Fatalf("session must reuse the repository volume, not declare a second PVC volume: %#v", volume)
+		}
 		if volume.Name == "late-findings" && (volume.ConfigMap == nil || volume.ConfigMap.Name != "sdo-late-incident") {
 			t.Fatalf("late findings volume is not a ConfigMap projection: %#v", volume)
 		}
 		if volume.Secret != nil && volume.Secret.SecretName != "agent-provider-credentials" {
 			t.Fatalf("worker mounted broker-only Secret %q", volume.Secret.SecretName)
 		}
+	}
+	if profile := job.Spec.Template.Spec.SecurityContext.SeccompProfile; profile == nil || profile.Type != corev1.SeccompProfileTypeUnconfined {
+		t.Fatalf("Codex's bubblewrap sandbox needs user namespaces, which RuntimeDefault seccomp denies: %#v", profile)
+	}
+	foundHomes := false
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == "codex-homes" {
+			foundHomes = mount.MountPath == "/sdo/codex-homes" && !mount.ReadOnly
+		}
+	}
+	homesEnv := ""
+	for _, variable := range container.Env {
+		if variable.Name == "SDO_CODEX_HOME_ROOT" {
+			homesEnv = variable.Value
+		}
+	}
+	homesVolume := false
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.Name == "codex-homes" {
+			homesVolume = volume.EmptyDir != nil
+		}
+	}
+	if !foundHomes || !homesVolume || homesEnv != "/sdo/codex-homes" {
+		t.Fatalf("Codex turns need a private writable home root outside /tmp and the checkout: mount=%v volume=%v env=%q", foundHomes, homesVolume, homesEnv)
 	}
 	response, err := anypb.New(&contracts.ReflectionResult{Summary: "learned", LearningDecision: "no_change", NoChangeReason: "already covered"})
 	if err != nil {

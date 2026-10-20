@@ -106,6 +106,8 @@ type nativeLedger struct {
 	RequiresReflection  bool                          `json:"requires_reflection,omitempty"`
 	OutcomeCommit       string                        `json:"outcome_commit,omitempty"`
 	ReflectionProcessed bool                          `json:"reflection_processed,omitempty"`
+	ReflectionStarted   bool                          `json:"reflection_started,omitempty"`
+	ReflectionAttempts  int                           `json:"reflection_attempts,omitempty"`
 	ReflectionDecision  *ReflectionDecision           `json:"reflection_decision,omitempty"`
 	ReflectionCommit    string                        `json:"reflection_commit,omitempty"`
 	RolloutExpectation  *ControllerRolloutExpectation `json:"rollout_expectation,omitempty"`
@@ -261,7 +263,15 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					return err
 				}
 				if len(paths) == 0 {
-					workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
+					if ledger.ReflectionStarted {
+						// An earlier reflection for this incident did not close; its Job and result are spent.
+						ledger.ReflectionAttempts++
+					}
+					ledger.ReflectionStarted = true
+					if err := n.saveLedger(ledger); err != nil {
+						return err
+					}
+					workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit, ReflectionAttempt: ledger.ReflectionAttempts}
 					record := new(contracts.OutcomeRecord)
 					if err := protojson.Unmarshal(ledger.OutcomeDocument, record); err != nil {
 						return fmt.Errorf("decode reflection outcome: %w", err)

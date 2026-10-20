@@ -116,10 +116,12 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
             item.get("success") is True for item in _items(result.get("repair_actions"), "repair actions")
         ):
             raise ProductionReceiptValidationError("native successful outcome lacks accepted repair evidence")
+    decision = ledger.get("reflection_decision")
     if ledger.get("requires_reflection") is True and (
         ledger.get("reflection_processed") is not True
-        or reflection is None
-        or not isinstance(ledger.get("reflection_decision"), dict)
+        or not isinstance(decision, dict)
+        # A no_change decision commits nothing; only an updating reflection is bound to a commit.
+        or (decision.get("learning_decision") == "updated" and reflection is None)
     ):
         raise ProductionReceiptValidationError("native required reflection is incomplete")
     expectation = ledger.get("rollout_expectation")
