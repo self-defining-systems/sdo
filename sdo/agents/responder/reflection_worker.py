@@ -98,7 +98,7 @@ def run_reflection_task(
     closure.request = closure.request.model_copy(update={"memory_snapshot": snapshot})
     if closure.request.incident_id != outcome.incident_id:
         raise ValueError("reflection outcome incident does not match closure")
-    session_mode = request.session_mode or "fresh"
+    session_mode = request.session_mode or "resume"
     if session_mode not in {"fresh", "resume"}:
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
     prior_session = closure.result.responder_session_id if closure.result is not None else ""
@@ -141,6 +141,13 @@ def run_reflection_task(
         no_change_reason=turn.no_change_reason or "",
         proposed_artifact_ids=turn.artifact_proposal.artifact_ids() if turn.artifact_proposal else [],
     )
+    for gap in turn.sdk_gaps:
+        typed_result.sdk_gaps.add(
+            fault_class=gap.fault_class,
+            primitive=gap.primitive,
+            reason=gap.reason,
+            scratch_script=gap.scratch_script,
+        )
     if turn.artifact_proposal is not None:
         typed_result.artifact_proposal.CopyFrom(
             json_format.ParseDict(turn.artifact_proposal.model_dump(mode="json"), OperationalArtifactProposal())

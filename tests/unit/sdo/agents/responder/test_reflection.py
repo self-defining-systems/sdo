@@ -24,6 +24,7 @@ from sdo.agents.views import (
     IncidentRequest,
     IncidentResult,
     OperationalMemorySnapshot,
+    StateChanges,
 )
 from sdo.contracts import OutcomeClassification, OutcomeRecord
 from tests.structured_turns import ScriptedAgent, failure, reply
@@ -207,9 +208,93 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     assert "OperationalArtifactProposal" in prompt
     assert "sdo-operator draft-test --app . --proposal-json" in prompt
     assert "Accepted architecture summary" in prompt
-    assert ".sdo/" not in prompt
+    assert ".sdo/outcomes/" not in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt  # full outcome context is richer
+
+
+def test_reflection_prompt_requires_one_program_decision_per_fault_and_retries_draft_test(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    for required in (
+        "for each confirmed fault",
+        "diagnose.go",
+        "mitigate.go",
+        "open, fixed, and healthy",
+        "recordings",
+        "labels",
+        "sdo.dev/operator/sdk/program",
+        ".sdo/lib",
+        "Params",
+        "no incident literals",
+        "allowed imports",
+        "service-targetport-mismatch",
+        "sdk_gap",
+        "Record each reused program ID",
+        "NoMatch",
+        "no shell commands",
+        "rerun",
+    ):
+        assert required in prompt
+
+
+def test_draft_test_rejection_is_shown_to_reflection_retry(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        validation_feedback="draft-test: healthy peer returned Match",
+        rejected_proposal_diff="+func Diagnose() {}",
+        closure=_fresh_closure(tmp_path),
+    )
+    assert backend.calls[0]["mode"] == "fresh"
+    assert "draft-test: healthy peer returned Match" in str(backend.calls[0]["prompt"])
+    assert "+func Diagnose() {}" in str(backend.calls[0]["prompt"])
+
+
+def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_brief import incident_brief
+
+    closure = _fresh_closure(tmp_path)
+    observed = datetime(2026, 7, 9, 18, 0, tzinfo=timezone.utc)
+    closure.request.state_changes = StateChanges.model_validate(
+        {
+            "baseline_at": observed,
+            "observed_at": observed,
+            "changes": [
+                {
+                    "kind": "Service",
+                    "name": "api",
+                    "change": "modified",
+                    "fields": [{"field": "targetPort", "after": "9999"}],
+                }
+            ],
+        }
+    )
+    closure.final_state_changes = StateChanges.model_validate(
+        {
+            "baseline_at": observed,
+            "observed_at": observed,
+            "changes": [],
+        }
+    )
+    brief = incident_brief(closure, worktree=tmp_path)
+    assert "State changes at dispatch" in brief
+    assert "targetPort" in brief
+    assert "State changes at verification" in brief
 
 
 def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

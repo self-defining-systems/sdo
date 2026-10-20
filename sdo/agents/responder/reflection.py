@@ -49,10 +49,11 @@ class ReflectionTurn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str = Field(min_length=1)
-    learning_decision: Literal["updated", "no_change"]
+    learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
     proposed_changes: list[str]
     artifact_proposal: OperationalArtifactDraft | None = None
+    sdk_gaps: list[SdkGap] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
     _usage: dict[str, int | float] = PrivateAttr(default_factory=dict)
 
@@ -68,10 +69,23 @@ class ReflectionTurn(BaseModel):
         if self.learning_decision == "updated" and not (self.proposed_changes or self.artifact_proposal):
             raise ValueError("updated reflection requires a logical artifact proposal or legacy changes")
         if self.learning_decision == "no_change":
-            if self.proposed_changes or self.artifact_proposal:
+            if self.proposed_changes or self.artifact_proposal or self.sdk_gaps:
                 raise ValueError("no_change reflection cannot propose changes")
             if self.no_change_reason is None:
                 raise ValueError("no_change reflection requires no_change_reason")
+        if self.learning_decision == "sdk_gap" and (
+            not self.sdk_gaps or self.proposed_changes or self.artifact_proposal
+        ):
+            raise ValueError("sdk_gap reflection requires typed gaps without artifact changes")
+
+
+class SdkGap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fault_class: str = Field(min_length=1)
+    primitive: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    scratch_script: str = Field(min_length=1)
 
 
 def reflection_output_schema() -> dict[str, object]:
@@ -176,23 +190,34 @@ def _logical_learning_request(
         "detectors and playbooks as structured artifacts in artifact_proposal. "
         "Do not edit operational-memory files in the checkout. Source edits are not part of reflection. "
         "Each detector needs a stable logical ID, Kubernetes watches, Go source and tests, "
-        "and the originating incident and outcome commit. Each playbook needs a logical ID, "
-        "fault class, originating incident, Markdown instructions, and optional scripts. "
-        "For local compiler feedback, write the proposed OperationalArtifactProposal as ProtoJSON to a temporary "
-        "file outside the checkout "
-        "and run `sdo-operator draft-test --app . --proposal-json <temporary-file>`. "
-        "The command validates a scratch clone and prints actionable errors; fix the draft and rerun it before "
-        "returning your structured artifact_proposal. The broker performs authoritative validation later. "
+        "and the originating incident and outcome commit; for each confirmed fault you handled, make exactly "
+        "one decision: compile or refine its program, reuse an existing program and explain why it was enough, "
+        "or return an sdk_gap with the missing SDK primitive, reason, and the scratch script that proved the check. "
+        "Record each reused program ID and its reason in summary; for no_change also use no_change_reason. "
+        "Extend an existing fault class instead of adding a near duplicate. If a program wrongly matched this "
+        "incident, tighten it or add a NoMatch corpus case. "
+        "A program proposal needs diagnose.go, optional mitigate.go, Go tests, and a corpus case from the "
+        "observed open, fixed, and healthy peer states with recordings and root-cause labels. "
+        "Use sdo.dev/operator/sdk/program and shared .sdo/lib helpers. Bind resources through Params; "
+        "put no incident literals in source or fault classes. The allowed imports are SDK, Kubernetes read types, "
+        "standard read-only packages, and shared helpers; no os/exec, net, unsafe, or writes. "
+        "Diagnose must Match at open and return NoMatch at fixed and healthy; Mitigate must plan actions only "
+        "at open. See tests/fixtures/sdo/playbook_program_app/.sdo/playbooks/service-targetport-mismatch/ "
+        "and its corpus case for a complete example. Keep playbook README prose to judgement and context, "
+        "with no shell commands; never persist scratch scripts. "
         "Use proposed_changes=[]; the artifact IDs are derived from artifact_proposal. "
         "Return learning_decision=updated only with a nonempty artifact_proposal. "
-        "Return no_change with a specific reason and artifact_proposal=null when no safe learning exists.\n\n"
+        "Return learning_decision=sdk_gap for gaps only, or no_change with a specific reason when existing "
+        "programs cover every fault or no safe learning exists. An updated proposal may also report sdk_gaps "
+        "for other faults.\n\n"
         f"{_logical_guidance(guidance)}"
         f"For this {classification.value} outcome, "
         f"{_classification_directive(classification, guidance)}\n\n"
-        "Before returning an update, save the complete artifact_proposal as ProtoJSON in a temporary file "
-        "outside the repository, run `sdo-operator draft-test --app . --proposal-json <file>` from the proposal "
-        "checkout, and correct any validation errors. The command checks a scratch projection and does not commit. "
-        "Remove the temporary file after the check; return the same complete proposal in the structured result.\n\n"
+        "Before returning an update, save the complete OperationalArtifactProposal as ProtoJSON in a temporary "
+        "file outside the repository and run `sdo-operator draft-test --app . --proposal-json <file>` from the "
+        "proposal checkout. Read every failure, fix the proposal, and rerun until it passes. The command checks "
+        "a scratch projection and does not commit. Remove the temporary file after the check and return the "
+        "same complete proposal in the structured result.\n\n"
         f"{DETECTOR_SDK_REFERENCE}\n"
         f"Outcome commit: {outcome_commit}\n"
         f"Operational memory snapshot:\n{snapshot.model_dump_json(indent=2)}\n\n"
@@ -206,40 +231,6 @@ def _history_section(outcome: OutcomeRecord, history: list[OutcomeRecord]) -> st
     if not prior:
         return "Outcome history (prior incidents, compact): none\n"
     return f"Outcome history (prior incidents, compact; raw evidence omitted):\n{json.dumps(prior, indent=2)}\n"
-
-
-def _diagnosis_directive(outcome: OutcomeRecord) -> str:
-    """Summarize SDO's deterministic diagnosis check and how learning must use it."""
-
-    if not outcome.diagnosis_verification:
-        return ""
-    lines = []
-    for verification in outcome.diagnosis_verification:
-        flipped = ", ".join(flip.detector_id for flip in verification.detectors if flip.flipped) or "none"
-        verified = ", ".join(f"{check.kind} {check.source}" for check in verification.evidence if check.verified)
-        contradicted = ", ".join(
-            f"{check.kind} {check.source}" + (f" ({check.reason})" if check.reason else "")
-            for check in verification.evidence
-            if check.HasField("verified") and not check.verified
-        )
-        verdict = getattr(verification.verdict, "value", verification.verdict)
-        line = f"- {verdict}: {verification.summary}; detectors flipped: {flipped}"
-        line += f"; verified evidence: {verified or 'none'}"
-        if contradicted:
-            line += f"; evidence not confirmed by the controller: {contradicted}"
-        if verification.HasField("repair"):
-            line += f"; repair attribution: {verification.repair.reason}"
-        lines.append(line + "\n")
-    return (
-        "Diagnosis verification (deterministic, by SDO):\n"
-        f"{''.join(lines)}"
-        "Learn only from confirmed causes: a playbook's diagnosis and any new incident detector must describe a "
-        "confirmed cause, never a contradicted, unverified, or unattributed one (an unattributed cause was not "
-        "backed by your own repair: something else restored health). Every playbook you create or refine must end "
-        "with a `## Verification` section that records how this incident confirmed the cause: the verified "
-        "evidence above, the detectors that flipped, and the check (for example `python3 -m sdo incident "
-        "status`) that proved recovery.\n\n"
-    )
 
 
 def _bounded_diff(diff: str | None) -> str:

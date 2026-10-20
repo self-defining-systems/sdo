@@ -112,8 +112,14 @@ def _findings_section(closure: BrokerClosure) -> str:
         f"{request.source_commit}, deployed commit {request.deployed_commit}.",
         f"Detected {closure.detected_at.isoformat()}, dispatched {closure.dispatched_at.isoformat()}, responder "
         f"completed {closure.responder_completed_at.isoformat()}, health verified {closure.verified_at.isoformat()}.",
-        "Findings:",
     ]
+    if request.state_changes is not None:
+        lines.append("State changes at dispatch (against healthy baseline):")
+        lines.append(_fenced(_clip(request.state_changes.model_dump_json(exclude_none=True), 2_000)))
+    if closure.final_state_changes is not None:
+        lines.append("State changes at verification (against healthy baseline):")
+        lines.append(_fenced(_clip(closure.final_state_changes.model_dump_json(exclude_none=True), 2_000)))
+    lines.append("Findings:")
     lines.extend(_finding(finding) for finding in request.findings[:_MAX_FULL_FINDINGS])
     lines.extend(
         f"- [{finding.severity.value}] {finding.detector_id} / {finding.rule_id}: {finding.summary} "
