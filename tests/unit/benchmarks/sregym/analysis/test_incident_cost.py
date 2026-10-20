@@ -12,6 +12,7 @@ from benchmarks.sregym.analysis.incident_cost import (
     WARM_PROMPT_MARKER,
     IncidentCostError,
     TokenUsage,
+    _reflection_usage,
     build_report,
     first_mutation_at,
     last_mutation_done_at,
@@ -20,6 +21,13 @@ from benchmarks.sregym.analysis.incident_cost import (
     main,
     read_verdict,
 )
+
+
+def test_native_reflection_usage_is_read_from_ledger_without_rollouts() -> None:
+    usage = _reflection_usage({"native_ledger": {"reflection_decision": {"usage": _usage(42, 7)}}}, [])
+    assert usage.input_tokens == 42
+    assert usage.output_tokens == 7
+
 
 PROBLEM_A = "missing_configmap_hotel_reservation"
 PROBLEM_B = "missing_configmap_mongodb_rate_hotel_reservation"

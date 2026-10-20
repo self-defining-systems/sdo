@@ -776,7 +776,10 @@ def _reflection_usage(
     receipt's ``reflection_usage`` is used.
     """
 
-    recorded = TokenUsage.from_mapping(receipt.get("reflection_usage"))
+    ledger = receipt.get("native_ledger")
+    decision = ledger.get("reflection_decision") if isinstance(ledger, dict) else None
+    native_usage = decision.get("usage") if isinstance(decision, dict) else None
+    recorded = TokenUsage.from_mapping(receipt.get("reflection_usage") or native_usage)
     own = [turn for turn in rollout_turn_usages(own_rollouts or []) if turn.input_tokens]
     if receipt.get("reflection_session_mode") == "resume":
         shared = rollout_turn_usages(responder_rollouts)
