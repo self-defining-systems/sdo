@@ -53,7 +53,7 @@ func TestControllerCapturesOpenAndVerifiedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	open, err := os.ReadFile(filepath.Join(dir, "open.json"))
+	open, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
 	if err != nil || !strings.Contains(string(open), "broken") {
 		t.Fatalf("open: %s, %v", open, err)
 	}

@@ -6,10 +6,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -68,6 +71,16 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 
 type changingLoopDetector struct{ find func() []sdk.Finding }
 
+type snapshotDiagnoser struct{}
+
+func (snapshotDiagnoser) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "fault", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
+}
+func (snapshotDiagnoser) Diagnose(_ context.Context, view program.ReadView, _ program.Bindings) (program.Verdict, error) {
+	_, _ = view.DiffAgainstBaseline(sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"})
+	return program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Fact: "moment", Observed: view.Services()[0].Annotations["moment"]}}}, nil
+}
+
 func (changingLoopDetector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{ID: "health"} }
 func (d changingLoopDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return d.find(), nil
@@ -102,6 +115,67 @@ func TestInitialNoMatchIsRediagnosedAfterSettle(t *testing.T) {
 	status := loop.Handle(context.Background(), ToolRequest{Command: "status"})
 	if len(status.ProgramRuns) != 1 || status.ProgramRuns[0].Verdict.Result != program.Match {
 		t.Fatalf("settled status: %+v", status)
+	}
+}
+
+func TestSettleCaptureDoesNotBlockResponderAndMatchesRediagnosis(t *testing.T) {
+	root := t.TempDir()
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	view := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", Annotations: map[string]string{"moment": "detect"}}}}}
+	provider := &changingProvider{snapshot: view}
+	if err := memory.CaptureIncidentSnapshot(root, "incident", "open@detect", view, "app"); err != nil {
+		t.Fatal(err)
+	}
+	finding := sdk.Finding{Status: sdk.FindingActive, PrimaryResource: ref}
+	registry, err := program.NewRegistry([]program.Diagnoser{snapshotDiagnoser{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "incident", Namespace: "app", Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{loopDetector{finding: finding}}, PlanExecutor{}, 5)
+	loop.CorpusSessionRoot = root
+	loop.DiagnosisSettleDelay = 250 * time.Millisecond
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	loop.InitialDiagnose(context.Background())
+	done := make(chan struct{})
+	go func() { loop.RetryInitialDiagnose(context.Background()); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("settle returned before delay")
+	default:
+	}
+	statusDone := make(chan struct{})
+	go func() { loop.Handle(context.Background(), ToolRequest{Command: "status"}); close(statusDone) }()
+	select {
+	case <-statusDone:
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("settle blocked responder status")
+	}
+	view.ServiceList[0].Annotations["moment"] = "settle"
+	provider.snapshot = view
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("settle blocked responder work")
+	}
+	dir, err := memory.IncidentCorpusDir(root, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "open@settle.json"))
+	if err != nil || !strings.Contains(string(data), `"moment":"settle"`) {
+		t.Fatalf("settle snapshot: %s, %v", data, err)
+	}
+	if len(loop.ProgramRuns()) != 3 {
+		t.Fatal("settle diagnosis did not run")
+	}
+	if got := loop.ProgramRuns()[2].Verdict.Evidence[0].Observed; got != "settle" {
+		t.Fatalf("settle diagnosis saw %q", got)
+	}
+	recorded, err := os.ReadFile(filepath.Join(dir, "open@settle-recordings.json"))
+	if err != nil || !strings.Contains(string(recorded), "DiffAgainstBaseline") {
+		t.Fatalf("settle primitive recording: %s, %v", recorded, err)
 	}
 }
 

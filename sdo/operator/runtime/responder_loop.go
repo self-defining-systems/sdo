@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 const DefaultMaxResponseLoops = 5
@@ -80,6 +81,9 @@ type ResponderLoop struct {
 	CandidateSweepLimit  int
 	MaxBatches           int
 	Trust                map[string]ProgramTrust
+	CorpusSessionRoot    string
+	capturePhase         string
+	preApplyCaptured     bool
 	mu                   sync.Mutex
 	plans                map[string]selectedPlan
 	applications         map[string]PlanApplicationResult
@@ -122,6 +126,8 @@ func (l *ResponderLoop) FailureSignals() []string {
 func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.capturePhase = "open@detect"
+	defer func() { l.capturePhase = "" }()
 	return l.diagnose(ctx, l.findings)
 }
 
@@ -138,9 +144,6 @@ func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
 	}
 	delay := l.DiagnosisSettleDelay
 	l.mu.Unlock()
-	if !inconclusive {
-		return
-	}
 	if delay <= 0 {
 		delay = DefaultDiagnosisSettleDelay
 	}
@@ -153,7 +156,15 @@ func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _, _ = l.refresh(ctx)
+	if l.batches == 0 {
+		l.capturePhase = "open@settle"
+	}
+	if inconclusive {
+		_, _, _ = l.refresh(ctx)
+	} else {
+		_, _ = l.snapshotView(ctx)
+	}
+	l.capturePhase = ""
 }
 
 func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); return l.batches }
@@ -166,6 +177,7 @@ func (l *ResponderLoop) Exhausted() bool {
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	defer func() { l.capturePhase = "" }()
 	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.MaxBatches}
 	defer func() {
 		if response.Error != "" {
@@ -181,12 +193,14 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	}()
 	switch request.Command {
 	case "status":
+		l.capturePreApply()
 		response.Trust = l.Trust
 		response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
 		response.Healthy = response.Error == "" && len(l.findings) == 0
 		response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
 		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.MaxBatches)
 	case "diagnose":
+		l.capturePreApply()
 		if request.ProgramID == "" {
 			response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
 		} else {
@@ -214,6 +228,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "plan":
 		l.plan(ctx, request, &response)
 	case "apply":
+		l.capturePreApply()
+		if l.capturePhase != "" {
+			if _, err := l.snapshotView(ctx); err != nil {
+				response.Error = err.Error()
+				break
+			}
+		}
 		l.apply(ctx, request, &response)
 	case "verify":
 		l.verify(ctx, nil, &response)
@@ -263,7 +284,29 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	if l.ReadView == nil {
 		return nil, errors.New("live read view is unavailable")
 	}
-	return l.ReadView(snapshot), nil
+	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
+		if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace); err != nil {
+			return nil, err
+		}
+		if l.capturePhase == "open@pre-apply" {
+			l.preApplyCaptured = true
+		}
+	}
+	view := l.ReadView(snapshot)
+	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
+		phase := l.capturePhase
+		return &sdktest.RecordingReadView{ReadView: view, OnRecord: func(call sdktest.PrimitiveCall) {
+			_ = memory.AppendCapturedRecording(l.CorpusSessionRoot, l.Request.IncidentID, phase, call)
+		}}, nil
+	}
+	return view, nil
+}
+
+func (l *ResponderLoop) capturePreApply() {
+	if l.preApplyCaptured || l.CorpusSessionRoot == "" {
+		return
+	}
+	l.capturePhase = "open@pre-apply"
 }
 
 func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []ProgramRun {

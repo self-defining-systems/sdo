@@ -8,10 +8,52 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
+
+var capturedRecordingsMu sync.Mutex
+
+func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdktest.PrimitiveCall) error {
+	if phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
+		return fmt.Errorf("invalid corpus recording phase %q", phase)
+	}
+	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(dir, phase+"-recordings.json")
+	capturedRecordingsMu.Lock()
+	defer capturedRecordingsMu.Unlock()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var calls []sdktest.PrimitiveCall
+	if err := json.Unmarshal(data, &calls); err != nil {
+		return err
+	}
+	calls = append(calls, call)
+	data, err = json.Marshal(calls)
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(dir, ".recordings-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
+}
 
 // IncidentCorpusDir locates trusted controller captures outside accepted memory.
 func IncidentCorpusDir(repositoryMount, incidentID string) (string, error) {
@@ -59,6 +101,8 @@ func ValidateCapturedCorpusTree(repositoryMount, candidate, incidentID string, c
 		var label struct {
 			Provenance struct {
 				IncidentID string `json:"incident_id"`
+				OpenAt     string `json:"open_at"`
+				OpenSHA256 string `json:"open_sha256"`
 			} `json:"provenance"`
 		}
 		if err := json.Unmarshal(labels, &label); err != nil {
@@ -70,8 +114,30 @@ func ValidateCapturedCorpusTree(repositoryMount, candidate, incidentID string, c
 		if label.Provenance.IncidentID != incidentID {
 			return fmt.Errorf("corpus %s references another captured incident", entry.Name())
 		}
+		openName := "open.json"
+		if label.Provenance.OpenAt != "" {
+			if label.Provenance.OpenAt != "detect" && label.Provenance.OpenAt != "settle" && label.Provenance.OpenAt != "pre-apply" {
+				return fmt.Errorf("invalid captured open phase %q", label.Provenance.OpenAt)
+			}
+			openName = "open@" + label.Provenance.OpenAt + ".json"
+		} else {
+			for _, phase := range []string{"open@pre-apply", "open@settle", "open@detect"} {
+				data, readErr := os.ReadFile(filepath.Join(trusted, phase+".json"))
+				if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == label.Provenance.OpenSHA256 {
+					openName = phase + ".json"
+					break
+				}
+			}
+		}
 		for _, name := range []string{"open.json", "fixed.json", "recordings.json"} {
-			want, err := os.ReadFile(filepath.Join(trusted, name))
+			trustedName := name
+			if name == "open.json" {
+				trustedName = openName
+			}
+			if name == "recordings.json" && openName != "open.json" {
+				trustedName = strings.TrimSuffix(openName, ".json") + "-recordings.json"
+			}
+			want, err := os.ReadFile(filepath.Join(trusted, trustedName))
 			if err != nil {
 				return fmt.Errorf("read trusted captured %s: %w", name, err)
 			}
@@ -89,7 +155,7 @@ func ValidateCapturedCorpusTree(repositoryMount, candidate, incidentID string, c
 
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
 func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string) error {
-	if phase != "open" && phase != "fixed" {
+	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
 	snapshot, err := sdktest.CaptureSnapshot(view, namespace)
@@ -107,8 +173,12 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	if phase == "open" {
-		if err := writeCapturedFile(filepath.Join(dir, "recordings.json"), []byte("[]")); err != nil {
+	if phase == "open" || strings.HasPrefix(phase, "open@") {
+		recordingName := "recordings.json"
+		if phase != "open" {
+			recordingName = phase + "-recordings.json"
+		}
+		if err := writeCapturedFile(filepath.Join(dir, recordingName), []byte("[]")); err != nil {
 			return err
 		}
 	}

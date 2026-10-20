@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 )
 
@@ -22,12 +23,16 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 	s := Snapshot{NamespaceName: namespace}
 	for _, object := range view.ConfigMaps() {
 		if object.Namespace == namespace {
-			s.ConfigMapList = append(s.ConfigMapList, object)
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.ConfigMapList = append(s.ConfigMapList, copy)
 		}
 	}
 	for _, object := range view.Services() {
 		if object.Namespace == namespace {
-			s.ServiceList = append(s.ServiceList, object)
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.ServiceList = append(s.ServiceList, copy)
 		}
 	}
 	for _, object := range view.Pods() {
@@ -35,6 +40,7 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			continue
 		}
 		copy := *object.DeepCopy()
+		compactMeta(&copy.ObjectMeta)
 		redactPodSpec(&copy.Spec)
 		s.PodList = append(s.PodList, copy)
 	}
@@ -43,6 +49,8 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			continue
 		}
 		copy := *object.DeepCopy()
+		compactMeta(&copy.ObjectMeta)
+		compactMeta(&copy.Spec.Template.ObjectMeta)
 		redactPodSpec(&copy.Spec.Template.Spec)
 		s.DeploymentList = append(s.DeploymentList, copy)
 	}
@@ -51,27 +59,39 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			continue
 		}
 		copy := *object.DeepCopy()
+		compactMeta(&copy.ObjectMeta)
+		compactMeta(&copy.Spec.Template.ObjectMeta)
 		redactPodSpec(&copy.Spec.Template.Spec)
 		s.ReplicaSetList = append(s.ReplicaSetList, copy)
 	}
 	for _, object := range view.Endpoints() {
 		if object.Namespace == namespace {
-			s.EndpointList = append(s.EndpointList, object)
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.EndpointList = append(s.EndpointList, copy)
 		}
 	}
 	for _, object := range view.EndpointSlices() {
 		if object.Namespace == namespace {
-			s.EndpointSliceList = append(s.EndpointSliceList, object)
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.EndpointSliceList = append(s.EndpointSliceList, copy)
 		}
 	}
 	for _, object := range view.NetworkPolicies() {
 		if object.Namespace == namespace {
-			s.NetworkPolicyList = append(s.NetworkPolicyList, object)
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			s.NetworkPolicyList = append(s.NetworkPolicyList, copy)
 		}
 	}
 	for _, object := range view.Events() {
 		if object.Namespace == namespace {
-			s.EventList = append(s.EventList, object)
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			copy.InvolvedObject.ResourceVersion = ""
+			copy.InvolvedObject.UID = ""
+			s.EventList = append(s.EventList, copy)
 		}
 	}
 	data, err := json.Marshal(s)
@@ -82,6 +102,14 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		return Snapshot{}, fmt.Errorf("captured snapshot exceeds %d bytes", MaxCapturedSnapshotBytes)
 	}
 	return s, nil
+}
+
+func compactMeta(meta *metav1.ObjectMeta) {
+	meta.ManagedFields = nil
+	meta.ResourceVersion = ""
+	meta.UID = ""
+	meta.Generation = 0
+	delete(meta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
 }
 
 func redactPodSpec(spec *corev1.PodSpec) {

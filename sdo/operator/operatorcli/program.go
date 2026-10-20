@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -42,6 +43,7 @@ type ProgramProposeConfig struct {
 	App                string
 	OperatorRoot       string
 	CorpusFromIncident string
+	OpenAt             string
 	Bindings           []string
 	PeerBindings       []string
 	CaptureDir         string
@@ -137,6 +139,7 @@ func ParseProgramPropose(args []string) (ProgramProposeConfig, error) {
 	flags.Var(&bindings, "bind", "incident binding name=Kind/namespace/name")
 	flags.Var(&peerBindings, "peer-bind", "healthy peer binding name=Kind/namespace/name")
 	corpusIncident := flags.String("corpus-from-incident", "", "capture incident ID")
+	openAt := flags.String("open-at", "", "open capture: detect, settle, or pre-apply")
 	dir := flags.String("dir", "", "playbook directory")
 	incident := flags.String("incident", "", "originating incident ID")
 	app := flags.String("app", ".", "accepted application checkout")
@@ -147,7 +150,13 @@ func ParseProgramPropose(args []string) (ProgramProposeConfig, error) {
 	if flags.NArg() != 0 || *dir == "" || *incident == "" {
 		return ProgramProposeConfig{}, errors.New("propose requires --dir and --incident")
 	}
-	return ProgramProposeConfig{Dir: *dir, Libraries: libs, Corpus: corpus, Incident: *incident, App: *app, OperatorRoot: *operatorRoot, CorpusFromIncident: *corpusIncident, Bindings: bindings, PeerBindings: peerBindings}, nil
+	if *openAt != "" && *openAt != "detect" && *openAt != "settle" && *openAt != "pre-apply" {
+		return ProgramProposeConfig{}, fmt.Errorf("invalid --open-at %q", *openAt)
+	}
+	if *openAt != "" && *corpusIncident == "" {
+		return ProgramProposeConfig{}, errors.New("--open-at requires --corpus-from-incident")
+	}
+	return ProgramProposeConfig{Dir: *dir, Libraries: libs, Corpus: corpus, Incident: *incident, App: *app, OperatorRoot: *operatorRoot, CorpusFromIncident: *corpusIncident, OpenAt: *openAt, Bindings: bindings, PeerBindings: peerBindings}, nil
 }
 
 func AssembleProgramProposal(config ProgramProposeConfig) (*contracts.OperationalArtifactProposal, error) {
@@ -228,6 +237,9 @@ func capturedCorpusCase(config ProgramProposeConfig, programID string) (*contrac
 	if config.CorpusFromIncident != config.Incident {
 		return nil, errors.New("captured corpus incident must match the originating incident")
 	}
+	if config.OpenAt != "" && config.OpenAt != "detect" && config.OpenAt != "settle" && config.OpenAt != "pre-apply" {
+		return nil, fmt.Errorf("invalid open capture %q", config.OpenAt)
+	}
 	dir := config.CaptureDir
 	if dir == "" {
 		dir = os.Getenv("SDO_CAPTURED_CORPUS_DIR")
@@ -235,7 +247,20 @@ func capturedCorpusCase(config ProgramProposeConfig, programID string) (*contrac
 	if dir == "" {
 		dir = "/sdo/session/corpus"
 	}
-	open, err := os.ReadFile(filepath.Join(dir, "open.json"))
+	phase := config.OpenAt
+	if phase == "" {
+		var latest time.Time
+		for _, candidate := range []string{"pre-apply", "settle", "detect"} {
+			if info, err := os.Stat(filepath.Join(dir, "open@"+candidate+".json")); err == nil && (phase == "" || info.ModTime().After(latest)) {
+				phase, latest = candidate, info.ModTime()
+			}
+		}
+	}
+	openName, recordingsName := "open.json", "recordings.json"
+	if phase != "" {
+		openName, recordingsName = "open@"+phase+".json", "open@"+phase+"-recordings.json"
+	}
+	open, err := os.ReadFile(filepath.Join(dir, openName))
 	if err != nil {
 		return nil, fmt.Errorf("read captured incident open snapshot: %w", err)
 	}
@@ -243,7 +268,7 @@ func capturedCorpusCase(config ProgramProposeConfig, programID string) (*contrac
 	if err != nil {
 		return nil, fmt.Errorf("read captured incident fixed snapshot: %w", err)
 	}
-	recordings, err := os.ReadFile(filepath.Join(dir, "recordings.json"))
+	recordings, err := os.ReadFile(filepath.Join(dir, recordingsName))
 	if err != nil {
 		return nil, fmt.Errorf("read captured incident recordings: %w", err)
 	}
@@ -279,14 +304,16 @@ func capturedCorpusCase(config ProgramProposeConfig, programID string) (*contrac
 		PeerBindings        program.Bindings `json:"peer_bindings"`
 		Provenance          struct {
 			IncidentID  string `json:"incident_id"`
+			OpenAt      string `json:"open_at,omitempty"`
 			OpenSHA256  string `json:"open_sha256"`
 			FixedSHA256 string `json:"fixed_sha256"`
 		} `json:"provenance"`
 	}{RootCauseProgramIDs: []string{programID}, Bindings: bindings, PeerBindings: peer, Provenance: struct {
 		IncidentID  string `json:"incident_id"`
+		OpenAt      string `json:"open_at,omitempty"`
 		OpenSHA256  string `json:"open_sha256"`
 		FixedSHA256 string `json:"fixed_sha256"`
-	}{config.CorpusFromIncident, fmt.Sprintf("%x", sha256.Sum256(open)), fmt.Sprintf("%x", sha256.Sum256(fixed))}})
+	}{config.CorpusFromIncident, phase, fmt.Sprintf("%x", sha256.Sum256(open)), fmt.Sprintf("%x", sha256.Sum256(fixed))}})
 	if err != nil {
 		return nil, err
 	}

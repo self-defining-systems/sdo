@@ -583,7 +583,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 				return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
 			}
 		}
-		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open", snapshot, request.Namespace); err != nil {
+		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace); err != nil {
 			return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
 		}
 	}

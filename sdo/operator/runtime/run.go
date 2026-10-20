@@ -439,6 +439,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}, *maxResponseLoops)
 				loop.DiagnosisDeadline = *diagnosisDeadline
 				loop.DiagnosisSettleDelay = *diagnosisSettleDelay
+				if options.NativeBroker != nil {
+					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
 						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}

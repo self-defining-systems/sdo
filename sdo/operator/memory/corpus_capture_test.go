@@ -40,3 +40,23 @@ func TestCaptureIncidentCorpusKeepsFirstRealSnapshot(t *testing.T) {
 		t.Fatal("arbitrary capture phase accepted")
 	}
 }
+
+func TestCaptureIncidentCorpusKeepsSeparateOpenMoments(t *testing.T) {
+	root := t.TempDir()
+	view := sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "detect", Namespace: "app"}}}}
+	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+		if err := CaptureIncidentSnapshot(root, "incident", phase, view, "app"); err != nil {
+			t.Fatal(err)
+		}
+		view.PodList[0].Name = phase
+	}
+	dir, err := IncidentCorpusDir(root, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+		if _, err := os.Stat(filepath.Join(dir, phase+".json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

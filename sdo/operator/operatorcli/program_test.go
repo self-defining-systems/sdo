@@ -128,6 +128,44 @@ func TestProgramProposeBuildsCorpusFromIncidentCapture(t *testing.T) {
 	}
 }
 
+func TestProgramProposeSelectsLatestPremitigationCapture(t *testing.T) {
+	root := t.TempDir()
+	view := sdktest.Snapshot{NamespaceName: "demo", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo"}}, {ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "demo"}}}}
+	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+		view.ServiceList[0].Annotations = map[string]string{"moment": phase}
+		if err := memory.CaptureIncidentSnapshot(root, "inc-42", phase, view, "demo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := memory.CaptureIncidentSnapshot(root, "inc-42", "fixed", view, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "targetport")
+	if err := RunProgramScaffold(ProgramScaffoldConfig{FaultClass: "targetport", Params: []ProgramParam{{Name: "service", Kind: "Service"}}, Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	captureDir, err := memory.IncidentCorpusDir(root, "inc-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := ProgramProposeConfig{Dir: dir, Incident: "inc-42", CorpusFromIncident: "inc-42", CaptureDir: captureDir, Bindings: []string{"service=Service/demo/front"}, PeerBindings: []string{"service=Service/demo/peer"}}
+	proposal, err := AssembleProgramProposal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(proposal.Playbooks[0].Program.CorpusCases[0].OpenJson, "open@pre-apply") {
+		t.Fatal("latest open capture was not selected")
+	}
+	config.OpenAt = "detect"
+	proposal, err = AssembleProgramProposal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(proposal.Playbooks[0].Program.CorpusCases[0].OpenJson, "open@detect") {
+		t.Fatal("requested open capture was not selected")
+	}
+}
+
 func TestProgramProposeAcceptsLocalDraftRoots(t *testing.T) {
 	config, err := ParseProgramPropose([]string{"program", "propose", "--dir", "scratch", "--incident", "inc-42", "--app", "accepted", "--operator-root", "operator"})
 	if err != nil {

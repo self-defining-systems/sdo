@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -25,7 +26,9 @@ type PrimitiveCall struct {
 
 type RecordingReadView struct {
 	program.ReadView
-	Calls []PrimitiveCall
+	Calls    []PrimitiveCall
+	OnRecord func(PrimitiveCall)
+	mu       sync.Mutex
 }
 
 func (v *RecordingReadView) record(method string, arguments any, result any, err error) {
@@ -35,7 +38,12 @@ func (v *RecordingReadView) record(method string, arguments any, result any, err
 	if err != nil {
 		call.Error = err.Error()
 	}
+	v.mu.Lock()
 	v.Calls = append(v.Calls, call)
+	if v.OnRecord != nil {
+		v.OnRecord(call)
+	}
+	v.mu.Unlock()
 }
 
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
@@ -140,6 +148,7 @@ type CorpusCase struct {
 
 type CorpusProvenance struct {
 	IncidentID  string `json:"incident_id"`
+	OpenAt      string `json:"open_at,omitempty"`
 	OpenSHA256  string `json:"open_sha256"`
 	FixedSHA256 string `json:"fixed_sha256"`
 }
