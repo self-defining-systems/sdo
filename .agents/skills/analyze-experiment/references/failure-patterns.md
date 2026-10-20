@@ -74,6 +74,8 @@ Check edits to human goals, architecture, health detectors, prior outcomes, or p
 
 Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. Reflection resumes the responder session by default; a different session is expected when `reflection_session_mode=fresh` or for a validation retry (`reflection_fresh_retry_attempts`). Reflection agents return typed logical artifact proposals and run `sdo-operator draft-test --app . --proposal-json <file>` for scratch feedback. A gap-only decision has `reflection_decision.learning_decision=sdk_gap` and typed `sdk_gaps` in the native ledger, with no reflection commit. Broker validation remains authoritative; compare the typed proposal, draft-test feedback, broker rejection, and accepted diff.
 
+For a newly learned program, a matching corpus case without `labels.json` capture provenance is a circular test: the agent may have reconstructed both evidence and expectation. Compare the labeled open and fixed digests with the private session captures and verify the healthy peer binding points to a same-kind object in the fixed snapshot. `synthetic_no_match_reason` permits a recorded tightening near miss only; it does not establish a real incident match. Older runs with unlabeled reconstructed snapshots should be identified as pre-capture evidence.
+
 ## Learned detector never fired
 
 **Signature:** a later variant of a fault the responder learned a detector for is solved cold: the receipt has `detector_firing_available=true` but `incident_detector_fired_before_dispatch=false`, so the stored memory went unused for detection.
