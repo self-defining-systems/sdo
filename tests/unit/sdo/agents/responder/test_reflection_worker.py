@@ -163,8 +163,10 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     request.closure.result.responder_session_id = ""
     task.request.Pack(request)
     path.write_text(to_canonical_json(task), encoding="utf-8")
-    with pytest.raises(ValueError, match="valid responder session"):
-        run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())
+    fallback = Reflector()
+    run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
+    assert fallback.kwargs is not None
+    assert fallback.kwargs["session_mode"] == "fresh"
 
     request.session_mode = "unknown"
     request.closure.result.responder_session_id = "responder-session-123"
@@ -177,8 +179,10 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     request.closure.result.responder_session_id = "invalid/session"
     task.request.Pack(request)
     path.write_text(to_canonical_json(task), encoding="utf-8")
-    with pytest.raises(ValueError, match="valid responder session"):
-        run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())
+    fallback = Reflector()
+    run_reflection_task(path, "result-map", Publisher(), reflector=fallback)
+    assert fallback.kwargs is not None
+    assert fallback.kwargs["session_mode"] == "fresh"
 
 
 def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(

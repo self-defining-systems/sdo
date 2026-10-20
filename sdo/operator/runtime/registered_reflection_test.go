@@ -1,7 +1,11 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"log"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +13,29 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 )
+
+func TestRegisteredReflectionWorkerExportsTurnUsage(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "reflection-usage.jsonl")
+	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh", UsageLogPath: func(string) string { return logPath }}
+	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		if err := os.WriteFile(logPath, []byte(`{"usage":{"input_tokens":42,"output_tokens":7,"model_requests":2}}`+"\n"), 0600); err != nil {
+			return nil, err
+		}
+		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
+		if err != nil {
+			return nil, err
+		}
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	})
+	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
+	decision, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Usage == nil || decision.Usage.InputTokens != 42 || decision.Usage.OutputTokens != 7 || decision.Usage.GetModelRequests() != 2 {
+		t.Fatalf("reflection usage lost: %+v", decision.Usage)
+	}
+}
 
 type reflectionTaskExecutorFunc func(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
 
@@ -49,20 +76,25 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 	}
 }
 
-func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
+func TestRegisteredReflectionWorkerResumeFallsBackWithoutBoundSession(t *testing.T) {
 	store := memory.NewJSONStore(t.TempDir())
 	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
 	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: store, Timeout: time.Minute, SessionMode: "resume", Guidance: "generalize-spec"}
 	called := false
+	var modes []string
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(os.Stderr)
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		called = true
 		request := &contracts.ReflectionRequest{}
 		if err := task.Request.UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		if request.GetSessionMode() != "resume" || request.GetGuidance() != "generalize-spec" || request.GetClosure().GetResult().GetResponderSessionId() != "session-123" {
+		if request.GetSessionMode() != "resume" && request.GetSessionMode() != "fresh" || request.GetGuidance() != "generalize-spec" {
 			t.Fatalf("resume lost accepted session binding: %+v", request)
 		}
+		modes = append(modes, request.GetSessionMode())
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "already learned"})
 		if err != nil {
 			return nil, err
@@ -75,15 +107,22 @@ func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
 		}
 		return worker.Executor, nil
 	}
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err == nil || called {
-		t.Fatalf("resume without accepted session dispatched: %v", err)
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err != nil || !called {
+		t.Fatalf("missing session did not fall back: %v", err)
 	}
+	called = false
 	closure.Result.ResponderSessionID = "../escape"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err == nil || called {
-		t.Fatalf("invalid session token dispatched: %v", err)
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err != nil || !called {
+		t.Fatalf("invalid session token did not fall back: %v", err)
 	}
 	closure.Result.ResponderSessionID = "session-123"
 	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome"); err != nil || !called {
 		t.Fatalf("valid session was not dispatched: %v", err)
+	}
+	if len(modes) != 3 || modes[0] != "fresh" || modes[1] != "fresh" || modes[2] != "resume" {
+		t.Fatalf("wrong fallback modes: %v", modes)
+	}
+	if !bytes.Contains(logs.Bytes(), []byte("session ID is missing or invalid; starting fresh")) {
+		t.Fatalf("fallback reason was not logged: %s", logs.String())
 	}
 }

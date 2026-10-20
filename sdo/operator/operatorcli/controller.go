@@ -59,7 +59,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "fresh", "reflection session mode: fresh or resume")
+	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")

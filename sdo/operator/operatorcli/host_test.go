@@ -71,6 +71,9 @@ func TestHostAcceptsGoalFileWithoutPythonCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if launch.Install.ReflectionSession != "resume" {
+		t.Fatalf("default reflection mode: %q", launch.Install.ReflectionSession)
+	}
 	if launch.Objective != "Keep the service healthy" {
 		t.Fatalf("goal file lost: %q", launch.Objective)
 	}

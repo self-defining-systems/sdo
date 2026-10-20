@@ -64,7 +64,7 @@ from benchmarks.sregym.protocol.conductor import (
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
-DEFAULT_REFLECTION_SESSION = "fresh"
+DEFAULT_REFLECTION_SESSION = "resume"
 
 DEFAULT_BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
 

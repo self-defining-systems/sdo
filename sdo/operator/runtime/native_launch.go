@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -85,6 +87,20 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(),
 		Environment: map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"},
 	}
+	sessionExecutor := func(incidentID string, resume bool) (ReflectionTaskExecutor, error) {
+		subPath, err := memory.PrepareIncidentSession(config.GetRepositoryMountPath(), config.GetRepositoryPvcSubpath(), incidentID)
+		if err != nil {
+			return nil, err
+		}
+		executor := freshExecutor
+		executor.SessionPVCSubPath = subPath
+		executor.Environment = map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude", "SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"}
+		if resume {
+			executor.Environment["CODEX_HOME"] = "/sdo/session/codex"
+			executor.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		}
+		return executor, nil
+	}
 	native.Reflector = RegisteredReflectionWorker{
 		Executor: freshExecutor,
 		AgentID:  "sdo-reflector", Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
@@ -92,14 +108,12 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		Guidance:    config.GetReflectionGuidance(),
 		Catalog:     memory.OpenCatalogReader(config.GetAppRoot()),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
-			subPath, err := memory.PrepareIncidentSession(config.GetRepositoryMountPath(), config.GetRepositoryPvcSubpath(), incidentID)
-			if err != nil {
-				return nil, err
-			}
-			resumed := freshExecutor
-			resumed.SessionPVCSubPath = subPath
-			resumed.Environment = map[string]string{"CODEX_HOME": "/sdo/session/codex", "CLAUDE_CONFIG_DIR": "/sdo/session/claude"}
-			return resumed, nil
+			return sessionExecutor(incidentID, true)
+		},
+		FreshSessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) { return sessionExecutor(incidentID, false) },
+		UsageLogPath: func(incidentID string) string {
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]
+			return filepath.Join(config.GetRepositoryMountPath(), ".sdo-runtime", "sessions", digest, "reflection-usage.jsonl")
 		},
 	}
 	return nil

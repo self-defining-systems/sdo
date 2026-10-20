@@ -40,3 +40,14 @@ func TestParseInstallExistingRejectsInvalidRepairPolicy(t *testing.T) {
 		t.Fatal("unsupported policy accepted")
 	}
 }
+
+func TestInstallExistingDefaultsToResumedReflection(t *testing.T) {
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model"}
+	launch, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.Install.ReflectionSession != "resume" {
+		t.Fatalf("default reflection mode: %q", launch.Install.ReflectionSession)
+	}
+}
