@@ -27,8 +27,17 @@ type compiledProgram struct {
 var programID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var shellLine = regexp.MustCompile(`(?i)^\s*(kubectl|curl|bash)(\s|$)`)
 var shellFence = regexp.MustCompile(`(?i)^(?:` + "```" + `|~~~)[ \t]*(bash|sh|zsh|shell|console|terminal|powershell)(\s|$)`)
-var incidentPort = regexp.MustCompile(`\b[0-9]{2,5}\b`)
+var incidentPort = regexp.MustCompile(`\b[0-9]{1,5}\b`)
 var incidentImage = regexp.MustCompile(`(?i)\bimage\s*(?:=|:|\s)\s*["']?([a-z0-9./:_-]+)`)
+
+var ignoredIncidentLiterals = map[string]bool{
+	"service": true, "deployment": true, "pod": true, "statefulset": true,
+	"daemonset": true, "replicaset": true, "configmap": true, "secret": true,
+	"ingress": true, "job": true, "cronjob": true, "namespace": true,
+	"node": true, "persistentvolumeclaim": true, "http": true, "https": true,
+	"tcp": true, "udp": true, "grpc": true, "port": true, "image": true,
+	"name": true, "kind": true,
+}
 
 func stagePrograms(ctx context.Context, config Config, workspace, module string) error {
 	root := filepath.Join(config.ApplicationRoot, ".sdo")
@@ -335,7 +344,7 @@ func parseProgramFrontmatter(body []byte, target any) error {
 func outcomeLiterals(record *contracts.OutcomeRecord) []string {
 	values := map[string]bool{}
 	add := func(value string) {
-		if len(value) >= 2 {
+		if relevantIncidentLiteral(value) {
 			values[value] = true
 		}
 	}
@@ -405,7 +414,7 @@ func outcomeLiterals(record *contracts.OutcomeRecord) []string {
 
 func checkIncidentLiterals(programRoot, libRoot, faultClass string, literals []string) error {
 	for _, literal := range literals {
-		if strings.Contains(faultClass, literal) {
+		if relevantIncidentLiteral(literal) && containsIncidentToken(faultClass, literal) {
 			return fmt.Errorf("fault class %q contains incident literal %q; use a role-based name", faultClass, literal)
 		}
 	}
@@ -425,20 +434,86 @@ func checkSourceLiterals(root string, literals []string) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse %s for incident literals: %w", path, err)
 		}
-		for _, literal := range literals {
-			if strings.Contains(string(data), literal) {
-				return fmt.Errorf("%s contains incident literal %q; bind resources and derive ports or images from the ReadView", path, literal)
+		var found string
+		ast.Inspect(file, func(node ast.Node) bool {
+			value, ok := node.(*ast.BasicLit)
+			if !ok {
+				return true
 			}
+			for _, literal := range literals {
+				if !relevantIncidentLiteral(literal) {
+					continue
+				}
+				switch value.Kind {
+				case token.STRING:
+					unquoted, err := strconv.Unquote(value.Value)
+					if err == nil && containsIncidentToken(unquoted, literal) {
+						found = literal
+					}
+				case token.INT:
+					if isPortLiteral(literal) {
+						port, _ := strconv.ParseInt(literal, 10, 64)
+						integer, err := strconv.ParseInt(value.Value, 0, 64)
+						if err == nil && integer == port {
+							found = literal
+						}
+					}
+				}
+				if found != "" {
+					return false
+				}
+			}
+			return true
+		})
+		if found != "" {
+			return fmt.Errorf("%s contains incident literal %q; bind resources and derive ports or images from the ReadView", path, found)
 		}
 		return nil
 	})
+}
+
+func relevantIncidentLiteral(value string) bool {
+	return (len(value) >= 3 || isPortLiteral(value)) && !ignoredIncidentLiterals[strings.ToLower(value)]
+}
+
+func isPortLiteral(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	port, err := strconv.ParseUint(value, 10, 16)
+	return err == nil && port > 0
+}
+
+func containsIncidentToken(value, literal string) bool {
+	for offset := 0; offset < len(value); {
+		index := strings.Index(value[offset:], literal)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		end := index + len(literal)
+		if (index == 0 || !incidentTokenChar(value[index-1])) && (end == len(value) || !incidentTokenChar(value[end])) {
+			return true
+		}
+		offset = index + 1
+	}
+	return false
+}
+
+func incidentTokenChar(character byte) bool {
+	return character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character >= '0' && character <= '9'
 }
 
 func corpusCasesFor(root, programID string) ([]string, error) {
