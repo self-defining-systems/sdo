@@ -65,6 +65,10 @@ type diagnostic struct {
 	fn func(context.Context, program.ReadView, program.Bindings) (program.Verdict, error)
 }
 
+type panickingSpec struct{ diagnostic }
+
+func (panickingSpec) Spec() program.ProgramSpec { panic("bad spec") }
+
 func (d diagnostic) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "test", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
@@ -97,6 +101,13 @@ func TestRunDiagnoseContainsFailures(t *testing.T) {
 				t.Fatalf("got %+v", got)
 			}
 		})
+	}
+}
+
+func TestRunDiagnoseContainsSpecPanic(t *testing.T) {
+	got := program.RunDiagnose(context.Background(), panickingSpec{}, &sdktest.ReplayReadView{}, nil, time.Second)
+	if got.Result != program.Unknown || len(got.Evidence) == 0 || !strings.Contains(got.Evidence[0].Observed, "bad spec") {
+		t.Fatalf("got %+v", got)
 	}
 }
 
