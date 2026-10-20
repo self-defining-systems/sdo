@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
@@ -184,6 +185,7 @@ def _logical_learning_request(
     if snapshot is None:
         raise ValueError("logical reflection requires an operational memory snapshot")
     classification = OutcomeClassification(outcome.classification)
+    example_dir = os.environ.get("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR") or "/opt/sdo/examples/playbook-programs"
     return (
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot and source code. Propose reusable incident "
@@ -198,12 +200,17 @@ def _logical_learning_request(
         "incident, tighten it or add a NoMatch corpus case. "
         "A program proposal needs diagnose.go, optional mitigate.go, Go tests, and a corpus case from the "
         "observed open, fixed, and healthy peer states with recordings and root-cause labels. "
-        "Use sdo.dev/operator/sdk/program and shared .sdo/lib helpers. Bind resources through Params; "
-        "put no incident literals in source or fault classes. The allowed imports are SDK, Kubernetes read types, "
+        "Use sdo.dev/operator/sdk/program and shared .sdo/lib helpers, importing helpers through this checkout's "
+        "diagnostics module path. Bind resources through Params; "
+        "derive names, ports and images from bindings and the ReadView; validation replays the corpus with every "
+        "name, port and image renamed and the verdicts must not change. "
+        "The allowed imports are SDK, Kubernetes read types, "
         "standard read-only packages, and shared helpers; no os/exec, net, unsafe, or writes. "
         "Diagnose must Match at open and return NoMatch at fixed and healthy; Mitigate must plan actions only "
-        "at open. See tests/fixtures/sdo/playbook_program_app/.sdo/playbooks/service-targetport-mismatch/ "
-        "and its corpus case for a complete example. Keep playbook README prose to judgement and context, "
+        "at open. See "
+        f"{example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
+        f"{example_dir}/corpus/targetport-mismatch/ for a complete example. "
+        "Keep playbook README prose to judgement and context, "
         "with no shell commands; never persist scratch scripts. "
         "Use proposed_changes=[]; the artifact IDs are derived from artifact_proposal. "
         "Return learning_decision=updated only with a nonempty artifact_proposal. "

@@ -20,6 +20,14 @@ RUN cd sdo/operator && go build -buildvcs=false -o /usr/local/bin/sdo-operator .
 FROM go-runtime AS validator
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
+ENV HOME=/tmp \
+    GOCACHE=/tmp/go-cache \
+    GOMODCACHE=/go/pkg/mod \
+    GOPROXY=off \
+    GOSUMDB=off \
+    GOMAXPROCS=2 \
+    GOFLAGS="-mod=mod -p=2"
+RUN cd /opt/sdo/sdo/operator/sdk && go list ./program >/dev/null
 # Pin the embedded schema identity into the image. The validator recomputes
 # it from the baked SDK before compiling a candidate.
 ARG SDO_VALIDATOR_SCHEMA_IDENTITY="unknown"
