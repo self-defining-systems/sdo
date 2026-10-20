@@ -334,3 +334,20 @@ def test_learning_does_not_open_the_next_incident_without_receipt_evidence(tmp_p
 
     with pytest.raises(RuntimeError, match="receipt missing"):
         agent.learn(resolved)
+
+
+def test_learning_uses_the_native_verified_rebuild_time(tmp_path: Path) -> None:
+    ops, calls = FakeOps(), []
+    agent = _agent(tmp_path, ops, calls)
+    resolved = agent.resolve(0, "p", _inject)
+    receipt = agent._receipt
+    rebuilt = VERIFIED + timedelta(seconds=8)
+    agent._receipt = lambda path: receipt(path) | {  # type: ignore[method-assign]
+        "native_ledger": {
+            "rollout_receipts": [{"success": True, "verified_at": rebuilt.isoformat()}],
+        }
+    }
+
+    learned = agent.learn(resolved)
+
+    assert learned.rebuild_done_at == rebuilt

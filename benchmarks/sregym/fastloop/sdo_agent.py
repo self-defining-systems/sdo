@@ -242,6 +242,16 @@ class SdoPersistentAgent:
         ledger = ledger if isinstance(ledger, dict) else {}
         outcome_document = ledger.get("outcome_document")
         outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
+        rollout_receipts = ledger.get("rollout_receipts")
+        rollout_receipts = rollout_receipts if isinstance(rollout_receipts, list) else []
+        rebuild_verified = next(
+            (
+                _timestamp(item.get("verified_at"))
+                for item in rollout_receipts
+                if isinstance(item, dict) and item.get("success") is True
+            ),
+            None,
+        )
         return outcome.with_learning(
             detected_at=outcome.detected_at or detected,
             mitigation_applied_at=outcome.mitigation_applied_at
@@ -252,7 +262,7 @@ class SdoPersistentAgent:
             reflection_seconds=self._clock.monotonic() - started,
             reflection_started_at=reflection_observed_at,
             reflection_finished_at=self._clock.now(),
-            rebuild_done_at=self._clock.now(),
+            rebuild_done_at=rebuild_verified or self._clock.now(),
             responder_started_at=outcome.responder_started_at or _timestamp(receipt.get("responder_started_at")),
             responder_finished_at=outcome.responder_finished_at or _timestamp(receipt.get("responder_finished_at")),
             responder_tokens=TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")),

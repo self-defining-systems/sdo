@@ -44,7 +44,7 @@ from benchmarks.sregym.fastloop.fault_tracker import (
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome
 from benchmarks.sregym.fastloop.records import TokenCounts
-from benchmarks.sregym.fastloop.sdo_agent import SdoPersistentAgent
+from benchmarks.sregym.fastloop.sdo_agent import SdoPersistentAgent, _timestamp
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -455,6 +455,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
         return replace(
             first,
             detected_at=detected,
+            responder_started_at=_timestamp(resolution.get("responder_started_at")),
+            responder_finished_at=_timestamp(resolution.get("responder_finished_at")),
             mitigation_applied_at=_last_successful_repair(resolution.get("repair_actions")),
             resolved_at=verified,
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
@@ -468,6 +470,12 @@ class CompositeSdoAgent(SdoPersistentAgent):
         last = outcomes[-1]
         return replace(
             first,
+            responder_started_at=min(
+                (item.responder_started_at for item in outcomes if item.responder_started_at), default=None
+            ),
+            responder_finished_at=max(
+                (item.responder_finished_at for item in outcomes if item.responder_finished_at), default=None
+            ),
             mitigation_applied_at=max(
                 (item.mitigation_applied_at for item in outcomes if item.mitigation_applied_at), default=None
             ),
@@ -504,6 +512,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         warm = False
         reasons: list[str] = []
         receipts_seen = 0
+        rebuild_verified = None
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             if not receipt and item.get("fallback_usage"):
@@ -516,6 +525,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
             receipts_seen += 1
             ledger = receipt.get("native_ledger")
             ledger = ledger if isinstance(ledger, dict) else {}
+            for rollout in ledger.get("rollout_receipts") or []:
+                if isinstance(rollout, dict) and rollout.get("success") is True:
+                    verified = _timestamp(rollout.get("verified_at"))
+                    if verified is not None and (rebuild_verified is None or verified > rebuild_verified):
+                        rebuild_verified = verified
             outcome_document = ledger.get("outcome_document")
             outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
             usage = _add(usage, TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")))
@@ -539,7 +553,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             reflection_seconds=self._reflection_drain_seconds + self._clock.monotonic() - started,
             reflection_started_at=self._reflection_started_at or observed_at,
             reflection_finished_at=self._clock.now(),
-            rebuild_done_at=self._clock.now(),
+            rebuild_done_at=rebuild_verified or self._clock.now(),
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 
