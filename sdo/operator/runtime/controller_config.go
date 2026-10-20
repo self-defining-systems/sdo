@@ -103,6 +103,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
+	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
 	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())
 

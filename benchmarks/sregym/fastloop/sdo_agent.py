@@ -106,6 +106,33 @@ def _summaries(items: object, *, successful_only: bool = False) -> str:
     )
 
 
+def _program_metrics(result: dict[str, Any]) -> dict[str, Any]:
+    runs = result.get("program_runs")
+    calls = result.get("program_tool_calls")
+    verdicts: dict[str, int] = {}
+    commands: dict[str, int] = {}
+    if isinstance(runs, list):
+        for run in runs:
+            if isinstance(run, dict):
+                verdict = run.get("verdict")
+                name = verdict.get("result") if isinstance(verdict, dict) else None
+                if isinstance(name, str):
+                    verdicts[name] = verdicts.get(name, 0) + 1
+    if isinstance(calls, list):
+        for call in calls:
+            if isinstance(call, dict) and isinstance(call.get("command"), str):
+                name = call["command"]
+                commands[name] = commands.get(name, 0) + 1
+    loops = result.get("response_loops_used")
+    return {
+        "program_diagnoses": len(runs) if isinstance(runs, list) else None,
+        "program_verdicts": verdicts,
+        "program_tool_calls": len(calls) if isinstance(calls, list) else None,
+        "tool_commands": commands,
+        "response_loops_used": loops if isinstance(loops, int) else None,
+    }
+
+
 class SdoPersistentAgent:
     name: AgentName = "sdo"
 
@@ -272,6 +299,7 @@ class SdoPersistentAgent:
             reflection_attempts=attempts if isinstance(attempts, int) else None,
             reflection_skipped_reason=skipped if isinstance(skipped, str) else None,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
+            **_program_metrics(outcome_document),
             error=error,
         )
 

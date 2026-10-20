@@ -109,11 +109,12 @@ type ControllerConfig struct {
 	ReflectionGuidance string `protobuf:"bytes,53,opt,name=reflection_guidance,json=reflectionGuidance,proto3" json:"reflection_guidance,omitempty"`
 	// Replays incident detectors on benchmark-supplied healthy snapshots. The
 	// validator receives only the bounded snapshot directory, read-only.
-	HealthyBaseline   bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
-	MaxResponseLoops  int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
-	DiagnosisDeadline *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	HealthyBaseline      bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
+	MaxResponseLoops     int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
+	DiagnosisDeadline    *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
+	DiagnosisSettleDelay *durationpb.Duration `protobuf:"bytes,57,opt,name=diagnosis_settle_delay,json=diagnosisSettleDelay,proto3" json:"diagnosis_settle_delay,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -524,11 +525,18 @@ func (x *ControllerConfig) GetDiagnosisDeadline() *durationpb.Duration {
 	return nil
 }
 
+func (x *ControllerConfig) GetDiagnosisSettleDelay() *durationpb.Duration {
+	if x != nil {
+		return x.DiagnosisSettleDelay
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xec\x16\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xbd\x17\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -590,7 +598,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"generalizeR\x0fgeneralize-specR\x12reflectionGuidance\x12)\n" +
 	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
 	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
-	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadlineB\x14\n" +
+	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12O\n" +
+	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelayB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13R\x06brokerR\vbroker_argsB\x88\x02\n" +
@@ -614,20 +623,21 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*durationpb.Duration)(nil), // 1: google.protobuf.Duration
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
-	1, // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
-	1, // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
-	1, // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	1, // 3: sdodev.contracts.v1alpha1.ControllerConfig.follow_up_cooldown:type_name -> google.protobuf.Duration
-	1, // 4: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	1, // 5: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	1, // 6: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	1, // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	1, // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	1,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
+	1,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
+	1,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
+	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.follow_up_cooldown:type_name -> google.protobuf.Duration
+	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
+	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
+	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
+	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
+	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_settle_delay:type_name -> google.protobuf.Duration
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

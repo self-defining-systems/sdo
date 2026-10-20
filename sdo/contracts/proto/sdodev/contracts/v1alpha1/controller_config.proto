@@ -107,4 +107,5 @@ message ControllerConfig {
   bool healthy_baseline = 54;
   int32 max_response_loops = 55 [(buf.validate.field).int32.gte = 0];
   google.protobuf.Duration diagnosis_deadline = 56;
+  google.protobuf.Duration diagnosis_settle_delay = 57;
 }

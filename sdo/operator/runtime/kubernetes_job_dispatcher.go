@@ -139,6 +139,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			return IncidentResult{}, fmt.Errorf("prepare responder tools: %w", err)
 		}
 		go func() { _ = server.Serve(toolCtx) }()
+		go loop.RetryInitialDiagnose(toolCtx)
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 	}
 	executor := worker_registry.KubernetesExecutor{
