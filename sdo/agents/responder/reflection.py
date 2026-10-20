@@ -4,6 +4,7 @@ import json
 import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
+from agentshim import SessionResumeError
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
@@ -118,6 +119,10 @@ class StatefulResponderBackend(Protocol):
         prompt: str,
         idempotency_key: str,
     ) -> ReflectionTurn: ...
+
+
+class ResponderSessionUnavailable(RuntimeError):
+    """The provider cannot continue the responder's incident session."""
 
 
 #: Upper bound on the rejected diff quoted into a retry prompt.
@@ -355,7 +360,7 @@ class SessionReflector:
                 prompt=prompt,
                 idempotency_key=idempotency_key,
             )
-        except RuntimeError as exc:
+        except ResponderSessionUnavailable as exc:
             print(f"reflection: cannot resume responder session ({exc}); starting fresh", file=sys.stderr)
             return self.resume(
                 session_id=session_id,
@@ -434,6 +439,20 @@ class CodexSessionBackend:
                 executor=self.executor,
             )
         except StructuredTurnError as exc:
+            if session_id is not None and (
+                str(exc) == f"{self.provider} cannot resume session {session_id!r}"
+                or (
+                    isinstance(exc.__cause__, SessionResumeError)
+                    and (
+                        self.provider == "codex"
+                        or "no conversation found" in exc.__cause__.stderr.lower()
+                        or "session not found" in exc.__cause__.stderr.lower()
+                    )
+                )
+            ):
+                raise ResponderSessionUnavailable(
+                    f"{self.provider} cannot resume session {session_id!r}: {exc}"
+                ) from exc
             raise RuntimeError(f"{self.provider} reflection failed: {exc}") from exc
         return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
 
