@@ -75,6 +75,12 @@ def test_native_receipt_verifies_correlated_go_ledger_and_health() -> None:
     assert receipt["outcome_commit"] == SHA_B
 
 
+def test_native_receipt_exports_reflection_usage() -> None:
+    ledger = _ledger()
+    ledger["reflection_decision"]["usage"] = {"input_tokens": 42, "output_tokens": 7}
+    assert _receipt(ledger)["reflection_usage"] == {"input_tokens": 42, "output_tokens": 7}
+
+
 @pytest.mark.parametrize(
     "change",
     [

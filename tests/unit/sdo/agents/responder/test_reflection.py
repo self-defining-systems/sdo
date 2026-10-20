@@ -210,6 +210,26 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     assert json.dumps({"incident_id": "inc-1"}) not in prompt  # full outcome context is richer
 
 
+def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    class MissingSession(_CapturingBackend):
+        def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            raise RuntimeError("session not found")
+
+    backend = MissingSession()
+    turn = SessionReflector(backend).resume(
+        session_id="missing",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    assert turn.learning_decision == "no_change"
+    assert backend.calls[0]["mode"] == "fresh"
+    assert "session not found" in capsys.readouterr().err
+
+
 def test_reflection_output_schema_is_strict_and_artifact_typed() -> None:
     schema = reflection_output_schema()
     assert schema["additionalProperties"] is False

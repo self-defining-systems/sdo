@@ -44,8 +44,9 @@ type ReflectionWorker interface {
 }
 
 type ReflectionDecision struct {
-	LearningDecision string `json:"learning_decision"`
-	NoChangeReason   string `json:"no_change_reason,omitempty"`
+	LearningDecision string        `json:"learning_decision"`
+	NoChangeReason   string        `json:"no_change_reason,omitempty"`
+	Usage            *UsageMetrics `json:"usage,omitempty"`
 }
 
 type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error)

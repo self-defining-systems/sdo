@@ -177,7 +177,7 @@ func reflectionSession(c Config) string {
 	if c.ReflectionSession != "" {
 		return c.ReflectionSession
 	}
-	return "fresh"
+	return "resume"
 }
 func reflectionGuidance(c Config) string {
 	if c.ReflectionGuidance != "" {

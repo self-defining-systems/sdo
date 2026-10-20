@@ -18,7 +18,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.988eeb5bea3ffdc5"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.c5da33bfb8d94a83"
 
 type repeatable []string
 
@@ -59,7 +59,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "fresh", "reflection session mode: fresh or resume")
+	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")

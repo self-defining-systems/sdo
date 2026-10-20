@@ -204,6 +204,7 @@ def native_production_receipt(
         "proposal_commit": ledger.get("proposal_commit") or None,
         "outcome_commit": ledger.get("outcome_commit"),
         "reflection_commit": ledger.get("reflection_commit") or None,
+        "reflection_usage": (ledger.get("reflection_decision") or {}).get("usage"),
         "outcome_classification": classification,
         "resolution": resolution,
     }

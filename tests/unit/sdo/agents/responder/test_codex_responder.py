@@ -188,6 +188,16 @@ def test_recorded_actions_policy_is_explicit_in_responder_prompt() -> None:
     assert "repair action receipt" in prompt
 
 
+def test_responder_prompt_keeps_reusable_checks_in_session_scratch() -> None:
+    prompt = _responder_prompt(IncidentRequest.model_validate_json(_fixture("incident_request.json")))
+    assert "multi-step or repeated check" in prompt
+    assert "session scratch directory" in prompt
+    assert "affected resources as arguments" in prompt
+    assert "no hard-coded resource names" in prompt
+    assert "one-off lookups" in prompt
+    assert "Never put scratch scripts in operational memory" in prompt
+
+
 def test_prompt_tells_the_responder_to_cancel_an_already_healed_finding() -> None:
     request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
 

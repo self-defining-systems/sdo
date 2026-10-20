@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"regexp"
 	"time"
 
@@ -32,9 +35,10 @@ type RegisteredReflectionWorker struct {
 	Timeout     time.Duration
 	SessionMode string
 	Guidance    string
-	// SessionExecutor supplies the narrow per-incident session transport only
-	// when resume is explicitly selected. Fresh reflection uses Executor.
-	SessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
+	// SessionExecutor supplies the narrow per-incident session transport for resume.
+	SessionExecutor      func(incidentID string) (ReflectionTaskExecutor, error)
+	FreshSessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
+	UsageLogPath         func(incidentID string) string
 }
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
@@ -48,7 +52,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	}
 	mode := w.SessionMode
 	if mode == "" {
-		mode = "fresh"
+		mode = "resume"
 	}
 	if mode != "fresh" && mode != "resume" {
 		return ReflectionDecision{}, fmt.Errorf("unsupported reflection session mode %q", mode)
@@ -61,9 +65,17 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		return ReflectionDecision{}, fmt.Errorf("unsupported reflection guidance %q", guidance)
 	}
 	if mode == "resume" && (closure.Result == nil || !resumableSessionID.MatchString(closure.Result.ResponderSessionID)) {
-		return ReflectionDecision{}, errors.New("resumed reflection requires a valid responder session ID in the accepted closure")
+		log.Printf("reflection incident %s: responder session ID is missing or invalid; starting fresh", workspace.IncidentID)
+		mode = "fresh"
 	}
 	executor := w.Executor
+	if mode == "fresh" && w.FreshSessionExecutor != nil {
+		var err error
+		executor, err = w.FreshSessionExecutor(workspace.IncidentID)
+		if err != nil {
+			return ReflectionDecision{}, fmt.Errorf("prepare fresh reflection session: %w", err)
+		}
+	}
 	if mode == "resume" {
 		if w.SessionExecutor == nil {
 			return ReflectionDecision{}, errors.New("resumed reflection requires isolated incident session transport")
@@ -184,5 +196,24 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("no-change reflection cannot propose artifacts")
 		}
 	}
-	return ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason()}, nil
+	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason()}
+	if w.UsageLogPath != nil {
+		data, err := os.ReadFile(w.UsageLogPath(workspace.IncidentID))
+		if err == nil {
+			for _, line := range bytes.Split(data, []byte("\n")) {
+				if len(line) == 0 {
+					continue
+				}
+				var record struct {
+					Usage *UsageMetrics `json:"usage"`
+				}
+				if json.Unmarshal(line, &record) == nil && record.Usage != nil {
+					decision.Usage = record.Usage
+				}
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return ReflectionDecision{}, fmt.Errorf("read reflection usage: %w", err)
+		}
+	}
+	return decision, nil
 }

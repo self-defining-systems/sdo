@@ -21,22 +21,22 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
-	Client                      kubernetes.Interface
-	Namespace                   string
-	Image                       string
-	Command                     []string
-	Registry                    *worker_registry.Registry
-	AgentID                     string
-	ServiceAccount              string
-	RepositoryPVC               string
-	RepositoryMountPath         string
-	RepositoryPVCSubPath        string
-	CredentialsSecret           string
-	Environment                 map[string]string
-	DispatchEnvironment         func(context.Context) map[string]string
-	PollInterval                time.Duration
-	Catalog                     memory.CatalogReader
-	RequireMemorySnapshot       bool
+	Client                kubernetes.Interface
+	Namespace             string
+	Image                 string
+	Command               []string
+	Registry              *worker_registry.Registry
+	AgentID               string
+	ServiceAccount        string
+	RepositoryPVC         string
+	RepositoryMountPath   string
+	RepositoryPVCSubPath  string
+	CredentialsSecret     string
+	Environment           map[string]string
+	DispatchEnvironment   func(context.Context) map[string]string
+	PollInterval          time.Duration
+	Catalog               memory.CatalogReader
+	RequireMemorySnapshot bool
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
@@ -89,6 +89,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		environment["CODEX_HOME"] = "/sdo/session/codex"
 		environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		environment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
 		if err := store.Ensure(ctx, request.IncidentID); err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare logical late findings transport: %w", err)

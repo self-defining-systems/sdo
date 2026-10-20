@@ -42,7 +42,7 @@ class NativeInstallConfig:
     agent_provider: str = "codex"
     repair_policy: str = "commit"
     late_findings: str = "off"
-    reflection_session: str = "fresh"
+    reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     max_follow_ups: int = 0
     follow_up_cooldown_seconds: int = 30

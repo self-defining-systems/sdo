@@ -103,7 +103,8 @@ def run_reflection_task(
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
     prior_session = closure.result.responder_session_id if closure.result is not None else ""
     if session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or ""):
-        raise ValueError("resume reflection requires a valid responder session")
+        print("reflection: responder session ID is missing or invalid; starting fresh", file=sys.stderr)
+        session_mode = "fresh"
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")

@@ -29,6 +29,9 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 func TestBoundedNativeControllerLaunch(t *testing.T) {
 	args := []string{"controller", "--app", "/workspace/application", "--namespace", "demo", "--responder-image", "responder:test", "--repository-pvc", "repository", "--repository-mount-path", "/workspace", "--credentials-secret", "credentials", "--worktree-root", "/workspace/worktrees", "--validator-image", "validator:test", "--model", "model", "--broker-mode=native", "--worker-mount-mode=proposal-only", "--duration", "30s", "--exit-after-closure", "--repair-policy", "recorded-actions"}
 	config, supervise, err := ParseControllerLaunch(args)
+	if err == nil && config.Controller.GetReflectionSession() != "resume" {
+		t.Fatalf("default reflection mode: %q", config.Controller.GetReflectionSession())
+	}
 	if err != nil || supervise || config.Controller.GetDuration().AsDuration().Seconds() != 30 || !config.Controller.GetExitAfterClosure() || config.Controller.GetRepairPolicy() != "recorded-actions" {
 		t.Fatalf("bounded native launch rejected: %+v %v %v", config.Controller, supervise, err)
 	}

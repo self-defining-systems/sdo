@@ -61,7 +61,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "fresh", "reflection session mode: fresh or resume")
+	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")

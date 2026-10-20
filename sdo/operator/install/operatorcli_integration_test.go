@@ -107,7 +107,7 @@ func TestOperateRejectsRegistryHostWithSchemeOrPath(t *testing.T) {
 }
 
 func TestNativeReflectionSessionIsForwardedToOperateAndController(t *testing.T) {
-	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", ReflectionSession: "resume"}
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
 	job, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +121,14 @@ func TestNativeReflectionSessionIsForwardedToOperateAndController(t *testing.T) 
 	}
 	if !contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "--reflection-session") || !contains(plan.Job.Spec.Template.Spec.Containers[0].Args, "resume") {
 		t.Fatalf("controller Job lost reflection mode: %v", plan.Job.Spec.Template.Spec.Containers[0].Args)
+	}
+	cfg.ReflectionSession = "fresh"
+	fresh, err := install.OperateJob(cfg, "healthy", "operation-2", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(fresh.Spec.Template.Spec.Containers[0].Args, "fresh") {
+		t.Fatalf("fresh reflection mode lost: %v", fresh.Spec.Template.Spec.Containers[0].Args)
 	}
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -347,12 +348,25 @@ class SessionReflector:
             "Reflect using the same incident context.\n"
             f"{request}"
         )
-        return self.backend.resume(
-            session_id=session_id,
-            worktree=worktree,
-            prompt=prompt,
-            idempotency_key=idempotency_key,
-        )
+        try:
+            return self.backend.resume(
+                session_id=session_id,
+                worktree=worktree,
+                prompt=prompt,
+                idempotency_key=idempotency_key,
+            )
+        except RuntimeError as exc:
+            print(f"reflection: cannot resume responder session ({exc}); starting fresh", file=sys.stderr)
+            return self.resume(
+                session_id=session_id,
+                incident_id=incident_id,
+                worktree=worktree,
+                outcome=outcome,
+                history=history,
+                outcome_commit=outcome_commit,
+                session_mode="fresh",
+                closure=closure,
+            )
 
 
 class CodexSessionBackend:

@@ -113,6 +113,12 @@ def test_agent_settings_keep_native_reflection_and_followup_options(monkeypatch:
     assert args.follow_up_cooldown_seconds == 12
 
 
+def test_reflection_defaults_to_resume_and_fresh_remains_selectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
+    assert driver._parse_args([]).reflection_session == "resume"
+    assert driver._parse_args(["--reflection-session", "fresh"]).reflection_session == "fresh"
+
+
 def test_receipt_is_persisted_atomically(tmp_path: Path) -> None:
     path = driver.persist_production_receipt({"schema_version": "sdo.production-receipt/v2"}, tmp_path)
     assert json.loads(path.read_text())["schema_version"] == "sdo.production-receipt/v2"

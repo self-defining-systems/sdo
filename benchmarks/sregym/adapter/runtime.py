@@ -47,7 +47,7 @@ class RuntimeConfig:
     wait_for_completion: bool = False
     repair_policy: str = "commit"
     agent_provider: str = "codex"
-    reflection_session: str = "fresh"
+    reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     late_findings: str = "off"
     max_follow_ups: int = 0
