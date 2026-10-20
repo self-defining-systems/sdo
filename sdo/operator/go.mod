@@ -34,7 +34,7 @@ require (
 	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 	golang.org/x/term v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
@@ -53,6 +53,9 @@ require (
 	k8s.io/api v0.30.3
 	k8s.io/apimachinery v0.30.3
 	k8s.io/client-go v0.30.3
+	sdo.dev/operator/sdk v0.0.0
 )
 
 replace sdo.dev/operator/contracts => ./contracts
+
+replace sdo.dev/operator/sdk => ./sdk

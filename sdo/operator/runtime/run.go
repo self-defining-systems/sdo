@@ -22,11 +22,13 @@ import (
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/worker_registry"
 )
 
 type RuntimeOptions struct {
+	Programs program.ProgramRegistry
 	Args     []string
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -53,7 +55,11 @@ func (values *repeatedFlag) Set(value string) error {
 }
 
 func Run(detectors []sdk.Detector) {
-	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{}); err != nil {
+	RunWithPrograms(detectors, nil)
+}
+
+func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry) {
+	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{Programs: programs}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

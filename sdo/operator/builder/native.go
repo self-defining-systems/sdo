@@ -155,6 +155,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := os.MkdirAll(filepath.Join(directory, "generated"), 0o755); err != nil {
 		return nil, err
 	}
+	if err := stagePrograms(ctx, config, directory, module); err != nil {
+		return nil, fmt.Errorf("validate playbook programs: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Join(directory, "cmd", "controller"), 0o755); err != nil {
 		return nil, err
 	}
@@ -184,7 +187,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 			return nil, err
 		}
 	}
-	main := fmt.Sprintf("package main\n\nimport (\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { runtime.Run(generated.All()) }\n", module+"/generated")
+	main := fmt.Sprintf("package main\n\nimport (\n\t\"log\"\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { programs, err := generated.Programs(); if err != nil { log.Fatal(err) }; runtime.RunWithPrograms(generated.All(), programs) }\n", module+"/generated")
 	if err := os.WriteFile(filepath.Join(directory, "cmd", "controller", "main.go"), []byte(main), 0o644); err != nil {
 		return nil, err
 	}
