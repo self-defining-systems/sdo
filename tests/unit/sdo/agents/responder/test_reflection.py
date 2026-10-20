@@ -206,7 +206,8 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     assert call["mode"] == "fresh"
     prompt = str(call["prompt"])
     assert "OperationalArtifactProposal" in prompt
-    assert "sdo-operator draft-test --app . --proposal-json" in prompt
+    assert "sdo-operator program scaffold" in prompt
+    assert "sdo-operator program propose" in prompt
     assert "Accepted architecture summary" in prompt
     assert ".sdo/outcomes/" not in prompt
     assert "sdo.operational_memory" not in prompt

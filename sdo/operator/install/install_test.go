@@ -56,6 +56,50 @@ func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	}
 }
 
+func TestControllerCanApplyProgramsOnlyInApplicationNamespace(t *testing.T) {
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var controller *rbacv1.Role
+	for _, role := range plan.AppRoles {
+		if role.Name == "sdo-controller" {
+			controller = role
+		}
+	}
+	if controller == nil || controller.Namespace != "demo" {
+		t.Fatalf("application controller role: %+v", controller)
+	}
+	for _, want := range []struct{ group, resource, verb string }{
+		{"", "services", "get"}, {"", "services", "patch"},
+		{"apps", "deployments", "get"}, {"apps", "deployments", "patch"},
+		{"apps", "statefulsets", "get"}, {"apps", "statefulsets", "patch"},
+		{"apps", "daemonsets", "get"}, {"apps", "daemonsets", "patch"},
+		{"apps", "replicasets", "get"}, {"apps", "replicasets", "list"},
+		{"apps", "controllerrevisions", "get"}, {"apps", "controllerrevisions", "list"},
+	} {
+		allowed := false
+		for _, rule := range controller.Rules {
+			if contains(rule.APIGroups, want.group) && contains(rule.Resources, want.resource) && contains(rule.Verbs, want.verb) {
+				allowed = true
+			}
+		}
+		if !allowed {
+			t.Errorf("missing %s %s/%s", want.verb, want.group, want.resource)
+		}
+	}
+	for _, role := range plan.ControlRoles {
+		if role.Name != "sdo-controller" {
+			continue
+		}
+		for _, rule := range role.Rules {
+			if contains(rule.Verbs, "patch") && (contains(rule.Resources, "services") || contains(rule.Resources, "deployments")) {
+				t.Fatal("program write permission leaked into control namespace")
+			}
+		}
+	}
+}
+
 func TestNativeRequiresEntrypointAndRejectsMixedArguments(t *testing.T) {
 	cfg := testConfig()
 	cfg.NativeCommand = nil

@@ -66,24 +66,25 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	Request           IncidentRequest
-	Programs          program.ProgramRegistry
-	Provider          SnapshotProvider
-	Detectors         []sdk.Detector
-	Executor          PlanExecutor
-	ReadView          func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline time.Duration
-	MaxBatches        int
-	Trust             map[string]ProgramTrust
-	mu                sync.Mutex
-	plans             map[string]selectedPlan
-	applications      map[string]PlanApplicationResult
-	applicationsLog   []RecordedPlanApplication
-	failureSignals    []string
-	calls             []ToolCall
-	runs              []ProgramRun
-	findings          []sdk.Finding
-	batches           int
+	Request             IncidentRequest
+	Programs            program.ProgramRegistry
+	Provider            SnapshotProvider
+	Detectors           []sdk.Detector
+	Executor            PlanExecutor
+	ReadView            func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline   time.Duration
+	CandidateSweepLimit int
+	MaxBatches          int
+	Trust               map[string]ProgramTrust
+	mu                  sync.Mutex
+	plans               map[string]selectedPlan
+	applications        map[string]PlanApplicationResult
+	applicationsLog     []RecordedPlanApplication
+	failureSignals      []string
+	calls               []ToolCall
+	runs                []ProgramRun
+	findings            []sdk.Finding
+	batches             int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -225,7 +226,7 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	if err != nil {
 		return nil
 	}
-	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 	l.runs = append(l.runs, runs...)
 	return runs
 }
@@ -396,7 +397,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
-	runs := SelectProgramCandidates(ctx, l.Programs, view, findings, l.deadline())
+	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 	response.ProgramRuns = append(response.ProgramRuns, runs...)
 	l.runs = append(l.runs, runs...)
 	response.Healthy = response.Error == "" && len(findings) == 0 && len(l.Detectors) > 0
