@@ -25,6 +25,25 @@ class ScriptDraft(ArtifactDraft):
     content: str = Field(min_length=1)
 
 
+class CorpusCaseDraft(ArtifactDraft):
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
+    open_json: str = Field(min_length=1)
+    fixed_json: str = Field(min_length=1)
+    healthy_json: str = Field(min_length=1)
+    recordings_json: str = Field(min_length=1)
+    labels_json: str = Field(min_length=1)
+
+
+class ProgramDraft(ArtifactDraft):
+    sources: list[GoSourceDraft] = Field(min_length=1)
+    corpus_cases: list[CorpusCaseDraft] = Field(min_length=1)
+
+
+class LibraryDraft(ArtifactDraft):
+    package: str = Field(min_length=1)
+    sources: list[GoSourceDraft] = Field(min_length=1)
+
+
 class DetectorDraft(ArtifactDraft):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
     detector_class: str = "incident"
@@ -49,11 +68,13 @@ class PlaybookDraft(ArtifactDraft):
     originating_incident: str = Field(min_length=1)
     markdown: str = Field(min_length=1)
     scripts: list[ScriptDraft] = Field(default_factory=list)
+    program: ProgramDraft | None = None
 
 
 class OperationalArtifactDraft(ArtifactDraft):
     detectors: list[DetectorDraft] = Field(default_factory=list)
     playbooks: list[PlaybookDraft] = Field(default_factory=list)
+    libraries: list[LibraryDraft] = Field(default_factory=list)
     delete_detector_ids: list[str] = Field(default_factory=list)
     delete_playbook_ids: list[str] = Field(default_factory=list)
 

@@ -37,6 +37,28 @@ func TestRegisteredReflectionWorkerExportsTurnUsage(t *testing.T) {
 	}
 }
 
+func TestRegisteredReflectionWorkerReturnsTypedSDKGap(t *testing.T) {
+	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
+	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		response, err := anypb.New(&contracts.ReflectionResult{
+			LearningDecision: "sdk_gap",
+			SdkGaps: []*contracts.SdkGap{{FaultClass: "service-port-mismatch", Primitive: "ProbeUDP", Reason: "The incident required a UDP probe", ScratchScript: "kubectl run probe"}},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	})
+	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
+	decision, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.LearningDecision != "sdk_gap" || len(decision.SDKGaps) != 1 || decision.SDKGaps[0].Primitive != "ProbeUDP" {
+		t.Fatalf("SDK gap lost: %+v", decision)
+	}
+}
+
 type reflectionTaskExecutorFunc func(context.Context, *contracts.AgentTask) (*contracts.AgentResult, error)
 
 func (f reflectionTaskExecutorFunc) Execute(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {

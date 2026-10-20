@@ -1,0 +1,1 @@
+{"namespace":"demo","services":[{"metadata":{"name":"peer","namespace":"demo"},"spec":{"selector":{"app":"peer"},"ports":[{"port":80,"targetPort":8080}]}}],"pods":[{"metadata":{"name":"peer-1","namespace":"demo","labels":{"app":"peer"}},"spec":{"containers":[{"name":"app","ports":[{"containerPort":8080}]}]}}]}

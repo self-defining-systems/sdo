@@ -77,7 +77,7 @@ message ReflectionRequest {
   string proposal_commit = 4;
   string outcome_commit = 5;
   OperationalMemorySnapshot memory_snapshot = 6;
-  // Empty selects a fresh reflection. Resume requires a valid prior responder session.
+  // Empty selects a resumed reflection. Resume requires a valid prior responder session.
   string session_mode = 7;
   // Empty selects baseline. Other modes are generalize and generalize-spec.
   string guidance = 8;
@@ -91,4 +91,12 @@ message ReflectionResult {
   string no_change_reason = 3;
   repeated string proposed_artifact_ids = 4;
   OperationalArtifactProposal artifact_proposal = 5;
+  repeated SdkGap sdk_gaps = 6;
+}
+
+message SdkGap {
+  string fault_class = 1;
+  string primitive = 2;
+  string reason = 3;
+  string scratch_script = 4;
 }

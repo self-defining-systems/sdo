@@ -33,7 +33,8 @@ ENV HOME=/tmp \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS=-p=2
+    GOFLAGS="-mod=mod -p=2"
+RUN cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 RUN find /opt/sdo/sdo/operator -name '*.py' -type f -delete \
     && chmod -R a+rX /opt/sdo/sdo/operator
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
@@ -67,16 +68,21 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS=-p=2
+    GOFLAGS="-mod=mod -p=2" \
+    CGO_ENABLED=0 \
+    SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs
 COPY --from=go-runtime /usr/local/go /usr/local/go
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-runtime /go/pkg/mod /go/pkg/mod
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+COPY examples/playbook-programs /opt/sdo/examples/playbook-programs
 COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
-RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs
+RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs /opt/sdo/examples \
+    && command -v go && command -v sdo-operator \
+    && cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 WORKDIR /opt/sdo
 
 FROM worker-runtime AS responder

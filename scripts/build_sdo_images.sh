@@ -33,6 +33,20 @@ docker build \
   --target sregym-responder \
   --tag sdo-sregym-responder:${tag} \
   "${repo_root}"
+for image in sdo-detector-validator sdo-controller sdo-responder sdo-sregym-responder; do
+  docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
+    command -v go >/dev/null
+    command -v sdo-operator >/dev/null
+    test "$GOPROXY" = off
+    test "$GOFLAGS" = "-mod=mod -p=2"
+    cd /opt/sdo/sdo/operator/sdk
+    go list ./program >/dev/null
+  '
+  docker run --rm --user 65532:65532 \
+    --volume "${repo_root}/tests/fixtures/sdo/playbook_program_app:/fixture:ro" \
+    "${image}:${tag}" \
+    sdo-operator validate --app /fixture --expect-schema "${validator_schema_identity}"
+done
 docker run --rm --user 65532:65532 \
   sdo-sregym-responder:${tag} \
   python3 -m benchmarks.sregym.adapter.submission --help >/dev/null

@@ -97,6 +97,65 @@ class WrongOriginReflector(LogicalReflector):
         )
 
 
+class ProgramReflector(LogicalReflector):
+    def resume(self, **kwargs: object) -> ReflectionTurn:
+        turn = super().resume(**kwargs)
+        assert turn.artifact_proposal is not None
+        return ReflectionTurn.model_validate(
+            {
+                "summary": "Compiled a reusable diagnosis",
+                "learning_decision": "updated",
+                "proposed_changes": [],
+                "artifact_proposal": {
+                    "playbooks": [
+                        {
+                            "id": "missing-service",
+                            "owner": "responder",
+                            "fault_class": "missing-service",
+                            "originating_incident": kwargs["outcome"].incident_id,
+                            "markdown": "# Missing service\n\n## Verification\nHealth cleared.\n",
+                            "program": {
+                                "sources": [{"name": "diagnose.go", "content": "package missingservice\n"}],
+                                "corpus_cases": [
+                                    {
+                                        "id": "missing-service-case",
+                                        "open_json": "{}",
+                                        "fixed_json": "{}",
+                                        "healthy_json": "{}",
+                                        "recordings_json": "{}",
+                                        "labels_json": "{}",
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "libraries": [
+                        {"package": "checks", "sources": [{"name": "checks.go", "content": "package checks\n"}]}
+                    ],
+                },
+            }
+        )
+
+
+class SdkGapReflector(Reflector):
+    def resume(self, **kwargs: object) -> ReflectionTurn:
+        return ReflectionTurn.model_validate(
+            {
+                "summary": "The proven log check needs an SDK primitive",
+                "learning_decision": "sdk_gap",
+                "proposed_changes": [],
+                "sdk_gaps": [
+                    {
+                        "fault_class": "missing-service",
+                        "primitive": "ReadPreviousContainerLogs",
+                        "reason": "The restarted container's previous logs identify the fault",
+                        "scratch_script": "kubectl logs --previous deployment/api",
+                    }
+                ],
+            }
+        )
+
+
 def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Path) -> None:
     closure = _closure()
     request = ReflectionRequest(
@@ -159,6 +218,14 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
     assert reflector.kwargs is not None
     assert reflector.kwargs["session_mode"] == "resume"
     assert reflector.kwargs["session_id"] == "responder-session-123"
+
+    request.session_mode = ""
+    task.request.Pack(request)
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    default = Reflector()
+    run_reflection_task(path, "result-map", Publisher(), reflector=default)
+    assert default.kwargs is not None
+    assert default.kwargs["session_mode"] == "resume"
 
     request.closure.result.responder_session_id = ""
     task.request.Pack(request)
@@ -273,6 +340,39 @@ def test_reflection_worker_returns_logical_artifact_proposal(tmp_path: Path) -> 
     assert result.response.Unpack(decision)
     assert decision.proposed_artifact_ids == ["missing-service"]
     assert decision.artifact_proposal.playbooks[0].id == "missing-service"
+
+
+@pytest.mark.parametrize("reflector", [ProgramReflector(), SdkGapReflector()])
+def test_reflection_worker_serializes_programs_and_sdk_gaps(tmp_path: Path, reflector: Reflector) -> None:
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit="outcome-commit"
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-program",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    publisher = Publisher()
+    run_reflection_task(path, "result-map", publisher, reflector=reflector)
+    assert publisher.payload is not None
+    result = parse_json(publisher.payload, AgentResult())
+    decision = ReflectionResult()
+    assert result.response.Unpack(decision)
+    if isinstance(reflector, ProgramReflector):
+        assert decision.artifact_proposal.playbooks[0].program.sources[0].name == "diagnose.go"
+        assert decision.artifact_proposal.playbooks[0].program.corpus_cases[0].healthy_json == "{}"
+        assert decision.artifact_proposal.libraries[0].package == "checks"
+    else:
+        assert decision.learning_decision == "sdk_gap"
+        assert decision.sdk_gaps[0].primitive == "ReadPreviousContainerLogs"
+        assert decision.sdk_gaps[0].scratch_script.startswith("kubectl logs")
 
 
 def test_reflection_worker_rejects_false_origin(tmp_path: Path) -> None:

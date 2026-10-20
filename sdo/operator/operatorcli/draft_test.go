@@ -65,6 +65,9 @@ func TestDraftTestCompilesTypedArtifactsWithoutEditingCheckout(t *testing.T) {
 }
 
 func TestDraftTestValidatesProgramProposal(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	app := t.TempDir()
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
 	copy := exec.Command("cp", "-a", fixture+"/.", app)

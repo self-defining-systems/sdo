@@ -143,6 +143,24 @@ func TestKubernetesValidatorProjectsHealthyBaselineOnlyForIncidentGate(t *testin
 	}
 }
 
+func TestKubernetesValidatorCompilesProgramsOffline(t *testing.T) {
+	launcher := KubernetesValidationJobClient{RepositoryPVC: "repository"}
+	job := launcher.validationJob("sdo-validator-test", "worktrees/candidate", strings.Repeat("a", 40), false)
+	env := map[string]string{}
+	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
+		env[entry.Name] = entry.Value
+	}
+	for name, want := range map[string]string{
+		"GOMODCACHE": "/go/pkg/mod",
+		"GOPROXY":    "off",
+		"GOFLAGS":    "-mod=mod -p=2",
+	} {
+		if env[name] != want {
+			t.Errorf("%s = %q, want %q", name, env[name], want)
+		}
+	}
+}
+
 func TestHealthyBaselineGateWaitsForAnIncidentDetectorProposal(t *testing.T) {
 	candidate := t.TempDir()
 	manifest := filepath.Join(candidate, ".sdo", "diagnostics", "manifest.yaml")

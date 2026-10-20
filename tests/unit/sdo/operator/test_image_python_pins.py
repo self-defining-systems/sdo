@@ -121,6 +121,53 @@ def test_validator_image_contains_no_python_dependency_install() -> None:
     assert "FROM go-runtime AS validator" in text
 
 
+def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
+    dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
+    assert "COPY examples/playbook-programs /opt/sdo/examples/playbook-programs" in dockerfile
+    assert "COPY --from=go-runtime /usr/local/go /usr/local/go" in dockerfile
+    assert "COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator" in dockerfile
+    assert "COPY --from=go-runtime /go/pkg/mod /go/pkg/mod" in dockerfile
+    assert "COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator" in dockerfile
+    assert "GOPROXY=off" in dockerfile
+    assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
+    assert "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs" in dockerfile
+    assert dockerfile.count("GOCACHE=/go/build-cache go list ./program") == 2
+    for relative in (
+        "playbooks/service-targetport-mismatch/diagnose.go",
+        "playbooks/service-targetport-mismatch/mitigate.go",
+        "lib/ports/ports.go",
+        "corpus/targetport-mismatch/open.json",
+        "corpus/targetport-mismatch/fixed.json",
+        "corpus/targetport-mismatch/healthy.json",
+        "corpus/targetport-mismatch/recordings.json",
+        "corpus/targetport-mismatch/labels.json",
+    ):
+        assert (REPO_ROOT / "examples/playbook-programs" / relative).is_file(), relative
+
+
+def test_validator_image_builds_programs_offline() -> None:
+    dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
+    for module in ("sdk", "core", "runtime", ""):
+        module_dir = f"sdo/operator/{module}" if module else "sdo/operator"
+        assert f"cd {module_dir} && go mod download all" in dockerfile
+    assert "FROM go-runtime AS validator" in dockerfile
+    assert "GOPROXY=off" in dockerfile
+    assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
+    assert "GOCACHE=/go/build-cache go list ./program" in dockerfile
+
+
+def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
+    script = (REPO_ROOT / "scripts/build_sdo_images.sh").read_text(encoding="utf-8")
+    for image in ("sdo-detector-validator", "sdo-controller", "sdo-responder", "sdo-sregym-responder"):
+        assert image in script
+    assert "--user 65532:65532" in script
+    assert "command -v go" in script
+    assert "command -v sdo-operator" in script
+    assert "go list ./program" in script
+    assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
+    assert "sdo-operator validate --app /fixture --expect-schema" in script
+
+
 def test_image_npm_installs_are_pinned_to_exact_versions() -> None:
     text = (REPO_ROOT / "sdo" / "operator" / "Dockerfile.runtime").read_text(encoding="utf-8")
     defaults = dict(re.findall(r"^ARG (\w+)=(\S+)$", text, re.MULTILINE))

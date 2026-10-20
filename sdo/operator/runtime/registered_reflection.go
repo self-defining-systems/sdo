@@ -169,11 +169,25 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err := result.GetResponse().UnmarshalTo(response); err != nil {
 		return ReflectionDecision{}, fmt.Errorf("reflection result contract: %w", err)
 	}
-	if response.GetLearningDecision() != "updated" && response.GetLearningDecision() != "no_change" {
+	if response.GetLearningDecision() != "updated" && response.GetLearningDecision() != "no_change" && response.GetLearningDecision() != "sdk_gap" {
 		return ReflectionDecision{}, errors.New("reflection result requires an explicit learning decision")
 	}
 	if response.GetLearningDecision() == "no_change" && response.GetNoChangeReason() == "" {
 		return ReflectionDecision{}, errors.New("no-change reflection requires a concrete reason")
+	}
+	if response.GetLearningDecision() == "sdk_gap" && len(response.GetSdkGaps()) == 0 {
+		return ReflectionDecision{}, errors.New("sdk_gap reflection requires a typed SDK gap")
+	}
+	if response.GetLearningDecision() == "no_change" && len(response.GetSdkGaps()) > 0 {
+		return ReflectionDecision{}, errors.New("no-change reflection cannot report SDK gaps")
+	}
+	if response.GetLearningDecision() == "sdk_gap" && response.GetArtifactProposal() != nil {
+		return ReflectionDecision{}, errors.New("sdk_gap reflection cannot propose artifacts")
+	}
+	for _, gap := range response.GetSdkGaps() {
+		if gap.GetFaultClass() == "" || gap.GetPrimitive() == "" || gap.GetReason() == "" || gap.GetScratchScript() == "" {
+			return ReflectionDecision{}, errors.New("SDK gap requires fault class, primitive, reason, and scratch script")
+		}
 	}
 	if w.Catalog != nil {
 		if err := memory.RequireCleanProposalCheckout(ctx, workspace.Worktree); err != nil {
@@ -193,10 +207,10 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, fmt.Errorf("materialize reflection artifacts: %w", err)
 			}
 		} else if response.GetArtifactProposal() != nil {
-			return ReflectionDecision{}, errors.New("no-change reflection cannot propose artifacts")
+			return ReflectionDecision{}, errors.New("reflection without updated learning cannot propose artifacts")
 		}
 	}
-	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason()}
+	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), SDKGaps: response.GetSdkGaps()}
 	if w.UsageLogPath != nil {
 		data, err := os.ReadFile(w.UsageLogPath(workspace.IncidentID))
 		if err == nil {
