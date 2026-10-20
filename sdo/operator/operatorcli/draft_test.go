@@ -2,6 +2,8 @@ package operatorcli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +11,10 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestParseDraftTestRequiresTypedProposal(t *testing.T) {
@@ -19,6 +24,41 @@ func TestParseDraftTestRequiresTypedProposal(t *testing.T) {
 	config, err := ParseDraftTestLaunch([]string{"draft-test", "--app", ".", "--proposal-json", "draft.json", "--operator-root", ".."})
 	if err != nil || config.ProposalJSON != "draft.json" {
 		t.Fatalf("parse draft-test: %+v, %v", config, err)
+	}
+}
+
+func TestDraftAllowsRealisticCapturedCorpusWithSeparateBound(t *testing.T) {
+	view := sdktest.Snapshot{NamespaceName: "app"}
+	for i := 0; i < 110; i++ {
+		view.ConfigMapList = append(view.ConfigMapList, corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("configuration-%03d", i), Namespace: "app"}, Data: map[string]string{"settings": strings.Repeat("x", 20<<10)}})
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := string(encoded)
+	if len(large) < 2<<20 {
+		t.Fatalf("fixture too small: %d", len(large))
+	}
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "large", Owner: "responder", FaultClass: "large", OriginatingIncident: "incident", Markdown: "# Large", Program: &contracts.ProposedProgram{CorpusCases: []*contracts.ProposedCorpusCase{{Id: "large", OpenJson: large, FixedJson: "{}", HealthyJson: "{}", RecordingsJson: "[]", LabelsJson: "{}"}}}}}}
+	app := draftFixtureApp(t)
+	path := filepath.Join(t.TempDir(), "draft.json")
+	check := func() error {
+		data, err := protojson.Marshal(proposal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path})
+	}
+	if err := check(); err == nil || !strings.Contains(err.Error(), "program needs diagnose.go") {
+		t.Fatalf("2 MiB corpus did not reach proposal validation: %v", err)
+	}
+	proposal.Playbooks[0].Program.CorpusCases[0].OpenJson = strings.Repeat("x", 8<<20)
+	if err := check(); err == nil || !strings.Contains(err.Error(), "exceeds 8 MiB") {
+		t.Fatalf("oversized corpus accepted: %v", err)
 	}
 }
 

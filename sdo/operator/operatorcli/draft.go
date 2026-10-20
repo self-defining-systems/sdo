@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -61,8 +62,8 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	if err != nil {
 		return fmt.Errorf("read typed draft: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
-		return errors.New("typed draft must be a regular JSON file of at most 1 MiB")
+	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
+		return errors.New("typed draft must be a regular JSON file of at most 64 MiB")
 	}
 	data, err := os.ReadFile(config.ProposalJSON)
 	if err != nil {
@@ -71,6 +72,9 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	proposal := &contracts.OperationalArtifactProposal{}
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(data, proposal); err != nil {
 		return fmt.Errorf("decode typed artifact draft: %w", err)
+	}
+	if err := validateDraftSize(proposal); err != nil {
+		return err
 	}
 	applyArtifactSchemaDefaults(proposal)
 	app, err := filepath.Abs(config.ApplicationRoot)
@@ -117,6 +121,28 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	defer workspace.Close()
 	if _, err := workspace.ValidateAndBuild(ctx); err != nil {
 		return fmt.Errorf("compile typed artifact draft: %w", err)
+	}
+	return nil
+}
+
+func validateDraftSize(proposal *contracts.OperationalArtifactProposal) error {
+	copy := proto.Clone(proposal).(*contracts.OperationalArtifactProposal)
+	for _, playbook := range copy.GetPlaybooks() {
+		if program := playbook.GetProgram(); program != nil {
+			for _, corpus := range program.GetCorpusCases() {
+				if len(corpus.GetOpenJson())+len(corpus.GetFixedJson())+len(corpus.GetHealthyJson())+len(corpus.GetRecordingsJson())+len(corpus.GetLabelsJson()) > 8<<20 {
+					return fmt.Errorf("corpus case %q exceeds 8 MiB", corpus.GetId())
+				}
+			}
+			program.CorpusCases = nil
+		}
+	}
+	base, err := protojson.Marshal(copy)
+	if err != nil {
+		return err
+	}
+	if len(base) > 1<<20 {
+		return errors.New("typed draft outside corpus must be at most 1 MiB")
 	}
 	return nil
 }

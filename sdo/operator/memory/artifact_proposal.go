@@ -383,6 +383,9 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 					return fmt.Errorf("playbook %q has invalid or duplicate corpus case %q", item.GetId(), corpus.GetId())
 				}
 				corpusIDs[corpus.GetId()] = true
+				if len(corpus.GetOpenJson())+len(corpus.GetFixedJson())+len(corpus.GetHealthyJson())+len(corpus.GetRecordingsJson())+len(corpus.GetLabelsJson()) > 8<<20 {
+					return fmt.Errorf("playbook %q corpus %q exceeds 8 MiB", item.GetId(), corpus.GetId())
+				}
 				for name, value := range map[string]string{"open": corpus.GetOpenJson(), "fixed": corpus.GetFixedJson(), "healthy": corpus.GetHealthyJson(), "recordings": corpus.GetRecordingsJson(), "labels": corpus.GetLabelsJson()} {
 					if !json.Valid([]byte(value)) {
 						return fmt.Errorf("playbook %q corpus %q has invalid %s JSON", item.GetId(), corpus.GetId(), name)
