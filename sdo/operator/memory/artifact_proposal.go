@@ -240,10 +240,6 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 				return err
 			}
 		}
-		origin := proposal.GetPlaybooks()[0].GetOriginatingIncident()
-		if err := os.WriteFile(filepath.Join(base, "metadata.yaml"), []byte("originating_incident: "+strconv.Quote(origin)+"\n"), 0o644); err != nil {
-			return err
-		}
 	}
 	for _, generator := range proposal.GetTrafficGenerators() {
 		base := filepath.Join(root, ".sdo", "diagnostics", "traffic", "generators")
@@ -279,6 +275,9 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 		if err := os.WriteFile(filepath.Join(base, workload.GetName()+".yaml"), encoded, 0o644); err != nil {
 			return err
 		}
+	}
+	if err := os.MkdirAll(playbookRoot, 0o755); err != nil {
+		return err
 	}
 	return refreshPlaybookIndex(playbookRoot)
 }
@@ -392,15 +391,6 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		}
 	}
 	for _, library := range proposal.GetLibraries() {
-		if len(proposal.GetPlaybooks()) == 0 {
-			return errors.New("shared library needs an originating playbook proposal")
-		}
-		origin := proposal.GetPlaybooks()[0].GetOriginatingIncident()
-		for _, playbook := range proposal.GetPlaybooks() {
-			if playbook.GetOriginatingIncident() != origin {
-				return errors.New("shared libraries in one proposal need one originating incident")
-			}
-		}
 		if library == nil || role != ResponderArtifacts || !safeLibraryPackage(library.GetPackage()) || len(library.GetSources()) == 0 {
 			return fmt.Errorf("invalid responder library package %q", library.GetPackage())
 		}
