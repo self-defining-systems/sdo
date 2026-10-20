@@ -185,8 +185,9 @@ def _up(args: argparse.Namespace) -> int:
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
         app = worker.request("app_info", problem_id=args.problem)
-    environment = placeholder.model_copy(
-        update={
+    environment = FastloopEnvironment.model_validate(
+        {
+            **placeholder.model_dump(),
             "kubeconfig": Path(str(cluster["kubeconfig"])),
             "namespace": str(app["namespace"]),
             "application": str(app["app_name"]),

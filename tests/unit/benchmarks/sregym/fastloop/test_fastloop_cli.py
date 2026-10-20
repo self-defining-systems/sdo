@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -58,6 +59,42 @@ def test_tables_have_one_row_per_incident_and_per_agent() -> None:
 def test_run_requires_an_environment_from_up(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="fastloop up"):
         FastloopEnvironment.load(tmp_path)
+
+
+def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    (tmp_path / "application_workspace").mkdir()
+
+    class Worker:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> Worker:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+        def request(self, op: str, **_kwargs: object) -> dict[str, object]:
+            if op == "cluster":
+                return {"kubeconfig": str(tmp_path / "worker.kubeconfig")}
+            if op == "deploy":
+                return {"deployed": True}
+            assert op == "app_info"
+            return {"app_name": "Hotel Reservation", "namespace": "hotel-reservation", "descriptions": "hotel"}
+
+    monkeypatch.setattr(cli, "SregymWorker", Worker)
+    assert main(["up", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox"]) == 0
+    assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
+
+    path = tmp_path / "fastloop.json"
+    old = json.loads(path.read_text(encoding="utf-8"))
+    old["application"] = "Hotel Reservation"
+    path.write_text(json.dumps(old), encoding="utf-8")
+    assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
 
 
 def test_parser_defaults_match_the_benchmark_configuration() -> None:
