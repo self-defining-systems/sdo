@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
 
 
@@ -58,6 +59,63 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
 def test_recovery_that_never_becomes_healthy_fails_the_loop() -> None:
     with pytest.raises(FastloopFaultError, match="mongodb-geo"):
         _driver(FakeWorker(health_sequence=[False]), timeout=5.0).recover()
+
+
+def test_recovery_reconciles_before_waiting_for_health() -> None:
+    events: list[str] = []
+
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            events.append("list")
+            return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "grant-fix"}, "spec": {}}]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            events.append("delete")
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            events.append("apply")
+
+    class Worker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            events.append(op)
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(
+        Worker(),
+        namespace="hotel-reservation",
+        baseline=ApplicationBaseline("hotel-reservation", []),
+        cluster=Cluster(),
+    )
+
+    driver.recover()
+
+    assert events == ["recover", "list", "delete", "health"]
+    assert driver.last_cleanup.deleted_counts == {"Job": 1}
+
+
+def test_recovery_cleans_every_recorded_application_namespace() -> None:
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "agent-fix"}, "spec": {}}]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            deleted.append((namespace, kind, name))
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError(value)
+
+    deleted: list[tuple[str, str, str]] = []
+    driver = SregymFaultDriver(
+        FakeWorker(),
+        namespace="hotel-reservation",
+        baseline=(ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])),
+        cluster=Cluster(),
+    )
+
+    driver.recover()
+
+    assert deleted == [("hotel-reservation", "Job", "agent-fix"), ("hotel-db", "Job", "agent-fix")]
+    assert driver.last_cleanup.deleted_counts == {"Job": 2}
 
 
 def test_oracle_verdict_is_typed() -> None:

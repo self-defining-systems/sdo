@@ -29,6 +29,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.fastloop.baseline_recovery import (
+    KubectlApplicationCluster,
+    application_namespaces,
+    capture_application_baseline,
+    load_application_baseline,
+    save_application_baseline,
+)
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
@@ -194,6 +201,12 @@ def _up(args: argparse.Namespace) -> int:
             "description": str(app["descriptions"]),
         }
     )
+    cluster = KubectlApplicationCluster(environment.kubeconfig)
+    namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+    save_application_baseline(
+        environment.baseline_path,
+        tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
+    )
     environment.save()
     print(
         f"fastloop environment ready: cluster={environment.cluster} namespace={environment.namespace} "
@@ -356,7 +369,19 @@ def _run(args: argparse.Namespace) -> int:
             baseline_path=str(environment.baseline_path),
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
-        driver = SregymFaultDriver(worker, namespace=environment.namespace, health_timeout_seconds=args.health_timeout)
+        baseline = load_application_baseline(environment.baseline_path, environment.namespace)
+        if baseline is None:
+            logger.warning(
+                "application baseline absent in %s; recovery will use the older fault-only path",
+                environment.baseline_path,
+            )
+        driver = SregymFaultDriver(
+            worker,
+            namespace=environment.namespace,
+            baseline=baseline,
+            cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
+            health_timeout_seconds=args.health_timeout,
+        )
         if args.agent == "sdo":
             records = run_incidents(
                 _sdo_agent(

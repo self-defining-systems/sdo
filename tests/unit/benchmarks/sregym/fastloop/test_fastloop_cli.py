@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
+from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
 from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, format_summary, main
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
@@ -85,13 +86,27 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             if op == "cluster":
                 return {"kubeconfig": str(tmp_path / "worker.kubeconfig")}
             if op == "deploy":
+                (tmp_path / "cluster_baseline_state.json").write_text('{"namespaces": ["observe"]}', encoding="utf-8")
                 return {"deployed": True}
             assert op == "app_info"
             return {"app_name": "Hotel Reservation", "namespace": "hotel-reservation", "descriptions": "hotel"}
 
     monkeypatch.setattr(cli, "SregymWorker", Worker)
+    monkeypatch.setattr(cli, "application_namespaces", lambda *_args: ("hotel-reservation",))
+
+    class Cluster:
+        def __init__(self, _kubeconfig: Path) -> None:
+            pass
+
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            return [{"kind": "Deployment", "metadata": {"name": "mongo", "namespace": namespace}, "spec": {}}]
+
+    monkeypatch.setattr(cli, "KubectlApplicationCluster", Cluster)
     assert main(["up", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox"]) == 0
     assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
+    baseline = load_application_baseline(tmp_path / "cluster_baseline_state.json", "hotel-reservation")
+    assert baseline is not None
+    assert baseline[0].objects[0]["metadata"]["name"] == "mongo"
 
     path = tmp_path / "fastloop.json"
     old = json.loads(path.read_text(encoding="utf-8"))
