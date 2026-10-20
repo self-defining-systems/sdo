@@ -236,6 +236,15 @@ def _run_one(
     outcome: AgentOutcome | None = None
     try:
         outcome = agent.resolve(index, problem_id, inject)
+    except KeyboardInterrupt:
+        if windows:
+            try:
+                driver.recover()
+                if not driver.oracle().success:
+                    logger.error("fault oracle still fails after interrupt recovery for incident %d", index)
+            except Exception:
+                logger.exception("fault recovery failed after interrupt for incident %d", index)
+        raise
     except Exception as exc:
         logger.exception("incident %d failed", index)
         errors.append(_describe(exc))

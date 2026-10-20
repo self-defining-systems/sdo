@@ -146,6 +146,23 @@ def test_a_failed_incident_is_recorded_recovered_and_the_loop_continues(tmp_path
     assert driver.events.count("recover") == 2
 
 
+def test_interrupt_after_injection_recovers_and_checks_the_oracle_before_exiting(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+
+    class InterruptedAgent(FakeAgent):
+        def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
+            inject()
+            raise KeyboardInterrupt
+
+    agent = InterruptedAgent(clock)
+    with pytest.raises(KeyboardInterrupt):
+        run_incidents(agent, driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert driver.events == ["inject:p1", "recover", "oracle"]
+    assert agent.events == ["close"]
+
+
 def test_the_loop_stops_when_the_fault_cannot_be_recovered(tmp_path: Path) -> None:
     clock = FakeClock()
     driver, agent = FakeDriver(clock, recover_fails=True), FakeAgent(clock)
