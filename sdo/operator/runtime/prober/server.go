@@ -18,11 +18,12 @@ import (
 
 // API paths served by the prober.
 const (
-	PathHealth  = "/healthz"
-	PathWindows = "/v1/windows"
-	PathBursts  = "/v1/bursts"
-	PathReset   = "/v1/reset"
-	DefaultPort = 8080
+	PathHealth    = "/healthz"
+	PathWindows   = "/v1/windows"
+	PathBursts    = "/v1/bursts"
+	PathReset     = "/v1/reset"
+	PathPrimitive = "/v1/primitive"
+	DefaultPort   = 8080
 )
 
 // WindowsResponse is the body of GET /v1/windows.
@@ -64,6 +65,25 @@ func Handler(prober *Prober) http.Handler {
 			return
 		}
 		result, err := prober.Burst(request.Context(), burst)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	mux.HandleFunc(PathPrimitive, func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			http.Error(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var probe PrimitiveRequest
+		decoder := json.NewDecoder(io.LimitReader(request.Body, 8*1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&probe); err != nil {
+			http.Error(w, "decode primitive request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		result, err := prober.Primitive(request.Context(), probe)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
