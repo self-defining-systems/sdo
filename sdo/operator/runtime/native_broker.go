@@ -44,9 +44,10 @@ type ReflectionWorker interface {
 }
 
 type ReflectionDecision struct {
-	LearningDecision string        `json:"learning_decision"`
-	NoChangeReason   string        `json:"no_change_reason,omitempty"`
-	Usage            *UsageMetrics `json:"usage,omitempty"`
+	LearningDecision string              `json:"learning_decision"`
+	NoChangeReason   string              `json:"no_change_reason,omitempty"`
+	SDKGaps          []*contracts.SdkGap `json:"sdk_gaps,omitempty"`
+	Usage            *UsageMetrics       `json:"usage,omitempty"`
 }
 
 type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error)
@@ -304,8 +305,9 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					}
 					ledger.ReflectionCommit = accepted.Commit
 					reflectionPaths = accepted.ChangedPaths
-				} else if ledger.ReflectionDecision.LearningDecision != "no_change" || strings.TrimSpace(ledger.ReflectionDecision.NoChangeReason) == "" {
-					return errors.New("no-op reflection requires no_change decision and concrete reason")
+				} else if (ledger.ReflectionDecision.LearningDecision == "sdk_gap" && len(ledger.ReflectionDecision.SDKGaps) == 0) ||
+					(ledger.ReflectionDecision.LearningDecision != "sdk_gap" && (ledger.ReflectionDecision.LearningDecision != "no_change" || strings.TrimSpace(ledger.ReflectionDecision.NoChangeReason) == "")) {
+					return errors.New("no-op reflection requires sdk_gap or no_change decision with concrete reason")
 				}
 			}
 			if err := n.setRolloutExpectation(ctx, &ledger, reflectionPaths); err != nil {

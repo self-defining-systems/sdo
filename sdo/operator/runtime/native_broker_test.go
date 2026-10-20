@@ -228,6 +228,42 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	}
 }
 
+func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
+	target := nativeRepository(t)
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{
+		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"),
+		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
+		}),
+		ResponderBackend: "test", ResponderModel: "test",
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
+			return ReflectionDecision{LearningDecision: "sdk_gap", SDKGaps: []*contracts.SdkGap{{FaultClass: "service-port-mismatch", Primitive: "ProbeUDP", Reason: "UDP health check needed", ScratchScript: "kubectl run probe"}}}, nil
+		}),
+	}
+	workspace, err := native.PrepareIncident(context.Background(), "sdk-gap-incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace.Worktree, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closure := nativeClosure(workspace)
+	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := native.readLedger(workspace.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.ReflectionProcessed || ledger.ReflectionDecision == nil || len(ledger.ReflectionDecision.SDKGaps) != 1 || ledger.ReflectionDecision.SDKGaps[0].Primitive != "ProbeUDP" {
+		t.Fatalf("SDK gap missing from incident ledger: %+v", ledger.ReflectionDecision)
+	}
+}
+
 func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)

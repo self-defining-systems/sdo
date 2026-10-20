@@ -117,6 +117,7 @@ AgentTask = worker_pb2.AgentTask
 AgentResult = worker_pb2.AgentResult
 ReflectionRequest = worker_pb2.ReflectionRequest
 ReflectionResult = worker_pb2.ReflectionResult
+SdkGap = worker_pb2.SdkGap
 SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
 SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
 DeploymentPlan = lifecycle_pb2.DeploymentPlan
@@ -172,6 +173,7 @@ __all__ = [
     "ProposalWorkspace",
     "ReflectionRequest",
     "ReflectionResult",
+    "SdkGap",
     "SourceDeploymentRequest",
     "SourceDeploymentResult",
     "DeploymentPlan",
