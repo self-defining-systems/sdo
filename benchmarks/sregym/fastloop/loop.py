@@ -6,24 +6,26 @@ resolves the incident. The loop grades the live cluster with the problem's own
 deterministic oracle, recovers the fault the harness's way, lets the agent
 learn (SDO reflection, measured separately), and appends one record.
 
-There is no conductor, no LLM judge, and no application rebuild or undeploy
-between incidents.
+There is no conductor or application rebuild or undeploy between incidents.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.fastloop.records import (
     AgentName,
+    DiagnosisGrade,
     IncidentRecord,
     OracleVerdict,
     TokenCounts,
     append_record,
+    write_records,
 )
 
 if TYPE_CHECKING:
@@ -110,6 +112,10 @@ class IncidentAgent(Protocol):
     def close(self) -> None: ...
 
 
+class DiagnosisGrader(Protocol):
+    def grade(self, problem_ids: tuple[str, ...], diagnosis: str) -> DiagnosisGrade: ...
+
+
 @dataclass(frozen=True)
 class LoopConfig:
     run_id: str
@@ -138,18 +144,38 @@ def run_incidents(
     driver: FaultDriver,
     config: LoopConfig,
     *,
+    grader: DiagnosisGrader | None = None,
+    diagnosis_grading: str = "off",
+    grading_timeout_seconds: float = 1800.0,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> list[IncidentRecord]:
     """Run ``config.incidents`` incidents, cycling through ``config.problems``."""
 
     records: list[IncidentRecord] = []
+    if diagnosis_grading not in ("off", "deferred", "inline"):
+        raise ValueError("diagnosis_grading must be off, deferred, or inline")
+    if diagnosis_grading != "off" and grader is None:
+        raise ValueError("diagnosis grader is required when grading is enabled")
+    pool = ThreadPoolExecutor(max_workers=2) if diagnosis_grading == "deferred" else None
+    pending: dict[Future[DiagnosisGrade], IncidentRecord] = {}
     try:
         for index in range(config.incidents):
             ids = config.stream[index] if config.stream else (config.problems[index % len(config.problems)],)
-            record, recovered = _run_one(agent, driver, config, index, ids, monotonic=monotonic, now=now)
+            record, recovered = _run_one(
+                agent,
+                driver,
+                config,
+                index,
+                ids,
+                monotonic=monotonic,
+                now=now,
+                grader=grader if diagnosis_grading == "inline" else None,
+            )
             append_record(config.results_path, record)
             records.append(record)
+            if pool is not None and grader is not None:
+                pending[pool.submit(grader.grade, ids, record.diagnosis)] = record
             logger.info(
                 "incident %d %s: oracle=%s wall=%.1fs error=%s",
                 index,
@@ -163,6 +189,22 @@ def run_incidents(
                 break
     finally:
         agent.close()
+        if pool is not None:
+            try:
+                done, outstanding = wait(pending, timeout=grading_timeout_seconds)
+                for future in done:
+                    record = pending[future]
+                    try:
+                        record.diagnosis_grade = future.result()
+                    except Exception as exc:
+                        record.diagnosis_grade = DiagnosisGrade(error=_describe(exc))
+                for future in outstanding:
+                    pending[future].diagnosis_grade = DiagnosisGrade(error="diagnosis grading timed out")
+                    future.cancel()
+                if records:
+                    write_records(config.results_path, records)
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
     return records
 
 
@@ -175,6 +217,7 @@ def _run_one(
     *,
     monotonic: Callable[[], float],
     now: Callable[[], datetime],
+    grader: DiagnosisGrader | None = None,
 ) -> tuple[IncidentRecord, bool]:
     started = monotonic()
     problem_id = "+".join(problem_ids)
@@ -203,6 +246,12 @@ def _run_one(
     recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
     recovered = bool(windows)
+    diagnosis_grade: DiagnosisGrade | None = None
+    if windows and grader is not None:
+        try:
+            diagnosis_grade = grader.grade(problem_ids, outcome.diagnosis if outcome else "")
+        except Exception as exc:
+            diagnosis_grade = DiagnosisGrade(error=_describe(exc))
     if windows:
 
         def grade() -> OracleVerdict:
@@ -260,6 +309,7 @@ def _run_one(
         injection_finished_at=window.finished_at,
         oracle=oracle,
         recovery_oracle=recovery_oracle,
+        diagnosis_grade=diagnosis_grade,
         oracle_finished_at=oracle_finished_at,
         recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,

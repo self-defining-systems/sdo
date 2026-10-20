@@ -33,13 +33,13 @@ from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvi
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
-from benchmarks.sregym.fastloop.stream import load_stream
+from benchmarks.sregym.fastloop.stream import load_stream_config
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter import ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
-    from benchmarks.sregym.fastloop.loop import IncidentAgent
+    from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +320,13 @@ def _run(args: argparse.Namespace) -> int:
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     results_dir = environment.run_dir / "results" / run_id
-    stream = load_stream(args.stream) if args.stream else ()
+    stream_config = load_stream_config(args.stream) if args.stream else None
+    stream = stream_config.incidents if stream_config else ()
+    grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
+    judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
+    from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
+
+    grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
     if stream:
         from benchmarks.sregym.fastloop.fault_tracker import composite_faults
@@ -354,12 +360,23 @@ def _run(args: argparse.Namespace) -> int:
                 ),
                 driver,
                 config,
+                grader=grader,
+                diagnosis_grading=grading_mode,
             )
         else:
-            records = _run_codex(args, environment, results_dir, worker, driver, config)
+            records = _run_codex(args, environment, results_dir, worker, driver, config, grader, grading_mode)
     _print_summary(records)
     print(f"results: {config.results_path}")
-    return 0 if records and all(record.error is None for record in records) else 1
+    return (
+        0
+        if records
+        and all(
+            record.error is None
+            and (grading_mode == "off" or (record.diagnosis_grade is not None and record.diagnosis_grade.error is None))
+            for record in records
+        )
+        else 1
+    )
 
 
 def _run_codex(
@@ -369,6 +386,8 @@ def _run_codex(
     worker: SregymWorker,
     driver: SregymFaultDriver,
     config: LoopConfig,
+    grader: DiagnosisGrader | None = None,
+    grading_mode: str = "off",
 ) -> list[IncidentRecord]:
     from benchmarks.sregym.fastloop.codex_agent import CodexBaselineAgent, CodexSettings, SubmissionStub
 
@@ -419,7 +438,7 @@ def _run_codex(
                 report_dir=results_dir,
                 settings=_composite_settings(args),
             )
-        return run_incidents(agent, driver, config)
+        return run_incidents(agent, driver, config, grader=grader, diagnosis_grading=grading_mode)
 
 
 def _collect(paths: list[Path]) -> list[IncidentRecord]:
@@ -597,11 +616,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
     run.add_argument("--problem", action="append", help="problem id; repeat to cycle through several")
-    run.add_argument("--stream", type=Path, help="JSON array of problem IDs or arrays of IDs composed together")
+    run.add_argument("--stream", type=Path, help="JSON array or object with incidents and grading settings")
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
+    run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
+    run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")
