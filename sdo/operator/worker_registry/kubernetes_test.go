@@ -48,9 +48,10 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	executor := KubernetesExecutor{
 		Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
-		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
-		CredentialsSecret:     "agent-provider-credentials",
-		LateFindingsConfigMap: "sdo-late-incident",
+		SessionPVCSubPath:      "tenant/.sdo-runtime/sessions/incident-hash",
+		CapturedCorpusReadOnly: true,
+		CredentialsSecret:      "agent-provider-credentials",
+		LateFindingsConfigMap:  "sdo-late-incident",
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errors := make(chan error, 1)
@@ -77,7 +78,15 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		t.Fatalf("wrong working directory: %q", container.WorkingDir)
 	}
 	foundSession := false
+	foundCorpus := false
 	for _, mount := range container.VolumeMounts {
+		if mount.MountPath == "/sdo/session/corpus" {
+			foundCorpus = true
+			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/corpus" {
+				t.Fatalf("capture mount is not read-only: %#v", mount)
+			}
+			continue
+		}
 		if mount.MountPath == "/sdo/session" {
 			foundSession = true
 			if mount.Name != "repository" {
@@ -99,6 +108,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	if !foundSession {
 		t.Fatal("isolated incident session mount missing")
+	}
+	if !foundCorpus {
+		t.Fatal("read-only captured corpus mount missing")
 	}
 	if len(container.EnvFrom) != 1 || container.EnvFrom[0].SecretRef.Name != "agent-provider-credentials" {
 		t.Fatalf("worker received an unexpected Secret: %#v", container.EnvFrom)

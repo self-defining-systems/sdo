@@ -32,18 +32,19 @@ const (
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
-	Client                kubernetes.Interface
-	Namespace             string
-	Registry              *Registry
-	ServiceAccount        string
-	RepositoryPVC         string
-	RepositoryMountPath   string
-	RepositoryPVCSubPath  string
-	SessionPVCSubPath     string
-	CredentialsSecret     string
-	LateFindingsConfigMap string
-	Environment           map[string]string
-	PollInterval          time.Duration
+	Client                 kubernetes.Interface
+	Namespace              string
+	Registry               *Registry
+	ServiceAccount         string
+	RepositoryPVC          string
+	RepositoryMountPath    string
+	RepositoryPVCSubPath   string
+	SessionPVCSubPath      string
+	CapturedCorpusReadOnly bool
+	CredentialsSecret      string
+	LateFindingsConfigMap  string
+	Environment            map[string]string
+	PollInterval           time.Duration
 }
 
 type JobFailedError struct{ JobName string }
@@ -188,6 +189,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
 		// leave the kubelet waiting forever for the pod's volumes.
 		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
+		if e.CapturedCorpusReadOnly {
+			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/corpus", SubPath: path.Join(e.SessionPVCSubPath, "corpus"), ReadOnly: true})
+		}
 	}
 	if e.LateFindingsConfigMap != "" {
 		mounts = append(mounts, corev1.VolumeMount{Name: "late-findings", MountPath: "/sdo/late-findings", ReadOnly: true})

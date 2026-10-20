@@ -146,7 +146,8 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
 		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
 		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
-		LateFindingsConfigMap: lateConfigMap,
+		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
+		LateFindingsConfigMap:  lateConfigMap,
 	}
 	agentResult, err := executor.Execute(ctx, task)
 	if err != nil {

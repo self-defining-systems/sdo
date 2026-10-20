@@ -29,6 +29,7 @@ type ControllerConfig struct {
 	SourceCommit        string
 	DeployedCommit      string
 	RepositoryWorktree  string
+	CorpusSessionRoot   string
 	ResponseTimeout     time.Duration
 	VerificationTimeout time.Duration
 	FiringThreshold     int
@@ -281,8 +282,8 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	probes := c.dueGateProbes(now, detectors)
 	if len(detectors) == 0 && len(probes) == 0 {
 		c.forgetGate()
-		c.maybeCloseIncident(now)
-		err := c.dispatchReady(ctx, now)
+		c.maybeCloseIncident(ctx, now, nil)
+		err := c.dispatchReady(ctx, now, nil)
 		c.refreshIncidentView(now, false)
 		return err
 	}
@@ -378,8 +379,8 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 
-	c.maybeCloseIncident(now)
-	err = c.dispatchReady(ctx, now)
+	c.maybeCloseIncident(ctx, now, snapshot)
+	err = c.dispatchReady(ctx, now, snapshot)
 	c.refreshIncidentView(now, true)
 	return err
 }
@@ -537,7 +538,7 @@ func (c *Controller) emitAdmissionDeferredLocked(now time.Time, incidentID strin
 	})
 }
 
-func (c *Controller) dispatchReady(ctx context.Context, now time.Time) error {
+func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen
 	deferred := c.dispatchState == admissionDeferredState
@@ -568,6 +569,24 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time) error {
 		return nil
 	}
 	request := c.incidentRequest(now, batch)
+	requeue := func(err error) error {
+		for _, finding := range batch {
+			c.batcher.AddAt(finding, now)
+		}
+		return err
+	}
+	if c.config.CorpusSessionRoot != "" {
+		if snapshot == nil {
+			var err error
+			snapshot, err = c.provider.Snapshot(ctx)
+			if err != nil {
+				return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
+			}
+		}
+		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open", snapshot, request.Namespace); err != nil {
+			return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
+		}
+	}
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
@@ -911,7 +930,7 @@ func (c *Controller) cleanupHelpers() {
 	}
 }
 
-func (c *Controller) maybeCloseIncident(now time.Time) {
+func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
 	c.mu.Lock()
 	if !c.incidentOpen || !c.responderDone || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
@@ -943,6 +962,22 @@ func (c *Controller) maybeCloseIncident(now time.Time) {
 		}
 		c.mu.Unlock()
 		return
+	}
+	if c.config.CorpusSessionRoot != "" {
+		if snapshot == nil {
+			var err error
+			snapshot, err = c.provider.Snapshot(ctx)
+			if err != nil {
+				c.mu.Unlock()
+				c.reportBrokerError("capture verified snapshot", err)
+				return
+			}
+		}
+		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace); err != nil {
+			c.mu.Unlock()
+			c.reportBrokerError("capture verified snapshot", err)
+			return
+		}
 	}
 	verifiedAt := now.UTC()
 	if verifiedAt.Before(c.responderCompletedAt) {

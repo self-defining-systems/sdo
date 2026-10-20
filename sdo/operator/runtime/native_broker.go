@@ -306,6 +306,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 						}
 						return errors.New("reflection changed files without declaring updated learning")
 					}
+					if n.SessionRoot != "" {
+						if err := memory.ValidateCapturedCorpusTree(n.SessionRoot, proposal.Path, id, paths); err != nil {
+							return fmt.Errorf("reflection corpus provenance: %w", err)
+						}
+					}
 					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ReflectionPhase)
 					if err != nil {
 						if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {

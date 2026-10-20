@@ -456,10 +456,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		RecheckInterval:             *admissionRecheckInterval,
 	}
 	start := time.Now().UTC()
+	corpusSessionRoot := ""
+	if options.NativeBroker != nil {
+		corpusSessionRoot = options.NativeBroker.SessionRoot
+	}
 	controller, err := NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
+		CorpusSessionRoot:   corpusSessionRoot,
 		VerificationTimeout: *verificationTimeout,
 		MaxFollowUps:        *maxFollowUps, FollowUpCooldown: *followUpCooldown,
 		RepairPolicy:    *repairPolicy,
