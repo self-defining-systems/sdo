@@ -213,7 +213,10 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     assert json.dumps({"incident_id": "inc-1"}) not in prompt  # full outcome context is richer
 
 
-def test_reflection_prompt_requires_one_program_decision_per_fault_and_retries_draft_test(tmp_path: Path) -> None:
+def test_reflection_prompt_requires_one_program_decision_per_fault_and_retries_draft_test(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", raising=False)
     backend = _CapturingBackend()
     SessionReflector(backend).resume(
         session_id="session-1",
@@ -234,10 +237,13 @@ def test_reflection_prompt_requires_one_program_decision_per_fault_and_retries_d
         "labels",
         "sdo.dev/operator/sdk/program",
         ".sdo/lib",
+        "diagnostics module path",
         "Params",
-        "no incident literals",
+        "derive names, ports and images from bindings and the ReadView",
+        "every name, port and image renamed",
         "allowed imports",
-        "service-targetport-mismatch",
+        "/opt/sdo/examples/playbook-programs/playbooks/service-targetport-mismatch/diagnose.go",
+        "/opt/sdo/examples/playbook-programs/corpus/targetport-mismatch/",
         "sdk_gap",
         "Record each reused program ID",
         "NoMatch",
@@ -245,6 +251,21 @@ def test_reflection_prompt_requires_one_program_decision_per_fault_and_retries_d
         "rerun",
     ):
         assert required in prompt
+
+
+def test_reflection_prompt_uses_configured_example_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", "/custom/examples")
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    assert "/custom/examples/playbooks/service-targetport-mismatch/diagnose.go" in str(backend.calls[0]["prompt"])
 
 
 def test_draft_test_rejection_is_shown_to_reflection_retry(tmp_path: Path) -> None:

@@ -23,6 +23,9 @@ func buildProgramFixture(t *testing.T, root string) (*Workspace, error) {
 }
 
 func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	root := programFixture(t)
 	w, err := buildProgramFixture(t, root)
 	if err != nil {
