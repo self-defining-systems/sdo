@@ -146,6 +146,40 @@ def _result_section(result: IncidentResult | None, dispatch_error: str | None) -
         lines.append(f"No responder result was recorded (dispatch error: {dispatch_error or 'none'}).")
         return "\n".join(lines)
     lines.append(f"Status: {result.status.value}" + (f"; error: {result.error}" if result.error else ""))
+    verdict_names = {
+        "RESULT_MATCH": "Match",
+        "RESULT_NO_MATCH": "NoMatch",
+        "RESULT_UNKNOWN": "Unknown",
+        "RESULT_NEEDS_JUDGEMENT": "NeedsJudgement",
+    }
+    if result.program_runs:
+        by_program: dict[str, list[str]] = {}
+        for run in result.program_runs:
+            verdict = verdict_names.get(run.verdict.result, run.verdict.result)
+            history = by_program.setdefault(run.program_id, [])
+            if not history or history[-1] != verdict:
+                history.append(verdict)
+        lines.append("Program diagnoses:")
+        lines.extend(f"- {program_id}: {' -> '.join(history)}" for program_id, history in list(by_program.items())[:12])
+        if len(by_program) > 12:
+            lines.append(f"- {len(by_program) - 12} more programs omitted")
+    if result.plan_applications:
+        lines.append("Program applications:")
+        for application in result.plan_applications[:12]:
+            verification = (
+                verdict_names.get(application.verification.result, application.verification.result)
+                if application.verification is not None
+                else "not recorded"
+            )
+            state = "applied" if application.applied else "not applied"
+            programs = ", ".join(application.program_ids) or "unknown program"
+            lines.append(
+                f"- {application.application_id or 'unnamed'}: {programs}; "
+                f"{state}; verification {verification}"
+                + (f"; error {_clip(application.error, 120)}" if application.error else "")
+            )
+        if len(result.plan_applications) > 12:
+            lines.append(f"- {len(result.plan_applications) - 12} more applications omitted")
     lines.append("Confirmed root causes:")
     lines.extend(
         f"- {cause.summary} [{'; '.join(_ref(ref) for ref in cause.resources)}]"

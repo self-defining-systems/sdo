@@ -318,6 +318,35 @@ def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) 
     assert "State changes at verification" in brief
 
 
+def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_brief import incident_brief
+
+    closure = _fresh_closure(tmp_path)
+    assert closure.result is not None
+    payload = closure.result.model_dump(mode="json")
+    payload["program_runs"] = [
+        {"program_id": "targetport", "verdict": {"result": "RESULT_MATCH"}, "duration": "0.1s"},
+        {"program_id": "other", "verdict": {"result": "RESULT_NO_MATCH"}, "duration": "0.1s"},
+    ]
+    payload["plan_applications"] = [
+        {
+            "application_id": "application-1",
+            "program_ids": ["targetport"],
+            "plan": {"actions": []},
+            "applied": True,
+            "verification": {"result": "RESULT_NO_MATCH"},
+        }
+    ]
+    closure.result = IncidentResult.model_validate(payload)
+
+    brief = incident_brief(closure, worktree=tmp_path)
+
+    assert "targetport: Match" in brief
+    assert "other: NoMatch" in brief
+    assert "application-1" in brief
+    assert "verification NoMatch" in brief
+
+
 def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     class MissingSession(_CapturingBackend):
         def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:

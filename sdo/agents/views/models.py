@@ -4,7 +4,7 @@ from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -294,6 +294,58 @@ class ProgramRun(ContractModel):
     program_revision: str = ""
 
 
+class ProgramToolCall(ContractModel):
+    command: str
+    at: datetime | None = None
+    request_json: str = ""
+    response_json: str = ""
+    error: str = ""
+
+
+class ReconcileFromSourceAction(ContractModel):
+    ref: ObjectRef
+
+
+class RollbackAction(ContractModel):
+    ref: ObjectRef
+    to_revision: str
+
+
+class SetFieldAction(ContractModel):
+    ref: ObjectRef
+    path: str
+    value: JsonValue
+    reason: str = ""
+
+
+class RestartRolloutAction(ContractModel):
+    ref: ObjectRef
+    reason: str = ""
+
+
+class PlanAction(ContractModel):
+    reconcile_from_source: ReconcileFromSourceAction | None = None
+    rollback: RollbackAction | None = None
+    set_field: SetFieldAction | None = None
+    restart_rollout: RestartRolloutAction | None = None
+
+
+class ProgramPlan(ContractModel):
+    actions: list[PlanAction] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class PlanApplication(ContractModel):
+    plan: ProgramPlan
+    applied: bool = False
+    dry_run: bool = False
+    verification: ProgramVerdict | None = None
+    application_id: str = ""
+    program_ids: list[str] = Field(default_factory=list)
+    error: str = ""
+    duration: str = ""
+
+
 class IncidentRequest(ContractModel):
     schema_version: Literal["sdo.dev/v1alpha1"] = SCHEMA_VERSION
     application: str = Field(min_length=1)
@@ -476,6 +528,12 @@ class IncidentResult(ContractModel):
     responder_session_id: str | None = None
     error: str | None = None
     late_findings_pull: LateFindingsPull | None = None
+    program_tool_calls: list[ProgramToolCall] = Field(default_factory=list)
+    program_runs: list[ProgramRun] = Field(default_factory=list)
+    plan_applications: list[PlanApplication] = Field(default_factory=list)
+    response_loops_used: int = 0
+    response_loop_exhausted: bool = False
+    program_failure_signals: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_repair_action_ids(self) -> IncidentResult:

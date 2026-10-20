@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from google.protobuf.any_pb2 import Any
 
 from sdo.agents.responder.reflection import ReflectionTurn
 from sdo.agents.responder.reflection_worker import run_reflection_task
+from sdo.agents.views import PlanApplication, ProgramRun, ProgramToolCall
 from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, ReflectionResult
 from sdo.contracts.proto import IncidentClosure, parse_json, to_canonical_json
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
@@ -158,6 +160,27 @@ class SdkGapReflector(Reflector):
 
 def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Path) -> None:
     closure = _closure()
+    closure.result.program_tool_calls.add(command="apply", request_json='{"plan_ids":["plan-1"]}', response_json="{}")
+    closure.result.program_runs.add(
+        program_id="targetport",
+        verdict={"result": "RESULT_MATCH"},
+        duration=timedelta(milliseconds=100),
+    )
+    application = closure.result.plan_applications.add(
+        application_id="application-1",
+        program_ids=["targetport"],
+        applied=True,
+        verification={"result": "RESULT_NO_MATCH"},
+        duration=timedelta(seconds=1),
+    )
+    action = application.plan.actions.add()
+    action.set_field.ref.api_version = "v1"
+    action.set_field.ref.kind = "Service"
+    action.set_field.ref.namespace = "app"
+    action.set_field.ref.name = "api"
+    action.set_field.path = "spec.ports[0].targetPort"
+    action.set_field.value.number_value = 8080
+    action.set_field.reason = "restore routing"
     request = ReflectionRequest(
         closure=closure,
         outcome=_outcome(closure.request.incident_id),
@@ -183,6 +206,13 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     assert reflector.kwargs is not None
     assert reflector.kwargs["outcome_commit"] == "outcome-commit"
     assert reflector.kwargs["session_mode"] == "fresh"
+    typed_closure = reflector.kwargs["closure"]
+    assert typed_closure.result is not None
+    assert isinstance(typed_closure.result.program_tool_calls[0], ProgramToolCall)
+    assert isinstance(typed_closure.result.program_runs[0], ProgramRun)
+    assert typed_closure.result.program_runs[0].verdict.result == "RESULT_MATCH"
+    assert isinstance(typed_closure.result.plan_applications[0], PlanApplication)
+    assert typed_closure.result.plan_applications[0].plan.actions[0].set_field.value == 8080
     assert publisher.payload is not None
     result = parse_json(publisher.payload, AgentResult())
     assert result.proposal_id == "proposal-1"
