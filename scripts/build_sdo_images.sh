@@ -42,6 +42,10 @@ for image in sdo-detector-validator sdo-controller sdo-responder sdo-sregym-resp
     cd /opt/sdo/sdo/operator/sdk
     go list ./program >/dev/null
   '
+  docker run --rm --user 65532:65532 \
+    --volume "${repo_root}/tests/fixtures/sdo/playbook_program_app:/fixture:ro" \
+    "${image}:${tag}" \
+    sdo-operator validate --app /fixture --expect-schema "${validator_schema_identity}"
 done
 docker run --rm --user 65532:65532 \
   sdo-sregym-responder:${tag} \

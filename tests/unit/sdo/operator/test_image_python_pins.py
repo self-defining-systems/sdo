@@ -164,6 +164,8 @@ def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     assert "command -v go" in script
     assert "command -v sdo-operator" in script
     assert "go list ./program" in script
+    assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
+    assert "sdo-operator validate --app /fixture --expect-schema" in script
 
 
 def test_image_npm_installs_are_pinned_to_exact_versions() -> None:
