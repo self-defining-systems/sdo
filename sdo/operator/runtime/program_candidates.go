@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -13,10 +15,17 @@ import (
 
 const DefaultDiagnosisDeadline = 10 * time.Second
 const maxCandidateAssignments = 32
+const DefaultSweepLimit = 64
 
-// ProgramRun is one diagnosis for a finding and one concrete binding.
+type CandidateOptions struct {
+	Deadline   time.Duration
+	SweepLimit int
+}
+
+// ProgramRun is one diagnosis for a concrete finding, hint, or sweep binding.
 type ProgramRun struct {
 	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
+	BindingSource      string           `json:"binding_source,omitempty"`
 	ProgramID          string           `json:"program_id"`
 	Bindings           program.Bindings `json:"bindings"`
 	Verdict            program.Verdict  `json:"verdict"`
@@ -26,11 +35,21 @@ type ProgramRun struct {
 
 // SelectProgramCandidates diagnoses all bindable programs under one deadline.
 func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, deadline time.Duration) []ProgramRun {
+	return SelectProgramCandidatesWithOptions(ctx, registry, view, findings, CandidateOptions{Deadline: deadline})
+}
+
+// SelectProgramCandidatesWithOptions diagnoses finding and namespace-sweep bindings.
+func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.ProgramRegistry, view program.ReadView, findings []sdk.Finding, options CandidateOptions) []ProgramRun {
 	if registry == nil {
 		return nil
 	}
+	deadline := options.Deadline
 	if deadline <= 0 {
 		deadline = DefaultDiagnosisDeadline
+	}
+	limit := options.SweepLimit
+	if limit <= 0 {
+		limit = DefaultSweepLimit
 	}
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
@@ -39,28 +58,67 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 		view = live
 	}
 	type candidate struct {
-		finding  sdk.Finding
-		id       string
-		bindings program.Bindings
+		fingerprint string
+		source      string
+		id          string
+		bindings    program.Bindings
 	}
 	var candidates []candidate
+	seen := map[string]bool{}
+	add := func(id string, bindings program.Bindings, fingerprint, source string) {
+		key := id + "\x00" + bindingKey(bindings)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings})
+	}
 	for _, finding := range findings {
 		if finding.Status != sdk.FindingActive {
 			continue
 		}
 		for _, spec := range registry.List() {
 			assignments := candidateBindings(spec, finding)
+			hintOnly := false
 			if len(assignments) == 0 {
 				for _, reference := range finding.Playbooks {
 					id, err := memory.PlaybookID(reference)
 					if err == nil && id == spec.ID {
 						assignments = []program.Bindings{cloneProgramBindings(program.Bindings(finding.ParameterBindings))}
+						hintOnly = true
 						break
 					}
 				}
 			}
 			for _, bindings := range assignments {
-				candidates = append(candidates, candidate{finding, spec.ID, bindings})
+				source := "finding"
+				if hintOnly {
+					source = "hint"
+				} else {
+					for name, ref := range bindings {
+						if finding.ParameterBindings[name] == ref && ref.Kind != "" {
+							source = "hint"
+						}
+					}
+				}
+				add(spec.ID, bindings, FindingFingerprint(finding), source)
+			}
+		}
+	}
+	for _, spec := range registry.List() {
+		if len(spec.Params) != 1 || !spec.Params[0].Required {
+			continue
+		}
+		count := 0
+		for _, ref := range sweepRefs(view, spec.Params[0].Kind) {
+			if count >= limit || ctx.Err() != nil {
+				break
+			}
+			bindings := program.Bindings{spec.Params[0].Name: ref}
+			before := len(candidates)
+			add(spec.ID, bindings, "", "sweep")
+			if len(candidates) > before {
+				count++
 			}
 		}
 	}
@@ -73,7 +131,7 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 				return
 			}
 			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: FindingFingerprint(candidate.finding), ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: time.Since(started)}
+			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: time.Since(started)}
 		}(item)
 	}
 	runs := make([]ProgramRun, 0, len(candidates))
@@ -85,13 +143,13 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 			for _, candidate := range candidates {
 				found := false
 				for _, run := range runs {
-					if run.FindingFingerprint == FindingFingerprint(candidate.finding) && run.ProgramID == candidate.id && sameBindings(run.Bindings, candidate.bindings) {
+					if run.ProgramID == candidate.id && sameBindings(run.Bindings, candidate.bindings) {
 						found = true
 						break
 					}
 				}
 				if !found {
-					runs = append(runs, ProgramRun{FindingFingerprint: FindingFingerprint(candidate.finding), ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
+					runs = append(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
 				}
 			}
 			sortProgramRuns(runs)
@@ -100,6 +158,75 @@ func SelectProgramCandidates(ctx context.Context, registry program.ProgramRegist
 	}
 	sortProgramRuns(runs)
 	return runs
+}
+
+func sweepRefs(view program.ReadView, kind program.Kind) []sdk.ObjectRef {
+	if view == nil || view.Namespace() == "" {
+		return nil
+	}
+	var objects []metav1.Object
+	apiVersion := "v1"
+	switch kind {
+	case "Service":
+		items := view.Services()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "ConfigMap":
+		items := view.ConfigMaps()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Pod":
+		items := view.Pods()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Endpoints":
+		items := view.Endpoints()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Event":
+		items := view.Events()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "Deployment":
+		apiVersion = "apps/v1"
+		items := view.Deployments()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "ReplicaSet":
+		apiVersion = "apps/v1"
+		items := view.ReplicaSets()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "EndpointSlice":
+		apiVersion = "discovery.k8s.io/v1"
+		items := view.EndpointSlices()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	case "NetworkPolicy":
+		apiVersion = "networking.k8s.io/v1"
+		items := view.NetworkPolicies()
+		for i := range items {
+			objects = append(objects, &items[i])
+		}
+	default:
+		return nil
+	}
+	refs := make([]sdk.ObjectRef, 0, len(objects))
+	for _, object := range objects {
+		if object.GetNamespace() == view.Namespace() && object.GetName() != "" {
+			refs = append(refs, sdk.ObjectRefFrom(string(kind), apiVersion, object))
+		}
+	}
+	sort.Slice(refs, func(i, j int) bool { return refs[i].Name < refs[j].Name })
+	return refs
 }
 
 func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.Bindings {
