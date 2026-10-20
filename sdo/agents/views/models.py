@@ -266,6 +266,34 @@ class OperationalMemorySnapshot(ContractModel):
     playbooks: list[MemoryPlaybook] = Field(default_factory=list)
 
 
+class ProgramBinding(ContractModel):
+    name: str
+    object: ObjectRef
+
+
+class ProgramEvidence(ContractModel):
+    resource: ObjectRef | None = None
+    fact: str
+    observed: str = ""
+    expected: str = ""
+
+
+class ProgramVerdict(ContractModel):
+    result: str
+    evidence: list[ProgramEvidence] = Field(default_factory=list)
+    question: str = ""
+
+
+class ProgramRun(ContractModel):
+    program_id: str
+    bindings: list[ProgramBinding] = Field(default_factory=list)
+    verdict: ProgramVerdict
+    duration: str = ""
+    error: str = ""
+    finding_fingerprint: str = ""
+    program_revision: str = ""
+
+
 class IncidentRequest(ContractModel):
     schema_version: Literal["sdo.dev/v1alpha1"] = SCHEMA_VERSION
     application: str = Field(min_length=1)
@@ -285,6 +313,8 @@ class IncidentRequest(ContractModel):
     state_changes: StateChanges | None = None
     follow_up: FollowUpContext | None = None
     memory_snapshot: OperationalMemorySnapshot | None = None
+    initial_program_runs: list[ProgramRun] = Field(default_factory=list)
+    max_response_loops: int = 0
 
 
 #: Live evidence kinds a root cause may cite. Static artifacts (manifests,
