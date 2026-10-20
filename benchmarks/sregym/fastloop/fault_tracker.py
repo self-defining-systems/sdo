@@ -74,6 +74,22 @@ def composite_faults(problem_id: str) -> tuple[FaultSpec, ...]:
     return COMPOSITE_FAULTS.get(problem_id, ())
 
 
+def stream_faults(problem_ids: tuple[str, ...]) -> tuple[FaultSpec, ...]:
+    """Map the registered hotel single-fault variants used in explicit streams to probes."""
+
+    faults: list[FaultSpec] = []
+    for problem_id in problem_ids:
+        if problem_id.startswith("k8s_target_port_misconfig__v_hotel_reservation_"):
+            component = problem_id.removeprefix("k8s_target_port_misconfig__v_hotel_reservation_").split("_")[0]
+            faults.append(FaultSpec("target_port", component))
+        elif problem_id.startswith("incorrect_image__v_hotel_reservation_"):
+            component = problem_id.removeprefix("incorrect_image__v_hotel_reservation_").split("_")[0]
+            faults.append(FaultSpec("incorrect_image", component))
+        else:
+            raise ValueError(f"no fastloop probe for {problem_id!r}")
+    return tuple(faults)
+
+
 def _deployment_available(read: Callable[[str, str], dict[str, Any] | None], name: str) -> bool:
     deployment = read("deployment", name)
     if not deployment:
@@ -110,14 +126,33 @@ def _service_has_endpoints(read: Callable[[str, str], dict[str, Any] | None], na
     return any(subset.get("addresses") for subset in endpoints.get("subsets") or [])
 
 
+def _target_port_matches(read: Callable[[str, str], dict[str, Any] | None], component: str) -> bool:
+    service = read("service", component)
+    deployment = read("deployment", component)
+    if not service or not deployment:
+        return False
+    ports = [
+        port
+        for container in (((deployment.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containers")
+        or []
+        for port in container.get("ports") or []
+    ]
+    targets = {port.get("containerPort") for port in ports} | {port.get("name") for port in ports}
+    return all(
+        port.get("targetPort", port.get("port")) in targets for port in (service.get("spec") or {}).get("ports") or []
+    )
+
+
 def probes_for(
     faults: Sequence[FaultSpec], read: Callable[[str, str], dict[str, Any] | None]
 ) -> dict[str, Callable[[], bool]]:
     probes: dict[str, Callable[[], bool]] = {}
     for fault in faults:
         component = fault.component
-        if fault.kind in {"readiness", "configmap", "resource_request"}:
+        if fault.kind in {"readiness", "configmap", "resource_request", "incorrect_image"}:
             probes[fault.name] = lambda component=component: _deployment_available(read, component)
+        elif fault.kind == "target_port":
+            probes[fault.name] = lambda component=component: _target_port_matches(read, component)
         elif fault.kind == "network_policy":
             probes[fault.name] = lambda component=component: (
                 _network_policy_open(read, component) and (_deployment_available(read, component))

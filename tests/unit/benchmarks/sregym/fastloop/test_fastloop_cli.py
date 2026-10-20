@@ -8,6 +8,7 @@ import pytest
 from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, format_summary, main
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.records import IncidentRecord, OracleVerdict, append_record
+from benchmarks.sregym.fastloop.stream import load_stream
 
 T0 = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -62,7 +63,7 @@ def test_run_requires_an_environment_from_up(tmp_path: Path) -> None:
 def test_parser_defaults_match_the_benchmark_configuration() -> None:
     args = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
 
-    assert (args.model, args.provider, args.reflection_session, args.incidents) == ("gpt-6-luna", "codex", "fresh", 1)
+    assert (args.model, args.provider, args.reflection_session, args.incidents) == ("gpt-6-luna", "codex", "resume", 1)
     up = build_parser().parse_args(["up", "--run-dir", "x"])
     assert up.cpu_limit == "3"
     assert up.cluster_prefix == "fastloop-w"
@@ -84,9 +85,49 @@ def test_up_builds_the_same_one_worker_kind_lane_as_the_experiments(tmp_path: Pa
     assert environment["SREGYM_KIND_REQUIRE_NETWORK_POLICY"] == "1"
 
 
+def test_up_cache_requires_every_node_to_have_the_requested_image_digests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop.environment import Images
+
+    calls: list[list[str]] = []
+
+    def run(argv: list[str], **_kwargs: object) -> object:
+        calls.append(argv)
+        value = "node-a\nnode-b\n" if argv[:3] == ["kind", "get", "nodes"] else "sha256:one\n"
+        if argv[:3] == ["docker", "exec", "node-b"]:
+            value = '{"status":{"id":"sha256:other"}}'
+        elif argv[:2] == ["docker", "exec"]:
+            value = '{"status":{"id":"sha256:one"}}'
+        return type("Result", (), {"returncode": 0, "stdout": value})()
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    images = Images(controller="controller:pbprog", responder="responder:pbprog", validator="validator:pbprog")
+
+    assert cli.node_images_match("fastloop-w0", images) is False
+    assert any(call[:3] == ["docker", "exec", "node-b"] for call in calls)
+
+
 def test_up_rejects_a_negative_worker_count(tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="kind-worker-nodes"):
         main(["up", "--run-dir", str(tmp_path), "--kind-worker-nodes", "-1"])
+
+
+def test_stream_accepts_ordered_single_and_composed_incidents(tmp_path: Path) -> None:
+    stream = tmp_path / "stream.json"
+    stream.write_text('["single", ["target-port", "incorrect-image"]]', encoding="utf-8")
+
+    assert load_stream(stream) == (("single",), ("target-port", "incorrect-image"))
+
+
+@pytest.mark.parametrize("content", ["[]", "[[]]", '["a", ["a", "a"]]', "[4]"])
+def test_stream_rejects_invalid_incidents(tmp_path: Path, content: str) -> None:
+    stream = tmp_path / "stream.json"
+    stream.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="stream"):
+        load_stream(stream)
 
 
 class _StopAtProxy(Exception):

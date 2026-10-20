@@ -324,3 +324,13 @@ def test_times_seen_at_verification_are_not_replaced_by_the_receipt(tmp_path: Pa
 
     assert learned.detected_at == DETECTED - timedelta(seconds=1)
     assert learned.resolved_at == VERIFIED
+
+
+def test_learning_does_not_open_the_next_incident_without_receipt_evidence(tmp_path: Path) -> None:
+    ops, calls = FakeOps(), []
+    agent = _agent(tmp_path, ops, calls)
+    resolved = agent.resolve(0, "p", _inject)
+    agent._receipt = lambda _path: {}  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="receipt missing"):
+        agent.learn(resolved)

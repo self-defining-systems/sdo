@@ -549,7 +549,7 @@ def _launch_native_lifecycle(
         model=args.model,
         kubeconfig=kubeconfig,
         agent_provider=args.provider,
-        repair_policy="recorded-actions",
+        repair_policy="commit" if not api_base else "recorded-actions",
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -565,7 +565,9 @@ def _launch_native_lifecycle(
         responder_env=(
             f"SDO_SREGYM_API_BASE={_in_cluster_api_base(api_base)}",
             f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
-        ),
+        )
+        if api_base
+        else (),
     )
     if _has_accepted_lifecycle(repository):
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health

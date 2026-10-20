@@ -29,12 +29,14 @@ from benchmarks.sregym.adapter import (
     DetectorReviewRequiredError,
     PersistentControllerError,
     PersistentState,
+    ReceiptRejectedError,
     collect_followup_incident,
     drain_pending_incident,
     pause_controller,
 )
 from benchmarks.sregym.fastloop.fault_tracker import (
     BackgroundPoller,
+    FaultSpec,
     FaultTracker,
     KubectlReader,
     composite_faults,
@@ -73,8 +75,14 @@ class CompositeSettings:
                 raise ValueError(f"{name} must be positive")
 
 
-def make_tracker(problem_id: str, reader: Callable[[str, str], dict[str, Any] | None], settings: CompositeSettings):
-    faults = composite_faults(problem_id)
+def make_tracker(
+    problem_id: str,
+    reader: Callable[[str, str], dict[str, Any] | None],
+    settings: CompositeSettings,
+    *,
+    faults: tuple[FaultSpec, ...] = (),
+):
+    faults = faults or composite_faults(problem_id)
     if not faults:
         return None
     return FaultTracker(probes_for(faults, reader), stable_seconds=settings.stable_seconds)
@@ -182,6 +190,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         reader: Callable[[str, str], dict[str, Any] | None],
         report_dir: Path,
         composite: CompositeSettings | None = None,
+        stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
         **kwargs: Any,
     ) -> None:
         self._composite = composite or CompositeSettings()
@@ -189,16 +198,31 @@ class CompositeSdoAgent(SdoPersistentAgent):
             *args, keep_running=True, stop_on_detector_review=self._composite.stop_on_detector_review, **kwargs
         )
         self._reader = reader
+        self._stream_faults = stream_faults or {}
         self._report_dir = report_dir
         self._incidents: list[dict[str, Any]] = []
         self._base_dir: Path | None = None
         self._wedge_usage: dict[str, Any] | None = None
+        self._reflection_drain_seconds = 0.0
+        self._reflection_started_at = None
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         composite = self._composite
-        tracker = make_tracker(problem_id, self._reader, composite)
+        tracker = make_tracker(problem_id, self._reader, composite, faults=self._stream_faults.get(problem_id, ()))
         if tracker is None:
-            raise ValueError(f"{problem_id!r} is not a registered composite")
+            if problem_id.startswith(("mf__", "composite")):
+                raise ValueError(f"{problem_id!r} is not a registered composite")
+            self._reflection_drain_seconds = 0.0
+            self._reflection_started_at = None
+            self._keep_running = False
+            try:
+                single = super().resolve(index, problem_id, inject)
+            finally:
+                self._keep_running = True
+            self._incidents = [
+                {"incident_id": single.incident_id, "receipt_dir": str(single.artifacts_dir), "outcome": single}
+            ]
+            return single
         settings = self._settings
         control = settings.runtime_config.control_namespace
         assert control is not None
@@ -242,6 +266,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
         sampler = threading.Thread(target=sample_controller, name="controller-state", daemon=True)
         sampler.start()
         self._incidents = []
+        self._reflection_drain_seconds = 0.0
+        self._reflection_started_at = None
         outcomes: list[AgentOutcome] = []
         stop_reason = "error"
         wedged = False
@@ -397,6 +423,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
         record = state.controllers.get(settings.namespace)
         if record is None or record.pending is None:
             return
+        if self._reflection_started_at is None:
+            self._reflection_started_at = self._clock.now()
+        started = self._clock.monotonic()
         try:
             drain_pending_incident(
                 record,
@@ -405,11 +434,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 drained_by=first_label,
                 clock=self._clock,
             )
-        except Exception:
-            logger.exception("draining incident %s failed", record.pending.incident_id)
-        finally:
-            record.pending = None
-            state.save(settings.state_path)
+        except ReceiptRejectedError as exc:
+            logger.warning("incident %s strict receipt rejected: %s", record.pending.incident_id, exc)
+        self._reflection_drain_seconds += self._clock.monotonic() - started
+        record.pending = None
+        state.save(settings.state_path)
 
     def _outcome_from_resolution(
         self, first: AgentOutcome, resolution: dict[str, Any], receipt_dir: Path
@@ -451,6 +480,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
         settings = self._settings
+        started = self._clock.monotonic()
+        observed_at = self._clock.now()
         state = PersistentState.load(settings.state_path)
         record = state.controllers.get(settings.namespace)
         error: str | None = None
@@ -463,11 +494,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
                     drained_by=f"fastloop-learn-{outcome.incident_id}",
                     clock=self._clock,
                 )
-            except Exception as exc:
+            except ReceiptRejectedError as exc:
                 error = f"drain failed: {type(exc).__name__}: {exc}"
-            finally:
-                record.pending = None
-                state.save(settings.state_path)
+            record.pending = None
+            state.save(settings.state_path)
         usage = TokenCounts()
         reflection = TokenCounts()
         attempts = 0
@@ -484,7 +514,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if not receipt:
                 continue
             receipts_seen += 1
-            usage = _add(usage, TokenCounts.from_usage(receipt.get("usage")))
+            ledger = receipt.get("native_ledger")
+            ledger = ledger if isinstance(ledger, dict) else {}
+            outcome_document = ledger.get("outcome_document")
+            outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
+            usage = _add(usage, TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")))
             reflection = _add(reflection, TokenCounts.from_usage(receipt.get("reflection_usage")))
             raw_attempts = receipt.get("reflection_attempts")
             attempts += raw_attempts if isinstance(raw_attempts, int) else 0
@@ -493,8 +527,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
             warm = warm or bool(memory.get("warm_path"))
             reasons.extend(str(reason) for reason in memory.get("match_reasons", []) or [])
         if receipts_seen < len(self._incidents):
-            error = "; ".join(
-                filter(None, [error, f"{len(self._incidents) - receipts_seen} incident receipt(s) missing"])
+            raise RuntimeError(
+                f"{len(self._incidents) - receipts_seen} incident receipt(s) missing after reflection drain"
             )
         return outcome.with_learning(
             responder_tokens=usage,
@@ -502,6 +536,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
             reflection_attempts=attempts,
+            reflection_seconds=self._reflection_drain_seconds + self._clock.monotonic() - started,
+            reflection_started_at=self._reflection_started_at or observed_at,
+            reflection_finished_at=self._clock.now(),
+            rebuild_done_at=self._clock.now(),
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

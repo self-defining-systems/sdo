@@ -106,3 +106,26 @@ def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
 
 def test_unseeded_workspace_has_no_accepted_lifecycle(tmp_path: Path) -> None:
     assert driver._has_accepted_lifecycle(tmp_path) is False
+
+
+def test_fastloop_native_launch_has_commit_repairs_and_no_submission_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "fastloop-w0")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    seen: list[object] = []
+    monkeypatch.setattr(driver, "launch_host", lambda config: seen.append(config) or {"installed": True})
+
+    driver._launch_native_lifecycle(
+        driver._parse_args([]),
+        repository=tmp_path,
+        namespace="demo",
+        application="demo",
+        health_objective="healthy",
+        api_base="",
+        persistent=True,
+    )
+
+    assert seen[0].install.repair_policy == "commit"
+    assert seen[0].install.responder_env == ()

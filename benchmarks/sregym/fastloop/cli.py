@@ -33,6 +33,7 @@ from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvi
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
+from benchmarks.sregym.fastloop.stream import load_stream
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 if TYPE_CHECKING:
@@ -61,6 +62,39 @@ def _ensure_builder(name: str) -> None:
     inspected = subprocess.run(["docker", "buildx", "inspect", name], capture_output=True, text=True, check=False)
     if inspected.returncode != 0:
         subprocess.run(["docker", "buildx", "create", "--name", name, "--driver", "docker-container"], check=True)
+
+
+def node_images_match(cluster: str, images: Images) -> bool:
+    """Reuse completed kind preflight only while every node has the same image content."""
+
+    nodes = subprocess.run(["kind", "get", "nodes", "--name", cluster], capture_output=True, text=True, check=False)
+    if nodes.returncode != 0 or not nodes.stdout.strip():
+        return False
+    for image in (images.controller, images.responder, images.validator):
+        local = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if local.returncode != 0 or not local.stdout.strip():
+            return False
+        for node in nodes.stdout.splitlines():
+            installed = subprocess.run(
+                ["docker", "exec", node, "crictl", "inspecti", image],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if installed.returncode != 0:
+                return False
+            try:
+                digest = json.loads(installed.stdout)["status"]["id"]
+            except (ValueError, KeyError, TypeError):
+                return False
+            if digest != local.stdout.strip():
+                return False
+    return True
 
 
 def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[str, str]:
@@ -101,10 +135,25 @@ def _up(args: argparse.Namespace) -> int:
     private_tmp = None if args.no_sandbox else run_dir / "tmp"
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
-    if args.builder:
-        _ensure_builder(args.builder)
     images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
     worker_env = up_worker_environment(args, workspace=workspace)
+    if not args.redeploy and (run_dir / "fastloop.json").is_file():
+        previous = FastloopEnvironment.load(run_dir)
+        if (
+            previous.cluster == worker_env["SREGYM_KIND_CLUSTER_NAME"]
+            and previous.images == images
+            and previous.worker_env == worker_env
+            and previous.deploy_problem == args.problem
+            and previous.kubeconfig.is_file()
+            and node_images_match(previous.cluster, images)
+        ):
+            with _worker(previous) as cached_worker:
+                health = cached_worker.request("health", namespace=previous.namespace, timeout=60)
+            if health.get("healthy"):
+                print(f"fastloop environment ready: reused verified node image digests -> {previous.path}")
+                return 0
+    if args.builder:
+        _ensure_builder(args.builder)
     placeholder = FastloopEnvironment(
         run_dir=run_dir,
         cluster=worker_env["SREGYM_KIND_CLUSTER_NAME"],
@@ -192,7 +241,12 @@ def _cluster_ops(args: argparse.Namespace, namespace: str) -> ClusterOps:
 
 
 def _sdo_agent(
-    args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path, *, composite: bool = False
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    *,
+    composite: bool = False,
+    stream: tuple[tuple[str, ...], ...] = (),
 ) -> IncidentAgent:
     from benchmarks.sregym.adapter import (
         RuntimeConfig,
@@ -213,7 +267,7 @@ def _sdo_agent(
         credentials_secret="sdo-agent-credentials",
         model=args.model,
         timeout_seconds=args.timeout,
-        repair_policy="recorded-actions",
+        repair_policy="commit",
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -222,6 +276,8 @@ def _sdo_agent(
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         healthy_baseline=args.healthy_baseline,
         controller_namespace=control_namespace_for(environment.namespace),
+        kind_cluster_name=environment.cluster,
+        persistent=True,
     )
     settings = SdoAgentSettings(
         repository=environment.workspace,
@@ -236,7 +292,7 @@ def _sdo_agent(
     ops = _cluster_ops(args, environment.namespace)
 
     def start_native(context: object) -> bool:
-        launch_native_lifecycle(runtime_config, context.health_objective, runtime_config.submission_api_base or "")  # type: ignore[attr-defined]
+        launch_native_lifecycle(runtime_config, context.health_objective, "")  # type: ignore[attr-defined]
         return False
 
     agent_arguments = {
@@ -246,6 +302,7 @@ def _sdo_agent(
     }
     if composite:
         from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, reader_for
+        from benchmarks.sregym.fastloop.fault_tracker import stream_faults
 
         return CompositeSdoAgent(
             settings,
@@ -253,6 +310,7 @@ def _sdo_agent(
             reader=reader_for(environment.namespace, environment.kubeconfig),
             report_dir=results_dir,
             composite=_composite_settings(args),
+            stream_faults={"+".join(ids): stream_faults(ids) for ids in stream if len(ids) > 1},
         )
     return SdoPersistentAgent(settings, **agent_arguments)
 
@@ -262,9 +320,20 @@ def _run(args: argparse.Namespace) -> int:
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     results_dir = environment.run_dir / "results" / run_id
-    problems = tuple(args.problem or [environment.deploy_problem])
+    stream = load_stream(args.stream) if args.stream else ()
+    problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
+    if stream:
+        from benchmarks.sregym.fastloop.fault_tracker import composite_faults
+
+        registered_composites = any(composite_faults(ids[0]) for ids in stream if len(ids) == 1)
+    else:
+        registered_composites = _is_composite(problems)
     config = LoopConfig(
-        run_id=run_id, problems=problems, incidents=args.incidents, results_path=results_dir / INCIDENTS_FILENAME
+        run_id=run_id,
+        problems=problems,
+        incidents=len(stream) if stream else args.incidents,
+        results_path=results_dir / INCIDENTS_FILENAME,
+        stream=stream,
     )
     with _worker(environment) as worker:
         worker.request(
@@ -276,7 +345,15 @@ def _run(args: argparse.Namespace) -> int:
         driver = SregymFaultDriver(worker, namespace=environment.namespace, health_timeout_seconds=args.health_timeout)
         if args.agent == "sdo":
             records = run_incidents(
-                _sdo_agent(args, environment, results_dir, composite=_is_composite(problems)), driver, config
+                _sdo_agent(
+                    args,
+                    environment,
+                    results_dir,
+                    composite=any(len(ids) > 1 for ids in stream) or registered_composites,
+                    stream=stream,
+                ),
+                driver,
+                config,
             )
         else:
             records = _run_codex(args, environment, results_dir, worker, driver, config)
@@ -327,7 +404,13 @@ def _run_codex(
                 worker.request("codex_prompt", problem_id=problem_id, api_base=api_base)["prompt"]
             ),
         )
-        if _is_composite(config.problems):
+        if config.stream:
+            from benchmarks.sregym.fastloop.fault_tracker import composite_faults
+
+            registered = any(composite_faults(ids[0]) for ids in config.stream if len(ids) == 1)
+        else:
+            registered = _is_composite(config.problems)
+        if registered:
             from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
 
             agent = TrackedAgent(  # type: ignore[assignment]
@@ -514,10 +597,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
     run.add_argument("--problem", action="append", help="problem id; repeat to cycle through several")
+    run.add_argument("--stream", type=Path, help="JSON array of problem IDs or arrays of IDs composed together")
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="fresh")
+    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")
     run.add_argument(

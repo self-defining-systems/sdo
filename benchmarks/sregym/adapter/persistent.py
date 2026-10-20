@@ -919,6 +919,9 @@ def _resolution_timings(closure: dict[str, Any]) -> dict[str, Any]:
         "incident_resolution_seconds": timings["operational_recovery"],
         "incident_resolution_scope": "detected_to_independently_verified_health",
         "resolution_phase_timings_seconds": timings,
+        "detected_at": detected.isoformat(),
+        "responder_started_at": dispatched.isoformat() if dispatched else None,
+        "responder_finished_at": responder_completed.isoformat() if responder_completed else None,
         "verified_at": verified.isoformat(),
     }
 

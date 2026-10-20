@@ -180,6 +180,8 @@ class SdoPersistentAgent:
         return AgentOutcome(
             injection=windows[0],
             detected_at=detected,
+            responder_started_at=_timestamp(resolution.get("responder_started_at")),
+            responder_finished_at=_timestamp(resolution.get("responder_finished_at")),
             mitigation_applied_at=_last_successful_repair(repairs),
             resolved_at=verified,
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
@@ -204,6 +206,7 @@ class SdoPersistentAgent:
         if record is None or record.pending is None or record.pending.incident_id != outcome.incident_id:
             raise RuntimeError(f"incident {outcome.incident_id!r} is not pending on the persistent controller")
         started = self._clock.monotonic()
+        reflection_observed_at = self._clock.now()
         error: str | None = None
         try:
             drain_pending_incident(
@@ -215,12 +218,14 @@ class SdoPersistentAgent:
             )
         except ReceiptRejectedError as exc:
             error = f"strict receipt rejected: {exc}"
-        finally:
-            # A failed drain must not block the next incident; its evidence stays on disk.
-            record.pending = None
-            state.save(settings.state_path)
+        # Receipt rejection happens after the controller has acknowledged and relaunched.
+        # Other drain failures leave the pending gate intact and stop the stream.
+        record.pending = None
+        state.save(settings.state_path)
         receipt_dir = Path(str(outcome.artifacts_dir))
         receipt = self._receipt(receipt_dir)
+        if not receipt:
+            raise RuntimeError(f"incident {outcome.incident_id!r} receipt missing after reflection drain")
         # Only a receipt that passed strict validation states how the incident closed.
         resolution = (
             receipt.get("resolution") or receipt_resolution(receipt)
@@ -233,6 +238,10 @@ class SdoPersistentAgent:
         skipped = receipt.get("reflection_skipped_reason")
         # When reflection finished between polls the driver never saw the closure; the receipt has it.
         detected, verified = _receipt_closure_times(receipt)
+        ledger = receipt.get("native_ledger")
+        ledger = ledger if isinstance(ledger, dict) else {}
+        outcome_document = ledger.get("outcome_document")
+        outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
         return outcome.with_learning(
             detected_at=outcome.detected_at or detected,
             mitigation_applied_at=outcome.mitigation_applied_at
@@ -241,7 +250,12 @@ class SdoPersistentAgent:
             diagnosis=outcome.diagnosis or _summaries(receipt.get("confirmed_root_causes")),
             mitigation=outcome.mitigation or _summaries(receipt.get("repair_actions"), successful_only=True),
             reflection_seconds=self._clock.monotonic() - started,
-            responder_tokens=TokenCounts.from_usage(receipt.get("usage")),
+            reflection_started_at=reflection_observed_at,
+            reflection_finished_at=self._clock.now(),
+            rebuild_done_at=self._clock.now(),
+            responder_started_at=outcome.responder_started_at or _timestamp(receipt.get("responder_started_at")),
+            responder_finished_at=outcome.responder_finished_at or _timestamp(receipt.get("responder_finished_at")),
+            responder_tokens=TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")),
             reflection_tokens=TokenCounts.from_usage(receipt.get("reflection_usage")),
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
