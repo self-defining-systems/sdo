@@ -106,21 +106,52 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 		}
 	}
 	for _, spec := range registry.List() {
-		if len(spec.Params) != 1 || !spec.Params[0].Required {
+		if len(spec.Params) == 0 {
+			continue
+		}
+		refs := make([][]sdk.ObjectRef, len(spec.Params))
+		valid := true
+		for index, param := range spec.Params {
+			if !param.Required || param.Kind == "" {
+				valid = false
+				break
+			}
+			refs[index] = sweepRefs(view, param.Kind)
+			if len(refs[index]) == 0 {
+				valid = false
+				break
+			}
+		}
+		if !valid {
 			continue
 		}
 		count := 0
-		for _, ref := range sweepRefs(view, spec.Params[0].Kind) {
+		var bind func(int, program.Bindings)
+		bind = func(index int, current program.Bindings) {
 			if count >= limit || ctx.Err() != nil {
-				break
+				return
 			}
-			bindings := program.Bindings{spec.Params[0].Name: ref}
-			before := len(candidates)
-			add(spec.ID, bindings, "", "sweep")
-			if len(candidates) > before {
-				count++
+			if index == len(spec.Params) {
+				before := len(candidates)
+				add(spec.ID, current, "", "sweep")
+				if len(candidates) > before {
+					count++
+				}
+				return
+			}
+			for _, ref := range refs[index] {
+				if count >= limit || ctx.Err() != nil {
+					break
+				}
+				if bindingUses(current, ref) {
+					continue
+				}
+				next := cloneProgramBindings(current)
+				next[spec.Params[index].Name] = ref
+				bind(index+1, next)
 			}
 		}
+		bind(0, program.Bindings{})
 	}
 	results := make(chan ProgramRun, len(candidates))
 	for _, item := range candidates {

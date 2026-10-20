@@ -3,10 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"testing"
 	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -65,6 +67,23 @@ func TestSelectProgramCandidatesSweepLimitAndDeadline(t *testing.T) {
 		if run.Verdict.Result != program.Unknown || run.BindingSource != "sweep" {
 			t.Fatalf("deadline result: %+v", run)
 		}
+	}
+}
+
+func TestSelectProgramCandidatesSweepsRequiredKindPair(t *testing.T) {
+	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "pair", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "deployment", Kind: "Deployment", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
+		if b["service"].Name == "geo" && b["deployment"].Name == "geo" {
+			return program.Verdict{Result: program.Match}
+		}
+		return program.Verdict{Result: program.NoMatch}
+	}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "geo", Namespace: "app"}}}, DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "geo", Namespace: "app"}}}}}
+	runs := SelectProgramCandidatesWithOptions(context.Background(), registry, view, nil, CandidateOptions{Deadline: time.Second, SweepLimit: 4})
+	if len(runs) != 1 || runs[0].Verdict.Result != program.Match || runs[0].BindingSource != "sweep" {
+		t.Fatalf("required-kind pair: %+v", runs)
 	}
 }
 
