@@ -326,10 +326,12 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 try:
                     self._drain_last(first_label=f"composite-{index:03d}")
                 except ClosureFailedError as exc:
+                    finished_at = self._clock.now()
                     failed = replace(
                         self._failed_closure_outcome(outcomes[-1], self._ops.runtime_state(control), exc),
                         reflection_started_at=self._reflection_started_at,
-                        reflection_finished_at=self._clock.now(),
+                        reflection_finished_at=finished_at,
+                        reflection_seconds=(finished_at - self._reflection_started_at).total_seconds(),
                     )
                     outcomes[-1] = failed
                     self._incidents[-1]["outcome"] = failed

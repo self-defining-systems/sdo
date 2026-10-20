@@ -328,6 +328,7 @@ def test_failed_closure_keeps_pending_outcome_evidence_and_stops(tmp_path: Path)
     assert outcome.responder_finished_at is not None
     assert outcome.reflection_started_at is not None
     assert outcome.reflection_finished_at is not None
+    assert outcome.reflection_seconds is not None
     assert outcome.responder_tokens.input_tokens == 500
     assert outcome.program_diagnoses == 1
     assert outcome.program_verdicts == {"RESULT_NO_MATCH": 1}
