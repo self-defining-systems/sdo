@@ -45,6 +45,11 @@ type PlanPatch struct {
 	Patch json.RawMessage
 }
 
+type PlanPreImage struct {
+	Ref    sdk.ObjectRef              `json:"ref"`
+	Object *unstructured.Unstructured `json:"object"`
+}
+
 // PlanApplicationResult contains the PlanApplication fields, generated patches,
 // and the pre-images needed to reverse an applied plan.
 type PlanApplicationResult struct {
@@ -56,7 +61,7 @@ type PlanApplicationResult struct {
 	ActionsApplied        []program.Action
 	Patches               []PlanPatch
 	Duration              time.Duration
-	PreImages             map[sdk.ObjectRef]*unstructured.Unstructured
+	PreImages             []PlanPreImage
 }
 
 type PlanExecutor struct {
@@ -83,7 +88,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if !dryRun && (e.Rollouts == nil || e.Verifier == nil) {
 		return result, errors.New("rollout waiter and health verifier are required")
 	}
-	result.PreImages = make(map[sdk.ObjectRef]*unstructured.Unstructured)
+	result.PreImages = make([]PlanPreImage, 0, len(plan.Actions))
 	current := make(map[sdk.ObjectRef]*unstructured.Unstructured)
 	refs := make([]sdk.ObjectRef, 0, len(plan.Actions))
 	// Capture every pre-image before any write, including later actions' targets.
@@ -108,7 +113,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if object == nil || !samePlanRef(object, ref) {
 			return result, fmt.Errorf("pre-image does not match %s/%s", ref.Kind, ref.Name)
 		}
-		result.PreImages[ref] = object.DeepCopy()
+		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
 		current[ref] = object.DeepCopy()
 		refs = append(refs, ref)
 	}
@@ -170,7 +175,13 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 			continue
 		}
 		seen[ref] = true
-		before := application.PreImages[ref]
+		var before *unstructured.Unstructured
+		for _, preImage := range application.PreImages {
+			if preImage.Ref == ref {
+				before = preImage.Object
+				break
+			}
+		}
 		if before == nil {
 			return fmt.Errorf("missing pre-image of %s/%s", ref.Kind, ref.Name)
 		}

@@ -649,6 +649,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			stateTracker.Reset()
 		}
 	}
+	persistControllerState := func() {
+		if err := controller.PersistState(ctx); err != nil {
+			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
+		}
+	}
 	if !desired.Paused {
 		kubernetesCache.Start(runCtx)
 		cacheStarted = true
@@ -665,9 +670,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	if err := controller.PersistState(ctx); err != nil {
-		return fmt.Errorf("persist controller state: %w", err)
-	}
+	persistControllerState()
 	if options.NativeBroker != nil && !desired.Paused {
 		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 			return err
@@ -718,9 +721,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return err
 		}
-		if err := controller.PersistState(ctx); err != nil {
-			return fmt.Errorf("persist controller state: %w", err)
-		}
+		persistControllerState()
 		if options.NativeBroker != nil {
 			if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 				return err
@@ -797,9 +798,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				return err
 			}
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -814,9 +813,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleDispatchCompletion(completion, time.Now().UTC())
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -831,9 +828,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleWorkspaceCompletion(completion)
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -848,9 +843,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleClosureCompletion(completion)
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := ClosureFailureError(controller); err != nil && *exitAfterClosure {
 				return err
 			}
@@ -865,9 +858,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleAcknowledgmentCompletion(completion)
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -915,9 +906,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				return err
 			}
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -1183,7 +1172,12 @@ func defaultIdentity() string {
 
 // executePausedEffects runs only operational-memory effects: a paused
 // controller neither prepares nor dispatches a responder.
-func executePausedEffects(ctx context.Context, controller *Controller) error {
+func executePausedEffects(ctx context.Context, controller *Controller) (err error) {
+	defer func() {
+		if errors.Is(err, ErrEffectNotDurable) {
+			err = nil
+		}
+	}()
 	if closure, ok := controller.PendingClosureEffect(); ok {
 		if err := controller.ExecuteClosureEffect(ctx, closure); err != nil {
 			return fmt.Errorf("execute persisted closure effect: %w", err)
@@ -1204,7 +1198,13 @@ func executePausedEffects(ctx context.Context, controller *Controller) error {
 	return nil
 }
 
-func executePendingEffects(ctx context.Context, controller *Controller) error {
+func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
+	// A failed state write leaves effects pending for the next successful save.
+	defer func() {
+		if errors.Is(err, ErrEffectNotDurable) {
+			err = nil
+		}
+	}()
 	if effect, ok := controller.PendingWorkspaceEffect(); ok {
 		if err := controller.ExecuteWorkspaceEffect(ctx, effect); err != nil {
 			return fmt.Errorf("execute persisted workspace effect: %w", err)

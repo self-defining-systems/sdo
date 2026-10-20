@@ -147,8 +147,12 @@ func TestFailedStateWriteBlocksDispatch(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	controller := durabilityController(t, client, testControllerConfig(), dispatcher)
+	failWrite := true
 	client.PrependReactor("create", "configmaps", func(k8stesting.Action) (bool, k8sruntime.Object, error) {
-		return true, nil, errors.New("API server unavailable")
+		if failWrite {
+			return true, nil, errors.New("API server unavailable")
+		}
+		return false, nil, nil
 	})
 	if err := controller.Step(ctx, time.Unix(0, 0), nil); err != nil {
 		t.Fatalf("open incident: %v", err)
@@ -164,6 +168,18 @@ func TestFailedStateWriteBlocksDispatch(t *testing.T) {
 		t.Fatalf("dispatch after failed write: got %v, want ErrEffectNotDurable", err)
 	}
 	assertNoRequest(t, dispatcher.requests)
+	if err := executePendingEffects(ctx, controller); err != nil {
+		t.Fatalf("failed persistence stopped controller effects loop: %v", err)
+	}
+	assertNoRequest(t, dispatcher.requests)
+	failWrite = false
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("retry state write: %v", err)
+	}
+	if err := executePendingEffects(ctx, controller); err != nil {
+		t.Fatalf("dispatch after successful retry: %v", err)
+	}
+	awaitRequest(t, dispatcher.requests)
 }
 
 func TestUnchangedPersistMakesNoAPICallsAndKeepsDispatchDurable(t *testing.T) {
@@ -338,6 +354,9 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 	if err := controller.ExecuteClosureEffect(ctx, closure); !errors.Is(err, ErrEffectNotDurable) {
 		t.Fatalf("closure committed before incident close was durable: got %v", err)
 	}
+	if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
+		t.Fatalf("paused controller stopped or committed undurable closure: %v", err)
+	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist incident close: %v", err)
 	}
@@ -354,6 +373,9 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 	}
 	if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, ack); !errors.Is(err, ErrEffectNotDurable) {
 		t.Fatalf("closure acknowledged before its receipt was durable: got %v", err)
+	}
+	if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
+		t.Fatalf("paused controller stopped or acknowledged undurable receipt: %v", err)
 	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist closure receipt: %v", err)
