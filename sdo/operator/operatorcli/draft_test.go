@@ -154,11 +154,29 @@ func draftFixtureAppFrom(t *testing.T, fixtureName string) string {
 	return app
 }
 
+func seedUnformattedHealthSource(t *testing.T, app string) {
+	t.Helper()
+	path := filepath.Join(app, ".sdo", "diagnostics", "detectors", "health", "objective", "detector.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", ".sdo/diagnostics/detectors/health/objective/detector.go"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "accepted health source"}} {
+		command := exec.Command("git", append([]string{"-C", app}, args...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+}
+
 func TestDraftTestValidatesProgramProposal(t *testing.T) {
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOSUMDB", "off")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	app := draftFixtureAppFrom(t, "playbook_program_app")
+	seedUnformattedHealthSource(t, app)
 	read := func(path string) string {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join(app, ".sdo", path))

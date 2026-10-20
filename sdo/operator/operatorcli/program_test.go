@@ -196,6 +196,7 @@ func TestProgramProposeEmitsValidatedFixture(t *testing.T) {
 	t.Setenv("GOSUMDB", "off")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	app := draftFixtureAppFrom(t, "playbook_program_app")
+	seedUnformattedHealthSource(t, app)
 	config := ProgramProposeConfig{Dir: filepath.Join(app, ".sdo", "playbooks", "service-targetport-mismatch"), Corpus: []string{filepath.Join(app, ".sdo", "corpus", "targetport-mismatch")}, Incident: "inc-42", App: app, OperatorRoot: ".."}
 	var output strings.Builder
 	if err := RunProgramPropose(context.Background(), config, &output); err != nil {

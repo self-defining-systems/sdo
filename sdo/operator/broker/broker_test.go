@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +79,98 @@ func TestValidateMemoryTreeRejectsUnformattedGo(t *testing.T) {
 	}
 }
 
+func TestResponderProgramProposalIgnoresPreexistingUnformattedHealthGo(t *testing.T) {
+	ctx := context.Background()
+	target := repository(t)
+	memoryFixture(t, target)
+	health := filepath.Join(target, ".sdo", "diagnostics", "detectors", "health", "objective", "detector.go")
+	if err := os.WriteFile(health, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(target, ".sdo", "playbooks", "base", "diagnose.go")
+	if err := os.WriteFile(program, []byte("package base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, target, "add", ".")
+	git(t, target, "commit", "-qm", "accepted memory")
+	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := b.CreateProposal(ctx, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "playbooks", "base", "diagnose.go"), []byte("package base\n\nfunc Diagnose() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warnings bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&warnings)
+	defer log.SetOutput(oldOutput)
+	if _, err := b.Publish(ctx, "incident", Responder, ReflectionPhase); err != nil {
+		t.Fatalf("program proposal rejected: %v", err)
+	}
+	if !strings.Contains(warnings.String(), "owner: health_judge") || !strings.Contains(warnings.String(), "detector.go") {
+		t.Fatalf("missing owner warning: %q", warnings.String())
+	}
+	if data, err := os.ReadFile(health); err != nil || string(data) != "package objective\nfunc f(){println(1)}\n" {
+		t.Fatalf("accepted health source changed: %q, %v", data, err)
+	}
+}
+
+func TestResponderDirectProgramEditRejectsUnformattedGo(t *testing.T) {
+	ctx := context.Background()
+	target := repository(t)
+	memoryFixture(t, target)
+	program := filepath.Join(target, ".sdo", "playbooks", "base", "diagnose.go")
+	if err := os.WriteFile(program, []byte("package base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, target, "add", ".")
+	git(t, target, "commit", "-qm", "accepted program")
+	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := b.CreateProposal(ctx, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "playbooks", "base", "diagnose.go"), []byte("package base\nfunc Diagnose(){}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ReflectionPhase); err == nil || !strings.Contains(err.Error(), "not gofmt formatted") {
+		t.Fatalf("unformatted direct program edit accepted: %v", err)
+	}
+}
+
 func TestNewProgramRequiresCapturedCorpus(t *testing.T) {
 	baseline := t.TempDir()
 	root := repository(t)
@@ -106,6 +200,12 @@ func TestResponderProposalCommitsCanonicalGo(t *testing.T) {
 	ctx := context.Background()
 	target := repository(t)
 	memoryFixture(t, target)
+	health := filepath.Join(target, ".sdo", "diagnostics", "detectors", "health", "objective", "detector.go")
+	if err := os.WriteFile(health, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, target, "add", ".")
+	git(t, target, "commit", "-qm", "accepted unformatted health source")
 	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
