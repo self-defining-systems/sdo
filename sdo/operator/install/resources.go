@@ -232,6 +232,7 @@ func Resources(c Config) (Plan, error) {
 			}
 			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
 		}
+		readRules = append(readRules, programApplyRules()...)
 		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
 		for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-controller-helper-cleanup"} {
 			subject := name
@@ -241,7 +242,7 @@ func Resources(c Config) (Plan, error) {
 			plan.AppBindings = append(plan.AppBindings, binding(c.Namespace, name, subject, control))
 		}
 	} else {
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
+		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", append(controllerRules, programApplyRules()...)), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
 	}
 	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
 		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
@@ -260,6 +261,14 @@ func Resources(c Config) (Plan, error) {
 	hash := sha256.Sum256(encoded)
 	plan.Job.Annotations = map[string]string{InstallFingerprintAnnotation: hex.EncodeToString(hash[:16]), WorkerMountPolicyAnnotation: "proposal-only"}
 	return plan, nil
+}
+
+func programApplyRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		rule("", []string{"services"}, "get", "patch"),
+		rule("apps", []string{"deployments", "statefulsets", "daemonsets"}, "get", "patch"),
+		rule("apps", []string{"replicasets", "controllerrevisions"}, "get", "list"),
+	}
 }
 
 func rule(group string, resources []string, verbs ...string) rbacv1.PolicyRule {

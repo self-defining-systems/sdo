@@ -129,7 +129,7 @@ class RestartRollout(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class ProgramRun(_message.Message):
-    __slots__ = ("program_id", "bindings", "verdict", "duration", "error", "finding_fingerprint", "program_revision")
+    __slots__ = ("program_id", "bindings", "verdict", "duration", "error", "finding_fingerprint", "program_revision", "binding_source")
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
     VERDICT_FIELD_NUMBER: _ClassVar[int]
@@ -137,6 +137,7 @@ class ProgramRun(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     FINDING_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
+    BINDING_SOURCE_FIELD_NUMBER: _ClassVar[int]
     program_id: str
     bindings: _containers.RepeatedCompositeFieldContainer[Binding]
     verdict: Verdict
@@ -144,7 +145,8 @@ class ProgramRun(_message.Message):
     error: str
     finding_fingerprint: str
     program_revision: str
-    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ...) -> None: ...
+    binding_source: str
+    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
     __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration")

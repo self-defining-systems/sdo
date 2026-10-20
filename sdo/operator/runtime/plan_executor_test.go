@@ -244,3 +244,45 @@ func TestPlanApplicationResultMapsToProto(t *testing.T) {
 		t.Fatalf("proto application = %+v, err = %v", encoded, err)
 	}
 }
+
+func TestPlanApplicationJSONRoundTripsAllActionsAndSetFieldValues(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	actions := []program.Action{
+		program.ReconcileFromSource{Ref: ref},
+		program.Rollback{Ref: ref, ToRevision: "previous"},
+		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].resources", Value: map[string]any{"limits": map[string]any{"cpu": "500m"}, "requests": []any{1, true, nil}}, Reason: "restore limits"},
+		program.RestartRollout{Ref: ref, Reason: "refresh"},
+	}
+	application := PlanApplicationResult{Plan: program.Plan{Actions: actions, Rationale: "repair"}, ActionsApplied: actions}
+	encoded, err := json.Marshal(application)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded PlanApplicationResult
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	encodedAgain, err := json.Marshal(decoded)
+	if err != nil || string(encodedAgain) != string(encoded) {
+		t.Fatalf("action data changed after reload: %s, want %s, err = %v", encodedAgain, encoded, err)
+	}
+	for index, action := range decoded.ActionsApplied {
+		var ok bool
+		switch index {
+		case 0:
+			_, ok = action.(program.ReconcileFromSource)
+		case 1:
+			_, ok = action.(program.Rollback)
+		case 2:
+			_, ok = action.(program.SetField)
+		case 3:
+			_, ok = action.(program.RestartRollout)
+		}
+		if !ok {
+			t.Fatalf("action %d lost its concrete type: %T", index, action)
+		}
+	}
+	if err := json.Unmarshal([]byte(`{"Plan":{"Actions":[{"kind":"unknown","action":{}}]}}`), &decoded); err == nil {
+		t.Fatal("unknown persisted action type accepted")
+	}
+}

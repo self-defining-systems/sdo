@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -37,6 +40,59 @@ func TestCloneIncidentResultPreservesEmptyCollectionsForBrokerProtocol(t *testin
 	applied := decoded["applied_playbooks"].([]any)[0].(map[string]any)
 	if applied["script_names"] == nil {
 		t.Fatalf("empty applied playbook scripts became null: %s", payload)
+	}
+}
+
+func TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence(t *testing.T) {
+	ctx := context.Background()
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "api"}
+	before := planObject(ref, map[string]any{"replicas": float64(1)})
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	action := program.SetField{Ref: ref, Path: "spec.replicas", Value: 2, Reason: "restore capacity"}
+	application, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc", Trusted: true}}
+	response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := RuntimeState{Version: RuntimeStateVersion, IncidentResult: &IncidentResult{
+		ProgramRuns:      []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}},
+		ProgramToolCalls: []ToolCall{{Command: "status", RequestJSON: `{"command":"status"}`, ResponseJSON: string(response), Summary: "healthy"}},
+		PlanApplications: []RecordedPlanApplication{{ID: "application-1", ProgramIDs: []string{"capacity"}, Result: application}},
+	}}
+	store := NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
+	if _, err := store.Save(ctx, state, ""); err != nil {
+		t.Fatalf("persist applied plan: %v", err)
+	}
+	loaded, _, err := store.Load(ctx)
+	if err != nil {
+		t.Fatalf("reload applied plan: %v", err)
+	}
+	result := loaded.IncidentResult
+	if len(result.ProgramRuns) != 1 || !reflect.DeepEqual(result.ProgramRuns[0].Bindings, state.IncidentResult.ProgramRuns[0].Bindings) ||
+		!reflect.DeepEqual(result.ProgramToolCalls, state.IncidentResult.ProgramToolCalls) {
+		t.Fatalf("program evidence changed after reload: %+v", result)
+	}
+	var restoredResponse ToolResponse
+	if err := json.Unmarshal([]byte(result.ProgramToolCalls[0].ResponseJSON), &restoredResponse); err != nil || !reflect.DeepEqual(restoredResponse.Trust, trust) {
+		t.Fatalf("trust stats after reload: %+v, %v", restoredResponse.Trust, err)
+	}
+	got := result.PlanApplications[0].Result
+	if len(got.PreImages) != 1 || len(got.ActionsApplied) != 1 {
+		t.Fatalf("applied plan lost rollback data: %+v", got)
+	}
+	if _, ok := got.ActionsApplied[0].(program.SetField); !ok {
+		t.Fatalf("applied action type = %T", got.ActionsApplied[0])
+	}
+	if err := executor.Rollback(ctx, got); err != nil {
+		t.Fatalf("rollback after reload: %v", err)
+	}
+	if !reflect.DeepEqual(client.objects[ref].Object, before.Object) {
+		t.Fatalf("rollback restored %+v, want %+v", client.objects[ref].Object, before.Object)
 	}
 }
 
