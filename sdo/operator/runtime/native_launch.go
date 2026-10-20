@@ -94,6 +94,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		}
 		executor := freshExecutor
 		executor.SessionPVCSubPath = subPath
+		executor.CapturedCorpusReadOnly = true
 		executor.Environment = map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude", "SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"}
 		if resume {
 			executor.Environment["CODEX_HOME"] = "/sdo/session/codex"

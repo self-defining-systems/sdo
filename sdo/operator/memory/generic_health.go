@@ -39,11 +39,11 @@ func writeGenericDetector(root string, entry artifactDetector, source string) er
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(base, "detector.go"), []byte(source), 0o644); err != nil {
+	if err := writeGoSource(filepath.Join(base, "detector.go"), &contracts.ProposedGoSource{Name: "detector.go", Content: source}); err != nil {
 		return err
 	}
 	test := fmt.Sprintf("package %s\n\nimport \"testing\"\n\nfunc TestRegistration(t *testing.T) { if New().Spec().ID != %q { t.Fatal(\"unexpected detector ID\") } }\n", genericPackage(entry.ID), entry.ID)
-	return os.WriteFile(filepath.Join(base, "detector_test.go"), []byte(test), 0o644)
+	return writeGoSource(filepath.Join(base, "detector_test.go"), &contracts.ProposedGoSource{Name: "detector_test.go", Content: test})
 }
 
 func genericPackage(id string) string {

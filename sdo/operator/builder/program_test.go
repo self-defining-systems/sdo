@@ -42,6 +42,41 @@ func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
 	}
 }
 
+func TestProgramAcceptsRecordedSyntheticNoMatchCase(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOSUMDB", "off")
+	root := programFixture(t)
+	source := filepath.Join(root, ".sdo", "corpus", "targetport-mismatch")
+	dir := filepath.Join(root, ".sdo", "corpus", "near-miss")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixed, err := os.ReadFile(filepath.Join(source, "fixed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"open.json", "fixed.json", "healthy.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), fixed, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "recordings.json"), []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	labels := `{"no_match_program_ids":["service-targetport-mismatch"],"bindings":{"service":{"kind":"Service","namespace":"demo","name":"front"}},"synthetic_no_match_reason":"healthy port near miss"}`
+	if err := os.WriteFile(filepath.Join(dir, "labels.json"), []byte(labels), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := buildProgramFixture(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if _, err := w.ValidateAndBuild(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
 	for _, tc := range []struct {
 		name, old, replacement string

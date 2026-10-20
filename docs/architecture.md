@@ -36,6 +36,8 @@ The `.proto` files are the source of truth for messages crossing Go, Python, and
 
 Native incident and reflection tasks carry an accepted-commit-bound `OperationalMemorySnapshot` with goal and architecture text, logical detector registrations, and playbook IDs/content. Agents return logical IDs and typed `OperationalArtifactProposal` mutations for detectors, playbooks, and judge-owned traffic. The Go memory edge maps those proposals into repository files; the broker then validates role ownership, provenance, the actual diff, and independent test evidence before commit. Source repair still occurs in an isolated proposal checkout. Workers do not read or write physical operational-memory paths.
 
+The controller captures the application namespace's detection view at incident open and verified close under the private incident session, before response and after verification respectively. Captures are bounded and redact sensitive environment values; workers see the corpus directory through a read-only session mount. Reflection binds a healthy peer from the fixed snapshot. `program propose --corpus-from-incident` builds typed corpus cases from those captures, and the broker checks the recorded incident ID and snapshot digests against the session files before publishing. Go proposals are gofmt canonicalized; direct unformatted `.sdo/` Go edits fail broker validation.
+
 | Package | Responsibility |
 |---|---|
 | `sdo/agents/{deployer,health_judge,responder}/`, `sdo/agents/views/` | Built-in agent sessions, prompts, local provider adapters, worker entry points, and agent-local prompt/output views; native memory reads and writes use logical protobuf contracts |
@@ -57,7 +59,7 @@ The controller is split by stability and privilege:
 | Package | Responsibility |
 |---|---|
 | `sdo/operator/sdk/` | Public Go interfaces for detector specifications, snapshots, findings, persistence, batching, and test snapshots |
-| `sdo/operator/sdk/program/`, `sdk/sdktest/` | Typed diagnosers, mitigators, plans, compiled program registry, and recorded corpus replay |
+| `sdo/operator/sdk/program/`, `sdk/sdktest/` | Typed diagnosers, mitigators, plans, namespace-scoped capture, and recorded corpus replay |
 | `sdo/operator/sdk/servicehealth/` | Zero-knowledge ready-endpoints detector that names the selector labels a Service's backing Deployment lacks |
 | `sdo/operator/sdk/traffic/` | Synthetic-traffic scenarios, parameter generators, workload profiles, the deterministic engine, sliding-window SLO evaluation, and the scenario SLO detector |
 | `sdo/operator/core/` | Detector execution, snapshot validation, finding emission, and playbook-path validation |
@@ -87,7 +89,7 @@ The application repository is the shared durable memory. Five artifact classes l
 | `diagnostics/` | Health judge and responder | Health and incident detector source, tests, module, and manifest; synthetic-traffic generators and workloads (judge-owned, except responder-owned `traffic/generators/incident/` and `traffic/workloads/incident-*.yaml`) |
 | Outcomes | Controller through the broker | Immutable, versioned incident outcome documents and evidence |
 
-The builder stages `.sdo/diagnostics`, `.sdo/playbooks`, and `.sdo/lib` into one temporary Go module using the diagnostics module path. Authored packages import shared helpers as `<diagnostics-module>/lib/<package>` and the SDK as `sdo.dev/operator/sdk`. Detector-only repositories retain their existing `diagnostics/go.mod` without migration. Corpus data stays at `.sdo/corpus/<case>/`; shared libraries may be proposed independently. The isolated validator checks imports, program registrations, bindings, corpus generalization and rename invariance, and shell-free program guidance. `draft-test` uses the same builder path.
+The builder stages `.sdo/diagnostics`, `.sdo/playbooks`, and `.sdo/lib` into one temporary Go module using the diagnostics module path. Authored packages import shared helpers as `<diagnostics-module>/lib/<package>` and the SDK as `sdo.dev/operator/sdk`. Detector-only repositories retain their existing `diagnostics/go.mod` without migration. Corpus data stays at `.sdo/corpus/<case>/`; shared libraries may be proposed independently. New programs need a captured matching case with `labels.json` provenance (`incident_id`, `open_sha256`, `fixed_sha256`). An agent-added synthetic NoMatch case uses `no_match_program_ids` and `synthetic_no_match_reason`. The isolated validator checks imports, program registrations, bindings, corpus generalization and rename invariance, and shell-free program guidance. `draft-test` uses the same builder path.
 
 The logical outcome contract is `OutcomeRecord` in `sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto`. The controller derives it, the broker alone receives `memory.Writer`, and `memory.Reader` exposes `Get` and `List` by incident ID. Reflection receives the accepted record and prior records as typed protobuf fields. The Go JSON storage adapter alone maps an incident ID to `.sdo/outcomes/<sha256(incident_id)>.json`, stores the versioned document, and can import the prior `.sdo/outcomes.jsonl` stream once, deleting that stream only after every record is accepted. Consumers never infer physical filenames. Broker-owned source deployment evidence lives outside `.sdo/` in its own durable ledger and is bound to an accepted commit.
 
@@ -176,7 +178,7 @@ Status meanings:
 | Isolated detector validation | `sdo/operator/builder/`, `sdo/operator/operatorcli/`, `sdo/operator/broker/` | Active | Agent `draft-test` checks scratch projections; broker acceptance uses its own isolated validator Job. |
 | Commit authority | `sdo/operator/broker/` | Active | The Go broker alone publishes role-owned changes; verified source publishing is bound to a trusted candidate-tree digest and durable deployment evidence. |
 | Logical operational memory | `sdo/contracts/proto/.../outcome.proto`, `sdo/operator/memory/`, `outcome_derivation/` | Active | Go supplies accepted-commit-bound logical catalogs to workers, materializes typed artifact proposals, and stores typed outcomes as versioned per-incident JSON documents. |
-| Outcome reflection and reuse | `sdo/agents/responder/reflection_worker.py`, `sdo/operator/runtime/native_broker.go` | Active | Resumed reflection proposes tested programs or typed SDK gaps; broker validates actual diff, publishes accepted artifacts, and retains gaps in the incident ledger. |
+| Outcome reflection and reuse | `sdo/agents/responder/reflection_worker.py`, `sdo/operator/runtime/native_broker.go`, `sdo/operator/memory/corpus_capture.go` | Active | Resumed reflection proposes tested programs from controller captures or typed SDK gaps; broker checks corpus provenance and actual diff, publishes accepted artifacts, and retains gaps in the incident ledger. |
 | Controller installation | `sdo/operator/install/` | Active | Go installer seeds the accepted commit and starts the controller in a prepared in-cluster checkout. |
 | SREGym adapter and receipts | `benchmarks/sregym/`, `third_party/sregym/` | Benchmark-only | Benchmark submission, strict receipts, and harness verdicts never enter production packages. |
 
@@ -187,7 +189,7 @@ Status meanings:
 | `.sdo/goal.md` | Human | Human | Agent proposals cannot change the objective. |
 | `.sdo/arch.md` | Deployer after accepted source | Deployer or authorized upkeep | `generated_at_commit` must name the broker-accepted source commit and topology must match source. |
 | `.sdo/playbooks/` | Health judge may create only the named bootstrap index/playbook; responder authors incident playbooks and programs | Responder | Paths, front matter, incident provenance, import allowlist, program registration, tests, and shell-free guidance are validated. Runtime programs propose plans; the controller records applications and verdicts. |
-| `.sdo/lib/`, `.sdo/corpus/` | Responder | Responder | Shared Go packages follow import checks; corpus labels must bind against program specs and pass generalization and rename-invariance replay. |
+| `.sdo/lib/`, `.sdo/corpus/` | Responder | Responder | Shared Go packages are gofmt canonicalized and follow import checks. New programs require a controller-captured matching case; labels bind it to incident snapshot digests. Synthetic NoMatch cases require a recorded reason. Replay checks generalization and rename invariance. |
 | `.sdo/diagnostics/detectors/health/` | Health judge | Health judge lifecycle | Objective digest, ownership, isolated compile, and tests are required. |
 | `.sdo/diagnostics/detectors/incidents/` | Responder | Responder | Incident provenance, compile, matching, and near-miss tests are required. |
 | `.sdo/diagnostics/traffic/generators/`, `traffic/workloads/` | Health judge | Health judge lifecycle | Workloads and generators obey engine limits and isolated validation. |
@@ -202,7 +204,7 @@ Status meanings:
 | `sdo/agents/`, `sdo/agents/views/` | Production agent implementations and agent-local Pydantic views; built-in agents may use Codex or Claude internally. |
 | `sdo/contracts/proto/`, `sdo/contracts/_gen/` | Canonical language-neutral task/result and outcome schemas, with generated Python messages. |
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
-| `sdo/operator/broker/`, `memory/`, `outcome_derivation/`, `install/` | Production Go authority, physical storage and artifact-projection edge, outcome derivation, and installer. |
+| `sdo/operator/broker/`, `memory/`, `outcome_derivation/`, `install/` | Production Go authority, physical storage and artifact-projection edge, private incident corpus capture and provenance validation, outcome derivation, and installer. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector and program SDK, validation/build, candidate selection, responder tools, controller stack, and generated contracts. Runtime remains independent of benchmark transports. |
 | `libs/sdo_core/`, `libs/agent_cli/`, `libs/model_config/` | Production-neutral helpers, agent turn runner, and model parsing. |
 | `apps/` | Deployment and evaluation inputs. |

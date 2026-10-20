@@ -1,0 +1,57 @@
+package memory
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"sdo.dev/operator/sdk/sdktest"
+)
+
+func TestValidateCapturedCorpusTreeRejectsForgedSnapshot(t *testing.T) {
+	root := t.TempDir()
+	view := sdktest.Snapshot{NamespaceName: "app"}
+	if err := CaptureIncidentSnapshot(root, "incident", "open", view, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CaptureIncidentSnapshot(root, "incident", "fixed", view, "app"); err != nil {
+		t.Fatal(err)
+	}
+	caseDir := filepath.Join(t.TempDir(), ".sdo", "corpus", "case")
+	if err := os.MkdirAll(caseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trusted, err := IncidentCorpusDir(root, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"open.json", "fixed.json", "recordings.json"} {
+		data, err := os.ReadFile(filepath.Join(trusted, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(caseDir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	open, _ := os.ReadFile(filepath.Join(trusted, "open.json"))
+	fixed, _ := os.ReadFile(filepath.Join(trusted, "fixed.json"))
+	labels := fmt.Sprintf(`{"provenance":{"incident_id":"incident","open_sha256":"%x","fixed_sha256":"%x"}}`, sha256.Sum256(open), sha256.Sum256(fixed))
+	if err := os.WriteFile(filepath.Join(caseDir, "labels.json"), []byte(labels), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Dir(filepath.Dir(filepath.Dir(caseDir)))
+	changed := []string{".sdo/corpus/case/open.json"}
+	if err := ValidateCapturedCorpusTree(root, candidate, "incident", changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(caseDir, "open.json"), []byte(`{"namespace":"forged"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCapturedCorpusTree(root, candidate, "incident", changed); err == nil || !strings.Contains(err.Error(), "captured") {
+		t.Fatalf("forged corpus accepted: %v", err)
+	}
+}

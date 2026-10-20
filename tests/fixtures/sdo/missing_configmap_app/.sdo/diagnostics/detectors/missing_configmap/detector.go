@@ -18,13 +18,13 @@ func New() sdk.Detector {
 
 func (Detector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{
-		ID:          "missing-configmap",
-		Class:       sdk.DetectorClassIncident,
-		Owner:       sdk.DetectorOwnerResponder,
-		Description: "find Deployments that reference absent required ConfigMaps",
-		Interval:    30 * time.Second,
-		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
-		Batching:    sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
+		ID:                  "missing-configmap",
+		Class:               sdk.DetectorClassIncident,
+		Owner:               sdk.DetectorOwnerResponder,
+		Description:         "find Deployments that reference absent required ConfigMaps",
+		Interval:            30 * time.Second,
+		Persistence:         sdk.PersistencePolicy{Firing: 2, Clearing: 2},
+		Batching:            sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
 		OriginatingIncident: "missing-configmap-fixture",
 		OriginatingCommit:   "fixture123",
 		Watches: []sdk.WatchKind{

@@ -27,6 +27,19 @@ func CheckGeneralization(t testing.TB, p program.Diagnoser, c CorpusCase, peer p
 	}
 }
 
+// CheckNoMatchCase exercises a recorded synthetic near miss used to tighten a
+// program. The reason in labels.json makes this exception explicit.
+func CheckNoMatchCase(t testing.TB, p program.Diagnoser, c CorpusCase) {
+	t.Helper()
+	if c.SyntheticNoMatchReason == "" {
+		t.Fatal("synthetic NoMatch case needs a recorded reason")
+	}
+	verdict := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: c.Open, Calls: c.Recordings}, c.Bindings, 10*time.Second)
+	if verdict.Result != program.NoMatch {
+		t.Errorf("synthetic NoMatch case: got %+v", verdict)
+	}
+}
+
 func CheckMitigatorGeneralization(t testing.TB, p program.Mitigator, c CorpusCase) {
 	t.Helper()
 	for _, tc := range []struct {

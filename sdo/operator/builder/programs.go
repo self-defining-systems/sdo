@@ -20,6 +20,7 @@ import (
 type compiledProgram struct {
 	id, diagnoser, mitigator string
 	cases                    []string
+	negativeCases            []string
 }
 
 var programID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -164,6 +165,10 @@ func validatePrograms(workspace, module string) ([]compiledProgram, error) {
 			return nil, fmt.Errorf("playbook %s needs a labeled corpus case", id)
 		}
 		item.cases = cases
+		item.negativeCases, err = noMatchCasesFor(filepath.Join(workspace, "corpus"), id)
+		if err != nil {
+			return nil, err
+		}
 		programs = append(programs, item)
 	}
 	sort.Slice(programs, func(i, j int) bool { return programs[i].id < programs[j].id })
@@ -203,10 +208,15 @@ func checkCorpusLabels(root string, programs []compiledProgram) error {
 		if err != nil {
 			return err
 		}
-		if len(caseData.RootCauseProgramIDs) == 0 {
-			return fmt.Errorf("corpus %s needs root_cause_program_ids", entry.Name())
+		if len(caseData.RootCauseProgramIDs) == 0 && len(caseData.NoMatchProgramIDs) == 0 {
+			return fmt.Errorf("corpus %s needs root_cause_program_ids or no_match_program_ids", entry.Name())
 		}
-		for _, id := range caseData.RootCauseProgramIDs {
+		if caseData.SyntheticNoMatchReason != "" {
+			if err := sdktest.ValidateCorpusProvenance(filepath.Join(root, entry.Name())); err != nil {
+				return fmt.Errorf("corpus %s: %w", entry.Name(), err)
+			}
+		}
+		for _, id := range append(caseData.RootCauseProgramIDs, caseData.NoMatchProgramIDs...) {
 			if !known[id] {
 				return fmt.Errorf("corpus %s labels unknown program %q", entry.Name(), id)
 			}
@@ -326,6 +336,33 @@ func corpusCasesFor(root, programID string) ([]string, error) {
 	return result, nil
 }
 
+func noMatchCasesFor(root, programID string) ([]string, error) {
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var result []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		caseData, err := sdktest.LoadCorpusCase(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range caseData.NoMatchProgramIDs {
+			if id == programID {
+				result = append(result, entry.Name())
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
 func generatePrograms(root, module string, programs []compiledProgram) error {
 	var source strings.Builder
 	source.WriteString("package generated\n\nimport (\n\t\"sdo.dev/operator/sdk/program\"\n")
@@ -352,6 +389,9 @@ func generatePrograms(root, module string, programs []compiledProgram) error {
 		fmt.Fprintf(&test, "\t{\n\t\tp, ok := registry.Diagnoser(%q)\n\t\tif !ok { t.Fatal(%q) }\n\t\tif p.Spec().ID != %q { t.Fatalf(\"program ID mismatch: %%s\", p.Spec().ID) }\n", item.id, "missing diagnoser "+item.id, item.id)
 		for _, caseID := range item.cases {
 			fmt.Fprintf(&test, "\t\t{\n\t\t\tc, err := sdktest.LoadCorpusCase(filepath.Join(\"..\", \"corpus\", %q))\n\t\t\tif err != nil { t.Fatal(err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil { t.Fatalf(\"case %s binding: %%v\", err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.PeerBindings); err != nil { t.Fatalf(\"case %s peer binding: %%v\", err) }\n\t\t\tsdktest.CheckGeneralization(t, p, c, c.PeerBindings)\n\t\t\tsdktest.CheckRenameInvariance(t, p, c)\n\t\t\tif m, ok := registry.Mitigator(%q); ok { sdktest.CheckMitigatorGeneralization(t, m, c) }\n\t\t}\n", caseID, caseID, caseID, item.id)
+		}
+		for _, caseID := range item.negativeCases {
+			fmt.Fprintf(&test, "\t\t{\n\t\t\tc, err := sdktest.LoadCorpusCase(filepath.Join(\"..\", \"corpus\", %q))\n\t\t\tif err != nil { t.Fatal(err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil { t.Fatal(err) }\n\t\t\tsdktest.CheckNoMatchCase(t, p, c)\n\t\t}\n", caseID)
 		}
 		test.WriteString("\t}\n")
 	}
