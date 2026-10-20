@@ -166,6 +166,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
+	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",
 		30*time.Second,
@@ -437,6 +438,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
 				}, *maxResponseLoops)
 				loop.DiagnosisDeadline = *diagnosisDeadline
+				loop.DiagnosisSettleDelay = *diagnosisSettleDelay
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
 						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}

@@ -8,11 +8,14 @@ import (
 	"sync"
 	"time"
 
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
 const DefaultMaxResponseLoops = 5
+const DefaultDiagnosisSettleDelay = 15 * time.Second
+const maxRecordedToolResponse = 2048
 
 type ToolRequest struct {
 	Command       string           `json:"command"`
@@ -66,25 +69,26 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	Request             IncidentRequest
-	Programs            program.ProgramRegistry
-	Provider            SnapshotProvider
-	Detectors           []sdk.Detector
-	Executor            PlanExecutor
-	ReadView            func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline   time.Duration
-	CandidateSweepLimit int
-	MaxBatches          int
-	Trust               map[string]ProgramTrust
-	mu                  sync.Mutex
-	plans               map[string]selectedPlan
-	applications        map[string]PlanApplicationResult
-	applicationsLog     []RecordedPlanApplication
-	failureSignals      []string
-	calls               []ToolCall
-	runs                []ProgramRun
-	findings            []sdk.Finding
-	batches             int
+	Request              IncidentRequest
+	Programs             program.ProgramRegistry
+	Provider             SnapshotProvider
+	Detectors            []sdk.Detector
+	Executor             PlanExecutor
+	ReadView             func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline    time.Duration
+	DiagnosisSettleDelay time.Duration
+	CandidateSweepLimit  int
+	MaxBatches           int
+	Trust                map[string]ProgramTrust
+	mu                   sync.Mutex
+	plans                map[string]selectedPlan
+	applications         map[string]PlanApplicationResult
+	applicationsLog      []RecordedPlanApplication
+	failureSignals       []string
+	calls                []ToolCall
+	runs                 []ProgramRun
+	findings             []sdk.Finding
+	batches              int
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {
@@ -121,6 +125,37 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	return l.diagnose(ctx, l.findings)
 }
 
+// RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
+// The caller starts this while the responder Job is being dispatched.
+func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
+	l.mu.Lock()
+	inconclusive := false
+	for _, run := range l.runs {
+		if run.Verdict.Result == program.NoMatch || run.Verdict.Result == program.Unknown {
+			inconclusive = true
+			break
+		}
+	}
+	delay := l.DiagnosisSettleDelay
+	l.mu.Unlock()
+	if !inconclusive {
+		return
+	}
+	if delay <= 0 {
+		delay = DefaultDiagnosisSettleDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, _, _ = l.refresh(ctx)
+}
+
 func (l *ResponderLoop) LoopsUsed() int { l.mu.Lock(); defer l.mu.Unlock(); return l.batches }
 func (l *ResponderLoop) Exhausted() bool {
 	l.mu.Lock()
@@ -137,20 +172,23 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Summary = response.Error
 		}
 		requestJSON, _ := json.Marshal(request)
+		response = logicalToolResponse(response)
 		responseJSON, _ := json.Marshal(response)
+		if len(responseJSON) > maxRecordedToolResponse {
+			responseJSON, _ = json.Marshal(map[string]any{"command": response.Command, "summary": boundedToolText(response.Summary), "error": boundedToolText(response.Error), "healthy": response.Healthy, "unresolved": response.Unresolved, "loops_used": response.LoopsUsed, "loops_allowed": response.LoopsAllowed, "findings_count": len(response.Findings), "program_runs_count": len(response.ProgramRuns), "detector_states_count": len(response.DetectorStates), "patches_count": len(response.Patches), "truncated": true})
+		}
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
 	}()
 	switch request.Command {
 	case "status":
 		response.Trust = l.Trust
-		response.Findings = append([]sdk.Finding(nil), l.findings...)
-		response.ProgramRuns = append([]ProgramRun(nil), l.runs...)
-		response.Healthy = len(l.findings) == 0
+		response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
+		response.Healthy = response.Error == "" && len(l.findings) == 0
 		response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
 		response.Summary = fmt.Sprintf("%d open findings; %d of %d apply batches used", len(l.findings), l.batches, l.MaxBatches)
 	case "diagnose":
 		if request.ProgramID == "" {
-			response.ProgramRuns = l.diagnose(ctx, l.findings)
+			response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
 		} else {
 			if l.Programs == nil {
 				response.Error = "no programs are compiled"
@@ -200,6 +238,13 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	return response
 }
 
+func boundedToolText(value string) string {
+	if len(value) <= 256 {
+		return value
+	}
+	return value[:256] + " [truncated]"
+}
+
 func (l *ResponderLoop) deadline() time.Duration {
 	if l.DiagnosisDeadline > 0 {
 		return l.DiagnosisDeadline
@@ -229,6 +274,45 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 	l.runs = append(l.runs, runs...)
 	return runs
+}
+
+func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, string) {
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return nil, nil, err.Error()
+	}
+	findings := make([]sdk.Finding, 0)
+	for _, detector := range l.Detectors {
+		observed, err := detector.Detect(ctx, view)
+		if err != nil {
+			return nil, nil, fmt.Sprintf("detector %s: %v", detector.Spec().ID, err)
+		}
+		for _, finding := range observed {
+			if finding.Status == sdk.FindingActive {
+				findings = append(findings, finding)
+			}
+		}
+	}
+	l.findings = findings
+	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	l.runs = append(l.runs, runs...)
+	return findings, runs, ""
+}
+
+func logicalToolResponse(response ToolResponse) ToolResponse {
+	for index := range response.Findings {
+		finding := &response.Findings[index]
+		copyFinding := *finding
+		copyFinding.Playbooks = make([]string, 0, len(finding.Playbooks))
+		for _, reference := range finding.Playbooks {
+			id, err := memory.PlaybookID(reference)
+			if err == nil {
+				copyFinding.Playbooks = append(copyFinding.Playbooks, id)
+			}
+		}
+		response.Findings[index] = copyFinding
+	}
+	return response
 }
 
 func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response *ToolResponse) {
@@ -397,13 +481,18 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
-	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
-	response.ProgramRuns = append(response.ProgramRuns, runs...)
-	l.runs = append(l.runs, runs...)
+	if len(findings) > 0 {
+		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+		response.ProgramRuns = append(response.ProgramRuns, runs...)
+		l.runs = append(l.runs, runs...)
+	}
 	response.Healthy = response.Error == "" && len(findings) == 0 && len(l.Detectors) > 0
 	response.Unresolved = l.batches >= l.MaxBatches && !response.Healthy
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("verification: %d open findings", len(findings))
+		if response.Healthy {
+			response.Summary = "verification: healthy; return the structured incident result immediately"
+		}
 	}
 }
 

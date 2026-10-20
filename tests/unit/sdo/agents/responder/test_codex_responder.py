@@ -52,6 +52,7 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     assert "ranked program verdicts" in prompt
     assert "sdo plan then sdo apply" in prompt
     assert "Always finish with sdo verify" in prompt
+    assert "return the structured incident result immediately" in prompt
     assert '"program_id": "targetport"' in prompt
 
 

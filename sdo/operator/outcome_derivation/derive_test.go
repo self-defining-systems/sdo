@@ -84,6 +84,20 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	}
 }
 
+func TestDeriveMitigationTimeFromVerifiedRepair(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.RepairActions[0].CompletedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(90 * time.Second))
+	closure.ResponderCompletedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(10 * time.Minute))
+	closure.VerifiedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(11 * time.Minute))
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Record.GetTimestamps().GetMitigatedAt().AsTime(); !got.Equal(closure.Result.RepairActions[0].CompletedAt.AsTime()) {
+		t.Fatalf("mitigated at %v, want verified repair completion %v", got, closure.Result.RepairActions[0].CompletedAt.AsTime())
+	}
+}
+
 func TestDerivePreservesResponderProgramEvidenceAsProtoJSON(t *testing.T) {
 	closure := fixtureClosure()
 	closure.Result.ProgramToolCalls = []*contractsv1alpha1.ProgramToolCall{{Command: "apply", At: timestamppb.Now(), RequestJson: `{"plan_ids":["plan-1"]}`}}

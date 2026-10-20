@@ -654,6 +654,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "For a Match, prefer sdo plan then sdo apply. "
         "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
         "Use a session-only bash fix when no program fits. Always finish with sdo verify. "
+        "When verify reports healthy and source changes are committed, "
+        "return the structured incident result immediately. "
         if request.max_response_loops > 0
         else ""
     )

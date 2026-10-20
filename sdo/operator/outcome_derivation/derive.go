@@ -85,6 +85,26 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	var mitigatedAt *timestamppb.Timestamp
 	if result != nil {
 		mitigatedAt = closure.GetResponderCompletedAt()
+		if healthVerified {
+			clearedAt := closure.GetHealthClearedAt()
+			cutoff := clearedAt
+			if cutoff == nil {
+				cutoff = closure.GetVerifiedAt()
+			}
+			for _, action := range result.GetRepairActions() {
+				completed := action.GetCompletedAt()
+				if !action.GetSuccess() || completed == nil || !completed.IsValid() ||
+					completed.AsTime().After(cutoff.AsTime()) {
+					continue
+				}
+				if mitigatedAt == closure.GetResponderCompletedAt() || completed.AsTime().After(mitigatedAt.AsTime()) {
+					mitigatedAt = completed
+				}
+			}
+			if mitigatedAt == closure.GetResponderCompletedAt() && clearedAt != nil {
+				mitigatedAt = clearedAt
+			}
+		}
 	}
 	var commit *string
 	if repairCommit != "" {
