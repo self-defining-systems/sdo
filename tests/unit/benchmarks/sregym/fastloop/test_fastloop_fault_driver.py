@@ -136,3 +136,17 @@ def test_a_composition_oracle_is_typed() -> None:
     assert driver.oracle().kind == "composition"
     driver.oracle(fault=0)
     assert worker.requests[-1] == ("oracle", {"fault": 0})
+
+
+def test_partial_composite_injection_recovers_the_first_fault() -> None:
+    class FailingWorker(ComposingWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            if op == "inject" and args.get("compose"):
+                raise RuntimeError("second fault unavailable")
+            return super().request(op, timeout=timeout, **args)
+
+    worker = FailingWorker()
+
+    with pytest.raises(FastloopFaultError, match="second fault unavailable"):
+        _driver(worker).inject_composite(["a", "b"])
+    assert [op for op, _ in worker.requests][-2:] == ["recover", "health"]

@@ -9,6 +9,8 @@ part of resolution time.
 
 from __future__ import annotations
 
+import csv
+import json
 import statistics
 from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -54,9 +56,9 @@ class TokenCounts(_PersistedModel):
         if not isinstance(usage, dict):
             return cls()
         return cls(
-            input_tokens=int(usage.get("input_tokens") or 0),
-            cached_input_tokens=int(usage.get("cached_input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
+            input_tokens=int(usage.get("input_tokens") or usage.get("inputTokens") or 0),
+            cached_input_tokens=int(usage.get("cached_input_tokens") or usage.get("cachedInputTokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or usage.get("outputTokens") or 0),
         )
 
 
@@ -93,7 +95,15 @@ class IncidentRecord(_PersistedModel):
     mitigation_applied_at: AwareDatetime | None = None
     #: Independently verified health (SDO) or agent exit (baseline).
     resolved_at: AwareDatetime | None = None
+    responder_started_at: AwareDatetime | None = None
+    responder_finished_at: AwareDatetime | None = None
+    oracle_finished_at: AwareDatetime | None = None
+    reflection_started_at: AwareDatetime | None = None
+    reflection_finished_at: AwareDatetime | None = None
+    rebuild_done_at: AwareDatetime | None = None
+    recovery_finished_at: AwareDatetime | None = None
     oracle: OracleVerdict | None = None
+    recovery_oracle: OracleVerdict | None = None
     diagnosis: str = ""
     mitigation: str = ""
     responder_tokens: TokenCounts = Field(default_factory=TokenCounts)
@@ -148,6 +158,16 @@ def append_record(path: Path, record: IncidentRecord) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(record.model_dump_json() + "\n")
+    csv_path = path.with_suffix(".csv")
+    row = record.model_dump(mode="json")
+    for key, value in row.items():
+        if isinstance(value, (dict, list)):
+            row[key] = json.dumps(value, sort_keys=True)
+    with csv_path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(row))
+        if handle.tell() == 0:
+            writer.writeheader()
+        writer.writerow(row)
 
 
 def load_records(path: Path) -> list[IncidentRecord]:

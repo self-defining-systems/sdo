@@ -1,0 +1,10 @@
+[
+  [
+    "k8s_target_port_misconfig__v_hotel_reservation_reservation_9999",
+    "incorrect_image__v_hotel_reservation_rate_nonexistent_tag"
+  ],
+  [
+    "k8s_target_port_misconfig__v_hotel_reservation_geo_9999",
+    "incorrect_image__v_hotel_reservation_search_nonexistent_tag"
+  ]
+]

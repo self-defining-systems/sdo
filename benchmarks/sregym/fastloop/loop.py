@@ -53,6 +53,11 @@ class AgentOutcome:
     detected_at: datetime | None = None
     mitigation_applied_at: datetime | None = None
     resolved_at: datetime | None = None
+    responder_started_at: datetime | None = None
+    responder_finished_at: datetime | None = None
+    reflection_started_at: datetime | None = None
+    reflection_finished_at: datetime | None = None
+    rebuild_done_at: datetime | None = None
     diagnosis: str = ""
     mitigation: str = ""
     responder_tokens: TokenCounts = field(default_factory=TokenCounts)
@@ -111,6 +116,7 @@ class LoopConfig:
     problems: tuple[str, ...]
     incidents: int
     results_path: Path
+    stream: tuple[tuple[str, ...], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -119,6 +125,8 @@ class LoopConfig:
             raise ValueError("at least one problem id is required")
         if self.incidents < 1:
             raise ValueError("incidents must be positive")
+        if self.stream and self.incidents != len(self.stream):
+            raise ValueError("incidents must equal stream length")
 
 
 def _describe(exc: BaseException) -> str:
@@ -138,20 +146,20 @@ def run_incidents(
     records: list[IncidentRecord] = []
     try:
         for index in range(config.incidents):
-            problem_id = config.problems[index % len(config.problems)]
-            record, recovered = _run_one(agent, driver, config, index, problem_id, monotonic=monotonic, now=now)
+            ids = config.stream[index] if config.stream else (config.problems[index % len(config.problems)],)
+            record, recovered = _run_one(agent, driver, config, index, ids, monotonic=monotonic, now=now)
             append_record(config.results_path, record)
             records.append(record)
             logger.info(
                 "incident %d %s: oracle=%s wall=%.1fs error=%s",
                 index,
-                problem_id,
+                record.problem_id,
                 record.oracle.success if record.oracle else None,
                 record.incident_wall_seconds or 0.0,
                 record.error,
             )
             if not recovered:
-                logger.error("stopping: the fault of incident %d could not be recovered", index)
+                logger.error("stopping: incident %d did not clear the recovery and learning gate", index)
                 break
     finally:
         agent.close()
@@ -163,16 +171,21 @@ def _run_one(
     driver: FaultDriver,
     config: LoopConfig,
     index: int,
-    problem_id: str,
+    problem_ids: tuple[str, ...],
     *,
     monotonic: Callable[[], float],
     now: Callable[[], datetime],
 ) -> tuple[IncidentRecord, bool]:
     started = monotonic()
+    problem_id = "+".join(problem_ids)
     windows: list[InjectionWindow] = []
 
     def inject() -> InjectionWindow:
-        window = driver.inject(problem_id)
+        window = (
+            driver.inject_composite(problem_ids).window  # type: ignore[attr-defined]
+            if len(problem_ids) > 1
+            else driver.inject(problem_ids[0])
+        )
         windows.append(window)
         return window
 
@@ -185,27 +198,53 @@ def _run_one(
         errors.append(_describe(exc))
 
     oracle: OracleVerdict | None = None
+    recovery_oracle: OracleVerdict | None = None
+    oracle_finished_at: datetime | None = None
+    recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
-    recovered = True
+    recovered = bool(windows)
     if windows:
+
+        def grade() -> OracleVerdict:
+            if len(problem_ids) > 1:
+                verdicts = [driver.oracle(fault=position) for position in range(len(problem_ids))]  # type: ignore[call-arg]
+                return OracleVerdict(
+                    kind="composition",
+                    success=all(verdict.success for verdict in verdicts),
+                    details={
+                        problem: verdict.model_dump() for problem, verdict in zip(problem_ids, verdicts, strict=True)
+                    },
+                )
+            return driver.oracle()
+
         try:
-            oracle = driver.oracle()
+            oracle = grade()
+            if not oracle.success:
+                errors.append("oracle reported failure")
         except Exception as exc:
             logger.exception("oracle failed for incident %d", index)
             errors.append(f"oracle failed: {_describe(exc)}")
+        finally:
+            oracle_finished_at = now()
         try:
             recovery_seconds = driver.recover()
+            recovery_finished_at = now()
+            recovery_oracle = grade()
+            if not recovery_oracle.success:
+                raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
         except Exception as exc:
             logger.exception("fault recovery failed for incident %d", index)
             errors.append(f"fault recovery failed: {_describe(exc)}")
             recovered = False
 
+    learning_complete = True
     if outcome is not None and recovered:
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:
             logger.exception("learning failed for incident %d", index)
             errors.append(f"learning failed: {_describe(exc)}")
+            learning_complete = False
 
     if outcome is not None and outcome.error:
         errors.append(outcome.error)
@@ -220,12 +259,15 @@ def _run_one(
         injection_started_at=window.started_at,
         injection_finished_at=window.finished_at,
         oracle=oracle,
+        recovery_oracle=recovery_oracle,
+        oracle_finished_at=oracle_finished_at,
+        recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,
         incident_wall_seconds=monotonic() - started,
         error="; ".join(errors) or None,
         **(_outcome_fields(outcome) if outcome is not None else {}),
     )
-    return record, recovered
+    return record, recovered and learning_complete
 
 
 def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
@@ -233,6 +275,11 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "detected_at": outcome.detected_at,
         "mitigation_applied_at": outcome.mitigation_applied_at,
         "resolved_at": outcome.resolved_at,
+        "responder_started_at": outcome.responder_started_at,
+        "responder_finished_at": outcome.responder_finished_at,
+        "reflection_started_at": outcome.reflection_started_at,
+        "reflection_finished_at": outcome.reflection_finished_at,
+        "rebuild_done_at": outcome.rebuild_done_at,
         "diagnosis": outcome.diagnosis,
         "mitigation": outcome.mitigation,
         "responder_tokens": outcome.responder_tokens,

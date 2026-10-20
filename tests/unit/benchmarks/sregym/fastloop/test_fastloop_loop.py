@@ -33,21 +33,24 @@ class FakeDriver:
     events: list[str] = field(default_factory=list)
     oracle_success: bool = True
     recover_fails: bool = False
+    recovered: bool = False
 
     def inject(self, problem_id: str) -> InjectionWindow:
+        self.recovered = False
         self.events.append(f"inject:{problem_id}")
         self.clock.advance(5)
         return InjectionWindow(started_at=T0, finished_at=T0 + timedelta(seconds=5))
 
     def oracle(self) -> OracleVerdict:
         self.events.append("oracle")
-        return OracleVerdict(kind="sregym-mitigation-oracle", success=self.oracle_success)
+        return OracleVerdict(kind="sregym-mitigation-oracle", success=self.oracle_success or self.recovered)
 
     def recover(self) -> float:
         self.events.append("recover")
         if self.recover_fails:
             raise RuntimeError("cluster gone")
         self.clock.advance(10)
+        self.recovered = True
         return 10.0
 
 
@@ -103,7 +106,7 @@ def test_each_incident_is_graded_before_recovery_and_learning_follows_recovery(t
 
     records = run_incidents(agent, driver, _config(tmp_path, 2, ("p1", "p2")), monotonic=clock.monotonic)
 
-    assert driver.events == ["inject:p1", "oracle", "recover", "inject:p2", "oracle", "recover"]
+    assert driver.events == ["inject:p1", "oracle", "recover", "oracle", "inject:p2", "oracle", "recover", "oracle"]
     assert agent.events == ["resolve:0", "learn:incident-0", "resolve:1", "learn:incident-1", "close"]
     assert [record.problem_id for record in records] == ["p1", "p2"]
     first = records[0]
@@ -157,3 +160,97 @@ def test_config_rejects_empty_problem_lists_and_non_positive_counts(tmp_path: Pa
         LoopConfig(run_id="r", problems=(), incidents=1, results_path=tmp_path / "x.jsonl")
     with pytest.raises(ValueError, match="incidents"):
         LoopConfig(run_id="r", problems=("p",), incidents=0, results_path=tmp_path / "x.jsonl")
+
+
+def test_next_injection_waits_for_learning_and_failed_learning_stops_stream(tmp_path: Path) -> None:
+    clock = FakeClock()
+    events: list[str] = []
+
+    class GatedDriver(FakeDriver):
+        def inject(self, problem_id: str) -> InjectionWindow:
+            events.append(f"inject:{problem_id}")
+            return super().inject(problem_id)
+
+    class GatedAgent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            events.append("reflection-and-rebuild")
+            if outcome.incident_id == "incident-0":
+                raise RuntimeError("rollout was not verified")
+            return super().learn(outcome)
+
+    records = run_incidents(
+        GatedAgent(clock), GatedDriver(clock), _config(tmp_path, 2, ("p1", "p2")), monotonic=clock.monotonic
+    )
+
+    assert events == ["inject:p1", "reflection-and-rebuild"]
+    assert len(records) == 1
+    assert "rollout was not verified" in str(records[0].error)
+
+
+def test_oracle_failure_is_recorded_and_recovery_finishes_before_next_injection(tmp_path: Path) -> None:
+    clock = FakeClock()
+    records = run_incidents(
+        FakeAgent(clock), FakeDriver(clock, oracle_success=False), _config(tmp_path, 2), monotonic=clock.monotonic
+    )
+
+    assert len(records) == 2
+    assert all(record.error == "oracle reported failure" for record in records)
+    assert all(record.oracle_finished_at is not None and record.recovery_finished_at is not None for record in records)
+
+
+def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class ResidualDriver(FakeDriver):
+        def oracle(self) -> OracleVerdict:
+            self.events.append("oracle")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=not self.recovered)
+
+    driver = ResidualDriver(clock)
+    records = run_incidents(FakeAgent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(records) == 1
+    assert "recovery residue" in str(records[0].error)
+
+
+def test_failed_injection_stops_before_another_fault_can_be_applied(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class FailedDriver(FakeDriver):
+        def inject(self, problem_id: str) -> InjectionWindow:
+            raise RuntimeError("injector did not return a window")
+
+    records = run_incidents(FakeAgent(clock), FailedDriver(clock), _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(records) == 1
+    assert "injector did not return a window" in str(records[0].error)
+
+
+def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class CompositeDriver(FakeDriver):
+        def inject_composite(self, ids: tuple[str, ...]) -> object:
+            self.events.append("compose:" + "+".join(ids))
+            return type("Injection", (), {"window": InjectionWindow(T0, T0 + timedelta(seconds=5))})()
+
+        def oracle(self, *, fault: int | None = None) -> OracleVerdict:
+            self.events.append(f"oracle:{fault}")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=fault == 0)
+
+    driver = CompositeDriver(clock)
+    config = LoopConfig(
+        run_id="run-1",
+        problems=("a",),
+        incidents=1,
+        results_path=tmp_path / "incidents.jsonl",
+        stream=(("a", "b"),),
+    )
+
+    records = run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)
+
+    assert driver.events[:3] == ["compose:a+b", "oracle:0", "oracle:1"]
+    assert records[0].problem_id == "a+b"
+    assert records[0].oracle is not None
+    assert records[0].oracle.success is False
+    assert "oracle reported failure" in str(records[0].error)

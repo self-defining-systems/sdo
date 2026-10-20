@@ -96,13 +96,23 @@ class SregymFaultDriver:
             raise ValueError(f"a composite fault lists a problem more than once: {problems}")
         faults: list[InjectedFault] = []
         for position, problem_id in enumerate(problems):
-            reply = self._worker.request(
-                "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
-            )
-            index = reply.get("fault")
-            if index != position:
-                raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {position}")
-            faults.append(InjectedFault(problem_id=problem_id, index=position, window=_window(reply)))
+            try:
+                reply = self._worker.request(
+                    "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
+                )
+                index = reply.get("fault")
+                if index != position:
+                    raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {position}")
+                faults.append(InjectedFault(problem_id=problem_id, index=position, window=_window(reply)))
+            except Exception as exc:
+                if faults:
+                    try:
+                        self.recover()
+                    except Exception as recovery_error:
+                        raise FastloopFaultError(
+                            f"composite injection failed at {problem_id}: {exc}; recovery failed: {recovery_error}"
+                        ) from recovery_error
+                raise FastloopFaultError(f"composite injection failed at {problem_id}: {exc}") from exc
         return CompositeInjection(faults=tuple(faults))
 
     def oracle(self, *, fault: int | None = None) -> OracleVerdict:
