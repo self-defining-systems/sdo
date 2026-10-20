@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from benchmarks.sregym.fastloop.grade_worker import diagnosis_problem
+from benchmarks.sregym.fastloop.grade_worker import MeteredBackend, diagnosis_problem
 from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
 
 if TYPE_CHECKING:
@@ -66,3 +66,24 @@ def test_grader_sends_diagnosis_and_problem_ids_to_sregym_judge(monkeypatch, tmp
     assert seen[0]["env"]["JUDGE_NUM_ROUNDS"] == "3"
     assert result.success is True
     assert result.judge_tokens.input_tokens == 13
+
+
+def test_non_codex_judge_usage_is_recorded_from_response_metadata() -> None:
+    class Backend:
+        temperature = 0.0
+
+        def inference(self, messages: object, system_prompt: str | None = None, tools: list | None = None) -> object:
+            return type(
+                "Response",
+                (),
+                {
+                    "usage_metadata": {"input_tokens": 8, "output_tokens": 2, "input_token_details": {"cache_read": 3}},
+                },
+            )()
+
+    backend = MeteredBackend(Backend())
+    backend.temperature = 0.7
+    backend.inference("diagnosis")
+
+    assert backend.temperature == 0.7
+    assert backend.usage == {"input_tokens": 8, "cached_input_tokens": 3, "output_tokens": 2}

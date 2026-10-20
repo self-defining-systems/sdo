@@ -17,6 +17,35 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+class MeteredBackend:
+    """Count usage exposed by SREGym's non-Codex judge backends."""
+
+    def __init__(self, backend: Any) -> None:
+        self.backend = backend
+        self.usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+        self.lock = threading.Lock()
+
+    @property
+    def temperature(self) -> float | None:
+        return getattr(self.backend, "temperature", None)
+
+    @temperature.setter
+    def temperature(self, value: float | None) -> None:
+        if hasattr(self.backend, "temperature"):
+            self.backend.temperature = value
+
+    def inference(self, messages: Any, system_prompt: str | None = None, tools: list | None = None) -> Any:
+        response = self.backend.inference(messages, system_prompt=system_prompt, tools=tools)
+        usage = getattr(response, "usage_metadata", None)
+        if isinstance(usage, dict):
+            details = usage.get("input_token_details") or {}
+            with self.lock:
+                self.usage["input_tokens"] += int(usage.get("input_tokens") or 0)
+                self.usage["cached_input_tokens"] += int(details.get("cache_read") or 0)
+                self.usage["output_tokens"] += int(usage.get("output_tokens") or 0)
+        return response
+
+
 def diagnosis_problem(problem_ids: tuple[str, ...], *, factory: Callable[[str], Any], composite: type) -> Any:
     """Match the conductor: explicit faults form one composite diagnosis problem."""
 
@@ -98,9 +127,12 @@ def grade(problem_ids: tuple[str, ...], diagnosis: str) -> dict[str, Any]:
     if not isinstance(oracle, LLMAsAJudgeOracle):
         raise RuntimeError("problem has no SREGym LLM diagnosis oracle")
     backend = oracle.judge.backend
-    metered = None
+    metered: Any = None
     if isinstance(backend, CodexCLIBackend):
         metered = MeteredCodexBackend(backend.model, backend.reasoning_effort)
+    elif backend is not None:
+        metered = MeteredBackend(backend)
+    if metered is not None:
         oracle.judge._backend = metered
     result = oracle.evaluate(diagnosis)
     return {
