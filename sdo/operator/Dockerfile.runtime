@@ -34,7 +34,7 @@ ENV HOME=/tmp \
     GOSUMDB=off \
     GOMAXPROCS=2 \
     GOFLAGS="-mod=mod -p=2"
-RUN cd /opt/sdo/sdo/operator/sdk && go list ./program >/dev/null
+RUN cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 RUN find /opt/sdo/sdo/operator -name '*.py' -type f -delete \
     && chmod -R a+rX /opt/sdo/sdo/operator
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
@@ -82,7 +82,7 @@ COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
 RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs /opt/sdo/examples \
     && command -v go && command -v sdo-operator \
-    && cd /opt/sdo/sdo/operator/sdk && go list ./program >/dev/null
+    && cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 WORKDIR /opt/sdo
 
 FROM worker-runtime AS responder

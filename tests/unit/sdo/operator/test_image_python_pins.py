@@ -131,6 +131,7 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     assert "GOPROXY=off" in dockerfile
     assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
     assert "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs" in dockerfile
+    assert dockerfile.count("GOCACHE=/go/build-cache go list ./program") == 2
     for relative in (
         "playbooks/service-targetport-mismatch/diagnose.go",
         "playbooks/service-targetport-mismatch/mitigate.go",
@@ -152,6 +153,7 @@ def test_validator_image_builds_programs_offline() -> None:
     assert "FROM go-runtime AS validator" in dockerfile
     assert "GOPROXY=off" in dockerfile
     assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
+    assert "GOCACHE=/go/build-cache go list ./program" in dockerfile
 
 
 def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
