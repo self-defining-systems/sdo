@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"io"
@@ -84,6 +85,9 @@ func validateCandidate(ctx context.Context, candidate, baseline string, actor Ac
 	}
 	if !memoryChanged {
 		return nil
+	}
+	if err := ValidateNewProgramCorpus(candidate, baseline); err != nil {
+		return err
 	}
 	if phase == InitialPhase && actor != HealthJudge {
 		return validateInitialStage(ctx, candidate, baseline, actor, paths)
@@ -228,6 +232,28 @@ func ValidateMemoryTree(ctx context.Context, root string) error { return validat
 func validateMemoryTree(ctx context.Context, root string) error {
 	memoryRoot := filepath.Join(root, ".sdo")
 	if err := rejectMemorySymlinks(memoryRoot); err != nil {
+		return err
+	}
+	if err := filepath.WalkDir(memoryRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		formatted, err := format.Source(data)
+		if err != nil {
+			return fmt.Errorf("invalid Go source %s: %w", path, err)
+		}
+		if !bytes.Equal(data, formatted) {
+			return fmt.Errorf("Go source %s is not gofmt formatted", path)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	version, err := os.ReadFile(filepath.Join(memoryRoot, "schema-version"))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"os"
@@ -138,7 +139,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 			return err
 		}
 		for _, source := range item.GetSources() {
-			if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
+			if err := writeGoSource(filepath.Join(base, source.GetName()), source); err != nil {
 				return err
 			}
 		}
@@ -204,7 +205,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 				}
 			}
 			for _, source := range program.GetSources() {
-				if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
+				if err := writeGoSource(filepath.Join(base, source.GetName()), source); err != nil {
 					return err
 				}
 			}
@@ -236,7 +237,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 			}
 		}
 		for _, source := range library.GetSources() {
-			if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
+			if err := writeGoSource(filepath.Join(base, source.GetName()), source); err != nil {
 				return err
 			}
 		}
@@ -250,7 +251,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 			return err
 		}
 		for _, source := range generator.GetSources() {
-			if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
+			if err := writeGoSource(filepath.Join(base, source.GetName()), source); err != nil {
 				return err
 			}
 		}
@@ -459,6 +460,14 @@ func validateGoSource(source *contracts.ProposedGoSource) error {
 		return fmt.Errorf("invalid Go source %q: %w", source.GetName(), err)
 	}
 	return nil
+}
+
+func writeGoSource(path string, source *contracts.ProposedGoSource) error {
+	formatted, err := format.Source([]byte(source.GetContent()))
+	if err != nil {
+		return fmt.Errorf("format Go source %q: %w", source.GetName(), err)
+	}
+	return os.WriteFile(path, formatted, 0o644)
 }
 
 func rejectPhysicalMemoryPath(content string) error {

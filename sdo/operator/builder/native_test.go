@@ -122,7 +122,7 @@ func TestBuildWorkspaceRejectsDetectorRegistrationDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := strings.Replace(string(data), `ID:          "missing-configmap"`, `ID:          "wrong-id"`, 1)
+	changed := strings.Replace(string(data), `ID:                  "missing-configmap"`, `ID:                  "wrong-id"`, 1)
 	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
 		t.Fatal(err)
 	}

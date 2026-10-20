@@ -100,6 +100,9 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	if err := memory.MaterializeArtifacts(scratch, proposal, memory.ResponderArtifacts); err != nil {
 		return fmt.Errorf("materialize typed artifact draft: %w", err)
 	}
+	if err := broker.ValidateNewProgramCorpus(scratch, app); err != nil {
+		return fmt.Errorf("validate draft corpus provenance: %w", err)
+	}
 	if err := broker.ValidateMemoryTree(ctx, scratch); err != nil {
 		return fmt.Errorf("validate typed artifact draft: %w", err)
 	}

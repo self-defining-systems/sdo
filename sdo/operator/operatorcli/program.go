@@ -2,9 +2,12 @@ package operatorcli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"go/format"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +16,9 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 type repeatedFlags []string
@@ -29,12 +35,16 @@ type ProgramScaffoldConfig struct {
 }
 
 type ProgramProposeConfig struct {
-	Dir          string
-	Libraries    []string
-	Corpus       []string
-	Incident     string
-	App          string
-	OperatorRoot string
+	Dir                string
+	Libraries          []string
+	Corpus             []string
+	Incident           string
+	App                string
+	OperatorRoot       string
+	CorpusFromIncident string
+	Bindings           []string
+	PeerBindings       []string
+	CaptureDir         string
 }
 
 var programID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -102,15 +112,6 @@ func RunProgramScaffold(config ProgramScaffoldConfig) error {
 			return err
 		}
 	}
-	corpus := filepath.Join(config.Out, "corpus", config.FaultClass)
-	if err := os.MkdirAll(corpus, 0o755); err != nil {
-		return err
-	}
-	for name, content := range map[string]string{"open.json": "{}\n", "fixed.json": "{}\n", "healthy.json": "{}\n", "recordings.json": "[]\n", "labels.json": "{}\n"} {
-		if err := writeNew(filepath.Join(corpus, name), content); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -130,9 +131,12 @@ func ParseProgramPropose(args []string) (ProgramProposeConfig, error) {
 	}
 	flags := flag.NewFlagSet("program propose", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var libs, corpus repeatedFlags
+	var libs, corpus, bindings, peerBindings repeatedFlags
 	flags.Var(&libs, "lib", "shared library directory")
 	flags.Var(&corpus, "corpus", "corpus case directory")
+	flags.Var(&bindings, "bind", "incident binding name=Kind/namespace/name")
+	flags.Var(&peerBindings, "peer-bind", "healthy peer binding name=Kind/namespace/name")
+	corpusIncident := flags.String("corpus-from-incident", "", "capture incident ID")
 	dir := flags.String("dir", "", "playbook directory")
 	incident := flags.String("incident", "", "originating incident ID")
 	app := flags.String("app", ".", "accepted application checkout")
@@ -143,7 +147,7 @@ func ParseProgramPropose(args []string) (ProgramProposeConfig, error) {
 	if flags.NArg() != 0 || *dir == "" || *incident == "" {
 		return ProgramProposeConfig{}, errors.New("propose requires --dir and --incident")
 	}
-	return ProgramProposeConfig{Dir: *dir, Libraries: libs, Corpus: corpus, Incident: *incident, App: *app, OperatorRoot: *operatorRoot}, nil
+	return ProgramProposeConfig{Dir: *dir, Libraries: libs, Corpus: corpus, Incident: *incident, App: *app, OperatorRoot: *operatorRoot, CorpusFromIncident: *corpusIncident, Bindings: bindings, PeerBindings: peerBindings}, nil
 }
 
 func AssembleProgramProposal(config ProgramProposeConfig) (*contracts.OperationalArtifactProposal, error) {
@@ -175,11 +179,13 @@ func AssembleProgramProposal(config ProgramProposeConfig) (*contracts.Operationa
 		return nil, errors.New("playbook has no Go sources")
 	}
 	cases := append([]string{}, config.Corpus...)
-	generated, err := filepath.Glob(filepath.Join(config.Dir, "corpus", "*"))
-	if err != nil {
-		return nil, err
+	if config.CorpusFromIncident == "" {
+		generated, err := filepath.Glob(filepath.Join(config.Dir, "corpus", "*"))
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, generated...)
 	}
-	cases = append(cases, generated...)
 	seen := map[string]bool{}
 	for _, dir := range cases {
 		caseID := filepath.Base(filepath.Clean(dir))
@@ -197,6 +203,13 @@ func AssembleProgramProposal(config ProgramProposeConfig) (*contracts.Operationa
 		}
 		proposal.Playbooks[0].Program.CorpusCases = append(proposal.Playbooks[0].Program.CorpusCases, &contracts.ProposedCorpusCase{Id: caseID, OpenJson: values[0], FixedJson: values[1], HealthyJson: values[2], RecordingsJson: values[3], LabelsJson: values[4]})
 	}
+	if config.CorpusFromIncident != "" {
+		captured, err := capturedCorpusCase(config, id)
+		if err != nil {
+			return nil, err
+		}
+		proposal.Playbooks[0].Program.CorpusCases = append(proposal.Playbooks[0].Program.CorpusCases, captured)
+	}
 	for _, dir := range config.Libraries {
 		pkg := filepath.Base(filepath.Clean(dir))
 		if !programID.MatchString(pkg) {
@@ -211,6 +224,147 @@ func AssembleProgramProposal(config ProgramProposeConfig) (*contracts.Operationa
 	return proposal, nil
 }
 
+func capturedCorpusCase(config ProgramProposeConfig, programID string) (*contracts.ProposedCorpusCase, error) {
+	if config.CorpusFromIncident != config.Incident {
+		return nil, errors.New("captured corpus incident must match the originating incident")
+	}
+	dir := config.CaptureDir
+	if dir == "" {
+		dir = os.Getenv("SDO_CAPTURED_CORPUS_DIR")
+	}
+	if dir == "" {
+		dir = "/sdo/session/corpus"
+	}
+	open, err := os.ReadFile(filepath.Join(dir, "open.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read captured incident open snapshot: %w", err)
+	}
+	fixed, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read captured incident fixed snapshot: %w", err)
+	}
+	recordings, err := os.ReadFile(filepath.Join(dir, "recordings.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read captured incident recordings: %w", err)
+	}
+	var openView, fixedView sdktest.Snapshot
+	if err := json.Unmarshal(open, &openView); err != nil {
+		return nil, fmt.Errorf("decode captured open snapshot: %w", err)
+	}
+	if err := json.Unmarshal(fixed, &fixedView); err != nil {
+		return nil, fmt.Errorf("decode captured fixed snapshot: %w", err)
+	}
+	if openView.NamespaceName == "" || openView.NamespaceName != fixedView.NamespaceName {
+		return nil, errors.New("captured snapshots must share an application namespace")
+	}
+	bindings, err := parseProgramBindings(config.Bindings, openView)
+	if err != nil {
+		return nil, fmt.Errorf("incident bindings: %w", err)
+	}
+	peer, err := parseProgramBindings(config.PeerBindings, fixedView)
+	if err != nil {
+		return nil, fmt.Errorf("peer bindings: %w", err)
+	}
+	if len(bindings) == 0 || len(bindings) != len(peer) {
+		return nil, errors.New("captured corpus requires incident and same-kind peer bindings")
+	}
+	for name, ref := range bindings {
+		if peer[name].Kind != ref.Kind {
+			return nil, fmt.Errorf("peer binding %q must have kind %s", name, ref.Kind)
+		}
+	}
+	labels, err := json.Marshal(struct {
+		RootCauseProgramIDs []string         `json:"root_cause_program_ids"`
+		Bindings            program.Bindings `json:"bindings"`
+		PeerBindings        program.Bindings `json:"peer_bindings"`
+		Provenance          struct {
+			IncidentID  string `json:"incident_id"`
+			OpenSHA256  string `json:"open_sha256"`
+			FixedSHA256 string `json:"fixed_sha256"`
+		} `json:"provenance"`
+	}{RootCauseProgramIDs: []string{programID}, Bindings: bindings, PeerBindings: peer, Provenance: struct {
+		IncidentID  string `json:"incident_id"`
+		OpenSHA256  string `json:"open_sha256"`
+		FixedSHA256 string `json:"fixed_sha256"`
+	}{config.CorpusFromIncident, fmt.Sprintf("%x", sha256.Sum256(open)), fmt.Sprintf("%x", sha256.Sum256(fixed))}})
+	if err != nil {
+		return nil, err
+	}
+	caseID := programID + "-" + fmt.Sprintf("%x", sha256.Sum256([]byte(config.CorpusFromIncident)))[:8]
+	return &contracts.ProposedCorpusCase{Id: caseID, OpenJson: string(open), FixedJson: string(fixed), HealthyJson: string(fixed), RecordingsJson: string(recordings), LabelsJson: string(labels)}, nil
+}
+
+func parseProgramBindings(values []string, snapshot sdktest.Snapshot) (program.Bindings, error) {
+	bindings := make(program.Bindings)
+	for _, value := range values {
+		name, object, ok := strings.Cut(value, "=")
+		parts := strings.Split(object, "/")
+		if !ok || !paramName.MatchString(name) || len(parts) != 3 || parts[1] != snapshot.NamespaceName || parts[2] == "" || bindings[name].Kind != "" {
+			return nil, fmt.Errorf("invalid binding %q; use name=Kind/namespace/name", value)
+		}
+		ref := sdk.ObjectRef{Kind: parts[0], Namespace: parts[1], Name: parts[2]}
+		if !snapshotHasRef(snapshot, ref) {
+			return nil, fmt.Errorf("binding %q has no object in captured snapshot", value)
+		}
+		bindings[name] = ref
+	}
+	return bindings, nil
+}
+
+func snapshotHasRef(snapshot sdktest.Snapshot, ref sdk.ObjectRef) bool {
+	switch ref.Kind {
+	case "Service":
+		for _, object := range snapshot.Services() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "Pod":
+		for _, object := range snapshot.Pods() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "Deployment":
+		for _, object := range snapshot.Deployments() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "ConfigMap":
+		for _, object := range snapshot.ConfigMaps() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "ReplicaSet":
+		for _, object := range snapshot.ReplicaSets() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "Endpoints":
+		for _, object := range snapshot.Endpoints() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "EndpointSlice":
+		for _, object := range snapshot.EndpointSlices() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	case "NetworkPolicy":
+		for _, object := range snapshot.NetworkPolicies() {
+			if object.Namespace == ref.Namespace && object.Name == ref.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func goSources(dir string) ([]*contracts.ProposedGoSource, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil {
@@ -222,7 +376,11 @@ func goSources(dir string) ([]*contracts.ProposedGoSource, error) {
 		if err != nil {
 			return nil, err
 		}
-		sources = append(sources, &contracts.ProposedGoSource{Name: filepath.Base(path), Content: string(data)})
+		formatted, err := format.Source(data)
+		if err != nil {
+			return nil, fmt.Errorf("format Go source %s: %w", path, err)
+		}
+		sources = append(sources, &contracts.ProposedGoSource{Name: filepath.Base(path), Content: string(formatted)})
 	}
 	return sources, nil
 }

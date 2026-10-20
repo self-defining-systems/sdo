@@ -8,10 +8,14 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
-func TestProgramScaffoldWritesProgramAndCorpusLayout(t *testing.T) {
+func TestProgramScaffoldWritesProgramLayout(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "scratch")
 	config, err := ParseProgramScaffold([]string{"program", "scaffold", "--fault-class", "targetport", "--param", "service=Service", "--mitigate", "--out", dir})
 	if err != nil {
@@ -20,7 +24,7 @@ func TestProgramScaffoldWritesProgramAndCorpusLayout(t *testing.T) {
 	if err := RunProgramScaffold(config); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"README.md", "diagnose.go", "mitigate.go", "diagnose_test.go", "corpus/targetport/open.json", "corpus/targetport/fixed.json", "corpus/targetport/healthy.json", "corpus/targetport/recordings.json", "corpus/targetport/labels.json"} {
+	for _, path := range []string{"README.md", "diagnose.go", "mitigate.go", "diagnose_test.go"} {
 		if _, err := os.Stat(filepath.Join(dir, path)); err != nil {
 			t.Errorf("missing %s: %v", path, err)
 		}
@@ -62,8 +66,65 @@ func TestProgramProposeAssemblesTypedProposalWithIncident(t *testing.T) {
 	if err := protojson.Unmarshal(data, decoded); err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.GetPlaybooks()) != 1 || decoded.GetPlaybooks()[0].GetId() != "targetport" || decoded.GetPlaybooks()[0].GetOwner() != "responder" || decoded.GetPlaybooks()[0].GetOriginatingIncident() != "inc-42" || len(decoded.GetPlaybooks()[0].GetProgram().GetCorpusCases()) != 1 || len(decoded.GetLibraries()) != 1 {
+	if len(decoded.GetPlaybooks()) != 1 || decoded.GetPlaybooks()[0].GetId() != "targetport" || decoded.GetPlaybooks()[0].GetOwner() != "responder" || decoded.GetPlaybooks()[0].GetOriginatingIncident() != "inc-42" || len(decoded.GetPlaybooks()[0].GetProgram().GetCorpusCases()) != 0 || len(decoded.GetLibraries()) != 1 {
 		t.Fatalf("assembled proposal: %s", data)
+	}
+}
+
+func TestProgramProposeCanonicalizesGoSources(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "fault")
+	if err := RunProgramScaffold(ProgramScaffoldConfig{FaultClass: "fault", Params: []ProgramParam{{Name: "service", Kind: "Service"}}, Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "diagnose.go")
+	if err := os.WriteFile(path, []byte("package fault\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := AssembleProgramProposal(ProgramProposeConfig{Dir: dir, Incident: "incident"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := proposal.Playbooks[0].Program.Sources[0].Content; got != "package fault\n\nfunc f() { println(1) }\n" {
+		t.Fatalf("source not canonical: %q", got)
+	}
+	if err := os.WriteFile(path, []byte("package fault\nfunc f( {\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AssembleProgramProposal(ProgramProposeConfig{Dir: dir, Incident: "incident"}); err == nil || !strings.Contains(err.Error(), "expected") {
+		t.Fatalf("bad source accepted: %v", err)
+	}
+}
+
+func TestProgramProposeBuildsCorpusFromIncidentCapture(t *testing.T) {
+	root := t.TempDir()
+	view := sdktest.Snapshot{NamespaceName: "demo", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo"}}, {ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "demo"}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "peer-pod", Namespace: "demo"}}}}
+	if err := memory.CaptureIncidentSnapshot(root, "inc-42", "open", view, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.CaptureIncidentSnapshot(root, "inc-42", "fixed", view, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "targetport")
+	if err := RunProgramScaffold(ProgramScaffoldConfig{FaultClass: "targetport", Params: []ProgramParam{{Name: "service", Kind: "Service"}}, Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	captureDir, err := memory.IncidentCorpusDir(root, "inc-42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := AssembleProgramProposal(ProgramProposeConfig{Dir: dir, Incident: "inc-42", CorpusFromIncident: "inc-42", Bindings: []string{"service=Service/demo/front"}, PeerBindings: []string{"service=Service/demo/peer"}, CaptureDir: captureDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := proposal.Playbooks[0].Program.CorpusCases
+	if len(cases) != 1 || cases[0].FixedJson != cases[0].HealthyJson || !strings.Contains(cases[0].LabelsJson, `"incident_id":"inc-42"`) || !strings.Contains(cases[0].LabelsJson, "open_sha256") {
+		t.Fatalf("not a captured corpus case: %+v", cases)
+	}
+	if !strings.Contains(cases[0].OpenJson, `"name":"front"`) {
+		t.Fatal("captured snapshot missing application object")
+	}
+	if _, err := AssembleProgramProposal(ProgramProposeConfig{Dir: dir, Incident: "inc-42", CorpusFromIncident: "inc-42", Bindings: []string{"service=Service/demo/front"}, PeerBindings: []string{"service=Pod/demo/peer-pod"}, CaptureDir: captureDir}); err == nil || !strings.Contains(err.Error(), "must have kind Service") {
+		t.Fatalf("different-kind peer accepted: %v", err)
 	}
 }
 

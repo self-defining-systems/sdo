@@ -65,6 +65,81 @@ func memoryFixture(t *testing.T, root string) {
 	git(t, root, "commit", "-qm", "initial memory")
 }
 
+func TestValidateMemoryTreeRejectsUnformattedGo(t *testing.T) {
+	root := repository(t)
+	memoryFixture(t, root)
+	path := filepath.Join(root, ".sdo", "diagnostics", "detectors", "health", "objective", "detector.go")
+	if err := os.WriteFile(path, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateMemoryTree(context.Background(), root); err == nil || !strings.Contains(err.Error(), "not gofmt formatted") {
+		t.Fatalf("unformatted direct edit accepted: %v", err)
+	}
+}
+
+func TestNewProgramRequiresCapturedCorpus(t *testing.T) {
+	baseline := t.TempDir()
+	root := repository(t)
+	memoryFixture(t, root)
+	dir := filepath.Join(root, ".sdo", "playbooks", "fault")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "diagnose.go"), []byte("package fault\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caseDir := filepath.Join(root, ".sdo", "corpus", "fault")
+	if err := os.MkdirAll(caseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"open.json": "{}", "fixed.json": "{}", "healthy.json": "{}", "recordings.json": "[]", "labels.json": `{"root_cause_program_ids":["fault"]}`} {
+		if err := os.WriteFile(filepath.Join(caseDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ValidateNewProgramCorpus(root, baseline); err == nil || !strings.Contains(err.Error(), "captured incident provenance") {
+		t.Fatalf("agent-authored matching corpus accepted: %v", err)
+	}
+}
+
+func TestResponderProposalCommitsCanonicalGo(t *testing.T) {
+	ctx := context.Background()
+	target := repository(t)
+	memoryFixture(t, target)
+	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := b.CreateProposal(ctx, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "fault", DetectorClass: "incident", Owner: "responder", Constructor: "New", OriginatingIncident: "incident", OriginatingCommit: "accepted", Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Pod"}}, Interval: "30s", Firing: 1, Clearing: 1, Severity: "critical", Debounce: "500ms", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package fault\nfunc New(){println(1)}\n"}}}}}
+	if err := memory.MaterializeArtifacts(proposal.Path, artifacts, memory.ResponderArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ReflectionPhase); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, ".sdo", "diagnostics", "detectors", "incidents", "fault", "detector.go"))
+	if err != nil || string(data) != "package fault\n\nfunc New() { println(1) }\n" {
+		t.Fatalf("accepted Go is not canonical: %q, %v", data, err)
+	}
+}
+
 func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
 	ctx := context.Background()
 	target := repository(t)

@@ -43,8 +43,31 @@ func TestMaterializeJudgeProposalOwnsPhysicalLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(generated), `Playbooks: []string{"health-objective"}`) || strings.Contains(string(generated), ".sdo/") {
+	if !strings.Contains(string(generated), `Playbooks:`) || !strings.Contains(string(generated), `[]string{"health-objective"}`) || strings.Contains(string(generated), ".sdo/") {
 		t.Fatalf("generated SDK detector must reference logical playbook IDs: %s", generated)
+	}
+}
+
+func TestMaterializeFormatsGoProposalAndRejectsSyntaxErrors(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, []byte("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "fault", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "# Fault", Program: &contracts.ProposedProgram{Sources: []*contracts.ProposedGoSource{{Name: "diagnose.go", Content: "package fault\nfunc f(){println(1)}\n"}}}}}}
+	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".sdo", "playbooks", "fault", "diagnose.go"))
+	if err != nil || string(data) != "package fault\n\nfunc f() { println(1) }\n" {
+		t.Fatalf("materialized Go is not canonical: %q, %v", data, err)
+	}
+	proposal.Playbooks[0].Program.Sources[0].Content = "package fault\nfunc f( {\n"
+	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err == nil || !strings.Contains(err.Error(), "diagnose.go") || !strings.Contains(err.Error(), "expected") {
+		t.Fatalf("syntax error was not actionable: %v", err)
 	}
 }
 

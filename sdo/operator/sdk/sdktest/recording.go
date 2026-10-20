@@ -2,6 +2,7 @@ package sdktest
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,13 +126,22 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 }
 
 type CorpusCase struct {
-	Open                Snapshot
-	Fixed               Snapshot
-	Healthy             Snapshot
-	Recordings          []PrimitiveCall
-	RootCauseProgramIDs []string
-	Bindings            program.Bindings
-	PeerBindings        program.Bindings
+	Open                   Snapshot
+	Fixed                  Snapshot
+	Healthy                Snapshot
+	Recordings             []PrimitiveCall
+	RootCauseProgramIDs    []string
+	NoMatchProgramIDs      []string
+	Bindings               program.Bindings
+	PeerBindings           program.Bindings
+	Provenance             CorpusProvenance
+	SyntheticNoMatchReason string
+}
+
+type CorpusProvenance struct {
+	IncidentID  string `json:"incident_id"`
+	OpenSHA256  string `json:"open_sha256"`
+	FixedSHA256 string `json:"fixed_sha256"`
 }
 
 // LoadCorpusCase reads open.json, fixed.json, healthy.json, recordings.json,
@@ -144,10 +154,13 @@ func LoadCorpusCase(dir string) (CorpusCase, error) {
 	}{
 		{"open.json", &c.Open}, {"fixed.json", &c.Fixed}, {"healthy.json", &c.Healthy}, {"recordings.json", &c.Recordings},
 		{"labels.json", &struct {
-			RootCauseProgramIDs *[]string         `json:"root_cause_program_ids"`
-			Bindings            *program.Bindings `json:"bindings"`
-			PeerBindings        *program.Bindings `json:"peer_bindings"`
-		}{&c.RootCauseProgramIDs, &c.Bindings, &c.PeerBindings}},
+			RootCauseProgramIDs    *[]string         `json:"root_cause_program_ids"`
+			NoMatchProgramIDs      *[]string         `json:"no_match_program_ids"`
+			Bindings               *program.Bindings `json:"bindings"`
+			PeerBindings           *program.Bindings `json:"peer_bindings"`
+			Provenance             *CorpusProvenance `json:"provenance"`
+			SyntheticNoMatchReason *string           `json:"synthetic_no_match_reason"`
+		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason}},
 	} {
 		path := filepath.Join(dir, item.name)
 		raw, err := os.ReadFile(path)
@@ -162,4 +175,35 @@ func LoadCorpusCase(dir string) (CorpusCase, error) {
 	}
 	c.Open.SourceName, c.Fixed.SourceName, c.Healthy.SourceName = "open.json", "fixed.json", "healthy.json"
 	return c, nil
+}
+
+// ValidateCorpusProvenance checks that persisted case snapshots still match
+// their recorded controller capture, or an explicitly labeled NoMatch case.
+func ValidateCorpusProvenance(dir string) error {
+	c, err := LoadCorpusCase(dir)
+	if err != nil {
+		return err
+	}
+	if c.Provenance.IncidentID == "" {
+		if c.SyntheticNoMatchReason != "" && len(c.RootCauseProgramIDs) == 0 && len(c.NoMatchProgramIDs) > 0 {
+			return nil
+		}
+		return errors.New("corpus case lacks captured incident provenance or synthetic NoMatch reason")
+	}
+	if c.SyntheticNoMatchReason != "" {
+		return errors.New("captured corpus cannot also be synthetic")
+	}
+	for name, digest := range map[string]string{"open.json": c.Provenance.OpenSHA256, "fixed.json": c.Provenance.FixedSHA256, "healthy.json": c.Provenance.FixedSHA256} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return err
+		}
+		if digest == "" || fmt.Sprintf("%x", sha256.Sum256(data)) != digest {
+			return fmt.Errorf("corpus %s does not match captured snapshot digest", name)
+		}
+	}
+	if c.Open.NamespaceName == "" || c.Open.NamespaceName != c.Fixed.NamespaceName || c.Fixed.NamespaceName != c.Healthy.NamespaceName {
+		return errors.New("captured corpus namespace mismatch")
+	}
+	return nil
 }
