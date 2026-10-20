@@ -164,6 +164,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		0,
 		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
 	)
+	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",
 		30*time.Second,
@@ -232,6 +234,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 {
+		return errors.New("max-response-loops and diagnosis-deadline must be positive")
 	}
 	if *exitAfterClosure && *restartAfterClosure {
 		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
@@ -400,6 +405,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
+	var stateTracker *StateTracker
 	var dispatcher Dispatcher
 	switch *dispatcherMode {
 	case "local":
@@ -414,13 +420,29 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)
 		}
+		var primitiveProber PrimitiveProber
+		if proberAddress != nil {
+			primitiveProber = HTTPProberClient{BaseURL: proberAddress}
+		}
 		dispatcher = KubernetesJobDispatcher{
 			Client: bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
 			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
-			Catalog: catalog, RequireMemorySnapshot: options.NativeBroker != nil,
+			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
+			LoopFactory: func(request IncidentRequest) *ResponderLoop {
+				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot},
+					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
+				}, *maxResponseLoops)
+				loop.DiagnosisDeadline = *diagnosisDeadline
+				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+				}
+				return loop
+			},
 		}
 	default:
 		return fmt.Errorf("unsupported dispatcher mode %q", *dispatcherMode)
@@ -464,7 +486,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	} else if *dispatcherMode == "job" {
 		return errors.New("job controller requires the Go incident broker")
 	}
-	var stateTracker *StateTracker
 	if *stateBaseline {
 		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace})
 		controller.Baseline = stateTracker

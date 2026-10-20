@@ -51,6 +51,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
+	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
@@ -106,7 +107,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, AgentProvider: *provider,
-		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()),
+		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
 		LateFindings:    *lateFindings,
 		HealthyBaseline: *healthyBaseline,
 		TimeoutSeconds:  int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),

@@ -41,6 +41,20 @@ def _fixture(name: str) -> str:
     return json.dumps(request)
 
 
+def test_program_prompt_guides_codex_and_claude_sessions() -> None:
+    raw = json.loads(_fixture("incident_request.json"))
+    raw["max_response_loops"] = 5
+    raw["initial_program_runs"] = [
+        {"program_id": "targetport", "verdict": {"result": "RESULT_MATCH"}, "duration": "0.02s"}
+    ]
+    request = IncidentRequest.model_validate(raw)
+    prompt = _responder_prompt(request)
+    assert "ranked program verdicts" in prompt
+    assert "sdo plan then sdo apply" in prompt
+    assert "Always finish with sdo verify" in prompt
+    assert '"program_id": "targetport"' in prompt
+
+
 def test_codex_responder_captures_resumable_session_id() -> None:
     request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
     result = IncidentResult.model_validate_json(_fixture("incident_result.json")).model_copy(

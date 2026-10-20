@@ -45,6 +45,7 @@ class NativeInstallConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     max_follow_ups: int = 0
+    max_response_loops: int = 5
     follow_up_cooldown_seconds: int = 30
     response_timeout_seconds: int = 1800
     verification_timeout_seconds: int = 120
@@ -82,7 +83,7 @@ class NativeInstallConfig:
             raise ValueError("reflection_session must be fresh or resume")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0:
+        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
             raise ValueError("follow-up count must be nonnegative and cooldown positive")
         if self.response_timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
             raise ValueError("controller timeouts must be positive")
@@ -375,6 +376,7 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args.extend(("--reflection-session", config.reflection_session))
     args.extend(("--reflection-guidance", config.reflection_guidance))
     args.extend(("--max-follow-ups", str(config.max_follow_ups)))
+    args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.verification_timeout_seconds}s"))
@@ -428,6 +430,7 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--reflection-session", config.install.reflection_session))
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
     args.extend(("--max-follow-ups", str(config.install.max_follow_ups)))
+    args.extend(("--max-response-loops", str(config.install.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.install.follow_up_cooldown_seconds}s"))
     args.extend(("--repair-policy", config.install.repair_policy))
     args.extend(("--response-timeout", f"{config.install.response_timeout_seconds}s"))

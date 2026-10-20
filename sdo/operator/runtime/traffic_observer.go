@@ -14,6 +14,7 @@ import (
 
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -144,6 +145,12 @@ func (c HTTPProberClient) Windows(ctx context.Context) (map[string]traffic.Windo
 func (c HTTPProberClient) Burst(ctx context.Context, request prober.BurstRequest) (prober.BurstResult, error) {
 	var result prober.BurstResult
 	err := c.do(ctx, http.MethodPost, prober.PathBursts, request, &result)
+	return result, err
+}
+
+func (c HTTPProberClient) Probe(ctx context.Context, ref sdk.ObjectRef, port int32, request *program.HTTPProbe) (program.ProbeResult, error) {
+	var result program.ProbeResult
+	err := c.do(ctx, http.MethodPost, prober.PathPrimitive, prober.PrimitiveRequest{To: ref, Port: port, HTTP: request}, &result)
 	return result, err
 }
 

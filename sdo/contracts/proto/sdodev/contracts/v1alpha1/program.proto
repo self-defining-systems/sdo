@@ -7,6 +7,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
@@ -90,13 +91,14 @@ message RestartRollout {
   string reason = 2 [(buf.validate.field).string.min_len = 1];
 }
 
-// ProgramRun and PlanApplication are available for future outcome records.
 message ProgramRun {
   string program_id = 1 [(buf.validate.field).string.min_len = 1];
   repeated Binding bindings = 2;
   Verdict verdict = 3 [(buf.validate.field).required = true];
   google.protobuf.Duration duration = 4 [(buf.validate.field).required = true];
   string error = 5;
+  string finding_fingerprint = 6;
+  string program_revision = 7;
 }
 
 message PlanApplication {
@@ -104,4 +106,16 @@ message PlanApplication {
   bool applied = 2;
   bool dry_run = 3;
   Verdict verification = 4;
+  string application_id = 5;
+  repeated string program_ids = 6;
+  string error = 7;
+  google.protobuf.Duration duration = 8;
+}
+
+message ProgramToolCall {
+  string command = 1;
+  google.protobuf.Timestamp at = 2;
+  string request_json = 3;
+  string response_json = 4;
+  string error = 5;
 }

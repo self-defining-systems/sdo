@@ -74,7 +74,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if err := plan.Validate(); err != nil {
 		return result, fmt.Errorf("validate plan: %w", err)
 	}
-	if incident.RepairPolicy != "recorded-actions" {
+	if !dryRun && incident.RepairPolicy != "recorded-actions" {
 		return result, fmt.Errorf("repair policy %q denies direct plan mutations", incident.RepairPolicy)
 	}
 	if e.Client == nil {

@@ -71,7 +71,9 @@ type IncidentRequest struct {
 	StateChanges *StateChanges `json:"state_changes,omitempty"`
 	// FollowUp is set only on a follow-up incident dispatched for findings that
 	// stayed active after an earlier responder completed.
-	FollowUp *FollowUpContext `json:"follow_up,omitempty"`
+	FollowUp           *FollowUpContext `json:"follow_up,omitempty"`
+	InitialProgramRuns []ProgramRun     `json:"initial_program_runs,omitempty"`
+	MaxResponseLoops   int              `json:"max_response_loops,omitempty"`
 }
 
 // FollowUpContext links a follow-up responder request to the incident it
@@ -143,21 +145,27 @@ type RepairActionReceipt struct {
 }
 
 type IncidentResult struct {
-	SchemaVersion        string                 `json:"schema_version"`
-	IncidentID           string                 `json:"incident_id"`
-	Status               IncidentStatus         `json:"status"`
-	ConfirmedRootCauses  []ConfirmedRootCause   `json:"confirmed_root_causes"`
-	AppliedPlaybooks     []AppliedPlaybook      `json:"applied_playbooks"`
-	RepairChanges        []string               `json:"repair_changes"`
-	RepairActions        []RepairActionReceipt  `json:"repair_actions"`
-	FinalDetectorStates  []DetectorEvaluation   `json:"final_detector_states"`
-	ProposedArtifactIDs  []string               `json:"proposed_artifact_ids"`
-	VerificationEvidence []VerificationEvidence `json:"verification_evidence"`
-	Usage                UsageMetrics           `json:"usage"`
-	Timing               TimingMetrics          `json:"timing"`
-	ResponderSessionID   string                 `json:"responder_session_id,omitempty"`
-	LateFindingsPull     *LateFindingsPull      `json:"late_findings_pull,omitempty"`
-	Error                string                 `json:"error,omitempty"`
+	SchemaVersion         string                    `json:"schema_version"`
+	IncidentID            string                    `json:"incident_id"`
+	Status                IncidentStatus            `json:"status"`
+	ConfirmedRootCauses   []ConfirmedRootCause      `json:"confirmed_root_causes"`
+	AppliedPlaybooks      []AppliedPlaybook         `json:"applied_playbooks"`
+	RepairChanges         []string                  `json:"repair_changes"`
+	RepairActions         []RepairActionReceipt     `json:"repair_actions"`
+	FinalDetectorStates   []DetectorEvaluation      `json:"final_detector_states"`
+	ProposedArtifactIDs   []string                  `json:"proposed_artifact_ids"`
+	VerificationEvidence  []VerificationEvidence    `json:"verification_evidence"`
+	Usage                 UsageMetrics              `json:"usage"`
+	Timing                TimingMetrics             `json:"timing"`
+	ResponderSessionID    string                    `json:"responder_session_id,omitempty"`
+	LateFindingsPull      *LateFindingsPull         `json:"late_findings_pull,omitempty"`
+	Error                 string                    `json:"error,omitempty"`
+	ProgramToolCalls      []ToolCall                `json:"program_tool_calls,omitempty"`
+	ProgramRuns           []ProgramRun              `json:"program_runs,omitempty"`
+	PlanApplications      []RecordedPlanApplication `json:"plan_applications,omitempty"`
+	ProgramFailureSignals []string                  `json:"program_failure_signals,omitempty"`
+	ResponseLoopsUsed     int                       `json:"response_loops_used,omitempty"`
+	ResponseLoopExhausted bool                      `json:"response_loop_exhausted,omitempty"`
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

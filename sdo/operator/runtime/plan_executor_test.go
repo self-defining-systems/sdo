@@ -164,11 +164,13 @@ func TestPlanExecutorActionsAndRollback(t *testing.T) {
 func TestPlanExecutorDryRunReturnsPatchesWithoutMutation(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
 	before := planObject(ref, map[string]any{"replicas": float64(1)})
-	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
-	executor := PlanExecutor{Client: client}
-	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}}, true)
-	if err != nil || result.Applied || !result.DryRun || len(result.Patches) != 1 || len(client.patches) != 0 {
-		t.Fatalf("dry run: %+v, %v", result, err)
+	for _, policy := range []string{"recorded-actions", "commit"} {
+		client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
+		executor := PlanExecutor{Client: client}
+		result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: policy}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}}, true)
+		if err != nil || result.Applied || !result.DryRun || len(result.Patches) != 1 || len(client.patches) != 0 {
+			t.Fatalf("%s dry run: %+v, %v", policy, result, err)
+		}
 	}
 }
 

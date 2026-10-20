@@ -60,7 +60,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
         )
 
     monkeypatch.setattr(subprocess, "run", run)
-    receipt = install_existing(replace(_install(tmp_path), healthy_baseline=True))
+    receipt = install_existing(replace(_install(tmp_path), healthy_baseline=True, max_response_loops=3))
 
     assert receipt.reused
     assert receipt.accepted_commit == "a" * 40
@@ -70,6 +70,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert "--responder-env" in calls[0]
     assert "--late-findings" in calls[0]
     assert "--healthy-baseline" in calls[0]
+    assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"
     assert "-m" not in calls[0]

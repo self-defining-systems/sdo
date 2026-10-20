@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -175,6 +176,10 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepositoryWorktree: request.RepositoryWorktree, RepositoryBaseCommit: request.RepositoryBaseCommit,
 		ResponseDeadline: contractTimestamp(request.ResponseDeadline), CancellationToken: request.CancellationToken,
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
+		MaxResponseLoops: int32(request.MaxResponseLoops),
+	}
+	for _, run := range request.InitialProgramRuns {
+		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
 	}
 	for _, finding := range request.Findings {
 		item, err := findingContract(finding)
@@ -221,6 +226,22 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		VerificationEvidence: make([]*contracts.VerificationEvidence, 0, len(result.VerificationEvidence)),
 		Usage:                proto.Clone(&result.Usage).(*contracts.UsageMetrics),
 		Timing:               &contracts.TimingMetrics{StartedAt: contractTimestamp(result.Timing.StartedAt), CompletedAt: contractTimestamp(result.Timing.CompletedAt)},
+		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
+		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
+	}
+	for _, call := range result.ProgramToolCalls {
+		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
+	}
+	for _, run := range result.ProgramRuns {
+		message.ProgramRuns = append(message.ProgramRuns, programRunContract(run))
+	}
+	for _, application := range result.PlanApplications {
+		encoded, err := application.Result.Proto()
+		if err != nil {
+			return nil, err
+		}
+		encoded.ApplicationId, encoded.ProgramIds, encoded.Duration, encoded.Error = application.ID, append([]string(nil), application.ProgramIDs...), durationpb.New(application.Result.Duration), application.Error
+		message.PlanApplications = append(message.PlanApplications, encoded)
 	}
 	for _, cause := range result.ConfirmedRootCauses {
 		item := &contracts.ConfirmedRootCause{
@@ -298,6 +319,14 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		VerificationEvidence: make([]VerificationEvidence, 0, len(message.GetVerificationEvidence())),
 		Timing:               TimingMetrics{StartedAt: controllerTime(message.GetTiming().GetStartedAt()), CompletedAt: controllerTime(message.GetTiming().GetCompletedAt())},
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
+		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
+		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
+	}
+	for _, call := range message.GetProgramToolCalls() {
+		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))
+	}
+	for _, run := range message.GetProgramRuns() {
+		result.ProgramRuns = append(result.ProgramRuns, programRunState(run))
 	}
 	if message.GetUsage() != nil {
 		result.Usage = *proto.Clone(message.GetUsage()).(*contracts.UsageMetrics)

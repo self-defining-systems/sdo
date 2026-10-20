@@ -285,6 +285,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=int(config.get("max_follow_ups", 0)),
         help="follow-up responders for health findings left active after a response (0 = off)",
     )
+    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 5)))
     parser.add_argument(
         "--follow-up-cooldown-seconds",
         type=int,
@@ -519,6 +520,7 @@ def _launch_native_lifecycle(
         reflection_guidance=args.reflection_guidance,
         healthy_baseline=args.healthy_baseline,
         max_follow_ups=args.max_follow_ups,
+        max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
@@ -563,6 +565,7 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         reflection_guidance=config.reflection_guidance,
         healthy_baseline=config.healthy_baseline,
         max_follow_ups=config.max_follow_ups,
+        max_response_loops=config.max_response_loops,
         follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
         timeout_sec=config.timeout_seconds,
         max_deployment_attempts=config.max_deployment_attempts,
@@ -603,6 +606,7 @@ def _native_install_for_run(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         max_follow_ups=args.max_follow_ups,
+        max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
@@ -794,6 +798,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         max_follow_ups=args.max_follow_ups,
+        max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         submission_api_base=_in_cluster_api_base(api_base),
         submission_relay_target_base=_relay_target_api_base(api_base),

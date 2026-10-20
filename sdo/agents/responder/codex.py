@@ -649,12 +649,21 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "a separate reflection task may later propose logical memory artifacts. "
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
+    program_guidance = (
+        "Start with the ranked program verdicts and evidence in initial_program_runs. "
+        "For a Match, prefer sdo plan then sdo apply. "
+        "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
+        "Use a session-only bash fix when no program fits. Always finish with sdo verify. "
+        if request.max_response_loops > 0
+        else ""
+    )
     excluded_request_fields = {"detector_history", "state_changes", "memory_snapshot"}
     request_json = request.model_dump_json(indent=2, exclude=excluded_request_fields)
     return (
         f"You are the SDO incident responder for incident {request.incident_id}.\n\n"
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
         f"{strategy}"
+        f"{program_guidance}"
         f"{surfaced_context}"
         f"{_no_action_instructions()}"
         f"{_verification_instructions()}"

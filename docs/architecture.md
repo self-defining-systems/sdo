@@ -61,8 +61,8 @@ The controller is split by stability and privilege:
 | `sdo/operator/sdk/servicehealth/` | Zero-knowledge ready-endpoints detector that names the selector labels a Service's backing Deployment lacks |
 | `sdo/operator/sdk/traffic/` | Synthetic-traffic scenarios, parameter generators, workload profiles, the deterministic engine, sliding-window SLO evaluation, and the scenario SLO detector |
 | `sdo/operator/core/` | Detector execution, snapshot validation, finding emission, and playbook-path validation |
-| `sdo/operator/runtime/` | Kubernetes cache, scheduler, finding state, batching, responder jobs, broker effects, leader election, durable state, and the prober pod and its observer |
-| `sdo/operator/runtime/prober/` | The isolated synthetic-traffic prober process (no Kubernetes dependency): continuous health probes, verify bursts, HTTP API |
+| `sdo/operator/runtime/` | Kubernetes cache, scheduler, finding state, batching, responder jobs, incident-scoped program selection and loop, plan execution, broker effects, leader election, durable state, and the prober pod and its observer |
+| `sdo/operator/runtime/prober/` | The isolated synthetic-traffic prober process (no Kubernetes dependency): continuous health probes, verify bursts, one-off read-only probes, HTTP API |
 | `sdo/operator/builder/` | Validate diagnostics, playbook programs, shared libraries, and corpus cases in an isolated workspace; compile the application-specific controller and prober |
 
 Generated detectors are deterministic Go. They consume controller snapshots and must not call models, read hidden benchmark labels, or use external verdicts.
@@ -170,6 +170,7 @@ Status meanings:
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
 | Built-in agents | `sdo/agents/{deployer,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots and results carry typed proposals or source changes. |
 | Detector SDK and execution | `sdo/operator/sdk/`, `core/`, `runtime/` | Active | Deterministic Go snapshots, detector evaluation, findings, batching, leader election, and controller state have Go tests. |
+| Program responder loop | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller ranks bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, verifies after each apply, and records tool and program evidence on the outcome. The fast path remains off. |
 | Synthetic traffic | `sdo/operator/sdk/traffic/`, `runtime/prober/`, `builder/`, `.sdo/diagnostics/traffic/` | Active | Generated workloads run in an isolated prober; acceptance remains independently validated. |
 | Controller builder and supervisor | `sdo/operator/builder/` | Active | Go builds and validates accepted diagnostics and supervises controller rollout with durable provenance. |
 | Isolated detector validation | `sdo/operator/builder/`, `sdo/operator/operatorcli/`, `sdo/operator/broker/` | Active | Agent `draft-test` checks scratch projections; broker acceptance uses its own isolated validator Job. |
@@ -185,13 +186,13 @@ Status meanings:
 |---|---|---|---|
 | `.sdo/goal.md` | Human | Human | Agent proposals cannot change the objective. |
 | `.sdo/arch.md` | Deployer after accepted source | Deployer or authorized upkeep | `generated_at_commit` must name the broker-accepted source commit and topology must match source. |
-| `.sdo/playbooks/` | Health judge may create only the named bootstrap index/playbook; responder authors incident playbooks and programs | Responder | Paths, front matter, incident provenance, import allowlist, program registration, tests, and shell-free guidance are validated. |
+| `.sdo/playbooks/` | Health judge may create only the named bootstrap index/playbook; responder authors incident playbooks and programs | Responder | Paths, front matter, incident provenance, import allowlist, program registration, tests, and shell-free guidance are validated. Runtime programs propose plans; the controller records applications and verdicts. |
 | `.sdo/lib/`, `.sdo/corpus/` | Responder | Responder | Shared Go packages follow import checks; corpus labels must bind against program specs and pass generalization and rename-invariance replay. |
 | `.sdo/diagnostics/detectors/health/` | Health judge | Health judge lifecycle | Objective digest, ownership, isolated compile, and tests are required. |
 | `.sdo/diagnostics/detectors/incidents/` | Responder | Responder | Incident provenance, compile, matching, and near-miss tests are required. |
 | `.sdo/diagnostics/traffic/generators/`, `traffic/workloads/` | Health judge | Health judge lifecycle | Workloads and generators obey engine limits and isolated validation. |
 | `.sdo/diagnostics/traffic/generators/incident/`, `traffic/workloads/incident-*.yaml` | Responder | Responder | Incident-scoped traffic only; health acceptance remains judge-owned. |
-| Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | `OutcomeRecord` is the logical schema; versioned per-incident documents are broker owned. The storage edge imports retired JSONL streams; no agent has writer capability. |
+| Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | `OutcomeRecord` is the logical schema; versioned per-incident documents include controller-recorded tool calls, program runs, applications, loop counts, and failure signals. The storage edge imports retired JSONL streams; no agent has writer capability. |
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. |
 
 ## Repository scope matrix
@@ -202,7 +203,7 @@ Status meanings:
 | `sdo/contracts/proto/`, `sdo/contracts/_gen/` | Canonical language-neutral task/result and outcome schemas, with generated Python messages. |
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/`, `outcome_derivation/`, `install/` | Production Go authority, physical storage and artifact-projection edge, outcome derivation, and installer. |
-| `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector and program SDK, validation/build, controller stack, and generated contracts. |
+| `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector and program SDK, validation/build, candidate selection, responder tools, controller stack, and generated contracts. Runtime remains independent of benchmark transports. |
 | `libs/sdo_core/`, `libs/agent_cli/`, `libs/model_config/` | Production-neutral helpers, agent turn runner, and model parsing. |
 | `apps/` | Deployment and evaluation inputs. |
 | `benchmarks/sregym/{adapter,protocol,runner,experiments,analysis}/` | First-party benchmark integration; may import production APIs. |

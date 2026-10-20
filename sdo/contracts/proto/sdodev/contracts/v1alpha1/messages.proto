@@ -21,6 +21,7 @@ import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/traffic.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
@@ -234,6 +235,8 @@ message IncidentRequest {
   StateChanges state_changes = 18;
   FollowUpContext follow_up = 19;
   OperationalMemorySnapshot memory_snapshot = 20;
+  repeated ProgramRun initial_program_runs = 21;
+  int32 max_response_loops = 22;
 }
 
 message RootCauseEvidence {
@@ -373,6 +376,12 @@ message IncidentResult {
   optional string responder_session_id = 13;
   optional string error = 14;
   LateFindingsPull late_findings_pull = 15;
+  repeated ProgramToolCall program_tool_calls = 16;
+  repeated ProgramRun program_runs = 17;
+  repeated PlanApplication plan_applications = 18;
+  int32 response_loops_used = 19;
+  bool response_loop_exhausted = 20;
+  repeated string program_failure_signals = 21;
 }
 
 // A responder claim that it read controller-published findings during its turn.
