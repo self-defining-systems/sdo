@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import httpx
 import pytest
 
 from benchmarks.sregym.fastloop.cli import build_parser, format_incidents, format_summary, main
@@ -306,3 +309,113 @@ def test_codex_run_hands_the_worker_an_agent_kubeconfig_path_it_can_write(
 
     assert requested == [results_dir / "agent.kubeconfig"]
     assert results_dir.is_dir()
+
+
+@pytest.mark.parametrize("stream_name", ["pbprog_repeat.json", "pbprog_compose.json"])
+def test_codex_prompt_and_oracle_cover_every_playbook_stream_incident(
+    stream_name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import cli, codex_agent, composite
+    from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+    from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
+    from benchmarks.sregym.fastloop.loop import LoopConfig
+
+    root = Path(__file__).resolve().parents[5]
+    incidents = load_stream(root / "benchmarks" / "sregym" / "experiments" / "fastloop" / stream_name)
+    registered = {problem for ids in incidents for problem in ids}
+    auth_home = tmp_path / "codex-home"
+    auth_home.mkdir()
+    (auth_home / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(auth_home))
+
+    class Worker:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+            self.injected: list[str] = []
+            self.oracles: list[tuple[tuple[str, ...], int | None, bool]] = []
+            self.recoveries: list[tuple[str, ...]] = []
+            self.recovered = False
+
+        def request(self, op: str, **args: Any) -> dict[str, Any]:
+            if op == "proxy":
+                return {"kubeconfig": args["kubeconfig"]}
+            if op == "codex_prompt":
+                problem_id = args["problem_id"]
+                if problem_id not in registered:
+                    raise ValueError(f"Problem ID {problem_id} not found in registry")
+                self.prompts.append(problem_id)
+                return {
+                    "prompt": "You are an SRE agent tasked with diagnosing and fixing issues in a Kubernetes "
+                    "application.\nApplication: Hotel Reservation\nNamespace: hotel-reservation\n"
+                    "Investigate the incident.\nThe submission endpoint is: " + args["api_base"] + "/submit\n"
+                }
+            if op == "inject":
+                if not args.get("compose"):
+                    self.injected = []
+                    self.recovered = False
+                self.injected.append(args["problem_id"])
+                return {"started_at": 1790000000.0, "finished_at": 1790000001.0, "fault": len(self.injected) - 1}
+            if op == "oracle":
+                self.oracles.append((tuple(self.injected), args.get("fault"), self.recovered))
+                return {"kind": "sregym-mitigation-oracle", "success": True}
+            if op == "recover":
+                self.recoveries.append(tuple(self.injected))
+                self.recovered = True
+                return {"seconds": 0.0}
+            if op == "health":
+                return {"healthy": True}
+            raise AssertionError(op)
+
+    def run_codex(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        prompt = command[-1]
+        endpoint = prompt.split("The submission endpoint is: ", 1)[1].splitlines()[0]
+        httpx.post(endpoint, json={"solution": "application incident"})
+        httpx.post(endpoint, json={"solution": ""})
+        kwargs["stdout"].write('{"type":"turn.completed","usage":{"input_tokens":1}}\n')
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(codex_agent.subprocess, "run", run_codex)
+    monkeypatch.setattr(composite, "reader_for", lambda *_args, **_kwargs: lambda *_read: None)
+    worker = Worker()
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fastloop-w0",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="Hotel Reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=root / "third_party" / "sregym",
+        private_tmp=None,
+    )
+    args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "codex"])
+    config = LoopConfig(
+        run_id="codex-test",
+        problems=tuple(ids[0] for ids in incidents),
+        incidents=len(incidents),
+        results_path=tmp_path / "results" / "incidents.jsonl",
+        stream=incidents,
+    )
+    tracked = {
+        "+".join(ids): tuple(FaultSpec("incorrect_image", f"component-{index}") for index in range(len(ids)))
+        for ids in incidents
+        if len(ids) > 1
+    }
+    driver = SregymFaultDriver(worker, namespace=environment.namespace)
+
+    records = cli._run_codex(args, environment, tmp_path / "results", worker, driver, config, stream_faults=tracked)
+
+    assert len(records) == len(incidents)
+    assert all(record.error is None and record.oracle and record.oracle.success for record in records)
+    assert worker.prompts == [ids[0] for ids in incidents]
+    assert worker.recoveries == list(incidents)
+    for index, ids in enumerate(incidents):
+        prompt = (tmp_path / "results" / f"{index:03d}_{'+'.join(ids)}" / "prompt.txt").read_text(encoding="utf-8")
+        assert "Application: Hotel Reservation" in prompt
+        assert all(problem not in prompt for problem in ids)
+        expected_faults = list(range(len(ids))) if len(ids) > 1 else [None]
+        assert [
+            fault for injected, fault, recovered in worker.oracles if injected == ids and not recovered
+        ] == expected_faults
+        assert [
+            fault for injected, fault, recovered in worker.oracles if injected == ids and recovered
+        ] == expected_faults

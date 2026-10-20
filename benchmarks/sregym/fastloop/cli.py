@@ -431,7 +431,7 @@ def _run_codex(
             settings,
             stub=stub,
             prompt_for=lambda problem_id, api_base: str(
-                worker.request("codex_prompt", problem_id=problem_id, api_base=api_base)["prompt"]
+                worker.request("codex_prompt", problem_id=problem_id.split("+", 1)[0], api_base=api_base)["prompt"]
             ),
         )
         if config.stream:
