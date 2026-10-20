@@ -175,6 +175,26 @@ message ProposedPlaybook {
   string originating_incident = 4;
   string markdown = 5;
   repeated MemoryScript scripts = 6;
+  ProposedProgram program = 7;
+}
+
+message ProposedProgram {
+  repeated ProposedGoSource sources = 1;
+  repeated ProposedCorpusCase corpus_cases = 2;
+}
+
+message ProposedCorpusCase {
+  string id = 1;
+  string open_json = 2;
+  string fixed_json = 3;
+  string healthy_json = 4;
+  string recordings_json = 5;
+  string labels_json = 6;
+}
+
+message ProposedLibrary {
+  string package = 1;
+  repeated ProposedGoSource sources = 2;
 }
 
 message ProposedTrafficGenerator {
@@ -189,6 +209,7 @@ message OperationalArtifactProposal {
   repeated TrafficWorkload traffic_workloads = 4;
   repeated string delete_detector_ids = 5;
   repeated string delete_playbook_ids = 6;
+  repeated ProposedLibrary libraries = 7;
 }
 
 // IncidentRequest is the snapshot the controller dispatches to the responder.

@@ -35,6 +35,32 @@ func TestAcceptedDiagnosticsProjectsPhysicalStorage(t *testing.T) {
 	}
 }
 
+func TestAcceptedDiagnosticsRejectsDirtyProgramMemory(t *testing.T) {
+	repository := t.TempDir()
+	gitCommand(t, repository, "init", "-q")
+	for path, content := range map[string]string{".sdo/diagnostics/manifest.yaml": "kind: DetectorManifest\n", ".sdo/playbooks/fault/diagnose.go": "package fault\n", ".sdo/lib/helpers/helpers.go": "package helpers\n", ".sdo/corpus/case-1/labels.json": "{}\n"} {
+		full := filepath.Join(repository, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitCommand(t, repository, "add", ".")
+	gitCommand(t, repository, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+	for _, path := range []string{".sdo/playbooks/fault/diagnose.go", ".sdo/lib/helpers/helpers.go", ".sdo/corpus/case-1/labels.json"} {
+		full := filepath.Join(repository, path)
+		if err := os.WriteFile(full, []byte("changed"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := AcceptedDiagnostics(context.Background(), repository); err == nil {
+			t.Fatalf("dirty %s accepted", path)
+		}
+		gitCommand(t, repository, "checkout", "--", path)
+	}
+}
+
 func TestPublishProberUsesEdgeOwnedCachePath(t *testing.T) {
 	mount := t.TempDir()
 	binary := filepath.Join(t.TempDir(), "prober")

@@ -38,12 +38,12 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
-	status, err := git("status", "--porcelain", "--", ".sdo/diagnostics")
+	status, err := git("status", "--porcelain", "--", ".sdo/diagnostics", ".sdo/playbooks", ".sdo/lib", ".sdo/corpus")
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
 	if status != "" {
-		return DiagnosticsProjection{}, errors.New("diagnostics must match the accepted commit before controller launch")
+		return DiagnosticsProjection{}, errors.New("diagnostics and program memory must match the accepted commit before controller launch")
 	}
 	fingerprint, err := git("rev-parse", "HEAD:.sdo/diagnostics")
 	if err != nil {

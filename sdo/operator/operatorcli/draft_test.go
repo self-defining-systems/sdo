@@ -63,3 +63,53 @@ func TestDraftTestCompilesTypedArtifactsWithoutEditingCheckout(t *testing.T) {
 		t.Fatalf("draft-test changed accepted checkout: %v: %s", err, output)
 	}
 }
+
+func TestDraftTestValidatesProgramProposal(t *testing.T) {
+	app := t.TempDir()
+	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
+	copy := exec.Command("cp", "-a", fixture+"/.", app)
+	if output, err := copy.CombinedOutput(); err != nil {
+		t.Fatalf("copy fixture: %v: %s", err, output)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"}} {
+		command := exec.Command("git", args...)
+		command.Dir = app
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(app, ".sdo", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	program := read("playbooks/service-targetport-mismatch/diagnose.go")
+	proposal := &contracts.OperationalArtifactProposal{
+		Playbooks: []*contracts.ProposedPlaybook{{Id: "service-targetport-mismatch", Owner: "responder", FaultClass: "service-targetport-mismatch", OriginatingIncident: "targetport-incident", Markdown: "Check the <SERVICE> target port.", Program: &contracts.ProposedProgram{Sources: []*contracts.ProposedGoSource{{Name: "diagnose.go", Content: program}}, CorpusCases: []*contracts.ProposedCorpusCase{{Id: "targetport-mismatch", OpenJson: read("corpus/targetport-mismatch/open.json"), FixedJson: read("corpus/targetport-mismatch/fixed.json"), HealthyJson: read("corpus/targetport-mismatch/healthy.json"), RecordingsJson: read("corpus/targetport-mismatch/recordings.json"), LabelsJson: read("corpus/targetport-mismatch/labels.json")}}}}},
+		Libraries: []*contracts.ProposedLibrary{{Package: "ports", Sources: []*contracts.ProposedGoSource{{Name: "ports.go", Content: read("lib/ports/ports.go")}}}},
+	}
+	path := filepath.Join(t.TempDir(), "proposal.json")
+	write := func() {
+		t.Helper()
+		data, err := protojson.Marshal(proposal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	config := DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path}
+	if err := RunDraftTest(context.Background(), config); err != nil {
+		t.Fatalf("valid program draft: %v", err)
+	}
+	proposal.Libraries[0].Sources[0].Content = "package ports\nimport \"net/http\"\nvar _ = http.Get\n"
+	write()
+	if err := RunDraftTest(context.Background(), config); err == nil || !strings.Contains(err.Error(), "may not import") {
+		t.Fatalf("unsafe draft: %v", err)
+	}
+}

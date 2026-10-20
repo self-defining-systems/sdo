@@ -193,6 +193,57 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 				return err
 			}
 		}
+		if program := item.GetProgram(); program != nil {
+			prior, err := filepath.Glob(filepath.Join(base, "*.go"))
+			if err != nil {
+				return err
+			}
+			for _, path := range prior {
+				if err := os.Remove(path); err != nil {
+					return err
+				}
+			}
+			for _, source := range program.GetSources() {
+				if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
+					return err
+				}
+			}
+			for _, corpus := range program.GetCorpusCases() {
+				caseRoot := filepath.Join(root, ".sdo", "corpus", corpus.GetId())
+				if err := os.MkdirAll(caseRoot, 0o755); err != nil {
+					return err
+				}
+				for name, content := range map[string]string{"open.json": corpus.GetOpenJson(), "fixed.json": corpus.GetFixedJson(), "healthy.json": corpus.GetHealthyJson(), "recordings.json": corpus.GetRecordingsJson(), "labels.json": corpus.GetLabelsJson()} {
+					if err := os.WriteFile(filepath.Join(caseRoot, name), []byte(content), 0o644); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	for _, library := range proposal.GetLibraries() {
+		base := filepath.Join(root, ".sdo", "lib", filepath.FromSlash(library.GetPackage()))
+		if err := os.MkdirAll(base, 0o755); err != nil {
+			return err
+		}
+		prior, err := filepath.Glob(filepath.Join(base, "*.go"))
+		if err != nil {
+			return err
+		}
+		for _, path := range prior {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+		}
+		for _, source := range library.GetSources() {
+			if err := os.WriteFile(filepath.Join(base, source.GetName()), []byte(source.GetContent()), 0o644); err != nil {
+				return err
+			}
+		}
+		origin := proposal.GetPlaybooks()[0].GetOriginatingIncident()
+		if err := os.WriteFile(filepath.Join(base, "metadata.yaml"), []byte("originating_incident: "+strconv.Quote(origin)+"\n"), 0o644); err != nil {
+			return err
+		}
 	}
 	for _, generator := range proposal.GetTrafficGenerators() {
 		base := filepath.Join(root, ".sdo", "diagnostics", "traffic", "generators")
@@ -234,6 +285,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 
 func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, role ArtifactRole) error {
 	seen := map[string]bool{}
+	corpusIDs := map[string]bool{}
 	checkID := func(id string) error {
 		if !playbookIDPattern.MatchString(id) {
 			return fmt.Errorf("invalid logical artifact ID %q", id)
@@ -308,6 +360,55 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 				return fmt.Errorf("invalid script in playbook %q", item.GetId())
 			}
 		}
+		if program := item.GetProgram(); program != nil {
+			if role != ResponderArtifacts || len(item.GetScripts()) != 0 {
+				return fmt.Errorf("playbook %q program requires responder ownership and no scripts", item.GetId())
+			}
+			found := false
+			for _, source := range program.GetSources() {
+				if err := validateGoSource(source); err != nil {
+					return fmt.Errorf("playbook %q: %w", item.GetId(), err)
+				}
+				name := source.GetName()
+				if name != "diagnose.go" && name != "mitigate.go" && !strings.HasSuffix(name, "_test.go") {
+					return fmt.Errorf("playbook %q: program source %q must be diagnose.go, mitigate.go, or *_test.go", item.GetId(), name)
+				}
+				found = found || name == "diagnose.go"
+			}
+			if !found {
+				return fmt.Errorf("playbook %q program needs diagnose.go", item.GetId())
+			}
+			for _, corpus := range program.GetCorpusCases() {
+				if corpus == nil || !playbookIDPattern.MatchString(corpus.GetId()) || corpusIDs[corpus.GetId()] {
+					return fmt.Errorf("playbook %q has invalid or duplicate corpus case %q", item.GetId(), corpus.GetId())
+				}
+				corpusIDs[corpus.GetId()] = true
+				for name, value := range map[string]string{"open": corpus.GetOpenJson(), "fixed": corpus.GetFixedJson(), "healthy": corpus.GetHealthyJson(), "recordings": corpus.GetRecordingsJson(), "labels": corpus.GetLabelsJson()} {
+					if !json.Valid([]byte(value)) {
+						return fmt.Errorf("playbook %q corpus %q has invalid %s JSON", item.GetId(), corpus.GetId(), name)
+					}
+				}
+			}
+		}
+	}
+	for _, library := range proposal.GetLibraries() {
+		if len(proposal.GetPlaybooks()) == 0 {
+			return errors.New("shared library needs an originating playbook proposal")
+		}
+		origin := proposal.GetPlaybooks()[0].GetOriginatingIncident()
+		for _, playbook := range proposal.GetPlaybooks() {
+			if playbook.GetOriginatingIncident() != origin {
+				return errors.New("shared libraries in one proposal need one originating incident")
+			}
+		}
+		if library == nil || role != ResponderArtifacts || !safeLibraryPackage(library.GetPackage()) || len(library.GetSources()) == 0 {
+			return fmt.Errorf("invalid responder library package %q", library.GetPackage())
+		}
+		for _, source := range library.GetSources() {
+			if err := validateGoSource(source); err != nil {
+				return fmt.Errorf("library %q: %w", library.GetPackage(), err)
+			}
+		}
 	}
 	for _, id := range append(append([]string{}, proposal.GetDeleteDetectorIds()...), proposal.GetDeletePlaybookIds()...) {
 		if !playbookIDPattern.MatchString(id) {
@@ -343,6 +444,18 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		}
 	}
 	return nil
+}
+
+func safeLibraryPackage(path string) bool {
+	if path == "" || strings.Contains(path, "\\") || filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if !playbookIDPattern.MatchString(part) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateGoSource(source *contracts.ProposedGoSource) error {

@@ -90,6 +90,9 @@ OperationalArtifactProposal = messages_pb2.OperationalArtifactProposal
 ProposedDetector = messages_pb2.ProposedDetector
 ProposedGoSource = messages_pb2.ProposedGoSource
 ProposedPlaybook = messages_pb2.ProposedPlaybook
+ProposedProgram = messages_pb2.ProposedProgram
+ProposedCorpusCase = messages_pb2.ProposedCorpusCase
+ProposedLibrary = messages_pb2.ProposedLibrary
 ProposedTrafficGenerator = messages_pb2.ProposedTrafficGenerator
 ProtoMemoryWatch = messages_pb2.MemoryWatch
 ProtoMemoryScript = messages_pb2.MemoryScript
@@ -154,6 +157,13 @@ __all__ = [
     "PlanApplication",
     "ProgramRun",
     "ProgramSpec",
+    "OperationalArtifactProposal",
+    "ProposedCorpusCase",
+    "ProposedDetector",
+    "ProposedGoSource",
+    "ProposedLibrary",
+    "ProposedPlaybook",
+    "ProposedProgram",
     "OutcomeRecord",
     "OutcomeTimestamps",
     "DiagnosisVerification",
