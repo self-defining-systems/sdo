@@ -110,4 +110,5 @@ def test_reflection_brief_uses_logical_snapshot_without_loading_memory_files(tmp
     )
     prompt = str(backend.calls[-1]["prompt"])
     assert ".sdo/outcomes/" not in prompt
-    assert "sdo-operator draft-test --app . --proposal-json" in prompt
+    assert "sdo-operator program scaffold" in prompt
+    assert "sdo-operator program propose" in prompt
