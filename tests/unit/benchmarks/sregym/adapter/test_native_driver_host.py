@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.sregym.adapter import driver
+from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,7 +109,7 @@ def test_unseeded_workspace_has_no_accepted_lifecycle(tmp_path: Path) -> None:
     assert driver._has_accepted_lifecycle(tmp_path) is False
 
 
-def test_fastloop_native_launch_has_commit_repairs_and_no_submission_transport(
+def test_fastloop_native_launch_has_recorded_action_repairs_and_no_submission_transport(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "fastloop-w0")
@@ -127,5 +128,32 @@ def test_fastloop_native_launch_has_commit_repairs_and_no_submission_transport(
         persistent=True,
     )
 
-    assert seen[0].install.repair_policy == "commit"
+    assert seen[0].install.repair_policy == "recorded-actions"
     assert seen[0].install.responder_env == ()
+
+
+def test_native_launch_passes_configured_repair_policy_to_installer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    policies: list[str] = []
+
+    def launch(args: object, **_kwargs: object) -> dict[str, object]:
+        policies.append(args.repair_policy)
+        return {}
+
+    monkeypatch.setattr(driver, "_launch_native_lifecycle", launch)
+    base = {
+        "repository": tmp_path,
+        "namespace": "demo",
+        "application": "demo",
+        "controller_image": "controller:pbprog",
+        "responder_image": "responder:pbprog",
+        "repository_pvc": "repository",
+        "credentials_secret": "credentials",
+        "model": "gpt-6-luna",
+        "timeout_seconds": 30,
+    }
+    for policy in ("recorded-actions", "commit"):
+        driver.launch_native_lifecycle(RuntimeConfig(**base, repair_policy=policy), "healthy", "")
+
+    assert policies == ["recorded-actions", "commit"]

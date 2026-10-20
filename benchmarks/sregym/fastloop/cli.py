@@ -267,7 +267,7 @@ def _sdo_agent(
         credentials_secret="sdo-agent-credentials",
         model=args.model,
         timeout_seconds=args.timeout,
-        repair_policy="commit",
+        repair_policy=args.repair_policy,
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -601,6 +601,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
+    run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
     run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")

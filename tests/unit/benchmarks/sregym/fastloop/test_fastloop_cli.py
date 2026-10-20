@@ -71,6 +71,23 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     assert up.kind_worker_nodes == 1
 
 
+def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
+    args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+    assert args.repair_policy == "recorded-actions"
+    selected = build_parser().parse_args(
+        [
+            "run",
+            "--run-dir",
+            str(tmp_path),
+            "--agent",
+            "sdo",
+            "--repair-policy",
+            "commit",
+        ]
+    )
+    assert selected.repair_policy == "commit"
+
+
 def test_up_builds_the_same_one_worker_kind_lane_as_the_experiments(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop.cli import up_worker_environment
 
