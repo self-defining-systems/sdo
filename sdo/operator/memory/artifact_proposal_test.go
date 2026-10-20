@@ -110,3 +110,37 @@ func TestTypedArtifactsRejectDirectWorkerFilesystemEdits(t *testing.T) {
 		t.Fatal("direct worker edit accepted")
 	}
 }
+
+func TestTypedArtifactsRejectIgnoredSharedLibraryEdits(t *testing.T) {
+	root := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "base"}} {
+		command := exec.Command("git", args...)
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("lib/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("git", "add", ".gitignore")
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+	command = exec.Command("git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "ignore")
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, output)
+	}
+	path := filepath.Join(root, ".sdo", "lib", "ports", "ports.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package ports\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireCleanProposalCheckout(context.Background(), root); err == nil {
+		t.Fatal("ignored library direct edit accepted")
+	}
+}

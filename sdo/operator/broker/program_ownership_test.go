@@ -1,0 +1,61 @@
+package broker
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestResponderOwnsProgramLibrariesAndCorpus(t *testing.T) {
+	for _, path := range []string{".sdo/lib/ports/ports.go", ".sdo/corpus/case-1/labels.json", ".sdo/playbooks/targetport/diagnose.go"} {
+		if err := checkOwnership(path, Responder, ReflectionPhase); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if err := checkOwnership(path, HealthJudge, InitialPhase); err == nil {
+			t.Fatalf("health judge owns %s", path)
+		}
+	}
+}
+
+func TestIgnoredSharedLibraryReachesValidatorTree(t *testing.T) {
+	root := repository(t)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("lib/\ncorpus/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, root, "add", ".gitignore")
+	git(t, root, "commit", "-qm", "ignore ordinary libraries")
+	path := filepath.Join(root, ".sdo", "lib", "ports", "ports.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package ports\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	casePath := filepath.Join(root, ".sdo", "corpus", "case-1", "labels.json")
+	if err := os.MkdirAll(filepath.Dir(casePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(casePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	base := git(t, root, "rev-parse", "HEAD")
+	paths, err := changedPaths(context.Background(), root, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != ".sdo/corpus/case-1/labels.json" || paths[1] != ".sdo/lib/ports/ports.go" {
+		t.Fatalf("library missing from proposal diff: %v", paths)
+	}
+	validator := JobValidator(validationJobFunc(func(_ context.Context, request ValidationJobRequest) (ValidationJobReceipt, error) {
+		files := git(t, root, "ls-tree", "-r", "--name-only", request.CandidateTree)
+		if !strings.Contains(files, ".sdo/lib/ports/ports.go") || !strings.Contains(files, ".sdo/corpus/case-1/labels.json") {
+			t.Fatalf("library missing from validator tree: %s", files)
+		}
+		return ValidationJobReceipt{CandidateTree: request.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true}, nil
+	}))
+	if err := validator(context.Background(), root, paths); err != nil {
+		t.Fatal(err)
+	}
+}

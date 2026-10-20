@@ -262,20 +262,54 @@ class ProposedDetector(_message.Message):
     def __init__(self, id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., constructor: _Optional[str] = ..., watches: _Optional[_Iterable[_Union[MemoryWatch, _Mapping]]] = ..., interval: _Optional[str] = ..., firing: _Optional[int] = ..., clearing: _Optional[int] = ..., severity: _Optional[str] = ..., debounce: _Optional[str] = ..., possible_playbook_ids: _Optional[_Iterable[str]] = ..., originating_commit: _Optional[str] = ..., originating_incident: _Optional[str] = ..., sources: _Optional[_Iterable[_Union[ProposedGoSource, _Mapping]]] = ...) -> None: ...
 
 class ProposedPlaybook(_message.Message):
-    __slots__ = ("id", "owner", "fault_class", "originating_incident", "markdown", "scripts")
+    __slots__ = ("id", "owner", "fault_class", "originating_incident", "markdown", "scripts", "program")
     ID_FIELD_NUMBER: _ClassVar[int]
     OWNER_FIELD_NUMBER: _ClassVar[int]
     FAULT_CLASS_FIELD_NUMBER: _ClassVar[int]
     ORIGINATING_INCIDENT_FIELD_NUMBER: _ClassVar[int]
     MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     SCRIPTS_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_FIELD_NUMBER: _ClassVar[int]
     id: str
     owner: str
     fault_class: str
     originating_incident: str
     markdown: str
     scripts: _containers.RepeatedCompositeFieldContainer[MemoryScript]
-    def __init__(self, id: _Optional[str] = ..., owner: _Optional[str] = ..., fault_class: _Optional[str] = ..., originating_incident: _Optional[str] = ..., markdown: _Optional[str] = ..., scripts: _Optional[_Iterable[_Union[MemoryScript, _Mapping]]] = ...) -> None: ...
+    program: ProposedProgram
+    def __init__(self, id: _Optional[str] = ..., owner: _Optional[str] = ..., fault_class: _Optional[str] = ..., originating_incident: _Optional[str] = ..., markdown: _Optional[str] = ..., scripts: _Optional[_Iterable[_Union[MemoryScript, _Mapping]]] = ..., program: _Optional[_Union[ProposedProgram, _Mapping]] = ...) -> None: ...
+
+class ProposedProgram(_message.Message):
+    __slots__ = ("sources", "corpus_cases")
+    SOURCES_FIELD_NUMBER: _ClassVar[int]
+    CORPUS_CASES_FIELD_NUMBER: _ClassVar[int]
+    sources: _containers.RepeatedCompositeFieldContainer[ProposedGoSource]
+    corpus_cases: _containers.RepeatedCompositeFieldContainer[ProposedCorpusCase]
+    def __init__(self, sources: _Optional[_Iterable[_Union[ProposedGoSource, _Mapping]]] = ..., corpus_cases: _Optional[_Iterable[_Union[ProposedCorpusCase, _Mapping]]] = ...) -> None: ...
+
+class ProposedCorpusCase(_message.Message):
+    __slots__ = ("id", "open_json", "fixed_json", "healthy_json", "recordings_json", "labels_json")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    OPEN_JSON_FIELD_NUMBER: _ClassVar[int]
+    FIXED_JSON_FIELD_NUMBER: _ClassVar[int]
+    HEALTHY_JSON_FIELD_NUMBER: _ClassVar[int]
+    RECORDINGS_JSON_FIELD_NUMBER: _ClassVar[int]
+    LABELS_JSON_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    open_json: str
+    fixed_json: str
+    healthy_json: str
+    recordings_json: str
+    labels_json: str
+    def __init__(self, id: _Optional[str] = ..., open_json: _Optional[str] = ..., fixed_json: _Optional[str] = ..., healthy_json: _Optional[str] = ..., recordings_json: _Optional[str] = ..., labels_json: _Optional[str] = ...) -> None: ...
+
+class ProposedLibrary(_message.Message):
+    __slots__ = ("package", "sources")
+    PACKAGE_FIELD_NUMBER: _ClassVar[int]
+    SOURCES_FIELD_NUMBER: _ClassVar[int]
+    package: str
+    sources: _containers.RepeatedCompositeFieldContainer[ProposedGoSource]
+    def __init__(self, package: _Optional[str] = ..., sources: _Optional[_Iterable[_Union[ProposedGoSource, _Mapping]]] = ...) -> None: ...
 
 class ProposedTrafficGenerator(_message.Message):
     __slots__ = ("id", "sources")
@@ -286,20 +320,22 @@ class ProposedTrafficGenerator(_message.Message):
     def __init__(self, id: _Optional[str] = ..., sources: _Optional[_Iterable[_Union[ProposedGoSource, _Mapping]]] = ...) -> None: ...
 
 class OperationalArtifactProposal(_message.Message):
-    __slots__ = ("detectors", "playbooks", "traffic_generators", "traffic_workloads", "delete_detector_ids", "delete_playbook_ids")
+    __slots__ = ("detectors", "playbooks", "traffic_generators", "traffic_workloads", "delete_detector_ids", "delete_playbook_ids", "libraries")
     DETECTORS_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOKS_FIELD_NUMBER: _ClassVar[int]
     TRAFFIC_GENERATORS_FIELD_NUMBER: _ClassVar[int]
     TRAFFIC_WORKLOADS_FIELD_NUMBER: _ClassVar[int]
     DELETE_DETECTOR_IDS_FIELD_NUMBER: _ClassVar[int]
     DELETE_PLAYBOOK_IDS_FIELD_NUMBER: _ClassVar[int]
+    LIBRARIES_FIELD_NUMBER: _ClassVar[int]
     detectors: _containers.RepeatedCompositeFieldContainer[ProposedDetector]
     playbooks: _containers.RepeatedCompositeFieldContainer[ProposedPlaybook]
     traffic_generators: _containers.RepeatedCompositeFieldContainer[ProposedTrafficGenerator]
     traffic_workloads: _containers.RepeatedCompositeFieldContainer[_traffic_pb2.TrafficWorkload]
     delete_detector_ids: _containers.RepeatedScalarFieldContainer[str]
     delete_playbook_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+    libraries: _containers.RepeatedCompositeFieldContainer[ProposedLibrary]
+    def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ..., libraries: _Optional[_Iterable[_Union[ProposedLibrary, _Mapping]]] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
     __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "follow_up", "memory_snapshot")

@@ -488,6 +488,9 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
 		return Receipt{}, err
 	}
+	if err := addIgnoredProgramMemory(ctx, stage, nil); err != nil {
+		return Receipt{}, err
+	}
 	if _, err := runGit(ctx, stage, "diff", "--cached", "--check"); err != nil {
 		return Receipt{}, fmt.Errorf("proposal diff check: %w", err)
 	}
@@ -586,6 +589,9 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	if _, err := run("add", "-A"); err != nil {
 		return "", err
 	}
+	if err := addIgnoredProgramMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
+		return "", err
+	}
 	tree, err := run("write-tree")
 	if err != nil {
 		return "", err
@@ -605,8 +611,12 @@ func changedPaths(ctx context.Context, checkout, base string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
+	ignoredProgramMemory, err := runGit(ctx, checkout, "ls-files", "--others", "-z", "--", ".sdo/lib", ".sdo/corpus")
+	if err != nil {
+		return nil, err
+	}
 	set := make(map[string]struct{})
-	for _, raw := range [][]byte{modified, untracked} {
+	for _, raw := range [][]byte{modified, untracked, ignoredProgramMemory} {
 		for _, part := range strings.Split(string(raw), "\x00") {
 			if part != "" {
 				set[part] = struct{}{}
@@ -619,6 +629,26 @@ func changedPaths(ctx context.Context, checkout, base string) ([]string, error) 
 	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+func addIgnoredProgramMemory(ctx context.Context, root string, env []string) error {
+	for _, part := range []string{"lib", "corpus"} {
+		path := filepath.Join(root, ".sdo", part)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("program memory root must be a directory: %s", path)
+		}
+		if _, err := runGitEnv(ctx, root, env, "add", "-f", "--all", "--", filepath.ToSlash(filepath.Join(".sdo", part))); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func checkOwnership(path string, actor Actor, phase Phase) error {
@@ -669,7 +699,7 @@ func checkOwnership(path string, actor Actor, phase Phase) error {
 	case HealthJudge:
 		allowed = path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/diagnostics/detectors/health/") || (strings.HasPrefix(path, ".sdo/diagnostics/traffic/") && !incidentTraffic(path)) || (phase == InitialPhase && (path == ".sdo/playbooks/README.md" || path == ".sdo/playbooks/health-objective/README.md"))
 	case Responder:
-		allowed = path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/playbooks/") || strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/") || incidentTraffic(path)
+		allowed = path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/playbooks/") || strings.HasPrefix(path, ".sdo/lib/") || strings.HasPrefix(path, ".sdo/corpus/") || strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/") || incidentTraffic(path)
 	}
 	if !allowed {
 		return fmt.Errorf("actor %s does not own %s", actor, path)

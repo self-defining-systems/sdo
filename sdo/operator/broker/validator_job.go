@@ -45,6 +45,9 @@ func JobValidator(client ValidationJobClient) Validator {
 		if _, err := runGit(ctx, candidate, "add", "--all", "--", "."); err != nil {
 			return err
 		}
+		if err := addIgnoredProgramMemory(ctx, candidate, nil); err != nil {
+			return err
+		}
 		tree, err := gitText(ctx, candidate, "write-tree")
 		if err != nil {
 			return err
