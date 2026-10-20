@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -234,6 +235,14 @@ func validateMemoryTree(ctx context.Context, root string) error {
 	if err := rejectMemorySymlinks(memoryRoot); err != nil {
 		return err
 	}
+	paths, err := changedPaths(ctx, root, "HEAD")
+	if err != nil {
+		return err
+	}
+	changed := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		changed[path] = true
+	}
 	if err := filepath.WalkDir(memoryRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -245,12 +254,23 @@ func validateMemoryTree(ctx context.Context, root string) error {
 		if err != nil {
 			return err
 		}
-		formatted, err := format.Source(data)
+		relative, err := filepath.Rel(root, path)
 		if err != nil {
-			return fmt.Errorf("invalid Go source %s: %w", path, err)
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		formatted, err := format.Source(data)
+		if !changed[relative] {
+			if err != nil || !bytes.Equal(data, formatted) {
+				log.Printf("warning: pre-existing Go source %s is not gofmt formatted (owner: %s)", relative, goSourceOwner(relative))
+			}
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("invalid Go source %s: %w", relative, err)
 		}
 		if !bytes.Equal(data, formatted) {
-			return fmt.Errorf("Go source %s is not gofmt formatted", path)
+			return fmt.Errorf("Go source %s is not gofmt formatted", relative)
 		}
 		return nil
 	}); err != nil {
@@ -271,6 +291,19 @@ func validateMemoryTree(ctx context.Context, root string) error {
 	}
 	_, err = readManifest(memoryRoot)
 	return err
+}
+
+func goSourceOwner(path string) string {
+	switch {
+	case strings.HasPrefix(path, ".sdo/diagnostics/detectors/health/"),
+		strings.HasPrefix(path, ".sdo/diagnostics/traffic/") && !incidentTraffic(path):
+		return string(HealthJudge)
+	case strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/"),
+		strings.HasPrefix(path, ".sdo/playbooks/"), strings.HasPrefix(path, ".sdo/lib/"), incidentTraffic(path):
+		return string(Responder)
+	default:
+		return "unknown"
+	}
 }
 
 func rejectMemorySymlinks(memoryRoot string) error {
