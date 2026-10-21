@@ -14,8 +14,7 @@ from typing import Any
 
 from google.protobuf.json_format import ParseError
 
-from sdo.contracts import AgentResult, AgentTask
-from sdo.contracts.proto import parse_json
+from sdo.contracts import AgentResult, AgentTask, parse_json
 
 STAGES = frozenset({"responder", "reflection", "drift", "broker"})
 MAX_TASK_BYTES = 1 << 20

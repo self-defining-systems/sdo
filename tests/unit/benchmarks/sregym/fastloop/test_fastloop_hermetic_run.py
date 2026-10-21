@@ -309,7 +309,7 @@ class Controller(FakeOps):
             turn = scripted_worker.ScriptedReflector().resume(
                 worktree=self.app.workspace,
                 incident_id=incident,
-                closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE)),
+                closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
             )
             assert turn.artifact_proposal is not None
             playbook = turn.artifact_proposal.playbooks[0]
