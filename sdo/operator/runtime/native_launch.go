@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -47,6 +48,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),
+		OnPhase:         recordClosurePhase,
 	}
 	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
 	if err != nil {
@@ -59,6 +61,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	return &NativeIncidentBroker{
 		Repository: repository, LedgerRoot: ledgerRoot,
 		Deriver: ProtoOutcomeDeriver{}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
+		PriorOutcomes: memory.OpenReader(config.GetAppRoot()), ForceReflection: config.GetForceReflection(), PhaseLog: os.Stdout,
 		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
 		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil
@@ -86,6 +89,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(),
 		Environment: map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"},
+		OnPhase:     recordClosurePhase,
 	}
 	sessionExecutor := func(incidentID string, resume bool) (ReflectionTaskExecutor, error) {
 		subPath, err := memory.PrepareIncidentSession(config.GetRepositoryMountPath(), config.GetRepositoryPvcSubpath(), incidentID)

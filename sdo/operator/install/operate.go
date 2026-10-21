@@ -117,6 +117,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--reflection-session", reflectionSession(cfg),
 		"--reflection-guidance", reflectionGuidance(cfg),
 	}
+	if cfg.ForceReflection {
+		args = append(args, "--force-reflection")
+	}
 	if cfg.MaxFollowUps > 0 {
 		args = append(args, "--max-follow-ups", fmt.Sprint(cfg.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(cfg)))
 	}

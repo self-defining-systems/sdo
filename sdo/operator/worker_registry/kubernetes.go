@@ -46,6 +46,7 @@ type KubernetesExecutor struct {
 	Environment            map[string]string
 	PollInterval           time.Duration
 	TaskPayload            string
+	OnPhase                func(context.Context, string) error
 }
 
 type JobFailedError struct{ JobName string }
@@ -104,9 +105,44 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.ensureJob(ctx, task, launch, jobName, requestName, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
+	if e.OnPhase != nil {
+		if err := e.OnPhase(ctx, "reflection_job_created"); err != nil {
+			return nil, err
+		}
+	}
 	ticker := time.NewTicker(e.PollInterval)
 	defer ticker.Stop()
+	observed := map[string]bool{}
 	for {
+		if e.OnPhase != nil && !observed["pod_ready"] {
+			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
+			if err == nil {
+				for _, pod := range pods.Items {
+					for _, condition := range pod.Status.Conditions {
+						if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue && !observed["pod_scheduled"] {
+							if err := e.OnPhase(ctx, "pod_scheduled"); err != nil {
+								return nil, err
+							}
+							observed["pod_scheduled"] = true
+						}
+					}
+					if pod.Status.StartTime != nil && !observed["pod_started"] {
+						if err := e.OnPhase(ctx, "pod_started"); err != nil {
+							return nil, err
+						}
+						observed["pod_started"] = true
+					}
+					for _, condition := range pod.Status.Conditions {
+						if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue && !observed["pod_ready"] {
+							if err := e.OnPhase(ctx, "pod_ready"); err != nil {
+								return nil, err
+							}
+							observed["pod_ready"] = true
+						}
+					}
+				}
+			}
+		}
 		job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if jobErr != nil && !apierrors.IsNotFound(jobErr) {
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
@@ -116,6 +152,12 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		}
 		resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{})
 		if err == nil {
+			if e.OnPhase != nil && !observed["worker_result_written"] {
+				if err := e.OnPhase(ctx, "worker_result_written"); err != nil {
+					return nil, err
+				}
+				observed["worker_result_written"] = true
+			}
 			data, ok := resultMap.Data[ResultDataKey]
 			if !ok {
 				return nil, fmt.Errorf("result ConfigMap %q has no %s", resultName, ResultDataKey)

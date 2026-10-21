@@ -36,6 +36,7 @@ type Config struct {
 	AcceptedCommit                                          string
 	RepairPolicy, AgentProvider                             string
 	ReflectionSession, ReflectionGuidance                   string
+	ForceReflection                                         bool
 	LateFindings                                            string
 	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
 	HealthyBaseline                                         bool
@@ -326,6 +327,9 @@ func controllerJob(c Config) *batchv1.Job {
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
+	if c.ForceReflection {
+		args = append(args, "--force-reflection")
+	}
 	if c.MaxFollowUps > 0 {
 		args = append(args, "--max-follow-ups", fmt.Sprint(c.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(c)))
 	}

@@ -113,6 +113,7 @@ type ControllerConfig struct {
 	MaxResponseLoops     int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
 	DiagnosisDeadline    *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
 	DiagnosisSettleDelay *durationpb.Duration `protobuf:"bytes,57,opt,name=diagnosis_settle_delay,json=diagnosisSettleDelay,proto3" json:"diagnosis_settle_delay,omitempty"`
+	ForceReflection      bool                 `protobuf:"varint,58,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -532,11 +533,18 @@ func (x *ControllerConfig) GetDiagnosisSettleDelay() *durationpb.Duration {
 	return nil
 }
 
+func (x *ControllerConfig) GetForceReflection() bool {
+	if x != nil {
+		return x.ForceReflection
+	}
+	return false
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xbd\x17\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe8\x17\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -599,7 +607,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
 	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
 	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12O\n" +
-	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelayB\x14\n" +
+	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelay\x12)\n" +
+	"\x10force_reflection\x18: \x01(\bR\x0fforceReflectionB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13R\x06brokerR\vbroker_argsB\x88\x02\n" +

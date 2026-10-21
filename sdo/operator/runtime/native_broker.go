@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -68,6 +70,9 @@ type NativeIncidentBroker struct {
 	ResponderModel       string
 	SessionRoot          string
 	SessionRetention     time.Duration
+	PhaseLog             io.Writer
+	PriorOutcomes        memory.Reader
+	ForceReflection      bool
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
 	}
@@ -99,22 +104,52 @@ type ControllerRolloutHandoff struct {
 }
 
 type nativeLedger struct {
-	IncidentID          string                        `json:"incident_id"`
-	Closure             json.RawMessage               `json:"closure,omitempty"`
-	ProposalCommit      string                        `json:"proposal_commit,omitempty"`
-	OutcomeDocument     json.RawMessage               `json:"outcome_document,omitempty"`
-	RequiresReflection  bool                          `json:"requires_reflection,omitempty"`
-	OutcomeCommit       string                        `json:"outcome_commit,omitempty"`
-	ReflectionProcessed bool                          `json:"reflection_processed,omitempty"`
-	ReflectionStarted   bool                          `json:"reflection_started,omitempty"`
-	ReflectionAttempts  int                           `json:"reflection_attempts,omitempty"`
-	ReflectionDecision  *ReflectionDecision           `json:"reflection_decision,omitempty"`
-	ReflectionCommit    string                        `json:"reflection_commit,omitempty"`
-	RolloutExpectation  *ControllerRolloutExpectation `json:"rollout_expectation,omitempty"`
-	RolloutReceipts     []ControllerRolloutReceipt    `json:"rollout_receipts,omitempty"`
-	Receipt             *ClosureReceipt               `json:"receipt,omitempty"`
-	Acknowledged        bool                          `json:"acknowledged,omitempty"`
-	AcknowledgedAt      time.Time                     `json:"acknowledged_at,omitempty"`
+	IncidentID              string                        `json:"incident_id"`
+	ClosurePhases           map[string]time.Time          `json:"closure_phase_timestamps,omitempty"`
+	Closure                 json.RawMessage               `json:"closure,omitempty"`
+	ProposalCommit          string                        `json:"proposal_commit,omitempty"`
+	OutcomeDocument         json.RawMessage               `json:"outcome_document,omitempty"`
+	RequiresReflection      bool                          `json:"requires_reflection,omitempty"`
+	ReflectionSkippedReason string                        `json:"reflection_skipped_reason,omitempty"`
+	OutcomeCommit           string                        `json:"outcome_commit,omitempty"`
+	ReflectionProcessed     bool                          `json:"reflection_processed,omitempty"`
+	ReflectionStarted       bool                          `json:"reflection_started,omitempty"`
+	ReflectionAttempts      int                           `json:"reflection_attempts,omitempty"`
+	ReflectionDecision      *ReflectionDecision           `json:"reflection_decision,omitempty"`
+	ReflectionCommit        string                        `json:"reflection_commit,omitempty"`
+	RolloutExpectation      *ControllerRolloutExpectation `json:"rollout_expectation,omitempty"`
+	RolloutReceipts         []ControllerRolloutReceipt    `json:"rollout_receipts,omitempty"`
+	Receipt                 *ClosureReceipt               `json:"receipt,omitempty"`
+	Acknowledged            bool                          `json:"acknowledged,omitempty"`
+	AcknowledgedAt          time.Time                     `json:"acknowledged_at,omitempty"`
+}
+
+type closurePhaseContextKey struct{}
+
+func recordClosurePhase(ctx context.Context, phase string) error {
+	observe, _ := ctx.Value(closurePhaseContextKey{}).(func(string) error)
+	if observe != nil {
+		return observe(phase)
+	}
+	return nil
+}
+
+func (n NativeIncidentBroker) recordPhase(ledger *nativeLedger, phase string) error {
+	if ledger.ClosurePhases == nil {
+		ledger.ClosurePhases = make(map[string]time.Time)
+	}
+	if _, recorded := ledger.ClosurePhases[phase]; recorded {
+		return nil
+	}
+	at := time.Now().UTC()
+	ledger.ClosurePhases[phase] = at
+	if err := n.saveLedger(*ledger); err != nil {
+		return err
+	}
+	if n.PhaseLog != nil {
+		_ = json.NewEncoder(n.PhaseLog).Encode(map[string]any{"incident_id": ledger.IncidentID, "closure_phase": phase, "at": at})
+	}
+	return nil
 }
 
 func (n NativeIncidentBroker) PrepareIncident(ctx context.Context, incidentID string) (IncidentWorkspace, error) {
@@ -155,6 +190,10 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if err != nil {
 			return err
 		}
+		if err := n.recordPhase(&ledger, "closure_start"); err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, closurePhaseContextKey{}, func(phase string) error { return n.recordPhase(&ledger, phase) })
 		encoded, err := json.Marshal(closure)
 		if err != nil {
 			return err
@@ -223,6 +262,16 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 			ledger.OutcomeDocument = encoded
 			ledger.RequiresReflection = derived.RequiresReflection
+			if derived.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
+				prior, err := n.PriorOutcomes.List(ctx)
+				if err != nil {
+					return fmt.Errorf("read accepted repair outcomes: %w", err)
+				}
+				ledger.ReflectionSkippedReason = reflectionSkipReason(derived.Record, prior)
+				if ledger.ReflectionSkippedReason != "" {
+					ledger.RequiresReflection = false
+				}
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
@@ -237,6 +286,12 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return err
 			}
 			ledger.OutcomeCommit = accepted.Commit
+			if err := n.recordPhase(&ledger, "outcome_write"); err != nil {
+				return err
+			}
+			if err := n.recordPhase(&ledger, "broker_commit"); err != nil {
+				return err
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
@@ -276,9 +331,15 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					if err := protojson.Unmarshal(ledger.OutcomeDocument, record); err != nil {
 						return fmt.Errorf("decode reflection outcome: %w", err)
 					}
+					if err := n.recordPhase(&ledger, "reflection_dispatch"); err != nil {
+						return err
+					}
 					decision, err := n.Reflector.Reflect(ctx, closure, workspace, record, ledger.ProposalCommit, ledger.OutcomeCommit)
 					if err != nil {
 						return fmt.Errorf("reflection worker: %w", err)
+					}
+					if err := n.recordPhase(&ledger, "worker_result_picked_up"); err != nil {
+						return err
 					}
 					ledger.ReflectionDecision = &decision
 					if err := n.saveLedger(ledger); err != nil {
@@ -347,6 +408,76 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		return n.saveLedger(ledger)
 	})
 	return receipt, err
+}
+
+func reflectionSkipReason(current *contracts.OutcomeRecord, prior []memory.Outcome) string {
+	if current == nil || current.GetClassification() != "success" || len(current.GetRepairActions()) == 0 || len(current.GetConfirmedRootCauses()) == 0 || len(current.GetProgramFailureSignals()) != 0 {
+		return ""
+	}
+	records := make([]*contracts.OutcomeRecord, 0, len(prior))
+	for _, stored := range prior {
+		if stored.Record != nil && stored.IncidentID != current.GetIncidentId() && stored.Record.GetClassification() == "success" {
+			records = append(records, stored.Record)
+		}
+	}
+	if allTrustedProgramRepairs(current, records) {
+		return "trusted accepted programs resolved every repair"
+	}
+	for _, record := range records {
+		if current.GetSourceCommit() == "" || record.GetSourceCommit() != current.GetSourceCommit() || len(record.GetRepairActions()) != len(current.GetRepairActions()) || len(record.GetConfirmedRootCauses()) != len(current.GetConfirmedRootCauses()) {
+			continue
+		}
+		match := true
+		for index, cause := range current.GetConfirmedRootCauses() {
+			if !proto.Equal(cause, record.GetConfirmedRootCauses()[index]) {
+				match = false
+			}
+		}
+		for index, action := range current.GetRepairActions() {
+			previous := record.GetRepairActions()[index]
+			if !action.GetSuccess() || !previous.GetSuccess() || action.GetKind() != previous.GetKind() || action.GetTarget() != previous.GetTarget() || action.GetSummary() != previous.GetSummary() || action.GetDetails() != previous.GetDetails() || len(action.GetResources()) != len(previous.GetResources()) {
+				match = false
+				break
+			}
+			for resource := range action.GetResources() {
+				if !proto.Equal(action.GetResources()[resource], previous.GetResources()[resource]) {
+					match = false
+				}
+			}
+		}
+		if match {
+			return "exact replay of accepted repairs"
+		}
+	}
+	return ""
+}
+
+func allTrustedProgramRepairs(current *contracts.OutcomeRecord, prior []*contracts.OutcomeRecord) bool {
+	if len(current.GetPlanApplications()) == 0 || len(prior) == 0 {
+		return false
+	}
+	for _, action := range current.GetRepairActions() {
+		if !action.GetSuccess() || action.GetKind() != "program-plan" {
+			return false
+		}
+	}
+	trust := ProgramTrustStats(prior)
+	revisions := make(map[string]string)
+	for _, run := range current.GetProgramRuns() {
+		revisions[run.GetProgramId()] = run.GetProgramRevision()
+	}
+	for _, application := range current.GetPlanApplications() {
+		if !application.GetApplied() || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(application.GetProgramIds()) == 0 {
+			return false
+		}
+		for _, id := range application.GetProgramIds() {
+			state := trust[id]
+			if !state.Trusted || revisions[id] == "" || revisions[id] != state.LastChange {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt ClosureReceipt) error {
@@ -561,6 +692,14 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			}
 		}
 		ledger.RolloutReceipts = append(ledger.RolloutReceipts, receipt)
+		if receipt.Success {
+			if err := n.recordPhase(&ledger, "controller_restart_relaunch"); err != nil {
+				return err
+			}
+			if err := n.recordPhase(&ledger, "program_registry_rebuild"); err != nil {
+				return err
+			}
+		}
 		return n.saveLedger(ledger)
 	})
 }

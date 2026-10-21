@@ -204,8 +204,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	restartAfterClosure := flags.Bool(
 		"restart-after-closure",
 		false,
-		"exit after each newly acknowledged closure so a supervisor can roll out learned detectors and relaunch",
+		"exit after each acknowledged closure in non-native mode",
 	)
+	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
 	)
@@ -235,6 +236,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if options.NativeBroker != nil && *forceReflection {
+		options.NativeBroker.ForceReflection = true
 	}
 	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 {
 		return errors.New("max-response-loops and diagnosis-deadline must be positive")
@@ -881,10 +885,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if *exitAfterClosure && completion.err == nil {
 				return nil
 			}
-			if *restartAfterClosure && completion.err == nil {
-				if err := encoder.Encode(map[string]any{
-					"controller_closure_restart": controller.LastAcknowledgedIncidentID(),
-				}); err != nil {
+			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
+				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
 					fmt.Fprintln(stderr, err)
 				}
 				return nil
