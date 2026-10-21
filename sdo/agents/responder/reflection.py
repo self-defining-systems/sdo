@@ -6,7 +6,7 @@ import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
 from agentshim import SessionResumeError
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
 
 from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.responder.reflection_brief import incident_brief
@@ -138,6 +138,10 @@ class StatefulResponderBackend(Protocol):
 
 class ResponderSessionUnavailable(RuntimeError):
     """The provider cannot continue the responder's incident session."""
+
+
+class ReflectionProposalError(ValueError):
+    """A model proposal does not match the typed reflection contract."""
 
 
 #: Upper bound on the rejected diff quoted into a retry prompt.
@@ -467,7 +471,12 @@ class CodexSessionBackend:
                     f"{self.provider} cannot resume session {session_id!r}: {exc}"
                 ) from exc
             raise RuntimeError(f"{self.provider} reflection failed: {exc}") from exc
-        return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
+        try:
+            return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
+        except ValidationError as exc:
+            if any("artifact_proposal" in error["loc"] for error in exc.errors()):
+                raise ReflectionProposalError(str(exc)) from exc
+            raise
 
 
 class ClaudeSessionBackend(CodexSessionBackend):
