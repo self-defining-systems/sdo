@@ -174,8 +174,18 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 		t.Fatalf("sdo %v: %v: %s", args, err, output)
 	}
 	var response ToolResponse
-	if err := json.Unmarshal([]byte(strings.SplitN(string(output), "\n", 2)[0]), &response); err != nil {
+	encoded := []byte(strings.SplitN(string(output), "\n", 2)[0])
+	if err := json.Unmarshal(encoded, &response); err != nil {
 		t.Fatalf("decode sdo %v: %s: %v", args, output, err)
+	}
+	if destination := os.Getenv("SDO_SCRIPTED_TOOL_RESPONSES"); destination != "" {
+		name := args[0]
+		if name == "plan" {
+			name += "." + args[1]
+		}
+		if err := os.WriteFile(filepath.Join(destination, name+".json"), encoded, 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return response
 }
@@ -260,6 +270,9 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			}
 			serverErr <- err
 		}()
+		if incident == 2 {
+			fastloopTool(t, tools, "status")
+		}
 		fastloopTool(t, tools, "diagnose")
 		if incident == 1 {
 			for _, ref := range []sdk.ObjectRef{port, image} {
