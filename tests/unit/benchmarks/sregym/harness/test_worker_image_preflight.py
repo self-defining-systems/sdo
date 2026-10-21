@@ -78,6 +78,7 @@ def test_reused_cluster_runs_required_image_preflight_before_return(
 ) -> None:
     module = _worker_infra()
     monkeypatch.setenv("SREGYM_REUSE_CLUSTER", "1")
+    monkeypatch.delenv("SREGYM_KIND_CLUSTER_PREFIX", raising=False)
     monkeypatch.setenv("SREGYM_KIND_REQUIRED_IMAGES", json.dumps(["controller:run"]))
     monkeypatch.setattr(module, "stable_kubeconfig_path", lambda _worker: str(tmp_path / "stable"))
     monkeypatch.setattr(module, "existing_cluster_is_reusable", lambda *_args: (True, ""))
