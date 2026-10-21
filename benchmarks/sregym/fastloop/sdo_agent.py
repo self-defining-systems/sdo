@@ -33,6 +33,7 @@ from benchmarks.sregym.adapter import (
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
+from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
@@ -191,6 +192,7 @@ class SdoPersistentAgent:
             clock=self._clock,
             pause_after_verified=not self._keep_running,
         )
+        self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:
             raise RuntimeError("the controller verified an incident without the fault being injected")
         verified = _timestamp(resolution.get("verified_at"))
@@ -245,6 +247,13 @@ class SdoPersistentAgent:
             )
         except ReceiptRejectedError as exc:
             error = f"strict receipt rejected: {exc}"
+        finally:
+            if settings.kubeconfig:
+                receipt_dir = Path(str(outcome.artifacts_dir))
+                self._ops.export_runtime_artifacts(
+                    replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                )
+                self._checkpoint(int(receipt_dir.name.split("_", 1)[0]), outcome.incident_id, receipt_dir)
         # Receipt rejection happens after the controller has acknowledged and relaunched.
         # Other drain failures leave the pending gate intact and stop the stream.
         record.pending = None
@@ -317,3 +326,20 @@ class SdoPersistentAgent:
 
     def close(self) -> None:
         """The controller keeps running for the next loop; ``fastloop down`` stops it."""
+
+    def _checkpoint(self, index: int, incident_id: str, receipt_dir: Path) -> None:
+        if not self._settings.kubeconfig:
+            return
+        from benchmarks.sregym.adapter import kubectl
+
+        control = self._settings.runtime_config.controller_namespace
+        response = kubectl(
+            ["get", "configmaps", "-o", "json"],
+            namespace=control,
+            kubeconfig=Path(self._settings.kubeconfig),
+        )
+        document = json.loads(response.stdout)
+        items = document.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError("worker ConfigMap listing omitted items")
+        capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)

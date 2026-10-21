@@ -69,6 +69,24 @@ two scripted incidents with a fake application API and controller boundary. It
 compiles the accepted Go program and runs its diagnosis and plan against the
 second incident's snapshot, so the gate needs a Go toolchain.
 
+Stage checkpoint tests run entirely offline:
+
+```bash
+uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_replay.py \
+  tests/unit/benchmarks/sregym/fastloop/test_model_recording.py \
+  tests/unit/benchmarks/sregym/fastloop/test_fake_kube.py \
+  tests/unit/benchmarks/sregym/fastloop/test_recording_registration.py
+```
+
+For a captured run, `uv run python -m benchmarks.sregym.fastloop replay
+--run-dir <results/run-id> --incident 0 --stage broker` reruns the current Go
+memory edge and broker in a temporary repository. The responder and reflection
+stages rerun their scripted workers from exact task ProtoJSON and captured
+namespace snapshots. `--agent live` uses recorded Codex CLI turns by task and
+prompt digest; a cache miss fails unless `--live-on-cache-miss` is selected.
+This replay does not contact a cluster. See the fastloop README for the
+checkpoint layout and replay commands.
+
 Use `scripts/run_tests.sh` for the repository-wide suite.
 
 `scripts/test_python.sh` runs pytest across cores with `pytest-xdist`; `pytest-cov` combines the per-worker coverage so the 70% `fail_under` gate still sees the whole suite. Set `SDO_PYTEST_WORKERS=0` for an in-process run when iterating on a single test. Generated detector compilation is covered by the Go builder and broker suites.
