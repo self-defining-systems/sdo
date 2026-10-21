@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
+	"log"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -50,6 +52,9 @@ func (c *Controller) ConfigureDrift(config DriftControllerConfig) {
 	c.drift = &config
 	c.adoptionNeeded = config.Source != nil && config.Client != nil
 	if config.Investigation.Worker != nil {
+		config.Investigation.OnDeferred = func(deferral DriftDeferral) {
+			log.Printf("drift investigation deferred: reason=%s until=%s", deferral.Reason, deferral.Until.Format(time.RFC3339))
+		}
 		config.Investigation.OnVerdict = func(event sdk.DriftEvent, verdict *contracts.DriftEventInvestigation) {
 			c.recordDriftInvestigation(event, verdict)
 		}
@@ -140,6 +145,12 @@ func (c *Controller) recordDriftInvestigation(event sdk.DriftEvent, verdict *con
 			event.InvestigationEvidence = append(event.InvestigationEvidence, sdk.DriftEvidence{Kind: evidence.GetKind(), Observation: safeDriftText(evidence.GetObservation())})
 		}
 	}
+	if c.driftInvestigation != nil {
+		if c.driftInvestigation.state.Verdicts == nil {
+			c.driftInvestigation.state.Verdicts = make(map[string]sdk.DriftEvent)
+		}
+		c.driftInvestigation.state.Verdicts[driftEventKey(event)] = event
+	}
 	c.mu.Lock()
 	found := false
 	for index := range c.driftEvents {
@@ -222,11 +233,25 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 		}
 		c.mu.Lock()
 		unchanged := false
-		for _, previous := range c.driftEvents {
-			if previous.InvestigationStatus == "completed" && driftEventKey(previous) == driftEventKey(*event) &&
-				previous.Manager == event.Manager && reflect.DeepEqual(previous.Fields, event.Fields) {
-				unchanged = true
-				break
+		if c.driftInvestigation != nil {
+			previous, found := c.driftInvestigation.state.Verdicts[driftEventKey(*event)]
+			unchanged = found && sameDriftObservation(previous, *event)
+			if c.driftInvestigation.state.RequestJSON != "" {
+				var task contracts.DriftInvestigationTask
+				if protojson.Unmarshal([]byte(c.driftInvestigation.state.RequestJSON), &task) == nil {
+					for _, pending := range c.driftInvestigation.state.Pending[:min(len(c.driftInvestigation.state.Pending), len(task.GetEvents()))] {
+						unchanged = unchanged || driftEventKey(pending) == driftEventKey(*event) && sameDriftObservation(pending, *event)
+					}
+				}
+			}
+		}
+		if c.driftInvestigation == nil {
+			for _, previous := range c.driftEvents {
+				if previous.InvestigationStatus == "completed" && driftEventKey(previous) == driftEventKey(*event) &&
+					sameDriftObservation(previous, *event) {
+					unchanged = true
+					break
+				}
 			}
 		}
 		if unchanged {

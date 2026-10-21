@@ -188,7 +188,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
 	driftBatchWindow := flags.Duration("drift-investigation-window", DefaultDriftInvestigationWindow, "batch window for unexplained drift")
 	driftDispatchesPerHour := flags.Int("drift-investigation-dispatches-per-hour", 12, "maximum drift worker dispatches per hour")
-	driftTokensPerHour := flags.Int64("drift-investigation-tokens-per-hour", 50000, "maximum drift worker tokens per hour")
+	driftTokensPerHour := flags.Int64("drift-investigation-tokens-per-hour", 1000000, "maximum drift worker tokens per hour for re-investigations")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",

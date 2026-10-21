@@ -65,7 +65,7 @@ Unexplained events are deduplicated by object and field, batched over a short wi
 - **benign**, with a reason. This is a weak label until the labeller confirms it, and only confirmed cases count toward an expected-drift rule.
 - **unsure**: no action, and the labeller resolves it later.
 
-It never reverts on suspicion. "bug" without the required evidence is treated as "unsure". A per-hour token budget caps the cost; when it is exceeded, events wait for the labeller. Each verdict should produce a deterministic artifact (an invariant or a drift rule), so the next identical event needs no LLM.
+It never reverts on suspicion. "bug" without the required evidence is treated as "unsure". The default hourly token budget is 1,000,000 and applies to re-investigations. Never-investigated drift keys run promptly and before re-investigations even after earlier work exceeds the budget. Budget deferrals carry a typed reason and retry time in controller status and logs. Completed verdicts live in a controller-owned ConfigMap separate from transient controller state, keyed by drift key with observed manager and current/source field values. An unchanged `unsure` or `benign` verdict survives controller restart and fastloop reset; a changed observation can be investigated again. Each verdict should produce a deterministic artifact (an invariant or a drift rule), so the next identical event needs no LLM.
 
 ### 4. Autonomous labeller (deterministic)
 

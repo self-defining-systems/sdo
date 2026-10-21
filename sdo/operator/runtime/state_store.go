@@ -114,9 +114,12 @@ var errStaleResourceVersion = fmt.Errorf("%w: stale ConfigMap resourceVersion", 
 // cached resourceVersion. Only a resourceVersion conflict falls back to Get
 // plus Update, and that path still rejects a stale state revision.
 type ConfigMapStateStore struct {
-	client    kubernetes.Interface
-	namespace string
-	name      string
+	client              kubernetes.Interface
+	namespace           string
+	name                string
+	driftVerdicts       bool
+	driftVerdictsDigest [sha256.Size]byte
+	driftVerdictsKnown  bool
 
 	mu sync.Mutex
 	// cached is the ConfigMap as the API server last returned it, or nil when
@@ -130,13 +133,23 @@ func NewConfigMapStateStore(client kubernetes.Interface, namespace string, name 
 	return &ConfigMapStateStore{client: client, namespace: namespace, name: name}
 }
 
+func (s *ConfigMapStateStore) EnableDriftVerdicts() { s.driftVerdicts = true }
+
 func (s *ConfigMapStateStore) Load(ctx context.Context) (RuntimeState, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cached = nil
+	var verdicts map[string]sdk.DriftEvent
+	if s.driftVerdicts {
+		var err error
+		verdicts, err = s.loadDriftVerdicts(ctx)
+		if err != nil {
+			return RuntimeState{}, "", err
+		}
+	}
 	configMap, err := s.client.CoreV1().ConfigMaps(s.namespace).Get(ctx, s.name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		return RuntimeState{}, "", nil
+		return RuntimeState{DriftInvestigation: DriftInvestigationState{Verdicts: verdicts}}, "", nil
 	}
 	if err != nil {
 		return RuntimeState{}, "", fmt.Errorf("get controller state ConfigMap: %w", err)
@@ -148,6 +161,9 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (RuntimeState, string, e
 	var state RuntimeState
 	if err := json.Unmarshal([]byte(payload), &state); err != nil {
 		return RuntimeState{}, "", fmt.Errorf("decode controller state: %w", err)
+	}
+	if verdicts != nil {
+		state.DriftInvestigation.Verdicts = verdicts
 	}
 	if err := state.Validate(); err != nil {
 		return RuntimeState{}, "", err
@@ -174,6 +190,11 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state RuntimeState, expe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.driftVerdicts {
+		if err := s.saveDriftVerdicts(ctx, state.DriftInvestigation.Verdicts); err != nil {
+			return "", err
+		}
+	}
 	if s.cached != nil && expectedRevision != "" &&
 		s.cached.Annotations[stateRevisionAnnotation] == expectedRevision {
 		if sha256.Sum256(payload) == s.durableDigest {
@@ -185,6 +206,66 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state RuntimeState, expe
 		}
 	}
 	return s.saveFromServer(ctx, payload, expectedRevision)
+}
+
+func (s *ConfigMapStateStore) driftVerdictsName() string { return s.name + "-drift-verdicts" }
+
+func (s *ConfigMapStateStore) loadDriftVerdicts(ctx context.Context) (map[string]sdk.DriftEvent, error) {
+	item, err := s.client.CoreV1().ConfigMaps(s.namespace).Get(ctx, s.driftVerdictsName(), metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get drift verdict ConfigMap: %w", err)
+	}
+	var verdicts map[string]sdk.DriftEvent
+	if err := json.Unmarshal([]byte(item.Data["verdicts.json"]), &verdicts); err != nil {
+		return nil, fmt.Errorf("decode drift verdict ConfigMap: %w", err)
+	}
+	s.driftVerdictsDigest = sha256.Sum256([]byte(item.Data["verdicts.json"]))
+	s.driftVerdictsKnown = true
+	return verdicts, nil
+}
+
+func (s *ConfigMapStateStore) saveDriftVerdicts(ctx context.Context, verdicts map[string]sdk.DriftEvent) error {
+	if len(verdicts) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(verdicts)
+	if err != nil {
+		return fmt.Errorf("encode drift verdicts: %w", err)
+	}
+	digest := sha256.Sum256(payload)
+	if s.driftVerdictsKnown && digest == s.driftVerdictsDigest {
+		return nil
+	}
+	configMaps := s.client.CoreV1().ConfigMaps(s.namespace)
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := configMaps.Get(ctx, s.driftVerdictsName(), metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = configMaps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: s.driftVerdictsName(), Namespace: s.namespace}, Data: map[string]string{"verdicts.json": string(payload)}}, metav1.CreateOptions{})
+			if apierrors.IsAlreadyExists(err) {
+				continue
+			}
+		} else if err == nil {
+			if current.Data["verdicts.json"] == string(payload) {
+				s.driftVerdictsDigest, s.driftVerdictsKnown = digest, true
+				return nil
+			}
+			updated := current.DeepCopy()
+			updated.Data = map[string]string{"verdicts.json": string(payload)}
+			_, err = configMaps.Update(ctx, updated, metav1.UpdateOptions{})
+			if apierrors.IsConflict(err) {
+				continue
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("save drift verdict ConfigMap: %w", err)
+		}
+		s.driftVerdictsDigest, s.driftVerdictsKnown = digest, true
+		return nil
+	}
+	return fmt.Errorf("save drift verdict ConfigMap: repeated conflict")
 }
 
 // saveFromServer is the compare-and-swap path against a freshly read ConfigMap.

@@ -1598,6 +1598,11 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 	if store == nil {
 		return fmt.Errorf("state store is required")
 	}
+	if c.driftInvestigation != nil {
+		if configMap, ok := store.(*ConfigMapStateStore); ok {
+			configMap.EnableDriftVerdicts()
+		}
+	}
 	state, revision, err := store.Load(ctx)
 	if err != nil {
 		return err
@@ -1606,6 +1611,8 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 		if err := c.RestoreState(state); err != nil {
 			return err
 		}
+	} else if c.driftInvestigation != nil {
+		c.driftInvestigation.state.Verdicts = state.DriftInvestigation.Verdicts
 	}
 	c.stateStore = store
 	c.stateRevision = revision

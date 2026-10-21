@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -30,14 +31,29 @@ type DriftInvestigationConfig struct {
 	BuildTask         func(context.Context, string, []sdk.DriftEvent) (*contracts.DriftInvestigationTask, error)
 	OnVerdict         func(sdk.DriftEvent, *contracts.DriftEventInvestigation)
 	OnPrepared        func(context.Context) error
+	OnDeferred        func(DriftDeferral)
 }
 
 type DriftInvestigationState struct {
-	Pending     []sdk.DriftEvent `json:"pending,omitempty"`
-	Deferred    []sdk.DriftEvent `json:"deferred,omitempty"`
-	RequestJSON string           `json:"request_json,omitempty"`
-	DispatchAt  []time.Time      `json:"dispatch_at,omitempty"`
-	TokenUsage  []DriftTokenUse  `json:"token_usage,omitempty"`
+	Pending     []sdk.DriftEvent          `json:"pending,omitempty"`
+	Deferred    []sdk.DriftEvent          `json:"deferred,omitempty"`
+	RequestJSON string                    `json:"request_json,omitempty"`
+	DispatchAt  []time.Time               `json:"dispatch_at,omitempty"`
+	TokenUsage  []DriftTokenUse           `json:"token_usage,omitempty"`
+	Verdicts    map[string]sdk.DriftEvent `json:"verdicts,omitempty"`
+	Deferral    *DriftDeferral            `json:"deferral,omitempty"`
+}
+
+type DriftDeferralReason string
+
+const (
+	DriftDispatchBudget DriftDeferralReason = "dispatch_budget"
+	DriftTokenBudget    DriftDeferralReason = "token_budget"
+)
+
+type DriftDeferral struct {
+	Reason DriftDeferralReason `json:"reason"`
+	Until  time.Time           `json:"until"`
 }
 
 type DriftTokenUse struct {
@@ -71,6 +87,14 @@ func driftEventKey(event sdk.DriftEvent) string {
 func (queue *driftInvestigationQueue) Add(event sdk.DriftEvent) {
 	key := driftEventKey(event)
 	if queue.state.RequestJSON != "" {
+		var task contracts.DriftInvestigationTask
+		if protojson.Unmarshal([]byte(queue.state.RequestJSON), &task) == nil {
+			for _, old := range queue.state.Pending[:min(len(queue.state.Pending), len(task.GetEvents()))] {
+				if driftEventKey(old) == key && sameDriftObservation(old, event) {
+					return
+				}
+			}
+		}
 		for index, old := range queue.state.Deferred {
 			if driftEventKey(old) == key {
 				queue.state.Deferred[index] = event
@@ -89,6 +113,35 @@ func (queue *driftInvestigationQueue) Add(event sdk.DriftEvent) {
 		}
 	}
 	queue.state.Pending = append(queue.state.Pending, event)
+	queue.prioritizeNew()
+}
+
+func sameDriftObservation(left, right sdk.DriftEvent) bool {
+	if left.Manager != right.Manager || len(left.Fields) != len(right.Fields) {
+		return false
+	}
+	fields := make(map[string]sdk.DriftField, len(left.Fields))
+	for _, field := range left.Fields {
+		fields[field.Path] = field
+	}
+	for _, field := range right.Fields {
+		previous, found := fields[field.Path]
+		if !found || previous.New != field.New || previous.Source != field.Source {
+			return false
+		}
+	}
+	return true
+}
+
+func (queue *driftInvestigationQueue) isNew(event sdk.DriftEvent) bool {
+	_, investigated := queue.state.Verdicts[driftEventKey(event)]
+	return !investigated
+}
+
+func (queue *driftInvestigationQueue) prioritizeNew() {
+	sort.SliceStable(queue.state.Pending, func(i, j int) bool {
+		return queue.isNew(queue.state.Pending[i]) && !queue.isNew(queue.state.Pending[j])
+	})
 }
 
 func (queue *driftInvestigationQueue) Pending() int {
@@ -98,6 +151,9 @@ func (queue *driftInvestigationQueue) LastRequestJSON() string              { re
 func (queue *driftInvestigationQueue) ExportState() DriftInvestigationState { return queue.state }
 func (queue *driftInvestigationQueue) RestoreState(state DriftInvestigationState) {
 	queue.state = state
+	if state.RequestJSON == "" {
+		queue.prioritizeNew()
+	}
 }
 
 func (queue *driftInvestigationQueue) Deadline() time.Time {
@@ -105,13 +161,13 @@ func (queue *driftInvestigationQueue) Deadline() time.Time {
 		return time.Time{}
 	}
 	deadline := queue.state.Pending[0].ObservedAt.Add(queue.config.BatchWindow)
-	if queue.state.RequestJSON == "" && queue.config.DispatchesPerHour > 0 && len(queue.state.DispatchAt) >= queue.config.DispatchesPerHour {
+	if queue.state.RequestJSON == "" && !queue.isNew(queue.state.Pending[0]) && queue.config.DispatchesPerHour > 0 && len(queue.state.DispatchAt) >= queue.config.DispatchesPerHour {
 		allowed := queue.state.DispatchAt[0].Add(time.Hour)
 		if allowed.After(deadline) {
-			return allowed
+			deadline = allowed
 		}
 	}
-	if queue.state.RequestJSON == "" && queue.config.TokensPerHour > 0 {
+	if queue.state.RequestJSON == "" && !queue.isNew(queue.state.Pending[0]) && queue.config.TokensPerHour > 0 {
 		var used int64
 		for _, item := range queue.state.TokenUsage {
 			used += item.Tokens
@@ -119,7 +175,7 @@ func (queue *driftInvestigationQueue) Deadline() time.Time {
 		if used >= queue.config.TokensPerHour && len(queue.state.TokenUsage) > 0 {
 			allowed := queue.state.TokenUsage[0].At.Add(time.Hour)
 			if allowed.After(deadline) {
-				return allowed
+				deadline = allowed
 			}
 		}
 	}
@@ -136,7 +192,11 @@ func (queue *driftInvestigationQueue) DispatchReady(ctx context.Context, now tim
 }
 
 func (queue *driftInvestigationQueue) PrepareReady(ctx context.Context, now time.Time) (*contracts.DriftInvestigationTask, error) {
-	if queue.config.Worker == nil || len(queue.state.Pending) == 0 || now.Before(queue.Deadline()) {
+	if queue.config.Worker == nil || len(queue.state.Pending) == 0 {
+		return nil, nil
+	}
+	if now.Before(queue.Deadline()) {
+		queue.recordDeferral(now)
 		return nil, nil
 	}
 	cutoff := now.Add(-time.Hour)
@@ -156,10 +216,12 @@ func (queue *driftInvestigationQueue) PrepareReady(ctx context.Context, now time
 		}
 	}
 	queue.state.TokenUsage = usage
-	if queue.state.RequestJSON == "" && (queue.config.DispatchesPerHour > 0 && len(active) >= queue.config.DispatchesPerHour ||
+	if queue.state.RequestJSON == "" && !queue.isNew(queue.state.Pending[0]) && (queue.config.DispatchesPerHour > 0 && len(active) >= queue.config.DispatchesPerHour ||
 		queue.config.TokensPerHour > 0 && tokens >= queue.config.TokensPerHour) {
+		queue.recordDeferral(now)
 		return nil, nil
 	}
+	queue.state.Deferral = nil
 	var task contracts.DriftInvestigationTask
 	if queue.state.RequestJSON != "" {
 		if err := protojson.Unmarshal([]byte(queue.state.RequestJSON), &task); err != nil {
@@ -168,6 +230,14 @@ func (queue *driftInvestigationQueue) PrepareReady(ctx context.Context, now time
 	} else {
 		batchID := fmt.Sprintf("drift-%x", sha256.Sum256([]byte(driftEventKey(queue.state.Pending[0])+queue.state.Pending[0].ObservedAt.Format(time.RFC3339Nano))))[:30]
 		batch := queue.state.Pending[:min(len(queue.state.Pending), maxDriftBatchEvents)]
+		if queue.isNew(batch[0]) && queue.overBudget(active, tokens) {
+			for index, event := range batch {
+				if !queue.isNew(event) {
+					batch = batch[:index]
+					break
+				}
+			}
+		}
 		if queue.config.BuildTask != nil {
 			built, err := queue.config.BuildTask(ctx, batchID, batch)
 			if err != nil {
@@ -221,6 +291,13 @@ func (queue *driftInvestigationQueue) Complete(now time.Time, task *contracts.Dr
 		if verdict == nil {
 			verdict = &contracts.DriftEventInvestigation{EventIndex: int32(index), Verdict: "unsure", Reason: "investigator omitted event"}
 		}
+		if queue.state.Verdicts == nil {
+			queue.state.Verdicts = make(map[string]sdk.DriftEvent)
+		}
+		event.InvestigationStatus = "completed"
+		event.InvestigationVerdict = verdict.GetVerdict()
+		event.InvestigationReason = safeDriftText(verdict.GetReason())
+		queue.state.Verdicts[driftEventKey(event)] = event
 		if queue.config.OnVerdict != nil {
 			queue.config.OnVerdict(event, verdict)
 		}
@@ -228,7 +305,40 @@ func (queue *driftInvestigationQueue) Complete(now time.Time, task *contracts.Dr
 	queue.state.Pending = append(queue.state.Pending[len(task.GetEvents()):], queue.state.Deferred...)
 	queue.state.Deferred = nil
 	queue.state.RequestJSON = ""
+	queue.prioritizeNew()
 	return nil
+}
+
+func (queue *driftInvestigationQueue) overBudget(dispatches []time.Time, tokens int64) bool {
+	return queue.config.DispatchesPerHour > 0 && len(dispatches) >= queue.config.DispatchesPerHour ||
+		queue.config.TokensPerHour > 0 && tokens >= queue.config.TokensPerHour
+}
+
+func (queue *driftInvestigationQueue) recordDeferral(now time.Time) {
+	if queue.state.RequestJSON != "" || len(queue.state.Pending) == 0 || queue.isNew(queue.state.Pending[0]) {
+		return
+	}
+	var deferral DriftDeferral
+	if queue.config.DispatchesPerHour > 0 && len(queue.state.DispatchAt) >= queue.config.DispatchesPerHour {
+		deferral = DriftDeferral{Reason: DriftDispatchBudget, Until: queue.state.DispatchAt[0].Add(time.Hour)}
+	}
+	var tokens int64
+	for _, item := range queue.state.TokenUsage {
+		tokens += item.Tokens
+	}
+	if queue.config.TokensPerHour > 0 && tokens >= queue.config.TokensPerHour && len(queue.state.TokenUsage) > 0 {
+		until := queue.state.TokenUsage[0].At.Add(time.Hour)
+		if until.After(deferral.Until) {
+			deferral = DriftDeferral{Reason: DriftTokenBudget, Until: until}
+		}
+	}
+	if deferral.Reason == "" || !deferral.Until.After(now) || reflect.DeepEqual(queue.state.Deferral, &deferral) {
+		return
+	}
+	queue.state.Deferral = &deferral
+	if queue.config.OnDeferred != nil {
+		queue.config.OnDeferred(deferral)
+	}
 }
 
 func validateDriftVerdict(verdict *contracts.DriftEventInvestigation) *contracts.DriftEventInvestigation {
