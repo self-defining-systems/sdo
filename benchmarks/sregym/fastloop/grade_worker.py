@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import os
 import subprocess
@@ -54,11 +55,16 @@ def diagnosis_problem(problem_ids: tuple[str, ...], *, factory: Callable[[str], 
 
 
 def grade(problem_ids: tuple[str, ...], diagnosis: str) -> dict[str, Any]:
-    from langchain_core.messages import AIMessage
-    from llm_backend.codex_cli_backend import CodexCLIBackend
-    from sregym.conductor.oracles.llm_as_a_judge.llm_as_a_judge_oracle import LLMAsAJudgeOracle
-    from sregym.conductor.problems.multiple_failures import MultipleIndependentFailures
-    from sregym.conductor.problems.registry import ProblemRegistry
+    # SREGym and its judge dependencies belong to the subprocess environment.
+    AIMessage = importlib.import_module("langchain_core.messages").AIMessage
+    CodexCLIBackend = importlib.import_module("llm_backend.codex_cli_backend").CodexCLIBackend
+    LLMAsAJudgeOracle = importlib.import_module(
+        "sregym.conductor.oracles.llm_as_a_judge.llm_as_a_judge_oracle"
+    ).LLMAsAJudgeOracle
+    MultipleIndependentFailures = importlib.import_module(
+        "sregym.conductor.problems.multiple_failures"
+    ).MultipleIndependentFailures
+    ProblemRegistry = importlib.import_module("sregym.conductor.problems.registry").ProblemRegistry
 
     class MeteredCodexBackend(CodexCLIBackend):
         def __init__(self, model: str, reasoning_effort: str) -> None:
@@ -66,7 +72,7 @@ def grade(problem_ids: tuple[str, ...], diagnosis: str) -> dict[str, Any]:
             self.usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
             self.lock = threading.Lock()
 
-        def inference(self, messages: Any, system_prompt: str | None = None, tools: list | None = None) -> AIMessage:
+        def inference(self, messages: Any, system_prompt: str | None = None, tools: list | None = None) -> Any:
             if tools:
                 raise ValueError("Codex judge backend does not support tool binding")
             with tempfile.TemporaryDirectory(prefix="sregym-codex-judge-") as workdir:

@@ -131,7 +131,8 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
             item.get("success") is True for item in _items(result.get("repair_actions"), "repair actions")
         ):
             raise ProductionReceiptValidationError("native successful outcome lacks accepted repair evidence")
-    decision = ledger.get("reflection_decision")
+    raw_decision = ledger.get("reflection_decision")
+    decision = _object(raw_decision, "reflection decision") if raw_decision is not None else None
     skipped = ledger.get("reflection_skipped_reason")
     if skipped is not None and (
         not isinstance(skipped, str)
@@ -142,12 +143,12 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
         raise ProductionReceiptValidationError("native reflection skip conflicts with broker decision")
     if ledger.get("requires_reflection") is True and (
         ledger.get("reflection_processed") is not True
-        or not isinstance(decision, dict)
+        or decision is None
         # A no_change decision commits nothing; only an updating reflection is bound to a commit.
         or (decision.get("learning_decision") == "updated" and reflection is None)
     ):
         raise ProductionReceiptValidationError("native required reflection is incomplete")
-    if isinstance(decision, dict) and decision.get("learning_decision") == "failed":
+    if decision is not None and decision.get("learning_decision") == "failed":
         _nonempty(decision.get("error"), "reflection failure error")
         if reflection is not None:
             raise ProductionReceiptValidationError("native failed reflection cannot have a reflection commit")
@@ -255,7 +256,7 @@ def native_production_receipt(
         "proposal_commit": ledger.get("proposal_commit") or None,
         "outcome_commit": ledger.get("outcome_commit"),
         "reflection_commit": ledger.get("reflection_commit") or None,
-        "reflection_usage": (ledger.get("reflection_decision") or {}).get("usage"),
+        "reflection_usage": _object(ledger.get("reflection_decision") or {}, "reflection decision").get("usage"),
         "reflection_skipped_reason": ledger.get("reflection_skipped_reason"),
         "outcome_classification": classification,
         "resolution": resolution,

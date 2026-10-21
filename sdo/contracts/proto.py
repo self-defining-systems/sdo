@@ -25,7 +25,7 @@ import sys
 from types import SimpleNamespace
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 _GEN_ROOT = Path(__file__).resolve().parent / "_gen"
 if str(_GEN_ROOT) not in sys.path:
@@ -53,6 +53,8 @@ from sdodev.contracts.v1alpha1 import (
 
 if TYPE_CHECKING:
     from google.protobuf.message import Message
+
+_MessageT = TypeVar("_MessageT", bound="Message")
 
 ObjectRef = common_pb2.ObjectRef
 
@@ -268,9 +270,10 @@ def to_canonical_json(message: Message) -> str:
     return json.dumps(json.loads(wire), indent=2, sort_keys=True) + "\n"
 
 
-def parse_json(text: str, message: Message) -> Message:
+def parse_json(text: str, message: _MessageT) -> _MessageT:
     """Parse protojson ``text`` into ``message`` (populated in place and returned)."""
-    return json_format.Parse(text, message)
+    json_format.Parse(text, message)
+    return message
 
 
 def timestamp_datetime(value: Timestamp) -> datetime:

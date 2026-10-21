@@ -82,6 +82,8 @@ def up(args: Any) -> int:
     worktree = (args.dev_mount or ROOT).resolve()
     if (run_dir / "fastloop.json").exists():
         env = FastloopEnvironment.load(run_dir)
+        if env.dev_mount is None:
+            raise ValueError("toy environment requires a development mount")
         if not ToyWorker(env).request("health")["healthy"]:
             raise ValueError("toy environment is unhealthy; run fastloop reset")
         prepare_dev_mount(env.dev_mount, None, run_dir)
@@ -226,6 +228,8 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
     )
 
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
+    if environment.dev_mount is None:
+        raise ValueError("toy controller requires a development mount")
     os.environ["SDO_DEV_MOUNT"] = "1"
     os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     if config is None:

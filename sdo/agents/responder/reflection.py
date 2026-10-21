@@ -4,7 +4,7 @@ import json
 import os
 import re
 import sys
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
 from agentshim import SessionResumeError
 from google.protobuf import json_format
@@ -246,11 +246,11 @@ class SessionReflector:
     is always a short fresh session that carries the typed diagnostics.
     """
 
-    def __init__(self, backend: StatefulResponderBackend, *, guidance: ReflectionGuidance = "baseline") -> None:
+    def __init__(self, backend: StatefulResponderBackend, *, guidance: str = "baseline") -> None:
         if guidance not in REFLECTION_GUIDANCE_MODES:
             raise ValueError(f"unsupported reflection guidance: {guidance!r}")
         self.backend = backend
-        self.guidance: ReflectionGuidance = guidance
+        self.guidance: ReflectionGuidance = cast("ReflectionGuidance", guidance)
 
     def resume(
         self,

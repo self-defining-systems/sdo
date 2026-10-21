@@ -39,6 +39,8 @@ from sdo.contracts import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from google.protobuf.message import Message
+
 PROBER_URL_ENVIRONMENT = "SDO_PROBER_URL"
 REQUEST_PATH_ENVIRONMENT = "SDO_REQUEST_PATH"
 #: The controller mounts the AgentTask envelope; the IncidentRequest is its packed ``request``.
@@ -220,7 +222,7 @@ class IncidentStatusReport:
         return "\n".join(lines)
 
 
-def _message_dict(message: Finding | StateChange) -> dict[str, Any]:
+def _message_dict(message: Message) -> dict[str, Any]:
     return json_format.MessageToDict(message, preserving_proto_field_name=True)
 
 

@@ -15,4 +15,4 @@ agents:
     kickoff_workdir: .
     kickoff_env: null
     install_script: install-codex.sh
-    agent_version: "0.157.1"
+    agent_version: "0.163.0"

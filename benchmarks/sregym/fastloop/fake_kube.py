@@ -41,7 +41,7 @@ class FakeKubernetesAPIServer:
         server = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, _format: str, *_args: Any) -> None:
+            def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
                 return
 
             def reply(self, status: int, value: dict[str, Any]) -> None:

@@ -465,15 +465,15 @@ def test_the_committed_stock_codex_pin_matches_the_image_pin(committed_sregym_re
 
 
 def test_system_host_parses_codex_versions_behind_warnings() -> None:
-    output = "WARNING: proceeding, even though we could not create PATH aliases\ncodex-cli 0.157.1\n"
+    output = "WARNING: proceeding, even though we could not create PATH aliases\ncodex-cli 0.163.0\n"
 
-    assert parse_codex_version(output) == "0.157.1"
+    assert parse_codex_version(output) == "0.163.0"
     assert parse_codex_version("command not found") is None
 
 
 def test_system_host_treats_npm_404_as_missing_and_other_errors_as_unknown() -> None:
     answers = {
-        "@openai/codex@0.157.1": (0, "0.157.1\n", ""),
+        "@openai/codex@0.163.0": (0, "0.163.0\n", ""),
         "@openai/codex@0.158.0-linux-x64": (1, "", "npm error code E404\n"),
         "@openai/codex@9.9.9": (1, "", "npm error network ETIMEDOUT\n"),
     }
@@ -484,7 +484,7 @@ def test_system_host_treats_npm_404_as_missing_and_other_errors_as_unknown() -> 
 
     host = SystemHost(run=run)
 
-    assert host.npm_resolves("@openai/codex@0.157.1") is True
+    assert host.npm_resolves("@openai/codex@0.163.0") is True
     assert host.npm_resolves("@openai/codex@0.158.0-linux-x64") is False
     assert host.npm_resolves("@openai/codex@9.9.9") is None
 

@@ -25,7 +25,7 @@ from sdo.agents.responder.incident_status import (
     incident_status,
     run_incident_status_cli,
 )
-from sdo.contracts import AgentTask, IncidentRequest, parse_json, to_canonical_json
+from sdo.contracts import AgentTask, DriftEvent, IncidentRequest, IncidentView, parse_json, to_canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -34,6 +34,20 @@ if TYPE_CHECKING:
 incident_status_module = importlib.import_module("sdo.agents.responder.incident_status")
 
 FIXTURE_DIR = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
+
+
+def test_controller_status_serializes_drift_events() -> None:
+    event = DriftEvent(operation="Update", manager="foreign-controller", classification="unexplained")
+    report = IncidentStatusReport(
+        state=IncidentStatusState.UNAVAILABLE,
+        burst=None,
+        detail="traffic prober unavailable",
+        view=IncidentView(drift_events=[event]),
+    )
+
+    assert report.to_json()["controller"]["drift_events"] == [
+        {"operation": "Update", "manager": "foreign-controller", "classification": "unexplained"}
+    ]
 
 
 def _verdict(scenario: str, *, healthy: bool, qualified: bool = True, failure: str = "") -> dict[str, Any]:

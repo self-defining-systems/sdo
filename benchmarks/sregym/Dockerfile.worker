@@ -1,5 +1,5 @@
 # Benchmark worker extensions. Build from the locally built production responder.
-ARG SDO_RESPONDER_IMAGE
+ARG SDO_RESPONDER_IMAGE=sdo-responder:latest
 FROM ${SDO_RESPONDER_IMAGE} AS sregym-responder
 # Benchmark transport clients; production images stay free of them.
 RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \

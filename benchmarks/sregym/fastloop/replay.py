@@ -81,6 +81,7 @@ class CheckpointStore:
         blobs.mkdir(parents=True, exist_ok=True)
         blobs.chmod(0o700)
         if edit_digest is not None:
+            assert edit_data is not None
             _write(blobs / edit_digest, edit_data)
         for name, digest in digests.items():
             _write(blobs / digest, captures[name])

@@ -288,6 +288,9 @@ def _run_one(
     now: Callable[[], datetime],
     grader: DiagnosisGrader | None = None,
 ) -> tuple[IncidentRecord, bool]:
+    if not problem_ids:
+        raise ValueError("an incident requires at least one problem ID")
+    first_problem = problem_ids[0]
     started = monotonic()
     problem_id = "+".join(problem_ids)
     windows: list[InjectionWindow] = []
@@ -296,7 +299,7 @@ def _run_one(
         window = (
             driver.inject_composite(problem_ids).window  # type: ignore[attr-defined]
             if len(problem_ids) > 1
-            else driver.inject(problem_ids[0])
+            else driver.inject(first_problem)
         )
         windows.append(window)
         return window

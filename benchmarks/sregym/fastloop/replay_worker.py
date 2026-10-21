@@ -42,7 +42,7 @@ class _Publisher:
     def __init__(self) -> None:
         self.payload: str | None = None
 
-    def publish_payload(self, _name: str, key: str, payload: str) -> None:
+    def publish_payload(self, name: str, key: str, payload: str) -> None:
         if key != "agent-result.json":
             raise CheckpointError(f"unexpected worker result key {key!r}")
         self.payload = payload
@@ -310,18 +310,19 @@ def replay_live_worker(
             commit = typed.repository_base_commit
             namespace = typed.namespace
             typed.repository_worktree = str(checkout)
+            session_id = typed.incident_id
         else:
             typed = ReflectionRequest()
             if not task.request.Unpack(typed):
                 raise CheckpointError("reflection checkpoint has no typed reflection request")
             commit = typed.outcome_commit
             namespace = typed.closure.request.namespace
+            session_id = typed.outcome.incident_id
         _clone_at(source, checkout, commit)
         task.workspace.checkout_path = str(checkout)
         task.request.Pack(typed)
         task_path = root / "request.json"
         task_path.write_text(to_canonical_json(task), encoding="utf-8")
-        session_id = typed.incident_id if stage == "responder" else typed.outcome.incident_id
         session = hashlib.sha256(session_id.encode()).hexdigest()[:32]
         incident_dirs = list(store.root.parent.glob(f"{incident:03d}_*"))
         if len(incident_dirs) != 1:
@@ -366,6 +367,8 @@ def replay_live_worker(
                     ),
                 )
             else:
+                if not isinstance(typed, ReflectionRequest):
+                    raise CheckpointError("reflection checkpoint requires a reflection request")
                 guidance = typed.guidance or "baseline"
                 reflector = SessionReflector(
                     CodexSessionBackend(model="gpt-6-luna", executor=recording), guidance=guidance

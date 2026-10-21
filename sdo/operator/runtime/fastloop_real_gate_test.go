@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -343,8 +344,7 @@ func fastloopGateAcknowledge(t *testing.T, ctx context.Context, controller *Cont
 }
 
 func TestHermeticFastloopRealGoGate(t *testing.T) {
-	t.Setenv("GOPROXY", "off")
-	t.Setenv("GOSUMDB", "off")
+	testutil.OfflineGo(t, "..")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()

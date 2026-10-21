@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import json
 import sys
 from types import SimpleNamespace
@@ -11,14 +12,19 @@ from unittest.mock import patch
 
 
 def describe(problem_ids: list[str]) -> dict[str, list[dict[str, str]]]:
-    from kubernetes import config
-    from sregym.conductor.problems.incorrect_image import IncorrectImage
-    from sregym.conductor.problems.network_policy_block import NetworkPolicyBlock
-    from sregym.conductor.problems.readiness_probe_misconfiguration import ReadinessProbeMisconfiguration
-    from sregym.conductor.problems.registry import ProblemRegistry
-    from sregym.conductor.problems.target_port import K8STargetPortMisconfig
-    from sregym.conductor.problems.wrong_service_selector import WrongServiceSelector
-    from sregym.service.kubectl import KubeCtl
+    # This entry point runs in SREGym's subprocess environment, like worker_client.
+    config = importlib.import_module("kubernetes.config")
+    IncorrectImage = importlib.import_module("sregym.conductor.problems.incorrect_image").IncorrectImage
+    NetworkPolicyBlock = importlib.import_module("sregym.conductor.problems.network_policy_block").NetworkPolicyBlock
+    ReadinessProbeMisconfiguration = importlib.import_module(
+        "sregym.conductor.problems.readiness_probe_misconfiguration"
+    ).ReadinessProbeMisconfiguration
+    ProblemRegistry = importlib.import_module("sregym.conductor.problems.registry").ProblemRegistry
+    K8STargetPortMisconfig = importlib.import_module("sregym.conductor.problems.target_port").K8STargetPortMisconfig
+    WrongServiceSelector = importlib.import_module(
+        "sregym.conductor.problems.wrong_service_selector"
+    ).WrongServiceSelector
+    KubeCtl = importlib.import_module("sregym.service.kubectl").KubeCtl
 
     def fault_spec(problem: Any) -> dict[str, str]:
         if isinstance(problem, K8STargetPortMisconfig):

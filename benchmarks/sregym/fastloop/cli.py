@@ -302,14 +302,14 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
 
     from benchmarks.sregym.adapter import KubectlClusterOps, kubectl_capture_ops
 
-    ops = ops or KubectlClusterOps()
+    selected: ClusterOps = ops or KubectlClusterOps()
     if args.inject_before_resume:
         from benchmarks.sregym.fastloop.simultaneous import InjectBeforeResumeOps
 
-        ops = InjectBeforeResumeOps(ops)  # type: ignore[assignment]
+        selected = InjectBeforeResumeOps(selected)  # type: ignore[assignment]
     if args.healthy_baseline:
-        ops = kubectl_capture_ops(ops, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
-    return ops
+        selected = kubectl_capture_ops(selected, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
+    return selected
 
 
 def _scaled_clock(scale: float) -> Clock:
@@ -455,17 +455,17 @@ def _run(args: argparse.Namespace) -> int:
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     results_dir = environment.run_dir / "results" / run_id
     stream_config = load_stream_config(args.stream) if args.stream else None
-    stream = stream_config.incidents if stream_config else ()
+    stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
     grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
     judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
     from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
 
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
-    if stream:
-        from benchmarks.sregym.fastloop.fault_tracker import composite_faults, describe_sregym_faults, stream_faults
+    from benchmarks.sregym.fastloop.fault_tracker import composite_faults, describe_sregym_faults, stream_faults
 
-        tracked = [ids for ids in stream if len(ids) > 1 or ids[0].startswith("mf__")]
+    if stream:
+        tracked = [ids for ids in stream if len(ids) > 1 or (ids and ids[0].startswith("mf__"))]
         described_incidents = stream if args.sweep_service else tracked
         tracked_ids = tuple(dict.fromkeys(problem_id for ids in described_incidents for problem_id in ids))
     else:
@@ -497,6 +497,7 @@ def _run(args: argparse.Namespace) -> int:
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
         deployed = time.monotonic()
+        catalog: dict[str, tuple[FaultSpec, ...]] = {}
         if stream:
             catalog, description_seconds = descriptions.result() if descriptions is not None else ({}, 0.0)
             faults_by_incident = {"+".join(ids): stream_faults(ids, catalog=catalog) for ids in tracked}

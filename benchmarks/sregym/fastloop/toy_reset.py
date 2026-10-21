@@ -50,6 +50,8 @@ class ToyControllerTemplate:
         return cls(restart_job(job), runtime_config_from_payload(record.runtime_config))
 
     def restart(self, environment: FastloopEnvironment) -> None:
+        if not environment.seed_commit:
+            raise ValueError("toy reset requires a seed commit")
         clear_runtime_state(environment, self.config.control_namespace)
         subprocess.run(
             ["kubectl", "--kubeconfig", str(environment.kubeconfig), "create", "-f", "-"],

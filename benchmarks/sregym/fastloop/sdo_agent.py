@@ -334,7 +334,12 @@ class SdoPersistentAgent:
         settings = self._settings
         state = PersistentState.load(settings.state_path)
         record = state.controllers.get(settings.namespace)
-        if record is None or record.pending is None or record.pending.incident_id != outcome.incident_id:
+        if (
+            not outcome.incident_id
+            or record is None
+            or record.pending is None
+            or record.pending.incident_id != outcome.incident_id
+        ):
             raise RuntimeError(f"incident {outcome.incident_id!r} is not pending on the persistent controller")
         started = self._clock.monotonic()
         reflection_observed_at = self._clock.now()

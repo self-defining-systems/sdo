@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/internal/testutil"
 )
 
 func programFixture(t *testing.T) string {
@@ -23,8 +25,7 @@ func buildProgramFixture(t *testing.T, root string) (*Workspace, error) {
 }
 
 func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
-	t.Setenv("GOPROXY", "off")
-	t.Setenv("GOSUMDB", "off")
+	testutil.OfflineGo(t, "..")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	root := programFixture(t)
 	w, err := buildProgramFixture(t, root)
@@ -43,8 +44,7 @@ func TestBuildWorkspaceRegistersProgramAndSharedLibrary(t *testing.T) {
 }
 
 func TestProgramAcceptsRecordedSyntheticNoMatchCase(t *testing.T) {
-	t.Setenv("GOPROXY", "off")
-	t.Setenv("GOSUMDB", "off")
+	testutil.OfflineGo(t, "..")
 	root := programFixture(t)
 	source := filepath.Join(root, ".sdo", "corpus", "targetport-mismatch")
 	dir := filepath.Join(root, ".sdo", "corpus", "near-miss")

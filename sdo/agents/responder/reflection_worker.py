@@ -6,7 +6,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
@@ -26,6 +26,8 @@ from sdo.contracts import (
     AgentResult,
     AgentTask,
     IncidentClosure,
+    MemoryDiagnostic,
+    OutcomeRecord,
     ReflectionRequest,
     ReflectionResult,
     SdkGap,
@@ -33,6 +35,9 @@ from sdo.contracts import (
     to_canonical_json,
     validate,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 AGENT_ID = "sdo-reflector"
 TASK_TYPE = "outcome-reflection-direct-v1"
@@ -45,7 +50,20 @@ class ResultPublisher(Protocol):
 
 
 class Reflector(Protocol):
-    def resume(self, **kwargs: object) -> ReflectionTurn: ...
+    def resume(
+        self,
+        *,
+        session_id: str,
+        incident_id: str,
+        worktree: Path,
+        outcome: OutcomeRecord,
+        history: list[OutcomeRecord],
+        outcome_commit: str,
+        session_mode: ReflectionSessionMode = "resume",
+        closure: IncidentClosure | None = None,
+        validation_attempt: int = 1,
+        diagnostics: Sequence[MemoryDiagnostic] = (),
+    ) -> ReflectionTurn: ...
 
 
 def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
