@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from sdo.agents.views import IncidentRequest, IncidentResult, OperationalArtifac
 
 PROGRAM_ID = "service-targetport-mismatch"
 PROGRAM_SOURCE = Path("/opt/sdo-scripted/targetport")
+LOG = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -41,15 +43,20 @@ def _tool(*args: str) -> dict[str, Any]:
 
 
 def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
-    for path in sorted(root.rglob("*.yaml")):
-        if ".sdo" in path.parts:
+    manifest_root = root / "kubernetes"
+    for path in sorted((*manifest_root.rglob("*.yaml"), *manifest_root.rglob("*.yml"))):
+        if "templates" in path.relative_to(manifest_root).parts:
             continue
-        for document in yaml.safe_load_all(path.read_text(encoding="utf-8")):
-            if (
-                isinstance(document, dict)
-                and document.get("kind") == kind
-                and document.get("metadata", {}).get("name") == name
-            ):
+        try:
+            documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            LOG.warning("skipping unparseable source manifest %s: %s", path, exc)
+            continue
+        for document in documents:
+            if not isinstance(document, dict) or document.get("kind") != kind:
+                continue
+            metadata = document.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("name") == name:
                 return document
     raise RuntimeError(f"accepted source has no {kind}/{name} manifest")
 
