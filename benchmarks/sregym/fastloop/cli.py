@@ -71,6 +71,18 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
     )
 
 
+def _reset_failed_incident(environment: FastloopEnvironment, worker: SregymWorker) -> None:
+    from benchmarks.sregym.adapter import control_namespace_for
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+
+    reset_environment(
+        environment,
+        KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
+        worker,
+        preserve_repository=True,
+    )
+
+
 def _ensure_builder(name: str) -> None:
     inspected = subprocess.run(["docker", "buildx", "inspect", name], capture_output=True, text=True, check=False)
     if inspected.returncode != 0:
@@ -494,15 +506,7 @@ def _run(args: argparse.Namespace) -> int:
         )
 
         def reset_failed() -> None:
-            from benchmarks.sregym.adapter import control_namespace_for
-            from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
-
-            reset_environment(
-                environment,
-                KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
-                worker,
-                preserve_repository=True,
-            )
+            _reset_failed_incident(environment, worker)
 
         if args.agent == "sdo":
             records = run_incidents(

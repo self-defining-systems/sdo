@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from benchmarks.sregym.fastloop import cli, reset
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
@@ -137,19 +138,28 @@ def test_fail_soft_controller_reset_preserves_accepted_repository(
     assert all("git -C /workspace/application" not in arg for arg in command)
 
 
-def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path) -> None:
+def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import datetime, timezone
 
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    (workspace / "README.md").write_text("seed\n")
+    subprocess.run(["git", "add", "README.md"], cwd=workspace, check=True)
+    commit = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm"]
+    subprocess.run([*commit, "seed"], cwd=workspace, check=True)
+    seed_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
+    program = workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
     environment = FastloopEnvironment(
         run_dir=tmp_path,
         cluster="kind-test",
         kubeconfig=tmp_path / "kubeconfig",
         namespace="hotel",
         application="hotel",
-        workspace=tmp_path / "workspace",
+        workspace=workspace,
         sregym_dir=tmp_path / "sregym",
         private_tmp=None,
-        seed_commit="a" * 40,
+        seed_commit=seed_commit,
     )
     baseline = ApplicationBaseline(
         "hotel",
@@ -157,7 +167,9 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path) -> Non
     )
     environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
     cluster = FakeCluster()
+    monkeypatch.setattr(reset, "KubectlResetCluster", lambda *_args: cluster)
     now = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    accepted_commit = ""
 
     class Agent:
         name = "sdo"
@@ -166,12 +178,25 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path) -> Non
         def resolve(self, index: int, _problem: str, inject: Any) -> AgentOutcome:
             window = inject()
             if index == 2:
-                assert cluster.accepted_commit == "program-commit"
+                assert program.is_file()
+                assert (
+                    subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=workspace, text=True).strip()
+                    == accepted_commit
+                )
+                assert cluster.accepted_commit == accepted_commit
             return AgentOutcome(injection=window, incident_id=f"incident-{index}")
 
         def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            nonlocal accepted_commit
             if outcome.incident_id == "incident-0":
-                cluster.accepted_commit = "program-commit"
+                program.parent.mkdir(parents=True)
+                program.write_text("package targetport\n")
+                subprocess.run(["git", "add", ".sdo"], cwd=workspace, check=True)
+                subprocess.run([*commit, "accepted program"], cwd=workspace, check=True)
+                accepted_commit = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=workspace, text=True
+                ).strip()
+                cluster.accepted_commit = accepted_commit
             if outcome.incident_id == "incident-1":
                 raise RuntimeError("learning failed")
             return outcome
@@ -200,9 +225,9 @@ def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path) -> Non
         Agent(),
         Driver(),
         config,
-        on_failed_incident=lambda: reset_environment(environment, cluster, FakeWorker(), preserve_repository=True),
+        on_failed_incident=lambda: cli._reset_failed_incident(environment, FakeWorker()),
     )
     assert len(records) == 3
     assert "learning failed" in (records[1].error or "")
     assert records[2].error is None
-    assert cluster.accepted_commit == "program-commit"
+    assert cluster.accepted_commit == accepted_commit
