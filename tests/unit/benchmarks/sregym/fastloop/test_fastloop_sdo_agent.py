@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -152,6 +152,7 @@ class FakeOps:
         return [f"/workspace/worktrees/{name}" for name in sorted(self.worktrees)]
 
     def export_runtime_artifacts(self, config: Any, artifacts_dir: Path) -> dict[str, str | None]:
+        self.last_runtime_export = artifacts_dir
         return {"directory": None, "error": None}
 
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None:
@@ -257,6 +258,23 @@ def test_learning_drains_reflection_and_reads_tokens_and_warm_path_from_the_stri
     assert warm.controller_installed is False
     state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
     assert state.controllers["hotel-reservation"].pending is None
+
+
+def test_learning_exports_reflection_session_before_checkpointing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ops, calls = FakeOps(), []
+    agent = _agent(tmp_path, ops, calls)
+    resolved = agent.resolve(0, "p", _inject)
+    ops.last_runtime_export = None
+    agent._settings = replace(agent._settings, kubeconfig="captured-kubeconfig")
+    seen: list[Path] = []
+    monkeypatch.setattr(agent, "_checkpoint", lambda _index, _incident, path: seen.append(path))
+
+    agent.learn(resolved)
+
+    assert ops.last_runtime_export == Path(str(resolved.artifacts_dir))
+    assert seen == [Path(str(resolved.artifacts_dir))]
 
 
 def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_next_incident(tmp_path: Path) -> None:
