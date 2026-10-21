@@ -353,7 +353,7 @@ func conditionalPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]
 }
 
 // Descend into equal-length arrays so a probe repair cannot roll back an image update.
-// Array shape changes are atomic and conservatively conflict.
+// Array shape changes and changed named-item identities conservatively conflict.
 func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok bool) (any, bool, error) {
 	if bok == aok && planValuesEqual(before, after) {
 		return live, lok, nil
@@ -395,6 +395,14 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 	if barray && aarray && larray && len(ba) == len(aa) && len(aa) == len(la) {
 		result := make([]any, len(la))
 		for i := range la {
+			// An unchanged name is still an identity precondition. Without it,
+			// another item's pre-image value can look like completed compensation.
+			bm, _ := ba[i].(map[string]any)
+			am, _ := aa[i].(map[string]any)
+			lm, _ := la[i].(map[string]any)
+			if !planValuesEqual(bm["name"], am["name"]) || !planValuesEqual(am["name"], lm["name"]) {
+				return nil, false, errors.New("named list item identity changed")
+			}
 			v, _, err := restorePlanFields(ba[i], true, aa[i], true, la[i], true)
 			if err != nil {
 				return nil, false, err
