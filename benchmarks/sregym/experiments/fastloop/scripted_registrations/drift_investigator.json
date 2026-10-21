@@ -1,0 +1,15 @@
+{
+  "schema_version": "sdo.dev/v1alpha1",
+  "agent_id": "sdo-drift-investigator",
+  "capabilities": [
+    {
+      "task_type": "drift-investigation",
+      "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.DriftInvestigationTask",
+      "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.DriftInvestigationResult"
+    }
+  ],
+  "kubernetes_job": {
+    "image": "sdo-sregym-responder:scripted-fastloop",
+    "command": ["python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "drift"]
+  }
+}

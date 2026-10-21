@@ -46,6 +46,7 @@ type KubernetesExecutor struct {
 	Environment            map[string]string
 	PollInterval           time.Duration
 	TaskPayload            string
+	RepositoryReadOnly     bool
 }
 
 type JobFailedError struct{ JobName string }
@@ -183,7 +184,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	envFrom := []corev1.EnvFromSource{}
 	mounts := []corev1.VolumeMount{
 		{Name: "request", MountPath: "/sdo/request", ReadOnly: true},
-		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath},
+		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath, ReadOnly: e.RepositoryReadOnly},
 		{Name: "scratch", MountPath: "/tmp"},
 		{Name: codexHomesVolume, MountPath: CodexHomesMountPath},
 	}

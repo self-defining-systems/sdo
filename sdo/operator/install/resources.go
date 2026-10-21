@@ -199,7 +199,7 @@ func Resources(c Config) (Plan, error) {
 	if split {
 		plan.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", ControllerNamespaceLabel: "true", ApplicationNamespaceLabel: c.Namespace}}}
 	}
-	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-image-builder"} {
+	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-drift-investigator", "sdo-image-builder"} {
 		plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control}})
 	}
 	controllerRules := []rbacv1.PolicyRule{
@@ -223,8 +223,15 @@ func Resources(c Config) (Plan, error) {
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "update", "patch", "delete"),
 	}
+	investigatorRules := []rbacv1.PolicyRule{
+		rule("", []string{"configmaps", "services", "pods", "endpoints", "events"}, "get", "list", "watch"),
+		rule("", []string{"pods/log"}, "get"),
+		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
+		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
+		rule("networking.k8s.io", []string{"networkpolicies", "ingresses"}, "get", "list", "watch"),
+	}
 	if split {
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", controllerRules), role(control, "sdo-responder", []rbacv1.PolicyRule{rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "patch")}))
+		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", controllerRules), role(control, "sdo-responder", []rbacv1.PolicyRule{rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "patch")}), role(control, "sdo-drift-investigator", []rbacv1.PolicyRule{rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "patch")}))
 		readRules := []rbacv1.PolicyRule{}
 		for _, r := range controllerRules {
 			if r.APIGroups[0] == "coordination.k8s.io" || r.APIGroups[0] == "batch" {
@@ -233,8 +240,8 @@ func Resources(c Config) (Plan, error) {
 			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
 		}
 		readRules = append(readRules, programApplyRules()...)
-		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
-		for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-controller-helper-cleanup"} {
+		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-drift-investigator", investigatorRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
+		for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-drift-investigator", "sdo-controller-helper-cleanup"} {
 			subject := name
 			if name == "sdo-controller-helper-cleanup" {
 				subject = "sdo-controller"
@@ -242,9 +249,9 @@ func Resources(c Config) (Plan, error) {
 			plan.AppBindings = append(plan.AppBindings, binding(c.Namespace, name, subject, control))
 		}
 	} else {
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", append(controllerRules, programApplyRules()...)), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
+		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", append(controllerRules, programApplyRules()...)), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules), role(control, "sdo-drift-investigator", append(investigatorRules, rule("", []string{"configmaps"}, "create", "update", "patch"))))
 	}
-	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
+	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-drift-investigator"} {
 		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
 	}
 	plan.SyncPod = syncPod(c)

@@ -659,6 +659,14 @@ def _responder_prompt(request: IncidentRequest) -> str:
         if request.max_response_loops > 0
         else ""
     )
+    drift_guidance = (
+        "The drift investigator found a latent bug with source contradiction and a violated relation "
+        "or observed impact. "
+        "Health checks may still report healthy before repair. Inspect the drift event and evidence, repair the "
+        "specific changed field through the configured repair policy, and verify that the relation is restored. "
+        if any(event.investigation_verdict == "bug" for event in request.drift_events)
+        else ""
+    )
     excluded_request_fields = {"detector_history", "state_changes", "memory_snapshot"}
     request_json = request.model_dump_json(indent=2, exclude=excluded_request_fields)
     return (
@@ -666,6 +674,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
         f"{strategy}"
         f"{program_guidance}"
+        f"{drift_guidance}"
         f"{surfaced_context}"
         f"{_no_action_instructions()}"
         f"{_verification_instructions()}"
