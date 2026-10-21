@@ -603,6 +603,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
         rebuild_verified = None
         closure_phases: dict[str, float] = {}
         skipped_reasons: list[str] = []
+        paths: list[str] = []
+        fast_programs: list[str] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             if not receipt and item.get("fallback_usage"):
@@ -628,6 +630,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
             outcome_document = ledger.get("outcome_document")
             outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
             metrics = _program_metrics(outcome_document)
+            if metrics["resolution_path"] is not None:
+                paths.append(metrics["resolution_path"])
+            fast_programs.extend(metrics["fast_path_programs"])
             diagnoses += metrics["program_diagnoses"] or 0
             calls += metrics["program_tool_calls"] or 0
             loops += metrics["response_loops_used"] or 0
@@ -664,6 +669,12 @@ class CompositeSdoAgent(SdoPersistentAgent):
             program_tool_calls=calls,
             tool_commands=commands,
             response_loops_used=loops,
+            resolution_path="fast_path"
+            if paths and all(path == "fast_path" for path in paths)
+            else "responder"
+            if paths
+            else None,
+            fast_path_programs=tuple(dict.fromkeys(fast_programs)),
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

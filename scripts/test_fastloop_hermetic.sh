@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
     cd "$root/sdo/operator/runtime"
-    go test -run '^(TestHermeticFastloopRealGoGate|TestHermeticFakeConfigMapEnforcesProductionLimit|TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit|TestHermeticResponderProgramReuseThroughRealToolTransport)$' -count=1 .
+    go test -run '^(TestHermeticFastloopRealGoGate|TestHermeticFakeConfigMapEnforcesProductionLimit|TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit|TestHermeticResponderProgramReuseThroughRealToolTransport|TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob|TestFailedFastPathRollsBackAndDispatchesResponderWithSummary|TestTrustedProgramFastPathRequiresEveryFindingExplained|TestTrustedProgramFastPathRejectsNeedsJudgement|TestNativeBrokerSkipsReflectionAfterTrustedFastPath)$' -count=1 .
 )
 
 cd "$root"

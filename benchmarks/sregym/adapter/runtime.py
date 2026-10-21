@@ -49,6 +49,8 @@ class RuntimeConfig:
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
+    program_fast_path: bool = False
+    program_trust_threshold: int = 3
     late_findings: str = "off"
     max_follow_ups: int = 0
     max_response_loops: int = 5
@@ -98,6 +100,10 @@ class RuntimeConfig:
             raise ValueError("invalid follow-up limit or cooldown")
         if self.max_deployment_attempts <= 0:
             raise ValueError("max_deployment_attempts must be positive")
+        if self.program_trust_threshold <= 0:
+            raise ValueError("program_trust_threshold must be positive")
+        if self.program_fast_path and self.repair_policy != "recorded-actions":
+            raise ValueError("program fast path requires recorded-actions repair policy")
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
             raise ValueError("agent_registrations path must be absolute")
 
@@ -138,6 +144,8 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
+        program_fast_path=config.program_fast_path,
+        program_trust_threshold=config.program_trust_threshold,
         healthy_baseline=config.healthy_baseline,
         max_follow_ups=config.max_follow_ups,
         max_response_loops=config.max_response_loops,

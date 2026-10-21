@@ -151,6 +151,10 @@ def _program_metrics(result: dict[str, Any]) -> dict[str, Any]:
     loops = result.get("response_loops_used")
     return {
         "program_diagnoses": len(runs) if isinstance(runs, list) else None,
+        "resolution_path": result.get("resolution_path")
+        if result.get("resolution_path") in ("fast_path", "responder")
+        else None,
+        "fast_path_programs": tuple(str(item) for item in result.get("fast_path_programs", []) or []),
         "program_verdicts": verdicts,
         "program_tool_calls": len(calls) if isinstance(calls, list) else None,
         "tool_commands": commands,

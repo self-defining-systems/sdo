@@ -129,6 +129,8 @@ class IncidentRecord(_PersistedModel):
     match_reasons: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    resolution_path: str | None = None
+    fast_path_programs: list[str] = Field(default_factory=list)
     closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = Field(default_factory=dict)
     fault_gate_timings_seconds: dict[str, float] = Field(default_factory=dict)

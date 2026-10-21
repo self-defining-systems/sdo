@@ -154,10 +154,32 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
             _nonempty(verified[0].get(name), f"rollout {name}")
         _timestamp(verified[0].get("verified_at"), "rollout verified_at")
     jobs = _items(receipt.get("responder_job_evidence"), "responder Job evidence")
-    if len(jobs) != 1 or jobs[0].get("incident_id") != incident_id or jobs[0].get("succeeded") is not True:
-        raise ProductionReceiptValidationError("native receipt requires one correlated successful responder Job")
-    _nonempty(jobs[0].get("job_uid"), "responder Job UID")
-    _nonempty(jobs[0].get("job_name"), "responder Job name")
+    if outcome.get("resolution_path") == "fast_path":
+        programs = outcome.get("fast_path_programs")
+        applications = _items(outcome.get("plan_applications"), "fast path plan applications")
+        if (
+            jobs
+            or request.get("repair_policy") != "recorded-actions"
+            or result.get("resolution_path") != "fast_path"
+            or result.get("fast_path_programs") != programs
+            or not isinstance(programs, list)
+            or not programs
+            or ledger.get("reflection_skipped_reason") != "trusted program fast path"
+            or result.get("program_failure_signals")
+            or not applications
+            or any(
+                item.get("applied") is not True
+                or item.get("rolled_back") is True
+                or item.get("verification", {}).get("result") != "RESULT_NO_MATCH"
+                for item in applications
+            )
+        ):
+            raise ProductionReceiptValidationError("native fast path lacks verified program and reflection evidence")
+    else:
+        if len(jobs) != 1 or jobs[0].get("incident_id") != incident_id or jobs[0].get("succeeded") is not True:
+            raise ProductionReceiptValidationError("native receipt requires one correlated successful responder Job")
+        _nonempty(jobs[0].get("job_uid"), "responder Job UID")
+        _nonempty(jobs[0].get("job_name"), "responder Job name")
     if (
         receipt.get("outcome_commit") != outcome_commit
         or receipt.get("reflection_commit") != reflection

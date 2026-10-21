@@ -332,6 +332,8 @@ def _sdo_agent(
         model=args.model,
         timeout_seconds=args.timeout,
         repair_policy=args.repair_policy,
+        program_fast_path=args.program_fast_path,
+        program_trust_threshold=args.program_trust_threshold,
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -847,6 +849,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
     run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
+    run.add_argument(
+        "--program-fast-path", action="store_true", help="allow trusted playbook programs to resolve incidents"
+    )
+    run.add_argument(
+        "--program-trust-threshold",
+        type=int,
+        default=3,
+        metavar="K",
+        help="verified successes required for a trusted program (default 3)",
+    )
     run.add_argument(
         "--detection-timeout",
         type=float,

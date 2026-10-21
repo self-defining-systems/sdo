@@ -68,6 +68,8 @@ class AgentOutcome:
     match_reasons: tuple[str, ...] = ()
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    resolution_path: str | None = None
+    fast_path_programs: tuple[str, ...] = ()
     closure_phase_seconds: dict[str, float] = field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = field(default_factory=dict)
     fault_gate_timings_seconds: dict[str, float] = field(default_factory=dict)
@@ -385,6 +387,8 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "match_reasons": list(outcome.match_reasons),
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
+        "resolution_path": outcome.resolution_path,
+        "fast_path_programs": list(outcome.fast_path_programs),
         "closure_phase_seconds": dict(outcome.closure_phase_seconds),
         "driver_phase_timings_seconds": dict(outcome.driver_phase_timings_seconds),
         "fault_gate_timings_seconds": dict(outcome.fault_gate_timings_seconds),

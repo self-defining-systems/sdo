@@ -158,6 +158,17 @@ def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
     assert settings.poll_seconds == pytest.approx(0.2)
 
 
+def test_program_fast_path_is_explicit_and_defaults_off() -> None:
+    ordinary = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
+    enabled = build_parser().parse_args(
+        ["run", "--run-dir", "x", "--agent", "sdo", "--program-fast-path", "--program-trust-threshold", "4"]
+    )
+    assert ordinary.program_fast_path is False
+    assert ordinary.program_trust_threshold == 3
+    assert enabled.program_fast_path is True
+    assert enabled.program_trust_threshold == 4
+
+
 def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
 

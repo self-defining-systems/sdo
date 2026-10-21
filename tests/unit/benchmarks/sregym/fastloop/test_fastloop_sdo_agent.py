@@ -15,6 +15,15 @@ from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_inc
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 
+
+def test_program_metrics_exports_fast_path_resolution() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+
+    fields = _program_metrics({"resolution_path": "fast_path", "fast_path_programs": ["targetport"]})
+    assert fields["resolution_path"] == "fast_path"
+    assert fields["fast_path_programs"] == ("targetport",)
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
