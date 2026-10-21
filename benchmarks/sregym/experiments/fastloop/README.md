@@ -4,6 +4,14 @@ TODO: The SREGym fork checked out in this worktree still needs the `mf__hotel_re
 
 # Recovery isolation
 
+For SDO streams with latent faults, add `--detection-timeout SECONDS` to
+`fastloop run`. If no incident opens within that window, the incident gets a
+failed row with `no incident opened within Ns`, the oracle is evaluated, and
+baseline recovery runs before the next incident. Once an incident opens, the
+normal verification deadline still applies. Without the flag, fastloop keeps
+waiting for the full verification deadline (`--timeout` plus 300 seconds for
+single faults, or `--composite-deadline` for composites).
+
 `up` adds full application workload specs for its namespace or namespaces to
 `cluster_baseline_state.json`. After each fault recovery, fastloop deletes
 agent-created workloads, restores changed baseline specs, waits for health,
