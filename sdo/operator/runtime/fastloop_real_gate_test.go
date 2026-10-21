@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -160,7 +161,19 @@ func fastloopGateWait(t *testing.T, limit time.Duration, ready func() bool) {
 	t.Fatal("timed out waiting for controller effect")
 }
 
-func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Clientset, native NativeIncidentBroker, accepted, captureRoot, stateName string, at time.Time, retry bool) (*Controller, *fastloopGateDispatch, IncidentRequest) {
+func fastloopSameRequest(left, right IncidentRequest) bool {
+	left.Findings = append([]sdk.Finding(nil), left.Findings...)
+	right.Findings = append([]sdk.Finding(nil), right.Findings...)
+	for index := range left.Findings {
+		left.Findings[index].Metadata = nil
+	}
+	for index := range right.Findings {
+		right.Findings[index].Metadata = nil
+	}
+	return sameJSON(left, right)
+}
+
+func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Clientset, native NativeIncidentBroker, accepted, captureRoot, stateName string, at time.Time, retry bool, configure ...func(*Controller)) (*Controller, *fastloopGateDispatch, IncidentRequest) {
 	t.Helper()
 	dispatcher := &fastloopGateDispatch{requests: make(chan IncidentRequest, 1), results: make(chan IncidentResult, 1), failFirst: retry}
 	commit := nativeGit(t, accepted, "rev-parse", "HEAD")
@@ -175,6 +188,9 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	}
 	if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "app", stateName)); err != nil {
 		t.Fatal(err)
+	}
+	for _, setup := range configure {
+		setup(controller)
 	}
 	if err := controller.Step(ctx, at, nil); err != nil {
 		t.Fatal(err)
@@ -213,7 +229,7 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 		}
 		controller.now = func() time.Time { return at.Add(5 * time.Second) }
 		reloaded, _, err := NewConfigMapStateStore(client, "app", stateName).Load(ctx)
-		if err != nil || reloaded.IncidentRequest == nil || !sameJSON(*reloaded.IncidentRequest, request) {
+		if err != nil || reloaded.IncidentRequest == nil || !fastloopSameRequest(*reloaded.IncidentRequest, request) {
 			t.Fatalf("retry lost persisted dispatch request: %+v %v", reloaded.IncidentRequest, err)
 		}
 	}
@@ -224,7 +240,7 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	case <-time.After(90 * time.Second):
 		t.Fatal("timed out waiting for dispatched request")
 	}
-	if !sameJSON(actual, request) {
+	if !fastloopSameRequest(actual, request) {
 		t.Fatalf("dispatch differed from persisted request: %+v %+v", actual, request)
 	}
 	if retry && dispatcher.attempts != 2 {
@@ -477,11 +493,35 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	peerService.ManagedFields = driftService(8080).ManagedFields
+	peerService.Spec.Ports[0].Protocol = corev1.ProtocolTCP
+	healthyPeer := peerService.DeepCopy()
 	peerService.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+	peerService.ManagedFields = append(peerService.ManagedFields, metav1.ManagedFieldsEntry{Manager: "kubectl-patch", Operation: metav1.ManagedFieldsOperationUpdate, FieldsType: "FieldsV1", FieldsV1: healthyPeer.ManagedFields[0].FieldsV1})
 	if _, err := client.CoreV1().Services("app").Update(ctx, peerService, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true)
+	registry, err := program.NewRegistry([]program.Diagnoser{fastloopPortProgram{}}, []program.Mitigator{fastloopPortProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := objectChange(t, healthyPeer, peerService, "v1", "Service")
+	secondSnapshot, err := provider.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classified, _, err := (DriftClassifier{Programs: registry}).Classify(ctx, change, driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: secondSnapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}, start.Add(2*time.Second))
+	if err != nil || classified == nil || classified.Classification != sdk.DriftFault {
+		t.Fatalf("changed peer was not classified: %+v %v; before=%+v after=%+v owned=%+v managed=%+v", classified, err, flattenDriftObject(change.Old), flattenDriftObject(change.New), ownedDriftPaths(change.Old, "sdo-deployer"), change.Old.GetManagedFields())
+	}
+	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
+		controller.ConfigureDrift(DriftControllerConfig{Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
+			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
+		}})
+	})
+	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
+		t.Fatalf("second fault missed sweep-on-change: %+v", secondRequest.DriftEvents)
+	}
 	secondView, err := provider.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)

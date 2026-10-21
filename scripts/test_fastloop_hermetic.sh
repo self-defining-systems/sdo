@@ -2,10 +2,14 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+seed=/mnt/data/shli/sdo-exp/luna-mixed-pilot/seed/fair-lifecycle-fmt
+if [[ -d "$seed/kubernetes" ]]; then
+    export SDO_DRIFT_SEED="$seed"
+fi
 
 (
     cd "$root/sdo/operator/runtime"
-    go test -run '^(TestHermeticFastloopRealGoGate|TestHermeticFakeConfigMapEnforcesProductionLimit|TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit|TestHermeticResponderProgramReuseThroughRealToolTransport)$' -count=1 .
+    go test -run '^(TestHermeticFastloopRealGoGate|TestHermeticFakeConfigMapEnforcesProductionLimit|TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit|TestHermeticResponderProgramReuseThroughRealToolTransport|TestGitPlanSourceUsesOnlyDeployedManifestSet|TestGitPlanSourceSelectsDeployedHotelSeed|TestControllerAdoptsSeededServiceThenDispatchesLaterDrift|TestInvestigatedTargetPortOpensLatentIncidentWithDriftCorpus)$' -count=1 .
 )
 
 cd "$root"
