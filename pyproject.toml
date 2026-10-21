@@ -90,6 +90,7 @@ exclude_lines = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "-n 6"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 norecursedirs = ["apps", ".venv", "venv", "build", "dist", ".hypothesis"]

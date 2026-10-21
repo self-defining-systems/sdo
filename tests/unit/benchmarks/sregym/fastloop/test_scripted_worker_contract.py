@@ -8,21 +8,16 @@ import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
+from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import scripted_worker
+
+if TYPE_CHECKING:
+    import pytest
 
 ROOT = Path(__file__).resolve().parents[5]
 OPERATOR = ROOT / "sdo/operator"
 APP_FIXTURE = ROOT / "tests/fixtures/sdo/playbook_program_app"
-
-
-@pytest.fixture(scope="module")
-def operator_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    binary = tmp_path_factory.mktemp("sdo-operator") / "sdo-operator"
-    subprocess.run(["go", "build", "-o", str(binary), "./cmd/sdo-operator"], cwd=OPERATOR, check=True)
-    return binary
 
 
 def _accepted_app(tmp_path: Path) -> Path:

@@ -25,6 +25,7 @@ import (
 // This exercises accepted Git and outcome memory across the native lifecycle
 // and controller. Worker turns and cluster side effects are deterministic fakes.
 func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	accepted := nativeRepository(t)
 	repository, err := broker.New(accepted, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })

@@ -17,7 +17,7 @@ import (
 )
 
 func testDerivedOutcome(id, classification string, reflect bool) DerivedOutcome {
-    return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: classification}, RequiresReflection: reflect}
+	return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: classification}, RequiresReflection: reflect}
 }
 
 type rejectingLatePull struct{}
@@ -27,6 +27,7 @@ func (rejectingLatePull) VerifyPull(context.Context, string, uint32, string, []s
 }
 
 func TestNativeBrokerRejectsUnverifiedLatePullBeforeLedger(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -117,6 +118,7 @@ func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
 }
 
 func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })
 	if err != nil {
@@ -229,6 +231,7 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 }
 
 func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -265,6 +268,7 @@ func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
 }
 
 func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })
@@ -308,6 +312,7 @@ func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
 }
 
 func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
 	if err != nil {
@@ -330,6 +335,7 @@ func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
 }
 
 func TestNativeBrokerRecordedActionsDoNotCreateEmptyProposalCommit(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
 	if err != nil {
@@ -371,6 +377,7 @@ func TestProtoOutcomeDeriverAcceptsRuntimeClosure(t *testing.T) {
 }
 
 func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })

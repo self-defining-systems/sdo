@@ -302,7 +302,9 @@ def test_an_unplanned_turn_is_refused_loudly(scripted: dict[str, Path]) -> None:
 
 @pytest.mark.parametrize("fault", ["network_policy_block", "missing_configmap"])
 @pytest.mark.parametrize("claimed", [False, True], ids=["confirmed-cause", "claimed-cause"])
-def test_every_scripted_memory_proposal_passes_the_detector_gateway(tmp_path: Path, fault: str, claimed: bool) -> None:
+def test_every_scripted_memory_proposal_passes_the_detector_gateway(
+    tmp_path: Path, fault: str, claimed: bool, operator_binary: Path
+) -> None:
     from google.protobuf import json_format
 
     from benchmarks.sregym.assurance.scripted_codex.faults import PLANS, Facts
@@ -319,9 +321,7 @@ def test_every_scripted_memory_proposal_passes_the_detector_gateway(tmp_path: Pa
     proposal_path.write_text(json_format.MessageToJson(proto), encoding="utf-8")
     gateway = subprocess.run(
         [
-            "go",
-            "run",
-            "./cmd/sdo-operator",
+            str(operator_binary),
             "draft-test",
             "--app",
             str(worktree),
