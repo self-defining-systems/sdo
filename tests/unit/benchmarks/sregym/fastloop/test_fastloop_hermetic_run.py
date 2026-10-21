@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import shutil
 import subprocess
@@ -255,6 +256,7 @@ class Controller(FakeOps):
         result = scripted_worker.scripted_responder(IncidentRequest.model_validate(raw))
         assert result.status == "completed"
         (self.capture / "fixed.json").write_text(json.dumps(self.app.snapshot()))
+        (self.capture / "open@pre-apply-recordings.json").write_text("[]\n")
         data = result.model_dump(mode="json")
         self.results[incident] = data
         self.commands_by_incident[incident] = list(self.commands)
@@ -293,7 +295,11 @@ class Controller(FakeOps):
             corpus.mkdir(parents=True, exist_ok=True)
             for phase in ("open", "fixed"):
                 shutil.copyfile(self.capture / f"{phase}.json", corpus / f"{phase}.json")
-            (corpus / "recordings.json").write_text("[]\n")
+            shutil.copyfile(self.capture / "open@pre-apply-recordings.json", corpus / "recordings.json")
+            reference = playbook.program.corpus_cases[0].reference
+            assert reference.open_sha256 == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
+            assert reference.fixed_sha256 == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
+            assert reference.recordings_sha256 == hashlib.sha256((corpus / "recordings.json").read_bytes()).hexdigest()
             subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
             subprocess.run(
                 ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "reflection"],
@@ -375,6 +381,10 @@ class Controller(FakeOps):
             return ""
         assert argv[2] == "propose"
         target = Path(argv[argv.index("--dir") + 1])
+
+        def digest(name: str) -> str:
+            return hashlib.sha256((self.capture / name).read_bytes()).hexdigest()
+
         return json.dumps(
             {
                 "playbooks": [
@@ -394,9 +404,9 @@ class Controller(FakeOps):
                                     "reference": {
                                         "incidentId": "incident-1",
                                         "captureLabel": "open@pre-apply",
-                                        "openSha256": "0" * 64,
-                                        "fixedSha256": "0" * 64,
-                                        "recordingsSha256": "0" * 64,
+                                        "openSha256": digest("open@pre-apply.json"),
+                                        "fixedSha256": digest("fixed.json"),
+                                        "recordingsSha256": digest("open@pre-apply-recordings.json"),
                                     },
                                 }
                             ],
