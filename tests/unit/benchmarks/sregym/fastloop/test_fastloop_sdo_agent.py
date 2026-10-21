@@ -141,7 +141,11 @@ class FakeOps:
             return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
         self.states[control_namespace]["pending_closure"] = {
             "request": {"incident_id": incident_id},
-            "result": {"confirmed_root_causes": ROOT_CAUSES, "repair_actions": REPAIRS},
+            "result": {
+                "confirmed_root_causes": ROOT_CAUSES,
+                "repair_actions": REPAIRS,
+                "usage": {"input_tokens": 300000, "output_tokens": 3000},
+            },
             "detected_at": DETECTED.isoformat(),
             "dispatched_at": DETECTED.isoformat(),
             "responder_completed_at": (DETECTED + timedelta(seconds=40)).isoformat(),
@@ -340,6 +344,15 @@ def test_learning_drains_reflection_and_reads_tokens_and_warm_path_from_the_stri
     assert warm.controller_installed is False
     state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
     assert state.controllers["hotel-reservation"].pending is None
+
+
+def test_resolved_incident_keeps_responder_cost_and_mitigation_time_when_learning_fails(tmp_path: Path) -> None:
+    ops, calls = FakeOps(), []
+    agent = _agent(tmp_path, ops, calls)
+    resolved = agent.resolve(0, "p", _inject)
+    assert resolved.responder_tokens.input_tokens == 300000
+    assert resolved.mitigation_applied_at == INJECTED + timedelta(seconds=30)
+    assert resolved.resolved_at == VERIFIED
 
 
 def test_learning_exports_reflection_session_before_checkpointing(

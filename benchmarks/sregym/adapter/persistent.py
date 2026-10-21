@@ -527,6 +527,7 @@ def run_persistent_stage(
         "namespace": inputs.namespace,
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
+        "usage": result.get("usage"),
         # Names the responder's rollout in the stage-end evidence.
         "responder_session_id": result.get("responder_session_id"),
         "lifecycle_reused": lifecycle_reused,
@@ -581,6 +582,7 @@ def run_persistent_stage(
                 "namespace",
                 "incident_id",
                 "responder_session_id",
+                "usage",
                 "stage_end_runtime_artifacts",
             }
         },
@@ -655,6 +657,7 @@ def collect_followup_incident(
         "namespace": inputs.namespace,
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
+        "usage": result.get("usage"),
         "responder_session_id": result.get("responder_session_id"),
         "followup_incident": True,
         "stage_end_runtime_artifacts": evidence,
@@ -681,6 +684,7 @@ def collect_followup_incident(
                     "namespace",
                     "incident_id",
                     "responder_session_id",
+                    "usage",
                     "stage_end_runtime_artifacts",
                 }
             },

@@ -245,6 +245,7 @@ class SdoPersistentAgent:
             resolved_at=verified,
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
             mitigation=_summaries(repairs, successful_only=True),
+            responder_tokens=TokenCounts.from_usage(resolution.get("usage")),
             baseline_gate_seconds=gate.get("controller_baseline_wait"),
             driver_phase_timings_seconds=resolution.get("driver_phase_timings_seconds") or {},
             fault_gate_timings_seconds=gate,
@@ -334,7 +335,9 @@ class SdoPersistentAgent:
             rebuild_done_at=rebuild_verified or self._clock.now(),
             responder_started_at=outcome.responder_started_at or _timestamp(receipt.get("responder_started_at")),
             responder_finished_at=outcome.responder_finished_at or _timestamp(receipt.get("responder_finished_at")),
-            responder_tokens=TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage")),
+            responder_tokens=TokenCounts.from_usage(receipt.get("usage") or outcome_document.get("usage"))
+            if receipt.get("usage") or outcome_document.get("usage")
+            else outcome.responder_tokens,
             reflection_tokens=TokenCounts.from_usage(receipt.get("reflection_usage")),
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
