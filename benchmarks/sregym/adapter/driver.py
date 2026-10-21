@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -55,7 +55,7 @@ from benchmarks.sregym.adapter.persistent import (
     persist_resolution,
     run_persistent_stage,
 )
-from benchmarks.sregym.adapter.runtime import RuntimeConfig, _responder_instructions
+from benchmarks.sregym.adapter.runtime import RuntimeConfig, _responder_instructions, native_install_config
 from benchmarks.sregym.adapter.submission import submit_solution
 from benchmarks.sregym.protocol.conductor import (
     get_api_base,
@@ -537,6 +537,7 @@ def _launch_native_lifecycle(
     health_objective: str,
     api_base: str,
     persistent: bool,
+    install_config: NativeInstallConfig | None = None,
 ) -> dict[str, Any]:
     """Provision benchmark transport, then run the production Go host lifecycle."""
 
@@ -553,8 +554,8 @@ def _launch_native_lifecycle(
     cluster = BenchmarkClusterResourcesConfig(
         namespace=namespace,
         control_namespace=control_namespace,
-        responder_image=args.responder_image,
-        credentials_secret=args.credentials_secret,
+        responder_image=install_config.responder_image if install_config else args.responder_image,
+        credentials_secret=install_config.credentials_secret if install_config else args.credentials_secret,
         registry_push_secret=args.registry_push_secret,
         registry_insecure=True,
         kind_cluster_name=kind_cluster_name,
@@ -563,7 +564,7 @@ def _launch_native_lifecycle(
     prepare_benchmark_resources(cluster, relay_target_base=relay_target, kubeconfig=kubeconfig)
     if relay_target is not None:
         wait_submission_bridge(control_namespace, kubeconfig)
-    install = NativeInstallConfig(
+    install = install_config or NativeInstallConfig(
         repository=repository.resolve(),
         namespace=namespace,
         control_namespace=control_namespace,
@@ -596,6 +597,20 @@ def _launch_native_lifecycle(
         if api_base
         else (),
     )
+    if install_config is not None:
+        install = replace(
+            install,
+            control_namespace=control_namespace,
+            duration_seconds=None if persistent else install.response_timeout_seconds,
+            exit_after_closure=not persistent,
+            registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
+            responder_env=(
+                f"SDO_SREGYM_API_BASE={_in_cluster_api_base(api_base)}",
+                f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
+            )
+            if api_base
+            else (),
+        )
     if _has_accepted_lifecycle(repository):
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
         # detectors): install the controller over it instead of running the deployer and health judge again.
@@ -623,24 +638,8 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
 
     args = argparse.Namespace(
         kind_cluster_name=config.kind_cluster_name,
-        controller_image=config.controller_image,
-        responder_image=config.responder_image,
-        validator_image=config.validator_image,
-        repository_pvc=config.repository_pvc,
-        credentials_secret=config.credentials_secret,
         registry_push_secret=config.registry_push_secret,
         buildkit_image=config.buildkit_image,
-        model=config.model,
-        provider=config.agent_provider,
-        repair_policy=config.repair_policy,
-        late_findings=config.late_findings,
-        reflection_session=config.reflection_session,
-        reflection_guidance=config.reflection_guidance,
-        healthy_baseline=config.healthy_baseline,
-        max_follow_ups=config.max_follow_ups,
-        max_response_loops=config.max_response_loops,
-        follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
-        timeout_sec=config.timeout_seconds,
         max_deployment_attempts=config.max_deployment_attempts,
         agent_registrations=config.agent_registrations,
     )
@@ -652,6 +651,7 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         health_objective=health_objective,
         api_base=api_base,
         persistent=config.persistent,
+        install_config=native_install_config(config),
     )
 
 
