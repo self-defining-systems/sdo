@@ -303,6 +303,53 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 	return refreshPlaybookIndex(playbookRoot)
 }
 
+// FillResponderProposalContext supplies identity and provenance from the
+// verified reflection task. Explicit conflicting values are rejected.
+func FillResponderProposalContext(proposal *contracts.OperationalArtifactProposal, incidentID, outcomeCommit string) error {
+	if proposal == nil || incidentID == "" || outcomeCommit == "" {
+		return errors.New("responder proposal, incident ID, and outcome commit are required")
+	}
+	fill := func(field *string, name, expected, artifact string) error {
+		if *field != "" && *field != expected {
+			return fmt.Errorf("%s %s: expected %q, got %q", artifact, name, expected, *field)
+		}
+		*field = expected
+		return nil
+	}
+	for _, item := range proposal.GetDetectors() {
+		if item == nil {
+			continue
+		}
+		artifact := fmt.Sprintf("detector %q", item.GetId())
+		for _, field := range []struct {
+			value          *string
+			name, expected string
+		}{
+			{&item.Owner, "owner", "responder"},
+			{&item.DetectorClass, "detector_class", "incident"},
+			{&item.OriginatingCommit, "originating_commit", outcomeCommit},
+			{&item.OriginatingIncident, "originating_incident", incidentID},
+		} {
+			if err := fill(field.value, field.name, field.expected, artifact); err != nil {
+				return err
+			}
+		}
+	}
+	for _, item := range proposal.GetPlaybooks() {
+		if item == nil {
+			continue
+		}
+		artifact := fmt.Sprintf("playbook %q", item.GetId())
+		if err := fill(&item.Owner, "owner", "responder", artifact); err != nil {
+			return err
+		}
+		if err := fill(&item.OriginatingIncident, "originating_incident", incidentID, artifact); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, role ArtifactRole) error {
 	seen := map[string]bool{}
 	corpusIDs := map[string]bool{}
@@ -334,8 +381,34 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		if role == HealthJudgeArtifacts {
 			class = "health"
 		}
-		if item.GetOwner() != string(role) || item.GetDetectorClass() != class || item.GetConstructor() == "" || len(item.GetSources()) == 0 || item.GetOriginatingCommit() == "" || (role == ResponderArtifacts && (item.GetOriginatingIncident() == "" || item.GetFiring() != 1)) {
-			return fmt.Errorf("detector %q violates %s ownership or registration", item.GetId(), role)
+		var failures []string
+		for _, field := range []struct{ name, actual, expected string }{
+			{"owner", item.GetOwner(), string(role)},
+			{"detector_class", item.GetDetectorClass(), class},
+			{"constructor", item.GetConstructor(), "nonempty Go constructor"},
+			{"sources", strconv.Itoa(len(item.GetSources())), "at least one Go source"},
+			{"originating_commit", item.GetOriginatingCommit(), "nonempty accepted outcome commit"},
+		} {
+			invalid := field.actual == ""
+			if field.name == "sources" {
+				invalid = len(item.GetSources()) == 0
+			} else if field.name == "owner" || field.name == "detector_class" {
+				invalid = field.actual != field.expected
+			}
+			if invalid {
+				failures = append(failures, fmt.Sprintf("%s: expected %s, got %q", field.name, field.expected, field.actual))
+			}
+		}
+		if role == ResponderArtifacts {
+			if item.GetOriginatingIncident() == "" {
+				failures = append(failures, "originating_incident: expected nonempty incident ID, got empty")
+			}
+			if item.GetFiring() != 1 {
+				failures = append(failures, fmt.Sprintf("firing: expected 1, got %d", item.GetFiring()))
+			}
+		}
+		if len(failures) > 0 {
+			return fmt.Errorf("detector %q: %s", item.GetId(), strings.Join(failures, "; "))
 		}
 		foundSource := false
 		for _, id := range item.GetPossiblePlaybookIds() {
@@ -364,8 +437,21 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		if err := rejectPhysicalMemoryPath(item.GetMarkdown()); err != nil {
 			return fmt.Errorf("playbook %q: %w", item.GetId(), err)
 		}
-		if item.GetOwner() != "responder" || !playbookIDPattern.MatchString(item.GetFaultClass()) || strings.TrimSpace(item.GetOriginatingIncident()) == "" || strings.ContainsAny(item.GetOriginatingIncident(), "\r\n") || strings.TrimSpace(item.GetMarkdown()) == "" || strings.HasPrefix(strings.TrimSpace(item.GetMarkdown()), "---") {
-			return fmt.Errorf("invalid playbook %q", item.GetId())
+		var failures []string
+		if item.GetOwner() != "responder" {
+			failures = append(failures, fmt.Sprintf("owner: expected %q, got %q", "responder", item.GetOwner()))
+		}
+		if !playbookIDPattern.MatchString(item.GetFaultClass()) {
+			failures = append(failures, fmt.Sprintf("fault_class: expected a logical fault-class ID, got %q", item.GetFaultClass()))
+		}
+		if strings.TrimSpace(item.GetOriginatingIncident()) == "" || strings.ContainsAny(item.GetOriginatingIncident(), "\r\n") {
+			failures = append(failures, "originating_incident: expected nonempty incident ID on one line")
+		}
+		if strings.TrimSpace(item.GetMarkdown()) == "" || strings.HasPrefix(strings.TrimSpace(item.GetMarkdown()), "---") {
+			failures = append(failures, "markdown: expected nonempty body without front matter")
+		}
+		if len(failures) > 0 {
+			return fmt.Errorf("playbook %q: %s", item.GetId(), strings.Join(failures, "; "))
 		}
 		if role == HealthJudgeArtifacts && item.GetId() != "health-objective" {
 			return fmt.Errorf("health judge cannot author playbook %q", item.GetId())

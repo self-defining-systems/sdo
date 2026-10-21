@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
@@ -36,6 +38,9 @@ from sdo.contracts import (
     to_canonical_json,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 AGENT_ID = "sdo-reflector"
 TASK_TYPE = "outcome-reflection"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
@@ -61,12 +66,42 @@ def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
     return SessionReflector(backend, guidance=guidance)
 
 
+def _validate_proposal(proposal: OperationalArtifactProposal, checkout: Path, incident: str, commit: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="sdo-reflection-proposal-") as directory:
+        draft = Path(directory) / "proposal.json"
+        draft.write_text(to_canonical_json(proposal), encoding="utf-8")
+        command = [
+            "sdo-operator",
+            "proposal",
+            "validate",
+            "--app",
+            str(checkout),
+            "--proposal-json",
+            str(draft),
+            "--incident",
+            incident,
+            "--outcome-commit",
+            commit,
+        ]
+        if root := os.environ.get("SDO_OPERATOR_ROOT"):
+            command.extend(["--operator-root", root])
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            raise ReflectionProposalError(f"proposal validator unavailable: {exc}") from exc
+        if result.returncode:
+            raise ReflectionProposalError(
+                result.stderr.strip() or result.stdout.strip() or "proposal validation failed"
+            )
+
+
 def run_reflection_task(
     task_path: Path,
     result_name: str,
     publisher: ResultPublisher,
     *,
     reflector: Reflector | None = None,
+    validate_proposal: Callable[[OperationalArtifactProposal, Path, str, str], None] | None = None,
 ) -> AgentResult:
     task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
     if task.schema_version != "sdo.dev/v1alpha1" or not task.task_id:
@@ -125,9 +160,13 @@ def run_reflection_task(
                 closure=closure,
                 validation_feedback=feedback,
             )
+            proposal = None
             if turn.artifact_proposal is not None:
                 proposal = json_format.ParseDict(
                     turn.artifact_proposal.model_dump(mode="json", by_alias=True), OperationalArtifactProposal()
+                )
+                (validate_proposal or _validate_proposal)(
+                    proposal, Path(task.workspace.checkout_path), outcome.incident_id, request.outcome_commit
                 )
             break
         except (ReflectionProposalError, json_format.ParseError) as exc:
@@ -148,16 +187,6 @@ def run_reflection_task(
         raise ValueError("updated logical reflection requires typed artifacts")
     if turn.learning_decision == "no_change" and turn.artifact_proposal is not None:
         raise ValueError("no-change reflection cannot return artifacts")
-    if turn.artifact_proposal is not None:
-        for detector in turn.artifact_proposal.detectors:
-            if (
-                detector.originating_commit != request.outcome_commit
-                or detector.originating_incident != outcome.incident_id
-            ):
-                raise ValueError("reflected detector origin must match authoritative outcome")
-        for playbook in turn.artifact_proposal.playbooks:
-            if playbook.originating_incident != outcome.incident_id:
-                raise ValueError("reflected playbook origin must match authoritative outcome")
     typed_result = ReflectionResult(
         summary=turn.summary,
         learning_decision=turn.learning_decision,

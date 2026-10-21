@@ -10,6 +10,7 @@ from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any as ProtoAny
 
 from benchmarks.sregym.adapter import scripted_worker
+from sdo.agents.responder import reflection_worker
 from sdo.agents.views import IncidentRequest, StateChanges
 from sdo.contracts import (
     AgentResult,
@@ -247,6 +248,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         workspace={"proposal_id": "proposal-2", "checkout_path": str(seed), "base_commit": "outcome-commit"},
     )
     task_path.write_text(to_canonical_json(task), encoding="utf-8")
+    monkeypatch.setattr(reflection_worker, "_validate_proposal", lambda *_args: None)
     assert scripted_worker.main(["reflection"]) == 0
     reflected = parse_json(api.results["agent-result.json"], AgentResult())
     decision = ReflectionResult()

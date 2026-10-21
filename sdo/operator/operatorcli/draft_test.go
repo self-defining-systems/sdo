@@ -28,6 +28,65 @@ func TestParseDraftTestRequiresTypedProposal(t *testing.T) {
 	}
 }
 
+func TestProposalValidateUsesAuthoritativeContextAndMemoryEdge(t *testing.T) {
+	config, err := ParseDraftTestLaunch([]string{"proposal", "validate", "--app", "app", "--proposal-json", "draft.json", "--incident", "incident-1", "--outcome-commit", "commit-1"})
+	if err != nil || config.IncidentID != "incident-1" || config.OutcomeCommit != "commit-1" {
+		t.Fatalf("proposal validate launch: %+v, %v", config, err)
+	}
+	app := draftFixtureApp(t)
+	path := filepath.Join(t.TempDir(), "draft.json")
+	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "image-pull", Firing: 1, Clearing: 2, Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Pod"}}, Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package pull\n"}}}}}
+	data, err := protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path, IncidentID: "incident-1", OutcomeCommit: "commit-1"})
+	if err == nil || !strings.Contains(err.Error(), "go test") {
+		t.Fatalf("proposal did not reach compiler after context defaults: %v", err)
+	}
+	proposal.Detectors[0].Owner = "health_judge"
+	data, err = protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path, IncidentID: "incident-1", OutcomeCommit: "commit-1"})
+	if err == nil || !strings.Contains(err.Error(), "owner") || !strings.Contains(err.Error(), "responder") {
+		t.Fatalf("conflicting ownership lacked named feedback: %v", err)
+	}
+	proposal.Detectors[0].Owner = ""
+	proposal.Detectors[0].Sources = nil
+	data, err = protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path, IncidentID: "incident-1", OutcomeCommit: "commit-1"})
+	if err == nil || !strings.Contains(err.Error(), "sources: expected at least one Go source") {
+		t.Fatalf("missing detector sources lacked named feedback: %v", err)
+	}
+	proposal.Detectors[0].Sources = []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package pull\n"}}
+	proposal.Detectors[0].Firing = 0
+	data, err = protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path, IncidentID: "incident-1", OutcomeCommit: "commit-1"})
+	if err == nil || !strings.Contains(err.Error(), "firing: expected 1") {
+		t.Fatalf("invalid firing lacked named feedback: %v", err)
+	}
+}
+
 func TestDraftAllowsRealisticCapturedCorpusWithSeparateBound(t *testing.T) {
 	view := sdktest.Snapshot{NamespaceName: "app"}
 	for i := 0; i < 110; i++ {

@@ -26,11 +26,13 @@ type DraftTestConfig struct {
 	OperatorRoot    string
 	ProposalJSON    string
 	CaptureDir      string
+	IncidentID      string
+	OutcomeCommit   string
 }
 
 func ParseDraftTestLaunch(args []string) (DraftTestConfig, error) {
-	if len(args) == 0 || args[0] != "draft-test" {
-		return DraftTestConfig{}, errors.New("expected draft-test subcommand")
+	if len(args) == 0 || (args[0] != "draft-test" && (len(args) < 2 || args[0] != "proposal" || args[1] != "validate")) {
+		return DraftTestConfig{}, errors.New("expected draft-test or proposal validate subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator draft-test", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -38,13 +40,22 @@ func ParseDraftTestLaunch(args []string) (DraftTestConfig, error) {
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "baked operator sources")
 	proposalJSON := flags.String("proposal-json", "", "typed OperationalArtifactProposal ProtoJSON file")
 	captureDir := flags.String("capture-dir", "", "local or session incident capture directory")
-	if err := flags.Parse(args[1:]); err != nil {
+	incidentID := flags.String("incident", "", "verified incident ID")
+	outcomeCommit := flags.String("outcome-commit", "", "accepted outcome commit")
+	start := 1
+	if args[0] == "proposal" {
+		start = 2
+	}
+	if err := flags.Parse(args[start:]); err != nil {
 		return DraftTestConfig{}, err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(*app) == "" || strings.TrimSpace(*proposalJSON) == "" {
 		return DraftTestConfig{}, errors.New("draft-test requires application checkout and typed proposal JSON")
 	}
-	return DraftTestConfig{ApplicationRoot: *app, OperatorRoot: *operatorRoot, ProposalJSON: *proposalJSON, CaptureDir: *captureDir}, nil
+	if args[0] == "proposal" && (*incidentID == "" || *outcomeCommit == "") {
+		return DraftTestConfig{}, errors.New("proposal validate requires --incident and --outcome-commit")
+	}
+	return DraftTestConfig{ApplicationRoot: *app, OperatorRoot: *operatorRoot, ProposalJSON: *proposalJSON, CaptureDir: *captureDir, IncidentID: *incidentID, OutcomeCommit: *outcomeCommit}, nil
 }
 
 // RunDraftTest gives an agent local compiler feedback without publishing or
@@ -78,7 +89,12 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	if err := validateDraftSize(proposal); err != nil {
 		return err
 	}
-	applyArtifactSchemaDefaults(proposal)
+	if config.IncidentID != "" || config.OutcomeCommit != "" {
+		if err := memory.FillResponderProposalContext(proposal, config.IncidentID, config.OutcomeCommit); err != nil {
+			return err
+		}
+	}
+	applyArtifactSchemaDefaults(proposal, config.IncidentID == "")
 	app, err := filepath.Abs(config.ApplicationRoot)
 	if err != nil {
 		return err
@@ -167,8 +183,9 @@ func gitDraft(ctx context.Context, root string, args ...string) (string, error) 
 
 // applyArtifactSchemaDefaults fills the fields that the agent-facing structured artifact schema
 // (sdo/agents/views/artifact_proposal.py) defaults, so a hand-written ProtoJSON draft is checked exactly as the
-// structured result the agent returns will be. Identity and provenance fields have no default.
-func applyArtifactSchemaDefaults(proposal *contracts.OperationalArtifactProposal) {
+// structured result the agent returns will be. The reflection session already
+// supplies numeric fields through its typed model, so zero there remains invalid.
+func applyArtifactSchemaDefaults(proposal *contracts.OperationalArtifactProposal, numericDefaults bool) {
 	for _, detector := range proposal.GetDetectors() {
 		if detector == nil {
 			continue
@@ -179,11 +196,13 @@ func applyArtifactSchemaDefaults(proposal *contracts.OperationalArtifactProposal
 		defaultString(&detector.Interval, "30s")
 		defaultString(&detector.Severity, "warn")
 		defaultString(&detector.Debounce, "500ms")
-		if detector.Firing == 0 {
-			detector.Firing = 1
-		}
-		if detector.Clearing == 0 {
-			detector.Clearing = 2
+		if numericDefaults {
+			if detector.Firing == 0 {
+				detector.Firing = 1
+			}
+			if detector.Clearing == 0 {
+				detector.Clearing = 2
+			}
 		}
 	}
 	for _, playbook := range proposal.GetPlaybooks() {

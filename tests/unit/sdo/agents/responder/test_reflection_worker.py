@@ -1,4 +1,5 @@
 import json
+import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -6,10 +7,16 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any
 
-from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
+from sdo.agents.responder import reflection_worker
+from sdo.agents.responder.reflection import (
+    CodexSessionBackend,
+    ReflectionProposalError,
+    ReflectionTurn,
+    SessionReflector,
+)
 from sdo.agents.responder.reflection_worker import run_reflection_task
 from sdo.agents.views import PlanApplication, ProgramRun, ProgramToolCall
-from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, ReflectionResult
+from sdo.contracts import AgentResult, AgentTask, OperationalArtifactProposal, ReflectionRequest, ReflectionResult
 from sdo.contracts.proto import IncidentClosure, parse_json, to_canonical_json
 from tests.structured_turns import ScriptedAgent, reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
@@ -277,7 +284,9 @@ def test_reflection_worker_repairs_proto_rejection_or_returns_typed_failure(tmp_
     agent = ScriptedAgent(respond)
     reflector = SessionReflector(CodexSessionBackend(executor=agent.executor))
     publisher = Publisher()
-    result = run_reflection_task(_reflection_task(tmp_path), "result-map", publisher, reflector=reflector)
+    result = run_reflection_task(
+        _reflection_task(tmp_path), "result-map", publisher, reflector=reflector, validate_proposal=lambda *_: None
+    )
 
     assert publisher.payload is not None
     assert result.status == ("completed" if corrected else "failed")
@@ -433,7 +442,7 @@ def test_reflection_worker_returns_logical_artifact_proposal(tmp_path: Path) -> 
     path = tmp_path / "agent-task.json"
     path.write_text(to_canonical_json(task), encoding="utf-8")
     publisher = Publisher()
-    run_reflection_task(path, "result-map", publisher, reflector=LogicalReflector())
+    run_reflection_task(path, "result-map", publisher, reflector=LogicalReflector(), validate_proposal=lambda *_: None)
     assert publisher.payload is not None
     result = parse_json(publisher.payload, AgentResult())
     decision = ReflectionResult()
@@ -464,7 +473,9 @@ def test_reflection_worker_rejects_oversized_result(tmp_path: Path) -> None:
     path.write_text(to_canonical_json(task), encoding="utf-8")
     publisher = Publisher()
     with pytest.raises(ValueError, match="use corpus references"):
-        run_reflection_task(path, "result-map", publisher, reflector=OversizedReflector())
+        run_reflection_task(
+            path, "result-map", publisher, reflector=OversizedReflector(), validate_proposal=lambda *_: None
+        )
     assert publisher.payload is None
 
 
@@ -486,7 +497,7 @@ def test_reflection_worker_serializes_programs_and_sdk_gaps(tmp_path: Path, refl
     path = tmp_path / "agent-task.json"
     path.write_text(to_canonical_json(task), encoding="utf-8")
     publisher = Publisher()
-    run_reflection_task(path, "result-map", publisher, reflector=reflector)
+    run_reflection_task(path, "result-map", publisher, reflector=reflector, validate_proposal=lambda *_: None)
     assert publisher.payload is not None
     result = parse_json(publisher.payload, AgentResult())
     decision = ReflectionResult()
@@ -522,8 +533,70 @@ def test_reflection_worker_rejects_false_origin(tmp_path: Path) -> None:
     path = tmp_path / "agent-task.json"
     path.write_text(to_canonical_json(task), encoding="utf-8")
     publisher = Publisher()
-    import pytest
 
-    with pytest.raises(ValueError, match="origin"):
-        run_reflection_task(path, "result-map", publisher, reflector=WrongOriginReflector())
-    assert publisher.payload is None
+    def reject_origin(proposal: object, _checkout: Path, incident: str, _commit: str) -> None:
+        if proposal.playbooks[0].originating_incident != incident:
+            raise ReflectionProposalError(f"originating_incident: expected {incident!r}")
+
+    result = run_reflection_task(
+        path, "result-map", publisher, reflector=WrongOriginReflector(), validate_proposal=reject_origin
+    )
+    assert result.status == "failed"
+    assert "originating_incident" in result.error_summary
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_reflection_worker_corrects_named_validator_error_or_fails_once(tmp_path: Path, corrected: bool) -> None:
+    class ScriptedReflector:
+        def __init__(self) -> None:
+            self.feedback: list[str | None] = []
+
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            self.feedback.append(kwargs.get("validation_feedback"))
+            sources = (
+                [{"name": "detector.go", "content": "package pull\n"}] if corrected and len(self.feedback) > 1 else []
+            )
+            return ReflectionTurn.model_validate(
+                {
+                    "summary": "Learn image pull failure",
+                    "learning_decision": "updated",
+                    "proposed_changes": [],
+                    "artifact_proposal": {"detectors": [{"id": "image-pull", "sources": sources}]},
+                }
+            )
+
+    def validate(proposal: object, _checkout: Path, _incident: str, _commit: str) -> None:
+        if not proposal.detectors[0].sources:
+            raise ReflectionProposalError('detector "image-pull" sources: expected at least one Go source, got "0"')
+
+    reflector = ScriptedReflector()
+    result = run_reflection_task(
+        _reflection_task(tmp_path), "result-map", Publisher(), reflector=reflector, validate_proposal=validate
+    )
+    assert reflector.feedback[0] is None
+    assert all("sources: expected at least one Go source" in value for value in reflector.feedback[1:])
+    assert result.status == ("completed" if corrected else "failed")
+    assert len(reflector.feedback) == (2 if corrected else 3)
+
+
+def test_reflection_validator_invokes_go_command_with_task_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        draft = Path(command[command.index("--proposal-json") + 1])
+        assert json.loads(draft.read_text(encoding="utf-8"))["detectors"][0]["id"] == "image-pull"
+        return subprocess.CompletedProcess(
+            command, 1, "", 'detector "image-pull" sources: expected at least one Go source'
+        )
+
+    monkeypatch.setattr(reflection_worker.subprocess, "run", run)
+    proposal = OperationalArtifactProposal()
+    proposal.detectors.add(id="image-pull")
+    with pytest.raises(ReflectionProposalError, match="sources: expected at least one Go source"):
+        reflection_worker._validate_proposal(proposal, tmp_path, "incident-1", "commit-1")
+    assert calls[0][:3] == ["sdo-operator", "proposal", "validate"]
+    assert calls[0][calls[0].index("--incident") + 1] == "incident-1"
+    assert calls[0][calls[0].index("--outcome-commit") + 1] == "commit-1"

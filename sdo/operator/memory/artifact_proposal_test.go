@@ -82,6 +82,49 @@ func TestMaterializeRejectsUntrustedPathsBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestResponderProposalContextFillsAuthoritativeFieldsAndNamesConflicts(t *testing.T) {
+	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "image-pull", Constructor: "New", Firing: 1, Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package imagepull\n"}}}}, Playbooks: []*contracts.ProposedPlaybook{{Id: "image-pull", FaultClass: "image-pull", Markdown: "# Image pull"}}}
+	if err := FillResponderProposalContext(proposal, "incident-1", "commit-1"); err != nil {
+		t.Fatal(err)
+	}
+	detector := proposal.Detectors[0]
+	if detector.Owner != "responder" || detector.DetectorClass != "incident" || detector.OriginatingIncident != "incident-1" || detector.OriginatingCommit != "commit-1" || proposal.Playbooks[0].Owner != "responder" || proposal.Playbooks[0].OriginatingIncident != "incident-1" {
+		t.Fatalf("authoritative fields were not filled: %+v %+v", detector, proposal.Playbooks[0])
+	}
+	for _, test := range []struct{ field, value, expected string }{
+		{"owner", "health_judge", "responder"},
+		{"detector_class", "health", "incident"},
+		{"originating_commit", "wrong", "commit-1"},
+		{"originating_incident", "wrong", "incident-1"},
+	} {
+		conflict := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "image-pull"}}}
+		switch test.field {
+		case "owner":
+			conflict.Detectors[0].Owner = test.value
+		case "detector_class":
+			conflict.Detectors[0].DetectorClass = test.value
+		case "originating_commit":
+			conflict.Detectors[0].OriginatingCommit = test.value
+		case "originating_incident":
+			conflict.Detectors[0].OriginatingIncident = test.value
+		}
+		err := FillResponderProposalContext(conflict, "incident-1", "commit-1")
+		if err == nil || !strings.Contains(err.Error(), test.field) || !strings.Contains(err.Error(), test.expected) {
+			t.Errorf("%s conflict lacks expected value: %v", test.field, err)
+		}
+	}
+}
+
+func TestMaterializeNamesMissingDetectorRegistrationFields(t *testing.T) {
+	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "image-pull", Owner: "responder", DetectorClass: "incident", OriginatingCommit: "commit-1", OriginatingIncident: "incident-1"}}}
+	err := MaterializeArtifacts(t.TempDir(), proposal, ResponderArtifacts)
+	for _, field := range []string{"constructor", "sources", "firing"} {
+		if err == nil || !strings.Contains(err.Error(), field) {
+			t.Fatalf("missing %s was not named: %v", field, err)
+		}
+	}
+}
+
 func TestMaterializeRejectsPhysicalReferencesInWorkerContent(t *testing.T) {
 	for _, test := range []struct {
 		name     string

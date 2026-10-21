@@ -168,7 +168,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
 	}
 	if result.GetStatus() == "failed" && result.GetErrorSummary() != "" {
-		return ReflectionDecision{LearningDecision: "failed", Error: result.GetErrorSummary()}, nil
+		return w.withUsage(ReflectionDecision{LearningDecision: "failed", Error: result.GetErrorSummary()}, workspace.IncidentID)
 	}
 	if result.GetStatus() != "completed" {
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
@@ -214,10 +214,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("updated reflection omitted typed operational artifacts")
 			}
 			proposal := proto.Clone(response.GetArtifactProposal()).(*contracts.OperationalArtifactProposal)
-			for _, detector := range proposal.GetDetectors() {
-				if detector.GetOriginatingCommit() == "" {
-					detector.OriginatingCommit = outcomeCommit
-				}
+			if err := memory.FillResponderProposalContext(proposal, workspace.IncidentID, outcomeCommit); err != nil {
+				return w.withUsage(ReflectionDecision{LearningDecision: "failed", Error: err.Error()}, workspace.IncidentID)
 			}
 			captureDir := ""
 			if w.CorpusSessionRoot != "" {
@@ -227,7 +225,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				}
 			}
 			if err := memory.MaterializeArtifacts(workspace.Worktree, proposal, memory.ResponderArtifacts, captureDir); err != nil {
-				return ReflectionDecision{}, fmt.Errorf("materialize reflection artifacts: %w", err)
+				return w.withUsage(ReflectionDecision{LearningDecision: "failed", Error: fmt.Sprintf("materialize reflection artifacts: %v", err)}, workspace.IncidentID)
 			}
 			if err := recordClosurePhase(ctx, "memory_edge_materialization"); err != nil {
 				return ReflectionDecision{}, err
@@ -237,8 +235,12 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		}
 	}
 	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), SDKGaps: response.GetSdkGaps()}
+	return w.withUsage(decision, workspace.IncidentID)
+}
+
+func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incidentID string) (ReflectionDecision, error) {
 	if w.UsageLogPath != nil {
-		data, err := os.ReadFile(w.UsageLogPath(workspace.IncidentID))
+		data, err := os.ReadFile(w.UsageLogPath(incidentID))
 		if err == nil {
 			for _, line := range bytes.Split(data, []byte("\n")) {
 				if len(line) == 0 {

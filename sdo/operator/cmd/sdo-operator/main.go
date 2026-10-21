@@ -79,7 +79,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "draft-test" {
+	if len(os.Args) > 1 && (os.Args[1] == "draft-test" || os.Args[1] == "proposal") {
 		config, err := operatorcli.ParseDraftTestLaunch(os.Args[1:])
 		if err == nil {
 			err = operatorcli.RunDraftTest(context.Background(), config)

@@ -132,8 +132,8 @@ class DetectorDraft(ArtifactDraft):
     severity: str = "warn"
     debounce: str = "500ms"
     possible_playbook_ids: list[str] = Field(default_factory=list)
-    originating_commit: str = Field(min_length=1)
-    originating_incident: str = Field(min_length=1)
+    originating_commit: str = ""
+    originating_incident: str = ""
     sources: list[GoSourceDraft] = Field(default_factory=list)
 
 
@@ -141,7 +141,7 @@ class PlaybookDraft(ArtifactDraft):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
     owner: str = "responder"
     fault_class: str = Field(min_length=1)
-    originating_incident: str = Field(min_length=1)
+    originating_incident: str = ""
     markdown: str = Field(min_length=1)
     scripts: list[ScriptDraft] = Field(default_factory=list)
     program: ProgramDraft | None = None

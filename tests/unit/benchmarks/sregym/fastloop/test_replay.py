@@ -445,7 +445,9 @@ def test_scripted_reflection_replay_runs_worker_again(tmp_path: Path, capsys: py
     from benchmarks.sregym.adapter.scripted_worker import ScriptedReflector
 
     publisher = Publisher()
-    run_reflection_task(task_path, "result", publisher, reflector=ScriptedReflector())
+    run_reflection_task(
+        task_path, "result", publisher, reflector=ScriptedReflector(), validate_proposal=lambda *_: None
+    )
     run_dir = tmp_path / "results" / "run"
     run_dir.mkdir(parents=True)
     (tmp_path / "fastloop.json").write_text(json.dumps({"workspace": str(source)}), encoding="utf-8")
