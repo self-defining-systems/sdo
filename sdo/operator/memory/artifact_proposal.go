@@ -66,12 +66,28 @@ type artifactBatching struct {
 
 // MaterializeArtifacts is the only edge that maps worker-owned logical artifacts
 // to the current repository layout. Broker validation still decides acceptance.
-func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactProposal, role ArtifactRole) error {
+func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactProposal, role ArtifactRole, captureDir ...string) error {
 	if root == "" || proposal == nil || (role != HealthJudgeArtifacts && role != ResponderArtifacts) {
 		return errors.New("checkout, typed artifacts, and known role are required")
 	}
 	if err := validateArtifactProposal(proposal, role); err != nil {
 		return err
+	}
+	resolved := map[string]map[string][]byte{}
+	for _, playbook := range proposal.GetPlaybooks() {
+		for _, corpus := range playbook.GetProgram().GetCorpusCases() {
+			if corpus.GetReference() == nil {
+				continue
+			}
+			if len(captureDir) != 1 || captureDir[0] == "" {
+				return fmt.Errorf("corpus %s requires a controller capture store", corpus.GetId())
+			}
+			files, err := ResolveCorpusReference(captureDir[0], playbook.GetOriginatingIncident(), corpus)
+			if err != nil {
+				return fmt.Errorf("corpus %s: %w", corpus.GetId(), err)
+			}
+			resolved[corpus.GetId()] = files
+		}
 	}
 	if err := rejectArtifactSymlinks(filepath.Join(root, ".sdo")); err != nil {
 		return err
@@ -214,8 +230,12 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 				if err := os.MkdirAll(caseRoot, 0o755); err != nil {
 					return err
 				}
-				for name, content := range map[string]string{"open.json": corpus.GetOpenJson(), "fixed.json": corpus.GetFixedJson(), "healthy.json": corpus.GetHealthyJson(), "recordings.json": corpus.GetRecordingsJson(), "labels.json": corpus.GetLabelsJson()} {
-					if err := os.WriteFile(filepath.Join(caseRoot, name), []byte(content), 0o644); err != nil {
+				files := resolved[corpus.GetId()]
+				if files == nil {
+					files = map[string][]byte{"open.json": []byte(corpus.GetOpenJson()), "fixed.json": []byte(corpus.GetFixedJson()), "healthy.json": []byte(corpus.GetHealthyJson()), "recordings.json": []byte(corpus.GetRecordingsJson()), "labels.json": []byte(corpus.GetLabelsJson())}
+				}
+				for name, content := range files {
+					if err := os.WriteFile(filepath.Join(caseRoot, name), content, 0o644); err != nil {
 						return err
 					}
 				}
@@ -383,6 +403,12 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 					return fmt.Errorf("playbook %q has invalid or duplicate corpus case %q", item.GetId(), corpus.GetId())
 				}
 				corpusIDs[corpus.GetId()] = true
+				if reference := corpus.GetReference(); reference != nil {
+					if corpus.GetOpenJson() != "" || corpus.GetFixedJson() != "" || corpus.GetHealthyJson() != "" || corpus.GetRecordingsJson() != "" || corpus.GetLabelsJson() != "" || reference.GetIncidentId() != item.GetOriginatingIncident() {
+						return fmt.Errorf("playbook %q corpus %q has mixed data or mismatched captured incident %q", item.GetId(), corpus.GetId(), reference.GetIncidentId())
+					}
+					continue
+				}
 				if len(corpus.GetOpenJson())+len(corpus.GetFixedJson())+len(corpus.GetHealthyJson())+len(corpus.GetRecordingsJson())+len(corpus.GetLabelsJson()) > 8<<20 {
 					return fmt.Errorf("playbook %q corpus %q exceeds 8 MiB", item.GetId(), corpus.GetId())
 				}

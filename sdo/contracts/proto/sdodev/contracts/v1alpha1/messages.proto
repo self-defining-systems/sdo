@@ -191,6 +191,24 @@ message ProposedCorpusCase {
   string healthy_json = 4;
   string recordings_json = 5;
   string labels_json = 6;
+  CorpusCaptureReference reference = 7;
+}
+
+message CorpusCaptureReference {
+  string incident_id = 1;
+  string capture_label = 2;
+  string open_sha256 = 3;
+  string fixed_sha256 = 4;
+  string recordings_sha256 = 5;
+  repeated CorpusBinding bindings = 6;
+  repeated CorpusBinding peer_bindings = 7;
+  repeated string root_cause_program_ids = 8;
+  repeated string no_match_program_ids = 9;
+}
+
+message CorpusBinding {
+  string name = 1;
+  ObjectRef object = 2;
 }
 
 message ProposedLibrary {

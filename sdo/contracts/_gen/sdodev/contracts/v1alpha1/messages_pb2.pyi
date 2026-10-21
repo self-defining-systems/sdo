@@ -289,20 +289,52 @@ class ProposedProgram(_message.Message):
     def __init__(self, sources: _Optional[_Iterable[_Union[ProposedGoSource, _Mapping]]] = ..., corpus_cases: _Optional[_Iterable[_Union[ProposedCorpusCase, _Mapping]]] = ...) -> None: ...
 
 class ProposedCorpusCase(_message.Message):
-    __slots__ = ("id", "open_json", "fixed_json", "healthy_json", "recordings_json", "labels_json")
+    __slots__ = ("id", "open_json", "fixed_json", "healthy_json", "recordings_json", "labels_json", "reference")
     ID_FIELD_NUMBER: _ClassVar[int]
     OPEN_JSON_FIELD_NUMBER: _ClassVar[int]
     FIXED_JSON_FIELD_NUMBER: _ClassVar[int]
     HEALTHY_JSON_FIELD_NUMBER: _ClassVar[int]
     RECORDINGS_JSON_FIELD_NUMBER: _ClassVar[int]
     LABELS_JSON_FIELD_NUMBER: _ClassVar[int]
+    REFERENCE_FIELD_NUMBER: _ClassVar[int]
     id: str
     open_json: str
     fixed_json: str
     healthy_json: str
     recordings_json: str
     labels_json: str
-    def __init__(self, id: _Optional[str] = ..., open_json: _Optional[str] = ..., fixed_json: _Optional[str] = ..., healthy_json: _Optional[str] = ..., recordings_json: _Optional[str] = ..., labels_json: _Optional[str] = ...) -> None: ...
+    reference: CorpusCaptureReference
+    def __init__(self, id: _Optional[str] = ..., open_json: _Optional[str] = ..., fixed_json: _Optional[str] = ..., healthy_json: _Optional[str] = ..., recordings_json: _Optional[str] = ..., labels_json: _Optional[str] = ..., reference: _Optional[_Union[CorpusCaptureReference, _Mapping]] = ...) -> None: ...
+
+class CorpusCaptureReference(_message.Message):
+    __slots__ = ("incident_id", "capture_label", "open_sha256", "fixed_sha256", "recordings_sha256", "bindings", "peer_bindings", "root_cause_program_ids", "no_match_program_ids")
+    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    CAPTURE_LABEL_FIELD_NUMBER: _ClassVar[int]
+    OPEN_SHA256_FIELD_NUMBER: _ClassVar[int]
+    FIXED_SHA256_FIELD_NUMBER: _ClassVar[int]
+    RECORDINGS_SHA256_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    PEER_BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    ROOT_CAUSE_PROGRAM_IDS_FIELD_NUMBER: _ClassVar[int]
+    NO_MATCH_PROGRAM_IDS_FIELD_NUMBER: _ClassVar[int]
+    incident_id: str
+    capture_label: str
+    open_sha256: str
+    fixed_sha256: str
+    recordings_sha256: str
+    bindings: _containers.RepeatedCompositeFieldContainer[CorpusBinding]
+    peer_bindings: _containers.RepeatedCompositeFieldContainer[CorpusBinding]
+    root_cause_program_ids: _containers.RepeatedScalarFieldContainer[str]
+    no_match_program_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, incident_id: _Optional[str] = ..., capture_label: _Optional[str] = ..., open_sha256: _Optional[str] = ..., fixed_sha256: _Optional[str] = ..., recordings_sha256: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[CorpusBinding, _Mapping]]] = ..., peer_bindings: _Optional[_Iterable[_Union[CorpusBinding, _Mapping]]] = ..., root_cause_program_ids: _Optional[_Iterable[str]] = ..., no_match_program_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class CorpusBinding(_message.Message):
+    __slots__ = ("name", "object")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    OBJECT_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    object: _common_pb2.ObjectRef
+    def __init__(self, name: _Optional[str] = ..., object: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ...) -> None: ...
 
 class ProposedLibrary(_message.Message):
     __slots__ = ("package", "sources")

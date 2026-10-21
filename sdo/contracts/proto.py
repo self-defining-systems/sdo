@@ -92,6 +92,8 @@ ProposedGoSource = messages_pb2.ProposedGoSource
 ProposedPlaybook = messages_pb2.ProposedPlaybook
 ProposedProgram = messages_pb2.ProposedProgram
 ProposedCorpusCase = messages_pb2.ProposedCorpusCase
+CorpusCaptureReference = messages_pb2.CorpusCaptureReference
+CorpusBinding = messages_pb2.CorpusBinding
 ProposedLibrary = messages_pb2.ProposedLibrary
 ProposedTrafficGenerator = messages_pb2.ProposedTrafficGenerator
 ProtoMemoryWatch = messages_pb2.MemoryWatch
@@ -160,6 +162,8 @@ __all__ = [
     "ProgramSpec",
     "OperationalArtifactProposal",
     "ProposedCorpusCase",
+    "CorpusCaptureReference",
+    "CorpusBinding",
     "ProposedDetector",
     "ProposedGoSource",
     "ProposedLibrary",
