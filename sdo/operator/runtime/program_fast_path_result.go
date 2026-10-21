@@ -12,6 +12,7 @@ func fastPathResult(request IncidentRequest, loop *ResponderLoop, attempt FastPa
 		SchemaVersion: ProtocolSchemaVersion, IncidentID: request.IncidentID, Status: IncidentCompleted,
 		Timing:              TimingMetrics{StartedAt: started, CompletedAt: completed},
 		FinalDetectorStates: append([]DetectorEvaluation(nil), attempt.Verification.DetectorStates...),
+		ProgramToolCalls:    loop.ToolCalls(),
 		ProgramRuns:         loop.ProgramRuns(), PlanApplications: loop.PlanApplications(), ProgramFailureSignals: loop.FailureSignals(),
 		ResolutionPath: "fast_path", FastPathPrograms: append([]string(nil), attempt.Programs...),
 		FastPathRelationCoveredFindings: append([]RelationCoveredFinding(nil), attempt.RelationCoveredFindings...),

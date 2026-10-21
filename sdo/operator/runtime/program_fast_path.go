@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -121,6 +122,8 @@ func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust 
 // TryTrustedFastPath makes one settled, verified plan attempt for an incident.
 // The caller hands an unsuccessful attempt to the responder with Summary.
 func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int) FastPathAttempt {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	skip := func(reason FastPathSkipReason) FastPathAttempt {
@@ -208,7 +211,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		plan := preview.Plan
 		var err error
 		if !cached {
-			plan, err = mitigator.Mitigate(ctx, matchedView, run.Bindings)
+			plan, err = l.runMitigator(ctx, run.ProgramID, mitigator, matchedView, run.Bindings)
 		}
 		if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
 			return skip(FastPathSkipInvalidPlan)
@@ -220,8 +223,21 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	sort.Strings(attempt.Programs)
 	l.fastPathPrograms = append([]string(nil), attempt.Programs...)
 	started := time.Now().UTC()
+	planIDs := make([]string, 0, len(selectedPlans))
+	for i, plan := range selectedPlans {
+		id := fmt.Sprintf("fast-path-plan-%d", i+1)
+		planIDs = append(planIDs, id)
+		requestJSON, _ := json.Marshal(ToolRequest{Command: "plan", ProgramID: plan.programID, Bindings: plan.bindings})
+		responseJSON, _ := json.Marshal(ToolResponse{Command: "plan", PlanID: id})
+		l.calls = append(l.calls, ToolCall{Command: "plan", At: started, RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Summary: "trusted program prepared plan"})
+	}
 	l.batches++
 	attempt.Attempted = true
+	l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true})
+	if err := l.persistToolState(ctx); err != nil {
+		attempt.Summary = err.Error()
+		return attempt
+	}
 	preview, prepareErr := l.Executor.Apply(ctx, l.Request, batch, true)
 	if prepareErr == nil && l.BeforeFastPathApply != nil {
 		prepareErr = l.BeforeFastPathApply(ctx, attempt.Programs, preview.PreImages)
@@ -231,14 +247,16 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		for _, id := range attempt.Programs {
 			l.addFailureSignal("fast_path_failure:" + id)
 		}
-		l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()})
+		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
 		return attempt
 	}
-	result, applyErr := l.Executor.Apply(ctx, l.Request, batch, false)
+	executor := l.applicationExecutor("fast-path-1")
+	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
 	response := ToolResponse{}
 	if result.Applied {
 		l.verify(ctx, selectedPlans, &response)
 	}
+	fillProgramRevisions(ctx, response.ProgramRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	attempt.Verification = response
 	attempt.Resolved = applyErr == nil && result.VerificationPassed && response.Healthy
 	if attempt.Resolved {
@@ -271,7 +289,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 			l.addFailureSignal("fast_path_failure:" + id)
 		}
 		if len(result.ActionsApplied) > 0 {
-			if rollbackErr := l.Executor.Rollback(ctx, result); rollbackErr != nil {
+			if rollbackErr := executor.Rollback(ctx, result); rollbackErr != nil {
 				attempt.RollbackErr = rollbackErr.Error()
 			} else {
 				attempt.RolledBack = true
@@ -289,7 +307,37 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if applyErr != nil {
 		entry.Error = applyErr.Error()
 	}
-	l.applicationsLog = append(l.applicationsLog, entry)
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == entry.ID {
+			l.applicationsLog[i] = entry
+		}
+	}
+	if attempt.RolledBack {
+		result.RolledBack = true
+		result.RollingBack = false
+		result.RollbackCompleted = len(result.ActionsApplied)
+	}
+	if attempt.RollbackErr != "" {
+		result.RollbackError = attempt.RollbackErr
+		result.RollingBack = true
+	}
+	l.applications["fast-path-1"] = result
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == entry.ID {
+			l.applicationsLog[i].Result = result
+		}
+	}
+	response.Command = "apply"
+	response.ApplicationID = "fast-path-1"
+	if applyErr != nil {
+		response.Error = applyErr.Error()
+	}
+	if !attempt.Resolved && response.Error == "" {
+		response.Error = "trusted fast-path verification failed"
+	}
+	requestJSON, _ := json.Marshal(ToolRequest{Command: "apply", PlanIDs: planIDs})
+	responseJSON, _ := json.Marshal(response)
+	l.calls = append(l.calls, ToolCall{Command: "apply", At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: attempt.Summary})
 	l.calls = append(l.calls, ToolCall{Command: "fast-path", At: time.Now().UTC(), Summary: boundedToolText(attempt.Summary)})
 	return attempt
 }

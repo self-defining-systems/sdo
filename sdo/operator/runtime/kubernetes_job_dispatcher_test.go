@@ -137,10 +137,7 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	loop.InitialDiagnose(context.Background())
 	outcomes := []memory.Outcome{}
 	for index := 0; index < 3; index++ {
-		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
-			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "image-pull-failure", ProgramRevision: "tree-a"}},
-			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"image-pull-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
-		}})
+		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "image-pull-failure", "tree-a")})
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ProgramFastPath: true,
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
@@ -192,10 +189,7 @@ func TestHermeticTrustedLatentDriftFastPathSkipsResponderAndReflection(t *testin
 	request.Findings = []sdk.Finding{finding}
 	request.DriftEvents = []sdk.DriftEvent{{Ref: finding.PrimaryResource, Classification: sdk.DriftFault, ProgramID: "service-targetport-mismatch", ObservedAt: time.Now().UTC()}}
 	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
-	outcomes := []memory.Outcome{{IncidentID: "earlier-drift", Record: &contracts.OutcomeRecord{
-		SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
-		PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
-	}}}
+	outcomes := []memory.Outcome{{IncidentID: "earlier-drift", Record: verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a")}}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
 		ProgramFastPath: true, ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: outcomes},
@@ -257,10 +251,7 @@ func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) 
 	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
 	outcomes := make([]memory.Outcome, 3)
 	for index := range outcomes {
-		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
-			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
-			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
-		}}
+		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a")}
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
@@ -353,7 +344,7 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	loop.CorpusReplayPassed = true
 	outcomes := make([]memory.Outcome, 3)
 	for index := range outcomes {
-		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "image-pull-failure", ProgramRevision: "tree-a"}}, PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"image-pull-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}}}
+		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "image-pull-failure", "tree-a")}
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace", ProgramFastPath: true, Outcomes: priorOutcomeReader{outcomes: outcomes}, PollInterval: time.Millisecond, LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
 	request, err = dispatcher.PrepareDispatch(context.Background(), request)
@@ -393,7 +384,7 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	if err != nil || deployment.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
 		t.Fatalf("failed relation verification left mutation: %+v %v", deployment, err)
 	}
-	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure") {
+	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure@tree-a") {
 		t.Fatalf("relation and trust evidence: %+v %+v", loop.fastPathRelationCoveredFindings, loop.FailureSignals())
 	}
 	cancel()
@@ -409,13 +400,23 @@ func TestInterruptedFastPathRestoresPersistedPreImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preImages, err := json.Marshal([]PlanPreImage{{Ref: ref, Object: before}})
+	images := []PlanPreImage{{Ref: ref, Object: before}}
+	after := before.DeepCopy()
+	if err := program.ApplySetField(after.Object, "spec.ports[0].targetPort", int64(8080)); err != nil {
+		t.Fatal(err)
+	}
+	pending := 0
+	journal, err := json.Marshal(PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}}}, PreImages: images, Patches: []PlanPatch{{Ref: ref, Before: before, After: after}}, PendingAction: &pending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preImages, err := json.Marshal(images)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = client.CoreV1().ConfigMaps("app").Create(context.Background(), &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: IncidentJobName(request.IncidentID) + "-fast-path"},
-		Data:       map[string]string{"state": "attempting", "preimages": string(preImages), "program_ids": `["service-targetport-mismatch"]`},
+		Data:       map[string]string{"state": "attempting", "application": string(journal), "preimages": string(preImages), "program_ids": `["service-targetport-mismatch"]`},
 	}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +431,7 @@ func TestInterruptedFastPathRestoresPersistedPreImages(t *testing.T) {
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app"}
 	_, summary, resolved, err := dispatcher.tryFastPath(context.Background(), request, loop)
-	if err != nil || resolved || !strings.Contains(summary, "rollback true") {
+	if err != nil || resolved || !strings.Contains(summary, "rollback complete") {
 		t.Fatalf("interrupted attempt: summary=%q resolved=%t err=%v", summary, resolved, err)
 	}
 	service, err = client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})

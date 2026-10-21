@@ -30,6 +30,7 @@ const (
 var ErrStateConflict = errors.New("controller state conflict")
 
 type RuntimeState struct {
+	ResponderToolStateJSON   []byte
 	Version                  string
 	SchedulerDeadlines       map[string]time.Time
 	FindingStates            map[string]FindingState
@@ -88,6 +89,7 @@ func encodeControllerState(state RuntimeState) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("project controller state: %w", err)
 	}
+	document.ResponderToolStateJson = append([]byte(nil), state.ResponderToolStateJSON...)
 	payload, err := wire.Canonical(document)
 	if err != nil {
 		return nil, fmt.Errorf("encode controller state: %w", err)
@@ -100,7 +102,9 @@ func decodeControllerState(payload []byte) (RuntimeState, error) {
 	if err := wire.Unmarshal(payload, document); err != nil {
 		return RuntimeState{}, fmt.Errorf("decode controller state: %w", err)
 	}
-	return controllerStateState(document), nil
+	state := controllerStateState(document)
+	state.ResponderToolStateJSON = append([]byte(nil), document.GetResponderToolStateJson()...)
+	return state, nil
 }
 
 type StateStore interface {

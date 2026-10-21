@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +10,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
-
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,47 +22,28 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func TestSyntheticTrustAndFastPathCoverage(t *testing.T) {
-	// Invented outcomes and one Deployment/Service relation; no captured run data.
-	outcomes := []*contracts.OutcomeRecord{}
-	for range 3 {
-		outcomes = append(outcomes, &contracts.OutcomeRecord{Classification: "success", SourceCommit: "revision-a",
-			ProgramRuns:      []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}},
-			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"repair"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}})
-	}
-	trust := ProgramTrustStats(outcomes, 3)
-	if state := trust["repair"]; !state.Trusted || state.VerifiedSuccesses != 3 || state.Failures != 0 {
-		t.Fatalf("synthetic successes did not establish trust: %+v", state)
-	}
+func TestHandwrittenFastPathCoverageDeduplicatesMatches(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
-	findings := []sdk.Finding{
-		{Fingerprint: "drift", PrimaryResource: ref},
-		{Fingerprint: "health", PrimaryResource: ref},
-		{Fingerprint: "service", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}},
-	}
-	snapshot := sdktest.Snapshot{NamespaceName: "app",
-		DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}},
-		ServiceList:    []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}},
-	}
-	runs := []ProgramRun{}
-	for _, finding := range findings[:2] {
-		runs = append(runs, ProgramRun{ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: finding.Fingerprint,
-			Bindings: program.Bindings{"affected": ref}, Verdict: program.Verdict{Result: program.Match}})
-	}
+	bindings := program.Bindings{"workload": ref}
+	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}}
+	findings := []sdk.Finding{{Fingerprint: "deployment", PrimaryResource: ref}, {Fingerprint: "hint", PrimaryResource: ref}, {Fingerprint: "service", PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
+	runs := []ProgramRun{{ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: "deployment", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}, {ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: "hint", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}}
+	trust := map[string]ProgramTrust{"repair": {Trusted: true, VerifiedSuccesses: 3, LastChange: "revision-a"}}
 	selected, related, reason := selectTrustedFastPathRuns(findings, runs, trust, 3, snapshot)
-	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != "service" || related[0].ProgramID != "repair" || related[0].Bindings["affected"] != ref {
-		t.Fatalf("related service: selected=%+v related=%+v reason=%q", selected, related, reason)
+	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != "service" || related[0].ProgramID != "repair" {
+		t.Fatalf("coverage: selected=%+v related=%+v reason=%q", selected, related, reason)
 	}
 	unrelated := append([]sdk.Finding(nil), findings...)
 	unrelated[2].PrimaryResource.Name = "other"
+	unrelated[2].Fingerprint = "other-service"
 	_, _, reason = selectTrustedFastPathRuns(unrelated, runs, trust, 3, snapshot)
 	if reason != FastPathSkipUncoveredFinding {
-		t.Fatalf("unrelated Service skip = %q", reason)
+		t.Fatalf("unrelated service accepted: %q", reason)
 	}
 	runs = append(runs, runs[0], runs[1])
 	selected, related, reason = selectTrustedFastPathRuns(findings[:2], runs, trust, 3, snapshot)
 	if reason != "" || len(selected) != 1 || len(related) != 0 {
-		t.Fatalf("equivalent matches: selected=%+v reason=%q", selected, reason)
+		t.Fatalf("duplicate matches: selected=%+v related=%+v reason=%q", selected, related, reason)
 	}
 }
 
@@ -333,5 +313,28 @@ func TestTrustedProgramFastPathLeavesUnexplainedDriftToResponder(t *testing.T) {
 	loop.findings = []sdk.Finding{finding}
 	if attempt := loop.TryTrustedFastPath(context.Background(), 1); attempt.Attempted || attempt.Resolved {
 		t.Fatalf("unexplained drift bypassed responder: %+v", attempt)
+	}
+}
+
+func TestSuccessfulFastPathAddsBoundTrustCredit(t *testing.T) {
+	loop, _ := trustedPortLoop(t, false, true, true)
+	attempt := loop.TryTrustedFastPath(context.Background(), 3)
+	if !attempt.Resolved {
+		t.Fatalf("fast path failed: %+v", attempt)
+	}
+	result := fastPathResult(loop.Request, loop, attempt, time.Now())
+	fillProgramRevisions(context.Background(), result.ProgramRuns, loop.Request.RepositoryWorktree, loop.Request.SourceCommit)
+	message, err := incidentResultContract(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "tree-a", ProgramRuns: message.ProgramRuns, PlanApplications: message.PlanApplications, ProgramToolCalls: message.ProgramToolCalls}
+	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]
+	if state.VerifiedSuccesses != 1 || !state.Trusted {
+		t.Fatalf("successful fast path lost bound evidence: %+v calls=%+v", state, message.ProgramToolCalls)
+	}
+	outcome.Classification = "partial"
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]; state.Trusted || state.VerifiedSuccesses != 0 {
+		t.Fatalf("unverified fast path earned credit: %+v", state)
 	}
 }

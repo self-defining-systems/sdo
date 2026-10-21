@@ -45,7 +45,7 @@ func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
 	}
 	outcomes := []*contracts.OutcomeRecord{}
 	for i := 0; i < 3; i++ {
-		outcomes = append(outcomes, &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: before}}, PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"targetport"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}})
+		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", before))
 	}
 	if !ProgramTrustStats(outcomes)["targetport"].Trusted {
 		t.Fatal("fixture did not earn trust")

@@ -27,11 +27,13 @@ func (c *Controller) observeProgramRuns(now time.Time, event *sdk.DriftEvent, ru
 		if prior != nil && prior.LastObservedAt.Equal(now) {
 			continue
 		}
-		if run.Verdict.Result == program.Unknown {
+		if run.Verdict.Result != program.Match && run.Verdict.Result != program.NoMatch {
 			if prior != nil {
 				prior.LastObservedAt = now
+				prior.ClearCount = 0
+				prior.FirstClearAt = time.Time{}
 			}
-			continue // Unknown is never proof of clearance.
+			continue // Inconclusive observations interrupt, never confirm, clearance.
 		}
 		var finding sdk.Finding
 		if run.Verdict.Result == program.Match {
