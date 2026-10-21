@@ -276,7 +276,11 @@ jobs:
         run: |
           files="$(docker run --rm --entrypoint find sdo-sregym-responder:v0.1.0 /opt/sdo/benchmarks -type f)"
           echo "${files}"
-          leaked="$(echo "${files}" | grep -E '/(experiments|assurance|fastloop|analysis|runner|agents)/|/docs/|/tests/' || true)"
+          # The benchmark worker carries these recording utilities, which contain
+          # no fault catalog or oracle data. All other fastloop paths stay forbidden.
+          recording_modules='(__init__|model_recording|file_edits|recording_worker)'
+          recording_paths="^/opt/sdo/benchmarks/sregym/fastloop/(${recording_modules}\.py|__pycache__/${recording_modules}\.cpython-[0-9]+(\.opt-[0-9]+)?\.pyc)$"
+          leaked="$(echo "${files}" | grep -E '/(experiments|assurance|fastloop|analysis|runner|agents)/|/docs/|/tests/' | grep -Ev "${recording_paths}" || true)"
           if [ -n "${leaked}" ]; then
             echo "answer-key paths present in sdo-sregym-responder:v0.1.0:" >&2
             echo "${leaked}" >&2
