@@ -35,10 +35,66 @@ STREAM = ROOT / "benchmarks/sregym/experiments/fastloop/pbprog_explicit.json"
 REGISTRATIONS = ROOT / "benchmarks/sregym/experiments/fastloop/scripted_registrations"
 NAMESPACE = "hotel-reservation"
 COMPONENTS = ("reservation", "rate", "geo", "search")
+SWEEP_MAIN = """
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "os"
+
+    targetport "hermetic/programsrc"
+    "sdo.dev/operator/sdk"
+    "sdo.dev/operator/sdk/program"
+    "sdo.dev/operator/sdk/sdktest"
+)
+
+func main() {
+	data, err := os.ReadFile(os.Args[1])
+	if err != nil {
+		panic(err)
+	}
+	var snapshot sdktest.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		panic(err)
+	}
+	view := &sdktest.ReplayReadView{Snapshot: snapshot}
+	bindings := program.Bindings{
+		"service": sdk.ObjectRef{Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
+	}
+	candidate := targetport.Program{}
+	verdict, err := candidate.Diagnose(context.Background(), view, bindings)
+	if err != nil {
+		panic(err)
+	}
+	plan, err := candidate.Mitigate(context.Background(), view, bindings)
+	if err != nil {
+		panic(err)
+	}
+	if len(plan.Actions) != 1 {
+		panic("expected one targetPort action")
+	}
+	action, ok := plan.Actions[0].(program.SetField)
+	if !ok {
+		panic("expected SetField")
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"result": verdict.Result, "path": action.Path, "value": action.Value,
+	}); err != nil {
+		panic(err)
+	}
+}
+"""
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def component_for(problem: str) -> str:
+    if "target_port" in problem:
+        return problem.split("__v_", 1)[1].split("_", 1)[0]
+    return next(name for name in COMPONENTS if f"_{name}_nonexistent_tag" in problem)
 
 
 class Application:
@@ -87,7 +143,11 @@ class Application:
         services = [deepcopy(self.objects["Service", name]) for name in COMPONENTS]
         pods = [
             {
-                "metadata": {"name": f"{name}-pod", "labels": service["spec"]["selector"]},
+                "metadata": {
+                    "name": f"{name}-pod",
+                    "namespace": NAMESPACE,
+                    "labels": service["spec"]["selector"],
+                },
                 "spec": {"containers": self.objects["Deployment", name]["spec"]["template"]["spec"]["containers"]},
             }
             for name, service in zip(COMPONENTS, services, strict=True)
@@ -111,7 +171,7 @@ class Worker:
             return {"deployed": True}
         if op == "inject":
             problem = str(kwargs["problem_id"])
-            name = next(name for name in COMPONENTS if f"_{name}_" in problem)
+            name = component_for(problem)
             kind = "Service" if "target_port" in problem else "Deployment"
             if not kwargs.get("compose"):
                 self.faults.clear()
@@ -145,6 +205,8 @@ class Controller(FakeOps):
         self.program_runs_by_incident: dict[str, list[dict[str, Any]]] = {}
         self.results: dict[str, dict[str, Any]] = {}
         self.registrations: list[Path | None] = []
+        self.sweep: Path | None = None
+        self.sweep_result: dict[str, Any] | None = None
 
     def install(self, config: Any) -> bool:
         self.registrations.append(config.agent_registrations)
@@ -238,6 +300,16 @@ class Controller(FakeOps):
                 cwd=self.app.workspace,
                 check=True,
             )
+            self.sweep = self.capture.parent / "sweep"
+            source = self.sweep / "programsrc"
+            source.mkdir(parents=True)
+            for name in ("diagnose.go", "mitigate.go"):
+                shutil.copyfile(directory / name, source / name)
+            (self.sweep / "go.mod").write_text(
+                "module hermetic\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+                f"replace sdo.dev/operator/sdk => {ROOT / 'sdo/operator/sdk'}\n"
+            )
+            (self.sweep / "main.go").write_text(SWEEP_MAIN)
         super()._finish_reflection(control, incident)
 
     def tool(self, *args: str) -> dict[str, Any]:
@@ -245,11 +317,23 @@ class Controller(FakeOps):
         if args[0] == "diagnose":
             if self.incidents == 2:
                 assert (self.app.workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
+                assert self.sweep is not None
+                snapshot = self.capture / "open@pre-apply.json"
+                completed = subprocess.run(
+                    ["go", "run", "-mod=mod", ".", str(snapshot)],
+                    cwd=self.sweep,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                assert completed.returncode == 0, completed.stderr
+                self.sweep_result = json.loads(completed.stdout)
                 runs = [
                     {
                         "program_id": scripted_worker.PROGRAM_ID,
                         "bindings": {"service": {"kind": "Service", "namespace": NAMESPACE, "name": "geo"}},
-                        "verdict": {"result": "Match"},
+                        "verdict": {"result": self.sweep_result["result"]},
                     }
                 ]
                 self.program_runs_by_incident[f"incident-{self.incidents}"] = runs
@@ -257,12 +341,13 @@ class Controller(FakeOps):
             return {"program_runs": []}
         if args[0] == "plan":
             assert args[1] == scripted_worker.PROGRAM_ID
+            assert self.sweep_result is not None
+            assert self.sweep_result["path"] == "spec.ports[0].targetPort"
             return {"plan_id": "targetport-plan"}
         if args[0] == "apply":
             assert args[1:] == ("targetport-plan",)
-            self.app.objects["Service", "geo"]["spec"]["ports"] = deepcopy(
-                self.app.baseline["Service", "geo"]["spec"]["ports"]
-            )
+            assert self.sweep_result is not None
+            self.app.objects["Service", "geo"]["spec"]["ports"][0]["targetPort"] = self.sweep_result["value"]
             return {"healthy": False}
         if args[0] == "verify":
             return {"healthy": self.app.healthy(), "summary": "fake detector sweep"}
@@ -393,7 +478,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
             problem: (
                 FaultSpec(
                     "target_port" if "target_port" in problem else "incorrect_image",
-                    next(name for name in COMPONENTS if f"_{name}_" in problem),
+                    component_for(problem),
                 ),
             )
             for problem in ids
