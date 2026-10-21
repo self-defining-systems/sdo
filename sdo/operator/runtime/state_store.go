@@ -33,6 +33,7 @@ type RuntimeState struct {
 	PendingBatch             BatcherState            `json:"pending_batch"`
 	History                  []DetectorEvaluation    `json:"history"`
 	DriftEvents              []sdk.DriftEvent        `json:"drift_events,omitempty"`
+	OwnershipAdoption        OwnershipAdoptionStatus `json:"ownership_adoption,omitempty"`
 	DriftInvestigation       DriftInvestigationState `json:"drift_investigation,omitempty"`
 	IncidentOpen             bool                    `json:"incident_open"`
 	ResponderDone            bool                    `json:"responder_done"`

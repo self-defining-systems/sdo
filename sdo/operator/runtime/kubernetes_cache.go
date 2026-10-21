@@ -29,9 +29,10 @@ type KubernetesCacheConfig struct {
 }
 
 type ObjectChange struct {
-	Old     *unstructured.Unstructured
-	New     *unstructured.Unstructured
-	Initial bool
+	Old      *unstructured.Unstructured
+	New      *unstructured.Unstructured
+	Initial  bool
+	Adoption bool
 }
 
 // KubernetesCache coalesces informer notifications into a set of pending watch

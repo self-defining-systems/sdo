@@ -1,0 +1,226 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"sort"
+	"time"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+
+	"sdo.dev/operator/sdk"
+)
+
+// OwnershipAdoptionStatus records the transfer of accepted manifest fields to
+// the deployer's field manager for one accepted source commit.
+type OwnershipAdoptionStatus struct {
+	SourceCommit       string   `json:"source_commit,omitempty"`
+	AdoptedObjects     int      `json:"adopted_objects,omitempty"`
+	ConflictsTakenOver int      `json:"conflicts_taken_over,omitempty"`
+	FromManagers       []string `json:"from_managers,omitempty"`
+}
+
+func supportsAcceptedSource(ref sdk.ObjectRef) bool {
+	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/Service", "v1/ConfigMap", "v1/Pod", "apps/v1/Deployment", "apps/v1/ReplicaSet", "v1/Endpoints", "discovery.k8s.io/v1/EndpointSlice", "networking.k8s.io/v1/NetworkPolicy":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
+	if c.CanAct != nil && !c.CanAct() {
+		return nil
+	}
+	if c.drift == nil || c.drift.Source == nil || c.drift.Client == nil {
+		c.adoptionNeeded = false
+		return nil
+	}
+	if c.drift.View == nil {
+		return fmt.Errorf("drift read view is required for ownership adoption")
+	}
+	actionCtx, cancel, err := c.actionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	objects, err := c.drift.Source.AcceptedManifests(actionCtx, c.config.SourceCommit, c.config.Namespace)
+	if err != nil {
+		return fmt.Errorf("render accepted manifests for ownership adoption: %w", err)
+	}
+	c.mu.Lock()
+	status := c.ownershipAdoption
+	c.mu.Unlock()
+	status.FromManagers = append([]string(nil), status.FromManagers...)
+	record := status.SourceCommit != c.config.SourceCommit || status.AdoptedObjects == 0
+	if status.SourceCommit != c.config.SourceCommit {
+		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit}
+	}
+	managerSet := map[string]bool{}
+	for _, manager := range status.FromManagers {
+		managerSet[manager] = true
+	}
+	changes := make([]ObjectChange, 0)
+	type candidate struct {
+		ref       sdk.ObjectRef
+		source    *unstructured.Unstructured
+		conflicts int
+		managers  []string
+	}
+	pending := make([]candidate, 0)
+	for _, source := range objects {
+		ref := sdk.ObjectRef{APIVersion: source.GetAPIVersion(), Kind: source.GetKind(), Namespace: source.GetNamespace(), Name: source.GetName()}
+		if !supportsAcceptedSource(ref) || ref.Namespace != c.config.Namespace {
+			return fmt.Errorf("unsupported accepted manifest %s/%s/%s", ref.Kind, ref.Namespace, ref.Name)
+		}
+		live, err := getAdoptionObject(actionCtx, c.drift.Client, ref)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("read live %s/%s for adoption: %w", ref.Kind, ref.Name, err)
+		}
+		normalized, err := dryRunAcceptedSource(actionCtx, c.drift.Client, ref, source)
+		if err != nil {
+			return fmt.Errorf("dry run adoption of %s/%s: %w", ref.Kind, ref.Name, err)
+		}
+		declared := flattenDriftPaths(source)
+		if live == nil || declaredFieldDifference(normalized, live, declared) {
+			changes = append(changes, ObjectChange{Old: normalized, New: live, Adoption: true})
+			continue
+		}
+		owned := ownedDriftPaths(live, "sdo-deployer")
+		allOwned := true
+		for path := range declared {
+			if !ownsDriftPath(owned, path) {
+				allOwned = false
+				break
+			}
+		}
+		if allOwned {
+			continue
+		}
+		conflicts, managers := adoptionConflicts(live, declared)
+		pending = append(pending, candidate{ref: ref, source: source, conflicts: conflicts, managers: managers})
+	}
+	if len(changes) > 0 {
+		view := c.drift.View(snapshot)
+		classifier := DriftClassifier{Programs: c.drift.Programs, Deadline: c.drift.Deadline}
+		for _, change := range changes {
+			event, _, err := classifier.Classify(actionCtx, change, view, now)
+			if err != nil {
+				return fmt.Errorf("classify pre-adoption difference: %w", err)
+			}
+			if event == nil {
+				return fmt.Errorf("pre-adoption difference was not classified")
+			}
+		}
+		c.processDrift(actionCtx, now, snapshot, changes, false)
+		if err := c.PersistState(actionCtx); err != nil {
+			return fmt.Errorf("persist pre-adoption drift: %w", err)
+		}
+		if err := c.dispatchDriftInvestigation(actionCtx, now); err != nil && c.OnError != nil {
+			c.OnError(err)
+		}
+	}
+	for _, item := range pending {
+		if _, err := applyAcceptedSource(actionCtx, c.drift.Client, item.ref, item.source, false); err != nil {
+			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
+		}
+		if record {
+			status.AdoptedObjects++
+			status.ConflictsTakenOver += item.conflicts
+			for _, manager := range item.managers {
+				managerSet[manager] = true
+			}
+		}
+	}
+	status.FromManagers = status.FromManagers[:0]
+	for manager := range managerSet {
+		status.FromManagers = append(status.FromManagers, manager)
+	}
+	sort.Strings(status.FromManagers)
+	c.mu.Lock()
+	c.ownershipAdoption = status
+	c.mu.Unlock()
+	c.adoptionNeeded = false
+	return nil
+}
+
+func declaredFieldDifference(expected, observed *unstructured.Unstructured, declared map[string]bool) bool {
+	left := flattenDriftObject(expected)
+	right := flattenDriftObject(observed)
+	for path := range declared {
+		if !reflect.DeepEqual(left[path], right[path]) {
+			return true
+		}
+	}
+	return false
+}
+
+func adoptionConflicts(live *unstructured.Unstructured, declared map[string]bool) (int, []string) {
+	count := 0
+	managers := map[string]bool{}
+	for _, entry := range live.GetManagedFields() {
+		if entry.Manager == "sdo-deployer" || entry.FieldsV1 == nil {
+			continue
+		}
+		var fields map[string]any
+		if json.Unmarshal(entry.FieldsV1.Raw, &fields) != nil {
+			continue
+		}
+		owned := map[string]bool{}
+		walkOwnedFields(fields, live.Object, "", owned)
+		for path := range declared {
+			if ownsDriftPath(owned, path) {
+				count++
+				managers[entry.Manager] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(managers))
+	for manager := range managers {
+		result = append(result, manager)
+	}
+	return count, result
+}
+
+func getAdoptionObject(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	var object any
+	var err error
+	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/Service":
+		object, err = client.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "v1/ConfigMap":
+		object, err = client.CoreV1().ConfigMaps(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "v1/Pod":
+		object, err = client.CoreV1().Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "apps/v1/Deployment":
+		object, err = client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "apps/v1/ReplicaSet":
+		object, err = client.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "v1/Endpoints":
+		object, err = client.CoreV1().Endpoints(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "discovery.k8s.io/v1/EndpointSlice":
+		object, err = client.DiscoveryV1().EndpointSlices(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "networking.k8s.io/v1/NetworkPolicy":
+		object, err = client.NetworkingV1().NetworkPolicies(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	default:
+		return nil, fmt.Errorf("unsupported adoption object %s/%s", ref.APIVersion, ref.Kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		return nil, err
+	}
+	result := &unstructured.Unstructured{Object: content}
+	result.SetAPIVersion(ref.APIVersion)
+	result.SetKind(ref.Kind)
+	return result, nil
+}

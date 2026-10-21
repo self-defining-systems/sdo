@@ -38,6 +38,7 @@ Speculative invariant mining (agents proposing checks with no failure behind the
 ### 1. Change feed (controller core)
 
 - The deployer applies with server-side apply under the field manager `sdo-deployer`. The fields SDO's manifests set are the declared intent. Fields other managers own, such as HPA replicas or injected sidecars, are outside it by construction.
+- On controller startup or resume, and after an accepted source commit or verified SDO repair, the controller renders accepted manifests through the deployer's renderer with the deployed image and adopts their declared fields using server-side apply as `sdo-deployer` with force-conflicts. It records the adopted object count, taken-over field count, and prior managers once in durable controller status. A dry run is compared with live state before each write. Existing differences are recorded as unexplained drift and left in place for the normal classifier and investigator path; adoption never silently repairs them. Repeating adoption over already-owned fields emits no drift.
 - An informer watches the application namespaces. On each add, modify or delete it computes:
   - a field-level diff against the previous object;
   - a diff against the accepted source manifest, normalised through a server-side apply dry run (`DiffAgainstSource`);

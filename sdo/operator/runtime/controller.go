@@ -80,6 +80,8 @@ type Controller struct {
 	history            []DetectorEvaluation
 	drift              *DriftControllerConfig
 	driftEvents        []sdk.DriftEvent
+	ownershipAdoption  OwnershipAdoptionStatus
+	adoptionNeeded     bool
 	driftInvestigation *driftInvestigationQueue
 	driftResults       chan driftInvestigationCompletion
 	driftRunning       bool
@@ -300,7 +302,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.nextDriftSweep = now.Add(c.drift.SweepInterval)
 		}
 	}
-	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !sweepDrift {
+	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !sweepDrift && !c.adoptionNeeded {
 		if err := c.dispatchDriftInvestigation(ctx, now); err != nil && c.OnError != nil {
 			c.OnError(err)
 		}
@@ -405,6 +407,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.Baseline.Observe(now, !errored && c.quiet())
 		}
 	}
+	if c.adoptionNeeded {
+		if err := c.adoptOwnership(ctx, now, snapshot); err != nil {
+			return err
+		}
+	}
 
 	c.maybeCloseIncident(ctx, now, snapshot)
 	err = c.dispatchReady(ctx, now, snapshot)
@@ -426,6 +433,7 @@ func (c *Controller) quiet() bool {
 // EvaluateAll evaluates every detector against one fresh snapshot, for example
 // when observation resumes after a planned maintenance window.
 func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
+	c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
 	c.scheduler.ExpediteAll(now)
 	return c.StepEvents(ctx, now, nil)
 }
@@ -942,6 +950,10 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.recordDispatchFailureLocked()
 	} else {
 		c.responderDone = true
+		if len(completion.result.RepairActions) > 0 || len(completion.result.RepairChanges) > 0 {
+			c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
+			c.nextDriftSweep = observedAt
+		}
 		c.responderCompletedAt = observedAt.UTC()
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
 			c.responderCompletedAt = c.incidentDispatchedAt
@@ -1413,6 +1425,7 @@ func (c *Controller) ExportState() RuntimeState {
 		PendingReleases:            append([]string(nil), c.pendingReleases...),
 		IncidentView:               cloneIncidentView(c.incidentView),
 		DriftEvents:                append([]sdk.DriftEvent(nil), c.driftEvents...),
+		OwnershipAdoption:          c.ownershipAdoption,
 		DriftInvestigation:         c.driftInvestigationState(),
 		EvaluationIteration:        c.evaluationIteration,
 		DetectorTimeline:           cloneTimeline(c.timeline),
@@ -1438,6 +1451,7 @@ func (c *Controller) RestoreState(state RuntimeState) error {
 	c.currentIncidentRequest = cloneIncidentRequest(state.IncidentRequest)
 	c.currentIncidentResult = cloneIncidentResult(state.IncidentResult)
 	c.driftEvents = append([]sdk.DriftEvent(nil), state.DriftEvents...)
+	c.ownershipAdoption = state.OwnershipAdoption
 	if c.driftInvestigation != nil {
 		c.driftInvestigation.RestoreState(state.DriftInvestigation)
 	}

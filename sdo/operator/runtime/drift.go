@@ -12,6 +12,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -27,7 +28,11 @@ type DriftClassifier struct {
 }
 
 type DriftControllerConfig struct {
-	Events        interface{ TakeObjectChanges() []ObjectChange }
+	Events interface{ TakeObjectChanges() []ObjectChange }
+	Source interface {
+		AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error)
+	}
+	Client        kubernetes.Interface
 	Programs      program.ProgramRegistry
 	View          func(sdk.DetectionContext) program.ReadView
 	Deadline      time.Duration
@@ -43,6 +48,7 @@ func (c *Controller) ConfigureDrift(config DriftControllerConfig) {
 		config.Deadline = DefaultDiagnosisDeadline
 	}
 	c.drift = &config
+	c.adoptionNeeded = config.Source != nil && config.Client != nil
 	if config.Investigation.Worker != nil {
 		config.Investigation.OnVerdict = func(event sdk.DriftEvent, verdict *contracts.DriftEventInvestigation) {
 			c.recordDriftInvestigation(event, verdict)
@@ -348,6 +354,9 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 		owner = change.New
 	}
 	owned := ownedDriftPaths(owner, "sdo-deployer")
+	if change.Adoption {
+		owned = flattenDriftPaths(change.Old)
+	}
 	if len(owned) == 0 {
 		return nil, nil, nil
 	}
@@ -387,6 +396,9 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	event := &sdk.DriftEvent{Ref: ref, Fields: make([]sdk.DriftField, 0, min(len(paths), maxDriftFields)), Source: "differs from accepted manifest", Manager: manager, Operation: operation, ManagerAt: managerAt, ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained}
 	for _, path := range paths[:min(len(paths), maxDriftFields)] {
 		event.Fields = append(event.Fields, sdk.DriftField{Path: path, Old: renderDriftValue(path, before[path]), Source: renderDriftValue(path, sourceValues[path]), New: renderDriftValue(path, after[path])})
+	}
+	if change.Adoption {
+		return event, nil, nil
 	}
 	runs := SelectProgramCandidatesWithOptions(ctx, c.Programs, view, nil, CandidateOptions{Deadline: c.Deadline, Affected: []sdk.ObjectRef{ref}})
 	for _, run := range runs {
@@ -435,6 +447,14 @@ func flattenDriftObject(object *unstructured.Unstructured) map[string]any {
 		}
 	}
 	return result
+}
+
+func flattenDriftPaths(object *unstructured.Unstructured) map[string]bool {
+	paths := map[string]bool{}
+	for path := range flattenDriftObject(object) {
+		paths[path] = true
+	}
+	return paths
 }
 
 func renderDriftValue(path string, value any) string {

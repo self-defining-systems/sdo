@@ -146,12 +146,19 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 }
 
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	return applyAcceptedSource(ctx, client, ref, source, true)
+}
+
+func applyAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured, dryRun bool) (*unstructured.Unstructured, error) {
 	patch, err := json.Marshal(source.Object)
 	if err != nil {
 		return nil, err
 	}
 	force := true
-	options := metav1.PatchOptions{FieldManager: "sdo-deployer", Force: &force, DryRun: []string{metav1.DryRunAll}}
+	options := metav1.PatchOptions{FieldManager: "sdo-deployer", Force: &force}
+	if dryRun {
+		options.DryRun = []string{metav1.DryRunAll}
+	}
 	var object any
 	switch ref.APIVersion + "/" + ref.Kind {
 	case "v1/Service":

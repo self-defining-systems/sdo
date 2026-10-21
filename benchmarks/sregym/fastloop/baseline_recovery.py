@@ -69,7 +69,12 @@ class KubectlApplicationCluster:
         )
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None:
-        kubectl(["apply", "-f", "-"], namespace=namespace, kubeconfig=self.kubeconfig, input_text=json.dumps(value))
+        kubectl(
+            ["apply", "--server-side", "--field-manager=sdo-deployer", "--force-conflicts", "-f", "-"],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+            input_text=json.dumps(value),
+        )
 
 
 @dataclass(frozen=True)

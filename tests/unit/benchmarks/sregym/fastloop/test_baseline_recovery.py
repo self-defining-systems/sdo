@@ -6,12 +6,25 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.fastloop.baseline_recovery import (
+    KubectlApplicationCluster,
     application_namespaces,
     capture_application_baseline,
     load_application_baseline,
     reconcile_application,
     save_application_baseline,
 )
+
+
+def test_recovery_restores_sdo_field_ownership(monkeypatch: Any, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def record(args: list[str], **_kwargs: Any) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", record)
+    KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", obj("Service", "reservation", spec={"ports": []}))
+    assert calls == [["apply", "--server-side", "--field-manager=sdo-deployer", "--force-conflicts", "-f", "-"]]
+
 
 if TYPE_CHECKING:
     from pathlib import Path

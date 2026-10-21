@@ -51,6 +51,10 @@ func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 		t.Fatal("mutable raw image restored without deployed image evidence")
 	}
 	source := GitPlanSource{Repository: repo, Images: fixedSourceImages{image}}
+	manifests, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
+	if err != nil || len(manifests) != 1 || manifests[0].GetName() != "rate" || manifests[0].Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] != image {
+		t.Fatalf("adoption source lost rendered image: %+v, %v", manifests, err)
+	}
 	baseline := planObject(ref, map[string]any{"replicas": float64(1), "template": map[string]any{
 		"spec": map[string]any{"containers": []any{map[string]any{"name": "rate", "image": image}}},
 	}})

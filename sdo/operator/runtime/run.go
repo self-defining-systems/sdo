@@ -413,6 +413,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	var stateTracker *StateTracker
+	if *stateBaseline {
+		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace})
+		defer stateTracker.Stop()
+	}
 	var dispatcher Dispatcher
 	switch *dispatcherMode {
 	case "local":
@@ -540,10 +544,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		}
 	}
-	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
+	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, Client: bootstrapProvider.Client, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
-					Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: resolvedSourceCommit}
+				Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: resolvedSourceCommit}
 		},
 	})
 	// The load term reads host pressure from a Linux PSI file; the backlog term
@@ -559,9 +563,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return errors.New("job controller requires the Go incident broker")
 	}
 	if *stateBaseline {
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace})
 		controller.Baseline = stateTracker
-		defer stateTracker.Stop()
 	}
 	if *cleanResponderHelpers {
 		controller.Helpers = KubernetesHelperCleaner{

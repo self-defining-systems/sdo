@@ -100,6 +100,34 @@ func TestControllerCanApplyProgramsOnlyInApplicationNamespace(t *testing.T) {
 	}
 }
 
+func TestControllerCanAdoptRenderedManifestFields(t *testing.T) {
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app *rbacv1.Role
+	for _, role := range plan.AppRoles {
+		if role.Name == "sdo-controller" {
+			app = role
+		}
+	}
+	if app == nil {
+		t.Fatal("application controller role is absent")
+	}
+	for _, want := range []struct{ group, resource string }{
+		{"", "configmaps"}, {"", "pods"}, {"", "endpoints"},
+		{"apps", "replicasets"}, {"discovery.k8s.io", "endpointslices"}, {"networking.k8s.io", "networkpolicies"},
+	} {
+		allowed := false
+		for _, rule := range app.Rules {
+			allowed = allowed || contains(rule.APIGroups, want.group) && contains(rule.Resources, want.resource) && contains(rule.Verbs, "patch")
+		}
+		if !allowed {
+			t.Errorf("missing adoption patch for %s/%s", want.group, want.resource)
+		}
+	}
+}
+
 func TestNativeRequiresEntrypointAndRejectsMixedArguments(t *testing.T) {
 	cfg := testConfig()
 	cfg.NativeCommand = nil
