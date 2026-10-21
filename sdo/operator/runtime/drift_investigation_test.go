@@ -65,6 +65,19 @@ func TestControllerDowngradesUnsupportedBugWithoutIncident(t *testing.T) {
 	}
 }
 
+func TestTargetPortSourceContradictionAndLivePodPortMismatchSupportBug(t *testing.T) {
+	result := validateDriftVerdict(&contracts.DriftEventInvestigation{
+		Verdict: "bug", Reason: "Service routes to no selected container port",
+		Evidence: []*contracts.DriftEvidence{
+			{Kind: "source_contradiction", Observation: "accepted Service targetPort is 8087; live targetPort is 9999"},
+			{Kind: "violated_relation", Observation: "live selected reservation pods expose containerPort 8087, none expose 9999"},
+		},
+	})
+	if result.GetVerdict() != "bug" {
+		t.Fatalf("source contradiction and live relation did not support bug: %+v", result)
+	}
+}
+
 func TestDriftWorkerRunsWithoutBlockingControllerStep(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	worker := blockingDriftInvestigator{started: make(chan struct{}), release: make(chan struct{})}

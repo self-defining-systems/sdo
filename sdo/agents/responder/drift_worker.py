@@ -86,8 +86,12 @@ def investigate_drift(
     prompt = (
         "Investigate only these specific live changes. Return one verdict per event: bug, benign, or unsure. "
         "A bug needs both a contradiction with the accepted source and either a violated resource relation "
-        "or observed impact. Give a concrete observation for each evidence item. If evidence is missing, "
-        "return unsure. Do not change resources, files, or source. Use only read-only commands: "
+        "or observed impact. Give a concrete observation for each evidence item. "
+        "For a changed Service targetPort, read the live Service selector and targetPort and the live selected pods' "
+        "containerPort values. A targetPort that matches no containerPort of those pods is a violated relation; "
+        "with a source contradiction, report bug even if traffic impact is not yet observed. "
+        "If evidence is missing, return unsure. Do not change resources, files, or source. "
+        "Use only read-only commands: "
         "sdo status, sdo diagnose, kubectl get, and reading the source checkout. "
         "Do not run sdo apply, kubectl patch/apply/delete, or any other write command. "
         f"Accepted commit: {request.accepted_commit}; namespace: {request.namespace}; "
@@ -101,7 +105,7 @@ def investigate_drift(
             prompt,
             output_schema=_result_schema(),
             cwd=request.repository_worktree,
-            access="read-only",
+            access="danger-full-access",
             model=os.getenv("SDO_RESPONDER_MODEL") or None,
             executor=executor,
         )

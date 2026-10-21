@@ -215,3 +215,44 @@ func TestKubernetesExecutorCanMountInvestigationSourceReadOnly(t *testing.T) {
 	}
 	t.Fatal("investigator source mount is absent")
 }
+
+func TestInvestigatorJobKeepsResponderToolAccessWithReadOnlySource(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	task := reflectionTestTask(t)
+	registration := reflectionTestRegistry(t)
+	launch, err := registration.Resolve("external-reflector", "outcome-reflection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := KubernetesExecutor{Client: client, Namespace: "demo", Registry: registration,
+		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", SessionPVCSubPath: "sessions/incident",
+		Environment: map[string]string{"SDO_TOOLS_DIR": "/sdo/session/tools"}}
+	for _, tc := range []struct {
+		name, account string
+		readOnly      bool
+	}{
+		{"responder", "sdo-responder", false},
+		{"investigator", "sdo-drift-investigator", true},
+	} {
+		executor := base
+		executor.ServiceAccount = tc.account
+		executor.RepositoryReadOnly = tc.readOnly
+		if err := executor.ensureJob(context.Background(), task, launch.GetKubernetesJob(), tc.name, "request", "result", "proposals/reflection-1"); err != nil {
+			t.Fatal(err)
+		}
+		job, err := client.BatchV1().Jobs("demo").Get(context.Background(), tc.name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.Spec.Template.Spec.ServiceAccountName != tc.account {
+			t.Fatalf("%s service account: %q", tc.name, job.Spec.Template.Spec.ServiceAccountName)
+		}
+		mounts := map[string]corev1.VolumeMount{}
+		for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+			mounts[mount.MountPath] = mount
+		}
+		if !mounts["/sdo/request"].ReadOnly || mounts["/sdo/session"].ReadOnly || mounts["/tmp"].ReadOnly || mounts[task.Workspace.CheckoutPath].ReadOnly != tc.readOnly {
+			t.Fatalf("%s lost request, session, scratch, or source mount contract: %+v", tc.name, mounts)
+		}
+	}
+}

@@ -2,10 +2,16 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -49,5 +55,28 @@ func TestDriftSessionToolsRejectMutation(t *testing.T) {
 		if response := handle(context.Background(), ToolRequest{Command: command}); response.Error == "" {
 			t.Fatalf("drift tool %q was allowed", command)
 		}
+	}
+}
+
+func TestDriftSessionInvokesStatusThroughWritableToolDirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "tools")
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "drift-1", Namespace: "app"}, nil,
+		staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, nil, PlanExecutor{}, 1)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	server := SessionToolServer{Directory: directory, Handle: driftReadOnlyToolHandle(loop), PollInterval: time.Millisecond}
+	if err := server.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = server.Serve(ctx) }()
+	if err := os.Chmod(directory, 0770); err != nil {
+		t.Fatal(err)
+	}
+	response := fastloopTool(t, directory, "status")
+	if response.Error != "" || response.Command != "status" || !response.Healthy {
+		t.Fatalf("drift status failed: %+v", response)
 	}
 }
