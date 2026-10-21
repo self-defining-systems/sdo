@@ -160,7 +160,8 @@ def _logical_learning_request(
     classification = outcome.classification
     return (
         "The controller verified this incident and committed its outcome. "
-        "Read the supplied logical memory snapshot, source code, and detector SDK reference. Edit the final files directly "
+        "Read the supplied logical memory snapshot, source code, and detector SDK reference. "
+        "Edit the final files directly "
         "in the operational memory directory `.sdo/` of this isolated checkout. "
         "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
         "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "

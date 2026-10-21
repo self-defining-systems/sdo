@@ -129,6 +129,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		}
 		logicalRequest := proto.Clone(request).(*contracts.ReflectionRequest)
 		logicalRequest.PreviousDiagnostics = nil
+		logicalRequest.ValidationAttempt = 1
 		requestWire, err := wire.Marshal(logicalRequest)
 		if err != nil {
 			return ReflectionDecision{}, err

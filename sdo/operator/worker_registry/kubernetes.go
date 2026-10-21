@@ -190,10 +190,11 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "SDO_RESULT_CONFIGMAP", Value: resultName},
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
 	}
-	if task.GetTaskType() == "outcome-reflection-direct-v1" {
+	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
+	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: "responder"}, corev1.EnvVar{Name: "SDO_PHASE", Value: "reflection"}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": task.GetTaskType() == "outcome-reflection-direct-v1", "SDO_PHASE": task.GetTaskType() == "outcome-reflection-direct-v1", "SDO_BASE_COMMIT": task.GetTaskType() == "outcome-reflection-direct-v1"}
+	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": reflection, "SDO_PHASE": reflection, "SDO_BASE_COMMIT": reflection}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {

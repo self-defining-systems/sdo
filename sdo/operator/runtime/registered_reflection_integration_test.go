@@ -31,7 +31,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
-	for _, scenario := range []string{"detector and README", "malformed then fixed", "no change"} {
+	for _, scenario := range []string{"detector and README", "malformed then fixed", "no change", "SDK gap"} {
 		t.Run(scenario, func(t *testing.T) {
 			target := nativeRepository(t)
 			if err := os.CopyFS(target, os.DirFS("../memory/validate/testdata/good")); err != nil {
@@ -59,7 +59,11 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 				readme := filepath.Join(checkout, ".sdo/playbooks/base/README.md")
 				detector := filepath.Join(checkout, ".sdo/diagnostics/detectors/incidents/cache/detector.go")
 				response := &contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "already covered"}
-				if scenario != "no change" {
+				if scenario == "SDK gap" {
+					response.LearningDecision = "sdk_gap"
+					response.NoChangeReason = "No deterministic SDK observation for this cause"
+				}
+				if scenario != "no change" && scenario != "SDK gap" {
 					original, err := os.ReadFile(readme)
 					if err != nil {
 						return nil, err
@@ -123,13 +127,17 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 			if calls != 1 {
 				t.Fatalf("worker dispatched %d times", calls)
 			}
-			if scenario == "no change" {
+			if scenario == "no change" || scenario == "SDK gap" {
 				if receipt.ReflectionCommit != "" {
 					t.Fatal("no-change created a commit")
 				}
 			} else {
 				if receipt.ReflectionCommit == "" {
 					t.Fatal("update was not committed")
+				}
+				ledger, err := native.readLedger("direct-files")
+				if err != nil || len(ledger.GetReflectionDecision().GetPlaybookIds()) != 1 || ledger.GetReflectionDecision().GetPlaybookIds()[0] != "base" {
+					t.Fatalf("accepted playbook IDs not durable: %v %v", ledger, err)
 				}
 				for rel, want := range map[string][]byte{".sdo/playbooks/base/README.md": authoredREADME, ".sdo/diagnostics/detectors/incidents/cache/detector.go": authoredGo} {
 					got, err := os.ReadFile(filepath.Join(target, rel))

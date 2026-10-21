@@ -19,7 +19,7 @@ func reflectionTestRegistry(t *testing.T) *Registry {
 	registry, err := New(&contracts.AgentRegistration{
 		SchemaVersion: SchemaVersion, AgentId: "external-reflector",
 		Capabilities: []*contracts.AgentCapability{{
-			TaskType:       "outcome-reflection-direct-v1",
+			TaskType:       "custom-reflection",
 			RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest",
 			ResultTypeUrl:  "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult",
 		}},
@@ -38,7 +38,7 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 		t.Fatal(err)
 	}
 	return &contracts.AgentTask{
-		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-1:abc", AgentId: "external-reflector", TaskType: "outcome-reflection-direct-v1", Request: payload,
+		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-1:abc", AgentId: "external-reflector", TaskType: "custom-reflection", Request: payload,
 		Workspace: &contracts.ProposalWorkspace{ProposalId: "reflection-1", CheckoutPath: "/workspace/proposals/reflection-1", BaseCommit: "abc"},
 	}
 }

@@ -58,12 +58,12 @@ func (h *rejectionHarness) setReflector(behave func(call int, w IncidentWorkspac
 }
 
 func writeBadPlaybook(w IncidentWorkspace) (ReflectionDecision, error) {
-	return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte("bad playbook\n"), 0o644)
+	return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte("bad playbook\n"), 0o644)
 }
 
 func writeGoodPlaybook(w IncidentWorkspace) (ReflectionDecision, error) {
 	body := "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME> carefully\n"
-	return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte(body), 0o644)
+	return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte(body), 0o644)
 }
 
 func TestMaxValidationRetriesIsTwo(t *testing.T) {
@@ -242,5 +242,19 @@ func TestNativeBrokerRejectionRecordedBeforeProposalReset(t *testing.T) {
 	}
 	if len(h.calls) == 0 || h.calls[0].Attempt != 2 {
 		t.Fatalf("recovery dispatch = %+v", h.calls)
+	}
+}
+
+func TestNativeBrokerBindsDurableReflectionIDsToAcceptedDiff(t *testing.T) {
+	h := newRejectionHarness(t, "inc-result-ids", func(_ int, w IncidentWorkspace) (ReflectionDecision, error) {
+		decision, err := writeGoodPlaybook(w)
+		decision.PlaybookIDs = []string{"unrelated"}
+		return decision, err
+	})
+	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err == nil {
+		t.Fatal("reflection whose IDs do not match its authored diff was published")
+	}
+	if _, accepted, err := h.native.Repository.AcceptedCommit(context.Background(), "inc-result-ids", broker.ReflectionPhase); err != nil || accepted {
+		t.Fatalf("mismatched reflection reached accepted state: accepted=%v error=%v", accepted, err)
 	}
 }

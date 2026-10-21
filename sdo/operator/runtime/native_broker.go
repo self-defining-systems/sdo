@@ -305,22 +305,21 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 			}
 			return nil, errors.New("reflection changes lack a durable worker decision; proposal reset")
 		}
-		if len(paths) == 0 {
-			if (ledger.ReflectionDecision.GetLearningDecision() != "no_change" && ledger.ReflectionDecision.GetLearningDecision() != "sdk_gap") || strings.TrimSpace(ledger.ReflectionDecision.GetNoChangeReason()) == "" {
-				return nil, errors.New("no-op reflection requires no_change decision and concrete reason")
-			}
-			return nil, nil
-		}
-		if ledger.ReflectionDecision.GetLearningDecision() != "updated" {
-			if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
-				return nil, err
+		decision := ReflectionDecision{LearningDecision: ledger.ReflectionDecision.GetLearningDecision(), NoChangeReason: ledger.ReflectionDecision.GetNoChangeReason(), PlaybookIDs: ledger.ReflectionDecision.GetPlaybookIds()}
+		if err := decision.Validate(paths); err != nil {
+			if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
+				return nil, fmt.Errorf("reflection decision: %v; reset proposal: %w", err, resetErr)
 			}
 			ledger.ReflectionDecision = nil
-			if err := n.saveLedger(ledger); err != nil {
-				return nil, err
+			if saveErr := n.saveLedger(ledger); saveErr != nil {
+				return nil, saveErr
 			}
-			return nil, errors.New("reflection changed files without declaring updated learning")
+			return nil, err
 		}
+		if len(paths) == 0 {
+			return nil, nil
+		}
+
 		accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ReflectionPhase)
 		if err == nil {
 			ledger.ReflectionCommit = accepted.Commit
