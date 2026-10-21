@@ -283,10 +283,7 @@ func TestScriptedReflectionScaffoldProposeAndWorkerResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"README.md", "diagnose.go", "mitigate.go"} {
-		source := filepath.Join(app, ".sdo", "playbooks", "service-targetport-mismatch", name)
-		if name != "README.md" {
-			source = filepath.Join("..", "..", "..", "benchmarks", "sregym", "fastloop", "scripted_program", name)
-		}
+		source := filepath.Join("..", "..", "..", "benchmarks", "sregym", "fastloop", "scripted_program", name)
 		wire, err := os.ReadFile(source)
 		if err != nil {
 			t.Fatal(err)

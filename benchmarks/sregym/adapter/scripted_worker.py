@@ -292,7 +292,7 @@ class ScriptedReflector:
                     str(target),
                 ]
             )
-            for name in ("diagnose.go", "mitigate.go"):
+            for name in ("README.md", "diagnose.go", "mitigate.go"):
                 (target / name).write_bytes((PROGRAM_SOURCE / name).read_bytes())
             (target / "diagnose_test.go").unlink()
             output = _command(
