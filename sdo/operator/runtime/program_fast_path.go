@@ -199,7 +199,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	attempt := FastPathAttempt{Programs: make([]string, 0, len(selected)), Findings: append([]sdk.Finding(nil), findings...), RelationCoveredFindings: related}
 	l.fastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), related...)
 	for _, run := range selected {
-		mitigator, ok := l.Programs.Mitigator(run.ProgramID)
+		_, ok := l.Programs.Mitigator(run.ProgramID)
 		if !ok {
 			return skip(FastPathSkipMitigatorMissing)
 		}
@@ -207,13 +207,10 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		if matchedView == nil {
 			return skip(FastPathSkipSnapshotFailed)
 		}
-		preview, cached := l.matchedPlans[matchedViewKey(run.ProgramID, run.Bindings)]
+		key := matchedViewKey(run.ProgramID, run.Bindings)
+		preview, cached := l.matchedPlans[key]
 		plan := preview.Plan
-		var err error
-		if !cached {
-			plan, err = l.runMitigator(ctx, run.ProgramID, mitigator, matchedView, run.Bindings)
-		}
-		if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
+		if !cached || l.matchedPlanErrors[key] != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
 			return skip(FastPathSkipInvalidPlan)
 		}
 		selectedPlans = append(selectedPlans, selectedPlan{programID: run.ProgramID, bindings: run.Bindings, plan: plan})

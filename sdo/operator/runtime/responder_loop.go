@@ -108,6 +108,7 @@ type ResponderLoop struct {
 	runs                            []ProgramRun
 	matchedViews                    map[string]program.ReadView
 	matchedPlans                    map[string]PlanApplicationResult
+	matchedPlanErrors               map[string]error
 	lastDiagnosisView               program.ReadView
 	findings                        []sdk.Finding
 	batches                         int
@@ -504,23 +505,32 @@ func matchedViewKey(id string, bindings program.Bindings) string {
 }
 
 func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []ProgramRun, view program.ReadView) {
+	if l.matchedPlanErrors == nil {
+		l.matchedPlanErrors = make(map[string]error)
+	}
 	for _, run := range runs {
 		if run.Verdict.Result == program.Match {
 			key := matchedViewKey(run.ProgramID, run.Bindings)
+			// The view and plan belong to the same preparation attempt, including
+			// failures. Never leave an earlier plan attached to a replacement view.
+			delete(l.matchedPlans, key)
+			delete(l.matchedPlanErrors, key)
 			l.matchedViews[key] = view
 			mitigator, ok := l.Programs.Mitigator(run.ProgramID)
 			if !ok {
 				continue
 			}
 			plan, err := l.runMitigator(ctx, run.ProgramID, mitigator, view, run.Bindings)
-			if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
+			if err != nil {
+				l.matchedPlanErrors[key] = err
 				continue
 			}
-			l.matchedPlans[key] = PlanApplicationResult{Plan: plan}
 			preview, err := l.Executor.Apply(ctx, l.Request, plan, true)
-			if err == nil {
-				l.matchedPlans[key] = preview
+			if err != nil {
+				l.matchedPlanErrors[key] = err
+				continue
 			}
+			l.matchedPlans[key] = preview
 		}
 	}
 }
