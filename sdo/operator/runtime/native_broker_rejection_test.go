@@ -10,6 +10,7 @@ import (
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
 )
 
 type rejectionHarness struct {
@@ -25,9 +26,14 @@ type rejectionHarness struct {
 // scripted by behave(call) where call is the 1-based dispatch count.
 func newRejectionHarness(t *testing.T, incident string, behave func(call int, w IncidentWorkspace) (ReflectionDecision, error)) *rejectionHarness {
 	t.Helper()
+	return newRejectionHarnessValidator(t, incident, behave, func(context.Context, string, []string) error { return nil })
+}
+
+func newRejectionHarnessValidator(t *testing.T, incident string, behave func(int, IncidentWorkspace) (ReflectionDecision, error), validator broker.Validator) *rejectionHarness {
+	t.Helper()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
-	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), validator)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,12 +64,12 @@ func (h *rejectionHarness) setReflector(behave func(call int, w IncidentWorkspac
 }
 
 func writeBadPlaybook(w IncidentWorkspace) (ReflectionDecision, error) {
-	return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte("bad playbook\n"), 0o644)
+	return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte("bad playbook\n"), 0o644)
 }
 
 func writeGoodPlaybook(w IncidentWorkspace) (ReflectionDecision, error) {
 	body := "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME> carefully\n"
-	return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte(body), 0o644)
+	return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte(body), 0o644)
 }
 
 func TestMaxValidationRetriesIsTwo(t *testing.T) {
@@ -242,5 +248,66 @@ func TestNativeBrokerRejectionRecordedBeforeProposalReset(t *testing.T) {
 	}
 	if len(h.calls) == 0 || h.calls[0].Attempt != 2 {
 		t.Fatalf("recovery dispatch = %+v", h.calls)
+	}
+}
+
+func TestNativeBrokerBindsDurableReflectionIDsToAcceptedDiff(t *testing.T) {
+	h := newRejectionHarness(t, "inc-result-ids", func(_ int, w IncidentWorkspace) (ReflectionDecision, error) {
+		decision, err := writeGoodPlaybook(w)
+		decision.PlaybookIDs = []string{"unrelated"}
+		return decision, err
+	})
+	receipt, err := h.native.ProcessClosure(context.Background(), h.closure)
+	if err != nil || receipt.ReflectionCommit != "" {
+		t.Fatalf("mismatched decision: receipt=%+v err=%v", receipt, err)
+	}
+	ledger, err := h.native.readLedger("inc-result-ids")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected {
+		t.Fatalf("decision rejection bypassed retry accounting: %+v", ledger)
+	}
+	for i, rejection := range ledger.ReflectionRejections {
+		if rejection.Attempt != uint32(i+1) || rejection.Diagnostics[0].Rule != "reflection.decision" {
+			t.Fatalf("lost decision feedback: %+v", rejection)
+		}
+	}
+	if _, accepted, err := h.native.Repository.AcceptedCommit(context.Background(), "inc-result-ids", broker.ReflectionPhase); err != nil || accepted {
+		t.Fatalf("mismatched reflection reached accepted state: accepted=%v error=%v", accepted, err)
+	}
+}
+
+func TestNativeBrokerCompileRejectionAdvancesAttempt(t *testing.T) {
+	checks := 0
+	validator := func(_ context.Context, _ string, paths []string) error {
+		for _, p := range paths {
+			if strings.HasPrefix(p, ".sdo/playbooks/") {
+				checks++
+				if checks == 1 {
+					ds, err := validate.ParseReport(`SDO_MEMORY_REPORT:{"diagnostics":[{"rule":"detector.compile","message":"undefined: missing","path":".sdo/diagnostics/detectors/incidents/cache/detector.go","line":4}]}`)
+					if err != nil {
+						return err
+					}
+					return validate.Err(ds)
+				}
+			}
+		}
+		return nil
+	}
+	h := newRejectionHarnessValidator(t, "inc-compile-retry", func(_ int, w IncidentWorkspace) (ReflectionDecision, error) { return writeGoodPlaybook(w) }, validator)
+	receipt, err := h.native.ProcessClosure(context.Background(), h.closure)
+	if err != nil || receipt.ReflectionCommit == "" {
+		t.Fatalf("compile retry failed: %+v %v", receipt, err)
+	}
+	if len(h.calls) != 2 || h.calls[0].Attempt != 1 || h.calls[1].Attempt != 2 || len(h.calls[1].Diagnostics) != 1 || h.calls[1].Diagnostics[0].Rule != validate.RuleDetectorCompile {
+		t.Fatalf("compile failure lost attempt/typed feedback: %+v", h.calls)
+	}
+	ledger, err := h.native.readLedger("inc-compile-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.ReflectionRejections) != 1 || ledger.ReflectionRejections[0].Attempt != 1 {
+		t.Fatalf("compile rejection not durable: %+v", ledger.ReflectionRejections)
 	}
 }

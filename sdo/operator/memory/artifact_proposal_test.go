@@ -50,8 +50,8 @@ func TestMaterializeJudgeProposalOwnsPhysicalLayout(t *testing.T) {
 
 func TestMaterializeRejectsUntrustedPathsBeforeMutation(t *testing.T) {
 	root := t.TempDir()
-	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "../../outside", DetectorClass: "incident", Owner: "responder", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package bad"}}}}}
-	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err == nil {
+	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "../../outside", DetectorClass: "health", Owner: "health_judge", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package bad"}}}}}
+	if err := MaterializeArtifacts(root, proposal, HealthJudgeArtifacts); err == nil {
 		t.Fatal("unsafe ID accepted")
 	}
 	if _, err := os.Stat(filepath.Join(root, ".sdo")); !os.IsNotExist(err) {
@@ -64,13 +64,13 @@ func TestMaterializeRejectsPhysicalReferencesInWorkerContent(t *testing.T) {
 		name     string
 		proposal *contracts.OperationalArtifactProposal
 	}{
-		{name: "detector source", proposal: &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "fault", DetectorClass: "incident", Owner: "responder", Constructor: "New", Firing: 1, OriginatingIncident: "incident", OriginatingCommit: "accepted", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package fault\n// .sdo/playbooks/fault/README.md\n"}}}}}},
-		{name: "playbook markdown", proposal: &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "fault", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "Read .sdo/playbooks/fault/README.md"}}}},
-		{name: "playbook script", proposal: &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "fault", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "# Repair", Scripts: []*contracts.MemoryScript{{Name: "verify.sh", Content: "cat .sdo/goal.md"}}}}}},
+		{name: "detector source", proposal: &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "fault", DetectorClass: "health", Owner: "health_judge", Constructor: "New", Firing: 1, OriginatingIncident: "incident", OriginatingCommit: "accepted", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package fault\n// .sdo/playbooks/fault/README.md\n"}}}}}},
+		{name: "playbook markdown", proposal: &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "health-objective", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "Read .sdo/playbooks/fault/README.md"}}}},
+		{name: "playbook script", proposal: &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "health-objective", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "# Repair", Scripts: []*contracts.MemoryScript{{Name: "verify.sh", Content: "cat .sdo/goal.md"}}}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			if err := MaterializeArtifacts(root, test.proposal, ResponderArtifacts); err == nil || !strings.Contains(err.Error(), "physical operational memory path") {
+			if err := MaterializeArtifacts(root, test.proposal, HealthJudgeArtifacts); err == nil || !strings.Contains(err.Error(), "physical operational memory path") {
 				t.Fatalf("worker content with storage path was accepted: %v", err)
 			}
 			if _, err := os.Stat(filepath.Join(root, ".sdo")); !os.IsNotExist(err) {
@@ -108,5 +108,16 @@ func TestTypedArtifactsRejectDirectWorkerFilesystemEdits(t *testing.T) {
 	}
 	if err := RequireCleanProposalCheckout(context.Background(), root); err == nil {
 		t.Fatal("direct worker edit accepted")
+	}
+}
+
+func TestMaterializeArtifactsRejectsResponderRole(t *testing.T) {
+	root := t.TempDir()
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "fault", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "# Repair <RESOURCE_NAME>\n"}}}
+	if err := MaterializeArtifacts(root, proposal, ArtifactRole("responder")); err == nil {
+		t.Fatal("reflection retained a route into the judge writer")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sdo")); !os.IsNotExist(err) {
+		t.Fatalf("rejected role mutated checkout: %v", err)
 	}
 }

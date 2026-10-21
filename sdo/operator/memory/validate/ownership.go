@@ -46,9 +46,8 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 // Incident traffic: responders own the incident generator and incident-*
 // workloads, and the health judge owns all other traffic. This is the broker's
 // long-standing behavior and docs/architecture.md's ownership matrix. The
-// typed OperationalArtifactProposal path in memory/artifact_proposal.go
-// rejects responder traffic outright; it is retired by the move to
-// file-based memory edits and does not define ownership.
+// judge-only bootstrap writer does not accept responder artifacts. Reflection
+// edits final files and uses this shared ownership policy.
 var grants = []grant{
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},
@@ -125,8 +124,8 @@ func (s *run) ownership(ctx context.Context) error {
 		s.add(Ownership, Diagnostic{Rule: RuleUnknownActor, Message: fmt.Sprintf("unknown actor %q", actor), Hint: "actors are human, deployer, health_judge, responder, and upkeep"})
 		return nil
 	}
-	if !knownPhase(phase) {
-		s.add(Ownership, Diagnostic{Rule: RuleUnknownPhase, Message: fmt.Sprintf("unknown phase %q", phase), Hint: "phases are proposal, reflection, initial, and outcome"})
+	if diagnostics := PhaseDiagnostics(phase); len(diagnostics) > 0 {
+		s.diags = append(s.diags, diagnostics...)
 		return nil
 	}
 	for _, p := range s.changed {
@@ -186,7 +185,7 @@ func changesManifests(paths []string) bool {
 // manifest that failed to parse is present with a nil value.
 func (s *run) candidateManifests() map[string]*detector {
 	byID := map[string]*detector{}
-	for _, det := range s.detectors {
+	for _, det := range s.sortedDetectors() {
 		if det.hasManifest {
 			byID[det.id] = det
 		}

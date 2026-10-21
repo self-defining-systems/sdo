@@ -73,6 +73,12 @@ def scripted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]
         '-m benchmarks.sregym.assurance.scripted_codex "$@"\n',
     )
     _executable(bin_dir / "kubectl", _KUBECTL)
+    _executable(
+        bin_dir / "sdo-operator",
+        '#!/bin/sh\ntest "$*" = "memory check" || exit 2\n'
+        'if grep -q "malformed README" .sdo/playbooks/*/README.md; '
+        'then echo "frontmatter.missing"; exit 1; fi\n',
+    )
     state = tmp_path / "cluster"
     state.mkdir()
     policy = {
@@ -230,7 +236,7 @@ def test_wrong_only_honest_fails_and_claimed_lies_about_verification(
     assert [(ref.kind, ref.name) for ref in wrong.resources] == [("Deployment", "frontend")]
 
 
-def test_resumed_reflection_accounts_only_its_own_tokens_and_returns_logical_artifacts(
+def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     worktree = _memory_worktree(scripted["tmp"])
@@ -257,12 +263,14 @@ def test_resumed_reflection_accounts_only_its_own_tokens_and_returns_logical_art
     assert turn.usage["input_tokens"] == own["input_tokens"]
     assert turn.usage["output_tokens"] == own["output_tokens"]
     assert turn.usage["model_requests"] == reflection["requests"]
-    proposal = turn.artifact_proposal
-    assert proposal is not None
-    assert proposal.detectors[0].id == "deny-all-networkpolicy-isolation"
-    assert proposal.detectors[0].originating_incident == request.incident_id
-    assert proposal.playbooks[0].id == "deny-all-networkpolicy-isolation"
-    assert not subprocess.run(
+    assert turn.playbook_ids == ["deny-all-networkpolicy-isolation"]
+    manifest = (
+        worktree / ".sdo/diagnostics/detectors/incidents/deny-all-networkpolicy-isolation/manifest.yaml"
+    ).read_text()
+    assert f'originatingIncident: "{request.incident_id}"' in manifest
+    assert (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").exists()
+    assert any(item["command"] == "sdo-operator memory check" for item in reflection["commands"])
+    assert subprocess.run(
         ["git", "-C", str(worktree), "status", "--porcelain"], capture_output=True, text=True, check=True
     ).stdout
 
@@ -345,3 +353,25 @@ def test_healed_noop_claims_completed_with_no_action_once_health_is_back(
     assert healed.repair_actions == []
     assert healed.confirmed_root_causes == []
     assert healed.verification_evidence[0].passed is True
+
+
+def test_scripted_reflection_fixes_local_diagnostics_in_the_same_checkout(
+    scripted: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worktree = _memory_worktree(scripted["tmp"])
+    request = _request(worktree, scripted["tmp"], monkeypatch)
+    _directive(scripted["store"], reflection="invalid_then_learn")
+    responder = execute_incident(request, model="gpt-6-luna", provider="codex")
+    turn = CodexSessionBackend(model="gpt-6-luna").resume(
+        session_id=responder.responder_session_id,
+        worktree=worktree,
+        prompt="Reflect on the verified closure",
+        idempotency_key=f"reflection:{request.incident_id}:{'a' * 40}",
+    )
+    assert turn.learning_decision == "updated"
+    reflection = _turn_records(scripted["store"])[-1]
+    checks = [command for command in reflection["commands"] if command["command"] == "sdo-operator memory check"]
+    assert [command["exit_code"] for command in checks] == [1, 0]
+    assert (
+        "malformed README" not in (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").read_text()
+    )

@@ -96,7 +96,7 @@ func TestBuiltInAgentManifestsRegisterIndependentCapabilities(t *testing.T) {
 		{"sdo-deployer", "source-architecture"},
 		{"sdo-health-judge", "health-judgment"},
 		{"sdo-responder", "incident-response"},
-		{"sdo-reflector", "outcome-reflection"},
+		{"sdo-reflector", "outcome-reflection-direct-v1"},
 	} {
 		if _, err := registry.Resolve(choice.id, choice.task); err != nil {
 			t.Errorf("%s/%s: %v", choice.id, choice.task, err)

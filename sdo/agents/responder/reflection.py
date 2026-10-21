@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
 
 from google.protobuf import json_format
@@ -11,9 +12,6 @@ from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
-from sdo.agents.views import (
-    OperationalArtifactDraft,  # noqa: TC001 - Pydantic resolves this field at runtime.
-)
 from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -45,10 +43,9 @@ class ReflectionTurn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str = Field(min_length=1)
-    learning_decision: Literal["updated", "no_change"]
+    learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
-    proposed_changes: list[str]
-    artifact_proposal: OperationalArtifactDraft | None = None
+    playbook_ids: list[str] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
     _usage: dict[str, int | float] = PrivateAttr(default_factory=dict)
 
@@ -61,13 +58,15 @@ class ReflectionTurn(BaseModel):
         return self
 
     def model_post_init(self, __context: object) -> None:
-        if self.learning_decision == "updated" and not (self.proposed_changes or self.artifact_proposal):
-            raise ValueError("updated reflection requires a logical artifact proposal or legacy changes")
-        if self.learning_decision == "no_change":
-            if self.proposed_changes or self.artifact_proposal:
-                raise ValueError("no_change reflection cannot propose changes")
-            if self.no_change_reason is None:
-                raise ValueError("no_change reflection requires no_change_reason")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_-]*", item) for item in self.playbook_ids):
+            raise ValueError("reflection requires logical playbook IDs")
+        if len(set(self.playbook_ids)) != len(self.playbook_ids):
+            raise ValueError("reflection playbook IDs must be unique")
+        if self.learning_decision in {"no_change", "sdk_gap"}:
+            if self.playbook_ids:
+                raise ValueError("no_change or sdk_gap reflection cannot claim playbook IDs")
+            if not self.no_change_reason or not self.no_change_reason.strip():
+                raise ValueError("no_change or sdk_gap reflection requires no_change_reason")
 
 
 def reflection_output_schema() -> dict[str, object]:
@@ -117,8 +116,6 @@ class StatefulResponderBackend(Protocol):
     ) -> ReflectionTurn: ...
 
 
-#: Upper bound on the rejected diff quoted into a retry prompt.
-
 #: Reasoning effort of the incident agents (responder and reflection). A
 #: benchmark comparing SDO against a stock agent declares the same effort.
 INCIDENT_REASONING_EFFORT = "medium"
@@ -163,23 +160,22 @@ def _logical_learning_request(
     classification = outcome.classification
     return (
         "The controller verified this incident and committed its outcome. "
-        "Read the supplied logical memory snapshot and source code. Propose reusable incident "
-        "detectors and playbooks as structured artifacts in artifact_proposal. "
-        "Do not edit operational-memory files in the checkout. Source edits are not part of reflection. "
-        "Each detector needs a stable logical ID, Kubernetes watches, Go source and tests, "
-        "and the originating incident and outcome commit. Each playbook needs a logical ID, "
-        "fault class, originating incident, Markdown instructions, and optional scripts. "
-        "Run `sdo-operator memory ls` to see the existing artifacts and `sdo-operator memory check` to confirm "
-        "the checkout's current memory is valid; both are read-only. "
-        "The broker performs authoritative validation of your OperationalArtifactProposal later. "
-        "Use proposed_changes=[]; the artifact IDs are derived from artifact_proposal. "
-        "Return learning_decision=updated only with a nonempty artifact_proposal. "
-        "Return no_change with a specific reason and artifact_proposal=null when no safe learning exists.\n\n"
+        "Read the supplied logical memory snapshot, source code, and detector SDK reference. "
+        "Edit the final files directly "
+        "in the operational memory directory `.sdo/` of this isolated checkout. "
+        "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
+        "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
+        "Run `sdo-operator memory ls` to inspect existing artifacts. "
+        "After editing, run `sdo-operator memory check` and fix its named diagnostics in this same checkout "
+        "until it exits zero, within your turn budget. SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT "
+        "are already set; do not override them. The Go broker repeats the same check independently. "
+        "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
+        "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
+        "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content.\n\n"
         f"{_logical_guidance(guidance)}"
         f"For this {classification} outcome, "
         f"{_classification_directive(classification, guidance)}\n\n"
-        "Before returning an update, make sure the complete artifact_proposal is in the structured result; "
-        "the broker rejects proposals that break the `sdo-operator memory check` rules.\n\n"
+        "Before returning an update, the complete final files must be in the checkout and memory check must pass.\n\n"
         f"{DETECTOR_SDK_REFERENCE}\n"
         f"Outcome commit: {outcome_commit}\n"
         f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
@@ -244,6 +240,8 @@ class SessionReflector:
                 "independently verified incident closure and committed its authoritative outcome; the responder's "
                 "session transcript is intentionally not available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
+                "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
+                "Author corrected final files here, then run memory check until green.\n\n"
                 f"Original reflection request:\n{request}"
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)

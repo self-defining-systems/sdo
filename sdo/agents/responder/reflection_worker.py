@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from typing import Protocol, cast
 
-from google.protobuf import json_format
-
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
@@ -26,7 +24,6 @@ from sdo.contracts import (
     AgentResult,
     AgentTask,
     IncidentClosure,
-    OperationalArtifactProposal,
     ReflectionRequest,
     ReflectionResult,
     parse_json,
@@ -71,7 +68,7 @@ def run_reflection_task(
         raise ValueError("reflection task request is not a ReflectionRequest")
     if not request.HasField("outcome") or not request.outcome_commit:
         raise ValueError("reflection task requires an outcome and outcome commit")
-    if not task.workspace.proposal_id or not task.workspace.checkout_path:
+    if not task.workspace.proposal_id or not task.workspace.checkout_path or not task.workspace.base_commit:
         raise ValueError("reflection task requires a proposal workspace")
     if not request.HasField("memory_snapshot"):
         raise ValueError("reflection task requires a logical memory snapshot")
@@ -79,7 +76,10 @@ def run_reflection_task(
     history = list(request.prior_outcomes)
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
-    if request.memory_snapshot.accepted_commit != request.outcome_commit:
+    if (
+        request.memory_snapshot.accepted_commit != request.outcome_commit
+        or task.workspace.base_commit != request.outcome_commit
+    ):
         raise ValueError("reflection memory snapshot is not bound to committed outcome")
     closure.request.memory_snapshot.CopyFrom(request.memory_snapshot)
     if closure.request.incident_id != outcome.incident_id:
@@ -93,6 +93,8 @@ def run_reflection_task(
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")
+    # The task, rather than inherited launcher environment, pins check ownership.
+    os.environ.update(SDO_ACTOR="responder", SDO_PHASE="reflection", SDO_BASE_COMMIT=task.workspace.base_commit)
     selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
     turn = selected.resume(
         session_id=prior_session or "",
@@ -106,32 +108,12 @@ def run_reflection_task(
         validation_attempt=request.validation_attempt or 1,
         diagnostics=list(request.previous_diagnostics),
     )
-    if turn.proposed_changes:
-        raise ValueError("logical reflection cannot return physical paths")
-    if turn.learning_decision == "updated" and turn.artifact_proposal is None:
-        raise ValueError("updated logical reflection requires typed artifacts")
-    if turn.learning_decision == "no_change" and turn.artifact_proposal is not None:
-        raise ValueError("no-change reflection cannot return artifacts")
-    if turn.artifact_proposal is not None:
-        for detector in turn.artifact_proposal.detectors:
-            if (
-                detector.originating_commit != request.outcome_commit
-                or detector.originating_incident != outcome.incident_id
-            ):
-                raise ValueError("reflected detector origin must match authoritative outcome")
-        for playbook in turn.artifact_proposal.playbooks:
-            if playbook.originating_incident != outcome.incident_id:
-                raise ValueError("reflected playbook origin must match authoritative outcome")
     typed_result = ReflectionResult(
         summary=turn.summary,
         learning_decision=turn.learning_decision,
         no_change_reason=turn.no_change_reason or "",
-        proposed_artifact_ids=turn.artifact_proposal.artifact_ids() if turn.artifact_proposal else [],
+        proposed_artifact_ids=turn.playbook_ids,
     )
-    if turn.artifact_proposal is not None:
-        typed_result.artifact_proposal.CopyFrom(
-            json_format.ParseDict(turn.artifact_proposal.model_dump(mode="json"), OperationalArtifactProposal())
-        )
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,

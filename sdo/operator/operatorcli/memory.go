@@ -22,14 +22,17 @@ import (
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
 commands:
-  check [--root .] [--actor A] [--phase P] [--base REV] [--layers L,...] [--json]
-        Validate operational memory with the same validator the commit broker
-        runs. Exit 0 when clean, 1 when there are diagnostics, 2 on an
-        infrastructure or usage error. Actor and phase default to the
-        SDO_ACTOR and SDO_PHASE environment variables. Layers are structural,
-        semantic, ownership, compile, static (the first three), or all; the
-        default is structural and semantic, plus ownership when --base is set.
-        Diagnostics print as "path:line: rule: message (hint)".
+  check [--root .] [--json] [--decision FILE]
+        Run structural, semantic, ownership, build, vet, and detector tests.
+        SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources
+        default to $SDO_OPERATOR_ROOT or /opt/sdo/sdo/operator. Optional recorded
+        healthy snapshots come from SDO_HEALTHY_BASELINE. Publication context is
+        provisioned in .git/sdo-check-context.json. Reflection must write its
+        intended ReflectionDecision JSON (learning_decision, no_change_reason,
+        playbook_ids) to .git/sdo-reflection-decision.json or --decision FILE.
+        The returned result must use the same decision and logical IDs.
+        Exit 0 when clean,
+        1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
@@ -117,29 +120,6 @@ func absRoot(root string) (string, error) {
 	return absolute, nil
 }
 
-func parseLayers(spec string) (validate.Layer, error) {
-	var layers validate.Layer
-	for _, name := range strings.Split(spec, ",") {
-		switch strings.TrimSpace(name) {
-		case "structural":
-			layers |= validate.Structural
-		case "semantic":
-			layers |= validate.Semantic
-		case "ownership":
-			layers |= validate.Ownership
-		case "compile":
-			layers |= validate.Compile
-		case "static":
-			layers |= validate.Static
-		case "all":
-			layers |= validate.All
-		default:
-			return 0, fmt.Errorf("unknown layer %q (structural, semantic, ownership, compile, static, all)", name)
-		}
-	}
-	return layers, nil
-}
-
 func marshalJSON(message proto.Message) ([]byte, error) {
 	return protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true, Multiline: true}.Marshal(message)
 }
@@ -155,12 +135,8 @@ func writeJSON(stdout io.Writer, message proto.Message) error {
 
 func memoryCheck(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
+	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
 	root := flags.String("root", ".", "repository checkout to validate")
-	actor := flags.String("actor", getenv(memoryActorEnv), "who authored the change (default $"+memoryActorEnv+")")
-	phase := flags.String("phase", getenv(memoryPhaseEnv), "lifecycle phase of the change (default $"+memoryPhaseEnv+")")
-	base := flags.String("base", "", "Git revision the change is made against; enables the ownership layer")
-	layers := flags.String("layers", "", "comma-separated layers")
-	operatorRoot := flags.String("operator-root", operatorRootDefault(getenv), "operator sources, for the compile layer")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
 	positional, err := parseFlags(flags, args)
 	if err != nil {
@@ -173,23 +149,31 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	if err != nil {
 		return exitInfra, err
 	}
-	selected := validate.Structural | validate.Semantic
-	if *base != "" {
-		selected |= validate.Ownership
+	actor, phase, base := getenv(memoryActorEnv), getenv(memoryPhaseEnv), getenv("SDO_BASE_COMMIT")
+	publication, err := validate.LoadPublicationContext(ctx, absolute)
+	if err != nil {
+		return exitInfra, err
 	}
-	if *layers != "" {
-		if selected, err = parseLayers(*layers); err != nil {
+	if publication == nil && getenv(memoryIncidentEnv) != "" {
+		publication = &validate.PublicationContext{BaseCommit: base, IncidentID: getenv(memoryIncidentEnv)}
+	}
+	var decision *contracts.ReflectionDecision
+	if phase == string(validate.ReflectionPhase) {
+		decision, err = validate.LoadReflectionDecision(ctx, absolute, *decisionPath)
+		if err != nil {
 			return exitInfra, err
 		}
 	}
-	diagnostics, err := validate.Validate(ctx, validate.Request{
-		Root: absolute, Base: *base, Actor: validate.Actor(*actor), Phase: validate.Phase(*phase), Layers: selected, OperatorRoot: *operatorRoot,
-	})
+
+	diagnostics, err := validate.Check(ctx, validate.Request{
+		Root: absolute, Base: base, Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
+		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
+	}, validate.CompileCandidate)
 	if err != nil {
 		return exitInfra, err
 	}
 	if *asJSON {
-		report := &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(diagnostics), Root: absolute, Actor: *actor, Phase: *phase, Base: *base}
+		report := &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base}
 		if err := writeJSON(stdout, report); err != nil {
 			return exitInfra, err
 		}

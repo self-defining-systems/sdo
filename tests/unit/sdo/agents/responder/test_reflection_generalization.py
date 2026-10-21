@@ -37,7 +37,7 @@ def test_logical_reflection_prompt_is_problem_agnostic(tmp_path: Path, guidance:
     static = prompt.split("Current outcome:", 1)[0]
     for private_fact in _LEAK_DENYLIST:
         assert re.search(re.escape(private_fact), static, re.IGNORECASE) is None
-    assert ".sdo/" not in prompt
+    assert "Edit the final files directly" in prompt
 
 
 def test_baseline_guidance_keeps_confirmed_signature_precise(tmp_path: Path) -> None:

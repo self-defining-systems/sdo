@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -125,7 +126,10 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
 			}
 		}
-		requestWire, err := wire.Marshal(request)
+		logicalRequest := proto.Clone(request).(*contracts.ReflectionRequest)
+		logicalRequest.PreviousDiagnostics = nil
+		logicalRequest.ValidationAttempt = 1
+		requestWire, err := wire.Marshal(logicalRequest)
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
@@ -172,26 +176,16 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err := wire.Validate(response); err != nil {
 		return ReflectionDecision{}, err
 	}
-	if w.Catalog != nil {
-		if err := memory.RequireCleanProposalCheckout(ctx, workspace.Worktree); err != nil {
-			return ReflectionDecision{}, err
-		}
-		if response.GetLearningDecision() == "updated" {
-			if response.GetArtifactProposal() == nil {
-				return ReflectionDecision{}, errors.New("updated reflection omitted typed operational artifacts")
-			}
-			proposal := proto.Clone(response.GetArtifactProposal()).(*contracts.OperationalArtifactProposal)
-			for _, detector := range proposal.GetDetectors() {
-				if detector.GetOriginatingCommit() == "" {
-					detector.OriginatingCommit = outcomeCommit
-				}
-			}
-			if err := memory.MaterializeArtifacts(workspace.Worktree, proposal, memory.ResponderArtifacts); err != nil {
-				return ReflectionDecision{}, fmt.Errorf("materialize reflection artifacts: %w", err)
-			}
-		} else if response.GetArtifactProposal() != nil {
-			return ReflectionDecision{}, errors.New("no-change reflection cannot propose artifacts")
-		}
+	// The direct-edit capability never accepts the retired content payload.
+	if response.GetArtifactProposal() != nil {
+		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
 	}
-	return ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason()}, nil
+	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...)}
+	return decision, nil
+}
+
+// Validate binds the worker decision to the actual checkout diff. Content and
+// ownership rules remain in validate.Check, shared by the CLI and broker.
+func (d ReflectionDecision) Validate(paths []string) error {
+	return validate.Err(validate.ReflectionDiagnostics(&contracts.ReflectionDecision{LearningDecision: d.LearningDecision, NoChangeReason: d.NoChangeReason, PlaybookIds: d.PlaybookIDs}, paths))
 }

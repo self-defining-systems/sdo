@@ -188,7 +188,7 @@ import (
 
 func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.DetectorSpec{ID:"health-objective", Class:sdk.DetectorClassHealth, Owner:sdk.DetectorOwnerHealthJudge, Watches:servicehealth.EndpointWatches(), Interval:30*time.Second, Persistence:sdk.PersistencePolicy{Firing:2,Clearing:2}, Batching:sdk.BatchingPolicy{Severity:sdk.SeverityCritical,Debounce:500*time.Millisecond}, Playbooks:[]string{"health-objective"}, OriginatingCommit:"lifecycle-bootstrap"}) }
 `}}}}, Playbooks: []*contracts.ProposedPlaybook{{Id: "health-objective", Owner: "responder", FaultClass: "health-objective-failure", OriginatingIncident: "lifecycle-bootstrap", Markdown: "# Repair <AFFECTED_RESOURCE>\n"}}}})
-	case "outcome-reflection":
+	case reflectionTaskType(w.t):
 		request := &contracts.ReflectionRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err

@@ -2,27 +2,31 @@ package broker
 
 import (
 	"context"
+	"errors"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
 )
 
-// validateCandidate runs the shared validator's read-only layers on a staged
-// candidate against the accepted base commit. Detector compilation executes
-// untrusted code, so it runs in the isolated validation Job (see Validator),
-// which invokes the same validator's compile layer.
-func validateCandidate(ctx context.Context, candidate, base string, actor Actor, phase Phase) error {
-	return validateLayers(ctx, candidate, base, actor, phase, validate.Static)
-}
-
-// validateOwnership checks only who may change which paths.
-func validateOwnership(ctx context.Context, checkout, base string, actor Actor, phase Phase) error {
-	return validateLayers(ctx, checkout, base, actor, phase, validate.Ownership)
-}
-
-func validateLayers(ctx context.Context, root, base string, actor Actor, phase Phase, layers validate.Layer) error {
-	diagnostics, err := validate.Validate(ctx, validate.Request{Root: root, Base: base, Actor: actor, Phase: phase, Layers: layers})
-	if err != nil {
-		return err
+// checkCandidate applies the same complete pipeline as memory check. Only the
+// compile transport differs: the broker requires its independent validator Job.
+func checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision) ([]validate.Diagnostic, error) {
+	var compile validate.CompileRunner
+	if runner != nil {
+		compile = func(ctx context.Context, _ validate.Request) ([]validate.Diagnostic, error) {
+			err := runner(ctx, root, paths)
+			var failure *validate.Failure
+			if errors.As(err, &failure) {
+				return failure.Diagnostics, nil
+			}
+			return nil, err
+		}
 	}
-	return validate.Err(diagnostics)
+	return validate.Check(ctx, validate.Request{Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision}, compile)
+}
+
+// PublishReflection binds the returned worker decision independently of any
+// self-check metadata the agent wrote in its proposal checkout.
+func (b *Broker) PublishReflection(ctx context.Context, incidentID string, decision *contracts.ReflectionDecision) (Receipt, error) {
+	return b.publish(ctx, incidentID, Responder, ReflectionPhase, "", nil, decision)
 }

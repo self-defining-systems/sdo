@@ -50,50 +50,25 @@ class Reflector:
     def resume(self, **kwargs: object) -> ReflectionTurn:
         self.kwargs = kwargs
         return ReflectionTurn(
-            summary="Already covered", learning_decision="no_change", no_change_reason="No gap", proposed_changes=[]
+            summary="Already covered", learning_decision="no_change", no_change_reason="No gap", playbook_ids=[]
         )
 
 
-class LogicalReflector(Reflector):
+class DirectReflector(Reflector):
     def resume(self, **kwargs: object) -> ReflectionTurn:
         self.kwargs = kwargs
-        outcome = kwargs["outcome"]
-        return ReflectionTurn.model_validate(
-            {
-                "summary": "Capture the confirmed signature",
-                "learning_decision": "updated",
-                "proposed_changes": [],
-                "artifact_proposal": {
-                    "playbooks": [
-                        {
-                            "id": "missing-service",
-                            "owner": "responder",
-                            "fault_class": "missing-service",
-                            "originating_incident": outcome.incident_id,
-                            "markdown": "# Missing service\n\n## Verification\nCheck recovery.\n",
-                        }
-                    ]
-                },
-            }
-        )
+        import os
 
-
-class WrongOriginReflector(LogicalReflector):
-    def resume(self, **kwargs: object) -> ReflectionTurn:
-        turn = super().resume(**kwargs)
-        assert turn.artifact_proposal is not None
-        return turn.model_copy(
-            update={
-                "artifact_proposal": turn.artifact_proposal.model_copy(
-                    update={
-                        "playbooks": [
-                            turn.artifact_proposal.playbooks[0].model_copy(
-                                update={"originating_incident": "unrelated-incident"}
-                            )
-                        ]
-                    }
-                )
-            }
+        assert os.environ["SDO_ACTOR"] == "responder"
+        assert os.environ["SDO_PHASE"] == "reflection"
+        assert os.environ["SDO_BASE_COMMIT"] == "outcome-commit"
+        worktree = kwargs["worktree"]
+        assert isinstance(worktree, Path)
+        readme = worktree / ".sdo/playbooks/missing-service/README.md"
+        readme.parent.mkdir(parents=True)
+        readme.write_text("# Final authored bytes\n", encoding="utf-8")
+        return ReflectionTurn(
+            summary="Capture signature", learning_decision="updated", playbook_ids=["missing-service"]
         )
 
 
@@ -111,7 +86,7 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-1",
         agent_id="sdo-reflector",
-        task_type="outcome-reflection",
+        task_type="outcome-reflection-direct-v1",
         request=packed,
         workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
     )
@@ -147,7 +122,7 @@ def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: P
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-resume",
         agent_id="sdo-reflector",
-        task_type="outcome-reflection",
+        task_type="outcome-reflection-direct-v1",
         workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
     )
     task.request.Pack(request)
@@ -199,7 +174,7 @@ def test_reflection_worker_uses_typed_guidance_for_builtin_reflector(
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-guidance",
         agent_id="sdo-reflector",
-        task_type="outcome-reflection",
+        task_type="outcome-reflection-direct-v1",
         workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
     )
     task.request.Pack(request)
@@ -229,7 +204,7 @@ def test_reflection_worker_requires_commit_bound_logical_memory(tmp_path: Path) 
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-missing-memory",
         agent_id="sdo-reflector",
-        task_type="outcome-reflection",
+        task_type="outcome-reflection-direct-v1",
         workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
     )
     task.request.Pack(request)
@@ -240,7 +215,7 @@ def test_reflection_worker_requires_commit_bound_logical_memory(tmp_path: Path) 
         run_reflection_task(path, "result-map", Publisher(), reflector=Reflector())
 
 
-def test_reflection_worker_returns_logical_artifact_proposal(tmp_path: Path) -> None:
+def test_reflection_worker_keeps_direct_edits_and_returns_logical_ids(tmp_path: Path) -> None:
     closure = _closure()
     outcome = _outcome(closure.request.incident_id)
     request = ReflectionRequest(
@@ -255,48 +230,34 @@ def test_reflection_worker_returns_logical_artifact_proposal(tmp_path: Path) -> 
         schema_version="sdo.dev/v1alpha1",
         task_id="reflection-logical",
         agent_id="sdo-reflector",
-        task_type="outcome-reflection",
+        task_type="outcome-reflection-direct-v1",
         request=packed,
         workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
     )
     path = tmp_path / "agent-task.json"
     path.write_text(to_canonical_json(task), encoding="utf-8")
     publisher = Publisher()
-    run_reflection_task(path, "result-map", publisher, reflector=LogicalReflector())
+    run_reflection_task(path, "result-map", publisher, reflector=DirectReflector())
     assert publisher.payload is not None
     result = parse_json(publisher.payload, AgentResult())
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
     assert decision.proposed_artifact_ids == ["missing-service"]
-    assert decision.artifact_proposal.playbooks[0].id == "missing-service"
+    assert not decision.HasField("artifact_proposal")
+    assert (tmp_path / ".sdo/playbooks/missing-service/README.md").read_text() == "# Final authored bytes\n"
 
 
-def test_reflection_worker_rejects_false_origin(tmp_path: Path) -> None:
-    closure = _closure()
-    request = ReflectionRequest(
-        closure=closure,
-        outcome=_outcome(closure.request.incident_id),
-        outcome_commit="outcome-commit",
-    )
-    request.memory_snapshot.accepted_commit = "outcome-commit"
-    packed = Any()
-    packed.Pack(request)
-    task = AgentTask(
-        schema_version="sdo.dev/v1alpha1",
-        task_id="reflection-origin",
-        agent_id="sdo-reflector",
-        task_type="outcome-reflection",
-        request=packed,
-        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
-    )
-    path = tmp_path / "agent-task.json"
-    path.write_text(to_canonical_json(task), encoding="utf-8")
-    publisher = Publisher()
-    import pytest
-
-    with pytest.raises(ValueError, match="origin"):
-        run_reflection_task(path, "result-map", publisher, reflector=WrongOriginReflector())
-    assert publisher.payload is None
+@pytest.mark.parametrize("decision", ["no_change", "sdk_gap"])
+def test_nonupdates_require_a_concrete_reason_and_no_ids(decision: str) -> None:
+    with pytest.raises(ValueError, match="no_change_reason"):
+        ReflectionTurn(summary="Nothing safe", learning_decision=decision)
+    with pytest.raises(ValueError, match="cannot claim"):
+        ReflectionTurn(
+            summary="Nothing safe",
+            learning_decision=decision,
+            no_change_reason="No observation",
+            playbook_ids=["fault"],
+        )
 
 
 def test_reflection_worker_forwards_go_retry_diagnostics(tmp_path: Path) -> None:
@@ -326,3 +287,10 @@ def test_reflection_worker_forwards_go_retry_diagnostics(tmp_path: Path) -> None
     assert reflector.kwargs is not None
     assert reflector.kwargs["validation_attempt"] == 2
     assert [d.rule for d in reflector.kwargs["diagnostics"]] == ["detector.manifest"]  # type: ignore[attr-defined]
+
+
+def test_reflection_schema_rejects_legacy_proposals() -> None:
+    with pytest.raises(ValueError, match="Extra inputs"):
+        ReflectionTurn.model_validate(
+            {"summary": "Legacy", "learning_decision": "updated", "artifact_proposal": {"playbooks": []}}
+        )

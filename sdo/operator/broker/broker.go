@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"syscall"
 
@@ -167,6 +166,9 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 			return err
 		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
+		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID}); err != nil {
+			return err
+		}
 		data, err := json.Marshal(proposal)
 		if err != nil {
 			return err
@@ -177,7 +179,7 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 }
 
 func (b *Broker) Publish(ctx context.Context, incidentID string, actor Actor, phase Phase) (Receipt, error) {
-	return b.publish(ctx, incidentID, actor, phase, "", nil)
+	return b.publish(ctx, incidentID, actor, phase, "", nil, nil)
 }
 
 // PublishVerifiedSource accepts an initial source proposal only when its full
@@ -187,12 +189,15 @@ func (b *Broker) PublishVerifiedSource(ctx context.Context, incidentID string, e
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
-	return b.publish(ctx, incidentID, Deployer, InitialPhase, evidence.ProposalTreeDigest, &evidence)
+	return b.publish(ctx, incidentID, Deployer, InitialPhase, evidence.ProposalTreeDigest, &evidence, nil)
 }
 
-func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence) (Receipt, error) {
-	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase {
-		return Receipt{}, errors.New("outcomes must use RecordOutcome; other phases are unsupported")
+func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, phase Phase, expectedSourceTree string, evidence *SourceEvidence, decision *contracts.ReflectionDecision) (Receipt, error) {
+	if err := validate.Err(validate.PhaseDiagnostics(phase)); err != nil {
+		return Receipt{}, err
+	}
+	if phase == OutcomePhase {
+		return Receipt{}, errors.New("outcomes must use RecordOutcome")
 	}
 	var receipt Receipt
 	err := b.locked(func() error {
@@ -219,21 +224,6 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
-		// Upkeep stays open after bootstrap: it carries schema migrations.
-		if phase == InitialPhase && actor != Upkeep {
-			if registered, err := layout.HasDetectors(b.target); err != nil {
-				return fmt.Errorf("inspect initial memory: %w", err)
-			} else if registered {
-				return errors.New("initial phase is closed after detector manifests are accepted")
-			}
-		}
-		if phase == ReflectionPhase {
-			if _, ok, err := b.findAccepted(ctx, incidentID, OutcomePhase); err != nil {
-				return err
-			} else if !ok {
-				return errors.New("reflection requires an accepted outcome commit")
-			}
-		}
 		proposal, err := b.proposal(incidentID, phase)
 		if err != nil {
 			return err
@@ -249,27 +239,25 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err != nil {
 			return err
 		}
-		if len(paths) == 0 {
-			return errors.New("proposal has no changed files")
-		}
-		sourceChange := false
-		for _, path := range paths {
-			if !layout.IsMemoryPath(path) {
-				sourceChange = true
+		publication := &validate.PublicationContext{BaseCommit: proposal.BaseCommit, IncidentID: incidentID, VerifiedSourceTree: expectedSourceTree}
+		if phase == ReflectionPhase && decision == nil {
+			decision, err = validate.LoadReflectionDecision(ctx, proposal.Path, "")
+			if err != nil {
+				return err
 			}
 		}
-		if phase == InitialPhase && actor == Deployer {
-			if sourceChange && expectedSourceTree == "" {
-				return errors.New("initial source must use PublishVerifiedSource")
-			}
-			if expectedSourceTree != "" && (!sourceChange || slices.Contains(paths, layout.ArchitectureFile)) {
-				return errors.New("verified source publish requires source files without architecture")
-			}
-		}
-		// Reject unowned paths before any trusted evidence is recorded; the
-		// candidate validation below repeats this check in the staged clone.
-		if err := validateOwnership(ctx, proposal.Path, proposal.BaseCommit, actor, phase); err != nil {
+		// Validate before copying so invalid filesystem shapes also receive the
+		// shared diagnostics. Recheck the frozen private clone with the real runner.
+		preflight, err := checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
+		if err != nil {
 			return err
+		}
+		if err := validate.Err(preflight); err != nil {
+			return err
+		}
+		if len(paths) == 0 {
+			receipt = Receipt{IncidentID: incidentID, Phase: phase}
+			return nil
 		}
 		if expectedSourceTree != "" {
 			actualTree, err := ProposalTreeDigest(ctx, proposal.Path)
@@ -296,11 +284,12 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		if err := validateCandidate(ctx, stage, proposal.BaseCommit, actor, phase); err != nil {
-			return fmt.Errorf("candidate validation: %w", err)
-		}
-		if err := b.validator(ctx, stage, paths); err != nil {
+		diagnostics, err := checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision)
+		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
+		}
+		if err := validate.Err(diagnostics); err != nil {
+			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if expectedSourceTree != "" {
 			stagedTree, err := ProposalTreeDigest(ctx, stage)
@@ -485,9 +474,6 @@ func (b *Broker) locked(fn func() error) error {
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
 		return Receipt{}, err
-	}
-	if _, err := runGit(ctx, stage, "diff", "--cached", "--check"); err != nil {
-		return Receipt{}, fmt.Errorf("proposal diff check: %w", err)
 	}
 	message := fmt.Sprintf("sdo(%s): validated %s\n\nSDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, phase, incidentID, actor, phase)
 	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "-m", message); err != nil {

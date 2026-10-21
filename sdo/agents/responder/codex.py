@@ -656,7 +656,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
     surfaced_context = "" if playbooks else _cold_surfaced_playbook_context(request)
     memory_guard = (
         "Operational memory is read-only. The controller verifies recovery and records the authoritative outcome; "
-        "a separate reflection task may later propose logical memory artifacts. "
+        "a separate reflection task may later edit operational memory in its own checkout. "
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
     request_json = json.dumps(_prompt_request(request), indent=2)

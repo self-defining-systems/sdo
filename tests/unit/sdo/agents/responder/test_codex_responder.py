@@ -129,7 +129,7 @@ def test_responder_cannot_reflect_before_controller_verification(monkeypatch) ->
     prompt = _responder_prompt(request)
 
     assert "Operational memory is read-only" in prompt
-    assert "separate reflection task may later propose logical memory artifacts" in prompt
+    assert "separate reflection task may later edit operational memory in its own checkout" in prompt
     assert "controller verifies recovery" in prompt
     assert "After recovery, reflect into `.sdo`" not in prompt
 

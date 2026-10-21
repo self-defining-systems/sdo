@@ -49,10 +49,18 @@ func ParseValidateLaunch(args []string) (builder.Config, error) {
 // layer over the staged candidate. The broker has already run the read-only
 // layers in its own process.
 func RunValidate(ctx context.Context, config builder.Config) error {
-	diagnostics, err := validate.Validate(ctx, validate.Request{
+	return RunValidateReport(ctx, config, io.Discard)
+}
+
+// RunValidateReport carries content failures across the isolated Job boundary.
+func RunValidateReport(ctx context.Context, config builder.Config, out io.Writer) error {
+	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{
 		Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
 	})
 	if err != nil {
+		return err
+	}
+	if err := validate.WriteReport(out, diagnostics); err != nil {
 		return err
 	}
 	return validate.Err(diagnostics)

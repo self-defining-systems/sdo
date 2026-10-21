@@ -3,7 +3,7 @@
   "agent_id": "sdo-reflector",
   "capabilities": [
     {
-      "task_type": "outcome-reflection",
+      "task_type": "outcome-reflection-direct-v1",
       "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest",
       "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult"
     }

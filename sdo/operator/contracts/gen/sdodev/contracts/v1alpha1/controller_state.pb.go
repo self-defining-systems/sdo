@@ -677,6 +677,7 @@ type ReflectionDecision struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	LearningDecision string                 `protobuf:"bytes,1,opt,name=learning_decision,json=learningDecision,proto3" json:"learning_decision,omitempty"`
 	NoChangeReason   string                 `protobuf:"bytes,2,opt,name=no_change_reason,json=noChangeReason,proto3" json:"no_change_reason,omitempty"`
+	PlaybookIds      []string               `protobuf:"bytes,3,rep,name=playbook_ids,json=playbookIds,proto3" json:"playbook_ids,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -723,6 +724,13 @@ func (x *ReflectionDecision) GetNoChangeReason() string {
 		return x.NoChangeReason
 	}
 	return ""
+}
+
+func (x *ReflectionDecision) GetPlaybookIds() []string {
+	if x != nil {
+		return x.PlaybookIds
+	}
+	return nil
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the
@@ -1265,10 +1273,11 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1fstate.open_incident_has_request\x12%an open incident requires its request\x1a1!this.incident_open || has(this.incident_request)\x1a\x9c\x02\n" +
 	"\x1estate.detector_review_complete\x12\\detector review requires an open incident whose responder finished, plus a time and a reason\x1a\x9b\x01!this.detector_review_required || (this.incident_open && this.responder_done && has(this.detector_review_required_at) && this.detector_review_reason != '')\x1a\xc5\x01\n" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1a_this.closure_state != 'failed' || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe7\x02\n" +
-	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xcf\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 'failed'))\"\x86\x01\n" +
-	"\x12ReflectionDecision\x12F\n" +
-	"\x11learning_decision\x18\x01 \x01(\tB\x19\xbaH\x16r\x14R\aupdatedR\tno_changeR\x10learningDecision\x12(\n" +
-	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\"\xcc\x01\n" +
+	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xcf\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 'failed'))\"\xb2\x01\n" +
+	"\x12ReflectionDecision\x12O\n" +
+	"\x11learning_decision\x18\x01 \x01(\tB\"\xbaH\x1fr\x1dR\aupdatedR\tno_changeR\asdk_gapR\x10learningDecision\x12(\n" +
+	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\x12!\n" +
+	"\fplaybook_ids\x18\x03 \x03(\tR\vplaybookIds\"\xcc\x01\n" +
 	"\x11ProposalRejection\x12!\n" +
 	"\aattempt\x18\x01 \x01(\rB\a\xbaH\x04*\x02(\x01R\aattempt\x12W\n" +
 	"\vdiagnostics\x18\x02 \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticB\b\xbaH\x05\x92\x01\x02\b\x01R\vdiagnostics\x12;\n" +

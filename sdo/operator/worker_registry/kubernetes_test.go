@@ -19,7 +19,7 @@ func reflectionTestRegistry(t *testing.T) *Registry {
 	registry, err := New(&contracts.AgentRegistration{
 		SchemaVersion: SchemaVersion, AgentId: "external-reflector",
 		Capabilities: []*contracts.AgentCapability{{
-			TaskType:       "outcome-reflection",
+			TaskType:       "custom-reflection",
 			RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest",
 			ResultTypeUrl:  "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult",
 		}},
@@ -38,7 +38,7 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 		t.Fatal(err)
 	}
 	return &contracts.AgentTask{
-		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-1:abc", AgentId: "external-reflector", TaskType: "outcome-reflection", Request: payload,
+		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-1:abc", AgentId: "external-reflector", TaskType: "custom-reflection", Request: payload,
 		Workspace: &contracts.ProposalWorkspace{ProposalId: "reflection-1", CheckoutPath: "/workspace/proposals/reflection-1", BaseCommit: "abc"},
 	}
 }
@@ -51,7 +51,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
 		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
 		CredentialsSecret:     "agent-provider-credentials",
+		HealthyBaseline:       true,
 		LateFindingsConfigMap: "sdo-late-incident",
+		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged"},
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errors := make(chan error, 1)
@@ -77,6 +79,20 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	if container.WorkingDir != task.Workspace.CheckoutPath {
 		t.Fatalf("wrong working directory: %q", container.WorkingDir)
 	}
+	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/healthy-baseline"} {
+		found := 0
+		for _, env := range container.Env {
+			if env.Name == name {
+				found++
+				if env.Value != want {
+					t.Fatalf("%s = %s, want %s", name, env.Value, want)
+				}
+			}
+		}
+		if found != 1 {
+			t.Fatalf("environment %s has %d entries", name, found)
+		}
+	}
 	foundSession := false
 	repositoryVolumes := 0
 	for _, volume := range job.Spec.Template.Spec.Volumes {
@@ -99,6 +115,12 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		}
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
+		}
+		if mount.MountPath == "/sdo/healthy-baseline" {
+			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-baseline/healthy" {
+				t.Fatalf("baseline must be narrow and read-only: %+v", mount)
+			}
+			continue
 		}
 		if mount.Name == "repository" && mount.MountPath != "/sdo/session" &&
 			(mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {

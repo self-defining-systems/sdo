@@ -87,7 +87,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	freshExecutor := worker_registry.KubernetesExecutor{
 		Client: client, Namespace: namespace, Registry: registry,
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
-		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(),
+		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(),
 		Environment: map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"},
 	}
 	native.Reflector = RegisteredReflectionWorker{

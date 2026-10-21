@@ -14,13 +14,17 @@ import (
 
 const maxCompileOutput = 4096
 
+// Go test timings and cache hits differ on repeated runs; they are log detail,
+// not part of a diagnostic's identity.
+var goTestDuration = regexp.MustCompile(`(?m)(?:\t(?:[0-9]+\.[0-9]+s|\(cached\))| \([0-9]+\.[0-9]+s\))$`)
+
 // goLocation matches a compiler or vet position inside a detector workspace,
 // whose layout mirrors the diagnostics directory.
 var goLocation = regexp.MustCompile(`(?m)^(?:vet: )?(?:\./)?((?:detectors|traffic)/[^\s:]+\.go):(\d+)(?::\d+)?: (.+)$`)
 
 // compile builds the detectors against the SDK in an isolated workspace, then
-// vets and tests them. It executes detector code: call it only inside the
-// network-isolated validation Job, never in the broker process.
+// vets and tests them. It executes detector code: the broker invokes it in
+// its network-isolated Job; agent self-checks invoke the same runner locally.
 func (s *run) compile(ctx context.Context) error {
 	diagnostics, err := memory.CandidateDiagnostics(s.req.Root)
 	if errors.Is(err, memory.ErrDiagnosticsNotBootstrapped) {
@@ -71,7 +75,7 @@ func (s *run) compile(ctx context.Context) error {
 		s.add(Compile, Diagnostic{Rule: rule, Path: path, Line: line, Message: strings.TrimSpace(m[3]), Hint: "go " + stage.Stage + " failed"})
 	}
 	if len(located) == 0 {
-		output := stage.Output
+		output := goTestDuration.ReplaceAllString(stage.Output, "")
 		if len(output) > maxCompileOutput {
 			output = "..." + output[len(output)-maxCompileOutput:]
 		}
