@@ -72,6 +72,46 @@ and the ConfigMap and reflection size-limit checks. The Python test remains a
 fast CLI and result-row check with the scripted worker and fake application API.
 The gate needs Go and `uv`, but no cluster or container runtime.
 
+### Fastloop phase budget
+
+Five scripted two-incident dev-loop runs on 2026-10-21 (the `devloop1-*`
+results under `fastloop-devloop1`) had these median wall times before the
+setup changes. The figures are a budget for finding the next bottleneck, not
+an estimate of Kubernetes speed from the fake API.
+
+| Phase | First incident | Second incident |
+| --- | ---: | ---: |
+| Inventory and lifecycle | 62.7 s | 0.1 s |
+| Controller install or reuse inspection | 36.6 s | 32.6 s |
+| Controller baseline gate | 31.7 s | 1.1 s |
+| Reflection and drain | 271.1 s | 71.3 s |
+| Incident wall time | 426.4 s | 143.1 s |
+
+The install inspection is now skipped after a fresh lifecycle has already
+created a controller Pod, and on later stages when the stored lifecycle
+fingerprint and the live Pod UID still match. A before/after run of the
+persistent-stage function against the same hermetic fake operations and fake
+clock, with each install inspection charged a deterministic 35 s, measured:
+
+| Hermetic phase | First before | First after | Second before | Second after |
+| --- | ---: | ---: | ---: | ---: |
+| Inventory and lifecycle | 35.0 s | 35.0 s | 0.0 s | 0.0 s |
+| Controller install or reuse inspection | 35.0 s | 0.0 s | 35.0 s | 0.0 s |
+| Controller baseline gate | 3.0 s | 3.0 s | 3.0 s | 3.0 s |
+
+The full fake API gate reports `controller_install_inspection=0.0 s` on its
+reused stage; its baseline gate takes about 0.001 s and therefore does not
+predict the real cluster's 1.1 s. A host-side Go build of `sdk/program` with
+`CGO_ENABLED=0`, `GOMAXPROCS=2`, and `GOFLAGS="-mod=mod -p=2"` took 21 s with
+an empty cache and under 1 s with the same cache warmed or copied into a
+new cache directory. Image build time and in-Pod cache-copy time remain
+unmeasured without Docker or kind.
+
+Fastloop result rows now separate `run_prelude_phase_seconds` (first row
+only), `driver_phase_timings_seconds`, and `fault_gate_timings_seconds` from
+`closure_phase_seconds`. Compare these fields before changing a wait; phase
+times from the hermetic fake API and kind are different workloads.
+
 Stage checkpoint tests run entirely offline:
 
 ```bash
