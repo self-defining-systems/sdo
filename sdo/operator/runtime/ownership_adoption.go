@@ -17,6 +17,7 @@ import (
 
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // OwnershipAdoptionStatus records the transfer of accepted manifest fields to
@@ -102,10 +103,11 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	}
 	changes := make([]ObjectChange, 0)
 	type candidate struct {
-		ref       sdk.ObjectRef
-		source    *unstructured.Unstructured
-		conflicts int
-		managers  []string
+		ref        sdk.ObjectRef
+		source     *unstructured.Unstructured
+		normalized *unstructured.Unstructured
+		conflicts  int
+		managers   []string
 	}
 	pending := make([]candidate, 0)
 	for _, source := range objects {
@@ -138,11 +140,20 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			continue
 		}
 		conflicts, managers := adoptionConflicts(live, declared)
-		pending = append(pending, candidate{ref: ref, source: source, conflicts: conflicts, managers: managers})
+		if live.GetUID() == "" || live.GetResourceVersion() == "" {
+			return fmt.Errorf("live %s/%s lacks UID or resourceVersion for conditional adoption", ref.Kind, ref.Name)
+		}
+		conditional := source.DeepCopy()
+		conditional.SetUID(live.GetUID())
+		conditional.SetResourceVersion(live.GetResourceVersion())
+		pending = append(pending, candidate{ref: ref, source: conditional, normalized: normalized, conflicts: conflicts, managers: managers})
 	}
-	if len(changes) > 0 {
-		view := c.drift.View(snapshot)
+	persistDifferences := func(changes []ObjectChange, view program.ReadView) error {
+		if len(changes) == 0 {
+			return nil
+		}
 		classifier := DriftClassifier{Programs: c.drift.Programs, Deadline: c.drift.Deadline}
+		events := make([]sdk.DriftEvent, 0, len(changes))
 		for _, change := range changes {
 			event, _, err := classifier.Classify(actionCtx, change, view, now)
 			if err != nil {
@@ -151,14 +162,48 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 			if event == nil {
 				return fmt.Errorf("pre-adoption difference was not classified")
 			}
+			events = append(events, *event)
 		}
-		c.processDrift(actionCtx, now, snapshot, changes, false)
+		for _, event := range events {
+			c.mu.Lock()
+			c.driftEvents = append(c.driftEvents, event)
+			if len(c.driftEvents) > 40 {
+				c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
+			}
+			c.mu.Unlock()
+			if event.Classification == sdk.DriftUnexplained {
+				c.queueUnexplainedFinding(now, event)
+			}
+		}
 		if err := c.PersistState(actionCtx); err != nil {
 			return fmt.Errorf("persist pre-adoption drift: %w", err)
 		}
+		return nil
+	}
+	if err := persistDifferences(changes, c.drift.View(snapshot)); err != nil {
+		return err
 	}
 	for _, item := range pending {
 		if _, err := applyAcceptedSource(actionCtx, c.drift.Client, item.ref, item.source, false); err != nil {
+			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+				live, readErr := getAdoptionObject(actionCtx, c.drift.Client, item.ref)
+				if readErr != nil && !apierrors.IsNotFound(readErr) {
+					return fmt.Errorf("re-read %s/%s after adoption conflict: %w", item.ref.Kind, item.ref.Name, readErr)
+				}
+				if live == nil || declaredFieldDifference(item.normalized, live, flattenDriftPaths(item.source)) {
+					// The informer snapshot may predate the conflicting write.
+					// Use the accepted projection and the direct API read for
+					// admission, without attempting another write.
+					expected, marshalErr := json.Marshal(comparableFields(item.normalized.Object))
+					if marshalErr != nil {
+						return marshalErr
+					}
+					view := adoptionConflictView{ReadView: c.drift.View(snapshot), ref: item.ref, diff: program.Diff{Changed: true, Text: "accepted: " + string(expected)}}
+					if classifyErr := persistDifferences([]ObjectChange{{Old: item.normalized, New: live, Adoption: true}}, view); classifyErr != nil {
+						return classifyErr
+					}
+				}
+			}
 			return fmt.Errorf("adopt %s/%s: %w", item.ref.Kind, item.ref.Name, err)
 		}
 		if record {
@@ -257,4 +302,19 @@ func getAdoptionObject(ctx context.Context, client kubernetes.Interface, ref sdk
 	result.SetAPIVersion(ref.APIVersion)
 	result.SetKind(ref.Kind)
 	return result, nil
+}
+
+// adoptionConflictView binds source comparison to the API state already read
+// after a conditional write failed, rather than a potentially stale informer.
+type adoptionConflictView struct {
+	program.ReadView
+	ref  sdk.ObjectRef
+	diff program.Diff
+}
+
+func (v adoptionConflictView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	if ref == v.ref {
+		return v.diff, nil
+	}
+	return v.ReadView.DiffAgainstSource(ref)
 }
