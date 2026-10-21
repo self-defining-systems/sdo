@@ -1,0 +1,7 @@
+{
+ "diagnosis_grading": "off",
+ "incidents": [
+  "k8s_target_port_misconfig_hotel_reservation__v_reservation_9999",
+  "k8s_target_port_misconfig_hotel_reservation__v_geo_9999"
+ ]
+}
