@@ -65,6 +65,8 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 			observed <- fmt.Errorf("no durable controller state at Job creation: %w", err)
 		case !state.IncidentOpen || state.DispatchState != "pending" || state.IncidentRequest == nil:
 			observed <- fmt.Errorf("durable state lacks the pending dispatch at Job creation: %#v", state)
+		case state.IncidentRequest.PreparedAgentTask == "":
+			observed <- fmt.Errorf("durable state lacks the exact dispatched agent task")
 		default:
 			observed <- nil
 		}
@@ -104,6 +106,17 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("responder Job was never created")
+	}
+	state, err := durableState(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestMap, err := client.CoreV1().ConfigMaps("demo").Get(ctx, IncidentJobName(state.IncidentRequest.IncidentID)+"-request", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestMap.Data[jobRequestDataKey] != state.IncidentRequest.PreparedAgentTask {
+		t.Fatal("agent request differs from durable task")
 	}
 }
 

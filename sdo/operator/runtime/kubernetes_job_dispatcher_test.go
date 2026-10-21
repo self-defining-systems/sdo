@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -118,6 +119,8 @@ func TestResponderJobStartsBeforeSettleCapture(t *testing.T) {
 }
 
 func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
+	// TODO: Add a hermetic e2e case for settle update, restart, and result
+	// collection once the hermetic e2e suite lands in this worktree.
 	client := fake.NewSimpleClientset()
 	request := goldenRequest(t)
 	dispatcher := KubernetesJobDispatcher{
@@ -125,6 +128,14 @@ func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
 		ServiceAccount: "sdo-responder", RepositoryPVC: "application-repository", CredentialsSecret: "sdo-codex",
 		RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "shared", PollInterval: time.Millisecond,
 		Environment: map[string]string{"SDO_SREGYM_API_BASE": "http://host.docker.internal:8123"},
+	}
+	var err error
+	request, err = dispatcher.PrepareDispatch(context.Background(), request)
+	if err != nil {
+		t.Fatalf("prepare durable dispatch: %v", err)
+	}
+	if request.PreparedAgentTask == "" {
+		t.Fatal("controller state has no exact agent task")
 	}
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	firstResult := make(chan error, 1)
@@ -162,6 +173,27 @@ func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
 	cancelFirst()
 	if err := <-firstResult; !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected first controller crash cancellation, got %v", err)
+	}
+	stateJSON, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored IncidentRequest
+	if err := json.Unmarshal(stateJSON, &restored); err != nil {
+		t.Fatal(err)
+	}
+	request = restored
+	// A settle observation changes the controller's current finding. Rejoining
+	// the worker must use the task that was dispatched before this update.
+	request.Findings[0].Evidence = "settle-time evidence"
+	preparedTask := request.PreparedAgentTask
+	request.PreparedAgentTask = "" // controller state written before task persistence
+	request, err = dispatcher.PrepareDispatch(context.Background(), request)
+	if err != nil {
+		t.Fatalf("recover legacy dispatch: %v", err)
+	}
+	if request.PreparedAgentTask != preparedTask {
+		t.Fatal("recovery rebuilt the dispatched task")
 	}
 
 	secondResult := make(chan IncidentResult, 1)

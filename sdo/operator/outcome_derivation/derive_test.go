@@ -84,6 +84,75 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	}
 }
 
+func TestDeriveConfirmsLatentCauseFromProgramVerdictFlip(t *testing.T) {
+	// TODO: Add a hermetic e2e latent targetPort repair case with pre-fix
+	// Match and verified post-fix NoMatch once that suite lands here.
+	closure := fixtureClosure()
+	cause := closure.Result.ConfirmedRootCauses[0]
+	cause.ExplainedDetectors = []string{"latent"}
+	binding := []*contractsv1alpha1.Binding{{Name: "deployment", Object: &contractsv1alpha1.ObjectRef{Kind: "Deployment", Name: "app"}}}
+	closure.Request.InitialProgramRuns = []*contractsv1alpha1.ProgramRun{{ProgramId: "deployment-fault", Bindings: binding, Verdict: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_MATCH}}}
+	closure.Result.ProgramRuns = []*contractsv1alpha1.ProgramRun{{ProgramId: "deployment-fault", Bindings: binding, Verdict: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_NO_MATCH}}}
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification := result.Record.GetDiagnosisVerification()[0]
+	if verification.GetVerdict() != "confirmed" || !result.RequiresReflection || len(verification.GetEvidence()) < 2 {
+		t.Fatalf("program flip did not verify latent cause: %+v", verification)
+	}
+}
+
+func TestDeriveConfirmsLatentCauseWhenFaultedFieldReturnsToBaseline(t *testing.T) {
+	closure := fixtureClosure()
+	cause := closure.Result.ConfirmedRootCauses[0]
+	cause.ExplainedDetectors = []string{"latent"}
+	cause.Evidence = []*contractsv1alpha1.RootCauseEvidence{{Kind: "state-change", Source: "Deployment/app", Observation: "image drifted"}}
+	closure.Request.StateChanges = &contractsv1alpha1.StateChanges{Changes: []*contractsv1alpha1.StateChange{{Kind: "Deployment", Name: "app", Change: "modified", Fields: []*contractsv1alpha1.StateFieldChange{{Field: "image", Before: stringPointer("good"), After: stringPointer("bad")}}}}}
+	closure.Result.RepairActions[0].CompletedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(90 * time.Second))
+	closure.FinalStateChanges = &contractsv1alpha1.StateChanges{ObservedAt: closure.VerifiedAt}
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification := result.Record.GetDiagnosisVerification()[0]
+	if verification.GetVerdict() != "confirmed" || len(verification.GetEvidence()) < 2 {
+		t.Fatalf("reverted fault did not verify latent cause: %+v", verification)
+	}
+}
+
+func TestDeriveDoesNotConfirmLatentCauseWithoutMatchingPostFixEvidence(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.ConfirmedRootCauses[0].ExplainedDetectors = []string{"latent"}
+	closure.Request.InitialProgramRuns = []*contractsv1alpha1.ProgramRun{{ProgramId: "fault", Bindings: []*contractsv1alpha1.Binding{{Name: "deployment", Object: &contractsv1alpha1.ObjectRef{Kind: "Deployment", Name: "app"}}}, Verdict: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_MATCH}}}
+	closure.Result.ProgramRuns = []*contractsv1alpha1.ProgramRun{{ProgramId: "fault", Bindings: []*contractsv1alpha1.Binding{{Name: "deployment", Object: &contractsv1alpha1.ObjectRef{Kind: "Deployment", Name: "other"}}}, Verdict: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_NO_MATCH}}}
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Record.GetDiagnosisVerification()[0].GetVerdict(); got != "unverified" {
+		t.Fatalf("unrelated binding verified latent cause: %s", got)
+	}
+}
+
+func TestDeriveDoesNotConfirmLatentCauseWhileFaultedObjectStillDiffers(t *testing.T) {
+	closure := fixtureClosure()
+	cause := closure.Result.ConfirmedRootCauses[0]
+	cause.ExplainedDetectors = []string{"latent"}
+	cause.Evidence = []*contractsv1alpha1.RootCauseEvidence{{Kind: "state-change", Source: "Deployment/app", Observation: "image drifted"}}
+	change := &contractsv1alpha1.StateChange{Kind: "Deployment", Name: "app", Change: "modified", Fields: []*contractsv1alpha1.StateFieldChange{{Field: "image", Before: stringPointer("good"), After: stringPointer("bad")}}}
+	closure.Request.StateChanges = &contractsv1alpha1.StateChanges{Changes: []*contractsv1alpha1.StateChange{change}}
+	closure.FinalStateChanges = &contractsv1alpha1.StateChanges{ObservedAt: closure.VerifiedAt, Changes: []*contractsv1alpha1.StateChange{change}}
+	closure.Result.RepairActions[0].CompletedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(90 * time.Second))
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Record.GetDiagnosisVerification()[0].GetVerdict(); got != "unverified" {
+		t.Fatalf("remaining drift verified latent cause: %s", got)
+	}
+}
+
 func TestDeriveMitigationTimeFromVerifiedRepair(t *testing.T) {
 	closure := fixtureClosure()
 	closure.Result.RepairActions[0].CompletedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(90 * time.Second))
