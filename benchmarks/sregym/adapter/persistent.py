@@ -1081,20 +1081,13 @@ def wait_for_maintenance_ack(
 def _wait_for_reflection_drain(
     ops: ClusterOps, control: str, incident_id: str, timeout: float, clock: Clock
 ) -> dict[str, Any]:
-    """Wait until the incident is acknowledged and the supervisor relaunched the controller.
-
-    The supervisor relaunches only after compiling and rolling out any
-    detector the reflection accepted, so the relaunch marks learned memory
-    as live. Returns the final controller state sampled at quiescence, so the
-    caller need not poll the controller again to decide whether to reap.
-    """
+    """Wait for broker acknowledgment, which follows any required detector rollout."""
 
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         state = ops.runtime_state(control)
         _raise_if_closure_failed(state, incident_id)
-        acknowledged = state.get("last_acknowledged_incident_id") == incident_id
-        if acknowledged and _relaunched_after(_log_records(ops.controller_logs(control)), incident_id):
+        if state.get("last_acknowledged_incident_id") == incident_id:
             return state
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")

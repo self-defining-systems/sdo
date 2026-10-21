@@ -2,8 +2,6 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# SDO_IMAGE_TAG builds under a private tag so shared v0.1.0 images stay untouched.
-tag="${SDO_IMAGE_TAG:-v0.1.0}"
 # Compute the validator schema identity from the sources baked into the image.
 validator_schema_identity="$(cd "${repo_root}/sdo/operator" && go run ./cmd/sdo-operator schema-identity)"
 docker build \

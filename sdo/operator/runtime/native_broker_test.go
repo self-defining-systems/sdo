@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 )
 
 func testDerivedOutcome(id, classification string, reflect bool) DerivedOutcome {
-    return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: classification}, RequiresReflection: reflect}
+	return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: id, Classification: classification}, RequiresReflection: reflect}
 }
 
 type rejectingLatePull struct{}
@@ -27,6 +28,7 @@ func (rejectingLatePull) VerifyPull(context.Context, string, uint32, string, []s
 }
 
 func TestNativeBrokerRejectsUnverifiedLatePullBeforeLedger(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -117,6 +119,7 @@ func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
 }
 
 func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })
 	if err != nil {
@@ -228,7 +231,108 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 	}
 }
 
+func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
+	target := nativeRepository(t)
+	validations := 0
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error {
+		validations++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{
+		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"),
+		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
+		}),
+		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error) {
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already accepted"}, nil
+		}),
+		ResponderBackend: "test", ResponderModel: "test",
+	}
+	workspace, err := native.PrepareIncident(context.Background(), "timed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closure := nativeClosure(workspace)
+	closure.Request.RepairPolicy = "recorded-actions"
+	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+		t.Fatal(err)
+	}
+	if validations != 0 {
+		t.Fatalf("no-change reflection launched %d validator runs", validations)
+	}
+	ledger, err := native.readLedger("timed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous time.Time
+	for _, phase := range []string{"closure_start", "outcome_write", "broker_commit", "reflection_dispatch", "worker_result_picked_up"} {
+		at := ledger.ClosurePhases[phase]
+		if at.IsZero() || (!previous.IsZero() && at.Before(previous)) {
+			t.Fatalf("phase %s is missing or out of order: %+v", phase, ledger.ClosurePhases)
+		}
+		previous = at
+	}
+}
+
+type priorOutcomeReader struct{ outcomes []memory.Outcome }
+
+func (r priorOutcomeReader) List(context.Context) ([]memory.Outcome, error) { return r.outcomes, nil }
+func (r priorOutcomeReader) Get(context.Context, string) (memory.Outcome, error) {
+	return memory.Outcome{}, memory.ErrNotFound
+}
+
+func TestNativeBrokerSkipsOnlyExactAcceptedRepairReplayUnlessForced(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
+			target := nativeRepository(t)
+			repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspace, err := repository.CreateProposal(context.Background(), "replayed")
+			if err != nil {
+				t.Fatal(err)
+			}
+			action := &contracts.RepairActionReceipt{Kind: "kubectl-patch", Target: "Service/api", Summary: "restore accepted source", Details: "accepted source fields", Success: true}
+			cause := &contracts.ConfirmedRootCause{Summary: "Service/api target port mismatch"}
+			prior := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success", SourceCommit: workspace.BaseCommit, RepairActions: []*contracts.RepairActionReceipt{action}, ConfirmedRootCauses: []*contracts.ConfirmedRootCause{cause}}
+			calls := 0
+			native := NativeIncidentBroker{
+				Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ForceReflection: force,
+				PriorOutcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "prior", Record: prior}}},
+				Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+					return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: closure.Request.IncidentID, Classification: "success", SourceCommit: workspace.BaseCommit, RepairActions: []*contracts.RepairActionReceipt{action}, ConfirmedRootCauses: []*contracts.ConfirmedRootCause{cause}}, RequiresReflection: true}, nil
+				}),
+				Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error) {
+					calls++
+					return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already accepted"}, nil
+				}),
+				ResponderBackend: "test", ResponderModel: "test",
+			}
+			closure := nativeClosure(IncidentWorkspace{IncidentID: "replayed", Worktree: workspace.Path, BaseCommit: workspace.BaseCommit})
+			closure.Request.RepairPolicy = "recorded-actions"
+			if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+				t.Fatal(err)
+			}
+			ledger, err := native.readLedger("replayed")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if force && (calls != 1 || ledger.ReflectionSkippedReason != "") {
+				t.Fatalf("forced reflection: calls=%d ledger=%+v", calls, ledger)
+			}
+			if !force && (calls != 0 || ledger.ReflectionSkippedReason != "exact replay of accepted repairs" || ledger.OutcomeCommit == "") {
+				t.Fatalf("replayed repair was not skipped after outcome commit: calls=%d ledger=%+v", calls, ledger)
+			}
+		})
+	}
+}
+
 func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
 	if err != nil {
@@ -265,6 +369,7 @@ func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
 }
 
 func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })
@@ -308,6 +413,7 @@ func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
 }
 
 func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
 	if err != nil {
@@ -330,6 +436,7 @@ func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
 }
 
 func TestNativeBrokerRecordedActionsDoNotCreateEmptyProposalCommit(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
 	if err != nil {
@@ -371,6 +478,7 @@ func TestProtoOutcomeDeriverAcceptsRuntimeClosure(t *testing.T) {
 }
 
 func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
+	t.Parallel()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
 	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, _ []string) error { return nil })

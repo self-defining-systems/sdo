@@ -2,6 +2,36 @@ The smoke stream names the two original mixed-fault problems (i06 and i10). The 
 
 TODO: The SREGym fork checked out in this worktree still needs the `mf__hotel_reservation__n2__s1773744812__v_` and `mf__hotel_reservation__n2__s1085951852__v_` composite specs and the hotel `target_port` variants for `reservation` and `geo`. Until those are registered, run `pbprog_explicit.json` after the target-port variants land.
 
+# Mounted-source development loop
+
+Use an existing set of SDO controller, responder, and validator images for the
+first `up`. The worktree is mounted into every kind node at `/opt/sdo-dev`; the
+Pods use its Python packages and a host-built `sdo-operator` at
+`.fastloop/sdo-operator`. The host build uses the warm Go cache. `reset` reuses
+the cluster and images, restores the captured application and seed repository,
+clears controller state and sessions, and checks health and the deployment
+problem's mitigation oracle.
+
+```bash
+export SDO_FASTLOOP_RUN=/absolute/path/to/fastloop-run
+export SDO_FASTLOOP_SEED=/absolute/path/to/accepted-lifecycle-seed
+uv run python -m benchmarks.sregym.fastloop up \
+  --run-dir "$SDO_FASTLOOP_RUN" --seed "$SDO_FASTLOOP_SEED" --dev-mount "$PWD"
+# After an SDO source edit; no image build or new cluster:
+uv run python -m benchmarks.sregym.fastloop reset \
+  --run-dir "$SDO_FASTLOOP_RUN" --dev-mount "$PWD"
+uv run python -m benchmarks.sregym.fastloop run \
+  --run-dir "$SDO_FASTLOOP_RUN" --agent sdo \
+  --stream benchmarks/sregym/experiments/fastloop/pbprog_repeat.json \
+  --diagnosis-grading off --time-scale 0.1 --continue-on-error
+```
+
+`--time-scale` defaults to 1. It scales controller detector intervals, finding
+debounce, drift baseline settle, diagnosis settle, verification waits, and the
+fastloop reflection wait. `--continue-on-error` records a failed incident and
+moves on only when recovery has passed its oracle. A new dev lane uses the
+`fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
+
 # Recovery isolation
 
 `up` adds full application workload specs for its namespace or namespaces to
@@ -53,3 +83,47 @@ propose --corpus-from-incident`. The image removes model CLIs. This stream
 uses the existing target-port and bad-image faults; it requires those fault
 variants in the local SREGym checkout. Do not use `pbprog_smoke.json` for this
 mode until its two composite specs are present.
+
+## Offline stage replay
+
+Each SDO `fastloop run` writes `checkpoints/<incident-number>/<stage>/` under
+`results/<run-id>/`. A checkpoint keeps the exact worker task and result
+ProtoJSON, its logical memory snapshot or accepted commit in the task, the
+matching broker ledger when settled, and redacted namespace snapshots and
+recordings from the incident corpus. Capture files are stored once by SHA-256
+under `checkpoints/blobs/`. Tasks and results have a 1 MiB checkpoint limit,
+so an oversized worker result remains available to debug its transport failure.
+Corpus snapshots have the SDK's 4 MiB per-file limit and a
+32 MiB bundle limit. Keep the run directory private because exact agent
+requests and results can contain incident text.
+
+Replay from the repository root, with the results run directory rather than
+the warm environment directory:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop replay \
+  --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage responder
+uv run python -m benchmarks.sregym.fastloop replay \
+  --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage reflection
+uv run python -m benchmarks.sregym.fastloop replay \
+  --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage broker
+```
+
+`responder` and `reflection` run the current scripted worker entry points in
+an isolated source clone. The responder's Kubernetes reads and patches use
+the captured open and fixed snapshots. `broker` runs the current Go memory
+materializer, broker validation, gofmt and program build in a temporary local
+repository. Replay never needs the warm cluster. It reports the new typed
+result and whether it matches the recorded result, ignoring response
+timestamps.
+
+The default Codex worker registrations record each agentshim Codex CLI turn
+under the exported incident session's `model_io/` directory, keyed by task and
+prompt digests. Use `--agent live` to run the current agent code with those
+recorded turns. A missing turn fails with both digests. Add
+`--live-on-cache-miss` to call `gpt-6-luna` and record a new turn. Live replay
+points `KUBECONFIG` at a local HTTP API backed by the captured snapshot.
+Explicit `--agent-registrations`, including the scripted registrations above,
+keep their own worker commands. The current branch has no registered drift
+worker contract; `--stage drift` can capture future drift tasks but cannot
+execute one until that contract is present.

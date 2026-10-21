@@ -209,8 +209,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	restartAfterClosure := flags.Bool(
 		"restart-after-closure",
 		false,
-		"exit after each newly acknowledged closure so a supervisor can roll out learned detectors and relaunch",
+		"exit after each acknowledged closure in non-native mode",
 	)
+	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
 	)
@@ -240,6 +241,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	timeScale, err := developmentTimeScale()
+	if err != nil {
+		return err
+	}
+	detectors = scaleDetectors(detectors, timeScale)
+	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
+	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
+	*followUpCooldown = scaledDuration(*followUpCooldown, timeScale)
+	if options.NativeBroker != nil && *forceReflection {
+		options.NativeBroker.ForceReflection = true
 	}
 	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *driftDispatchesPerHour < 0 || *driftTokensPerHour < 0 {
 		return errors.New("response loops, diagnosis deadline, drift sweep and investigation windows must be positive; drift budgets must be nonnegative")
@@ -414,7 +426,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	var stateTracker *StateTracker
 	if *stateBaseline {
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace})
+		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
 		defer stateTracker.Stop()
 	}
 	var dispatcher Dispatcher
@@ -483,12 +495,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		VerificationTimeout: *verificationTimeout,
 		MaxFollowUps:        *maxFollowUps, FollowUpCooldown: *followUpCooldown,
 		RepairPolicy:    *repairPolicy,
-		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
-		ConfirmationInterval: time.Second,
+		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
+		ConfirmationInterval: scaledDuration(time.Second, timeScale),
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
-		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second},
+		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: scaledDuration(2*time.Second, timeScale), Interval: scaledDuration(time.Second, timeScale)},
 		Admission:        admission,
 	}, detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
@@ -963,10 +975,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if *exitAfterClosure && completion.err == nil {
 				return nil
 			}
-			if *restartAfterClosure && completion.err == nil {
-				if err := encoder.Encode(map[string]any{
-					"controller_closure_restart": controller.LastAcknowledgedIncidentID(),
-				}); err != nil {
+			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
+				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
 					fmt.Fprintln(stderr, err)
 				}
 				return nil

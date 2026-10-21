@@ -109,7 +109,8 @@ func ArtifactID(reference string) (string, error) {
 // change the detector program that a running controller must reload.
 func RequiresControllerRollout(changedPaths []string) bool {
 	for _, path := range changedPaths {
-		if path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/") {
+		if path == ".sdo/diagnostics/manifest.yaml" || strings.HasPrefix(path, ".sdo/diagnostics/detectors/incidents/") ||
+			(strings.HasSuffix(path, ".go") && (strings.HasPrefix(path, ".sdo/playbooks/") || strings.HasPrefix(path, ".sdo/lib/"))) {
 			return true
 		}
 	}

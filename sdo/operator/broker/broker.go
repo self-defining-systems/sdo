@@ -349,13 +349,12 @@ func (b *Broker) AcceptedCommit(ctx context.Context, incidentID string, phase Ph
 	return b.findAccepted(ctx, incidentID, phase)
 }
 
-// DiagnosticsFingerprint is the Git tree identity of the accepted detector
-// package at a specific commit. It supports incident-correlated rollouts.
+// DiagnosticsFingerprint identifies accepted source compiled into the controller.
 func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (string, error) {
 	if commit == "" {
 		return "", errors.New("commit is required")
 	}
-	return gitText(ctx, b.target, "rev-parse", commit+":.sdo/diagnostics")
+	return memory.ControllerFingerprint(ctx, b.target, commit)
 }
 
 // ReleaseProposal removes a proposal checkout after acknowledgement or a

@@ -112,4 +112,5 @@ message ControllerConfig {
   google.protobuf.Duration drift_investigation_window = 59;
   int32 drift_investigation_dispatches_per_hour = 60;
   int64 drift_investigation_tokens_per_hour = 61;
+  bool force_reflection = 62;
 }

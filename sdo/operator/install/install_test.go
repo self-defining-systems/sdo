@@ -22,6 +22,30 @@ func testConfig() Config {
 	return Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
 }
 
+func TestDevControllerUsesMountedSourceAndTimingConfig(t *testing.T) {
+	t.Setenv("SDO_DEV_MOUNT", "1")
+	t.Setenv("SDO_TIME_SCALE", "0.1")
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := plan.Job.Spec.Template.Spec.Containers[0]
+	foundSource := map[string]bool{"/opt/sdo/sdo": false, "/opt/sdo/benchmarks": false, "/opt/sdo/libs": false}
+	foundBinary, foundScale := false, false
+	for _, mount := range container.VolumeMounts {
+		if _, exists := foundSource[mount.MountPath]; exists {
+			foundSource[mount.MountPath] = mount.ReadOnly
+		}
+		foundBinary = foundBinary || mount.MountPath == "/usr/local/bin/sdo-operator" && mount.ReadOnly
+	}
+	for _, variable := range container.Env {
+		foundScale = foundScale || variable.Name == "SDO_TIME_SCALE" && variable.Value == "0.1"
+	}
+	if !foundSource["/opt/sdo/sdo"] || !foundSource["/opt/sdo/benchmarks"] || !foundSource["/opt/sdo/libs"] || !foundBinary || !foundScale {
+		t.Fatalf("dev controller mounts=%v env=%v", container.VolumeMounts, container.Env)
+	}
+}
+
 func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	plan, err := Resources(testConfig())
 	if err != nil {

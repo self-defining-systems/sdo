@@ -58,15 +58,11 @@ def test_persistent_receipt_reads_native_go_evidence(
     monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
     calls: list[str] = []
 
-    def sync(_config: object) -> None:
-        calls.append("sync")
-
-    def collect(_config: object, incident_id: str) -> dict[str, object]:
-        calls.append(incident_id)
+    def collect(_config: object, incident_id: str, *, sync_repository: bool = False) -> dict[str, object]:
+        calls.append(f"{incident_id}:{sync_repository}")
         return {"schema_version": "sdo.production-receipt/v2", "incident_id": incident_id}
 
-    monkeypatch.setattr(runtime, "sync_existing", sync)
     monkeypatch.setattr(runtime, "collect_native_receipt", collect)
     receipt = runtime.collect_production_receipt(_config(tmp_path), "incident-1", tmp_path)
     assert receipt["schema_version"] == "sdo.production-receipt/v2"
-    assert calls == ["sync", "incident-1"]
+    assert calls == ["incident-1:True"]

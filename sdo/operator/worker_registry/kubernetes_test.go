@@ -45,6 +45,7 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	task := reflectionTestTask(t)
+	var phases []string
 	executor := KubernetesExecutor{
 		Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
@@ -52,6 +53,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		CapturedCorpusReadOnly: true,
 		CredentialsSecret:      "agent-provider-credentials",
 		LateFindingsConfigMap:  "sdo-late-incident",
+		OnPhase:                func(_ context.Context, phase string) error { phases = append(phases, phase); return nil },
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errors := make(chan error, 1)
@@ -173,6 +175,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	if got := <-results; got.GetTaskId() != task.TaskId {
 		t.Fatalf("wrong result: %#v", got)
+	}
+	if len(phases) < 2 || phases[0] != "reflection_job_created" || phases[len(phases)-1] != "worker_result_written" {
+		t.Fatalf("worker transport phases: %v", phases)
 	}
 }
 

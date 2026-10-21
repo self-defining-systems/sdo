@@ -33,6 +33,7 @@ from benchmarks.sregym.adapter import (
 )
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
+from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
 from benchmarks.sregym.protocol import receipt_resolution
 
 if TYPE_CHECKING:
@@ -51,18 +52,32 @@ class SdoAgentSettings:
     results_dir: Path
     kubeconfig: str | None = None
     verification_timeout_seconds: float = 3900.0
+    reflection_wait_seconds: float = 3600.0
 
     def __post_init__(self) -> None:
         if self.runtime_config.submission_api_base or self.runtime_config.submission_relay_target_base:
             raise ValueError("the fast loop has no benchmark submission transport")
         if self.verification_timeout_seconds <= 0:
             raise ValueError("verification_timeout_seconds must be positive")
+        if self.reflection_wait_seconds <= 0:
+            raise ValueError("reflection_wait_seconds must be positive")
 
 
 def _timestamp(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _closure_phase_seconds(ledger: dict[str, Any]) -> dict[str, float]:
+    phases = ledger.get("closure_phase_timestamps")
+    if not isinstance(phases, dict):
+        return {}
+    ordered = sorted(
+        ((at, name) for name, value in phases.items() if isinstance(name, str) for at in [_timestamp(value)] if at),
+        key=lambda item: item[0],
+    )
+    return {name: (at - ordered[index - 1][0]).total_seconds() for index, (at, name) in enumerate(ordered) if index > 0}
 
 
 def _last_successful_repair(repairs: object) -> datetime | None:
@@ -191,6 +206,7 @@ class SdoPersistentAgent:
             clock=self._clock,
             pause_after_verified=not self._keep_running,
         )
+        self._checkpoint(index, str(resolution["incident_id"]), receipt_dir)
         if not windows:
             raise RuntimeError("the controller verified an incident without the fault being injected")
         verified = _timestamp(resolution.get("verified_at"))
@@ -242,9 +258,17 @@ class SdoPersistentAgent:
                 repository=settings.repository,
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
+                timeout_seconds=settings.reflection_wait_seconds,
             )
         except ReceiptRejectedError as exc:
             error = f"strict receipt rejected: {exc}"
+        finally:
+            if settings.kubeconfig:
+                receipt_dir = Path(str(outcome.artifacts_dir))
+                self._ops.export_runtime_artifacts(
+                    replace(settings.runtime_config, artifacts_dir=receipt_dir), receipt_dir
+                )
+                self._checkpoint(int(receipt_dir.name.split("_", 1)[0]), outcome.incident_id, receipt_dir)
         # Receipt rejection happens after the controller has acknowledged and relaunched.
         # Other drain failures leave the pending gate intact and stop the stream.
         record.pending = None
@@ -298,6 +322,7 @@ class SdoPersistentAgent:
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
             reflection_attempts=attempts if isinstance(attempts, int) else None,
             reflection_skipped_reason=skipped if isinstance(skipped, str) else None,
+            closure_phase_seconds=_closure_phase_seconds(ledger),
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             **_program_metrics(outcome_document),
             error=error,
@@ -317,3 +342,20 @@ class SdoPersistentAgent:
 
     def close(self) -> None:
         """The controller keeps running for the next loop; ``fastloop down`` stops it."""
+
+    def _checkpoint(self, index: int, incident_id: str, receipt_dir: Path) -> None:
+        if not self._settings.kubeconfig:
+            return
+        from benchmarks.sregym.adapter import kubectl
+
+        control = self._settings.runtime_config.controller_namespace
+        response = kubectl(
+            ["get", "configmaps", "-o", "json"],
+            namespace=control,
+            kubeconfig=Path(self._settings.kubeconfig),
+        )
+        document = json.loads(response.stdout)
+        items = document.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError("worker ConfigMap listing omitted items")
+        capture_checkpoints(CheckpointStore(self._settings.results_dir), index, incident_id, receipt_dir, items)

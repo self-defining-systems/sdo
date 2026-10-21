@@ -117,6 +117,7 @@ type ControllerConfig struct {
 	DriftInvestigationWindow            *durationpb.Duration `protobuf:"bytes,59,opt,name=drift_investigation_window,json=driftInvestigationWindow,proto3" json:"drift_investigation_window,omitempty"`
 	DriftInvestigationDispatchesPerHour int32                `protobuf:"varint,60,opt,name=drift_investigation_dispatches_per_hour,json=driftInvestigationDispatchesPerHour,proto3" json:"drift_investigation_dispatches_per_hour,omitempty"`
 	DriftInvestigationTokensPerHour     int64                `protobuf:"varint,61,opt,name=drift_investigation_tokens_per_hour,json=driftInvestigationTokensPerHour,proto3" json:"drift_investigation_tokens_per_hour,omitempty"`
+	ForceReflection                     bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
 	unknownFields                       protoimpl.UnknownFields
 	sizeCache                           protoimpl.SizeCache
 }
@@ -564,11 +565,18 @@ func (x *ControllerConfig) GetDriftInvestigationTokensPerHour() int64 {
 	return 0
 }
 
+func (x *ControllerConfig) GetForceReflection() bool {
+	if x != nil {
+		return x.ForceReflection
+	}
+	return false
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x87\x1a\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb2\x1a\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -635,7 +643,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x14drift_sweep_interval\x18: \x01(\v2\x19.google.protobuf.DurationR\x12driftSweepInterval\x12W\n" +
 	"\x1adrift_investigation_window\x18; \x01(\v2\x19.google.protobuf.DurationR\x18driftInvestigationWindow\x12T\n" +
 	"'drift_investigation_dispatches_per_hour\x18< \x01(\x05R#driftInvestigationDispatchesPerHour\x12L\n" +
-	"#drift_investigation_tokens_per_hour\x18= \x01(\x03R\x1fdriftInvestigationTokensPerHourB\x14\n" +
+	"#drift_investigation_tokens_per_hour\x18= \x01(\x03R\x1fdriftInvestigationTokensPerHour\x12)\n" +
+	"\x10force_reflection\x18> \x01(\bR\x0fforceReflectionB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13R\x06brokerR\vbroker_argsB\x88\x02\n" +

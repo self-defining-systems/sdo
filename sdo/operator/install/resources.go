@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/devmount"
 )
 
 const (
@@ -36,6 +38,7 @@ type Config struct {
 	AcceptedCommit                                          string
 	RepairPolicy, AgentProvider                             string
 	ReflectionSession, ReflectionGuidance                   string
+	ForceReflection                                         bool
 	LateFindings                                            string
 	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
 	HealthyBaseline                                         bool
@@ -345,6 +348,9 @@ func controllerJob(c Config) *batchv1.Job {
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
+	if c.ForceReflection {
+		args = append(args, "--force-reflection")
+	}
 	if c.MaxFollowUps > 0 {
 		args = append(args, "--max-follow-ups", fmt.Sprint(c.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(c)))
 	}
@@ -438,6 +444,13 @@ func controllerJob(c Config) *batchv1.Job {
 	}}
 	if c.RegistrationConfigMap != "" {
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: c.registrationDirectory(), ReadOnly: true})
+	}
+	if devmount.Enabled() {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		devmount.Apply(pod)
+	}
+	if scale := os.Getenv("SDO_TIME_SCALE"); scale != "" {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
 	}
 	return job
 }

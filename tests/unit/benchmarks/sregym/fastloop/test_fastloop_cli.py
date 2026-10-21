@@ -143,6 +143,14 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     assert up.kind_worker_nodes == 1
 
 
+def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
+    normal = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
+    fast = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--time-scale", "0.1"])
+
+    assert normal.time_scale == 1.0
+    assert fast.time_scale == 0.1
+
+
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
     assert args.repair_policy == "recorded-actions"
@@ -181,6 +189,21 @@ def test_up_builds_the_same_one_worker_kind_lane_as_the_experiments(tmp_path: Pa
     assert environment["SREGYM_KIND_WORKER_NODES"] == "1"
     assert environment["SREGYM_APP_SOURCE_DIR"] == str(tmp_path / "workspace")
     assert environment["SREGYM_KIND_REQUIRE_NETWORK_POLICY"] == "1"
+
+
+def test_dev_kind_config_mounts_the_worktree_on_every_node(tmp_path: Path) -> None:
+    import yaml
+
+    from benchmarks.sregym.fastloop.dev import write_kind_config
+
+    source = tmp_path / "kind.yaml"
+    source.write_text("kind: Cluster\nnodes:\n  - role: control-plane\n  - role: worker\n", encoding="utf-8")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    result = write_kind_config(source, tmp_path / "dev.yaml", worktree)
+
+    nodes = yaml.safe_load(result.read_text(encoding="utf-8"))["nodes"]
+    assert all(node["extraMounts"] == [{"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"}] for node in nodes)
 
 
 def test_up_cache_requires_every_node_to_have_the_requested_image_digests(

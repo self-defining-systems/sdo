@@ -101,6 +101,7 @@ func TestRecordedWorkerResultsReplayThroughContracts(t *testing.T) {
 }
 
 func TestRecordedIncidentAndReflectionReachNativeBroker(t *testing.T) {
+	t.Parallel()
 	read := func(name string) *contracts.AgentResult {
 		t.Helper()
 		wire, err := os.ReadFile(filepath.Join("testdata", "recorded_results", name))

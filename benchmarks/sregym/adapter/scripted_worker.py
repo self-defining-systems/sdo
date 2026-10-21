@@ -128,10 +128,27 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
         patch = {"spec": {"ports": source["spec"]["ports"]}}
     elif kind == "Deployment":
         containers = source["spec"]["template"]["spec"]["containers"]
+        baseline_images = {
+            field.field: field.before
+            for change in (request.state_changes.changes if request.state_changes else [])
+            if change.kind == kind and change.name == name
+            for field in change.fields or []
+            if field.before
+        }
         patch = {
             "spec": {
                 "template": {
-                    "spec": {"containers": [{"name": item["name"], "image": item["image"]} for item in containers]}
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": item["name"],
+                                "image": item["image"]
+                                if "@sha256:" in item["image"]
+                                else baseline_images.get(f"container[{item['name']}].image", item["image"]),
+                            }
+                            for item in containers
+                        ]
+                    }
                 }
             }
         }

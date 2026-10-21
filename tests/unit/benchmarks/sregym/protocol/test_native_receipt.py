@@ -81,6 +81,18 @@ def test_native_receipt_exports_reflection_usage() -> None:
     assert _receipt(ledger)["reflection_usage"] == {"input_tokens": 42, "output_tokens": 7}
 
 
+def test_native_receipt_reports_broker_verified_reflection_skip() -> None:
+    ledger = _ledger()
+    ledger["requires_reflection"] = False
+    ledger["reflection_processed"] = False
+    ledger["reflection_decision"] = None
+    ledger["reflection_commit"] = None
+    ledger["reflection_skipped_reason"] = "exact replay of accepted repairs"
+    ledger["receipt"]["reflection_commit"] = ""
+    receipt = _receipt(ledger)
+    assert receipt["reflection_skipped_reason"] == "exact replay of accepted repairs"
+
+
 @pytest.mark.parametrize(
     "change",
     [

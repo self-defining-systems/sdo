@@ -19,12 +19,17 @@ def test_responder_sources_parse_on_runtime_python() -> None:
         repository / "sdo" / "contracts",
         repository / "libs" / "agent_cli",
     )
-    for source in (source for root in source_roots for source in root.rglob("*.py")):
-        result = subprocess.run(
-            [python311, "-c", "import ast,sys; ast.parse(sys.stdin.read())"],
-            input=source.read_text(encoding="utf-8"),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert result.returncode == 0, f"{source}: {result.stderr}"
+    sources = [str(source) for root in source_roots for source in root.rglob("*.py")]
+    result = subprocess.run(
+        [
+            python311,
+            "-c",
+            "import ast, pathlib, sys; "
+            "[(ast.parse(pathlib.Path(path).read_text(encoding='utf-8'), filename=path)) for path in sys.argv[1:]]",
+            *sources,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

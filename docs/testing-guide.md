@@ -62,10 +62,37 @@ the experiment lead because it builds images and changes a kind cluster.
 The scripted Level 1 check in `tests/unit/benchmarks/sregym/fastloop/`
 exercises responder and reflection worker entry points with a copied hotel
 seed, typed tasks, and a fake Kubernetes API, without a cluster.
+Run `bash scripts/test_fastloop_hermetic.sh` before Level 2. Its Go test drives
+two incidents through the real controller, ConfigMap state store, native broker,
+logical memory edge, and program builder against a fake Kubernetes API. It
+checks a persisted dispatch retry, corpus references and reflection transport
+limits, compiled program reuse, verified outcomes, and the deployed image after
+source restoration. The gate also runs the real responder tool transport check
+and the ConfigMap and reflection size-limit checks. The Python test remains a
+fast CLI and result-row check with the scripted worker and fake application API.
+The gate needs Go and `uv`, but no cluster or container runtime.
+
+Stage checkpoint tests run entirely offline:
+
+```bash
+uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_replay.py \
+  tests/unit/benchmarks/sregym/fastloop/test_model_recording.py \
+  tests/unit/benchmarks/sregym/fastloop/test_fake_kube.py \
+  tests/unit/benchmarks/sregym/fastloop/test_recording_registration.py
+```
+
+For a captured run, `uv run python -m benchmarks.sregym.fastloop replay
+--run-dir <results/run-id> --incident 0 --stage broker` reruns the current Go
+memory edge and broker in a temporary repository. The responder and reflection
+stages rerun their scripted workers from exact task ProtoJSON and captured
+namespace snapshots. `--agent live` uses recorded Codex CLI turns by task and
+prompt digest; a cache miss fails unless `--live-on-cache-miss` is selected.
+This replay does not contact a cluster. See the fastloop README for the
+checkpoint layout and replay commands.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.
 
-`scripts/test_python.sh` runs pytest across cores with `pytest-xdist`; `pytest-cov` combines the per-worker coverage so the 70% `fail_under` gate still sees the whole suite. Set `SDO_PYTEST_WORKERS=0` for an in-process run when iterating on a single test. Generated detector compilation is covered by the Go builder and broker suites.
+Pytest and `scripts/test_python.sh` use six workers by default; `pytest-cov` combines the per-worker coverage so the 70% `fail_under` gate still sees the whole suite. Set `SDO_PYTEST_WORKERS=0` for an in-process run through the script, or pass `-n 0` to pytest, when iterating on a single test. Generated detector compilation is covered by the Go builder and broker suites.
 
 Go-to-Python contract shapes are pinned by fixtures under `tests/fixtures/sdo/contracts/go/` (`sdo/operator/runtime/contract_golden_test.go`) and Python's strict models parse them (`tests/unit/sdo/contracts/test_go_contract_fixtures.py`). After an intentional Go encoding change, regenerate them with `SDO_UPDATE_GO_CONTRACT_FIXTURES=1 go test -run TestGoContractFixtures ./...` in `sdo/operator/runtime` and rerun the Python tests. `TestContractShapesNeverEncodeNullCollections` fails on any `null` in those shapes: Python rejects `null` for a list field.
 
