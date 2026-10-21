@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,13 +21,16 @@ type SessionToolServer struct {
 	Directory    string
 	Handle       func(context.Context, ToolRequest) ToolResponse
 	PollInterval time.Duration
+
+	requests  *os.Root
+	responses *os.Root
 }
 
-func (s SessionToolServer) Serve(ctx context.Context) error {
+func (s *SessionToolServer) Serve(ctx context.Context) error {
 	if err := s.Prepare(); err != nil {
 		return err
 	}
-	requests, responses := filepath.Join(s.Directory, "requests"), filepath.Join(s.Directory, "responses")
+	defer s.Close()
 	interval := s.PollInterval
 	if interval <= 0 {
 		interval = 100 * time.Millisecond
@@ -32,7 +38,7 @@ func (s SessionToolServer) Serve(ctx context.Context) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
-		if err := s.process(ctx, requests, responses); err != nil {
+		if err := s.process(ctx); err != nil {
 			return err
 		}
 		select {
@@ -43,29 +49,113 @@ func (s SessionToolServer) Serve(ctx context.Context) error {
 	}
 }
 
-func (s SessionToolServer) Prepare() error {
+func (s *SessionToolServer) Prepare() error {
 	if s.Directory == "" || s.Handle == nil {
 		return fmt.Errorf("session tool directory and handler are required")
 	}
-	requests, responses := filepath.Join(s.Directory, "requests"), filepath.Join(s.Directory, "responses")
-	for _, path := range []string{s.Directory, requests, responses} {
-		if err := os.Mkdir(path, 0700); err != nil && !os.IsExist(err) {
+	// Repeated Prepare calls retain the original handles, including when Serve
+	// follows an explicit Prepare before starting the worker.
+	if s.requests != nil && s.responses != nil {
+		for _, root := range []*os.Root{s.requests, s.responses} {
+			info, err := root.Stat(".")
+			if err != nil {
+				return err
+			}
+			if err := validateToolDirectory(info); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	parent, err := os.OpenRoot(filepath.Dir(s.Directory))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(s.Directory)
+	if err := parent.Mkdir(name, 0700); err != nil && !os.IsExist(err) {
+		return err
+	}
+	info, err := parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if err := validateToolDirectory(info); err != nil {
+		return err
+	}
+	directory, err := parent.OpenRoot(name)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	roots := make([]*os.Root, 0, 2)
+	for _, name := range []string{"requests", "responses"} {
+		if err := directory.Mkdir(name, 0700); err != nil && !os.IsExist(err) {
 			return err
 		}
-		info, err := os.Lstat(path)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0007 != 0 {
-			return fmt.Errorf("tool session path is not a real directory: %s", path)
+		info, err := directory.Lstat(name)
+		if err != nil {
+			return err
 		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != uint32(os.Getuid()) {
-			return fmt.Errorf("tool session path has unexpected owner: %s", path)
+		if err := validateToolDirectory(info); err != nil {
+			return err
 		}
+		root, err := directory.OpenRoot(name)
+		if err != nil {
+			return err
+		}
+		roots = append(roots, root)
+		// Close even a partially prepared set if the next directory fails.
+		defer func() {
+			if s.requests == nil {
+				_ = root.Close()
+			}
+		}()
+		info, err = root.Stat(".")
+		if err != nil {
+			return err
+		}
+		if err := validateToolDirectory(info); err != nil {
+			return err
+		}
+	}
+	s.requests, s.responses = roots[0], roots[1]
+	return nil
+}
+
+func validateToolDirectory(info os.FileInfo) error {
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0007 != 0 {
+		return fmt.Errorf("tool session path is not a real private directory: %s", info.Name())
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != uint32(os.Getuid()) {
+		return fmt.Errorf("tool session path has unexpected owner: %s", info.Name())
 	}
 	return nil
 }
 
-func (s SessionToolServer) process(ctx context.Context, requests, responses string) error {
-	entries, err := os.ReadDir(requests)
+// Close releases prepared directory handles after serving has stopped.
+func (s *SessionToolServer) Close() error {
+	var errs []error
+	for _, root := range []*os.Root{s.requests, s.responses} {
+		if root != nil {
+			errs = append(errs, root.Close())
+		}
+	}
+	s.requests, s.responses = nil, nil
+	return errors.Join(errs...)
+}
+
+func (s *SessionToolServer) process(ctx context.Context) error {
+	if s.requests == nil || s.responses == nil {
+		return fmt.Errorf("tool server is not prepared")
+	}
+	directory, err := s.requests.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := directory.ReadDir(-1)
+	_ = directory.Close()
 	if err != nil {
 		return err
 	}
@@ -77,12 +167,16 @@ func (s SessionToolServer) process(ctx context.Context, requests, responses stri
 		if len(name) > 90 {
 			continue
 		}
-		responsePath := filepath.Join(responses, name)
-		if _, err := os.Stat(responsePath); err == nil {
-			_ = os.Remove(filepath.Join(requests, name))
+		if _, err := s.responses.Stat(name); err == nil {
+			_ = s.requests.Remove(name)
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(requests, name))
+		requestFile, err := s.requests.Open(name)
+		if err != nil {
+			return err
+		}
+		data, err := io.ReadAll(io.LimitReader(requestFile, 64*1024+1))
+		_ = requestFile.Close()
 		if err != nil {
 			return err
 		}
@@ -104,24 +198,25 @@ func (s SessionToolServer) process(ctx context.Context, requests, responses stri
 		if err != nil {
 			return err
 		}
-		file, err := os.CreateTemp(responses, ".reply-*")
+		temporary := ".reply-" + rand.Text()
+		file, err := s.responses.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if err != nil {
 			return err
 		}
 		if _, err := file.Write(encoded); err != nil {
 			_ = file.Close()
-			_ = os.Remove(file.Name())
+			_ = s.responses.Remove(temporary)
 			return err
 		}
 		if err := file.Close(); err != nil {
-			_ = os.Remove(file.Name())
+			_ = s.responses.Remove(temporary)
 			return err
 		}
-		if err := os.Rename(file.Name(), responsePath); err != nil {
-			_ = os.Remove(file.Name())
+		if err := s.responses.Rename(temporary, name); err != nil {
+			_ = s.responses.Remove(temporary)
 			return err
 		}
-		if err := os.Remove(filepath.Join(requests, name)); err != nil {
+		if err := s.requests.Remove(name); err != nil {
 			return err
 		}
 	}

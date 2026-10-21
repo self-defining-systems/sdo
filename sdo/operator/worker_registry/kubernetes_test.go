@@ -268,6 +268,15 @@ func TestWorkerJobKeepsToolAccessWithReadOnlySource(t *testing.T) {
 		for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
 			mounts[mount.MountPath] = mount
 		}
+		for _, surface := range []struct {
+			name     string
+			readOnly bool
+		}{{"tools", true}, {"tools/requests", false}, {"tools/responses", false}} {
+			mount, ok := mounts["/sdo/session/"+surface.name]
+			if !ok || mount.Name != "repository" || mount.SubPath != "sessions/incident/"+surface.name || mount.ReadOnly != surface.readOnly {
+				t.Errorf("tool directory can be replaced or has wrong access: %+v", mount)
+			}
+		}
 		if !mounts["/sdo/request"].ReadOnly || mounts["/sdo/session"].ReadOnly || mounts["/tmp"].ReadOnly || mounts[task.Workspace.CheckoutPath].ReadOnly != tc.readOnly {
 			t.Fatalf("%s lost request, session, scratch, or source mount contract: %+v", tc.name, mounts)
 		}

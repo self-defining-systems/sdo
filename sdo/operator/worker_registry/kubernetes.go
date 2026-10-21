@@ -242,6 +242,16 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
 		// leave the kubelet waiting forever for the pod's volumes.
 		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
+		if e.Environment["SDO_TOOLS_DIR"] != "" {
+			// Bind the directories individually so the worker cannot replace
+			// server-owned entries through the writable session parent. Replies
+			// remain writable because the CLI unlinks them after reading.
+			mounts = append(mounts,
+				corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/tools", SubPath: path.Join(e.SessionPVCSubPath, "tools"), ReadOnly: true},
+				corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/tools/requests", SubPath: path.Join(e.SessionPVCSubPath, "tools/requests")},
+				corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/tools/responses", SubPath: path.Join(e.SessionPVCSubPath, "tools/responses")},
+			)
+		}
 		if e.CapturedCorpusReadOnly {
 			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/corpus", SubPath: path.Join(e.SessionPVCSubPath, "corpus"), ReadOnly: true})
 		}
