@@ -7,6 +7,7 @@
 package contractsv1alpha1
 
 import (
+	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	anypb "google.golang.org/protobuf/types/known/anypb"
@@ -807,11 +808,263 @@ func (x *SdkGap) GetScratchScript() string {
 	return ""
 }
 
+type DriftInvestigationTask struct {
+	state              protoimpl.MessageState     `protogen:"open.v1"`
+	SchemaVersion      string                     `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	BatchId            string                     `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	Application        string                     `protobuf:"bytes,3,opt,name=application,proto3" json:"application,omitempty"`
+	Namespace          string                     `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	AcceptedCommit     string                     `protobuf:"bytes,5,opt,name=accepted_commit,json=acceptedCommit,proto3" json:"accepted_commit,omitempty"`
+	MemorySnapshot     *OperationalMemorySnapshot `protobuf:"bytes,6,opt,name=memory_snapshot,json=memorySnapshot,proto3" json:"memory_snapshot,omitempty"`
+	Events             []*DriftEvent              `protobuf:"bytes,7,rep,name=events,proto3" json:"events,omitempty"`
+	CaptureId          string                     `protobuf:"bytes,8,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
+	CaptureSha256      string                     `protobuf:"bytes,9,opt,name=capture_sha256,json=captureSha256,proto3" json:"capture_sha256,omitempty"`
+	RepositoryWorktree string                     `protobuf:"bytes,10,opt,name=repository_worktree,json=repositoryWorktree,proto3" json:"repository_worktree,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *DriftInvestigationTask) Reset() {
+	*x = DriftInvestigationTask{}
+	mi := &file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DriftInvestigationTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DriftInvestigationTask) ProtoMessage() {}
+
+func (x *DriftInvestigationTask) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DriftInvestigationTask.ProtoReflect.Descriptor instead.
+func (*DriftInvestigationTask) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_worker_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DriftInvestigationTask) GetSchemaVersion() string {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetApplication() string {
+	if x != nil {
+		return x.Application
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetAcceptedCommit() string {
+	if x != nil {
+		return x.AcceptedCommit
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetMemorySnapshot() *OperationalMemorySnapshot {
+	if x != nil {
+		return x.MemorySnapshot
+	}
+	return nil
+}
+
+func (x *DriftInvestigationTask) GetEvents() []*DriftEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+func (x *DriftInvestigationTask) GetCaptureId() string {
+	if x != nil {
+		return x.CaptureId
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetCaptureSha256() string {
+	if x != nil {
+		return x.CaptureSha256
+	}
+	return ""
+}
+
+func (x *DriftInvestigationTask) GetRepositoryWorktree() string {
+	if x != nil {
+		return x.RepositoryWorktree
+	}
+	return ""
+}
+
+type DriftInvestigationResult struct {
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	Events        []*DriftEventInvestigation `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	InputTokens   int64                      `protobuf:"varint,2,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
+	OutputTokens  int64                      `protobuf:"varint,3,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DriftInvestigationResult) Reset() {
+	*x = DriftInvestigationResult{}
+	mi := &file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DriftInvestigationResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DriftInvestigationResult) ProtoMessage() {}
+
+func (x *DriftInvestigationResult) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DriftInvestigationResult.ProtoReflect.Descriptor instead.
+func (*DriftInvestigationResult) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_worker_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *DriftInvestigationResult) GetEvents() []*DriftEventInvestigation {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+func (x *DriftInvestigationResult) GetInputTokens() int64 {
+	if x != nil {
+		return x.InputTokens
+	}
+	return 0
+}
+
+func (x *DriftInvestigationResult) GetOutputTokens() int64 {
+	if x != nil {
+		return x.OutputTokens
+	}
+	return 0
+}
+
+type DriftEventInvestigation struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	EventIndex        int32                  `protobuf:"varint,1,opt,name=event_index,json=eventIndex,proto3" json:"event_index,omitempty"`
+	Verdict           string                 `protobuf:"bytes,2,opt,name=verdict,proto3" json:"verdict,omitempty"`
+	Reason            string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Evidence          []*DriftEvidence       `protobuf:"bytes,4,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	MitigationRequest string                 `protobuf:"bytes,5,opt,name=mitigation_request,json=mitigationRequest,proto3" json:"mitigation_request,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *DriftEventInvestigation) Reset() {
+	*x = DriftEventInvestigation{}
+	mi := &file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DriftEventInvestigation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DriftEventInvestigation) ProtoMessage() {}
+
+func (x *DriftEventInvestigation) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_worker_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DriftEventInvestigation.ProtoReflect.Descriptor instead.
+func (*DriftEventInvestigation) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_worker_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *DriftEventInvestigation) GetEventIndex() int32 {
+	if x != nil {
+		return x.EventIndex
+	}
+	return 0
+}
+
+func (x *DriftEventInvestigation) GetVerdict() string {
+	if x != nil {
+		return x.Verdict
+	}
+	return ""
+}
+
+func (x *DriftEventInvestigation) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *DriftEventInvestigation) GetEvidence() []*DriftEvidence {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
+func (x *DriftEventInvestigation) GetMitigationRequest() string {
+	if x != nil {
+		return x.MitigationRequest
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\x80\x03\n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x19google/protobuf/any.proto\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\x80\x03\n" +
 	"\x11AgentRegistration\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x19\n" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12N\n" +
@@ -875,7 +1128,31 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"faultClass\x12\x1c\n" +
 	"\tprimitive\x18\x02 \x01(\tR\tprimitive\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\x12%\n" +
-	"\x0escratch_script\x18\x04 \x01(\tR\rscratchScriptB\xfe\x01\n" +
+	"\x0escratch_script\x18\x04 \x01(\tR\rscratchScript\"\xd8\x03\n" +
+	"\x16DriftInvestigationTask\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\tR\rschemaVersion\x12\x19\n" +
+	"\bbatch_id\x18\x02 \x01(\tR\abatchId\x12 \n" +
+	"\vapplication\x18\x03 \x01(\tR\vapplication\x12\x1c\n" +
+	"\tnamespace\x18\x04 \x01(\tR\tnamespace\x12'\n" +
+	"\x0faccepted_commit\x18\x05 \x01(\tR\x0eacceptedCommit\x12]\n" +
+	"\x0fmemory_snapshot\x18\x06 \x01(\v24.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12=\n" +
+	"\x06events\x18\a \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\x06events\x12\x1d\n" +
+	"\n" +
+	"capture_id\x18\b \x01(\tR\tcaptureId\x12%\n" +
+	"\x0ecapture_sha256\x18\t \x01(\tR\rcaptureSha256\x12/\n" +
+	"\x13repository_worktree\x18\n" +
+	" \x01(\tR\x12repositoryWorktree\"\xae\x01\n" +
+	"\x18DriftInvestigationResult\x12J\n" +
+	"\x06events\x18\x01 \x03(\v22.sdodev.contracts.v1alpha1.DriftEventInvestigationR\x06events\x12!\n" +
+	"\finput_tokens\x18\x02 \x01(\x03R\vinputTokens\x12#\n" +
+	"\routput_tokens\x18\x03 \x01(\x03R\foutputTokens\"\xfd\x01\n" +
+	"\x17DriftEventInvestigation\x12\x1f\n" +
+	"\vevent_index\x18\x01 \x01(\x05R\n" +
+	"eventIndex\x124\n" +
+	"\averdict\x18\x02 \x01(\tB\x1a\xbaH\x17r\x15R\x03bugR\x06benignR\x06unsureR\averdict\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12D\n" +
+	"\bevidence\x18\x04 \x03(\v2(.sdodev.contracts.v1alpha1.DriftEvidenceR\bevidence\x12-\n" +
+	"\x12mitigation_request\x18\x05 \x01(\tR\x11mitigationRequestB\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -890,7 +1167,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_worker_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_sdodev_contracts_v1alpha1_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*AgentRegistration)(nil),           // 0: sdodev.contracts.v1alpha1.AgentRegistration
 	(*AgentCapability)(nil),             // 1: sdodev.contracts.v1alpha1.AgentCapability
@@ -902,32 +1179,41 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*ReflectionRequest)(nil),           // 7: sdodev.contracts.v1alpha1.ReflectionRequest
 	(*ReflectionResult)(nil),            // 8: sdodev.contracts.v1alpha1.ReflectionResult
 	(*SdkGap)(nil),                      // 9: sdodev.contracts.v1alpha1.SdkGap
-	(*anypb.Any)(nil),                   // 10: google.protobuf.Any
-	(*timestamppb.Timestamp)(nil),       // 11: google.protobuf.Timestamp
-	(*IncidentClosure)(nil),             // 12: sdodev.contracts.v1alpha1.IncidentClosure
-	(*OperationalMemorySnapshot)(nil),   // 13: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	(*OutcomeRecord)(nil),               // 14: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*OperationalArtifactProposal)(nil), // 15: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*DriftInvestigationTask)(nil),      // 10: sdodev.contracts.v1alpha1.DriftInvestigationTask
+	(*DriftInvestigationResult)(nil),    // 11: sdodev.contracts.v1alpha1.DriftInvestigationResult
+	(*DriftEventInvestigation)(nil),     // 12: sdodev.contracts.v1alpha1.DriftEventInvestigation
+	(*anypb.Any)(nil),                   // 13: google.protobuf.Any
+	(*timestamppb.Timestamp)(nil),       // 14: google.protobuf.Timestamp
+	(*IncidentClosure)(nil),             // 15: sdodev.contracts.v1alpha1.IncidentClosure
+	(*OperationalMemorySnapshot)(nil),   // 16: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	(*OutcomeRecord)(nil),               // 17: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*OperationalArtifactProposal)(nil), // 18: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*DriftEvent)(nil),                  // 19: sdodev.contracts.v1alpha1.DriftEvent
+	(*DriftEvidence)(nil),               // 20: sdodev.contracts.v1alpha1.DriftEvidence
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
 	2,  // 1: sdodev.contracts.v1alpha1.AgentRegistration.kubernetes_job:type_name -> sdodev.contracts.v1alpha1.KubernetesJobLaunch
 	3,  // 2: sdodev.contracts.v1alpha1.AgentRegistration.local_process:type_name -> sdodev.contracts.v1alpha1.LocalProcessLaunch
-	10, // 3: sdodev.contracts.v1alpha1.AgentTask.request:type_name -> google.protobuf.Any
+	13, // 3: sdodev.contracts.v1alpha1.AgentTask.request:type_name -> google.protobuf.Any
 	4,  // 4: sdodev.contracts.v1alpha1.AgentTask.workspace:type_name -> sdodev.contracts.v1alpha1.ProposalWorkspace
-	11, // 5: sdodev.contracts.v1alpha1.AgentTask.deadline:type_name -> google.protobuf.Timestamp
-	10, // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
-	12, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
-	13, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
-	14, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	14, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	15, // 11: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	14, // 5: sdodev.contracts.v1alpha1.AgentTask.deadline:type_name -> google.protobuf.Timestamp
+	13, // 6: sdodev.contracts.v1alpha1.AgentResult.response:type_name -> google.protobuf.Any
+	15, // 7: sdodev.contracts.v1alpha1.ReflectionRequest.closure:type_name -> sdodev.contracts.v1alpha1.IncidentClosure
+	16, // 8: sdodev.contracts.v1alpha1.ReflectionRequest.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	17, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	17, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	18, // 11: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
 	9,  // 12: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	16, // 13: sdodev.contracts.v1alpha1.DriftInvestigationTask.memory_snapshot:type_name -> sdodev.contracts.v1alpha1.OperationalMemorySnapshot
+	19, // 14: sdodev.contracts.v1alpha1.DriftInvestigationTask.events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	12, // 15: sdodev.contracts.v1alpha1.DriftInvestigationResult.events:type_name -> sdodev.contracts.v1alpha1.DriftEventInvestigation
+	20, // 16: sdodev.contracts.v1alpha1.DriftEventInvestigation.evidence:type_name -> sdodev.contracts.v1alpha1.DriftEvidence
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }
@@ -947,7 +1233,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_worker_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

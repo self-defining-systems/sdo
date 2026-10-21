@@ -47,6 +47,7 @@ message DriftField {
   string path = 1;
   string old = 2;
   string new = 3;
+  string source = 4;
 }
 
 message DriftEvent {
@@ -59,6 +60,16 @@ message DriftEvent {
   string classification = 7 [(buf.validate.field).string = {in: ["fault", "unexplained"]}];
   string program_id = 8;
   google.protobuf.Timestamp manager_at = 9;
+  string investigation_status = 10;
+  string investigation_verdict = 11;
+  string investigation_reason = 12;
+  repeated DriftEvidence investigation_evidence = 13;
+  string investigation_capture_id = 14;
+}
+
+message DriftEvidence {
+  string kind = 1 [(buf.validate.field).string = {in: ["source_contradiction", "violated_relation", "observed_impact"]}];
+  string observation = 2;
 }
 
 // DetectorEvaluation is one detector's status at a point in time.

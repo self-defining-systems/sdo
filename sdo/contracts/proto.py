@@ -119,6 +119,10 @@ AgentTask = worker_pb2.AgentTask
 AgentResult = worker_pb2.AgentResult
 ReflectionRequest = worker_pb2.ReflectionRequest
 ReflectionResult = worker_pb2.ReflectionResult
+DriftInvestigationTask = worker_pb2.DriftInvestigationTask
+DriftInvestigationResult = worker_pb2.DriftInvestigationResult
+DriftEventInvestigation = worker_pb2.DriftEventInvestigation
+DriftEvidence = messages_pb2.DriftEvidence
 SdkGap = worker_pb2.SdkGap
 SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
 SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
@@ -177,6 +181,10 @@ __all__ = [
     "ProposalWorkspace",
     "ReflectionRequest",
     "ReflectionResult",
+    "DriftInvestigationTask",
+    "DriftInvestigationResult",
+    "DriftEventInvestigation",
+    "DriftEvidence",
     "SdkGap",
     "SourceDeploymentRequest",
     "SourceDeploymentResult",

@@ -3,6 +3,7 @@ syntax = "proto3";
 package sdodev.contracts.v1alpha1;
 
 import "google/protobuf/any.proto";
+import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
@@ -99,4 +100,31 @@ message SdkGap {
   string primitive = 2;
   string reason = 3;
   string scratch_script = 4;
+}
+
+message DriftInvestigationTask {
+  string schema_version = 1;
+  string batch_id = 2;
+  string application = 3;
+  string namespace = 4;
+  string accepted_commit = 5;
+  OperationalMemorySnapshot memory_snapshot = 6;
+  repeated DriftEvent events = 7;
+  string capture_id = 8;
+  string capture_sha256 = 9;
+  string repository_worktree = 10;
+}
+
+message DriftInvestigationResult {
+  repeated DriftEventInvestigation events = 1;
+  int64 input_tokens = 2;
+  int64 output_tokens = 3;
+}
+
+message DriftEventInvestigation {
+  int32 event_index = 1;
+  string verdict = 2 [(buf.validate.field).string = {in: ["bug", "benign", "unsure"]}];
+  string reason = 3;
+  repeated DriftEvidence evidence = 4;
+  string mitigation_request = 5;
 }

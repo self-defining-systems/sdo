@@ -76,6 +76,12 @@ class DriftField(ContractModel):
     path: str
     old: str = ""
     new: str = ""
+    source: str = ""
+
+
+class DriftEvidence(ContractModel):
+    kind: Literal["source_contradiction", "violated_relation", "observed_impact"]
+    observation: str
 
 
 class DriftEvent(ContractModel):
@@ -88,6 +94,11 @@ class DriftEvent(ContractModel):
     observed_at: datetime
     classification: Literal["fault", "unexplained"]
     program_id: str = ""
+    investigation_status: str = ""
+    investigation_verdict: str = ""
+    investigation_reason: str = ""
+    investigation_evidence: list[DriftEvidence] = Field(default_factory=list)
+    investigation_capture_id: str = ""
 
 
 class DetectorEvaluation(ContractModel):

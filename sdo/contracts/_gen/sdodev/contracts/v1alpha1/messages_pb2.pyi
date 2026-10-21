@@ -50,17 +50,19 @@ class Finding(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., rule_id: _Optional[str] = ..., status: _Optional[str] = ..., severity: _Optional[str] = ..., summary: _Optional[str] = ..., evidence: _Optional[str] = ..., primary_resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., related_resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., fingerprint: _Optional[str] = ..., metadata: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
 
 class DriftField(_message.Message):
-    __slots__ = ("path", "old", "new")
+    __slots__ = ("path", "old", "new", "source")
     PATH_FIELD_NUMBER: _ClassVar[int]
     OLD_FIELD_NUMBER: _ClassVar[int]
     NEW_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     path: str
     old: str
     new: str
-    def __init__(self, path: _Optional[str] = ..., old: _Optional[str] = ..., new: _Optional[str] = ...) -> None: ...
+    source: str
+    def __init__(self, path: _Optional[str] = ..., old: _Optional[str] = ..., new: _Optional[str] = ..., source: _Optional[str] = ...) -> None: ...
 
 class DriftEvent(_message.Message):
-    __slots__ = ("ref", "fields", "source", "manager", "operation", "observed_at", "classification", "program_id", "manager_at")
+    __slots__ = ("ref", "fields", "source", "manager", "operation", "observed_at", "classification", "program_id", "manager_at", "investigation_status", "investigation_verdict", "investigation_reason", "investigation_evidence", "investigation_capture_id")
     REF_FIELD_NUMBER: _ClassVar[int]
     FIELDS_FIELD_NUMBER: _ClassVar[int]
     SOURCE_FIELD_NUMBER: _ClassVar[int]
@@ -70,6 +72,11 @@ class DriftEvent(_message.Message):
     CLASSIFICATION_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     MANAGER_AT_FIELD_NUMBER: _ClassVar[int]
+    INVESTIGATION_STATUS_FIELD_NUMBER: _ClassVar[int]
+    INVESTIGATION_VERDICT_FIELD_NUMBER: _ClassVar[int]
+    INVESTIGATION_REASON_FIELD_NUMBER: _ClassVar[int]
+    INVESTIGATION_EVIDENCE_FIELD_NUMBER: _ClassVar[int]
+    INVESTIGATION_CAPTURE_ID_FIELD_NUMBER: _ClassVar[int]
     ref: _common_pb2.ObjectRef
     fields: _containers.RepeatedCompositeFieldContainer[DriftField]
     source: str
@@ -79,7 +86,20 @@ class DriftEvent(_message.Message):
     classification: str
     program_id: str
     manager_at: _timestamp_pb2.Timestamp
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., fields: _Optional[_Iterable[_Union[DriftField, _Mapping]]] = ..., source: _Optional[str] = ..., manager: _Optional[str] = ..., operation: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., classification: _Optional[str] = ..., program_id: _Optional[str] = ..., manager_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    investigation_status: str
+    investigation_verdict: str
+    investigation_reason: str
+    investigation_evidence: _containers.RepeatedCompositeFieldContainer[DriftEvidence]
+    investigation_capture_id: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., fields: _Optional[_Iterable[_Union[DriftField, _Mapping]]] = ..., source: _Optional[str] = ..., manager: _Optional[str] = ..., operation: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., classification: _Optional[str] = ..., program_id: _Optional[str] = ..., manager_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., investigation_status: _Optional[str] = ..., investigation_verdict: _Optional[str] = ..., investigation_reason: _Optional[str] = ..., investigation_evidence: _Optional[_Iterable[_Union[DriftEvidence, _Mapping]]] = ..., investigation_capture_id: _Optional[str] = ...) -> None: ...
+
+class DriftEvidence(_message.Message):
+    __slots__ = ("kind", "observation")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_FIELD_NUMBER: _ClassVar[int]
+    kind: str
+    observation: str
+    def __init__(self, kind: _Optional[str] = ..., observation: _Optional[str] = ...) -> None: ...
 
 class DetectorEvaluation(_message.Message):
     __slots__ = ("detector_id", "evaluated_at", "status", "fingerprints", "error")

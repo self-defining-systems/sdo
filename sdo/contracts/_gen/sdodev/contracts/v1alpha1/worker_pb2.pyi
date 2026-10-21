@@ -1,6 +1,7 @@
 import datetime
 
 from google.protobuf import any_pb2 as _any_pb2
+from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
 from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
@@ -147,3 +148,51 @@ class SdkGap(_message.Message):
     reason: str
     scratch_script: str
     def __init__(self, fault_class: _Optional[str] = ..., primitive: _Optional[str] = ..., reason: _Optional[str] = ..., scratch_script: _Optional[str] = ...) -> None: ...
+
+class DriftInvestigationTask(_message.Message):
+    __slots__ = ("schema_version", "batch_id", "application", "namespace", "accepted_commit", "memory_snapshot", "events", "capture_id", "capture_sha256", "repository_worktree")
+    SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
+    BATCH_ID_FIELD_NUMBER: _ClassVar[int]
+    APPLICATION_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
+    MEMORY_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    EVENTS_FIELD_NUMBER: _ClassVar[int]
+    CAPTURE_ID_FIELD_NUMBER: _ClassVar[int]
+    CAPTURE_SHA256_FIELD_NUMBER: _ClassVar[int]
+    REPOSITORY_WORKTREE_FIELD_NUMBER: _ClassVar[int]
+    schema_version: str
+    batch_id: str
+    application: str
+    namespace: str
+    accepted_commit: str
+    memory_snapshot: _messages_pb2.OperationalMemorySnapshot
+    events: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DriftEvent]
+    capture_id: str
+    capture_sha256: str
+    repository_worktree: str
+    def __init__(self, schema_version: _Optional[str] = ..., batch_id: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., accepted_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., capture_id: _Optional[str] = ..., capture_sha256: _Optional[str] = ..., repository_worktree: _Optional[str] = ...) -> None: ...
+
+class DriftInvestigationResult(_message.Message):
+    __slots__ = ("events", "input_tokens", "output_tokens")
+    EVENTS_FIELD_NUMBER: _ClassVar[int]
+    INPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    events: _containers.RepeatedCompositeFieldContainer[DriftEventInvestigation]
+    input_tokens: int
+    output_tokens: int
+    def __init__(self, events: _Optional[_Iterable[_Union[DriftEventInvestigation, _Mapping]]] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ...) -> None: ...
+
+class DriftEventInvestigation(_message.Message):
+    __slots__ = ("event_index", "verdict", "reason", "evidence", "mitigation_request")
+    EVENT_INDEX_FIELD_NUMBER: _ClassVar[int]
+    VERDICT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    EVIDENCE_FIELD_NUMBER: _ClassVar[int]
+    MITIGATION_REQUEST_FIELD_NUMBER: _ClassVar[int]
+    event_index: int
+    verdict: str
+    reason: str
+    evidence: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DriftEvidence]
+    mitigation_request: str
+    def __init__(self, event_index: _Optional[int] = ..., verdict: _Optional[str] = ..., reason: _Optional[str] = ..., evidence: _Optional[_Iterable[_Union[_messages_pb2.DriftEvidence, _Mapping]]] = ..., mitigation_request: _Optional[str] = ...) -> None: ...

@@ -30,6 +30,16 @@ func builtInResponderRegistration(image string, command []string) *contracts.Age
 	}
 }
 
+func builtInDriftRegistration(image string) *contracts.AgentRegistration {
+	return &contracts.AgentRegistration{
+		SchemaVersion: ProtocolSchemaVersion, AgentId: "sdo-drift-investigator",
+		Capabilities: []*contracts.AgentCapability{{TaskType: driftTaskType,
+			RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.DriftInvestigationTask",
+			ResultTypeUrl:  "type.googleapis.com/sdodev.contracts.v1alpha1.DriftInvestigationResult"}},
+		Launch: &contracts.AgentRegistration_KubernetesJob{KubernetesJob: &contracts.KubernetesJobLaunch{Image: image, Command: []string{"python3", "-m", "sdo.agents.responder.drift_worker"}}},
+	}
+}
+
 func builtInReflectorRegistration(image string) *contracts.AgentRegistration {
 	return &contracts.AgentRegistration{
 		SchemaVersion: ProtocolSchemaVersion,
