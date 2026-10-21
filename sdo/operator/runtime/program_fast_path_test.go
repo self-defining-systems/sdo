@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +9,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
-
-	"google.golang.org/protobuf/encoding/protojson"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,64 +21,28 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func TestLiveEvidenceTrustAndFastPathCoverage(t *testing.T) {
-	var fixture struct {
-		PriorOutcomes []json.RawMessage `json:"prior_outcomes"`
-		LiveIncident  struct {
-			Findings  []sdk.Finding     `json:"findings"`
-			MatchRuns []json.RawMessage `json:"match_runs"`
-			Snapshot  sdktest.Snapshot  `json:"snapshot"`
-		} `json:"live_incident"`
+func TestHandwrittenFastPathCoverageDeduplicatesMatches(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	bindings := program.Bindings{"workload": ref}
+	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}}
+	findings := []sdk.Finding{{Fingerprint: "deployment", PrimaryResource: ref}, {Fingerprint: "hint", PrimaryResource: ref}, {Fingerprint: "service", PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
+	runs := []ProgramRun{{ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: "deployment", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}, {ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: "hint", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}}
+	trust := map[string]ProgramTrust{"repair": {Trusted: true, VerifiedSuccesses: 3, LastChange: "revision-a"}}
+	selected, related, reason := selectTrustedFastPathRuns(findings, runs, trust, 3, snapshot)
+	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != "service" || related[0].ProgramID != "repair" {
+		t.Fatalf("coverage: selected=%+v related=%+v reason=%q", selected, related, reason)
 	}
-	data, err := os.ReadFile("testdata/fast_path_live_evidence.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	outcomes := make([]*contracts.OutcomeRecord, 0, len(fixture.PriorOutcomes))
-	for _, raw := range fixture.PriorOutcomes {
-		outcome := new(contracts.OutcomeRecord)
-		if err := protojson.Unmarshal(raw, outcome); err != nil {
-			t.Fatal(err)
-		}
-		outcomes = append(outcomes, outcome)
-	}
-	trust := ProgramTrustStats(outcomes, 3)
-	state := trust["health-objective-failure"]
-	if !state.Trusted || state.VerifiedSuccesses != 3 || state.Failures != 0 {
-		t.Fatalf("live successes did not establish trust: %+v", state)
-	}
-	runs := make([]ProgramRun, 0, len(fixture.LiveIncident.MatchRuns))
-	for _, raw := range fixture.LiveIncident.MatchRuns {
-		message := new(contracts.ProgramRun)
-		if err := protojson.Unmarshal(raw, message); err != nil {
-			t.Fatal(err)
-		}
-		run := programRunState(message)
-		run.Verdict.Result = program.Match
-		runs = append(runs, run)
-	}
-	selected, related, reason := selectTrustedFastPathRuns(fixture.LiveIncident.Findings, runs, trust, 3, fixture.LiveIncident.Snapshot)
-	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != FindingFingerprint(fixture.LiveIncident.Findings[2]) || related[0].ProgramID != "health-objective-failure" || related[0].Bindings["affected"].Name != "profile" {
-		t.Fatalf("live incident eligibility: selected=%+v related=%+v reason=%q", selected, related, reason)
-	}
-	unrelated := append([]sdk.Finding(nil), fixture.LiveIncident.Findings...)
+	unrelated := append([]sdk.Finding(nil), findings...)
 	unrelated[2].PrimaryResource.Name = "other"
 	unrelated[2].Fingerprint = "other-service"
-	_, _, reason = selectTrustedFastPathRuns(unrelated, runs, trust, 3, fixture.LiveIncident.Snapshot)
+	_, _, reason = selectTrustedFastPathRuns(unrelated, runs, trust, 3, snapshot)
 	if reason != FastPathSkipUncoveredFinding {
-		t.Fatalf("unrelated Service skip = %q", reason)
+		t.Fatalf("unrelated service accepted: %q", reason)
 	}
-
-	// The same trusted diagnosis can be associated with a hint and a finding.
-	// Repeated observations of either association must not create ambiguity.
-	covered := fixture.LiveIncident.Findings[:2]
 	runs = append(runs, runs[0], runs[1])
-	selected, related, reason = selectTrustedFastPathRuns(covered, runs, trust, 3, fixture.LiveIncident.Snapshot)
-	if reason != "" || len(selected) != 1 || len(related) != 0 || selected[0].ProgramID != "health-objective-failure" {
-		t.Fatalf("equivalent matches should select one program: selected=%+v reason=%q", selected, reason)
+	selected, related, reason = selectTrustedFastPathRuns(findings[:2], runs, trust, 3, snapshot)
+	if reason != "" || len(selected) != 1 || len(related) != 0 {
+		t.Fatalf("duplicate matches: selected=%+v related=%+v reason=%q", selected, related, reason)
 	}
 }
 

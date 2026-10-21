@@ -97,6 +97,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			defer cancel()
 			if rollbackErr := e.Rollback(recoveryCtx, result); rollbackErr != nil {
 				result.RollbackError = rollbackErr.Error()
+				result.RollingBack = true
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
 			} else {
 				result.RolledBack = true
@@ -178,7 +179,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}
 	if client, ok := e.Client.(planDryRunner); ok {
 		for _, patch := range result.Patches {
-			if err := client.DryRunPatch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
+			if err := client.DryRunPatch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil && !errors.Is(err, ErrPlanDryRunUnsupported) {
 				return result, fmt.Errorf("server dry-run %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
 			}
 		}

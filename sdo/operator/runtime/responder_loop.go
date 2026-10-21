@@ -373,6 +373,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			break
 		}
 		executor := l.applicationExecutor(request.ApplicationID)
+		reconciled, err := executor.Reconcile(ctx, application)
+		if err != nil {
+			response.Error = err.Error()
+			break
+		}
+		application = reconciled
 		if err := executor.Rollback(ctx, application); err != nil {
 			response.Error = err.Error()
 			break

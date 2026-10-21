@@ -409,13 +409,23 @@ func TestInterruptedFastPathRestoresPersistedPreImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preImages, err := json.Marshal([]PlanPreImage{{Ref: ref, Object: before}})
+	images := []PlanPreImage{{Ref: ref, Object: before}}
+	after := before.DeepCopy()
+	if err := program.ApplySetField(after.Object, "spec.ports[0].targetPort", int64(8080)); err != nil {
+		t.Fatal(err)
+	}
+	pending := 0
+	journal, err := json.Marshal(PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}}}, PreImages: images, Patches: []PlanPatch{{Ref: ref, Before: before, After: after}}, PendingAction: &pending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preImages, err := json.Marshal(images)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = client.CoreV1().ConfigMaps("app").Create(context.Background(), &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: IncidentJobName(request.IncidentID) + "-fast-path"},
-		Data:       map[string]string{"state": "attempting", "preimages": string(preImages), "program_ids": `["service-targetport-mismatch"]`},
+		Data:       map[string]string{"state": "attempting", "application": string(journal), "preimages": string(preImages), "program_ids": `["service-targetport-mismatch"]`},
 	}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +440,7 @@ func TestInterruptedFastPathRestoresPersistedPreImages(t *testing.T) {
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app"}
 	_, summary, resolved, err := dispatcher.tryFastPath(context.Background(), request, loop)
-	if err != nil || resolved || !strings.Contains(summary, "rollback true") {
+	if err != nil || resolved || !strings.Contains(summary, "rollback complete") {
 		t.Fatalf("interrupted attempt: summary=%q resolved=%t err=%v", summary, resolved, err)
 	}
 	service, err = client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})

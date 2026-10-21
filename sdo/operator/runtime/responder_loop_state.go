@@ -89,6 +89,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 }
 func (l *ResponderLoop) applicationExecutor(id string) PlanExecutor {
 	executor := l.Executor
+	previousCheckpoint := executor.Checkpoint
 	executor.Checkpoint = func(ctx context.Context, result PlanApplicationResult) error {
 		l.applications[id] = result
 		for i := range l.applicationsLog {
@@ -98,7 +99,13 @@ func (l *ResponderLoop) applicationExecutor(id string) PlanExecutor {
 				l.applicationsLog[i].RollbackError = result.RollbackError
 			}
 		}
-		return l.persistToolState(ctx)
+		if err := l.persistToolState(ctx); err != nil {
+			return err
+		}
+		if previousCheckpoint != nil {
+			return previousCheckpoint(ctx, result)
+		}
+		return nil
 	}
 	return executor
 }

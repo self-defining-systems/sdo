@@ -224,6 +224,11 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	started := time.Now().UTC()
 	l.batches++
 	attempt.Attempted = true
+	l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true})
+	if err := l.persistToolState(ctx); err != nil {
+		attempt.Summary = err.Error()
+		return attempt
+	}
 	preview, prepareErr := l.Executor.Apply(ctx, l.Request, batch, true)
 	if prepareErr == nil && l.BeforeFastPathApply != nil {
 		prepareErr = l.BeforeFastPathApply(ctx, attempt.Programs, preview.PreImages)
@@ -233,10 +238,11 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		for _, id := range attempt.Programs {
 			l.addFailureSignal("fast_path_failure:" + id)
 		}
-		l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()})
+		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
 		return attempt
 	}
-	result, applyErr := l.Executor.Apply(ctx, l.Request, batch, false)
+	executor := l.applicationExecutor("fast-path-1")
+	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
 	response := ToolResponse{}
 	if result.Applied {
 		l.verify(ctx, selectedPlans, &response)
@@ -273,7 +279,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 			l.addFailureSignal("fast_path_failure:" + id)
 		}
 		if len(result.ActionsApplied) > 0 {
-			if rollbackErr := l.Executor.Rollback(ctx, result); rollbackErr != nil {
+			if rollbackErr := executor.Rollback(ctx, result); rollbackErr != nil {
 				attempt.RollbackErr = rollbackErr.Error()
 			} else {
 				attempt.RolledBack = true
@@ -291,7 +297,26 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if applyErr != nil {
 		entry.Error = applyErr.Error()
 	}
-	l.applicationsLog = append(l.applicationsLog, entry)
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == entry.ID {
+			l.applicationsLog[i] = entry
+		}
+	}
+	if attempt.RolledBack {
+		result.RolledBack = true
+		result.RollingBack = false
+		result.RollbackCompleted = len(result.ActionsApplied)
+	}
+	if attempt.RollbackErr != "" {
+		result.RollbackError = attempt.RollbackErr
+		result.RollingBack = true
+	}
+	l.applications["fast-path-1"] = result
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == entry.ID {
+			l.applicationsLog[i].Result = result
+		}
+	}
 	l.calls = append(l.calls, ToolCall{Command: "fast-path", At: time.Now().UTC(), Summary: boundedToolText(attempt.Summary)})
 	return attempt
 }
