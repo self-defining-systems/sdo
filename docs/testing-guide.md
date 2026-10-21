@@ -112,6 +112,13 @@ only), `driver_phase_timings_seconds`, and `fault_gate_timings_seconds` from
 `closure_phase_seconds`. Compare these fields before changing a wait; phase
 times from the hermetic fake API and kind are different workloads.
 
+The receipt drain now records acknowledgment and collection timestamps and
+durations under `reflection_drain`. The hermetic operator transport test
+compares the previous temporary sync Pod path with direct reuse of the
+running controller Pod. It checks repository sync and ledger read in both
+paths and reports elapsed time and Pod creations; the real cluster's sync Pod
+startup cannot be inferred from the fake API timing.
+
 Stage checkpoint tests run entirely offline:
 
 ```bash

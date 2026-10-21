@@ -718,7 +718,7 @@ def _collect_settled_receipt(
     incident_id: str,
     receipt_dir: Path,
     clock: Clock,
-    timeout: float = CLOSEOUT_SETTLE_TIMEOUT_SECONDS,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     """Collect the receipt once close-out has settled, or once the bounded wait elapses.
 
@@ -730,6 +730,8 @@ def _collect_settled_receipt(
     """
 
     receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+    if timeout is None:
+        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
     deadline = clock.monotonic() + timeout
     while not _closeout_settled(receipt) and clock.monotonic() < deadline:
         clock.sleep(POLL_SECONDS)
@@ -757,6 +759,8 @@ def drain_pending_incident(
     if pending is None:
         return 0.0
     started = clock.monotonic()
+    phases: dict[str, float] = {}
+    phase_timestamps = {"drain_started": clock.now().isoformat()}
     try:
         drained_state = _wait_for_reflection_drain(
             ops, record.control_namespace, pending.incident_id, timeout_seconds, clock
@@ -765,6 +769,8 @@ def drain_pending_incident(
         # The controller log holds every broker rejection of the closure.
         ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
         raise
+    phases["wait_for_ack"] = clock.monotonic() - started
+    phase_timestamps["ack_observed"] = clock.now().isoformat()
     config = replace(
         runtime_config_from_payload(record.runtime_config),
         repository=repository,
@@ -778,6 +784,8 @@ def drain_pending_incident(
     # incident worktrees; the benchmark must not mutate its workspace.
     del drained_state
     receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
+    phases["collect_settled_receipt"] = clock.monotonic() - started - phases["wait_for_ack"]
+    phase_timestamps["receipt_collected"] = clock.now().isoformat()
     # The reflection-drain cost includes the wait for close-out to settle; neither
     # is resolution time (both are excluded below).
     waited = clock.monotonic() - started
@@ -794,7 +802,12 @@ def drain_pending_incident(
             "post_recovery_learning_and_receipt"
         ),
     }
-    receipt["reflection_drain"] = {"drained_by": drained_by, "waited_seconds": waited}
+    receipt["reflection_drain"] = {
+        "drained_by": drained_by,
+        "waited_seconds": waited,
+        "phase_seconds": phases,
+        "phase_timestamps": phase_timestamps,
+    }
     # The controller log covering reflection is evidence whether or not the receipt validates.
     ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
     try:
@@ -1094,8 +1107,10 @@ def _log_records(logs: str) -> list[dict[str, Any]]:
 
 
 def wait_for_maintenance_ack(
-    ops: ClusterOps, control: str, generation: str, clock: Clock, timeout: float = MAINTENANCE_ACK_TIMEOUT_SECONDS
+    ops: ClusterOps, control: str, generation: str, clock: Clock, timeout: float | None = None
 ) -> None:
+    if timeout is None:
+        timeout = MAINTENANCE_ACK_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         records = _log_records(ops.controller_logs(control))

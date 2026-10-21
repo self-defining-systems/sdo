@@ -69,11 +69,17 @@ func KubectlTarSynchronizer(repositoryPath string) RepositorySynchronizer {
 
 // KubectlTarSynchronizerWithKubeconfig keeps sync-back on the requested cluster.
 func KubectlTarSynchronizerWithKubeconfig(repositoryPath, kubeconfig string) RepositorySynchronizer {
+	return KubectlTarSynchronizerFromPodWithKubeconfig(repositoryPath, kubeconfig, RepositorySyncPodName)
+}
+
+// KubectlTarSynchronizerFromPodWithKubeconfig copies accepted commits from an
+// already running Pod with the repository volume mounted.
+func KubectlTarSynchronizerFromPodWithKubeconfig(repositoryPath, kubeconfig, podName string) RepositorySynchronizer {
 	return func(ctx context.Context, cfg Config) error {
 		if repositoryPath == "" {
 			return fmt.Errorf("repository path is required")
 		}
-		producer := kubectlCommand(ctx, kubeconfig, "--namespace", cfg.controlNamespace(), "exec", RepositorySyncPodName, "--", "tar", "-C", "/workspace/application", "-cf", "-", ".")
+		producer := kubectlCommand(ctx, kubeconfig, "--namespace", cfg.controlNamespace(), "exec", podName, "--", "tar", "-C", "/workspace/application", "-cf", "-", ".")
 		pipe, err := producer.StdoutPipe()
 		if err != nil {
 			return err

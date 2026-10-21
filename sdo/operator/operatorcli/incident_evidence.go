@@ -12,6 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/worker_registry"
@@ -60,22 +63,51 @@ func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (Incid
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
+	return runIncidentEvidence(ctx, client, cfg)
+}
+
+func runIncidentEvidence(ctx context.Context, client kubernetes.Interface, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
 	path, err := broker.NativeLedgerPath(broker.DefaultNativeWorktreeRoot, cfg.IncidentID)
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
 	var data []byte
+	podName := install.RepositorySyncPodName
+	job, err := client.BatchV1().Jobs(cfg.Sync.ControlNamespace).Get(ctx, install.ControllerJobName, metav1.GetOptions{})
+	if err != nil {
+		return IncidentEvidenceResult{}, fmt.Errorf("find current controller Job: %w", err)
+	}
+	if job.UID == "" {
+		return IncidentEvidenceResult{}, errors.New("current controller Job has no UID")
+	}
+	pods, err := client.CoreV1().Pods(cfg.Sync.ControlNamespace).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + install.ControllerJobName})
+	if err != nil {
+		return IncidentEvidenceResult{}, fmt.Errorf("find running controller Pod: %w", err)
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		for _, owner := range pod.OwnerReferences {
+			if owner.Kind == "Job" && owner.Name == install.ControllerJobName && owner.UID == job.UID {
+				if podName != install.RepositorySyncPodName {
+					return IncidentEvidenceResult{}, errors.New("multiple running controller Pods own repository evidence")
+				}
+				podName = pod.Name
+			}
+		}
+	}
 	installer := install.Installer{Client: client}
 	if cfg.Repository != "" {
-		installer.SyncRepository = install.KubectlTarSynchronizerWithKubeconfig(cfg.Repository, cfg.Kubeconfig)
+		installer.SyncRepository = install.KubectlTarSynchronizerFromPodWithKubeconfig(cfg.Repository, cfg.Kubeconfig, podName)
 	}
-	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, syncConfig install.Config) error {
+	action := func(ctx context.Context, syncConfig install.Config) error {
 		if installer.SyncRepository != nil {
 			if err := installer.SyncRepository(ctx, syncConfig); err != nil {
 				return fmt.Errorf("synchronize accepted repository: %w", err)
 			}
 		}
-		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "cat", path)
+		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", podName, "--", "cat", path)
 		if cfg.Kubeconfig != "" {
 			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
 		}
@@ -89,7 +121,12 @@ func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (Incid
 		}
 		data = output
 		return nil
-	})
+	}
+	if podName == install.RepositorySyncPodName {
+		err = installer.WithSyncPod(ctx, cfg.Sync, action)
+	} else {
+		err = action(ctx, install.Config{ControlNamespace: cfg.Sync.ControlNamespace})
+	}
 	if err != nil {
 		return IncidentEvidenceResult{}, err
 	}
