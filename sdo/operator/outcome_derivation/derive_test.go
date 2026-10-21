@@ -42,11 +42,11 @@ func fixtureClosure() *contractsv1alpha1.IncidentClosure {
 
 func TestDeriveGoldenClosureDiagnosisParity(t *testing.T) {
 	for _, tc := range []struct {
-		file, verdict string
+		file, verdict, classification string
 		reflect       bool
 	}{
-		{"closure_repaired.json", "confirmed", true},
-		{"closure_own_edit.json", "contradicted", false},
+		{"closure_repaired.json", "confirmed", "success", true},
+		{"closure_own_edit.json", "contradicted", "partial", false},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			path := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "contracts", "go", tc.file)
@@ -63,7 +63,7 @@ func TestDeriveGoldenClosureDiagnosisParity(t *testing.T) {
 				t.Fatal(err)
 			}
 			record := result.Record
-			if record.GetClassification() != "success" || len(record.GetDiagnosisVerification()) != 1 || record.GetDiagnosisVerification()[0].GetVerdict() != tc.verdict || result.RequiresReflection != tc.reflect {
+			if record.GetClassification() != tc.classification || len(record.GetDiagnosisVerification()) != 1 || record.GetDiagnosisVerification()[0].GetVerdict() != tc.verdict || result.RequiresReflection != tc.reflect {
 				t.Fatalf("unexpected derived outcome: %+v, reflect=%v", record, result.RequiresReflection)
 			}
 		})
@@ -81,6 +81,68 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	record := result.Record
 	if record.GetClassification() != "success" || len(record.GetDiagnosisVerification()) != 1 || record.GetDiagnosisVerification()[0].GetVerdict() != "confirmed" || !record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() || record.GetTimestamps().GetCompletedAt() == nil || !result.RequiresReflection {
 		t.Fatalf("unexpected outcome: %+v, reflect=%v", record, result.RequiresReflection)
+	}
+}
+
+func TestDeriveVerifiesQualifiedDetectorFinding(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Request.Findings[0] = &contractsv1alpha1.Finding{
+		DetectorId: "health-objective", RuleId: "deployment-unavailable", Status: "active",
+		Fingerprint: "health-objective/deployment-unavailable/hotel-reservation/search",
+	}
+	closure.Request.DetectorHistory[0].DetectorId = "health-objective"
+	closure.Result.ConfirmedRootCauses[0].Evidence[0].Source = "health-objective/deployment-unavailable/hotel-reservation/search"
+	closure.Result.ConfirmedRootCauses[0].ExplainedDetectors = []string{"health-objective"}
+	closure.FinalDetectorStates[0].DetectorId = "health-objective"
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := result.Record.GetDiagnosisVerification()[0].GetEvidence()[0]
+	if check.Verified == nil || !check.GetVerified() || result.Record.GetClassification() != "success" || !result.RequiresReflection {
+		t.Fatalf("qualified finding did not verify diagnosis: %+v", result.Record)
+	}
+}
+
+func TestDeriveVerifiesDetectorHistoryFingerprint(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Request.DetectorHistory[0].Fingerprints = []string{"health/unhealthy/hotel-reservation/Deployment/app"}
+	closure.Result.ConfirmedRootCauses[0].Evidence[0].Source = "health/unhealthy/hotel-reservation/Deployment/app"
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := result.Record.GetDiagnosisVerification()[0].GetEvidence()[0]
+	if check.Verified == nil || !check.GetVerified() {
+		t.Fatalf("detector history fingerprint did not verify: %+v", check)
+	}
+}
+
+func TestDeriveDoesNotContradictUnknownFindingSource(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.ConfirmedRootCauses[0].Evidence[0].Source = "unknown/rule/namespace/resource"
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := result.Record.GetDiagnosisVerification()[0].GetEvidence()[0]
+	if check.Verified != nil || result.Record.GetDiagnosisVerification()[0].GetVerdict() == "contradicted" {
+		t.Fatalf("unknown source was treated as contradicted: %+v", result.Record.GetDiagnosisVerification()[0])
+	}
+}
+
+func TestDeriveDoesNotClassifyContradictedDiagnosisAsSuccess(t *testing.T) {
+	closure := fixtureClosure()
+	cause := *closure.Result.ConfirmedRootCauses[0]
+	cause.Evidence = []*contractsv1alpha1.RootCauseEvidence{{Kind: "detector-finding", Source: "other"}}
+	closure.Result.ConfirmedRootCauses = append(closure.Result.ConfirmedRootCauses, &cause)
+	closure.Request.Findings = append(closure.Request.Findings, &contractsv1alpha1.Finding{DetectorId: "other", RuleId: "healthy", Status: "clear"})
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Record.GetClassification() == "success" || result.RequiresReflection {
+		t.Fatalf("contradicted diagnosis classified as success: %+v", result.Record)
 	}
 }
 
@@ -176,6 +238,9 @@ func TestDeriveDoesNotConfirmLatentCauseWithoutMatchingPostFixEvidence(t *testin
 	}
 	if got := result.Record.GetDiagnosisVerification()[0].GetVerdict(); got != "unverified" {
 		t.Fatalf("unrelated binding verified latent cause: %s", got)
+	}
+	if result.Record.GetClassification() == "success" {
+		t.Fatalf("unverified diagnosis classified as success: %+v", result.Record)
 	}
 }
 

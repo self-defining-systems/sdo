@@ -414,7 +414,7 @@ ROOT_CAUSE_EVIDENCE_KINDS = ("detector-finding", "synthetic-traffic", "state-cha
 class RootCauseEvidence(ContractModel):
     """One live observation that supports a root cause.
 
-    ``source`` names what was observed: a detector ID, a synthetic scenario,
+    ``source`` names what was observed: a detector ID or finding fingerprint, a synthetic scenario,
     a changed ``Kind/name`` from the request's state changes, or the command
     that produced ``observation``.
     """

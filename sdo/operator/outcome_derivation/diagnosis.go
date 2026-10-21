@@ -16,18 +16,34 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 	}
 	request := closure.GetRequest()
 	fired := map[string]bool{}
+	findings := map[string]bool{}
 	scenarios := map[string]bool{}
 	for _, finding := range request.GetFindings() {
-		if finding.GetStatus() == "active" {
-			fired[finding.GetDetectorId()] = true
+		if finding.GetDetectorId() != "" {
+			fired[finding.GetDetectorId()] = fired[finding.GetDetectorId()] || finding.GetStatus() == "active"
+		}
+		if finding.GetFingerprint() != "" {
+			findings[finding.GetFingerprint()] = findings[finding.GetFingerprint()] || finding.GetStatus() == "active"
+		}
+		if ref := finding.GetPrimaryResource(); ref.GetName() != "" {
+			qualified := strings.Join([]string{finding.GetDetectorId(), finding.GetRuleId(), ref.GetNamespace(), ref.GetName()}, "/")
+			findings[qualified] = findings[qualified] || finding.GetStatus() == "active"
 		}
 		if strings.HasPrefix(finding.GetRuleId(), "scenario-slo.") {
-			scenarios[strings.TrimPrefix(finding.GetRuleId(), "scenario-slo.")] = true
+			name := strings.TrimPrefix(finding.GetRuleId(), "scenario-slo.")
+			scenarios[name] = scenarios[name] || finding.GetStatus() == "active"
 		}
 	}
 	for _, evaluation := range request.GetDetectorHistory() {
+		for _, fingerprint := range evaluation.GetFingerprints() {
+			findings[fingerprint] = findings[fingerprint] || evaluation.GetStatus() == "firing"
+		}
 		if evaluation.GetStatus() == "firing" {
 			fired[evaluation.GetDetectorId()] = true
+		} else if evaluation.GetDetectorId() != "" {
+			if _, ok := fired[evaluation.GetDetectorId()]; !ok {
+				fired[evaluation.GetDetectorId()] = false
+			}
 		}
 	}
 	latest := map[string]*contractsv1alpha1.DetectorEvaluation{}
@@ -47,9 +63,17 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 			check := &contractsv1alpha1.OutcomeEvidenceCheck{Kind: evidence.GetKind(), Source: evidence.GetSource()}
 			switch evidence.GetKind() {
 			case "detector-finding":
-				check.Verified = boolPointer(fired[evidence.GetSource()])
+				if fired[evidence.GetSource()] || findings[evidence.GetSource()] {
+					check.Verified = boolPointer(true)
+				} else if _, ok := fired[evidence.GetSource()]; ok {
+					check.Verified = boolPointer(false)
+				} else if _, ok := findings[evidence.GetSource()]; ok {
+					check.Verified = boolPointer(false)
+				}
 			case "synthetic-traffic":
-				check.Verified = boolPointer(scenarios[strings.TrimPrefix(evidence.GetSource(), "scenario-slo.")])
+				if observed, ok := scenarios[strings.TrimPrefix(evidence.GetSource(), "scenario-slo.")]; ok {
+					check.Verified = boolPointer(observed)
+				}
 			case "state-change":
 				check.Verified, check.Reason = changes.check(evidence.GetSource())
 			}

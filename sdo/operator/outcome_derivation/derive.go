@@ -204,14 +204,21 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 	}
 	if len(verifications) > 0 {
 		attributed := false
+		confirmed := false
 		for _, verification := range verifications {
+			if verification.GetVerdict() == "contradicted" {
+				return "partial"
+			}
+			confirmed = confirmed || verification.GetVerdict() == "confirmed"
 			if verification.Repair.Attributed {
 				attributed = true
-				break
 			}
 		}
 		if !attributed {
 			return "external_recovery"
+		}
+		if !confirmed {
+			return "partial"
 		}
 	}
 	return "success"

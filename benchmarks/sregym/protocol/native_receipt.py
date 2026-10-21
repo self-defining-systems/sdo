@@ -110,6 +110,8 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
         if not _items(result.get("confirmed_root_causes"), "confirmed root causes"):
             raise ProductionReceiptValidationError("native successful outcome lacks confirmed cause")
         verifications = _items(outcome.get("diagnosis_verification"), "diagnosis verification")
+        if any(item.get("verdict") == "contradicted" for item in verifications):
+            raise ProductionReceiptValidationError("native successful outcome has contradicted diagnosis")
         if not any(item.get("verdict") == "confirmed" for item in verifications):
             raise ProductionReceiptValidationError("native successful outcome lacks independently confirmed diagnosis")
         if proposal is None and not any(

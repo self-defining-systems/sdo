@@ -75,6 +75,13 @@ def test_native_receipt_verifies_correlated_go_ledger_and_health() -> None:
     assert receipt["outcome_commit"] == SHA_B
 
 
+def test_native_receipt_rejects_success_with_contradicted_diagnosis() -> None:
+    ledger = _ledger()
+    ledger["outcome_document"]["diagnosis_verification"].append({"verdict": "contradicted"})
+    with pytest.raises(ProductionReceiptValidationError, match="contradicted"):
+        _receipt(ledger)
+
+
 def test_native_receipt_accepts_verified_fast_path_without_responder_job() -> None:
     ledger = _ledger()
     ledger["proposal_commit"] = ""
