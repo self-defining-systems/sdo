@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -14,14 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from google.protobuf import json_format
 
 from sdo.agents.responder import KubernetesResultPublisher, ReflectionTurn, run_reflection_task, run_worker_task
 from sdo.agents.responder.drift_worker import run_drift_task
 from sdo.agents.views import IncidentRequest, IncidentResult, OperationalArtifactDraft
-from sdo.contracts import DriftInvestigationResult, DriftInvestigationTask
+from sdo.contracts import DriftInvestigationResult, DriftInvestigationTask, OperationalArtifactProposal
 
 PROGRAM_ID = "service-targetport-mismatch"
 PROGRAM_SOURCE = Path("/opt/sdo-scripted/targetport")
+LOG = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -44,15 +47,20 @@ def _tool(*args: str) -> dict[str, Any]:
 
 
 def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
-    for path in sorted(root.rglob("*.yaml")):
-        if ".sdo" in path.parts:
+    manifest_root = root / "kubernetes"
+    for path in sorted((*manifest_root.rglob("*.yaml"), *manifest_root.rglob("*.yml"))):
+        if "templates" in path.relative_to(manifest_root).parts:
             continue
-        for document in yaml.safe_load_all(path.read_text(encoding="utf-8")):
-            if (
-                isinstance(document, dict)
-                and document.get("kind") == kind
-                and document.get("metadata", {}).get("name") == name
-            ):
+        try:
+            documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            LOG.warning("skipping unparseable source manifest %s: %s", path, exc)
+            continue
+        for document in documents:
+            if not isinstance(document, dict) or document.get("kind") != kind:
+                continue
+            metadata = document.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("name") == name:
                 return document
     raise RuntimeError(f"accepted source has no {kind}/{name} manifest")
 
@@ -398,7 +406,10 @@ class ScriptedReflector:
                 ],
                 timeout=120,
             )
-            proposal = OperationalArtifactDraft.model_validate(json.loads(output))
+            typed = json_format.Parse(output, OperationalArtifactProposal())
+            proposal = OperationalArtifactDraft.model_validate(
+                json_format.MessageToDict(typed, preserving_proto_field_name=True)
+            )
         return ReflectionTurn(
             summary="Compiled target port program from captured repair",
             learning_decision="updated",

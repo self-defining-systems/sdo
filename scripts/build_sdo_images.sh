@@ -27,10 +27,14 @@ docker build \
   --target responder \
   --tag sdo-responder:${tag} \
   "${repo_root}"
+responder_target="sregym-responder"
+if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
+  responder_target="scripted-worker"
+fi
 docker build \
   --load \
   --file "${repo_root}/sdo/operator/Dockerfile.runtime" \
-  --target sregym-responder \
+  --target "${responder_target}" \
   --tag sdo-sregym-responder:${tag} \
   "${repo_root}"
 for image in sdo-detector-validator sdo-controller sdo-responder sdo-sregym-responder; do
@@ -53,3 +57,8 @@ docker run --rm --user 65532:65532 \
 docker run --rm --user 65532:65532 \
   sdo-sregym-responder:${tag} \
   python3 -c "from sdo.agents.responder.codex import execute_incident" >/dev/null
+if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
+  docker run --rm --user 65532:65532 \
+    sdo-sregym-responder:${tag} \
+    python3 -c "from benchmarks.sregym.adapter.scripted_worker import scripted_responder, ScriptedReflector" >/dev/null
+fi

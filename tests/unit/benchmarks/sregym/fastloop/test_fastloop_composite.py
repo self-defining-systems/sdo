@@ -51,6 +51,7 @@ class FakeOps:
     logs: dict[str, list[str]] = field(default_factory=dict)
     maintenance: list[str] = field(default_factory=list)
     receipts: list[str] = field(default_factory=list)
+    receipt_configs: list[RuntimeConfig] = field(default_factory=list)
     #: Worktree directory names under the shared /workspace/worktrees root. Empty by
     #: default, so there is nothing for the quiescent-drain reap to remove.
     worktrees: set[str] = field(default_factory=set)
@@ -136,6 +137,7 @@ class FakeOps:
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
         self.receipts.append(incident_id)
+        self.receipt_configs.append(config)
         return {
             "schema_version": "sdo.production-receipt/v1",
             "pre_cutover": False,
@@ -199,7 +201,7 @@ def _clock() -> Clock:
     return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: INJECTED)
 
 
-def _agent(tmp_path: Path, ops: FakeOps) -> CompositeSdoAgent:
+def _agent(tmp_path: Path, ops: FakeOps, *, agent_registrations: Path | None = None) -> CompositeSdoAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
     namespace = "hotel-reservation"
@@ -219,6 +221,7 @@ def _agent(tmp_path: Path, ops: FakeOps) -> CompositeSdoAgent:
             timeout_seconds=3600,
             repair_policy="recorded-actions",
             controller_namespace=control_namespace_for(namespace),
+            agent_registrations=agent_registrations,
         ),
         state_path=tmp_path / "state.json",
         results_dir=tmp_path / "incidents",
@@ -277,6 +280,18 @@ def test_controller_keeps_serving_until_every_fault_is_resolved(tmp_path: Path) 
     assert outcome.warm_path is True
     assert "cause of incident-1" in outcome.diagnosis
     assert "cause of incident-2" in outcome.diagnosis
+
+
+def test_composite_drains_pending_incident_with_scripted_agent_config(tmp_path: Path) -> None:
+    ops = FakeOps()
+    registrations = tmp_path / "scripted-agents.json"
+    agent = _agent(tmp_path, ops, agent_registrations=registrations)
+
+    outcome = agent.resolve(0, PROBLEM, _inject)
+    agent.learn(outcome)
+
+    assert ops.receipts == ["incident-1", "incident-2"]
+    assert [config.agent_registrations for config in ops.receipt_configs] == [registrations, registrations]
 
 
 def test_run_stops_when_no_further_incident_arrives_while_a_fault_remains(tmp_path: Path) -> None:

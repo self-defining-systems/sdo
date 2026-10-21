@@ -65,6 +65,23 @@ def test_run_requires_an_environment_from_up(tmp_path: Path) -> None:
         FastloopEnvironment.load(tmp_path)
 
 
+def test_environment_round_trips_all_paths_through_saved_file(tmp_path: Path) -> None:
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=tmp_path / "private",
+    )
+
+    environment.save()
+
+    assert FastloopEnvironment.load(tmp_path) == environment
+
+
 def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

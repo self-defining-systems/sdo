@@ -59,6 +59,9 @@ Historical plumbing regressions have focused checks in the same suites:
 The no-LLM kind path is documented in
 `benchmarks/sregym/experiments/fastloop/README.md`. It is intentionally run by
 the experiment lead because it builds images and changes a kind cluster.
+The scripted Level 1 check in `tests/unit/benchmarks/sregym/fastloop/`
+exercises responder and reflection worker entry points with a copied hotel
+seed, typed tasks, and a fake Kubernetes API, without a cluster.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.
 
