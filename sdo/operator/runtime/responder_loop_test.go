@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -72,6 +73,79 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 type changingLoopDetector struct{ find func() []sdk.Finding }
 
 type snapshotDiagnoser struct{}
+
+type transientImageProgram struct{}
+
+func (transientImageProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "health-objective-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
+}
+
+func (transientImageProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	for _, pod := range view.Pods() {
+		if pod.Labels["app"] != bindings["deployment"].Name {
+			continue
+		}
+		for _, status := range pod.Status.ContainerStatuses {
+			if status.State.Waiting != nil && status.State.Waiting.Reason == "ImagePullBackOff" {
+				return program.Verdict{Result: program.Match}, nil
+			}
+		}
+	}
+	return program.Verdict{Result: program.NoMatch}, nil
+}
+
+func (p transientImageProgram) Mitigate(ctx context.Context, view program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	verdict, err := p.Diagnose(ctx, view, bindings)
+	if err != nil || verdict.Result != program.Match {
+		return program.Plan{}, err
+	}
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["deployment"], Path: "spec.template.spec.containers[0].image", Value: "search:healthy", Reason: "restore pullable image"}}}, nil
+}
+
+func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "hotel-reservation", Name: "search"}
+	finding := sdk.Finding{DetectorID: "deployment-image-pull-backoff", RuleID: "unavailable-image-pull-backoff", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"deployment": ref}, Playbooks: []string{"health-objective-failure"}}
+	snapshot := sdktest.Snapshot{NamespaceName: ref.Namespace, DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}}}
+	provider := &changingProvider{snapshot: snapshot}
+	registry, err := program.NewRegistry([]program.Diagnoser{transientImageProgram{}}, []program.Mitigator{transientImageProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:broken"}}}}})}}
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "hotel-reservation-1792598104937982241", Namespace: ref.Namespace, Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{loopDetector{finding: finding}}, PlanExecutor{Client: client}, 5)
+	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
+	}
+	loop.DiagnosisSettleDelay = time.Millisecond
+	if runs := loop.InitialDiagnose(context.Background()); len(runs) == 0 || runs[0].Verdict.Result != program.NoMatch {
+		t.Fatalf("initial diagnosis: %+v", runs)
+	}
+	snapshot.PodList = []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "search-pod", Namespace: ref.Namespace, Labels: map[string]string{"app": "search"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}}
+	provider.snapshot = snapshot
+	loop.RetryInitialDiagnose(context.Background())
+	if runs := loop.ProgramRuns(); runs[len(runs)-1].Verdict.Result != program.Match {
+		t.Fatalf("settled diagnosis: %+v", runs)
+	}
+	snapshot.PodList = nil
+	provider.snapshot = snapshot
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
+	if planned.Error != "" || planned.PlanID == "" || len(planned.Patches) != 1 {
+		t.Fatalf("plan after pod state changed: %+v", planned)
+	}
+	repairs := []RepairActionReceipt{{ActionID: "restore-search-image", Resources: []sdk.ObjectRef{ref}, Success: true}}
+	client.objects[ref] = planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:other"}}}}})
+	loop.CreditEquivalentRepairs(context.Background(), repairs)
+	if len(loop.PlanApplications()) != 0 {
+		t.Fatalf("different image received trust credit: %+v", loop.PlanApplications())
+	}
+	client.objects[ref] = planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:healthy"}}}}})
+	client.objects[ref].SetAnnotations(map[string]string{"kubectl.kubernetes.io/last-applied-configuration": "{}"})
+	loop.CreditEquivalentRepairs(context.Background(), repairs)
+	applications := loop.PlanApplications()
+	if len(applications) != 1 || !applications[0].Result.VerificationPassed || applications[0].ProgramIDs[0] != "health-objective-failure" {
+		t.Fatalf("verified equivalent repair was not credited: %+v", applications)
+	}
+}
 
 func (snapshotDiagnoser) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "fault", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}

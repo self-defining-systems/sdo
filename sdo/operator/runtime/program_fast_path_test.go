@@ -17,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -191,6 +192,50 @@ func TestTrustedProgramFastPathResolvesWithoutResponder(t *testing.T) {
 	if len(loop.PlanApplications()) != 1 || len(loop.ProgramRuns()) < 2 {
 		t.Fatalf("missing durable program evidence: applications=%+v runs=%+v", loop.PlanApplications(), loop.ProgramRuns())
 	}
+}
+
+func TestTrustedFastPathPlansFromTheSettledMatchSnapshot(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "hotel-reservation", Name: "search"}
+	finding := sdk.Finding{DetectorID: "deployment-image-pull-backoff", RuleID: "unavailable-image-pull-backoff", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"deployment": ref}, Playbooks: []string{"health-objective-failure"}}
+	broken := sdktest.Snapshot{NamespaceName: ref.Namespace, DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "search-pod", Namespace: ref.Namespace, Labels: map[string]string{"app": "search"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}}}
+	recovered := broken
+	recovered.PodList = nil
+	provider := &changingProvider{snapshot: broken}
+	detections := 0
+	detector := imagePullChangingDetector{find: func() []sdk.Finding {
+		detections++
+		provider.snapshot = recovered
+		if detections == 1 {
+			return []sdk.Finding{finding}
+		}
+		return nil
+	}}
+	registry, err := program.NewRegistry([]program.Diagnoser{transientImageProgram{}}, []program.Mitigator{transientImageProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:broken"}}}}})}}
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "hotel-reservation-1792598104937982241", Namespace: ref.Namespace, SourceCommit: "tree-a", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	loop.DiagnosisSettleDelay = time.Millisecond
+	loop.CorpusReplayPassed = true
+	loop.Trust = map[string]ProgramTrust{"health-objective-failure": {VerifiedSuccesses: 3, LastChange: "tree-a", Trusted: true}}
+	attempt := loop.TryTrustedFastPath(context.Background(), 3)
+	if !attempt.Resolved || !attempt.Attempted {
+		t.Fatalf("settled match lost when pods changed: %+v", attempt)
+	}
+}
+
+type imagePullChangingDetector struct{ find func() []sdk.Finding }
+
+func (imagePullChangingDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "deployment-image-pull-backoff"}
+}
+
+func (d imagePullChangingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return d.find(), nil
 }
 
 func TestTrustedProgramFastPathFailureRollsBackForResponder(t *testing.T) {

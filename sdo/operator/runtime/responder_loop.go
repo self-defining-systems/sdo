@@ -98,6 +98,9 @@ type ResponderLoop struct {
 	failureSignals                  []string
 	calls                           []ToolCall
 	runs                            []ProgramRun
+	matchedViews                    map[string]program.ReadView
+	matchedPlans                    map[string]PlanApplicationResult
+	lastDiagnosisView               program.ReadView
 	findings                        []sdk.Finding
 	batches                         int
 	fastPathPrograms                []string
@@ -109,7 +112,7 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 	if maxBatches <= 0 {
 		maxBatches = DefaultMaxResponseLoops
 	}
-	return &ResponderLoop{Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	return &ResponderLoop{Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 }
 
 func (l *ResponderLoop) ToolCalls() []ToolCall {
@@ -350,6 +353,8 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 		return nil
 	}
 	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	l.rememberMatchedViews(ctx, runs, view)
+	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
 	return runs
 }
@@ -373,8 +378,35 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 	}
 	l.findings = findings
 	runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+	l.rememberMatchedViews(ctx, runs, view)
+	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
 	return findings, runs, ""
+}
+
+func matchedViewKey(id string, bindings program.Bindings) string {
+	return id + "\x00" + bindingKey(bindings)
+}
+
+func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []ProgramRun, view program.ReadView) {
+	for _, run := range runs {
+		if run.Verdict.Result == program.Match {
+			key := matchedViewKey(run.ProgramID, run.Bindings)
+			l.matchedViews[key] = view
+			mitigator, ok := l.Programs.Mitigator(run.ProgramID)
+			if !ok {
+				continue
+			}
+			plan, err := mitigator.Mitigate(ctx, view, run.Bindings)
+			if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
+				continue
+			}
+			preview, err := l.Executor.Apply(ctx, l.Request, plan, true)
+			if err == nil {
+				l.matchedPlans[key] = preview
+			}
+		}
+	}
 }
 
 func logicalToolResponse(response ToolResponse) ToolResponse {
@@ -407,15 +439,25 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		response.Error = err.Error()
 		return
 	}
-	view, err := l.snapshotView(ctx)
-	if err != nil {
-		response.Error = err.Error()
-		return
+	view := l.matchedViews[matchedViewKey(request.ProgramID, request.Bindings)]
+	if view == nil || l.batches > 0 {
+		var err error
+		view, err = l.snapshotView(ctx)
+		if err != nil {
+			response.Error = err.Error()
+			return
+		}
 	}
-	plan, err := mitigator.Mitigate(ctx, view, request.Bindings)
-	if err != nil {
-		response.Error = err.Error()
-		return
+	key := matchedViewKey(request.ProgramID, request.Bindings)
+	preview, matched := l.matchedPlans[key]
+	plan := preview.Plan
+	if !matched || l.batches > 0 {
+		var err error
+		plan, err = mitigator.Mitigate(ctx, view, request.Bindings)
+		if err != nil {
+			response.Error = err.Error()
+			return
+		}
 	}
 	if err := plan.Validate(); err != nil {
 		response.Error = err.Error()

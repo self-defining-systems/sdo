@@ -175,26 +175,23 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		}
 	}
 	if len(driftFindings) > 0 {
-		view, err := l.snapshotView(ctx)
-		if err != nil {
+		view := l.lastDiagnosisView
+		if view == nil {
 			return skip(FastPathSkipSnapshotFailed)
 		}
 		driftRuns := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, driftFindings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
+		l.rememberMatchedViews(ctx, driftRuns, view)
 		l.runs = append(l.runs, driftRuns...)
 		runs = append(runs, driftRuns...)
 	}
 	l.findings = findings
 	fillProgramRevisions(ctx, l.runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	runs = l.runs[len(l.runs)-len(runs):]
-	snapshot, err := l.Provider.Snapshot(ctx)
-	if err != nil {
+	view := l.lastDiagnosisView
+	if view == nil {
 		return skip(FastPathSkipSnapshotFailed)
 	}
-	if l.ReadView == nil {
-		return skip(FastPathSkipSnapshotFailed)
-	}
-	view := l.ReadView(snapshot)
-	selected, related, reason := selectTrustedFastPathRuns(findings, runs, l.Trust, minSuccesses, snapshot)
+	selected, related, reason := selectTrustedFastPathRuns(findings, runs, l.Trust, minSuccesses, view)
 	if reason != "" {
 		return skip(reason)
 	}
@@ -207,7 +204,16 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		if !ok {
 			return skip(FastPathSkipMitigatorMissing)
 		}
-		plan, err := mitigator.Mitigate(ctx, view, run.Bindings)
+		matchedView := l.matchedViews[matchedViewKey(run.ProgramID, run.Bindings)]
+		if matchedView == nil {
+			return skip(FastPathSkipSnapshotFailed)
+		}
+		preview, cached := l.matchedPlans[matchedViewKey(run.ProgramID, run.Bindings)]
+		plan := preview.Plan
+		var err error
+		if !cached {
+			plan, err = mitigator.Mitigate(ctx, matchedView, run.Bindings)
+		}
 		if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
 			return skip(FastPathSkipInvalidPlan)
 		}

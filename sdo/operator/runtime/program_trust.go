@@ -46,6 +46,9 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 			if !application.GetApplied() && !strings.HasPrefix(application.GetApplicationId(), "fast-path") {
 				continue
 			}
+			if strings.HasPrefix(application.GetApplicationId(), "equivalent-repair-") && outcome.GetClassification() != "success" {
+				continue
+			}
 			for _, id := range application.GetProgramIds() {
 				state := stats[id]
 				revision := revisions[id]

@@ -48,3 +48,15 @@ func TestInterruptedFastPathFailureBreaksTrustWithoutApplication(t *testing.T) {
 		t.Fatalf("interrupted attempt did not break trust: %+v", state)
 	}
 }
+
+func TestEquivalentResponderRepairEarnsTrustOnlyAfterIndependentSuccess(t *testing.T) {
+	application := &contracts.PlanApplication{ApplicationId: "equivalent-repair-1", Applied: true, ProgramIds: []string{"health-objective-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}
+	base := &contracts.OutcomeRecord{SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "health-objective-failure", ProgramRevision: "tree-a"}}, PlanApplications: []*contracts.PlanApplication{application}}
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{base}, 1)["health-objective-failure"]; state.VerifiedSuccesses != 0 {
+		t.Fatalf("unverified incident earned trust: %+v", state)
+	}
+	base.Classification = "success"
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{base}, 1)["health-objective-failure"]; state.VerifiedSuccesses != 1 || !state.Trusted {
+		t.Fatalf("verified equivalent repair earned no trust: %+v", state)
+	}
+}
