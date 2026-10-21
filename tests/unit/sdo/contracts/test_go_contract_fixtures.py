@@ -22,6 +22,7 @@ from sdo.agents.views import (
     IncidentRequest,
     IncidentView,
 )
+from sdo.contracts import AgentResult, AgentTask, DriftInvestigationResult, DriftInvestigationTask, parse_json
 
 GO_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts" / "go"
 VIEWS = ("incident_view_empty.json", "incident_view_open.json", "incident_view_populated.json")
@@ -45,7 +46,9 @@ def _nulls(value: Any, path: str = "$") -> list[str]:
 def test_every_go_fixture_is_present_and_null_free() -> None:
     names = sorted(path.name for path in GO_FIXTURES.glob("*.json"))
 
-    assert names == sorted([*VIEWS, *CLOSURES, "incident_request.json"])
+    assert names == sorted(
+        [*VIEWS, *CLOSURES, "incident_request.json", "drift_investigation_task.json", "drift_investigation_result.json"]
+    )
     for name in names:
         assert _nulls(_raw(name)) == [], name
 
@@ -106,6 +109,18 @@ def test_a_latent_incident_carries_classified_drift() -> None:
 
     assert request.findings[0].severity.value == "latent"
     assert request.drift_events[0].program_id == "targetport"
+
+
+def test_go_drift_contract_fixture_round_trip() -> None:
+    task = parse_json(json.dumps(_raw("drift_investigation_task.json")), AgentTask())
+    request = DriftInvestigationTask()
+    assert task.request.Unpack(request)
+    assert request.memory_snapshot.accepted_commit == request.accepted_commit
+    assert request.events[0].fields[0].source == "8080"
+    response = parse_json(json.dumps(_raw("drift_investigation_result.json")), AgentResult())
+    result = DriftInvestigationResult()
+    assert response.response.Unpack(result)
+    assert {item.kind for item in result.events[0].evidence} == {"source_contradiction", "violated_relation"}
 
 
 def test_a_repaired_closure_carries_the_f17_facts() -> None:

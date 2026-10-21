@@ -1,0 +1,46 @@
+{
+  "agent_id": "sdo-drift-investigator",
+  "request": {
+    "@type": "type.googleapis.com/sdodev.contracts.v1alpha1.DriftInvestigationTask",
+    "accepted_commit": "source",
+    "application": "demo",
+    "batch_id": "drift-1",
+    "capture_id": "drift-1",
+    "capture_sha256": "abc",
+    "events": [
+      {
+        "classification": "unexplained",
+        "fields": [
+          {
+            "new": "9999",
+            "old": "8080",
+            "path": "spec.ports[0].targetPort",
+            "source": "8080"
+          }
+        ],
+        "manager": "operator",
+        "observed_at": "1970-01-01T00:01:40Z",
+        "ref": {
+          "api_version": "v1",
+          "kind": "Service",
+          "name": "api",
+          "namespace": "app"
+        }
+      }
+    ],
+    "memory_snapshot": {
+      "accepted_commit": "source"
+    },
+    "namespace": "app",
+    "repository_worktree": "/workspace/app",
+    "schema_version": "sdo.dev/v1alpha1"
+  },
+  "schema_version": "sdo.dev/v1alpha1",
+  "task_id": "drift-1",
+  "task_type": "drift-investigation",
+  "workspace": {
+    "base_commit": "source",
+    "checkout_path": "/workspace/app",
+    "proposal_id": "drift-1"
+  }
+}

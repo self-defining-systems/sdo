@@ -9,9 +9,43 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/anypb"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
+
+func TestGoDriftContractFixtures(t *testing.T) {
+	event := &contracts.DriftEvent{Ref: &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"},
+		Fields:  []*contracts.DriftField{{Path: "spec.ports[0].targetPort", Old: "8080", Source: "8080", New: "9999"}},
+		Manager: "operator", Classification: "unexplained", ObservedAt: contractTimestamp(time.Unix(100, 0).UTC())}
+	request := &contracts.DriftInvestigationTask{SchemaVersion: ProtocolSchemaVersion, BatchId: "drift-1", Application: "demo", Namespace: "app", AcceptedCommit: "source",
+		MemorySnapshot: &contracts.OperationalMemorySnapshot{AcceptedCommit: "source"}, Events: []*contracts.DriftEvent{event}, CaptureId: "drift-1", CaptureSha256: "abc", RepositoryWorktree: "/workspace/app"}
+	packed, err := anypb.New(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &contracts.AgentTask{SchemaVersion: ProtocolSchemaVersion, TaskId: "drift-1", AgentId: "sdo-drift-investigator", TaskType: driftTaskType,
+		Request: packed, Workspace: &contracts.ProposalWorkspace{ProposalId: "drift-1", CheckoutPath: "/workspace/app", BaseCommit: "source"}}
+	wire, err := canonicalProtoJSON(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGoContractFixture(t, "drift_investigation_task.json", json.RawMessage(wire))
+	result := &contracts.DriftInvestigationResult{Events: []*contracts.DriftEventInvestigation{{EventIndex: 0, Verdict: "bug", Reason: "unserved port",
+		Evidence: []*contracts.DriftEvidence{{Kind: "source_contradiction", Observation: "source targetPort 8080"}, {Kind: "violated_relation", Observation: "no selected pod serves 9999"}}}}}
+	packed, err = anypb.New(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := &contracts.AgentResult{SchemaVersion: ProtocolSchemaVersion, TaskId: "drift-1", Status: "completed", ProposalId: "drift-1", Response: packed}
+	wire, err = canonicalProtoJSON(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGoContractFixture(t, "drift_investigation_result.json", json.RawMessage(wire))
+}
 
 // Cross-language contract fixtures. The Go controller writes each shape
 // Python parses into tests/fixtures/sdo/contracts/go/, and Python's strict

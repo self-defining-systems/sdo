@@ -289,6 +289,26 @@ func TestOperateMayApplySourceButControllerMayOnlyObserveApplication(t *testing.
 	t.Fatal("operate ServiceAccount is not bound to application deployment role")
 }
 
+func TestDriftInvestigatorCanReadApplicationButNotMutateIt(t *testing.T) {
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasServiceAccount(plan.ServiceAccounts, "sdo-drift-investigator") {
+		t.Fatal("missing drift investigator service account")
+	}
+	for _, role := range plan.AppRoles {
+		if role.Name != "sdo-drift-investigator" {
+			continue
+		}
+		if !roleAllows(role, "services", "get") || !roleAllows(role, "pods", "list") || roleAllows(role, "services", "patch") || roleAllows(role, "pods", "create") {
+			t.Fatalf("drift investigator has wrong application permissions: %+v", role.Rules)
+		}
+		return
+	}
+	t.Fatal("missing drift investigator application role")
+}
+
 func TestStartOperateRequiresPreparedCommitAndCreatesJob(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: cfg.RepositoryPVC, Namespace: cfg.ControlNamespace}})

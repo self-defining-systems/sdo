@@ -1,0 +1,25 @@
+{
+  "proposal_id": "drift-1",
+  "response": {
+    "@type": "type.googleapis.com/sdodev.contracts.v1alpha1.DriftInvestigationResult",
+    "events": [
+      {
+        "evidence": [
+          {
+            "kind": "source_contradiction",
+            "observation": "source targetPort 8080"
+          },
+          {
+            "kind": "violated_relation",
+            "observation": "no selected pod serves 9999"
+          }
+        ],
+        "reason": "unserved port",
+        "verdict": "bug"
+      }
+    ]
+  },
+  "schema_version": "sdo.dev/v1alpha1",
+  "status": "completed",
+  "task_id": "drift-1"
+}

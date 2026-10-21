@@ -184,3 +184,29 @@ func TestKubernetesExecutorRejectsCheckoutOutsideMount(t *testing.T) {
 		t.Fatal("accepted checkout outside proposal mount")
 	}
 }
+
+func TestKubernetesExecutorCanMountInvestigationSourceReadOnly(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	task := reflectionTestTask(t)
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryReadOnly: true}
+	registration, err := executor.Registry.Resolve(task.AgentId, task.TaskType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.ensureJob(context.Background(), task, registration.GetKubernetesJob(), "read-only-test", "request", "result", "proposals/reflection-1"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), "read-only-test", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.MountPath == task.Workspace.CheckoutPath {
+			if !mount.ReadOnly {
+				t.Fatal("investigator source mount is writable")
+			}
+			return
+		}
+	}
+	t.Fatal("investigator source mount is absent")
+}
