@@ -241,6 +241,35 @@ def test_detection_timeout_reaches_single_and_composite_sdo_stages(
         assert agent.stage_inputs("stage", tmp_path, "fp").detection_timeout_seconds == 12
 
 
+def test_drift_token_budget_reaches_fastloop_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fastloop-w0",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="hotel-reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    monkeypatch.setattr(cli, "_cluster_ops", lambda *_args: object())
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--run-dir",
+            str(tmp_path),
+            "--agent",
+            "sdo",
+            "--drift-investigation-tokens-per-hour",
+            "250000",
+        ]
+    )
+    agent = cli._sdo_agent(args, environment, tmp_path)
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.drift_investigation_tokens_per_hour == 250000
+
+
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
     assert args.repair_policy == "recorded-actions"

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -227,7 +228,7 @@ func TestDriftInvestigationBatchesDeduplicatesAndKeepsOverBudgetPending(t *testi
 		t.Fatalf("expected one deduplicated event: requests=%d, err=%v", len(worker.requests), err)
 	}
 	third := first
-	third.Ref.Name = "other"
+	third.Fields = []sdk.DriftField{{Path: first.Fields[0].Path, Old: "9000", New: "9001"}}
 	third.ObservedAt = start.Add(21 * time.Second)
 	queue.Add(third)
 	if err := queue.DispatchReady(context.Background(), start.Add(41*time.Second)); err != nil || len(worker.requests) != 1 || queue.Pending() != 1 {
@@ -273,10 +274,192 @@ func TestDriftTokenBudgetLeavesNextEventPending(t *testing.T) {
 		t.Fatalf("drift usage omitted token breakdown: %+v", usage)
 	}
 	second := first
-	second.Ref.Name = "other"
+	second.Fields = []sdk.DriftField{{Path: "spec.port", New: "9001"}}
 	second.ObservedAt = start.Add(2 * time.Second)
 	queue.Add(second)
 	if err := queue.DispatchReady(context.Background(), start.Add(3*time.Second)); err != nil || len(worker.requests) != 1 || queue.Pending() != 1 {
 		t.Fatalf("token budget dispatched or lost pending event: requests=%d pending=%d err=%v", len(worker.requests), queue.Pending(), err)
+	}
+}
+
+func TestFirstDriftKeyBypassesSpentTokenBudget(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	worker := &recordingDriftInvestigator{result: &contracts.DriftInvestigationResult{InputTokens: 55000, OutputTokens: 500}}
+	queue := newDriftInvestigationQueue(DriftInvestigationConfig{Worker: worker, BatchWindow: time.Second, TokensPerHour: 50000})
+	jaeger := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Name: "jaeger"}, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", New: "9999"}}, ObservedAt: start}
+	queue.Add(jaeger)
+	if err := queue.DispatchReady(context.Background(), start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	target := jaeger
+	target.Ref.Name = "reservation"
+	target.ObservedAt = start.Add(2 * time.Second)
+	queue.Add(target)
+	if err := queue.DispatchReady(context.Background(), start.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.requests) != 2 || worker.requests[1].Events[0].Ref.Name != "reservation" {
+		t.Fatalf("new targetPort drift waited behind spent token budget: %+v", worker.requests)
+	}
+}
+
+func TestInFlightDriftDuplicateIsNotQueued(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	queue := newDriftInvestigationQueue(DriftInvestigationConfig{Worker: &recordingDriftInvestigator{}, BatchWindow: time.Second})
+	event := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Name: "jaeger"}, Fields: []sdk.DriftField{{Path: "spec.port", New: "9999"}}, ObservedAt: start}
+	queue.Add(event)
+	task, err := queue.PrepareReady(context.Background(), start.Add(time.Second))
+	if err != nil || task == nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	duplicate := event
+	duplicate.Fields = []sdk.DriftField{{Path: "spec.port", Old: "8080", New: "9999"}}
+	queue.Add(duplicate)
+	if err := queue.Complete(start.Add(2*time.Second), task, &contracts.DriftInvestigationResult{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if queue.Pending() != 0 {
+		t.Fatalf("in-flight duplicate queued after completion: %+v", queue.ExportState())
+	}
+}
+
+func TestDriftVerdictSurvivesTransientStateReset(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := NewConfigMapStateStore(client, "control", "sdo-controller-state")
+	store.EnableDriftVerdicts()
+	start := time.Unix(100, 0).UTC()
+	worker := &recordingDriftInvestigator{result: &contracts.DriftInvestigationResult{Events: []*contracts.DriftEventInvestigation{{Verdict: "unsure", Reason: "pre-existing"}}}}
+	queue := newDriftInvestigationQueue(DriftInvestigationConfig{Worker: worker, BatchWindow: time.Second})
+	event := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Name: "jaeger"}, Fields: []sdk.DriftField{{Path: "spec.port", New: "9999"}}, ObservedAt: start}
+	queue.Add(event)
+	if err := queue.DispatchReady(ctx, start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	state := RuntimeState{Version: RuntimeStateVersion, DriftInvestigation: queue.ExportState()}
+	if _, err := store.Save(ctx, state, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CoreV1().ConfigMaps("control").Delete(ctx, "sdo-controller-state", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewConfigMapStateStore(client, "control", "sdo-controller-state")
+	restarted.EnableDriftVerdicts()
+	loaded, _, err := restarted.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.DriftInvestigation.Verdicts) != 1 {
+		t.Fatalf("reset discarded completed verdict: %+v", loaded.DriftInvestigation)
+	}
+}
+
+func TestHermeticDriftVerdictAcrossFastloopResetAndNextIncident(t *testing.T) {
+	ctx := context.Background()
+	start := time.Unix(100, 0).UTC()
+	client := fake.NewSimpleClientset()
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: client, TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := &recordingDriftInvestigator{result: &contracts.DriftInvestigationResult{
+		Events:      []*contracts.DriftEventInvestigation{{Verdict: "unsure", Reason: "pre-existing"}},
+		InputTokens: 55000, OutputTokens: 500,
+	}}
+	newController := func(at time.Time) *Controller {
+		t.Helper()
+		config := testControllerConfig()
+		config.Namespace = "app"
+		controller, err := NewController(config, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}},
+			&recordingDispatcher{requests: make(chan IncidentRequest, 1)}, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		controller.ConfigureDrift(DriftControllerConfig{Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
+			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
+		}, Investigation: DriftInvestigationConfig{Worker: worker, BatchWindow: time.Second, TokensPerHour: 50000}})
+		if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "control", "sdo-controller-state")); err != nil {
+			t.Fatal(err)
+		}
+		return controller
+	}
+	controller := newController(start)
+	jaegerBefore, jaegerDrift := driftService(8080), driftService(9999)
+	jaegerBefore.Name, jaegerDrift.Name = "jaeger", "jaeger"
+	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(jaegerBefore, jaegerDrift)
+	if err := controller.StepEvents(ctx, start, cache.TakeEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.StepEvents(ctx, start.Add(time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.requests) != 1 || controller.ExportState().DriftEvents[0].InvestigationVerdict != "unsure" {
+		t.Fatalf("pre-existing drift was not investigated: %+v", controller.ExportState())
+	}
+	if err := client.CoreV1().ConfigMaps("control").Delete(ctx, "sdo-controller-state", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	controller = newController(start.Add(10 * time.Second))
+	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(jaegerBefore, jaegerDrift)
+	if err := controller.StepEvents(ctx, start.Add(10*time.Second), cache.TakeEvents()); err != nil {
+		t.Fatal(err)
+	}
+	reservationBefore, reservationDrift := driftService(8080), driftService(9999)
+	reservationBefore.Name, reservationDrift.Name = "reservation", "reservation"
+	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(reservationBefore, reservationDrift)
+	if err := controller.StepEvents(ctx, start.Add(11*time.Second), cache.TakeEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.StepEvents(ctx, start.Add(12*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.requests) != 2 || worker.requests[1].Events[0].Ref.Name != "reservation" {
+		t.Fatalf("second incident repeated jaeger or delayed new drift: %+v", worker.requests)
+	}
+	jaegerChanged := driftService(9000)
+	jaegerChanged.Name = "jaeger"
+	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(jaegerDrift, jaegerChanged)
+	if err := controller.StepEvents(ctx, start.Add(time.Hour+13*time.Second), cache.TakeEvents()); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.StepEvents(ctx, start.Add(time.Hour+14*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.requests) != 3 || worker.requests[2].Events[0].Ref.Name != "jaeger" {
+		t.Fatalf("changed jaeger drift did not invalidate its verdict: %+v", worker.requests)
+	}
+}
+
+func TestDriftReinvestigationBudgetDeferralHasTypedStatus(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	worker := &recordingDriftInvestigator{result: &contracts.DriftInvestigationResult{InputTokens: 55000, OutputTokens: 500}}
+	queue := newDriftInvestigationQueue(DriftInvestigationConfig{Worker: worker, BatchWindow: time.Second, TokensPerHour: 50000})
+	event := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Name: "jaeger"}, Fields: []sdk.DriftField{{Path: "spec.port", New: "9999"}}, ObservedAt: start}
+	queue.Add(event)
+	if err := queue.DispatchReady(context.Background(), start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	event.Fields[0].New = "9000"
+	event.ObservedAt = start.Add(2 * time.Second)
+	queue.Add(event)
+	if err := queue.DispatchReady(context.Background(), start.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	state := queue.ExportState()
+	if len(worker.requests) != 1 || state.Deferral == nil || state.Deferral.Reason != DriftTokenBudget || !state.Deferral.Until.After(start.Add(3*time.Second)) {
+		t.Fatalf("re-investigation budget deferral missing from status: %+v", state)
+	}
+	newKey := event
+	newKey.Ref.Name = "reservation"
+	newKey.ObservedAt = start.Add(4 * time.Second)
+	queue.Add(newKey)
+	if err := queue.DispatchReady(context.Background(), start.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if len(worker.requests) != 2 || len(worker.requests[1].Events) != 1 || worker.requests[1].Events[0].Ref.Name != "reservation" || queue.Pending() != 1 || queue.ExportState().Deferral != nil {
+		t.Fatalf("new key waited behind deferred re-investigation: %+v", queue.ExportState())
 	}
 }
