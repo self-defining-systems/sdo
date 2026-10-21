@@ -364,6 +364,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 self._incidents.append(
                     {"incident_id": followup["incident_id"], "receipt_dir": str(receipt_dir), "outcome": outcomes[-1]}
                 )
+        except Exception:
+            logger.exception("composite %s failed before completion", problem_id)
+            raise
         finally:
             sampler_stop.set()
             sampler.join(timeout=30)
@@ -371,10 +374,14 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if "poll_start" in marks:
                 poller.__exit__(None, None, None)
             try:
-                if stop_reason in {"detector_review_required", "no_closure_within_deadline", "closure_failed"}:
+                if injected and stop_reason in {
+                    "detector_review_required",
+                    "no_closure_within_deadline",
+                    "closure_failed",
+                }:
                     # The controller stopped itself; nothing will acknowledge a pause.
                     self._ops.set_maintenance(control, paused=True, generation=f"composite-{index:03d}-wedged")
-                else:
+                elif injected:
                     pause_controller(self._ops, control, label=f"composite-{index:03d}", clock=self._clock)
             except Exception:
                 logger.exception("could not pause the controller after the composite")
@@ -579,7 +586,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         usage = TokenCounts()
         reflection = TokenCounts()
         attempts = 0
-        from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+        from benchmarks.sregym.fastloop.sdo_agent import _program_metrics, _receipt_closure_fields
 
         diagnoses = 0
         calls = 0
@@ -590,6 +597,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
         reasons: list[str] = []
         receipts_seen = 0
         rebuild_verified = None
+        closure_phases: dict[str, float] = {}
+        skipped_reasons: list[str] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             if not receipt and item.get("fallback_usage"):
@@ -600,6 +609,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if not receipt:
                 continue
             receipts_seen += 1
+            phases, skipped = _receipt_closure_fields(receipt)
+            for name, seconds in phases.items():
+                closure_phases[name] = closure_phases.get(name, 0.0) + seconds
+            if skipped:
+                skipped_reasons.append(skipped)
             ledger = receipt.get("native_ledger")
             ledger = ledger if isinstance(ledger, dict) else {}
             for rollout in ledger.get("rollout_receipts") or []:
@@ -635,6 +649,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
             reflection_attempts=attempts,
+            reflection_skipped_reason="; ".join(dict.fromkeys(skipped_reasons)) or None,
+            closure_phase_seconds=closure_phases,
             reflection_seconds=self._reflection_drain_seconds + self._clock.monotonic() - started,
             reflection_started_at=self._reflection_started_at or observed_at,
             reflection_finished_at=self._clock.now(),

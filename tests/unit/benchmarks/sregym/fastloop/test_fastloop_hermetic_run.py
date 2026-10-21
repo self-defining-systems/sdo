@@ -529,6 +529,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         private_tmp=None,
     ).save()
     monkeypatch.setattr(cli, "_worker", lambda _environment: worker)
+    monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "_cluster_ops", lambda _args, _namespace: controller)
     monkeypatch.setattr(cli, "KubectlApplicationCluster", lambda _kubeconfig: app)
     monkeypatch.setattr(cli, "_composite_settings", lambda _args: CompositeSettings(20, 1, 0.001, 0.001))

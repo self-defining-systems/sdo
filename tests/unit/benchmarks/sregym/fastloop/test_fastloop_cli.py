@@ -169,6 +169,36 @@ def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.Mon
     assert sleeps == [0.1]
 
 
+def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=tmp_path / "private",
+    ).save()
+    checked: list[list[str]] = []
+
+    def missing_secret(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        checked.append(args)
+        return SimpleNamespace(
+            returncode=1, stderr='Error from server (NotFound): secrets "sdo-agent-credentials" not found'
+        )
+
+    monkeypatch.setattr(cli, "kubectl", missing_secret)
+    monkeypatch.setattr(cli, "_worker", lambda _environment: pytest.fail("worker started before credential preflight"))
+
+    with pytest.raises(SystemExit, match="credentials Secret.*sdo-agent-credentials.*missing"):
+        main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+
+    assert checked == [["get", "secret", "sdo-agent-credentials"]]
+
+
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
     assert args.repair_policy == "recorded-actions"
@@ -325,6 +355,7 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         return object()
 
     monkeypatch.setattr(cli, "_worker", lambda _env: Worker())
+    monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "SregymFaultDriver", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])

@@ -80,6 +80,13 @@ def _closure_phase_seconds(ledger: dict[str, Any]) -> dict[str, float]:
     return {name: (at - ordered[index - 1][0]).total_seconds() for index, (at, name) in enumerate(ordered) if index > 0}
 
 
+def _receipt_closure_fields(receipt: dict[str, Any]) -> tuple[dict[str, float], str | None]:
+    ledger = receipt.get("native_ledger")
+    ledger = ledger if isinstance(ledger, dict) else {}
+    skipped = receipt.get("reflection_skipped_reason") or ledger.get("reflection_skipped_reason")
+    return _closure_phase_seconds(ledger), skipped if isinstance(skipped, str) else None
+
+
 def _last_successful_repair(repairs: object) -> datetime | None:
     completions = [
         completed
@@ -289,9 +296,9 @@ class SdoPersistentAgent:
         memory = receipt.get("memory_reuse")
         memory = memory if isinstance(memory, dict) else {}
         attempts = receipt.get("reflection_attempts")
-        skipped = receipt.get("reflection_skipped_reason")
         # When reflection finished between polls the driver never saw the closure; the receipt has it.
         detected, verified = _receipt_closure_times(receipt)
+        closure_phases, skipped = _receipt_closure_fields(receipt)
         ledger = receipt.get("native_ledger")
         ledger = ledger if isinstance(ledger, dict) else {}
         outcome_document = ledger.get("outcome_document")
@@ -324,8 +331,8 @@ class SdoPersistentAgent:
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
             reflection_attempts=attempts if isinstance(attempts, int) else None,
-            reflection_skipped_reason=skipped if isinstance(skipped, str) else None,
-            closure_phase_seconds=_closure_phase_seconds(ledger),
+            reflection_skipped_reason=skipped,
+            closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             **_program_metrics(outcome_document),
             error=error,

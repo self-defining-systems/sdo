@@ -387,6 +387,21 @@ def _run(args: argparse.Namespace) -> int:
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if args.time_scale <= 0:
         raise SystemExit("--time-scale must be positive")
+    if args.agent == "sdo":
+        from benchmarks.sregym.adapter import control_namespace_for
+
+        secret = "sdo-agent-credentials"
+        checked = kubectl(
+            ["get", "secret", secret],
+            namespace=control_namespace_for(environment.namespace),
+            kubeconfig=environment.kubeconfig,
+            check=False,
+        )
+        if checked.returncode != 0:
+            raise SystemExit(
+                f"agent credentials Secret {secret!r} is missing or inaccessible in "
+                f"{control_namespace_for(environment.namespace)!r}: {checked.stderr.strip()}"
+            )
     os.environ["SDO_TIME_SCALE"] = str(args.time_scale)
     if environment.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
