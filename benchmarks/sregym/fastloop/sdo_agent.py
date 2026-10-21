@@ -51,12 +51,15 @@ class SdoAgentSettings:
     results_dir: Path
     kubeconfig: str | None = None
     verification_timeout_seconds: float = 3900.0
+    detection_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if self.runtime_config.submission_api_base or self.runtime_config.submission_relay_target_base:
             raise ValueError("the fast loop has no benchmark submission transport")
         if self.verification_timeout_seconds <= 0:
             raise ValueError("verification_timeout_seconds must be positive")
+        if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
+            raise ValueError("detection_timeout_seconds must be positive")
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -171,6 +174,7 @@ class SdoPersistentAgent:
             state_path=settings.state_path,
             kubeconfig=settings.kubeconfig,
             verification_timeout_seconds=settings.verification_timeout_seconds,
+            detection_timeout_seconds=settings.detection_timeout_seconds,
             stop_on_detector_review=self._stop_on_detector_review,
         )
 

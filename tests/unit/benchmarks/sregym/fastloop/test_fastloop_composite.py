@@ -6,8 +6,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
-from benchmarks.sregym.adapter.persistent import Clock, ClosureFailedError, ControllerPod, control_namespace_for
+from benchmarks.sregym.adapter.persistent import (
+    Clock,
+    ClosureFailedError,
+    ControllerPod,
+    DetectionMissError,
+    control_namespace_for,
+)
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, CompositeSettings, TrackedAgent
 from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
@@ -201,7 +209,13 @@ def _clock() -> Clock:
     return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: INJECTED)
 
 
-def _agent(tmp_path: Path, ops: FakeOps, *, agent_registrations: Path | None = None) -> CompositeSdoAgent:
+def _agent(
+    tmp_path: Path,
+    ops: FakeOps,
+    *,
+    agent_registrations: Path | None = None,
+    detection_timeout_seconds: float | None = None,
+) -> CompositeSdoAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
     namespace = "hotel-reservation"
@@ -226,6 +240,7 @@ def _agent(tmp_path: Path, ops: FakeOps, *, agent_registrations: Path | None = N
         state_path=tmp_path / "state.json",
         results_dir=tmp_path / "incidents",
         verification_timeout_seconds=600,
+        detection_timeout_seconds=detection_timeout_seconds,
     )
     context = DeployedLifecycleContext(health_objective="objective", active_resources=[])
 
@@ -280,6 +295,20 @@ def test_controller_keeps_serving_until_every_fault_is_resolved(tmp_path: Path) 
     assert outcome.warm_path is True
     assert "cause of incident-1" in outcome.diagnosis
     assert "cause of incident-2" in outcome.diagnosis
+
+
+def test_composite_detection_miss_stays_a_detection_miss(tmp_path: Path) -> None:
+    class LatentOps(FakeOps):
+        def inject_after_resume(
+            self, control_namespace: str, generation: str, inject: Callable[[], None]
+        ) -> dict[str, float]:
+            inject()
+            return {"controller_baseline_wait": 1.0}
+
+    agent = _agent(tmp_path, LatentOps(), detection_timeout_seconds=10)
+
+    with pytest.raises(DetectionMissError, match="no incident opened within 10s"):
+        agent.resolve(0, PROBLEM, _inject)
 
 
 def test_composite_drains_pending_incident_with_scripted_agent_config(tmp_path: Path) -> None:
