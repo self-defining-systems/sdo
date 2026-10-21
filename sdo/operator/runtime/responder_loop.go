@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -142,6 +144,50 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	l.capturePhase = "open@detect"
 	defer func() { l.capturePhase = "" }()
 	return l.diagnose(ctx, l.findings)
+}
+
+// RestoreInitialMatches prepares plans from the dispatch capture when the
+// responder loop is recreated after the initial diagnosis was persisted.
+func (l *ResponderLoop) RestoreInitialMatches(ctx context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.CorpusSessionRoot == "" || l.Programs == nil {
+		return nil
+	}
+	matched := make([]ProgramRun, 0)
+	for _, run := range l.Request.InitialProgramRuns {
+		if run.Verdict.Result == program.Match {
+			matched = append(matched, run)
+		}
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
+	if err != nil {
+		return fmt.Errorf("read dispatch snapshot: %w", err)
+	}
+	var snapshot sdktest.Snapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return fmt.Errorf("decode dispatch snapshot: %w", err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+	if err != nil {
+		return fmt.Errorf("read dispatch recordings: %w", err)
+	}
+	var calls []sdktest.PrimitiveCall
+	if err := json.Unmarshal(data, &calls); err != nil {
+		return fmt.Errorf("decode dispatch recordings: %w", err)
+	}
+	for _, run := range matched {
+		view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
+		l.rememberMatchedViews(ctx, []ProgramRun{run}, view)
+	}
+	return nil
 }
 
 // RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
@@ -330,6 +376,21 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 			l.preApplyCaptured = true
 		}
 	}
+	if l.CorpusSessionRoot != "" && l.capturePhase == "open@detect" {
+		dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
+		if err != nil {
+			return nil, err
+		}
+		var captured sdktest.Snapshot
+		if err := json.Unmarshal(data, &captured); err != nil {
+			return nil, err
+		}
+		snapshot = captured
+	}
 	view := l.ReadView(snapshot)
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
 		phase := l.capturePhase
@@ -401,6 +462,7 @@ func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []Program
 			if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
 				continue
 			}
+			l.matchedPlans[key] = PlanApplicationResult{Plan: plan}
 			preview, err := l.Executor.Apply(ctx, l.Request, plan, true)
 			if err == nil {
 				l.matchedPlans[key] = preview

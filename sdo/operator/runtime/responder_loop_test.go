@@ -147,6 +147,44 @@ func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
 	}
 }
 
+func TestResponderPlanRestoresDispatchMatchFromCapturedView(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "hotel-reservation", Name: "search"}
+	broken := sdktest.Snapshot{NamespaceName: ref.Namespace, DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "search-pod", Namespace: ref.Namespace, Labels: map[string]string{"app": "search"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}}}
+	root := t.TempDir()
+	if err := memory.CaptureIncidentSnapshot(root, "incident", "open@detect", broken, ref.Namespace); err != nil {
+		t.Fatal(err)
+	}
+	recovered := broken
+	recovered.PodList = nil
+	registry, err := program.NewRegistry([]program.Diagnoser{transientImageProgram{}}, []program.Mitigator{transientImageProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:broken"}}}}})}}
+	request := IncidentRequest{IncidentID: "incident", Namespace: ref.Namespace, Findings: []sdk.Finding{{DetectorID: "deployment-image-pull-backoff", RuleID: "unavailable-image-pull-backoff", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"deployment": ref}, Playbooks: []string{"health-objective-failure"}}}}
+	preparer := NewResponderLoop(request, registry, staticProvider{snapshot: recovered}, nil, PlanExecutor{Client: client}, 5)
+	preparer.CorpusSessionRoot = root
+	preparer.ReadView = func(view sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
+	}
+	request.InitialProgramRuns = preparer.InitialDiagnose(context.Background())
+	if len(request.InitialProgramRuns) == 0 || request.InitialProgramRuns[0].Verdict.Result != program.Match {
+		t.Fatalf("dispatch diagnosis missed captured image-pull state: %+v", request.InitialProgramRuns)
+	}
+	loop := NewResponderLoop(request, registry, staticProvider{snapshot: recovered}, nil, PlanExecutor{Client: client}, 5)
+	loop.CorpusSessionRoot = root
+	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
+	}
+	if err := loop.RestoreInitialMatches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
+	if planned.Error != "" || planned.PlanID == "" {
+		t.Fatalf("dispatch match lost across loop recreation: %+v", planned)
+	}
+}
+
 func (snapshotDiagnoser) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "fault", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }

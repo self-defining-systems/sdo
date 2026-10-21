@@ -159,6 +159,9 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 				loop.MaxBatches = request.MaxResponseLoops
 			}
 			loop.runs = append([]ProgramRun(nil), request.InitialProgramRuns...)
+			if err := loop.RestoreInitialMatches(ctx); err != nil {
+				return IncidentResult{}, fmt.Errorf("restore dispatch program view: %w", err)
+			}
 		}
 	}
 	if d.Registry == nil {
