@@ -97,7 +97,11 @@ The drift stream can record an expected pre-existing difference for the
 `jaeger` Service: SREGym replaces the source Service with a `kubectl-create`
 object that has no ports. Its unchanged `unsure` verdict must remain recorded
 without being investigated again after each repair. It does not block later
-target-port drift incidents in the stream.
+target-port drift incidents in the stream. The controller stores completed verdicts
+in `sdo-controller-state-drift-verdicts`, which `fastloop reset` preserves while
+clearing transient state. A changed manager or current/source field value invalidates the prior
+verdict. `fastloop run --drift-investigation-tokens-per-hour N` sets the hourly
+budget for re-investigations (default 1,000,000); first investigations bypass it.
 
 ## Offline stage replay
 

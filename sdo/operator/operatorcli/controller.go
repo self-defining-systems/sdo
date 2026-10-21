@@ -67,6 +67,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	driftTokensPerHour := flags.Int64("drift-investigation-tokens-per-hour", 1000000, "drift re-investigation token budget per hour")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
@@ -104,6 +105,9 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *programTrustThreshold < 1 {
 		return builder.RunConfig{}, false, errors.New("program trust threshold must be positive")
 	}
+	if *driftTokensPerHour <= 0 {
+		return builder.RunConfig{}, false, errors.New("drift investigation token budget must be positive")
+	}
 	if *programFastPath && *repairPolicy != "recorded-actions" {
 		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
 	}
@@ -132,6 +136,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
+		DriftInvestigationTokensPerHour: *driftTokensPerHour,
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)

@@ -47,6 +47,7 @@ class NativeInstallConfig:
     force_reflection: bool = False
     program_fast_path: bool = False
     program_trust_threshold: int = 3
+    drift_investigation_tokens_per_hour: int = 1_000_000
     max_follow_ups: int = 0
     max_response_loops: int = 5
     follow_up_cooldown_seconds: int = 30
@@ -83,6 +84,8 @@ class NativeInstallConfig:
             raise ValueError("repair_policy must be commit or recorded-actions")
         if self.program_trust_threshold <= 0:
             raise ValueError("program_trust_threshold must be positive")
+        if self.drift_investigation_tokens_per_hour <= 0:
+            raise ValueError("drift_investigation_tokens_per_hour must be positive")
         if self.program_fast_path and self.repair_policy != "recorded-actions":
             raise ValueError("program fast path requires recorded-actions repair policy")
         if self.late_findings not in ("off", "pull"):
@@ -402,6 +405,7 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     if config.program_fast_path:
         args.append("--program-fast-path")
     args.extend(("--program-trust-threshold", str(config.program_trust_threshold)))
+    args.extend(("--drift-investigation-tokens-per-hour", str(config.drift_investigation_tokens_per_hour)))
     args.extend(("--max-follow-ups", str(config.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))
@@ -461,6 +465,7 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     if config.install.program_fast_path:
         args.append("--program-fast-path")
     args.extend(("--program-trust-threshold", str(config.install.program_trust_threshold)))
+    args.extend(("--drift-investigation-tokens-per-hour", str(config.install.drift_investigation_tokens_per_hour)))
     args.extend(("--max-follow-ups", str(config.install.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.install.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.install.follow_up_cooldown_seconds}s"))

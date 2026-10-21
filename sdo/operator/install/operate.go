@@ -134,6 +134,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.ProgramTrustThreshold > 0 {
 		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
 	}
+	if cfg.DriftInvestigationTokensPerHour > 0 {
+		args = append(args, "--drift-investigation-tokens-per-hour", fmt.Sprint(cfg.DriftInvestigationTokensPerHour))
+	}
 	if cfg.RegistryHost != "" {
 		args = append(args, "--registry-host", cfg.RegistryHost)
 	}

@@ -41,6 +41,7 @@ type Config struct {
 	ForceReflection                                         bool
 	ProgramFastPath                                         bool
 	ProgramTrustThreshold                                   int
+	DriftInvestigationTokensPerHour                         int64
 	LateFindings                                            string
 	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
 	HealthyBaseline                                         bool
@@ -171,6 +172,9 @@ func (c Config) validate() error {
 	}
 	if c.ProgramTrustThreshold < 0 {
 		return errors.New("program trust threshold cannot be negative")
+	}
+	if c.DriftInvestigationTokensPerHour < 0 {
+		return errors.New("drift investigation token budget cannot be negative")
 	}
 	if c.ProgramFastPath && c.RepairPolicy != "recorded-actions" {
 		return errors.New("program fast path requires recorded-actions repair policy")
@@ -376,6 +380,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.ProgramTrustThreshold > 0 {
 		args = append(args, "--program-trust-threshold", fmt.Sprint(c.ProgramTrustThreshold))
+	}
+	if c.DriftInvestigationTokensPerHour > 0 {
+		args = append(args, "--drift-investigation-tokens-per-hour", fmt.Sprint(c.DriftInvestigationTokensPerHour))
 	}
 	if c.RepairPolicy != "" {
 		args = append(args, "--repair-policy", c.RepairPolicy)

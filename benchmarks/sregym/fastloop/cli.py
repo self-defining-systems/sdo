@@ -347,6 +347,7 @@ def _sdo_agent(
         repair_policy=args.repair_policy,
         program_fast_path=args.program_fast_path,
         program_trust_threshold=args.program_trust_threshold,
+        drift_investigation_tokens_per_hour=args.drift_investigation_tokens_per_hour,
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -863,6 +864,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         metavar="K",
         help="verified successes required for a trusted program (default 3)",
+    )
+    run.add_argument(
+        "--drift-investigation-tokens-per-hour",
+        type=int,
+        default=1_000_000,
+        help="hourly token budget for re-investigating changed drift keys (default 1000000)",
     )
     run.add_argument(
         "--detection-timeout",
