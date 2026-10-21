@@ -234,7 +234,8 @@ func TestSettleCaptureDoesNotBlockResponderAndMatchesRediagnosis(t *testing.T) {
 	root := t.TempDir()
 	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
 	view := sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", Annotations: map[string]string{"moment": "detect"}}}}}
-	provider := &changingProvider{snapshot: view}
+	provider := &responderTestSnapshotProvider{}
+	provider.Set(view)
 	if err := memory.CaptureIncidentSnapshot(root, "incident", "open@detect", view, "app"); err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +266,7 @@ func TestSettleCaptureDoesNotBlockResponderAndMatchesRediagnosis(t *testing.T) {
 		t.Fatal("settle blocked responder status")
 	}
 	view.ServiceList[0].Annotations["moment"] = "settle"
-	provider.snapshot = view
+	provider.Set(view)
 	select {
 	case <-done:
 	case <-time.After(time.Second):

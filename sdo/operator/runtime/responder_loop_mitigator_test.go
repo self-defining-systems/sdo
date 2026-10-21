@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,4 +81,27 @@ func TestResponderLoopReleasesMutexDuringMitigation(t *testing.T) {
 		t.Error("mitigator holds loop mutex")
 	}
 	<-done
+}
+
+type responderTestSnapshotProvider struct {
+	mu       sync.Mutex
+	snapshot sdktest.Snapshot
+}
+
+func (p *responderTestSnapshotProvider) Set(snapshot sdktest.Snapshot) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	data, _ := json.Marshal(snapshot)
+	_ = json.Unmarshal(data, &p.snapshot)
+}
+func (p *responderTestSnapshotProvider) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	data, err := json.Marshal(p.snapshot)
+	if err != nil {
+		return nil, err
+	}
+	var snapshot sdktest.Snapshot
+	err = json.Unmarshal(data, &snapshot)
+	return snapshot, err
 }
