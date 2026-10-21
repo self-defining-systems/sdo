@@ -130,6 +130,9 @@ class IncidentRecord(_PersistedModel):
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
     closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
+    driver_phase_timings_seconds: dict[str, float] = Field(default_factory=dict)
+    fault_gate_timings_seconds: dict[str, float] = Field(default_factory=dict)
+    run_prelude_phase_seconds: dict[str, float] = Field(default_factory=dict)
     #: ``sdo_mitigated``, ``external_recovery`` or ``cleared_without_sdo_action`` from the validated strict
     #: receipt; ``None`` for the baseline or when no receipt validated.
     sdo_resolution: str | None = None

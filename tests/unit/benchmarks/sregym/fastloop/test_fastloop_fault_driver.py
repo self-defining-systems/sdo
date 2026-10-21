@@ -53,7 +53,22 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
     seconds = _driver(worker).recover()
 
     assert [op for op, _ in worker.requests] == ["recover", "health", "health", "health"]
-    assert seconds == pytest.approx(2 * 2.0)
+    assert seconds == pytest.approx(2 * 1.0)
+
+
+def test_recovery_poll_interval_can_follow_the_run_time_scale() -> None:
+    now = [0.0]
+    worker = FakeWorker(health_sequence=[False, True])
+
+    driver = SregymFaultDriver(
+        worker,
+        namespace="hotel-reservation",
+        health_poll_seconds=0.1,
+        monotonic=lambda: now[0],
+        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+
+    assert driver.recover() == pytest.approx(0.1)
 
 
 def test_recovery_waits_for_rollouts_in_every_application_namespace() -> None:
@@ -109,7 +124,7 @@ def test_recovery_waits_for_rollouts_in_every_application_namespace() -> None:
     )
     driver._cluster = cluster
 
-    assert driver.recover() == pytest.approx(2.0)
+    assert driver.recover() == pytest.approx(1.0)
     assert cluster.calls == 6
 
 

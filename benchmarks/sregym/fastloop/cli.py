@@ -24,6 +24,9 @@ import os
 import socket
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,7 +49,7 @@ from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from benchmarks.sregym.adapter import ClusterOps
+    from benchmarks.sregym.adapter import Clock, ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
     from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
@@ -257,8 +260,10 @@ def _composite_settings(args: argparse.Namespace) -> CompositeSettings:
     from benchmarks.sregym.fastloop.composite import CompositeSettings
 
     return CompositeSettings(
-        deadline_seconds=args.composite_deadline,
-        idle_seconds=args.composite_idle,
+        deadline_seconds=args.composite_deadline * args.time_scale,
+        idle_seconds=args.composite_idle * args.time_scale,
+        stable_seconds=20.0 * args.time_scale,
+        poll_seconds=min(1.0, 2.0 * args.time_scale),
         stop_on_detector_review=not args.no_stop_on_review,
     )
 
@@ -285,6 +290,12 @@ def _cluster_ops(args: argparse.Namespace, namespace: str) -> ClusterOps:
     if args.healthy_baseline:
         ops = kubectl_capture_ops(ops, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
     return ops
+
+
+def _scaled_clock(scale: float) -> Clock:
+    from benchmarks.sregym.adapter import Clock
+
+    return Clock(sleep=lambda seconds: time.sleep(seconds * scale))
 
 
 def _sdo_agent(
@@ -355,6 +366,7 @@ def _sdo_agent(
         "ops": ops,
         "lifecycle_inputs": lambda: deployed_lifecycle(environment.namespace),
         "run_lifecycle": start_native,
+        "clock": _scaled_clock(args.time_scale),
     }
     if composite:
         from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, reader_for
@@ -371,6 +383,7 @@ def _sdo_agent(
 
 
 def _run(args: argparse.Namespace) -> int:
+    run_started = time.monotonic()
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     if args.time_scale <= 0:
         raise SystemExit("--time-scale must be positive")
@@ -396,14 +409,9 @@ def _run(args: argparse.Namespace) -> int:
 
         tracked = [ids for ids in stream if len(ids) > 1 or ids[0].startswith("mf__")]
         tracked_ids = tuple(dict.fromkeys(problem_id for ids in tracked for problem_id in ids))
-        catalog = describe_sregym_faults(tracked_ids, sregym_dir=environment.sregym_dir)
-        faults_by_incident = {"+".join(ids): stream_faults(ids, catalog=catalog) for ids in tracked}
-        registered_composites = bool(faults_by_incident) or any(
-            composite_faults(ids[0]) for ids in stream if len(ids) == 1
-        )
     else:
-        faults_by_incident = {}
-        registered_composites = _is_composite(problems)
+        tracked = []
+        tracked_ids = ()
     config = LoopConfig(
         run_id=run_id,
         problems=problems,
@@ -412,13 +420,35 @@ def _run(args: argparse.Namespace) -> int:
         stream=stream,
         continue_on_error=args.continue_on_error,
     )
-    with _worker(environment) as worker:
+    with ThreadPoolExecutor(max_workers=1) as pool, _worker(environment) as worker:
+        worker_ready = time.monotonic()
+
+        def describe() -> tuple[dict[str, tuple[FaultSpec, ...]], float]:
+            started = time.monotonic()
+            catalog = describe_sregym_faults(
+                tracked_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace
+            )
+            return catalog, time.monotonic() - started
+
+        descriptions = pool.submit(describe) if stream and tracked_ids else None
         worker.request(
             "deploy",
             problem_id=environment.deploy_problem,
             baseline_path=str(environment.baseline_path),
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
+        deployed = time.monotonic()
+        if stream:
+            catalog, description_seconds = descriptions.result() if descriptions is not None else ({}, 0.0)
+            faults_by_incident = {"+".join(ids): stream_faults(ids, catalog=catalog) for ids in tracked}
+            registered_composites = bool(faults_by_incident) or any(
+                composite_faults(ids[0]) for ids in stream if len(ids) == 1
+            )
+        else:
+            faults_by_incident = {}
+            registered_composites = _is_composite(problems)
+            description_seconds = 0.0
+        described = time.monotonic()
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
         if baseline is None:
             logger.warning(
@@ -430,7 +460,18 @@ def _run(args: argparse.Namespace) -> int:
             namespace=environment.namespace,
             baseline=baseline,
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
-            health_timeout_seconds=args.health_timeout,
+            health_timeout_seconds=args.health_timeout * args.time_scale,
+            health_poll_seconds=min(1.0, args.time_scale),
+        )
+        config = replace(
+            config,
+            run_prelude_phase_seconds={
+                "worker_start": worker_ready - run_started,
+                "worker_deploy": deployed - worker_ready,
+                "fault_description": description_seconds,
+                "baseline_and_driver_setup": time.monotonic() - described,
+                "total_before_first_incident": time.monotonic() - run_started,
+            },
         )
 
         def reset_failed() -> None:

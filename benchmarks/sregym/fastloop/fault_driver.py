@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
 
-HEALTH_POLL_SECONDS = 2.0
+HEALTH_POLL_SECONDS = 1.0
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
 WORKER_OP_TIMEOUT_SECONDS = 900.0
 
@@ -73,17 +73,21 @@ class SregymFaultDriver:
         baseline: ApplicationBaseline | tuple[ApplicationBaseline, ...] | None = None,
         cluster: ApplicationCluster | None = None,
         health_timeout_seconds: float = 300.0,
+        health_poll_seconds: float = HEALTH_POLL_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
+        if health_poll_seconds <= 0:
+            raise ValueError("health_poll_seconds must be positive")
         self._worker = worker
         self._namespace = namespace
         self._baselines = (baseline,) if isinstance(baseline, ApplicationBaseline) else baseline
         self._cluster = cluster
         self.last_cleanup = RecoveryCleanup()
         self._health_timeout = health_timeout_seconds
+        self._health_poll = health_poll_seconds
         self._monotonic = monotonic
         self._sleep = sleep
 
@@ -168,7 +172,7 @@ class SregymFaultDriver:
                     f"{self._namespace} is not healthy {self._health_timeout:.0f}s after recovery; "
                     f"unready: {health.get('unready')}; rollouts: {unready_rollouts}"
                 )
-            self._sleep(HEALTH_POLL_SECONDS)
+            self._sleep(self._health_poll)
 
     def _unready_rollouts(self) -> list[str]:
         if self._cluster is None:

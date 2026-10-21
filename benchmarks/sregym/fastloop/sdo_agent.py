@@ -187,6 +187,7 @@ class SdoPersistentAgent:
             kubeconfig=settings.kubeconfig,
             verification_timeout_seconds=settings.verification_timeout_seconds,
             stop_on_detector_review=self._stop_on_detector_review,
+            lifecycle_installs_controller=True,
         )
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
@@ -230,6 +231,8 @@ class SdoPersistentAgent:
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
             mitigation=_summaries(repairs, successful_only=True),
             baseline_gate_seconds=gate.get("controller_baseline_wait"),
+            driver_phase_timings_seconds=resolution.get("driver_phase_timings_seconds") or {},
+            fault_gate_timings_seconds=gate,
             setup_seconds=float(costs.get("inventory_and_lifecycle", 0.0))
             + float(costs.get("controller_install_or_reuse", 0.0)),
             controller_installed=controller.get("installed_this_stage"),

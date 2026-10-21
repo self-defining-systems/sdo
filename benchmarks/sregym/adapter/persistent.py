@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.cluster_resources import kubectl
-from benchmarks.sregym.adapter.fault_gate import inject_fault_after_resumed_baseline
+from benchmarks.sregym.adapter.fault_gate import BASELINE_TIMEOUT_SECONDS, inject_fault_after_resumed_baseline
 from benchmarks.sregym.adapter.native_operator import (
     NativeOperatorError,
 )
@@ -329,7 +329,15 @@ class KubectlClusterOps:
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
-        return inject_fault_after_resumed_baseline(control_namespace, generation, inject=inject, kubectl_runner=kubectl)
+        scale = float(os.getenv("SDO_TIME_SCALE", "1"))
+        return inject_fault_after_resumed_baseline(
+            control_namespace,
+            generation,
+            inject=inject,
+            kubectl_runner=kubectl,
+            timeout_seconds=BASELINE_TIMEOUT_SECONDS * scale,
+            poll_seconds=min(1.0, scale),
+        )
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
         return collect_production_receipt(config, incident_id, artifacts_dir)
@@ -364,6 +372,7 @@ class StageInputs:
     detection_timeout_seconds: float | None = None
     #: Raise as soon as the controller stops the incident for detector review (it never closes it).
     stop_on_detector_review: bool = True
+    lifecycle_installs_controller: bool = False
 
     def __post_init__(self) -> None:
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
@@ -411,6 +420,7 @@ def run_persistent_stage(
             f"{record.application!r}; refusing to reuse it for {inputs.application!r}"
         )
     pod = ops.controller_pod(control) if record is not None else None
+    inventory_ready = clock.monotonic()
     drain_seconds = 0.0
     if record is not None and pod is not None and pod.uid == record.controller_pod_uid and record.pending is not None:
         # The previous problem's learning must reach memory (and any learned
@@ -433,6 +443,7 @@ def run_persistent_stage(
         and pod.uid == record.controller_pod_uid
         and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
     )
+    lifecycle_started = clock.monotonic()
     if reusable:
         lifecycle_reused, lifecycle_revalidation_skipped = True, True
     else:
@@ -448,10 +459,23 @@ def run_persistent_stage(
         state.save(inputs.state_path)
         lifecycle_reused, lifecycle_revalidation_skipped = run_lifecycle(), False
     lifecycle_ready = clock.monotonic()
-    reused = ops.install(replace(config, reuse_existing=reusable))
-    if reusable and not reused:
-        raise PersistentControllerError("the running controller's install fingerprint changed mid-pipeline")
-    pod = _wait_for_controller_pod(ops, control, clock)
+    install_inspected = False
+    if not reusable:
+        pod = (
+            _wait_for_controller_pod(ops, control, clock)
+            if inputs.lifecycle_installs_controller
+            else ops.controller_pod(control)
+        )
+        if pod is None:
+            ops.install(replace(config, reuse_existing=False))
+            pod = _wait_for_controller_pod(ops, control, clock)
+            install_inspected = True
+    else:
+        # The saved fingerprint and the live Pod UID already establish this
+        # controller's identity; another install inspection costs a full Go
+        # process startup on every incident in the same application lane.
+        assert pod is not None
+    install_inspection_ready = clock.monotonic()
     if record is None or not reusable:
         record = ControllerRecord(
             application=inputs.application,
@@ -525,8 +549,11 @@ def run_persistent_stage(
         },
         "reflection_drain_seconds": drain_seconds,
         "driver_phase_timings_seconds": {
+            "controller_inventory": inventory_ready - started,
             "reflection_drain": drain_seconds,
+            "lifecycle": lifecycle_ready - lifecycle_started,
             "inventory_and_lifecycle": lifecycle_ready - started - drain_seconds,
+            "controller_install_inspection": install_inspection_ready - lifecycle_ready if install_inspected else 0.0,
             "controller_install_or_reuse": install_ready - lifecycle_ready,
             "fault_gate": injected - install_ready,
             "injection_to_verified_recovery": verified_ready - injected,

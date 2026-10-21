@@ -202,7 +202,8 @@ def _agent(
     def run_lifecycle(received: DeployedLifecycleContext) -> bool:
         assert received == context
         lifecycle_calls.append("lifecycle")
-        return True
+        ops.install(replace(settings.runtime_config, persistent=True, wait_for_completion=False))
+        return False
 
     return SdoPersistentAgent(
         settings,

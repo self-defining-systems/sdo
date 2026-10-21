@@ -69,6 +69,8 @@ class AgentOutcome:
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
     closure_phase_seconds: dict[str, float] = field(default_factory=dict)
+    driver_phase_timings_seconds: dict[str, float] = field(default_factory=dict)
+    fault_gate_timings_seconds: dict[str, float] = field(default_factory=dict)
     #: How the strict receipt says the incident closed (``sdo_mitigated``, ``external_recovery`` or
     #: ``cleared_without_sdo_action``); ``None`` when no receipt validated. Only ``sdo_mitigated`` is SDO's own fix.
     sdo_resolution: str | None = None
@@ -131,6 +133,7 @@ class LoopConfig:
     results_path: Path
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
+    run_prelude_phase_seconds: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -357,6 +360,7 @@ def _run_one(
         cleanup_restored=cleanup.restored if cleanup is not None else [],
         cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
         incident_wall_seconds=monotonic() - started,
+        run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == 0 else {},
         error="; ".join(errors) or None,
         **(_outcome_fields(outcome) if outcome is not None else {}),
     )
@@ -382,6 +386,8 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
         "closure_phase_seconds": dict(outcome.closure_phase_seconds),
+        "driver_phase_timings_seconds": dict(outcome.driver_phase_timings_seconds),
+        "fault_gate_timings_seconds": dict(outcome.fault_gate_timings_seconds),
         "sdo_resolution": outcome.sdo_resolution,
         "reflection_seconds": outcome.reflection_seconds,
         "baseline_gate_seconds": outcome.baseline_gate_seconds,

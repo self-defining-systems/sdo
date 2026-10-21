@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -246,11 +246,15 @@ def _agent(tmp_path: Path, ops: FakeOps, *, agent_registrations: Path | None = N
             return None
         return {"metadata": {"generation": 1}, "spec": {"replicas": 1}, "status": {"observedGeneration": 1}}
 
+    def run_lifecycle(_received: DeployedLifecycleContext) -> bool:
+        ops.install(replace(settings.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
     return CompositeSdoAgent(
         settings,
         ops=ops,
         lifecycle_inputs=lambda: DeployedLifecycle(fingerprint="fp", context=context),
-        run_lifecycle=lambda received: True,
+        run_lifecycle=run_lifecycle,
         clock=_clock(),
         reader=reader,
         report_dir=tmp_path / "reports",

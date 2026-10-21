@@ -124,6 +124,23 @@ def test_each_incident_is_graded_before_recovery_and_learning_follows_recovery(t
     assert [record.index for record in load_records(tmp_path / "incidents.jsonl")] == [0, 1]
 
 
+def test_run_prelude_phases_are_recorded_once_before_the_first_incident(tmp_path: Path) -> None:
+    clock = FakeClock()
+    config = LoopConfig(
+        run_id="run-1",
+        problems=("p1",),
+        incidents=2,
+        results_path=tmp_path / "incidents.jsonl",
+        run_prelude_phase_seconds={"fault_description": 4.0, "worker_deploy": 12.0},
+    )
+
+    records = run_incidents(FakeAgent(clock), FakeDriver(clock), config, monotonic=clock.monotonic)
+
+    assert records[0].run_prelude_phase_seconds == {"fault_description": 4.0, "worker_deploy": 12.0}
+    assert records[1].run_prelude_phase_seconds == {}
+    assert load_records(config.results_path)[0].run_prelude_phase_seconds == records[0].run_prelude_phase_seconds
+
+
 def test_incident_row_records_recovery_cleanup(tmp_path: Path) -> None:
     clock = FakeClock()
 

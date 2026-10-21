@@ -149,6 +149,24 @@ def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
 
     assert normal.time_scale == 1.0
     assert fast.time_scale == 0.1
+    from benchmarks.sregym.fastloop.cli import _composite_settings
+
+    settings = _composite_settings(fast)
+    assert settings.deadline_seconds == pytest.approx(fast.composite_deadline * 0.1)
+    assert settings.idle_seconds == pytest.approx(fast.composite_idle * 0.1)
+    assert settings.stable_seconds == pytest.approx(2.0)
+    assert settings.poll_seconds == pytest.approx(0.2)
+
+
+def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+
+    cli._scaled_clock(0.1).sleep(1.0)
+
+    assert sleeps == [0.1]
 
 
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:

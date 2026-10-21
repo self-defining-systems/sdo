@@ -77,7 +77,9 @@ def composite_faults(problem_id: str) -> tuple[FaultSpec, ...]:
     return COMPOSITE_FAULTS.get(problem_id, ())
 
 
-def describe_sregym_faults(problem_ids: tuple[str, ...], *, sregym_dir: Path) -> dict[str, tuple[FaultSpec, ...]]:
+def describe_sregym_faults(
+    problem_ids: tuple[str, ...], *, sregym_dir: Path, app_source_dir: Path | None = None
+) -> dict[str, tuple[FaultSpec, ...]]:
     """Resolve probe targets from SREGym's registered problem instances without cluster calls."""
 
     if not problem_ids:
@@ -87,6 +89,8 @@ def describe_sregym_faults(problem_ids: tuple[str, ...], *, sregym_dir: Path) ->
         **os.environ,
         "PYTHONPATH": os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH", "")))),
     }
+    if app_source_dir is not None:
+        env["SREGYM_APP_SOURCE_DIR"] = str(app_source_dir)
     completed = subprocess.run(
         ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.fastloop.fault_spec_worker"],
         input=json.dumps(problem_ids),

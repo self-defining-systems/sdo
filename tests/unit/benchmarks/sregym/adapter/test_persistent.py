@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -391,12 +391,53 @@ def test_one_controller_serves_both_stages_and_the_second_skips_install_and_life
     assert first["persistent_controller"]["installed_this_stage"] is True
     assert second["persistent_controller"]["installed_this_stage"] is False
     assert second["persistent_controller"]["lifecycle_revalidation_skipped"] is True
+    assert "controller_inventory" in first["driver_phase_timings_seconds"]
+    assert "lifecycle" in first["driver_phase_timings_seconds"]
+    assert "controller_install_inspection" in first["driver_phase_timings_seconds"]
+    assert second["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
     kinds = [
         event[0] for event in ops.events if event[0] in {"install", "reuse", "active", "paused", "fault", "delete"}
     ]
-    assert kinds == ["install", "active", "fault", "paused", "reuse", "active", "fault", "paused"]
+    assert kinds == ["install", "active", "fault", "paused", "active", "fault", "paused"]
     # Each stage correlates its own incident.
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
+
+
+def test_fresh_lifecycle_controller_is_used_without_a_second_install_inspection(tmp_path: Path) -> None:
+    ops = FakeOps()
+    inputs = _inputs(tmp_path, "s0")
+
+    def lifecycle() -> bool:
+        ops.install(replace(inputs.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    assert [event[0] for event in ops.events if event[0] in {"install", "reuse"}] == ["install"]
+    assert result["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
+
+
+def test_fresh_lifecycle_waits_for_its_pod_instead_of_reinstalling(tmp_path: Path) -> None:
+    class DelayedOps(FakeOps):
+        unseen = 1
+
+        def controller_pod(self, control_namespace: str) -> ControllerPod | None:
+            if self.pods and self.unseen:
+                self.unseen -= 1
+                return None
+            return super().controller_pod(control_namespace)
+
+    ops = DelayedOps()
+    inputs = replace(_inputs(tmp_path, "s0"), lifecycle_installs_controller=True)
+
+    def lifecycle() -> bool:
+        ops.install(replace(inputs.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    assert [event[0] for event in ops.events if event[0] in {"install", "reuse"}] == ["install"]
+    assert result["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
 
 
 def test_stage_reports_resolution_at_verified_health_before_reflection_finishes(tmp_path: Path) -> None:

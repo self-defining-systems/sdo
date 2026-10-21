@@ -180,3 +180,24 @@ def test_persistent_gate_waits_for_the_resumed_controllers_all_clear_before_inje
     assert timings["controller_baseline_wait"] == pytest.approx(2.0)
     assert all(namespace == "hotel-sdo" for _, namespace in calls)
     assert calls[0][0][:2] == ["logs", "job/sdo-controller-run"]
+
+
+def test_persistent_gate_poll_can_follow_fastloop_time_scale() -> None:
+    clock = _Clock()
+    outputs = [_maintenance("active", "stage-1"), _maintenance("active", "stage-1") + "\n" + _evaluation()]
+
+    def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
+        stdout = outputs.pop(0) if len(outputs) > 1 else outputs[0]
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    timings = inject_fault_after_resumed_baseline(
+        "hotel-sdo",
+        "stage-1",
+        inject=lambda: None,
+        kubectl_runner=kubectl,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        poll_seconds=0.1,
+    )
+
+    assert timings["controller_baseline_wait"] == pytest.approx(0.1)
