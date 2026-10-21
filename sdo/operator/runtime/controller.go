@@ -69,19 +69,23 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-	config         ControllerConfig
-	startedAt      time.Time
-	scheduler      *Scheduler
-	detectors      map[string]sdk.Detector
-	tracker        *FindingStateTracker
-	batcher        *Batcher
-	provider       SnapshotProvider
-	dispatcher     Dispatcher
-	history        []DetectorEvaluation
-	drift          *DriftControllerConfig
-	driftEvents    []sdk.DriftEvent
-	nextDriftSweep time.Time
-	results        chan dispatchCompletion
+	config             ControllerConfig
+	startedAt          time.Time
+	scheduler          *Scheduler
+	detectors          map[string]sdk.Detector
+	tracker            *FindingStateTracker
+	batcher            *Batcher
+	provider           SnapshotProvider
+	dispatcher         Dispatcher
+	history            []DetectorEvaluation
+	drift              *DriftControllerConfig
+	driftEvents        []sdk.DriftEvent
+	driftInvestigation *driftInvestigationQueue
+	driftResults       chan driftInvestigationCompletion
+	driftRunning       bool
+	driftRetryAt       time.Time
+	nextDriftSweep     time.Time
+	results            chan dispatchCompletion
 	// gateClears and gateProbes hold the submit gate's confirmation of active
 	// findings (GateConfirmationPolicy); they are never persisted, so a
 	// restarted controller confirms again from fresh evaluations.
@@ -281,6 +285,7 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
 	c.processDispatchCompletions(now)
+	c.processDriftCompletions(now)
 	c.processBrokerCompletions()
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
@@ -296,6 +301,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !sweepDrift {
+		if err := c.dispatchDriftInvestigation(ctx, now); err != nil && c.OnError != nil {
+			c.OnError(err)
+		}
 		c.forgetGate()
 		c.maybeCloseIncident(ctx, now, nil)
 		err := c.dispatchReady(ctx, now, nil)
@@ -307,6 +315,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges, sweepDrift)
+	if err := c.dispatchDriftInvestigation(ctx, now); err != nil && c.OnError != nil {
+		c.OnError(err)
+	}
 
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := false
@@ -596,6 +607,14 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		return err
 	}
 	if c.config.CorpusSessionRoot != "" {
+		for _, event := range request.DriftEvents {
+			if event.InvestigationVerdict == "bug" && event.InvestigationCaptureID != "" {
+				if err := memory.ReuseDriftCapture(c.config.CorpusSessionRoot, event.InvestigationCaptureID, request.IncidentID); err != nil {
+					return requeue(fmt.Errorf("reuse drift capture: %w", err))
+				}
+				break
+			}
+		}
 		if snapshot == nil {
 			var err error
 			snapshot, err = c.provider.Snapshot(ctx)
@@ -676,6 +695,15 @@ func severityAtLeast(actual sdk.FindingSeverity, threshold sdk.FindingSeverity) 
 
 func (c *Controller) NextWake() time.Time {
 	next := c.scheduler.NextRun()
+	if c.driftInvestigation != nil && !c.driftRunning {
+		deadline := c.driftInvestigation.Deadline()
+		if c.driftRetryAt.After(deadline) {
+			deadline = c.driftRetryAt
+		}
+		if !deadline.IsZero() && (next.IsZero() || deadline.Before(next)) {
+			next = deadline
+		}
+	}
 	if c.drift != nil && (next.IsZero() || c.nextDriftSweep.Before(next)) {
 		next = c.nextDriftSweep
 	}
@@ -1385,6 +1413,7 @@ func (c *Controller) ExportState() RuntimeState {
 		PendingReleases:            append([]string(nil), c.pendingReleases...),
 		IncidentView:               cloneIncidentView(c.incidentView),
 		DriftEvents:                append([]sdk.DriftEvent(nil), c.driftEvents...),
+		DriftInvestigation:         c.driftInvestigationState(),
 		EvaluationIteration:        c.evaluationIteration,
 		DetectorTimeline:           cloneTimeline(c.timeline),
 	}
@@ -1409,6 +1438,9 @@ func (c *Controller) RestoreState(state RuntimeState) error {
 	c.currentIncidentRequest = cloneIncidentRequest(state.IncidentRequest)
 	c.currentIncidentResult = cloneIncidentResult(state.IncidentResult)
 	c.driftEvents = append([]sdk.DriftEvent(nil), state.DriftEvents...)
+	if c.driftInvestigation != nil {
+		c.driftInvestigation.RestoreState(state.DriftInvestigation)
+	}
 	c.dispatchError = state.DispatchError
 	c.incidentDetectedAt = state.IncidentDetectedAt
 	c.incidentDispatchedAt = state.IncidentDispatchedAt

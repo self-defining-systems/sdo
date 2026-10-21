@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -31,6 +32,7 @@ type DriftControllerConfig struct {
 	View          func(sdk.DetectionContext) program.ReadView
 	Deadline      time.Duration
 	SweepInterval time.Duration
+	Investigation DriftInvestigationConfig
 }
 
 func (c *Controller) ConfigureDrift(config DriftControllerConfig) {
@@ -41,7 +43,150 @@ func (c *Controller) ConfigureDrift(config DriftControllerConfig) {
 		config.Deadline = DefaultDiagnosisDeadline
 	}
 	c.drift = &config
+	if config.Investigation.Worker != nil {
+		config.Investigation.OnVerdict = func(event sdk.DriftEvent, verdict *contracts.DriftEventInvestigation) {
+			c.recordDriftInvestigation(event, verdict)
+		}
+		config.Investigation.OnPrepared = c.PersistState
+		c.driftInvestigation = newDriftInvestigationQueue(config.Investigation)
+		c.driftResults = make(chan driftInvestigationCompletion, 1)
+	}
 	c.nextDriftSweep = c.startedAt.Add(config.SweepInterval)
+}
+
+func (c *Controller) driftInvestigationState() DriftInvestigationState {
+	if c.driftInvestigation == nil {
+		return DriftInvestigationState{}
+	}
+	return c.driftInvestigation.ExportState()
+}
+
+func (c *Controller) dispatchDriftInvestigation(ctx context.Context, now time.Time) error {
+	if c.driftInvestigation == nil {
+		return nil
+	}
+	if c.driftRunning || now.Before(c.driftRetryAt) {
+		return nil
+	}
+	if c.driftInvestigation.config.Async {
+		task, err := c.driftInvestigation.PrepareReady(ctx, now)
+		if err != nil || task == nil {
+			return err
+		}
+		c.driftRunning = true
+		go func() {
+			result, err := c.driftInvestigation.config.Worker.Investigate(ctx, task)
+			select {
+			case c.driftResults <- driftInvestigationCompletion{task: task, result: result, err: err}:
+			case <-ctx.Done():
+			}
+		}()
+		return nil
+	}
+	return c.driftInvestigation.DispatchReady(ctx, now)
+}
+
+type driftInvestigationCompletion struct {
+	task   *contracts.DriftInvestigationTask
+	result *contracts.DriftInvestigationResult
+	err    error
+}
+
+func (c *Controller) processDriftCompletions(now time.Time) {
+	if c.driftResults == nil {
+		return
+	}
+	for {
+		select {
+		case completion := <-c.driftResults:
+			c.handleDriftCompletion(completion, now)
+		default:
+			return
+		}
+	}
+}
+
+func (c *Controller) handleDriftCompletion(completion driftInvestigationCompletion, now time.Time) {
+	c.driftRunning = false
+	if err := c.driftInvestigation.Complete(now, completion.task, completion.result, completion.err); err != nil {
+		c.driftRetryAt = now.Add(2 * time.Second)
+		if c.OnError != nil {
+			c.OnError(fmt.Errorf("drift investigation: %w", err))
+		}
+	} else {
+		c.driftRetryAt = time.Time{}
+	}
+}
+
+func (c *Controller) recordDriftInvestigation(event sdk.DriftEvent, verdict *contracts.DriftEventInvestigation) {
+	event.InvestigationStatus = "completed"
+	event.InvestigationVerdict = verdict.GetVerdict()
+	event.InvestigationReason = safeDriftText(verdict.GetReason())
+	if verdict.GetVerdict() == "bug" {
+		event.Classification = sdk.DriftFault
+	}
+	for _, evidence := range verdict.GetEvidence() {
+		if evidence != nil {
+			event.InvestigationEvidence = append(event.InvestigationEvidence, sdk.DriftEvidence{Kind: evidence.GetKind(), Observation: safeDriftText(evidence.GetObservation())})
+		}
+	}
+	c.mu.Lock()
+	found := false
+	for index := range c.driftEvents {
+		item := &c.driftEvents[index]
+		if driftEventKey(*item) != driftEventKey(event) || !item.ObservedAt.Equal(event.ObservedAt) {
+			continue
+		}
+		*item = event
+		found = true
+		break
+	}
+	if !found {
+		c.driftEvents = append(c.driftEvents, event)
+	}
+	if len(c.driftEvents) > 40 {
+		c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
+	}
+	c.mu.Unlock()
+	if verdict.GetVerdict() != "bug" {
+		return
+	}
+	encoded, _ := json.Marshal(map[string]any{"drift": event, "investigation": verdict})
+	finding := sdk.Finding{DetectorID: "drift/investigator", RuleID: "investigated-drift", Status: sdk.FindingActive,
+		Severity: sdk.SeverityLatent, Summary: "investigated drift contradicts source and violates a relation or has impact",
+		Evidence: bounded(string(encoded)), PrimaryResource: event.Ref,
+		Metadata: map[string]any{"drift_event": event, "investigator_evidence": event.InvestigationEvidence}}
+	finding.Fingerprint = FindingFingerprint(finding)
+	c.recordEvaluation(finding.DetectorID, event.ObservedAt, []sdk.Finding{finding})
+	if c.mergeIntoOpenIncident(finding) || c.attachBeforeLaunch([]sdk.Finding{finding}) {
+		return
+	}
+	c.batcher.AddAtWithDebounce(finding, event.ObservedAt, 0)
+}
+
+func (c *Controller) clearInvestigatedDrift(now time.Time, change ObjectChange, view program.ReadView) {
+	if change.New == nil {
+		return
+	}
+	ref := sdk.ObjectRef{APIVersion: change.New.GetAPIVersion(), Kind: change.New.GetKind(), Namespace: change.New.GetNamespace(), Name: change.New.GetName()}
+	c.mu.Lock()
+	active := false
+	if c.currentIncidentRequest != nil {
+		for _, finding := range c.currentIncidentRequest.Findings {
+			if finding.DetectorID == "drift/investigator" && finding.PrimaryResource == ref {
+				active = true
+				break
+			}
+		}
+	}
+	c.mu.Unlock()
+	if !active {
+		return
+	}
+	diff, err := view.DiffAgainstSource(ref)
+	if err == nil && !diff.Changed {
+		c.recordEvaluation("drift/investigator", now, nil)
+	}
 }
 
 func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext, changes []ObjectChange, sweep bool) {
@@ -59,14 +204,34 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 			continue
 		}
 		if event == nil {
+			c.clearInvestigatedDrift(now, change, view)
 			continue
 		}
+		if event.Classification == sdk.DriftUnexplained && c.driftInvestigation != nil {
+			event.InvestigationStatus = "pending"
+		}
 		c.mu.Lock()
-		c.driftEvents = append(c.driftEvents, *event)
+		replaced := false
+		if event.Classification == sdk.DriftUnexplained && c.driftInvestigation != nil && c.driftInvestigation.state.RequestJSON == "" {
+			for index := range c.driftEvents {
+				if driftEventKey(c.driftEvents[index]) == driftEventKey(*event) && c.driftEvents[index].InvestigationStatus == "pending" {
+					event.ObservedAt = c.driftEvents[index].ObservedAt
+					c.driftEvents[index] = *event
+					replaced = true
+					break
+				}
+			}
+		}
+		if !replaced {
+			c.driftEvents = append(c.driftEvents, *event)
+		}
 		if len(c.driftEvents) > 40 {
 			c.driftEvents = append([]sdk.DriftEvent(nil), c.driftEvents[len(c.driftEvents)-40:]...)
 		}
 		c.mu.Unlock()
+		if event.Classification == sdk.DriftUnexplained && c.driftInvestigation != nil {
+			c.driftInvestigation.Add(*event)
+		}
 		if event.Classification == sdk.DriftFault {
 			for _, run := range runs {
 				if run.Verdict.Result == program.Match {
@@ -210,10 +375,18 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 	if !diff.Changed {
 		return nil, nil, nil
 	}
+	sourceValues := map[string]any{}
+	if strings.HasPrefix(diff.Text, "accepted: ") {
+		line := strings.SplitN(strings.TrimPrefix(diff.Text, "accepted: "), "\nobserved: ", 2)[0]
+		var sourceObject map[string]any
+		if json.Unmarshal([]byte(line), &sourceObject) == nil {
+			sourceValues = flattenDriftObject(&unstructured.Unstructured{Object: sourceObject})
+		}
+	}
 	manager, operation, managerAt := changedDriftManager(change, paths)
 	event := &sdk.DriftEvent{Ref: ref, Fields: make([]sdk.DriftField, 0, min(len(paths), maxDriftFields)), Source: "differs from accepted manifest", Manager: manager, Operation: operation, ManagerAt: managerAt, ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained}
 	for _, path := range paths[:min(len(paths), maxDriftFields)] {
-		event.Fields = append(event.Fields, sdk.DriftField{Path: path, Old: renderDriftValue(path, before[path]), New: renderDriftValue(path, after[path])})
+		event.Fields = append(event.Fields, sdk.DriftField{Path: path, Old: renderDriftValue(path, before[path]), Source: renderDriftValue(path, sourceValues[path]), New: renderDriftValue(path, after[path])})
 	}
 	runs := SelectProgramCandidatesWithOptions(ctx, c.Programs, view, nil, CandidateOptions{Deadline: c.Deadline, Affected: []sdk.ObjectRef{ref}})
 	for _, run := range runs {

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -167,6 +168,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
+	driftBatchWindow := flags.Duration("drift-investigation-window", DefaultDriftInvestigationWindow, "batch window for unexplained drift")
+	driftDispatchesPerHour := flags.Int("drift-investigation-dispatches-per-hour", 12, "maximum drift worker dispatches per hour")
+	driftTokensPerHour := flags.Int64("drift-investigation-tokens-per-hour", 50000, "maximum drift worker tokens per hour")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",
@@ -237,8 +241,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 {
-		return errors.New("max-response-loops, diagnosis-deadline, and drift-sweep-interval must be positive")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *driftDispatchesPerHour < 0 || *driftTokensPerHour < 0 {
+		return errors.New("response loops, diagnosis deadline, drift sweep and investigation windows must be positive; drift budgets must be nonnegative")
 	}
 	if *exitAfterClosure && *restartAfterClosure {
 		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
@@ -275,6 +279,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			registeredWorkers, registryErr = worker_registry.New(
 				builtInResponderRegistration(*responderImage, argv),
 				builtInReflectorRegistration(*responderImage),
+				builtInDriftRegistration(*responderImage),
 			)
 		} else {
 			registeredWorkers, registryErr = worker_registry.LoadDirectory(*agentRegistrationDirectory)
@@ -485,7 +490,57 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval,
+	var investigation DriftInvestigationConfig
+	if *dispatcherMode == "job" {
+		if _, err := registeredWorkers.Resolve("sdo-drift-investigator", driftTaskType); err == nil {
+			catalog := memory.OpenCatalogReader(resolvedRoot)
+			investigation = DriftInvestigationConfig{Async: true, BatchWindow: *driftBatchWindow, DispatchesPerHour: *driftDispatchesPerHour, TokensPerHour: *driftTokensPerHour}
+			investigation.Worker = RegisteredDriftInvestigator{AgentID: "sdo-drift-investigator", Executor: worker_registry.KubernetesExecutor{
+				Client: bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers,
+				ServiceAccount: "sdo-drift-investigator", RepositoryPVC: *repositoryPVC, RepositoryMountPath: *repositoryMountPath,
+				RepositoryPVCSubPath: *repositoryPVCSubPath, CredentialsSecret: *credentialsSecret,
+				Environment: jobEnvironment, PollInterval: time.Second, RepositoryReadOnly: true,
+			}, ToolLoopFactory: func(task *contractsv1alpha1.DriftInvestigationTask) *ResponderLoop {
+				request := IncidentRequest{IncidentID: task.GetBatchId(), Namespace: task.GetNamespace(), SourceCommit: task.GetAcceptedCommit(), DriftEvents: controller.ExportState().DriftEvents}
+				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{}, 1)
+				loop.DiagnosisDeadline = *diagnosisDeadline
+				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
+						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: task.GetAcceptedCommit()}
+				}
+				return loop
+			}}
+			investigation.BuildTask = func(ctx context.Context, batchID string, events []sdk.DriftEvent) (*contractsv1alpha1.DriftInvestigationTask, error) {
+				snapshot, err := catalog.Snapshot(ctx)
+				if err != nil {
+					return nil, err
+				}
+				if snapshot.GetAcceptedCommit() != resolvedSourceCommit {
+					return nil, fmt.Errorf("drift memory snapshot differs from accepted commit")
+				}
+				view, err := snapshotProvider.Snapshot(ctx)
+				if err != nil {
+					return nil, err
+				}
+				if err := memory.CaptureIncidentSnapshot(corpusSessionRoot, batchID, "open@detect", view, *namespace); err != nil {
+					return nil, err
+				}
+				captureDir, err := memory.IncidentCorpusDir(corpusSessionRoot, batchID)
+				if err != nil {
+					return nil, err
+				}
+				captured, err := os.ReadFile(filepath.Join(captureDir, "open@detect.json"))
+				if err != nil {
+					return nil, err
+				}
+				return &contractsv1alpha1.DriftInvestigationTask{SchemaVersion: ProtocolSchemaVersion, BatchId: batchID,
+					Application: *application, Namespace: *namespace, AcceptedCommit: resolvedSourceCommit,
+					MemorySnapshot: snapshot, Events: driftEventsContract(events), CaptureId: batchID,
+					CaptureSha256: fmt.Sprintf("%x", sha256.Sum256(captured)), RepositoryWorktree: resolvedRoot}, nil
+			}
+		}
+	}
+	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
 				Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: resolvedSourceCommit}
@@ -840,6 +895,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
+			if err := executePendingEffects(runCtx, controller); err != nil {
+				if runCtx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+		case completion := <-controller.driftResults:
+			if stopTimerForRuntimeEvent(runCtx, timer) {
+				return nil
+			}
+			controller.handleDriftCompletion(completion, time.Now().UTC())
+			if err := controller.StepEvents(runCtx, time.Now().UTC(), nil); err != nil {
+				return err
+			}
+			persistControllerState()
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil

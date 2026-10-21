@@ -104,6 +104,9 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	}
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
 	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
+	dur("--drift-investigation-window", config.GetDriftInvestigationWindow())
+	if config.GetDriftInvestigationDispatchesPerHour() > 0 { args = append(args, "--drift-investigation-dispatches-per-hour", strconv.Itoa(int(config.GetDriftInvestigationDispatchesPerHour()))) }
+	if config.GetDriftInvestigationTokensPerHour() > 0 { args = append(args, "--drift-investigation-tokens-per-hour", strconv.FormatInt(config.GetDriftInvestigationTokensPerHour(), 10)) }
 	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
 	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())

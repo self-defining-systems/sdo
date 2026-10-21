@@ -33,6 +33,7 @@ type RuntimeState struct {
 	PendingBatch             BatcherState            `json:"pending_batch"`
 	History                  []DetectorEvaluation    `json:"history"`
 	DriftEvents              []sdk.DriftEvent        `json:"drift_events,omitempty"`
+	DriftInvestigation       DriftInvestigationState `json:"drift_investigation,omitempty"`
 	IncidentOpen             bool                    `json:"incident_open"`
 	ResponderDone            bool                    `json:"responder_done"`
 	IncidentRequest          *IncidentRequest        `json:"incident_request,omitempty"`
@@ -72,6 +73,9 @@ func (state RuntimeState) Validate() error {
 	}
 	if len(state.History) > 100 {
 		return fmt.Errorf("runtime history exceeds 100 entries")
+	}
+	if state.DriftInvestigation.RequestJSON != "" && len(state.DriftInvestigation.Pending) == 0 {
+		return fmt.Errorf("drift investigation request has no pending events")
 	}
 	if state.IncidentOpen && state.IncidentRequest == nil {
 		return fmt.Errorf("open incident is missing its request")

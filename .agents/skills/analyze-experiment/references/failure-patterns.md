@@ -48,7 +48,7 @@ Inspect firing/clearing thresholds, debounce state, snapshot versions, durable c
 
 **Signature:** a `latent` finding or an outcome `drift_events` entry names a matching program while health detectors remain clear, or a changed object is recorded as `unexplained` without an incident.
 
-Join the event's logical resource, changed fields, manager/operation/time, and `program_id` to the incident request and program verdict. Check that the field was owned by `sdo-deployer` in the pre-image and that the accepted-source dry run still differed. An HPA-owned replica change should not appear. An unexplained event is observation only in P1; it is not a benign label or a learning decision. A latent incident from the 60 s fallback sweep may have no drift event.
+Join the event's logical resource, changed fields and old/source/new values, manager/operation/time, and `program_id` or investigator evidence to the incident request. Check that the field was owned by `sdo-deployer` in the pre-image and that the accepted-source dry run still differed. An HPA-owned replica change should not appear. For investigator bugs, require both `source_contradiction` and `violated_relation` or `observed_impact`, then check the independently verified repair and the `open@detect` capture used by reflection. A pending event may be waiting on the hourly budget; benign and unsure verdicts are weak labels and do not authorize a repair. A latent incident from the 60 s fallback sweep may have no drift event.
 
 ## Link reachability finding (latent dependency fault)
 

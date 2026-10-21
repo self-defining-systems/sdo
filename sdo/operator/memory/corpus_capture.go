@@ -185,6 +185,42 @@ func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk
 	return writeCapturedFile(filepath.Join(dir, phase+".json"), data)
 }
 
+// ReuseDriftCapture makes the investigated change the incident's detect-time
+// corpus case. CaptureIncidentSnapshot will retain these first-written files.
+func ReuseDriftCapture(repositoryMount, captureID, incidentID string) error {
+	from, err := IncidentCorpusDir(repositoryMount, captureID)
+	if err != nil {
+		return err
+	}
+	to, err := IncidentCorpusDir(repositoryMount, incidentID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(to, 0700); err != nil {
+		return err
+	}
+	for _, name := range []string{"open@detect.json", "open@detect-recordings.json"} {
+		source, destination := filepath.Join(from, name), filepath.Join(to, name)
+		if err := os.Link(source, destination); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("reuse investigated drift capture %s: %w", name, err)
+			}
+			before, readErr := os.ReadFile(source)
+			if readErr != nil {
+				return readErr
+			}
+			after, readErr := os.ReadFile(destination)
+			if readErr != nil {
+				return readErr
+			}
+			if string(before) != string(after) {
+				return fmt.Errorf("incident %s has a different %s capture", incidentID, name)
+			}
+		}
+	}
+	return nil
+}
+
 func writeCapturedFile(path string, data []byte) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".capture-*")
 	if err != nil {
