@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from benchmarks.sregym.fastloop.baseline_recovery import RecoveryCleanup
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import DiagnosisGrade, OracleVerdict, TokenCounts, load_records
 
@@ -121,6 +122,19 @@ def test_each_incident_is_graded_before_recovery_and_learning_follows_recovery(t
     assert first.incident_wall_seconds == pytest.approx(107.0)
     assert (records[0].warm_path, records[1].warm_path) == (False, True)
     assert [record.index for record in load_records(tmp_path / "incidents.jsonl")] == [0, 1]
+
+
+def test_incident_row_records_recovery_cleanup(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class Driver(FakeDriver):
+        last_cleanup = RecoveryCleanup(deleted_counts={"Job": 1}, restored=["Deployment/mongodb-geo"])
+
+    record = run_incidents(FakeAgent(clock), Driver(clock), _config(tmp_path, 1), monotonic=clock.monotonic)[0]
+    saved = load_records(tmp_path / "incidents.jsonl")[0]
+
+    assert record.cleanup_deleted_counts == saved.cleanup_deleted_counts == {"Job": 1}
+    assert record.cleanup_restored == saved.cleanup_restored == ["Deployment/mongodb-geo"]
 
 
 def test_the_run_record_says_when_sdo_did_not_mitigate_the_incident(tmp_path: Path) -> None:

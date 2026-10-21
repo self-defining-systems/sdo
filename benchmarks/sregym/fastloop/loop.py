@@ -321,6 +321,7 @@ def _run_one(
         errors.append(outcome.error)
     fallback = windows[0] if windows else InjectionWindow(started_at=now(), finished_at=now())
     window = outcome.injection if outcome is not None else fallback
+    cleanup = getattr(driver, "last_cleanup", None) if windows else None
     record = IncidentRecord(
         run_id=config.run_id,
         index=index,
@@ -335,6 +336,9 @@ def _run_one(
         oracle_finished_at=oracle_finished_at,
         recovery_finished_at=recovery_finished_at,
         fault_recovery_seconds=recovery_seconds,
+        cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
+        cleanup_restored=cleanup.restored if cleanup is not None else [],
+        cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
         incident_wall_seconds=monotonic() - started,
         error="; ".join(errors) or None,
         **(_outcome_fields(outcome) if outcome is not None else {}),
