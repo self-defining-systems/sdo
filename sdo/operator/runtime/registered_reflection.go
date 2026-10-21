@@ -216,10 +216,6 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			return ReflectionDecision{}, errors.New("SDK gap requires fault class, primitive, reason, and scratch script")
 		}
 	}
-	if response.GetArtifactProposal() != nil {
-		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
-	}
-
 	// The direct-edit capability never accepts the retired content payload.
 	if response.GetArtifactProposal() != nil {
 		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")

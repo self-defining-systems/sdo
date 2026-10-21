@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -43,9 +44,12 @@ func (s adoptionSource) AcceptedManifest(context.Context, string, sdk.ObjectRef)
 }
 
 type adoptionServiceAPI struct {
-	service corev1.Service
-	patches int
-	dryRuns int
+	service     corev1.Service
+	patches     int
+	dryRuns     int
+	afterDryRun func(*corev1.Service)
+	conflicts   int
+	lastApply   *corev1.Service
 }
 
 func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -63,14 +67,29 @@ func (a *adoptionServiceAPI) ServeHTTP(writer http.ResponseWriter, request *http
 		writer.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	if request.URL.Query().Get("dryRun") == "" {
+		a.lastApply = applied.DeepCopy()
+		if (applied.UID != "" && applied.UID != a.service.UID) || (applied.ResourceVersion != "" && applied.ResourceVersion != a.service.ResourceVersion) {
+			a.conflicts++
+			writer.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(writer).Encode(&metav1.Status{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Status"}, Status: "Failure", Reason: metav1.StatusReasonConflict, Code: http.StatusConflict, Message: "object changed since check"})
+			return
+		}
+	}
 	result := *a.service.DeepCopy()
 	result.Spec.Ports[0].TargetPort = applied.Spec.Ports[0].TargetPort
 	if request.URL.Query().Get("dryRun") == "" {
 		a.patches++
+		result.ResourceVersion = fmt.Sprint(a.patches + 1)
 		result.ManagedFields = append(result.ManagedFields, metav1.ManagedFieldsEntry{Manager: "sdo-deployer", Operation: metav1.ManagedFieldsOperationApply, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:port":{},"f:protocol":{},"f:targetPort":{}}}}}`)}})
 		a.service = result
 	} else {
 		a.dryRuns++
+		if a.afterDryRun != nil {
+			mutate := a.afterDryRun
+			a.afterDryRun = nil
+			mutate(&a.service)
+		}
 	}
 	_ = json.NewEncoder(writer).Encode(&result)
 }
@@ -246,6 +265,7 @@ func (f *fixedObjectChanges) TakeObjectChanges() []ObjectChange {
 func adoptionController(t *testing.T, target int32, detectors ...sdk.Detector) (*Controller, *adoptionServiceAPI, adoptionSource, func()) {
 	t.Helper()
 	service := *driftService(target)
+	service.UID, service.ResourceVersion = "original", "1"
 	service.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}
 	service.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "kubectl-client-side-apply", Operation: metav1.ManagedFieldsOperationUpdate, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:targetPort":{}}}}}`)}}}
 	api := &adoptionServiceAPI{service: service}
@@ -272,4 +292,52 @@ type adoptionSnapshot struct{ api *adoptionServiceAPI }
 
 func (s adoptionSnapshot) Snapshot(context.Context) (sdk.DetectionContext, error) {
 	return sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{s.api.service}}, nil
+}
+
+func TestControllerAdoptionDoesNotOverwriteConcurrentMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		recreate, drift bool
+	}{
+		{name: "declared drift", drift: true},
+		{name: "delete and recreate", recreate: true, drift: true},
+		{name: "unrelated update"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller, api, source, closeServer := adoptionController(t, 8080)
+			defer closeServer()
+			// This view uses the controller's earlier snapshot. A conflict must
+			// classify the freshly read object even if the informer is stale.
+			controller.drift.View = func(snapshot sdk.DetectionContext) program.ReadView {
+				return LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source.object}, SourceCommit: "accepted"}
+			}
+			api.afterDryRun = func(service *corev1.Service) {
+				service.ResourceVersion = "2"
+				if tc.recreate {
+					service.UID = "replacement"
+					service.ResourceVersion = "1"
+				}
+				if tc.drift {
+					service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+				}
+			}
+			if err := controller.StepEvents(context.Background(), time.Unix(10, 0).UTC(), nil); err != nil {
+				t.Fatal(err)
+			}
+			state := controller.ExportState()
+			if api.patches != 0 || api.conflicts != 1 || api.lastApply == nil || api.lastApply.UID != "original" || api.lastApply.ResourceVersion != "1" {
+				t.Fatalf("adoption lacked checked preconditions or retried a conflict: patches=%d conflicts=%d apply=%+v", api.patches, api.conflicts, api.lastApply)
+			}
+			if state.OwnershipAdoption.AdoptedObjects != 0 || state.OwnershipAdoption.LastError == "" {
+				t.Fatalf("conflict reported as adoption: %+v", state.OwnershipAdoption)
+			}
+			if tc.drift {
+				if api.service.Spec.Ports[0].TargetPort.IntVal != 9999 || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != sdk.DriftUnexplained || len(state.PendingBatch.Findings) != 1 {
+					t.Fatalf("concurrent drift overwritten or not classified: service=%+v state=%+v", api.service, state)
+				}
+			} else if len(state.DriftEvents) != 0 {
+				t.Fatalf("unrelated update classified as drift: %+v", state.DriftEvents)
+			}
+		})
+	}
 }
