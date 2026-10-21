@@ -88,3 +88,28 @@ func TestSessionToolServerRejectsWorldWritableDirectory(t *testing.T) {
 		t.Fatal("world-writable response directory accepted")
 	}
 }
+
+func TestSessionToolServerIgnoresAtomicRequestTemporaryFiles(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "tools")
+	called := false
+	server := SessionToolServer{Directory: directory, Handle: func(context.Context, ToolRequest) ToolResponse {
+		called = true
+		return ToolResponse{Summary: "handled"}
+	}}
+	if err := server.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	temporary := filepath.Join(directory, "requests", ".call.json")
+	if err := os.WriteFile(temporary, []byte(`{"command":"status"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.process(context.Background(), filepath.Join(directory, "requests"), filepath.Join(directory, "responses")); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("atomic request temporary file was executed before rename")
+	}
+	if _, err := os.Stat(filepath.Join(directory, "responses", ".call.json")); !os.IsNotExist(err) {
+		t.Fatalf("temporary request produced a response: %v", err)
+	}
+}

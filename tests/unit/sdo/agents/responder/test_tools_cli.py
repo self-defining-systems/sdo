@@ -15,7 +15,7 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
 
     def controller():
         for _ in range(100):
-            files = list(requests.glob("*.json"))
+            files = [path for path in requests.glob("*.json") if not path.name.startswith(".")]
             if files:
                 request = json.loads(files[0].read_text())
                 seen.append(request)
