@@ -60,8 +60,8 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	}
 	installer := install.Installer{Client: client}
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
-		// Static shell text selects only non-secret runtime evidence paths.
-		script := `cd /workspace/.sdo-runtime 2>/dev/null || exit 0; set --; for path in usage telemetry sessions codex/sessions claude/projects; do [ -e "$path" ] && set -- "$@" "$path"; done; [ "$#" -eq 0 ] && exit 0; exec tar -cf - "$@"`
+		// Archive only evidence files; extraction applies the same allowlist.
+		script := `cd /workspace/.sdo-runtime 2>/dev/null || exit 0; find usage telemetry sessions codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do base=${path##*/}; lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]'); case "$lower" in *auth*|*credential*|*token*) [ "$lower" = token_usage.json ] || continue;; esac; case "$path" in usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
 		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "sh", "-c", script)
 		if cfg.Kubeconfig != "" {
 			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
@@ -95,15 +95,36 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 }
 
 func allowedRuntimeArtifact(name string) bool {
-	if name == "usage" || name == "telemetry" || name == "sessions" || name == "codex" || name == "claude" {
-		return true
+	parts := strings.Split(name, "/")
+	base := strings.ToLower(parts[len(parts)-1])
+	if base != "token_usage.json" && (strings.Contains(base, "auth") || strings.Contains(base, "credential") || strings.Contains(base, "token")) {
+		return false
 	}
-	for _, prefix := range []string{"usage/", "telemetry/", "sessions/", "codex/sessions/", "claude/projects/"} {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
+	if len(parts) == 2 && (parts[0] == "usage" || parts[0] == "telemetry") {
+		return strings.HasSuffix(base, ".jsonl") || parts[0] == "telemetry" && strings.HasSuffix(base, ".jsonl.1")
 	}
-	return name == "codex/sessions" || name == "claude/projects"
+	if len(parts) >= 3 && parts[0] == "codex" && parts[1] == "sessions" {
+		return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
+	}
+	if len(parts) >= 3 && parts[0] == "claude" && parts[1] == "projects" {
+		return strings.HasSuffix(base, ".jsonl")
+	}
+	if len(parts) < 3 || parts[0] != "sessions" {
+		return false
+	}
+	if len(parts) == 3 {
+		return strings.HasSuffix(base, ".jsonl") || base == "token_usage.json"
+	}
+	if len(parts) == 4 && parts[2] == "corpus" {
+		return strings.HasSuffix(base, ".json")
+	}
+	if len(parts) == 5 && parts[2] == "model_io" {
+		return strings.HasSuffix(base, ".json")
+	}
+	if len(parts) >= 5 && parts[2] == "codex" && parts[3] == "sessions" {
+		return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
+	}
+	return len(parts) >= 5 && parts[2] == "claude" && parts[3] == "projects" && strings.HasSuffix(base, ".jsonl")
 }
 
 func extractRuntimeArtifacts(source io.Reader, destination string) error {
@@ -119,13 +140,16 @@ func extractRuntimeArtifacts(source io.Reader, destination string) error {
 		}
 		name := strings.TrimSuffix(header.Name, "/")
 		clean := filepath.Clean(name)
-		if filepath.IsAbs(name) || clean != name || strings.Contains(name, "\\") || !allowedRuntimeArtifact(name) {
+		if filepath.IsAbs(name) || clean != name || strings.Contains(name, "\\") || strings.HasPrefix(name, "../") || strings.Contains(name, "/../") {
 			return fmt.Errorf("runtime artifact archive contains unsafe path %q", header.Name)
 		}
-		path := filepath.Join(destination, name)
-		if (name == "usage" || name == "telemetry" || name == "sessions" || name == "codex" || name == "claude" || name == "codex/sessions" || name == "claude/projects") && header.Typeflag != tar.TypeDir {
-			return fmt.Errorf("runtime artifact archive root is not a directory: %q", name)
+		if !allowedRuntimeArtifact(name) {
+			if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA && header.Typeflag != tar.TypeDir {
+				return fmt.Errorf("runtime artifact archive contains unsupported entry %q", name)
+			}
+			continue
 		}
+		path := filepath.Join(destination, name)
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(path, 0700); err != nil {
