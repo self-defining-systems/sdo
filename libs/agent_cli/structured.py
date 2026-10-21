@@ -9,8 +9,9 @@ Access levels:
 
 - ``read-only``: the agent may read the repository but not write it.
 - ``workspace-write``: it may write the repository only; SDO's detector
-  gateway (``sdo detector check``) is the one sanctioned way to compile and
-  runs outside the sandbox, so direct ``go`` is refused where the provider can
+  gateway (``sdo detector check``) and complete memory check
+  (``sdo-operator memory check``) provide compilation and
+  run outside the sandbox, so direct ``go`` is refused where the provider can
   express that. Codex reads that exemption only from ``$CODEX_HOME/rules``, so
   each such Codex turn runs in a private Codex home that is deleted afterwards
   and cannot be resumed.
@@ -66,6 +67,9 @@ ACCESS_MODES: tuple[AccessMode, ...] = ("read-only", "workspace-write", "danger-
 #: The command that stays outside the shell sandbox in workspace-write: it
 #: starts the no-network validator container and needs the container runtime.
 DETECTOR_GATEWAY_COMMAND = "sdo detector check"
+
+#: The complete operational-memory acceptance command, shared with the broker.
+MEMORY_CHECK_COMMAND = "sdo-operator memory check"
 
 #: Overrides the directory per-turn Codex homes are created in. The default is
 #: ``$XDG_CACHE_HOME/sdo/codex-homes`` (``~/.cache/sdo/codex-homes``). It must
@@ -453,7 +457,9 @@ def _provider_for(
     if provider == "codex":
         if access != "workspace-write":
             return CodexProvider(sandbox=CodexSandboxConfig(mode=access)), (), {}
-        sandbox = CodexSandboxConfig(mode="workspace-write", excluded_commands=[DETECTOR_GATEWAY_COMMAND])
+        sandbox = CodexSandboxConfig(
+            mode="workspace-write", excluded_commands=[DETECTOR_GATEWAY_COMMAND, MEMORY_CHECK_COMMAND]
+        )
         home = turn_scope.enter_context(_codex_turn_home(sandbox))
         return CodexProvider(sandbox=sandbox), (), {"CODEX_HOME": str(home)}
     if access == "danger-full-access":
@@ -465,7 +471,7 @@ def _provider_for(
     claude = ClaudeProvider(
         sandbox=SandboxConfig(
             confine_native_reads_to=[root],
-            excluded_commands=[DETECTOR_GATEWAY_COMMAND],
+            excluded_commands=[DETECTOR_GATEWAY_COMMAND, MEMORY_CHECK_COMMAND],
         ),
         hooks=[
             ClaudeHook(

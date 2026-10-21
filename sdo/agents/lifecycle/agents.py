@@ -98,18 +98,6 @@ class DeployerAssessment(DeployerHandoff):
     resources: list[TopologyResourceDTO]
 
 
-class AuthoredTrafficFile(BaseModel):
-    """One judge-authored synthetic-traffic artifact in the logical traffic catalog.
-
-    ``path`` identifies a generator or workload within that catalog.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    path: str = Field(min_length=1)
-    content: str = Field(min_length=1)
-
-
 class HealthJudgeDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -118,25 +106,19 @@ class HealthJudgeDraft(BaseModel):
     source_commit: str = Field(min_length=1)
     covered_resources: list[TopologyResourceDTO]
     failure_patterns: list[str] = Field(min_length=1)
-    detector_source: str = Field(min_length=40)
-    detector_test_source: str = Field(min_length=40)
-    # Required in the structured-output schema (strict turns require every
-    # property); an application with no HTTP entrypoint returns an empty list.
-    traffic_files: list[AuthoredTrafficFile]
+    detector_ids: list[str] = Field(min_length=1)
 
 
 class HealthJudgeArtifact(HealthJudgeDraft):
     session_id: str = Field(min_length=1)
-    # Provenance recorded before synthetic traffic existed has none.
-    traffic_files: list[AuthoredTrafficFile] = Field(default_factory=list)
 
 
 _WATCH_LIST = ", ".join(f"{api_version} {kind}" for api_version, kind in HEALTH_OBJECTIVE_WATCHES)
 _COVERED_KINDS = ", ".join(sorted(COVERED_RESOURCE_KINDS))
 
-#: Health-judge instructions for typed synthetic traffic proposals.
+#: Health-judge instructions for direct synthetic traffic edits.
 TRAFFIC_AUTHORING = """Synthetic traffic (health-judge owned). For an application that serves HTTP, also author
-end-to-end synthetic traffic as logical generator and workload artifacts. Ground it in the application source and
+end-to-end synthetic traffic in the checkout under `.sdo/diagnostics/traffic/`. Ground it in the application source and
 the accepted architecture summary: open the user-facing entrypoint's route handlers (its HTTP mux or
 router) and derive paths it really serves, their methods, and parameter values its handlers accept, including the
 records the application seeds at startup. Cover the main user journeys, read and write paths both when the
@@ -144,7 +126,7 @@ application has write paths. An isolated prober runs these journeys continuously
 traffic health detector opens an incident when a scenario violates its SLO, and a responder's repair is accepted only
 when the same scenarios recover. Every scenario must therefore succeed against the healthy application.
 
-1. Generators: Go package `generators` in a logical traffic generator artifact exporting
+1. Generators: Go package `generators` in `.sdo/diagnostics/traffic/generators/` exporting
    `func Scenarios() traffic.Catalog` (import "sdo.dev/operator/sdk/traffic"). Each traffic.Scenario has ID,
    Description, Target {Service, Port} (a source-backed Service and a port it exposes), DependsOn (the Services on
    the request path per the architecture summary, for localization), SideEffect (traffic.SideEffectRead,
@@ -158,7 +140,7 @@ when the same scenarios recover. Every scenario must therefore succeed against t
    segments. Use .Contains(...) whenever the application reports failures inside a successful status. Generators only
    build requests and check responses: never import net, os, or the clock, and draw randomness only from the rng the
    engine passes. Never read or modify real users' data beyond the fixtures the application's own source seeds.
-2. Workloads: a logical workload named workloads/<name>.yaml with apiVersion sdo.dev/v1alpha1, kind
+2. Workloads: a file `.sdo/diagnostics/traffic/workloads/<name>.yaml` with apiVersion sdo.dev/v1alpha1, kind
    TrafficWorkload, name equal to the file name, purpose, ratePerSecond, and scenarios [{id, weight}]. Write
    `health` (purpose health-probe, ratePerSecond at most 4, read scenarios only unless a write is idempotent) and
    `verify` (purpose verify-burst, ratePerSecond about 12, duration 3s, the same scenarios). Optional: timeout (2s),
@@ -340,8 +322,9 @@ Correction feedback from the prior fresh attempt:
         )
         feedback = correction_feedback or "No validator feedback is available for the first round."
         prompt = f"""You are the independent SDO health judge for application {application!r}, authoring round
-{round_index} of a bounded three-round adversarial refinement. This is a new read-only Codex session with no
-conversation state. Continuity comes only from the structured deployer handoff and prior detector artifact below.
+{round_index} of a bounded three-round adversarial refinement. This is a fresh session with write access to
+the proposal checkout and no conversation state. Continuity comes only from the structured deployer handoff
+and prior detector metadata below.
 
 Human-owned health objective:
 {health_objective}
@@ -387,11 +370,25 @@ batching Severity sdk.SeverityCritical and Debounce 500*time.Millisecond; playbo
 "lifecycle-bootstrap". Do not substitute incident/responder ownership or another ID.
 
 Never read environment variables, benchmark results, SREGym data, verdict files, hidden fault labels, or any external
-oracle. Never call an LLM at detector runtime. Return source text in the structured fields; do not edit repository
-files. Set round exactly to {round_index}; set source_commit to the deployer's commit; cover only resources present
+oracle. Never call an LLM at detector runtime. Edit the final health detector manifest, detector.go and
+detector_test.go directly under
+`.sdo/diagnostics/detectors/health/health-objective/` in this checkout. Author the complete
+`.sdo/playbooks/health-objective/README.md` with front matter: schema_version: 1, owner: responder,
+fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance using
+logical artifact IDs and parameter placeholders such as <AFFECTED_RESOURCE>. Update the playbook index
+`.sdo/playbooks/README.md` to list the playbooks. Preserve existing incident detectors and all other playbooks,
+human goal, architecture, outcomes, schema-version and diagnostics go.mod. Health manifests use apiVersion:
+sdo.dev/v1alpha1, kind: DetectorManifest, sdkVersion: v0.1, constructor: New, class: health,
+owner: health_judge, and the Spec values above (possiblePlaybooks: [health-objective]).
+Never put physical operational-memory paths in authored Go or narrative; use logical IDs there.
+Set round exactly to {round_index}; set source_commit to the deployer's commit; cover only resources present
 in the deployer handoff; and copy the authoritative objective SHA-256 above exactly.
-The last structured response is the only response the controller accepts. It must repeat both complete Go files;
-never return a placeholder such as "pending", "superseded", or a reference to an earlier commentary payload.
+Return metadata and logical detector_ids only; the checkout carries all artifact contents.
+Run `sdo-operator memory ls` to inspect existing memory and `sdo-operator memory check` after editing.
+Fix every named diagnostic and rerun until it exits zero within your turn budget. The environment is already
+set to SDO_ACTOR=health_judge and SDO_PHASE=initial with the accepted SDO_BASE_COMMIT; never override it.
+The Go broker repeats the same validation independently. Its explicit bootstrap step installs the generic
+service-endpoints and traffic-* detectors from the authored workloads; do not author those packages.
 For covered_resources, copy every resource required by the objective exactly from the deployer handoff, preserving
 each kind, name, source-manifest namespace, source path, and complete dependencies list; never invent an object that
 is absent from the handoff, and do not substitute the configured runtime namespace into this provenance field. For a
@@ -410,12 +407,11 @@ literal string "default" in detector source. Use DetectionContext.Namespace() wh
 checking for a required resource that is absent, and use each observed object's Namespace for resources that exist.
 
 {TRAFFIC_AUTHORING}
-Return each file in traffic_files as {{path, content}} with a logical artifact name (for example
-generators/generators.go or workloads/health.yaml); the controller writes the files, compiles and checks them in the
-isolated validator, and installs the detector that judges each health-probe or link-probe workload. Repeat every file
-in full on later rounds.
+Write traffic generator Go and workload YAML files directly in their final directories.
+The shared memory check installs and checks the generic detector for each health-probe or link-probe workload.
+It compiles and tests the complete candidate, including the health detector and traffic generators.
 """
-        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft)
+        draft, session_id = self._execute(repository, prompt, HealthJudgeDraft, sandbox="workspace-write")
         return HealthJudgeArtifact(**draft.model_dump(), session_id=session_id)
 
     def _execute(

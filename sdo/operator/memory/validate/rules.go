@@ -66,6 +66,9 @@ const (
 	RuleArchitectureAlone     = "ownership.architecture-alone"
 	RuleUpkeepMigration       = "ownership.upkeep-migration"
 
+	// Explicit Go health-bootstrap preparation.
+	RuleGenericHealth = "bootstrap.generic-health"
+
 	// Compile.
 	RuleDetectorCompile = "detector.compile"
 	RuleDetectorVet     = "detector.vet"

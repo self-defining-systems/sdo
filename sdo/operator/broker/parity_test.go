@@ -468,7 +468,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			}
 			got := rules(report.Diagnostics, nil).cli
 			want := append([]string(nil), test.want...)
-			if test.phase == validate.InitialPhase && test.actor != validate.Upkeep && test.name != "initial judge health only" && test.name != "initial unverified source" {
+			if test.phase == validate.InitialPhase && test.actor != validate.Upkeep && test.actor != validate.HealthJudge && test.name != "initial unverified source" {
 				want = append(want, validate.RuleBootstrapClosed)
 			}
 			if test.name == "architecture alone" {

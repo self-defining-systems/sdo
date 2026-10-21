@@ -175,3 +175,34 @@ func TestKubernetesExecutorRejectsCheckoutOutsideMount(t *testing.T) {
 		t.Fatal("accepted checkout outside proposal mount")
 	}
 }
+
+func TestJudgeJobPinsMemoryCheckOwnership(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", RepositoryPVC: "repo", Environment: map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "forged"}}
+	request, err := anypb.New(&contracts.HealthJudgeRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &contracts.AgentTask{Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/workspace/judge", BaseCommit: "accepted-architecture"}}
+	if err := executor.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "judge:1"}, "judge", "request", "result", "judge"); err != nil {
+		t.Fatal(err)
+	}
+	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), "judge", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"SDO_ACTOR": "health_judge", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "accepted-architecture"} {
+		count := 0
+		for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+			if env.Name == name {
+				count++
+				if env.Value != want {
+					t.Fatalf("%s = %s, want %s", name, env.Value, want)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%s has %d values", name, count)
+		}
+	}
+}

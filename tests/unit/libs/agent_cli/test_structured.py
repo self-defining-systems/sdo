@@ -23,6 +23,7 @@ from libs.agent_cli.structured import (
     ACCESS_MODES,
     AGENT_PROVIDERS,
     DETECTOR_GATEWAY_COMMAND,
+    MEMORY_CHECK_COMMAND,
     TURN_USAGE_LOG_ENV,
     StructuredTurnError,
     StructuredTurnTimeout,
@@ -144,7 +145,7 @@ class TestCodexGatewayHome:
         (seen,), turn = self._run_capturing(tmp_path, reply("codex", {"answer": "ok"}, session_id="s-1"))
 
         assert json.loads(turn.output_json) == {"answer": "ok"}
-        assert seen["rules"] == [DETECTOR_GATEWAY_COMMAND.split()]
+        assert seen["rules"] == [DETECTOR_GATEWAY_COMMAND.split(), MEMORY_CHECK_COMMAND.split()]
         assert seen["auth"] == codex_login.auth.read_text(encoding="utf-8")
         assert seen["auth_mode"] == 0o600
         assert seen["entries"] == ["auth.json", "rules"]
@@ -235,7 +236,7 @@ class TestCodexGatewayHome:
 
         assert json.loads(turn.output_json) == {"answer": "ok"}
         assert seen["entries"] == ["rules"]
-        assert seen["rules"] == [DETECTOR_GATEWAY_COMMAND.split()]
+        assert seen["rules"] == [DETECTOR_GATEWAY_COMMAND.split(), MEMORY_CHECK_COMMAND.split()]
 
     @pytest.mark.parametrize("access", ["read-only", "danger-full-access"])
     def test_other_levels_keep_the_launching_codex_home(
@@ -278,7 +279,7 @@ class TestClaudeAccess:
         settings = _settings(argv)
         assert settings is not None
         assert "filesystem" not in settings["sandbox"]
-        assert settings["sandbox"]["excludedCommands"] == [DETECTOR_GATEWAY_COMMAND]
+        assert settings["sandbox"]["excludedCommands"] == [DETECTOR_GATEWAY_COMMAND, MEMORY_CHECK_COMMAND]
         assert "--disallowedTools" not in argv
         matchers = [entry.get("matcher") for entry in settings["hooks"]["PreToolUse"]]
         assert "Bash" in matchers
@@ -291,6 +292,7 @@ class TestClaudeAccess:
             ("cd .sdo/diagnostics && go build ./...", True),
             ("GOFLAGS=-mod=mod go vet ./...", True),
             (DETECTOR_GATEWAY_COMMAND, False),
+            (MEMORY_CHECK_COMMAND, False),
             ("gofmt -l .", False),
             ("cat go.mod", False),
         ],

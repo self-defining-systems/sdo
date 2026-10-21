@@ -1,33 +1,72 @@
 package memory
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	"gopkg.in/yaml.v3"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
 )
 
-// The health judge authors the objective predicate. These generic registrations
-// are operator policy, installed at the physical memory edge alongside it.
-func installGenericHealth(root string, detectors map[string]layout.Detector, workloads []*contracts.TrafficWorkload) error {
-	if _, ok := detectors["health-objective"]; !ok {
+// PrepareHealth is the explicit Go bootstrap step shared by memory check and
+// broker acceptance. It installs policy detectors from final workload files;
+// it never translates or repairs the judge's authored artifacts.
+func PrepareHealth(root string) error {
+	if _, err := os.Stat(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective"))); os.IsNotExist(err) {
 		return fmt.Errorf("health judge omitted health-objective detector")
+	} else if err != nil {
+		return err
 	}
 	endpoint := genericManifest("service-endpoints", "15s", []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}})
 	if err := writeGenericDetector(root, endpoint, endpointSource()); err != nil {
 		return err
 	}
-	detectors[endpoint.ID] = layout.Detector{Class: layout.ClassHealth, Manifest: endpoint}
-	for _, workload := range workloads {
+	directory := filepath.Join(root, layout.TrafficWorkloadsDir)
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			return err
+		}
+		var fields map[string]any
+		if err := yaml.Unmarshal(data, &fields); err != nil {
+			return err
+		}
+		data, err = json.Marshal(fields)
+		if err != nil {
+			return err
+		}
+		workload := &contracts.TrafficWorkload{}
+		if err := protojson.Unmarshal(data, workload); err != nil {
+			return fmt.Errorf("traffic workload %s: %w", entry.Name(), err)
+		}
+		if workload.GetName() != strings.TrimSuffix(entry.Name(), ".yaml") || !layout.ValidDetectorID(workload.GetName()) {
+			return fmt.Errorf("traffic workload %s must use its logical filename ID", entry.Name())
+		}
 		if workload.GetPurpose() != "health-probe" && workload.GetPurpose() != "link-probe" {
 			continue
 		}
 		id := "traffic-" + workload.GetName()
-		entry := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
-		if err := writeGenericDetector(root, entry, trafficSource(id, workload.GetName(), workload.GetPurpose() == "link-probe")); err != nil {
+		manifest := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
+		if err := writeGenericDetector(root, manifest, trafficSource(id, workload.GetName(), workload.GetPurpose() == "link-probe")); err != nil {
 			return err
 		}
-		detectors[id] = layout.Detector{Class: layout.ClassHealth, Manifest: entry}
 	}
 	return nil
 }
@@ -43,10 +82,35 @@ func genericManifest(id, interval string, watches []layout.Watch) layout.Detecto
 
 func writeGenericDetector(root string, manifest layout.DetectorManifest, source string) error {
 	test := fmt.Sprintf("package %s\n\nimport \"testing\"\n\nfunc TestRegistration(t *testing.T) { if New().Spec().ID != %q { t.Fatal(\"unexpected detector ID\") } }\n", genericPackage(manifest.ID), manifest.ID)
-	return layout.WriteDetector(root, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: []layout.File{
-		{Name: layout.DetectorFileName, Content: []byte(source)},
-		{Name: layout.DetectorTestFileName, Content: []byte(test)},
-	}})
+	files := []layout.File{{Name: layout.DetectorFileName, Content: []byte(source)}, {Name: layout.DetectorTestFileName, Content: []byte(test)}}
+	encoded, err := layout.MarshalDetectorManifest(manifest)
+	if err != nil {
+		return err
+	}
+	files = append(files, layout.File{Name: layout.ManifestFileName, Content: encoded})
+	// An existing policy package must match exactly. Never hide a malformed
+	// authored file by overwriting it before validation.
+	base := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, manifest.ID))
+	entries, err := os.ReadDir(base)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != layout.ManifestFileName && entry.Name() != layout.DetectorFileName && entry.Name() != layout.DetectorTestFileName {
+			return fmt.Errorf("generic health package %s contains unexpected file %s", manifest.ID, entry.Name())
+		}
+	}
+	for _, file := range files {
+		path := filepath.Join(base, file.Name)
+		data, err := os.ReadFile(path)
+		if err == nil && !bytes.Equal(data, file.Content) {
+			return fmt.Errorf("generic health file %s differs from Go policy; remove the edit", layout.DetectorDir(layout.ClassHealth, manifest.ID)+"/"+file.Name)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return layout.WriteDetector(root, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: files[:2]})
 }
 
 func genericPackage(id string) string {

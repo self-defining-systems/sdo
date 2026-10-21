@@ -6,14 +6,10 @@ import hashlib
 import os
 import re
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-import yaml
-from google.protobuf import json_format
-
 from sdo.agents.lifecycle import (
-    HEALTH_OBJECTIVE_WATCHES,
     ClaudeLifecycleBackend,
     CodexLifecycleBackend,
     DeployerAssessment,
@@ -27,13 +23,6 @@ from sdo.contracts import (
     AgentTask,
     HealthJudgeRequest,
     HealthJudgeResult,
-    MemoryWatch,
-    OperationalArtifactProposal,
-    ProposedDetector,
-    ProposedGoSource,
-    ProposedPlaybook,
-    ProposedTrafficGenerator,
-    TrafficWorkload,
     parse_json,
     to_canonical_json,
     validate,
@@ -47,14 +36,6 @@ DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 
 class ResultPublisher(Protocol):
     def publish_payload(self, name: str, key: str, payload: str) -> None: ...
-
-
-class _TrafficFile(Protocol):
-    @property
-    def path(self) -> str: ...
-
-    @property
-    def content(self) -> str: ...
 
 
 class _JudgeDraft(Protocol):
@@ -71,13 +52,7 @@ class _JudgeDraft(Protocol):
     def failure_patterns(self) -> Sequence[str]: ...
 
     @property
-    def detector_source(self) -> str: ...
-
-    @property
-    def detector_test_source(self) -> str: ...
-
-    @property
-    def traffic_files(self) -> Sequence[_TrafficFile]: ...
+    def detector_ids(self) -> Sequence[str]: ...
 
 
 def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
@@ -121,14 +96,12 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
     _validate_judge_draft(
         artifact, health_objective=request.health_objective, source_commit=request.accepted_source_commit
     )
-    proposal = _judge_proposal(artifact)
     return HealthJudgeResult(
         authored=True,
         summary="health diagnostics authored",
         agent_session_id=artifact.session_id,
         objective_digest=artifact.objective_digest,
-        detector_ids=["health-objective"],
-        artifact_proposal=proposal,
+        detector_ids=list(artifact.detector_ids),
     )
 
 
@@ -154,68 +127,12 @@ def _validate_judge_draft(artifact: _JudgeDraft, *, health_objective: str, sourc
         raise ValueError("health judge must return the requested authoring round")
     if not artifact.failure_patterns:
         raise ValueError("health judge must enumerate failure patterns")
-    if "package objective" not in artifact.detector_source or "func New() sdk.Detector" not in artifact.detector_source:
-        raise ValueError("health judge must return complete objective detector source")
-    if "package objective" not in artifact.detector_test_source or "func Test" not in artifact.detector_test_source:
-        raise ValueError("health judge must return deterministic objective detector tests")
-
-
-def _judge_proposal(artifact: _JudgeDraft) -> OperationalArtifactProposal:
-    """Convert an agent-authored draft to logical artifacts for the Go mapper."""
-
-    proposal = OperationalArtifactProposal()
-    proposal.detectors.append(
-        ProposedDetector(
-            id="health-objective",
-            detector_class="health",
-            owner="health_judge",
-            constructor="New",
-            watches=[MemoryWatch(api_version=api, kind=kind) for api, kind in HEALTH_OBJECTIVE_WATCHES],
-            interval="30s",
-            firing=2,
-            clearing=2,
-            severity="critical",
-            debounce="500ms",
-            possible_playbook_ids=["health-objective"],
-            originating_commit="lifecycle-bootstrap",
-            sources=[
-                ProposedGoSource(name="detector.go", content=artifact.detector_source),
-                ProposedGoSource(name="detector_test.go", content=artifact.detector_test_source),
-            ],
-        )
-    )
-    proposal.playbooks.append(
-        ProposedPlaybook(
-            id="health-objective",
-            owner="responder",
-            fault_class="health-objective-failure",
-            originating_incident="lifecycle-bootstrap",
-            markdown=(
-                "# Health objective failure\n\nInspect `<AFFECTED_RESOURCE>`, repair the source of truth, "
-                "redeploy, and verify the human-owned objective.\n"
-            ),
-        )
-    )
-    generators: dict[str, list[ProposedGoSource]] = {}
-    for file in artifact.traffic_files:
-        relative = PurePosixPath(file.path)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError("traffic artifact has invalid logical name")
-        if len(relative.parts) == 2 and relative.parts[0] == "generators" and relative.suffix == ".go":
-            generators.setdefault("application", []).append(ProposedGoSource(name=relative.name, content=file.content))
-        elif len(relative.parts) == 2 and relative.parts[0] == "workloads" and relative.suffix == ".yaml":
-            document = yaml.safe_load(file.content)
-            if not isinstance(document, dict):
-                raise ValueError("traffic workload must be a YAML object")
-            workload = json_format.ParseDict(document, TrafficWorkload())
-            if workload.name != relative.stem:
-                raise ValueError("traffic workload logical ID differs from authored name")
-            proposal.traffic_workloads.append(workload)
-        else:
-            raise ValueError("traffic artifact has unsupported kind")
-    for generator_id, sources in generators.items():
-        proposal.traffic_generators.append(ProposedTrafficGenerator(id=generator_id, sources=sources))
-    return proposal
+    if not artifact.detector_ids or any(
+        not re.fullmatch(r"[a-z0-9][a-z0-9_.-]*", item) for item in artifact.detector_ids
+    ):
+        raise ValueError("health judge must return logical detector IDs")
+    if len(set(artifact.detector_ids)) != len(artifact.detector_ids):
+        raise ValueError("health judge detector IDs must be unique")
 
 
 def run_judge_task(
@@ -242,8 +159,11 @@ def run_judge_task(
     if any(not (row.kind and row.name and row.namespace and row.source) for row in request.source_resources):
         raise ValueError("health judge received an incomplete source inventory resource")
     typed = execute(request, checkout)
-    if not typed.HasField("artifact_proposal") or not typed.artifact_proposal.detectors:
-        raise ValueError("health judge must return typed diagnostic artifacts")
+    if typed.HasField("artifact_proposal"):
+        raise ValueError("direct-edit health judge rejects deprecated artifact_proposal")
+    validate(typed)
+    if typed.authored and not typed.detector_ids:
+        raise ValueError("health judge must return logical detector IDs")
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
         task_id=task.task_id,

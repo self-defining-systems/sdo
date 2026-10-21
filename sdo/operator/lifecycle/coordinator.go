@@ -42,7 +42,6 @@ type ArtifactWriter interface {
 	WriteSchema(checkout string) error
 	WriteArchitecture(checkout, application, acceptedSourceCommit, fingerprint, summary string) error
 	ReadArchitecture(checkout string) (string, error)
-	WriteArtifacts(checkout string, proposal *contracts.OperationalArtifactProposal, role memory.ArtifactRole) error
 }
 
 type WorkerExecutor interface {
@@ -493,13 +492,9 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail("health judge did not author detectors: " + response.GetSummary())
 	}
-	if response.GetArtifactProposal() == nil {
+	if response.GetArtifactProposal() != nil {
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return fail("health judge omitted typed operational artifacts")
-	}
-	if err := c.Bootstrap.WriteArtifacts(proposal.Path, response.GetArtifactProposal(), memory.HealthJudgeArtifacts); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
-		return fail("invalid health judge artifacts: " + err.Error())
+		return fail("direct-edit health judge rejects deprecated artifact_proposal")
 	}
 	receipt, err := c.Broker.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
 	if err != nil {

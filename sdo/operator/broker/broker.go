@@ -300,6 +300,12 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return errors.New("staged source tree differs from verified deployment")
 			}
 		}
+		// The shared check may install generic health registrations. Publish
+		// every checked file, including those explicit Go bootstrap outputs.
+		paths, err = validate.ChangedPaths(ctx, stage, proposal.BaseCommit)
+		if err != nil {
+			return err
+		}
 		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths)
 		if err != nil {
 			return err

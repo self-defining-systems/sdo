@@ -113,7 +113,9 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnost
 	if len(paths) == 0 && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
 		add(RuleEmptyDiff, "proposal has no changed files", "return no_change instead of publishing")
 	}
-	if r.Phase == InitialPhase && r.Actor != Upkeep {
+	// Upkeep carries schema migrations; the independent health judge may
+	// refine health diagnostics after their first accepted registration.
+	if r.Phase == InitialPhase && r.Actor != Upkeep && r.Actor != HealthJudge {
 		base, err := exportBase(ctx, r.Root, r.Base)
 		if err != nil {
 			return nil, err

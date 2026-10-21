@@ -5,18 +5,18 @@ from types import SimpleNamespace
 import pytest
 
 from sdo.agents.health_judge import worker as judge_worker
-from sdo.agents.health_judge.worker import _judge_proposal, _validate_judge_draft, run_judge_task
+from sdo.agents.health_judge.worker import _validate_judge_draft, run_judge_task
+from sdo.agents.lifecycle.agents import CodexLifecycleBackend, HealthJudgeDraft
 from sdo.contracts.proto import (
     AgentTask,
     HealthJudgeRequest,
     HealthJudgeResult,
-    OperationalArtifactProposal,
     ProposalWorkspace,
-    ProposedDetector,
     SourceResource,
     parse_json,
     to_canonical_json,
 )
+from tests.structured_turns import ScriptedAgent, fake_codex_login, reply
 
 
 class Publisher:
@@ -44,7 +44,7 @@ def judge_task(tmp_path: Path, architecture: str = "# Architecture\nFacts.") -> 
         schema_version="sdo.dev/v1alpha1",
         task_id="initial-judge-1",
         agent_id="custom-judge",
-        task_type="health-judgment",
+        task_type="health-judgment-direct-v1",
         workspace=ProposalWorkspace(
             proposal_id="proposal-judge", checkout_path=str(tmp_path), base_commit="accepted-architecture"
         ),
@@ -55,7 +55,7 @@ def judge_task(tmp_path: Path, architecture: str = "# Architecture\nFacts.") -> 
     return path
 
 
-def test_judge_worker_preserves_typed_proposal_identity(tmp_path: Path) -> None:
+def test_judge_worker_preserves_direct_edit_proposal_identity(tmp_path: Path) -> None:
     publisher = Publisher()
 
     def execute(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
@@ -67,7 +67,6 @@ def test_judge_worker_preserves_typed_proposal_identity(tmp_path: Path) -> None:
             agent_session_id="judge-1",
             objective_digest="digest",
             detector_ids=["health-objective"],
-            artifact_proposal=OperationalArtifactProposal(detectors=[ProposedDetector(id="health-objective")]),
         )
 
     result = run_judge_task(judge_task(tmp_path), "result", publisher, execute=execute)
@@ -77,6 +76,17 @@ def test_judge_worker_preserves_typed_proposal_identity(tmp_path: Path) -> None:
     typed = HealthJudgeResult()
     assert wire.response.Unpack(typed)
     assert typed.detector_ids == ["health-objective"]
+    assert not typed.HasField("artifact_proposal")
+
+
+def test_judge_worker_rejects_retired_proposal_field(tmp_path: Path) -> None:
+    def execute(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
+        result = HealthJudgeResult(authored=True, detector_ids=["health-objective"])
+        result.artifact_proposal.SetInParent()
+        return result
+
+    with pytest.raises(ValueError, match="rejects deprecated"):
+        run_judge_task(judge_task(tmp_path), "result", Publisher(), execute=execute)
 
 
 def test_judge_worker_requires_typed_architecture_before_agent_execution(tmp_path: Path) -> None:
@@ -84,67 +94,10 @@ def test_judge_worker_requires_typed_architecture_before_agent_execution(tmp_pat
         run_judge_task(judge_task(tmp_path, ""), "result", Publisher())
 
 
-def test_judge_returns_logical_artifacts_without_writing_memory_paths(tmp_path: Path) -> None:
-    artifact = SimpleNamespace(
-        detector_source=(
-            "package objective\n"
-            'import ("time"; "sdo.dev/operator/sdk")\n'
-            "type detector struct{}\n"
-            "func (d detector) Spec() sdk.DetectorSpec { return sdk.DetectorSpec{} }\n"
-            "func New() sdk.Detector { return detector{} }\n"
-        ),
-        detector_test_source="package objective\nfunc TestObjective(t *testing.T) {}\n",
-        traffic_files=[],
-    )
-    proposal = _judge_proposal(artifact)
-    assert not (tmp_path / ".sdo").exists()
-    assert proposal.detectors[0].id == "health-objective"
-    assert proposal.detectors[0].possible_playbook_ids == ["health-objective"]
-    assert proposal.detectors[0].sources[0].name == "detector.go"
-    assert proposal.playbooks[0].id == "health-objective"
-    assert ".sdo/" not in proposal.SerializeToString().decode("utf-8", errors="ignore")
-
-
 def test_native_judge_rejects_draft_with_wrong_objective_digest() -> None:
-    artifact = SimpleNamespace(
-        round=1,
-        objective_digest="0" * 64,
-        source_commit="source",
-        detector_source="package objective",
-        detector_test_source="package objective",
-        failure_patterns=["unavailable"],
-    )
+    artifact = SimpleNamespace(objective_digest="0" * 64)
     with pytest.raises(ValueError, match="objective digest"):
         _validate_judge_draft(artifact, health_objective="stay healthy", source_commit="source")
-
-
-def test_judge_consumes_go_prepared_source_inventory_without_reading_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    observed = []
-
-    class Backend:
-        def run_health_judge(self, **kwargs):
-            observed.append(kwargs["deployer"])
-            return SimpleNamespace(
-                round=1,
-                objective_digest=hashlib.sha256(b"stay healthy").hexdigest(),
-                source_commit="accepted-source",
-                failure_patterns=["unavailable"],
-                detector_source="package objective\nfunc New() sdk.Detector { return nil }",
-                detector_test_source="package objective\nfunc TestObjective(t *testing.T) {}",
-                traffic_files=[],
-                session_id="judge-1",
-            )
-
-    monkeypatch.setattr(judge_worker, "CodexLifecycleBackend", lambda **kwargs: Backend())
-    task = parse_json(judge_task(tmp_path).read_text(), AgentTask())
-    request = HealthJudgeRequest()
-    assert task.request.Unpack(request)
-    result = judge_worker.author_health_diagnostics(request, tmp_path)
-    assert result.artifact_proposal.detectors[0].id == "health-objective"
-    assert observed[0].topology_fingerprint == "a" * 64
-    assert [(row.kind, row.name, row.source) for row in observed[0].resources] == [("Deployment", "api", "app.yaml")]
 
 
 def test_judge_rejects_missing_go_prepared_source_inventory(tmp_path: Path) -> None:
@@ -159,31 +112,63 @@ def test_judge_rejects_missing_go_prepared_source_inventory(tmp_path: Path) -> N
         run_judge_task(task_path, "result", Publisher())
 
 
-def test_judge_retry_feeds_typed_broker_diagnostics_to_the_agent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("retry", [False, True])
+def test_judge_authors_final_files_in_writable_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    retry: bool,
 ) -> None:
-    seen: list[str | None] = []
-
-    class Backend:
-        def run_health_judge(self, **kwargs):
-            seen.append(kwargs["correction_feedback"])
-            return SimpleNamespace(
-                round=1,
-                objective_digest=hashlib.sha256(b"stay healthy").hexdigest(),
-                source_commit="accepted-source",
-                failure_patterns=["unavailable"],
-                detector_source="package objective\nfunc New() sdk.Detector { return nil }",
-                detector_test_source="package objective\nfunc TestObjective(t *testing.T) {}",
-                traffic_files=[],
-                session_id="judge-1",
-            )
-
-    monkeypatch.setattr(judge_worker, "CodexLifecycleBackend", lambda **kwargs: Backend())
     task = parse_json(judge_task(tmp_path).read_text(), AgentTask())
     request = HealthJudgeRequest()
     assert task.request.Unpack(request)
-    request.validation_attempt = 2
-    request.previous_diagnostics.add(rule="detector.manifest", path="m.yaml", line=2, message="bad", hint="fix")
-    judge_worker.author_health_diagnostics(request, tmp_path)
-    assert seen[0] is not None
-    assert "[detector.manifest] m.yaml:2: bad (hint: fix)" in seen[0]
+    if retry:
+        request.validation_attempt = 2
+        request.previous_diagnostics.add(rule="detector.manifest", path="m.yaml", line=2, message="bad", hint="fix")
+    output = {
+        "round": 1,
+        "objective_digest": hashlib.sha256(b"stay healthy").hexdigest(),
+        "source_commit": "accepted-source",
+        "covered_resources": [],
+        "failure_patterns": ["unavailable"],
+        "detector_ids": ["health-objective"],
+    }
+
+    def respond(command):
+        # The model writes final files. Python forwards metadata without creating
+        # or translating an artifact in its response.
+        target = tmp_path / ".sdo/diagnostics/detectors/health/health-objective"
+        target.mkdir(parents=True)
+        (target / "detector.go").write_text("package objective\n// authored bytes\n")
+        return reply("codex", output, session_id="judge-1", commands=["sdo-operator memory check"])
+
+    agent = ScriptedAgent(respond)
+    monkeypatch.setenv("SDO_AGENT_PROVIDER", "codex")
+    monkeypatch.setattr(
+        judge_worker, "CodexLifecycleBackend", lambda **kwargs: CodexLifecycleBackend(executor=agent.executor)
+    )
+    with fake_codex_login(monkeypatch):
+        result = judge_worker.author_health_diagnostics(request, tmp_path)
+    assert result.detector_ids == ["health-objective"]
+    assert not result.HasField("artifact_proposal")
+    assert any("workspace-write" in arg for arg in agent.argvs[0])
+    prompt = agent.prompts[0]
+    assert "sdo-operator memory check" in prompt
+    assert "SDO_ACTOR=health_judge" in prompt
+    assert "SDO_PHASE=initial" in prompt
+    assert "a" * 64 in prompt
+    assert '"source": "app.yaml"' in prompt
+    if retry:
+        assert "[detector.manifest] m.yaml:2: bad (hint: fix)" in prompt
+    assert (
+        (tmp_path / ".sdo/diagnostics/detectors/health/health-objective/detector.go")
+        .read_text()
+        .endswith("// authored bytes\n")
+    )
+    assert set(HealthJudgeDraft.model_fields) == {
+        "round",
+        "objective_digest",
+        "source_commit",
+        "covered_resources",
+        "failure_patterns",
+        "detector_ids",
+    }
