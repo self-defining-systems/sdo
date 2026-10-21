@@ -14,6 +14,7 @@ from sdo.agents.views import IncidentRequest, StateChanges
 from sdo.contracts import (
     AgentResult,
     AgentTask,
+    OperationalArtifactProposal,
     ProtoIncidentRequest,
     ProtoIncidentResult,
     ReflectionRequest,
@@ -95,8 +96,9 @@ def test_source_lookup_skips_unparseable_raw_manifest_and_other_variants(
 
 
 @pytest.mark.parametrize("seed_source", SEED_SOURCES)
+@pytest.mark.parametrize("proposal_encoding", ["snake_case", "camel_case"])
 def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed_source: Path
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed_source: Path, proposal_encoding: str
 ) -> None:
     seed = tmp_path / "seed"
     shutil.copytree(seed_source, seed, ignore=shutil.ignore_patterns(".git"))
@@ -225,36 +227,37 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         assert argv[argv.index("--bind") + 1] == "service=Service/hotel/reservation"
         assert argv[argv.index("--peer-bind") + 1] == "service=Service/hotel/rate"
         target = Path(argv[argv.index("--dir") + 1])
-        return json.dumps(
-            {
-                "playbooks": [
-                    {
-                        "id": scripted_worker.PROGRAM_ID,
-                        "fault_class": scripted_worker.PROGRAM_ID,
-                        "originating_incident": outcome.incident_id,
-                        "markdown": (target / "README.md").read_text(encoding="utf-8"),
-                        "program": {
-                            "sources": [
-                                {"name": name, "content": (target / name).read_text(encoding="utf-8")}
-                                for name in ("diagnose.go", "mitigate.go")
-                            ],
-                            "corpus_cases": [
-                                {
-                                    "id": "incident-case",
-                                    "reference": {
-                                        "incident_id": outcome.incident_id,
-                                        "capture_label": "open@pre-apply",
-                                        "open_sha256": "0" * 64,
-                                        "fixed_sha256": "0" * 64,
-                                        "recordings_sha256": "0" * 64,
-                                    },
-                                }
-                            ],
-                        },
-                    }
-                ],
-            }
-        )
+        proposed = {
+            "playbooks": [
+                {
+                    "id": scripted_worker.PROGRAM_ID,
+                    "fault_class": scripted_worker.PROGRAM_ID,
+                    "originating_incident": outcome.incident_id,
+                    "markdown": (target / "README.md").read_text(encoding="utf-8"),
+                    "program": {
+                        "sources": [
+                            {"name": name, "content": (target / name).read_text(encoding="utf-8")}
+                            for name in ("diagnose.go", "mitigate.go")
+                        ],
+                        "corpus_cases": [
+                            {
+                                "id": "incident-case",
+                                "reference": {
+                                    "incident_id": outcome.incident_id,
+                                    "capture_label": "open@pre-apply",
+                                    "open_sha256": "0" * 64,
+                                    "fixed_sha256": "0" * 64,
+                                    "recordings_sha256": "0" * 64,
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+        if proposal_encoding == "camel_case":
+            return json_format.MessageToJson(json_format.ParseDict(proposed, OperationalArtifactProposal()))
+        return json.dumps(proposed)
 
     monkeypatch.setattr(scripted_worker, "_command", operator_command)
     reflection = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")

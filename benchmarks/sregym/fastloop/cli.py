@@ -271,6 +271,12 @@ def _sdo_agent(
     )
     from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 
+    registrations = args.agent_registrations.resolve() if args.agent_registrations else None
+    if registrations is None and args.provider == "codex":
+        from benchmarks.sregym.fastloop.recording_worker import recording_registrations
+
+        registrations = recording_registrations(results_dir, environment.images.responder)
+
     runtime_config = RuntimeConfig(
         repository=environment.workspace,
         namespace=environment.namespace,
@@ -293,7 +299,7 @@ def _sdo_agent(
         controller_namespace=control_namespace_for(environment.namespace),
         kind_cluster_name=environment.cluster,
         persistent=True,
-        agent_registrations=args.agent_registrations.resolve() if args.agent_registrations else None,
+        agent_registrations=registrations,
     )
     settings = SdoAgentSettings(
         repository=environment.workspace,
@@ -701,6 +707,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(handler=_run)
 
+    replay = commands.add_parser("replay", help="re-execute one checkpointed stage without a cluster")
+    replay.add_argument("--run-dir", type=Path, required=True, help="one fastloop results run directory")
+    replay.add_argument("--incident", type=int, required=True)
+    replay.add_argument("--stage", choices=("reflection", "responder", "drift", "broker"), required=True)
+    replay.add_argument("--agent", choices=("scripted", "live"), default="scripted")
+    replay.add_argument("--live-on-cache-miss", action="store_true")
+    replay.set_defaults(handler=_replay)
+
     summary = commands.add_parser("summary", help="summarize incidents.jsonl files or run directories")
     summary.add_argument("paths", type=Path, nargs="+")
     summary.add_argument("--json", action="store_true")
@@ -711,6 +725,40 @@ def build_parser() -> argparse.ArgumentParser:
     down.add_argument("--delete-cluster", action="store_true")
     down.set_defaults(handler=_down)
     return parser
+
+
+def _replay(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.replay import CheckpointStore, replay_broker
+
+    run_dir = args.run_dir.resolve()
+    store = CheckpointStore(run_dir)
+    environment = next(
+        (parent / "fastloop.json" for parent in (run_dir, *run_dir.parents) if (parent / "fastloop.json").is_file()),
+        None,
+    )
+    source = Path(json.loads(environment.read_text(encoding="utf-8"))["workspace"]) if environment else run_dir
+    if args.stage == "broker":
+        result = replay_broker(store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator")
+    elif args.stage == "responder" and args.agent == "scripted":
+        from benchmarks.sregym.fastloop.replay_worker import replay_scripted_responder
+
+        result = replay_scripted_responder(store, args.incident, source=source)
+    elif args.stage == "reflection" and args.agent == "scripted":
+        from benchmarks.sregym.fastloop.replay_worker import replay_scripted_reflection
+
+        result = replay_scripted_reflection(
+            store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator"
+        )
+    elif args.stage in {"responder", "reflection"} and args.agent == "live":
+        from benchmarks.sregym.fastloop.replay_worker import replay_live_worker
+
+        result = replay_live_worker(
+            store, args.incident, args.stage, source=source, live_on_cache_miss=args.live_on_cache_miss
+        )
+    else:
+        raise RuntimeError(f"{args.stage} replay requires a worker execution harness")
+    print(json.dumps({"incident": args.incident, "stage": args.stage, **result}, sort_keys=True))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
