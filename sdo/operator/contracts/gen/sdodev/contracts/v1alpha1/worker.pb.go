@@ -676,14 +676,16 @@ func (x *ReflectionRequest) GetPreviousDiagnostics() []*MemoryDiagnostic {
 }
 
 type ReflectionResult struct {
-	state               protoimpl.MessageState       `protogen:"open.v1"`
-	Summary             string                       `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
-	LearningDecision    string                       `protobuf:"bytes,2,opt,name=learning_decision,json=learningDecision,proto3" json:"learning_decision,omitempty"`
-	NoChangeReason      string                       `protobuf:"bytes,3,opt,name=no_change_reason,json=noChangeReason,proto3" json:"no_change_reason,omitempty"`
-	ProposedArtifactIds []string                     `protobuf:"bytes,4,rep,name=proposed_artifact_ids,json=proposedArtifactIds,proto3" json:"proposed_artifact_ids,omitempty"`
-	ArtifactProposal    *OperationalArtifactProposal `protobuf:"bytes,5,opt,name=artifact_proposal,json=artifactProposal,proto3" json:"artifact_proposal,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Summary          string                 `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
+	LearningDecision string                 `protobuf:"bytes,2,opt,name=learning_decision,json=learningDecision,proto3" json:"learning_decision,omitempty"`
+	NoChangeReason   string                 `protobuf:"bytes,3,opt,name=no_change_reason,json=noChangeReason,proto3" json:"no_change_reason,omitempty"`
+	// Logical playbook IDs affected by the checkout diff; never physical paths.
+	ProposedArtifactIds []string `protobuf:"bytes,4,rep,name=proposed_artifact_ids,json=proposedArtifactIds,proto3" json:"proposed_artifact_ids,omitempty"`
+	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/worker.proto.
+	ArtifactProposal *OperationalArtifactProposal `protobuf:"bytes,5,opt,name=artifact_proposal,json=artifactProposal,proto3" json:"artifact_proposal,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ReflectionResult) Reset() {
@@ -744,6 +746,7 @@ func (x *ReflectionResult) GetProposedArtifactIds() []string {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/worker.proto.
 func (x *ReflectionResult) GetArtifactProposal() *OperationalArtifactProposal {
 	if x != nil {
 		return x.ArtifactProposal
@@ -814,14 +817,14 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomes\x12-\n" +
 	"\x12validation_attempt\x18\v \x01(\rR\x11validationAttempt\x12^\n" +
 	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
-	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xdb\x03\n" +
+	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xf1\x03\n" +
 	"\x10ReflectionResult\x12\x18\n" +
-	"\asummary\x18\x01 \x01(\tR\asummary\x12F\n" +
-	"\x11learning_decision\x18\x02 \x01(\tB\x19\xbaH\x16r\x14R\aupdatedR\tno_changeR\x10learningDecision\x12(\n" +
+	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +
+	"\x11learning_decision\x18\x02 \x01(\tB\"\xbaH\x1fr\x1dR\aupdatedR\tno_changeR\asdk_gapR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x122\n" +
-	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12c\n" +
-	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalR\x10artifactProposal:\xa1\x01\xbaH\x9d\x01\x1a\x9a\x01\n" +
-	"\x1freflection.no_change_has_reason\x121a no_change reflection requires a concrete reason\x1aDthis.learning_decision != 'no_change' || this.no_change_reason != ''B\xfe\x01\n" +
+	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12g\n" +
+	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposal:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
+	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''B\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

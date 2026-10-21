@@ -19,7 +19,7 @@ func reflectionTestRegistry(t *testing.T) *Registry {
 	registry, err := New(&contracts.AgentRegistration{
 		SchemaVersion: SchemaVersion, AgentId: "external-reflector",
 		Capabilities: []*contracts.AgentCapability{{
-			TaskType:       "outcome-reflection",
+			TaskType:       "outcome-reflection-direct-v1",
 			RequestTypeUrl: "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionRequest",
 			ResultTypeUrl:  "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult",
 		}},
@@ -38,7 +38,7 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 		t.Fatal(err)
 	}
 	return &contracts.AgentTask{
-		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-1:abc", AgentId: "external-reflector", TaskType: "outcome-reflection", Request: payload,
+		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-1:abc", AgentId: "external-reflector", TaskType: "outcome-reflection-direct-v1", Request: payload,
 		Workspace: &contracts.ProposalWorkspace{ProposalId: "reflection-1", CheckoutPath: "/workspace/proposals/reflection-1", BaseCommit: "abc"},
 	}
 }
@@ -52,6 +52,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
 		CredentialsSecret:     "agent-provider-credentials",
 		LateFindingsConfigMap: "sdo-late-incident",
+		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged"},
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errors := make(chan error, 1)
@@ -76,6 +77,20 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	if container.WorkingDir != task.Workspace.CheckoutPath {
 		t.Fatalf("wrong working directory: %q", container.WorkingDir)
+	}
+	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc"} {
+		found := 0
+		for _, env := range container.Env {
+			if env.Name == name {
+				found++
+				if env.Value != want {
+					t.Fatalf("%s = %s, want %s", name, env.Value, want)
+				}
+			}
+		}
+		if found != 1 {
+			t.Fatalf("environment %s has %d entries", name, found)
+		}
 	}
 	foundSession := false
 	repositoryVolumes := 0

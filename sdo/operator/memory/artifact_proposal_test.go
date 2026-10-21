@@ -113,7 +113,8 @@ func TestTypedArtifactsRejectDirectWorkerFilesystemEdits(t *testing.T) {
 
 func TestMaterializeArtifactsRejectsResponderRole(t *testing.T) {
 	root := t.TempDir()
-	if err := MaterializeArtifacts(root, &contracts.OperationalArtifactProposal{}, ArtifactRole("responder")); err == nil {
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{Id: "fault", Owner: "responder", FaultClass: "fault", OriginatingIncident: "incident", Markdown: "# Repair <RESOURCE_NAME>\n"}}}
+	if err := MaterializeArtifacts(root, proposal, ArtifactRole("responder")); err == nil {
 		t.Fatal("reflection retained a route into the judge writer")
 	}
 	if _, err := os.Stat(filepath.Join(root, ".sdo")); !os.IsNotExist(err) {

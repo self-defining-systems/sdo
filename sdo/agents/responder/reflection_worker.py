@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from typing import Protocol, cast
 
-from google.protobuf import json_format
-
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (

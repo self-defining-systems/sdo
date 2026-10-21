@@ -42,13 +42,13 @@ class _CapturingBackend:
     def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
         self.calls.append({"mode": "resume", "session_id": session_id, "prompt": prompt, "key": idempotency_key})
         return ReflectionTurn(
-            summary="Already covered", learning_decision="no_change", no_change_reason="No gap", proposed_changes=[]
+            summary="Already covered", learning_decision="no_change", no_change_reason="No gap", playbook_ids=[]
         )
 
     def fresh(self, *, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
         self.calls.append({"mode": "fresh", "prompt": prompt, "key": idempotency_key})
         return ReflectionTurn(
-            summary="Already covered", learning_decision="no_change", no_change_reason="No gap", proposed_changes=[]
+            summary="Already covered", learning_decision="no_change", no_change_reason="No gap", playbook_ids=[]
         )
 
 
@@ -100,7 +100,7 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "proposed_changes": [],
+                "playbook_ids": [],
             },
             session_id="session-1",
         )
@@ -133,7 +133,7 @@ def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "proposed_changes": [],
+                "playbook_ids": [],
             },
             session_id="session-1",
         )
@@ -160,7 +160,7 @@ def test_reflection_requires_logical_snapshot(tmp_path: Path) -> None:
     assert backend.calls == []
 
 
-def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tmp_path: Path) -> None:
+def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path: Path) -> None:
     backend = _CapturingBackend()
     closure = _fresh_closure(tmp_path)
     SessionReflector(backend).resume(
@@ -176,11 +176,12 @@ def test_reflection_prompt_uses_logical_artifacts_and_native_draft_validation(tm
     (call,) = backend.calls
     assert call["mode"] == "fresh"
     prompt = str(call["prompt"])
-    assert "OperationalArtifactProposal" in prompt
+    assert "artifact_proposal" not in prompt
+    assert "until it exits zero" in prompt
     assert "sdo-operator memory check" in prompt
     assert "draft-test" not in prompt
     assert "Accepted architecture summary" in prompt
-    assert ".sdo/" not in prompt
+    assert "Edit the final files directly" in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt  # full outcome context is richer
 
@@ -219,8 +220,30 @@ def test_reflection_first_attempt_prompt_has_no_rejection_text(tmp_path: Path) -
     assert "rejected" not in str(backend.calls[0]["prompt"]).lower().split("reflection request:")[0]
 
 
-def test_reflection_output_schema_is_strict_and_artifact_typed() -> None:
+def test_reflection_output_schema_is_strict_and_carries_only_decision_and_ids() -> None:
     schema = reflection_output_schema()
     assert schema["additionalProperties"] is False
-    assert "artifact_proposal" in schema["properties"]
+    assert "artifact_proposal" not in schema["properties"]
+    assert "proposed_changes" not in schema["properties"]
+    assert "playbook_ids" in schema["properties"]
     assert schema["required"] == list(schema["properties"])
+
+
+def test_broker_diagnostic_correction_starts_a_fresh_file_edit_session(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="prior-session",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+        validation_attempt=2,
+        diagnostics=[MemoryDiagnostic(rule="document.parse", path="README.md", line=1, message="missing front matter")],
+    )
+    (call,) = backend.calls
+    assert call["mode"] == "fresh"
+    assert "document.parse" in str(call["prompt"])
+    assert "Author corrected final files" in str(call["prompt"])
+    assert "artifact_proposal" not in str(call["prompt"])

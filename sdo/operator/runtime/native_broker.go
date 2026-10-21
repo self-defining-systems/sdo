@@ -55,7 +55,7 @@ type ReflectionFeedback struct {
 type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
-	PlaybookIDs []string
+	PlaybookIDs      []string
 }
 
 type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error)

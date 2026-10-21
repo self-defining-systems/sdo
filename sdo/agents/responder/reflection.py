@@ -58,7 +58,7 @@ class ReflectionTurn(BaseModel):
         return self
 
     def model_post_init(self, __context: object) -> None:
-        if any(not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", item) for item in self.playbook_ids):
+        if any(not re.fullmatch(r"[a-z][a-z0-9_-]*", item) for item in self.playbook_ids):
             raise ValueError("reflection requires logical playbook IDs")
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
@@ -115,8 +115,6 @@ class StatefulResponderBackend(Protocol):
         idempotency_key: str,
     ) -> ReflectionTurn: ...
 
-
-#: Upper bound on the rejected diff quoted into a retry prompt.
 
 #: Reasoning effort of the incident agents (responder and reflection). A
 #: benchmark comparing SDO against a stock agent declares the same effort.
@@ -241,6 +239,8 @@ class SessionReflector:
                 "independently verified incident closure and committed its authoritative outcome; the responder's "
                 "session transcript is intentionally not available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
+                "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
+                "Author corrected final files here, then run memory check until green.\n\n"
                 f"Original reflection request:\n{request}"
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)

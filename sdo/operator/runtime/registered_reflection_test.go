@@ -20,13 +20,15 @@ func (f reflectionTaskExecutorFunc) Execute(ctx context.Context, task *contracts
 }
 
 func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
+	root := nativeRepository(t)
+	base := nativeGit(t, root, "rev-parse", "HEAD")
 	store := memory.NewJSONStore(t.TempDir())
 	if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success"}); err != nil {
 		t.Fatal(err)
 	}
 	w := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: store, Timeout: time.Minute}
 	w.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
-		if task.TaskType != reflectionTaskType(t) || task.Workspace.CheckoutPath != "/proposal" {
+		if task.TaskType != reflectionTaskType(t) || task.Workspace.CheckoutPath != root {
 			t.Fatalf("wrong task: %+v", task)
 		}
 		request := &contracts.ReflectionRequest{}
@@ -42,8 +44,8 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 		}
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
 	})
-	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
-	decision, err := w.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{})
+	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base})
+	decision, err := w.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +55,10 @@ func TestRegisteredReflectionWorkerUsesTypedTaskAndPriorMemory(t *testing.T) {
 }
 
 func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
+	root := nativeRepository(t)
+	base := nativeGit(t, root, "rev-parse", "HEAD")
 	store := memory.NewJSONStore(t.TempDir())
-	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"})
+	closure := nativeClosure(IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base})
 	worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: store, Timeout: time.Minute, SessionMode: "resume", Guidance: "generalize-spec"}
 	called := false
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -78,15 +82,15 @@ func TestRegisteredReflectionWorkerResumeRequiresBoundSession(t *testing.T) {
 		}
 		return worker.Executor, nil
 	}
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err == nil || called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err == nil || called {
 		t.Fatalf("resume without accepted session dispatched: %v", err)
 	}
 	closure.Result.ResponderSessionID = "../escape"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err == nil || called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err == nil || called {
 		t.Fatalf("invalid session token dispatched: %v", err)
 	}
 	closure.Result.ResponderSessionID = "session-123"
-	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err != nil || !called {
+	if _, err := worker.Reflect(context.Background(), closure, IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", "outcome", ReflectionFeedback{}); err != nil || !called {
 		t.Fatalf("valid session was not dispatched: %v", err)
 	}
 }
@@ -119,9 +123,9 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 			root := nativeRepository(t)
 			nativeMemoryFixture(t, root)
 			base := nativeGit(t, root, "rev-parse", "HEAD")
-			worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute}
+			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute}
 			worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
-				if task.TaskType != "outcome-reflection-direct-v1" {
+				if task.TaskType != reflectionTaskType(t) {
 					t.Fatalf("legacy capability: %s", task.TaskType)
 				}
 				if tc.edit {
@@ -140,7 +144,7 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: packed}, err
 			})
 			workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}
-			_, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", base)
+			_, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", base, ReflectionFeedback{})
 			if (err != nil) != tc.wantError {
 				t.Fatalf("error = %v, wantError %v", err, tc.wantError)
 			}
