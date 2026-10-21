@@ -2,6 +2,36 @@ The smoke stream names the two original mixed-fault problems (i06 and i10). The 
 
 TODO: The SREGym fork checked out in this worktree still needs the `mf__hotel_reservation__n2__s1773744812__v_` and `mf__hotel_reservation__n2__s1085951852__v_` composite specs and the hotel `target_port` variants for `reservation` and `geo`. Until those are registered, run `pbprog_explicit.json` after the target-port variants land.
 
+# Mounted-source development loop
+
+Use an existing set of SDO controller, responder, and validator images for the
+first `up`. The worktree is mounted into every kind node at `/opt/sdo-dev`; the
+Pods use its Python packages and a host-built `sdo-operator` at
+`.fastloop/sdo-operator`. The host build uses the warm Go cache. `reset` reuses
+the cluster and images, restores the captured application and seed repository,
+clears controller state and sessions, and checks health and the deployment
+problem's mitigation oracle.
+
+```bash
+export SDO_FASTLOOP_RUN=/absolute/path/to/fastloop-run
+export SDO_FASTLOOP_SEED=/absolute/path/to/accepted-lifecycle-seed
+uv run python -m benchmarks.sregym.fastloop up \
+  --run-dir "$SDO_FASTLOOP_RUN" --seed "$SDO_FASTLOOP_SEED" --dev-mount "$PWD"
+# After an SDO source edit; no image build or new cluster:
+uv run python -m benchmarks.sregym.fastloop reset \
+  --run-dir "$SDO_FASTLOOP_RUN" --dev-mount "$PWD"
+uv run python -m benchmarks.sregym.fastloop run \
+  --run-dir "$SDO_FASTLOOP_RUN" --agent sdo \
+  --stream benchmarks/sregym/experiments/fastloop/pbprog_repeat.json \
+  --diagnosis-grading off --time-scale 0.1 --continue-on-error
+```
+
+`--time-scale` defaults to 1. It scales controller detector intervals, finding
+debounce, drift baseline settle, diagnosis settle, verification waits, and the
+fastloop reflection wait. `--continue-on-error` records a failed incident and
+moves on only when recovery has passed its oracle. A new dev lane uses the
+`fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
+
 # Recovery isolation
 
 `up` adds full application workload specs for its namespace or namespaces to

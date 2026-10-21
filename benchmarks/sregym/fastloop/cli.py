@@ -44,6 +44,8 @@ from benchmarks.sregym.fastloop.stream import load_stream_config
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from benchmarks.sregym.adapter import ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
@@ -61,7 +63,7 @@ DEPLOY_OP_TIMEOUT_SECONDS = 2400.0
 def _worker(environment: FastloopEnvironment) -> SregymWorker:
     return SregymWorker(
         worker_argv(environment.sregym_dir, private_tmp=environment.private_tmp),
-        env=environment.worker_process_env(),
+        env={**environment.worker_process_env(), "PYTHONPATH": str(REPO_ROOT)},
         log_path=environment.run_dir / "worker.log",
     )
 
@@ -127,12 +129,18 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
     }
     if args.builder:
         worker_env["SREGYM_DOCKER_BUILDER"] = args.builder
+    if args.dev_mount is not None:
+        worker_env["FASTLOOP_KIND_CONFIG"] = str(args.run_dir.resolve() / "kind-dev.yaml")
     return worker_env
 
 
 def _up(args: argparse.Namespace) -> int:
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
+    if args.dev_mount is not None:
+        args.dev_mount = args.dev_mount.resolve()
+        if args.cluster_prefix == "fastloop-w":
+            args.cluster_prefix = "fastloop-dev-w"
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     workspace = run_dir / "application_workspace"
@@ -144,11 +152,33 @@ def _up(args: argparse.Namespace) -> int:
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
     images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
+    if args.dev_mount is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+
+        prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
+    prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
+    if prior is not None and prior.dev_mount != args.dev_mount:
+        raise ValueError("up --dev-mount must match the worktree used to create this environment")
+    seed_commit = prior.seed_commit if prior is not None else None
+    if seed_commit is None and (workspace / ".git").exists():
+        seed_commit = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
     worker_env = up_worker_environment(args, workspace=workspace)
+    if args.dev_mount is not None and not (run_dir / "fastloop.json").exists():
+        clusters = subprocess.run(
+            ["kind", "get", "clusters"], capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        if worker_env["SREGYM_KIND_CLUSTER_NAME"] in clusters:
+            raise ValueError("dev mount needs a new kind cluster name; choose --cluster-prefix")
     if not args.redeploy and (run_dir / "fastloop.json").is_file():
         previous = FastloopEnvironment.load(run_dir)
         if (
             previous.cluster == worker_env["SREGYM_KIND_CLUSTER_NAME"]
+            and previous.dev_mount == args.dev_mount
             and previous.images == images
             and previous.worker_env == worker_env
             and previous.deploy_problem == args.problem
@@ -172,12 +202,14 @@ def _up(args: argparse.Namespace) -> int:
         sregym_dir=args.sregym_dir.resolve(),
         private_tmp=private_tmp,
         deploy_problem=args.problem,
+        seed_commit=seed_commit,
+        dev_mount=args.dev_mount,
         images=images,
         worker_env=worker_env,
     )
     worker = SregymWorker(
         worker_argv(placeholder.sregym_dir, private_tmp=private_tmp),
-        env={**worker_env, "PYTHONUNBUFFERED": "1"},
+        env={**worker_env, "PYTHONPATH": str(REPO_ROOT), "PYTHONUNBUFFERED": "1"},
         log_path=run_dir / "worker.log",
     )
     with worker:
@@ -303,7 +335,9 @@ def _sdo_agent(
         state_path=environment.state_path,
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
-        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
+        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300)
+        * args.time_scale,
+        reflection_wait_seconds=3600.0 * args.time_scale,
     )
     ops = _cluster_ops(args, environment.namespace)
 
@@ -332,6 +366,14 @@ def _sdo_agent(
 
 def _run(args: argparse.Namespace) -> int:
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if args.time_scale <= 0:
+        raise SystemExit("--time-scale must be positive")
+    os.environ["SDO_TIME_SCALE"] = str(args.time_scale)
+    if environment.dev_mount is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+
+        prepare_dev_mount(environment.dev_mount, environment.sregym_dir, environment.run_dir)
+        os.environ["SDO_DEV_MOUNT"] = "1"
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     results_dir = environment.run_dir / "results" / run_id
@@ -362,6 +404,7 @@ def _run(args: argparse.Namespace) -> int:
         incidents=len(stream) if stream else args.incidents,
         results_path=results_dir / INCIDENTS_FILENAME,
         stream=stream,
+        continue_on_error=args.continue_on_error,
     )
     with _worker(environment) as worker:
         worker.request(
@@ -383,6 +426,18 @@ def _run(args: argparse.Namespace) -> int:
             cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
             health_timeout_seconds=args.health_timeout,
         )
+
+        def reset_failed() -> None:
+            from benchmarks.sregym.adapter import control_namespace_for
+            from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+
+            reset_environment(
+                environment,
+                KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
+                worker,
+            )
+            _restore_seed(environment)
+
         if args.agent == "sdo":
             records = run_incidents(
                 _sdo_agent(
@@ -396,10 +451,20 @@ def _run(args: argparse.Namespace) -> int:
                 config,
                 grader=grader,
                 diagnosis_grading=grading_mode,
+                on_failed_incident=reset_failed if args.continue_on_error else None,
             )
         else:
             records = _run_codex(
-                args, environment, results_dir, worker, driver, config, grader, grading_mode, faults_by_incident
+                args,
+                environment,
+                results_dir,
+                worker,
+                driver,
+                config,
+                grader,
+                grading_mode,
+                faults_by_incident,
+                reset_failed if args.continue_on_error else None,
             )
     _print_summary(records)
     print(f"results: {config.results_path}")
@@ -425,6 +490,7 @@ def _run_codex(
     grader: DiagnosisGrader | None = None,
     grading_mode: str = "off",
     stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    on_failed_incident: Callable[[], None] | None = None,
 ) -> list[IncidentRecord]:
     from benchmarks.sregym.fastloop.codex_agent import CodexBaselineAgent, CodexSettings, SubmissionStub
 
@@ -476,7 +542,9 @@ def _run_codex(
                 settings=_composite_settings(args),
                 stream_faults=stream_faults,
             )
-        return run_incidents(agent, driver, config, grader=grader, diagnosis_grading=grading_mode)
+        return run_incidents(
+            agent, driver, config, grader=grader, diagnosis_grading=grading_mode, on_failed_incident=on_failed_incident
+        )
 
 
 def _collect(paths: list[Path]) -> list[IncidentRecord]:
@@ -618,6 +686,34 @@ def _down(args: argparse.Namespace) -> int:
     return 1 if errors else 0
 
 
+def _reset(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.adapter import control_namespace_for
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.seed_commit is None:
+        raise ValueError("reset requires a seed commit captured by fastloop up")
+    if args.dev_mount is not None and environment.dev_mount != args.dev_mount.resolve():
+        raise ValueError("reset --dev-mount must match the worktree mounted by up")
+    if environment.dev_mount is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+
+        prepare_dev_mount(environment.dev_mount, environment.sregym_dir, environment.run_dir)
+    cluster = KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace))
+    with _worker(environment) as worker:
+        reset_environment(environment, cluster, worker)
+    _restore_seed(environment)
+    print(f"fastloop environment reset: {environment.path}")
+    return 0
+
+
+def _restore_seed(environment: FastloopEnvironment) -> None:
+    if environment.seed_commit is None:
+        raise ValueError("reset requires a seed commit captured by fastloop up")
+    subprocess.run(["git", "-C", str(environment.workspace), "reset", "--hard", environment.seed_commit], check=True)
+    subprocess.run(["git", "-C", str(environment.workspace), "clean", "-fd"], check=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fastloop", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -642,6 +738,9 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--responder-image", default=Images().responder)
     up.add_argument("--validator-image", default=Images().validator)
     up.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    up.add_argument(
+        "--dev-mount", type=Path, help="mount this worktree into kind and build its Go operator on the host"
+    )
     up.add_argument("--redeploy", action="store_true", help="redeploy even if the application is healthy")
     up.add_argument(
         "--no-sandbox",
@@ -649,6 +748,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the SREGym worker without a private /tmp (unsafe next to other SREGym runs)",
     )
     up.set_defaults(handler=_up)
+
+    reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
+    reset.add_argument("--run-dir", type=Path, required=True)
+    reset.add_argument("--dev-mount", type=Path, help="worktree mounted when this environment was created")
+    reset.set_defaults(handler=_reset)
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
@@ -679,9 +783,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--follow-up-cooldown-seconds", type=int, default=30)
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
+    run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
     run.add_argument("--health-timeout", type=float, default=300.0, help="seconds to wait for health after recovery")
     run.add_argument("--proxy-port", type=int, default=0, help="Codex baseline API proxy port (default: free port)")
     run.add_argument("--run-id", default=None)
+    run.add_argument(
+        "--continue-on-error", action="store_true", help="record a failed incident and continue after baseline recovery"
+    )
     run.add_argument(
         "--composite-deadline",
         type=float,

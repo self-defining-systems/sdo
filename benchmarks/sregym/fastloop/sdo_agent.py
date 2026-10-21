@@ -51,12 +51,15 @@ class SdoAgentSettings:
     results_dir: Path
     kubeconfig: str | None = None
     verification_timeout_seconds: float = 3900.0
+    reflection_wait_seconds: float = 3600.0
 
     def __post_init__(self) -> None:
         if self.runtime_config.submission_api_base or self.runtime_config.submission_relay_target_base:
             raise ValueError("the fast loop has no benchmark submission transport")
         if self.verification_timeout_seconds <= 0:
             raise ValueError("verification_timeout_seconds must be positive")
+        if self.reflection_wait_seconds <= 0:
+            raise ValueError("reflection_wait_seconds must be positive")
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -242,6 +245,7 @@ class SdoPersistentAgent:
                 repository=settings.repository,
                 drained_by=f"fastloop-learn-{outcome.incident_id}",
                 clock=self._clock,
+                timeout_seconds=settings.reflection_wait_seconds,
             )
         except ReceiptRejectedError as exc:
             error = f"strict receipt rejected: {exc}"
