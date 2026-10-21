@@ -414,6 +414,9 @@ func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
 	for index, existing := range c.currentIncidentRequest.Findings {
 		if FindingStateKey(existing.DetectorID, FindingFingerprint(existing)) == key {
 			c.currentIncidentRequest.Findings[index] = finding
+			if c.incidentDispatchedAt.IsZero() {
+				c.currentIncidentRequest.PreparedAgentTask = ""
+			}
 			sortFindings(c.currentIncidentRequest.Findings)
 			return true
 		}
@@ -449,6 +452,7 @@ func (c *Controller) attachBeforeLaunch(findings []sdk.Finding) bool {
 		c.config.RepositoryWorktree, request.Findings, c.config.SourceCommit, c.detectorOrigins(),
 	)
 	request.DetectorHistory = compactDetectorHistory(c.history)
+	request.PreparedAgentTask = ""
 	c.incidentFindingKeys = findingKeys(request.Findings)
 	c.noteBatchedLocked(request.IncidentID, findings)
 	return true
@@ -1488,6 +1492,22 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	defer cancel()
 	state := c.ExportState()
+	if preparer, ok := c.dispatcher.(interface {
+		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
+	}); ok && state.DispatchState == "pending" && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
+		prepared, err := preparer.PrepareDispatch(actionCtx, *state.IncidentRequest)
+		if err != nil {
+			return fmt.Errorf("prepare responder dispatch: %w", err)
+		}
+		c.mu.Lock()
+		if c.currentIncidentRequest == nil || !sameJSON(*c.currentIncidentRequest, *state.IncidentRequest) {
+			c.mu.Unlock()
+			return ErrStateConflict
+		}
+		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
+		c.mu.Unlock()
+		state.IncidentRequest = cloneIncidentRequest(&prepared)
+	}
 	revision, err := c.stateStore.Save(actionCtx, state, c.stateRevision)
 	if err != nil {
 		// The write may or may not have landed; no effect recorded since the

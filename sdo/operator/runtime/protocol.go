@@ -74,6 +74,8 @@ type IncidentRequest struct {
 	FollowUp           *FollowUpContext `json:"follow_up,omitempty"`
 	InitialProgramRuns []ProgramRun     `json:"initial_program_runs,omitempty"`
 	MaxResponseLoops   int              `json:"max_response_loops,omitempty"`
+	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
+	PreparedAgentTask string `json:"prepared_agent_task,omitempty"`
 }
 
 // FollowUpContext links a follow-up responder request to the incident it

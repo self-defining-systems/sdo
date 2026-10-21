@@ -45,6 +45,7 @@ type KubernetesExecutor struct {
 	LateFindingsConfigMap  string
 	Environment            map[string]string
 	PollInterval           time.Duration
+	TaskPayload            string
 }
 
 type JobFailedError struct{ JobName string }
@@ -87,6 +88,13 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	payload, err := canonicalJSON(task)
 	if err != nil {
 		return nil, fmt.Errorf("encode agent task: %w", err)
+	}
+	if e.TaskPayload != "" {
+		prepared := new(contracts.AgentTask)
+		if err := protojson.Unmarshal([]byte(e.TaskPayload), prepared); err != nil || !proto.Equal(prepared, task) {
+			return nil, errors.New("prepared agent task differs from validated task")
+		}
+		payload = []byte(e.TaskPayload)
 	}
 	jobName := JobName(task.GetTaskId())
 	requestName, resultName := jobName+"-request", jobName+"-result"
