@@ -445,8 +445,14 @@ def run_persistent_stage(
         and pod.uid == record.controller_pod_uid
         and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
     )
+    restart_after_reset = (
+        record is not None
+        and record.controller_pod_uid == ""
+        and record.lifecycle_fingerprint == inputs.lifecycle_fingerprint
+        and ops.namespace_exists(control)
+    )
     lifecycle_started = clock.monotonic()
-    if reusable:
+    if reusable or restart_after_reset:
         lifecycle_reused, lifecycle_revalidation_skipped = True, True
     else:
         if record is not None and record.pending is not None:
@@ -478,7 +484,11 @@ def run_persistent_stage(
         # process startup on every incident in the same application lane.
         assert pod is not None
     install_inspection_ready = clock.monotonic()
-    if record is None or not reusable:
+    if restart_after_reset:
+        assert record is not None
+        record.controller_pod_uid = pod.uid
+        record.controller_pod_name = pod.name
+    elif record is None or not reusable:
         record = ControllerRecord(
             application=inputs.application,
             namespace=inputs.namespace,

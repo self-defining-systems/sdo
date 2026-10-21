@@ -620,6 +620,69 @@ def test_teardown_drains_the_last_incident_and_stops_every_controller(tmp_path: 
     assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers == {}
 
 
+def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.reset import reset_environment
+
+    class RestartOps(FakeOps):
+        def install(self, config: RuntimeConfig) -> bool:
+            durable = self.states.get(config.control_namespace, {}).get("drift_verdicts")
+            installed = super().install(config)
+            if durable is not None:
+                self.states[config.control_namespace]["drift_verdicts"] = durable
+            return installed
+
+    class ResetCluster:
+        def __init__(self, ops: RestartOps) -> None:
+            self.ops = ops
+            self.objects: list[dict[str, Any]] = []
+
+        def list_objects(self, _namespace: str) -> list[dict[str, Any]]:
+            return self.objects
+
+        def delete(self, _namespace: str, _kind: str, _name: str) -> None:
+            self.objects.clear()
+
+        def apply(self, _namespace: str, value: dict[str, Any]) -> None:
+            self.objects = [value]
+
+        def reset_controller(self, _seed_commit: str, *, preserve_repository: bool = False) -> None:
+            assert preserve_repository
+            self.ops.pods.pop("hotel-sdo", None)
+
+    class HealthyWorker:
+        def request(self, op: str, **_kwargs: Any) -> dict[str, bool]:
+            return {"healthy": True} if op == "health" else {"success": True}
+
+    ops = RestartOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.existing_namespaces.add("hotel-sdo")
+    ops.states["hotel-sdo"]["drift_verdicts"] = {"service": "bug"}
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="Hotel Reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        seed_commit="a" * 40,
+    )
+    baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
+    environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
+
+    reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
+    calls: list[str] = []
+    resolution = _run(tmp_path, ops, "s1", calls)
+
+    assert calls == []
+    assert ("delete", "hotel-sdo") not in ops.events
+    assert ops.states["hotel-sdo"]["drift_verdicts"] == {"service": "bug"}
+    assert resolution["persistent_controller"]["installed_this_stage"]
+
+
 def test_deferred_receipts_are_published_into_the_run_the_harness_already_published(tmp_path: Path) -> None:
     # SREGym moves the staging tree to results/<agent>/<problem>/run_N when the
     # stage ends, before the drain can write the strict receipt.

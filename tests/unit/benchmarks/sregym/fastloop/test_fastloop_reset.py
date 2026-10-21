@@ -136,6 +136,8 @@ def test_fail_soft_controller_reset_preserves_accepted_repository(
     command = next(args for args in calls if args[:1] == ["exec"])
     assert "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees" in command
     assert all("git -C /workspace/application" not in arg for arg in command)
+    assert not any(args[:2] == ["delete", "configmap"] for args in calls)
+    assert not any(args[:2] == ["delete", "namespace"] for args in calls)
 
 
 def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

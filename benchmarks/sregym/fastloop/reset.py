@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import PersistentState, kubectl
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
     load_application_baseline,
@@ -63,8 +63,8 @@ class KubectlResetCluster(KubectlApplicationCluster):
             kubeconfig=self.kubeconfig,
             check=False,
         )
-        if job.returncode == 0 and len(running) != 1:
-            raise RuntimeError(f"reset needs one running controller Pod in {namespace}, found {len(running)}")
+        if job.returncode == 0 and len(running) > 1:
+            raise RuntimeError(f"reset found multiple running controller Pods in {namespace}")
         if running:
             kubectl(
                 ["apply", "-f", "-"],
@@ -99,11 +99,6 @@ class KubectlResetCluster(KubectlApplicationCluster):
             namespace=namespace,
             kubeconfig=self.kubeconfig,
         )
-        kubectl(
-            ["delete", "configmap", "sdo-controller-state", "--ignore-not-found=true"],
-            namespace=namespace,
-            kubeconfig=self.kubeconfig,
-        )
 
 
 def reset_environment(
@@ -117,7 +112,16 @@ def reset_environment(
     cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
     for baseline in baselines:
         reconcile_application(cluster, baseline, baseline.namespace)
-    environment.state_path.unlink(missing_ok=True)
+    if preserve_repository:
+        state = PersistentState.load(environment.state_path)
+        record = state.controllers.get(environment.namespace)
+        if record is not None:
+            record.controller_pod_uid = ""
+            record.controller_pod_name = ""
+            record.pending = None
+            state.save(environment.state_path)
+    else:
+        environment.state_path.unlink(missing_ok=True)
     health = worker.request("health", namespace=environment.namespace, timeout=60)
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
