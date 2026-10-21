@@ -124,6 +124,7 @@ class IncidentRecord(_PersistedModel):
     diagnosis: str = ""
     mitigation: str = ""
     responder_tokens: TokenCounts = Field(default_factory=TokenCounts)
+    drift_tokens: TokenCounts = Field(default_factory=TokenCounts)
     reflection_tokens: TokenCounts = Field(default_factory=TokenCounts)
     warm_path: bool | None = None
     match_reasons: list[str] = Field(default_factory=list)

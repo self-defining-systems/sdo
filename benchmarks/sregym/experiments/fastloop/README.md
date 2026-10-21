@@ -65,7 +65,7 @@ scripted source repair requests rendered accepted manifests from the Go controll
 
 Run from this repository root with an accepted lifecycle seed. The seed must
 contain `.sdo/diagnostics/manifest.yaml` and `.sdo/lifecycle-provenance.yaml`;
-the scripted registrations replace only the responder and reflector. The
+the scripted registrations replace the responder, reflector, and drift investigator. The
 registration override rejects an unseeded workspace before cluster access.
 Choose a new run directory for each build:
 

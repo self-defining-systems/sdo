@@ -63,6 +63,7 @@ class AgentOutcome:
     diagnosis: str = ""
     mitigation: str = ""
     responder_tokens: TokenCounts = field(default_factory=TokenCounts)
+    drift_tokens: TokenCounts = field(default_factory=TokenCounts)
     reflection_tokens: TokenCounts = field(default_factory=TokenCounts)
     warm_path: bool | None = None
     match_reasons: tuple[str, ...] = ()
@@ -382,6 +383,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "diagnosis": outcome.diagnosis,
         "mitigation": outcome.mitigation,
         "responder_tokens": outcome.responder_tokens,
+        "drift_tokens": outcome.drift_tokens,
         "reflection_tokens": outcome.reflection_tokens,
         "warm_path": outcome.warm_path,
         "match_reasons": list(outcome.match_reasons),

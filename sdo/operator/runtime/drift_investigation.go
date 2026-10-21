@@ -41,8 +41,10 @@ type DriftInvestigationState struct {
 }
 
 type DriftTokenUse struct {
-	At     time.Time `json:"at"`
-	Tokens int64     `json:"tokens"`
+	At           time.Time `json:"at"`
+	Tokens       int64     `json:"tokens"`
+	InputTokens  int64     `json:"input_tokens,omitempty"`
+	OutputTokens int64     `json:"output_tokens,omitempty"`
 }
 
 type driftInvestigationQueue struct {
@@ -203,7 +205,10 @@ func (queue *driftInvestigationQueue) Complete(now time.Time, task *contracts.Dr
 	if result == nil {
 		return fmt.Errorf("drift investigation returned no result")
 	}
-	queue.state.TokenUsage = append(queue.state.TokenUsage, DriftTokenUse{At: now, Tokens: result.GetInputTokens() + result.GetOutputTokens()})
+	queue.state.TokenUsage = append(queue.state.TokenUsage, DriftTokenUse{
+		At: now, Tokens: result.GetInputTokens() + result.GetOutputTokens(),
+		InputTokens: result.GetInputTokens(), OutputTokens: result.GetOutputTokens(),
+	})
 	byIndex := make(map[int32]*contracts.DriftEventInvestigation, len(result.GetEvents()))
 	for _, verdict := range result.GetEvents() {
 		if verdict != nil && verdict.GetEventIndex() >= 0 && int(verdict.GetEventIndex()) < len(task.GetEvents()) {

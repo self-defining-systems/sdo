@@ -72,6 +72,21 @@ def _timestamp(value: object) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def drift_tokens_from_state(state: dict[str, Any], started: datetime, finished: datetime) -> TokenCounts:
+    investigation = state.get("drift_investigation") or {}
+    uses = investigation.get("token_usage", []) if isinstance(investigation, dict) else []
+    input_tokens = 0
+    output_tokens = 0
+    for use in uses:
+        if not isinstance(use, dict):
+            continue
+        at = _timestamp(use.get("at"))
+        if at is not None and started <= at <= finished:
+            input_tokens += int(use.get("input_tokens") or 0)
+            output_tokens += int(use.get("output_tokens") or 0)
+    return TokenCounts(input_tokens=input_tokens, output_tokens=output_tokens)
+
+
 def _closure_phase_seconds(ledger: dict[str, Any]) -> dict[str, float]:
     phases = ledger.get("closure_phase_timestamps")
     if not isinstance(phases, dict):
@@ -236,6 +251,11 @@ class SdoPersistentAgent:
         gate = resolution.get("fault_gate_timings_seconds") or {}
         costs = resolution.get("pre_injection_costs_seconds") or {}
         controller = resolution.get("persistent_controller") or {}
+        drift_tokens = drift_tokens_from_state(
+            {"drift_investigation": resolution.get("drift_investigation")},
+            windows[0].started_at,
+            self._clock.now(),
+        )
         return AgentOutcome(
             injection=windows[0],
             detected_at=detected,
@@ -246,6 +266,7 @@ class SdoPersistentAgent:
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
             mitigation=_summaries(repairs, successful_only=True),
             responder_tokens=TokenCounts.from_usage(resolution.get("usage")),
+            drift_tokens=drift_tokens,
             baseline_gate_seconds=gate.get("controller_baseline_wait"),
             driver_phase_timings_seconds=resolution.get("driver_phase_timings_seconds") or {},
             fault_gate_timings_seconds=gate,

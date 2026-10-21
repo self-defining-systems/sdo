@@ -268,6 +268,10 @@ func TestDriftTokenBudgetLeavesNextEventPending(t *testing.T) {
 	if err := queue.DispatchReady(context.Background(), start.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	usage := queue.ExportState().TokenUsage
+	if len(usage) != 1 || usage[0].InputTokens != 9 || usage[0].OutputTokens != 1 || usage[0].Tokens != 10 {
+		t.Fatalf("drift usage omitted token breakdown: %+v", usage)
+	}
 	second := first
 	second.Ref.Name = "other"
 	second.ObservedAt = start.Add(2 * time.Second)

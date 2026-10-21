@@ -214,6 +214,7 @@ class ControllerPod:
 class VerifiedIncident:
     incident_id: str
     closure: dict[str, Any] | None
+    drift_investigation: dict[str, Any]
 
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
@@ -528,6 +529,7 @@ def run_persistent_stage(
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
         "usage": result.get("usage"),
+        "drift_investigation": verified.drift_investigation,
         # Names the responder's rollout in the stage-end evidence.
         "responder_session_id": result.get("responder_session_id"),
         "lifecycle_reused": lifecycle_reused,
@@ -1035,11 +1037,19 @@ def _wait_for_verified_incident(
             request: dict[str, Any] = raw_request if isinstance(raw_request, dict) else {}
             incident_id = request.get("incident_id")
             if isinstance(incident_id, str) and incident_id not in known and _timestamp(closure.get("verified_at")):
-                return VerifiedIncident(incident_id=incident_id, closure=closure)
+                return VerifiedIncident(
+                    incident_id=incident_id,
+                    closure=closure,
+                    drift_investigation=state.get("drift_investigation") or {},
+                )
         acknowledged = state.get("last_acknowledged_incident_id")
         if isinstance(acknowledged, str) and acknowledged and acknowledged not in known:
             # Reflection finished between polls; the ledger holds the closure.
-            return VerifiedIncident(incident_id=acknowledged, closure=None)
+            return VerifiedIncident(
+                incident_id=acknowledged,
+                closure=None,
+                drift_investigation=state.get("drift_investigation") or {},
+            )
         if stop_on_review and state.get("detector_review_required"):
             incident_request = state.get("incident_request")
             incident_id = incident_request.get("incident_id") if isinstance(incident_request, dict) else None

@@ -2,11 +2,42 @@ package runtime
 
 import (
 	"context"
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/worker_registry"
 )
+
+func TestMissingDriftRegistrationWarnsOnlyWhenEnabled(t *testing.T) {
+	registry, err := worker_registry.New(builtInResponderRegistration("worker:test", []string{"/worker"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status bytes.Buffer
+	var log bytes.Buffer
+	warnings := reportDriftRegistration(registry, true, &status, &log)
+	var record struct {
+		ControllerStatus struct {
+			Warnings []string `json:"warnings"`
+		} `json:"controller_status"`
+	}
+	if err := json.Unmarshal(status.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "sdo-drift-investigator") ||
+		!strings.Contains(log.String(), warnings[0]) || len(record.ControllerStatus.Warnings) != 1 || record.ControllerStatus.Warnings[0] != warnings[0] {
+		t.Fatalf("missing drift investigator was not surfaced: warnings=%v status=%q log=%q", warnings, status.String(), log.String())
+	}
+	status.Reset()
+	log.Reset()
+	if got := reportDriftRegistration(registry, false, &status, &log); len(got) != 0 || status.Len() != 0 || log.Len() != 0 {
+		t.Fatalf("disabled drift emitted warning: %v %q %q", got, status.String(), log.String())
+	}
+}
 
 func TestRunRejectsUnregisteredResponderBeforeStarting(t *testing.T) {
 	directory := t.TempDir()

@@ -12,6 +12,7 @@ from sdo.agents.responder import (
     CodexSessionBackend,
     KubernetesResultPublisher,
     SessionReflector,
+    drift_worker,
     execute_incident,
     prepare_claude_home,
     prepare_codex_home,
@@ -26,7 +27,7 @@ _REGISTRATIONS = Path(__file__).resolve().parents[3] / "sdo" / "agents" / "regis
 def recording_registrations(results_dir: Path, image: str) -> Path:
     directory = results_dir / "recording_registrations"
     directory.mkdir(parents=True, exist_ok=True)
-    for role, stage in (("responder", "responder"), ("reflector", "reflection")):
+    for role, stage in (("responder", "responder"), ("reflector", "reflection"), ("drift_investigator", "drift")):
         registration = json.loads((_REGISTRATIONS / f"{role}.json").read_text(encoding="utf-8"))
         registration["kubernetes_job"] = {
             "image": image,
@@ -38,8 +39,8 @@ def recording_registrations(results_dir: Path, image: str) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
-    if len(args) != 1 or args[0] not in {"responder", "reflection"}:
-        print("usage: recording_worker responder|reflection", file=sys.stderr)
+    if len(args) != 1 or args[0] not in {"responder", "reflection", "drift"}:
+        print("usage: recording_worker responder|reflection|drift", file=sys.stderr)
         return 2
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
@@ -62,6 +63,13 @@ def main(argv: list[str] | None = None) -> int:
                 executor=lambda request: execute_incident(
                     request, model="gpt-6-luna", provider="codex", executor=recording
                 ),
+            )
+        elif args[0] == "drift":
+            drift_worker.run_drift_task(
+                task_path,
+                result_name,
+                publisher,
+                investigator=lambda request: drift_worker.investigate_drift(request, executor=recording),
             )
         else:
             task = parse_json(wire, AgentTask())

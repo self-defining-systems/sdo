@@ -28,6 +28,20 @@ import (
 	"sdo.dev/operator/worker_registry"
 )
 
+func reportDriftRegistration(registry *worker_registry.Registry, enabled bool, status io.Writer, log io.Writer) []string {
+	if !enabled {
+		return nil
+	}
+	if _, err := registry.Resolve("sdo-drift-investigator", driftTaskType); err == nil {
+		return nil
+	} else {
+		warning := fmt.Sprintf("WARNING: drift investigation is enabled but sdo-drift-investigator cannot resolve: %v", err)
+		fmt.Fprintln(log, warning)
+		_ = json.NewEncoder(status).Encode(map[string]any{"controller_status": map[string]any{"warnings": []string{warning}}})
+		return []string{warning}
+	}
+}
+
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
 	Args     []string
@@ -292,6 +306,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	argv := append([]string{*dispatcherCommand}, dispatcherArgs...)
 	var registeredWorkers *worker_registry.Registry
+	var startupWarnings []string
 	if *dispatcherMode == "job" {
 		var registryErr error
 		if *agentRegistrationDirectory == "" {
@@ -316,6 +331,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if *responderImage == "" {
 			*responderImage = registration.GetKubernetesJob().GetImage()
 		}
+		startupWarnings = reportDriftRegistration(registeredWorkers, true, stdout, stderr)
 	}
 	resolvedRoot, err := filepath.Abs(*appRoot)
 	if err != nil {
@@ -518,7 +534,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	var investigation DriftInvestigationConfig
 	if *dispatcherMode == "job" {
-		if _, err := registeredWorkers.Resolve("sdo-drift-investigator", driftTaskType); err == nil {
+		if len(startupWarnings) == 0 {
 			catalog := memory.OpenCatalogReader(resolvedRoot)
 			investigation = DriftInvestigationConfig{Async: true, BatchWindow: *driftBatchWindow, DispatchesPerHour: *driftDispatchesPerHour, TokensPerHour: *driftTokensPerHour}
 			investigation.Worker = RegisteredDriftInvestigator{AgentID: "sdo-drift-investigator", Executor: worker_registry.KubernetesExecutor{
