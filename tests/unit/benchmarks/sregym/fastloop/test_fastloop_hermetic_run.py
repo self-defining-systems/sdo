@@ -106,6 +106,10 @@ class Application:
             for kind in ("Service", "Deployment"):
                 item = scripted_worker._manifest(workspace, kind, name)
                 item.setdefault("metadata", {})["namespace"] = NAMESPACE
+                if kind == "Deployment" and name in {"rate", "search"}:
+                    item["spec"]["template"]["spec"]["containers"][0]["image"] = (
+                        "yinfangchen/hotelreservation@sha256:" + "a" * 64
+                    )
                 self.objects[kind, name] = item
         self.baseline = deepcopy(self.objects)
 
@@ -248,13 +252,25 @@ class Controller(FakeOps):
             for kind, name in changed
             if kind == "Service"
         ]
-        raw["state_changes"] = {
-            "baseline_at": now(),
-            "observed_at": now(),
-            "changes": [{"kind": kind, "name": name, "change": "modified"} for kind, name in changed],
-        }
-        result = scripted_worker.scripted_responder(IncidentRequest.model_validate(raw))
+        changes = []
+        for kind, name in changed:
+            fields = []
+            if kind == "Deployment":
+                before = self.app.baseline[kind, name]["spec"]["template"]["spec"]["containers"][0]
+                after = self.app.objects[kind, name]["spec"]["template"]["spec"]["containers"][0]
+                fields.append(
+                    {"field": f"container[{before['name']}].image", "before": before["image"], "after": after["image"]}
+                )
+            changes.append({"kind": kind, "name": name, "change": "modified", "fields": fields})
+        raw["state_changes"] = {"baseline_at": now(), "observed_at": now(), "changes": changes}
+        request = IncidentRequest.model_validate(raw)
+        result = scripted_worker.scripted_responder(request)
         assert result.status == "completed"
+        if incident == "incident-1":
+            image = self.app.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"]
+            source_image = self.app.baseline["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"]
+            assert source_image.endswith("a" * 64)
+            assert image == source_image
         (self.capture / "fixed.json").write_text(json.dumps(self.app.snapshot()))
         (self.capture / "open@pre-apply-recordings.json").write_text("[]\n")
         data = result.model_dump(mode="json")
@@ -497,6 +513,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
     monkeypatch.setattr(scripted_worker, "_command", controller.command)
     monkeypatch.setattr(scripted_worker, "_tool", controller.tool)
+    monkeypatch.setattr(scripted_worker.time, "sleep", lambda _seconds: None)
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(controller.capture))
 
     assert (
