@@ -137,10 +137,7 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	loop.InitialDiagnose(context.Background())
 	outcomes := []memory.Outcome{}
 	for index := 0; index < 3; index++ {
-		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
-			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "image-pull-failure", ProgramRevision: "tree-a"}},
-			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"image-pull-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
-		}})
+		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "image-pull-failure", "tree-a")})
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ProgramFastPath: true,
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
@@ -192,10 +189,7 @@ func TestHermeticTrustedLatentDriftFastPathSkipsResponderAndReflection(t *testin
 	request.Findings = []sdk.Finding{finding}
 	request.DriftEvents = []sdk.DriftEvent{{Ref: finding.PrimaryResource, Classification: sdk.DriftFault, ProgramID: "service-targetport-mismatch", ObservedAt: time.Now().UTC()}}
 	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
-	outcomes := []memory.Outcome{{IncidentID: "earlier-drift", Record: &contracts.OutcomeRecord{
-		SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
-		PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
-	}}}
+	outcomes := []memory.Outcome{{IncidentID: "earlier-drift", Record: verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a")}}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
 		ProgramFastPath: true, ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: outcomes},
@@ -257,10 +251,7 @@ func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) 
 	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
 	outcomes := make([]memory.Outcome, 3)
 	for index := range outcomes {
-		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
-			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
-			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
-		}}
+		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a")}
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
@@ -353,7 +344,7 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	loop.CorpusReplayPassed = true
 	outcomes := make([]memory.Outcome, 3)
 	for index := range outcomes {
-		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "image-pull-failure", ProgramRevision: "tree-a"}}, PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"image-pull-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}}}
+		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: verifiedTrustOutcome(t, "image-pull-failure", "tree-a")}
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace", ProgramFastPath: true, Outcomes: priorOutcomeReader{outcomes: outcomes}, PollInterval: time.Millisecond, LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
 	request, err = dispatcher.PrepareDispatch(context.Background(), request)

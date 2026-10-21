@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -121,19 +120,7 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		}
 		// Group B's marker wire contract: revision-bound suspicion is frozen before
 		// writes, retained on failure, and excluded from successful/skipped outcomes.
-		signals := make([]string, 0, len(ids))
-		for _, id := range ids {
-			revision := loop.Trust[id].LastChange
-			if revision == "" {
-				revision = request.SourceCommit
-			}
-			signal := "fast_path_failure:" + id
-			if revision != "" {
-				signal += "@" + revision
-			}
-			signals = append(signals, signal)
-		}
-		encodedSignals, err := json.Marshal(signals)
+		encodedSignals, err := json.Marshal(loop.fastPathTrustFailureSignals(ids))
 		if err != nil {
 			return err
 		}
@@ -190,7 +177,7 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 	marker.Data["summary"] = summary
 	marker.Data["skip_reason"] = string(attempt.SkippedReason)
 	if attempt.Attempted {
-		if err := restoreFastPathMarkerTrust(loop, marker.Data["trust_failure_signals"]); err != nil {
+		if err := loop.restoreFastPathTrustFailureSignals(marker.Data["trust_failure_signals"]); err != nil {
 			return IncidentResult{}, "", false, err
 		}
 	}
@@ -263,51 +250,12 @@ func restoreFastPathMarker(loop *ResponderLoop, data map[string]string) error {
 		}
 	}
 	loop.fastPathSkippedReason = FastPathSkipReason(data["skip_reason"])
-	if err := restoreFastPathMarkerTrust(loop, data["trust_failure_signals"]); err != nil {
+	if err := loop.restoreFastPathTrustFailureSignals(data["trust_failure_signals"]); err != nil {
 		return err
 	}
 	if data["trust_failure_signals"] == "" {
 		for _, id := range ids {
 			loop.addFailureSignal("fast_path_failure:" + id)
-		}
-	}
-	return nil
-}
-
-// Decode the marker's Group B trust wire contract before mutating loop state.
-func restoreFastPathMarkerTrust(loop *ResponderLoop, encoded string) error {
-	if encoded == "" {
-		return nil
-	}
-	var signals []string
-	if err := json.Unmarshal([]byte(encoded), &signals); err != nil {
-		return fmt.Errorf("decode fast-path trust failures: %w", err)
-	}
-	ids := make([]string, len(signals))
-	for i, signal := range signals {
-		payload, ok := strings.CutPrefix(signal, "fast_path_failure:")
-		id, revision, bound := strings.Cut(payload, "@")
-		if !ok || id == "" || strings.ContainsAny(id, ":@") || (bound && (revision == "" || strings.ContainsAny(revision, ":@"))) {
-			return fmt.Errorf("invalid fast-path trust failure signal %q", signal)
-		}
-		ids[i] = id
-	}
-	for i, signal := range signals {
-		// Replace the live unversioned signal with its pre-write revision binding.
-		retained := loop.failureSignals[:0]
-		for _, known := range loop.failureSignals {
-			if known != "fast_path_failure:"+ids[i] {
-				retained = append(retained, known)
-			}
-		}
-		loop.failureSignals = retained
-		loop.addFailureSignal(signal)
-		found := false
-		for _, id := range loop.fastPathPrograms {
-			found = found || id == ids[i]
-		}
-		if !found {
-			loop.fastPathPrograms = append(loop.fastPathPrograms, ids[i])
 		}
 	}
 	return nil
