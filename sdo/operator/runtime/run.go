@@ -434,7 +434,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot},
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
 				}, *maxResponseLoops)
 				loop.DiagnosisDeadline = *diagnosisDeadline
@@ -444,7 +444,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+						Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
 			},

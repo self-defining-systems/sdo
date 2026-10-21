@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import subprocess
 import sys
@@ -13,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
 from google.protobuf import json_format
 
 from sdo.agents.responder import KubernetesResultPublisher, ReflectionTurn, run_reflection_task, run_worker_task
@@ -22,7 +20,6 @@ from sdo.contracts import OperationalArtifactProposal
 
 PROGRAM_ID = "service-targetport-mismatch"
 PROGRAM_SOURCE = Path("/opt/sdo-scripted/targetport")
-LOG = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -44,28 +41,9 @@ def _tool(*args: str) -> dict[str, Any]:
     return response
 
 
-def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
-    manifest_root = root / "kubernetes"
-    for path in sorted((*manifest_root.rglob("*.yaml"), *manifest_root.rglob("*.yml"))):
-        if "templates" in path.relative_to(manifest_root).parts:
-            continue
-        try:
-            documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8")))
-        except (OSError, UnicodeError, yaml.YAMLError) as exc:
-            LOG.warning("skipping unparseable source manifest %s: %s", path, exc)
-            continue
-        for document in documents:
-            if not isinstance(document, dict) or document.get("kind") != kind:
-                continue
-            metadata = document.get("metadata")
-            if isinstance(metadata, dict) and metadata.get("name") == name:
-                return document
-    raise RuntimeError(f"accepted source has no {kind}/{name} manifest")
-
-
 def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
     kind, name = ref["kind"], ref["name"]
-    source = _manifest(Path(request.repository_worktree), kind, name)
+    source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
     if kind == "Service":
         patch = {"spec": {"ports": source["spec"]["ports"]}}
     elif kind == "Deployment":

@@ -22,7 +22,7 @@ uv run pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_scripted_
 
 The test copies the accepted hotel seed when it is available at the experiment
 path, or its checked-in manifest and Helm template fixture elsewhere. The
-scripted source repair reads the seed's raw `kubernetes/` manifest set.
+scripted source repair requests rendered accepted manifests from the Go controller.
 
 Run from this repository root with an accepted lifecycle seed. The seed must
 contain `.sdo/diagnostics/manifest.yaml` and `.sdo/lifecycle-provenance.yaml`;
