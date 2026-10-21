@@ -45,7 +45,7 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 		return nil, nil
 	}
 
-	request, err = compileRequest(ctx, request)
+	request, err = selectCompileBaseline(ctx, request)
 	if err != nil {
 		return nil, err
 	}

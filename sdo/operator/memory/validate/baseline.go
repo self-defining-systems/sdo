@@ -30,7 +30,7 @@ func BaselineGateRequired(candidate string, changedPaths []string) (bool, error)
 	return false, nil
 }
 
-func compileRequest(ctx context.Context, request Request) (Request, error) {
+func selectCompileBaseline(ctx context.Context, request Request) (Request, error) {
 	if request.HealthyBaseline != "" {
 		paths, err := ChangedPaths(ctx, request.Root, request.Base)
 		if err != nil {
