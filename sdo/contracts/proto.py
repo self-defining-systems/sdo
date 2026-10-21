@@ -79,11 +79,6 @@ LateFindingsPull = messages_pb2.LateFindingsPull
 IncidentView = messages_pb2.IncidentView
 DetectorTimelineEntry = messages_pb2.DetectorTimelineEntry
 IncidentClosure = messages_pb2.IncidentClosure
-OperationalArtifactProposal = messages_pb2.OperationalArtifactProposal
-ProposedDetector = messages_pb2.ProposedDetector
-ProposedGoSource = messages_pb2.ProposedGoSource
-ProposedPlaybook = messages_pb2.ProposedPlaybook
-ProposedTrafficGenerator = messages_pb2.ProposedTrafficGenerator
 MemoryWatch = messages_pb2.MemoryWatch
 MemoryScript = messages_pb2.MemoryScript
 MemoryDetector = messages_pb2.MemoryDetector
@@ -176,11 +171,6 @@ __all__ = [
     "MemoryScript",
     "MemoryWatch",
     "OperationalMemorySnapshot",
-    "OperationalArtifactProposal",
-    "ProposedDetector",
-    "ProposedGoSource",
-    "ProposedPlaybook",
-    "ProposedTrafficGenerator",
     "BatcherState",
     "BrokerLedger",
     "ClosureFailure",

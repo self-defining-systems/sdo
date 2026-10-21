@@ -7,6 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 )
 
 // CompileRunner executes the compile layer locally or in the broker's isolated
@@ -26,6 +29,17 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 	diagnostics, err := Validate(ctx, request)
 	if err != nil || len(diagnostics) > 0 {
 		return diagnostics, err
+	}
+	if request.Actor == HealthJudge && request.Phase == InitialPhase {
+		if err := memory.PrepareHealth(request.Root); err != nil {
+			return []Diagnostic{{Rule: RuleGenericHealth, Path: layout.DiagnosticsDir, Message: err.Error(), Hint: "preserve Go-owned generic detectors and valid final workload files"}}, nil
+		}
+		// Validate the prepared tree too; compilation and publication must see
+		// exactly these generated policy registrations.
+		diagnostics, err = Validate(ctx, request)
+		if err != nil || len(diagnostics) > 0 {
+			return diagnostics, err
+		}
 	}
 	request.Layers = Compile
 	return compile(ctx, request)

@@ -130,17 +130,12 @@ func (f fakeBootstrap) WriteArchitecture(_ string, application, sourceCommit, fi
 func (f fakeBootstrap) ReadArchitecture(_ string) (string, error) {
 	return "# Architecture\nSource-grounded layout.\n", nil
 }
-func (f fakeBootstrap) WriteArtifacts(_ string, proposal *contracts.OperationalArtifactProposal, role memory.ArtifactRole) error {
-	if role != memory.HealthJudgeArtifacts || len(proposal.GetDetectors()) == 0 {
-		return errors.New("invalid judge artifacts")
-	}
-	return nil
-}
 
 type fakeExecutor struct {
-	tasks          []*contracts.AgentTask
-	deployFailures int
-	archFailures   int
+	tasks               []*contracts.AgentTask
+	deployFailures      int
+	archFailures        int
+	retiredJudgePayload bool
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -170,7 +165,15 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 		if err := task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
 		}
-		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}, ArtifactProposal: &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "health-objective"}}}})
+		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
+		if f.retiredJudgePayload {
+			result := &contracts.HealthJudgeResult{}
+			if err := response.UnmarshalTo(result); err != nil {
+				return nil, err
+			}
+			result.ArtifactProposal = &contracts.OperationalArtifactProposal{}
+			response, err = anypb.New(result)
+		}
 	default:
 		return nil, fmt.Errorf("unexpected task type %s", task.GetTaskType())
 	}
@@ -584,5 +587,19 @@ func TestCoordinatorResumesHealthJudgeRetryCountAfterRestart(t *testing.T) {
 	requests := judgeRequests(t, e)
 	if len(requests) != 1 || requests[0].GetValidationAttempt() != 3 || requests[0].GetPreviousDiagnostics()[0].GetMessage() != "earlier rejection" {
 		t.Fatalf("restart reset or duplicated attempts: %+v", requests)
+	}
+}
+
+func TestCoordinatorRejectsRetiredJudgePayloadBeforePublishing(t *testing.T) {
+	c, b, worker, _ := testCoordinator(t)
+	worker.retiredJudgePayload = true
+	_, err := c.Run(context.Background(), Config{OperationID: "retired", Application: "demo", Namespace: "demo", HealthObjective: "healthy", DeployerAgentID: "source-agent", JudgeAgentID: "judge-agent", MaxAttempts: 1})
+	if err == nil || !strings.Contains(err.Error(), "rejects deprecated artifact_proposal") {
+		t.Fatalf("retired payload accepted: %v", err)
+	}
+	for _, event := range b.events {
+		if event == "publish:retired-judge-1:health_judge" {
+			t.Fatal("published retired judge payload")
+		}
 	}
 }

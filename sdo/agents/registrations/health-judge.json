@@ -3,7 +3,7 @@
   "agent_id": "sdo-health-judge",
   "capabilities": [
     {
-      "task_type": "health-judgment",
+      "task_type": "health-judgment-direct-v1",
       "request_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeRequest",
       "result_type_url": "type.googleapis.com/sdodev.contracts.v1alpha1.HealthJudgeResult"
     }

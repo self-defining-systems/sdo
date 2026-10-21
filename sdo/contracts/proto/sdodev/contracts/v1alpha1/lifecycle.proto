@@ -103,5 +103,6 @@ message HealthJudgeResult {
   string agent_session_id = 3;
   string objective_digest = 4;
   repeated string detector_ids = 5 [(buf.validate.field).repeated.items.string.pattern = "^[a-z0-9][a-z0-9_.-]*$"];
-  OperationalArtifactProposal artifact_proposal = 6;
+  // Wire compatibility only; direct-edit judges must leave this absent.
+  OperationalArtifactProposal artifact_proposal = 6 [deprecated = true];
 }

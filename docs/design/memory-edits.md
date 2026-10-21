@@ -397,3 +397,20 @@ passes; the expanded scenario suite above is an implementation deliverable.
   merge; version direct-edit capability explicitly and drain old workers.
 - **Legacy corpus and retention:** preserve accepted evidence durably outside
   session TTL; require recapture where authenticity cannot be established.
+
+## Judge migration implementation
+
+The native health judge now edits final checkout files through
+`health-judgment-direct-v1`. Its structured result carries metadata and detector
+IDs. The former proposal writer and translation helpers are removed; deprecated
+wire descriptors remain solely for Buf compatibility and their payloads are
+rejected by direct-edit workers and Go lifecycle dispatch.
+
+`validate.Check` explicitly calls `memory.PrepareHealth` after static validation
+and validates the prepared tree again before compilation. This installs generic
+service-endpoint and traffic detectors from final workload files without
+overwriting conflicting authored contents. The broker includes the prepared
+files in its accepted diff. Independent health verification still follows the
+accepted judge commit. Source-only health-detector refinements are allowed; the
+other ownership boundaries remain enforced. This completes the native judge
+portion of steps 15 and 17; the other unbuilt gates above keep their stated scope.

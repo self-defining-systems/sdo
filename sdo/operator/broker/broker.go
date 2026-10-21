@@ -219,8 +219,9 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err := b.requireClean(ctx); err != nil {
 			return err
 		}
-		// Upkeep stays open after bootstrap: it carries schema migrations.
-		if phase == InitialPhase && actor != Upkeep {
+		// Upkeep carries schema migrations; the independent health judge may
+		// refine health diagnostics after their first accepted registration.
+		if phase == InitialPhase && actor != Upkeep && actor != HealthJudge {
 			if registered, err := layout.HasDetectors(b.target); err != nil {
 				return fmt.Errorf("inspect initial memory: %w", err)
 			} else if registered {
@@ -311,6 +312,12 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			if stagedTree != expectedSourceTree {
 				return errors.New("staged source tree differs from verified deployment")
 			}
+		}
+		// The shared check may install generic health registrations. Publish
+		// every checked file, including those explicit Go bootstrap outputs.
+		paths, err = validate.ChangedPaths(ctx, stage, proposal.BaseCommit)
+		if err != nil {
+			return err
 		}
 		receipt, err = b.accept(ctx, stage, incidentID, actor, phase, paths)
 		if err != nil {

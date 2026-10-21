@@ -191,10 +191,16 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
 	}
 	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
-	if reflection {
-		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: "responder"}, corev1.EnvVar{Name: "SDO_PHASE", Value: "reflection"}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
+	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})
+	memoryAuthor := reflection || judge
+	if memoryAuthor {
+		actor, phase := "responder", "reflection"
+		if judge {
+			actor, phase = "health_judge", "initial"
+		}
+		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: actor}, corev1.EnvVar{Name: "SDO_PHASE", Value: phase}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": reflection, "SDO_PHASE": reflection, "SDO_BASE_COMMIT": reflection}
+	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {

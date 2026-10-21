@@ -19,6 +19,7 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 	"sdo.dev/operator/worker_registry/registrytest"
@@ -54,7 +55,7 @@ func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(workers.tasks, ",") != "source-deployment,source-architecture,health-judgment" {
+	if strings.Join(workers.tasks, ",") != "source-deployment,source-architecture,health-judgment-direct-v1" {
 		t.Fatalf("registered workers did not run in role order: %v", workers.tasks)
 	}
 	if backend.applies != 1 || backend.observes < 2 {
@@ -178,7 +179,15 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 		if request.GetArchitectureSummaryMarkdown() == "" {
 			return nil, fmt.Errorf("judge did not receive accepted architecture")
 		}
-		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "health checks authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}, ArtifactProposal: &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "health-objective", DetectorClass: "health", Owner: "health_judge", Constructor: "New", Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Service"}, {ApiVersion: "v1", Kind: "Endpoints"}, {ApiVersion: "v1", Kind: "Pod"}, {ApiVersion: "apps/v1", Kind: "Deployment"}}, Interval: "30s", Firing: 2, Clearing: 2, Severity: "critical", Debounce: "500ms", PossiblePlaybookIds: []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: `package objective
+		manifest := layout.DetectorManifest{
+			APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion,
+			ID: "health-objective", Constructor: "New", Class: "health", Owner: "health_judge",
+			Watches:  []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Endpoints"}, {APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}},
+			Interval: "30s", Persistence: layout.Persistence{Firing: 2, Clearing: 2},
+			Batching:          layout.Batching{Severity: "critical", Debounce: "500ms"},
+			PossiblePlaybooks: []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
+		}
+		if err := layout.WriteDetector(checkout, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: []byte(`package objective
 
 import (
  "time"
@@ -187,7 +196,20 @@ import (
 )
 
 func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.DetectorSpec{ID:"health-objective", Class:sdk.DetectorClassHealth, Owner:sdk.DetectorOwnerHealthJudge, Watches:servicehealth.EndpointWatches(), Interval:30*time.Second, Persistence:sdk.PersistencePolicy{Firing:2,Clearing:2}, Batching:sdk.BatchingPolicy{Severity:sdk.SeverityCritical,Debounce:500*time.Millisecond}, Playbooks:[]string{"health-objective"}, OriginatingCommit:"lifecycle-bootstrap"}) }
-`}}}}, Playbooks: []*contracts.ProposedPlaybook{{Id: "health-objective", Owner: "responder", FaultClass: "health-objective-failure", OriginatingIncident: "lifecycle-bootstrap", Markdown: "# Repair <AFFECTED_RESOURCE>\n"}}}})
+`)}}}); err != nil {
+			return nil, err
+		}
+		playbooks := filepath.Join(checkout, layout.PlaybooksDir)
+		if err := os.MkdirAll(filepath.Join(playbooks, "health-objective"), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(playbooks, "health-objective", "README.md"), []byte("---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\noriginating_incident: lifecycle-bootstrap\n---\n# Repair <AFFECTED_RESOURCE>\n"), 0o644); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(playbooks, "README.md"), []byte("# Playbooks\n\n- [health-objective](health-objective/README.md)\n"), 0o644); err != nil {
+			return nil, err
+		}
+		response, err = anypb.New(&contracts.HealthJudgeResult{Authored: true, Summary: "health checks authored", AgentSessionId: "judge-session", ObjectiveDigest: fmt.Sprintf("%x", sha256.Sum256([]byte(request.GetHealthObjective()))), DetectorIds: []string{"health-objective"}})
 	case reflectionTaskType(w.t):
 		request := &contracts.ReflectionRequest{}
 		if err = task.GetRequest().UnmarshalTo(request); err != nil {

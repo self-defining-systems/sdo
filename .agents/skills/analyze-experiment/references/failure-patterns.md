@@ -72,7 +72,7 @@ Check edits to human goals, architecture, health detectors, prior outcomes, or p
 
 **Signature:** an outcome commit exists but reflection is absent when required, uses a different session, produces no validated memory commit, or generalizes beyond evidence.
 
-Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`ReflectionRequest.validation_attempt > 1`). Direct-edit reflection agents author final files and run `sdo-operator memory check` until green within their turn budget. The broker repeats the same check independently. Compare the authored checkout diff, local diagnostics, durable `reflection_rejections` and terminal `reflection_rejected`, and accepted commit. Only legacy reflection runs and the current judge bootstrap use typed artifact proposals.
+Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`ReflectionRequest.validation_attempt > 1`). Direct-edit reflection agents author final files and run `sdo-operator memory check` until green within their turn budget. The broker repeats the same check independently. Compare the authored checkout diff, local diagnostics, durable `reflection_rejections` and terminal `reflection_rejected`, and accepted commit. Typed artifact proposals occur only in retired worker contracts; direct-edit reflection and judge capabilities reject them.
 
 ## Learned detector never fired
 
@@ -96,3 +96,16 @@ This invalidates the production path. Benchmark transport belongs only in the SR
 | Broker | Ownership checks, independent verification, committed outcome |
 | Reflection | Same-session proposal when applicable, validated memory commit, correlated rollout |
 | Benchmark | Explicit diagnosis and mitigation success plus one valid strict receipt for SDO adapter runs |
+
+## Native judge direct edits
+
+For `health-judgment-direct-v1`, inspect the proposal checkout diff and accepted
+judge commit for health detector, traffic and health-objective playbook content.
+The typed result contains metadata and logical detector IDs; an artifact payload
+is a rejected retired contract, not evidence of authored files. Both the CLI and
+broker use `validate.Check`, including the explicit Go `memory.PrepareHealth`
+step for generic service-endpoint and traffic policy detectors. Accepted commits
+include those prepared files. A green authoring check does not establish health:
+correlate the separate independent verifier and installation evidence. Judge
+refinements can change health diagnostics after bootstrap but cannot change
+source, human goal, controller outcomes, incident detectors or other playbooks.

@@ -1100,8 +1100,10 @@ func (x *OperationalMemorySnapshot) GetPlaybooks() []*MemoryPlaybook {
 	return nil
 }
 
-// Workers propose logical artifacts; the Go memory edge alone chooses paths,
-// frontmatter, manifest layout, and commit representation.
+// Retired wire-only proposal messages. Direct-edit capabilities reject these;
+// retain their descriptors for Buf compatibility. No production writer consumes them.
+//
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/messages.proto.
 type ProposedGoSource struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -1154,6 +1156,7 @@ func (x *ProposedGoSource) GetContent() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/messages.proto.
 type ProposedDetector struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1302,6 +1305,7 @@ func (x *ProposedDetector) GetSources() []*ProposedGoSource {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/messages.proto.
 type ProposedPlaybook struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1386,6 +1390,7 @@ func (x *ProposedPlaybook) GetScripts() []*MemoryScript {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/messages.proto.
 type ProposedTrafficGenerator struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1438,6 +1443,7 @@ func (x *ProposedTrafficGenerator) GetSources() []*ProposedGoSource {
 	return nil
 }
 
+// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/messages.proto.
 type OperationalArtifactProposal struct {
 	state             protoimpl.MessageState      `protogen:"open.v1"`
 	Detectors         []*ProposedDetector         `protobuf:"bytes,1,rep,name=detectors,proto3" json:"detectors,omitempty"`
@@ -3017,10 +3023,10 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x15architecture_markdown\x18\x03 \x01(\tR\x14architectureMarkdown\x126\n" +
 	"\x17playbook_index_markdown\x18\x04 \x01(\tR\x15playbookIndexMarkdown\x12G\n" +
 	"\tdetectors\x18\x05 \x03(\v2).sdodev.contracts.v1alpha1.MemoryDetectorR\tdetectors\x12G\n" +
-	"\tplaybooks\x18\x06 \x03(\v2).sdodev.contracts.v1alpha1.MemoryPlaybookR\tplaybooks\"@\n" +
+	"\tplaybooks\x18\x06 \x03(\v2).sdodev.contracts.v1alpha1.MemoryPlaybookR\tplaybooks\"D\n" +
 	"\x10ProposedGoSource\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\xa8\x04\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent:\x02\x18\x01\"\xac\x04\n" +
 	"\x10ProposedDetector\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
 	"\x0edetector_class\x18\x02 \x01(\tR\rdetectorClass\x12\x14\n" +
@@ -3036,7 +3042,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x15possible_playbook_ids\x18\v \x03(\tR\x13possiblePlaybookIds\x12-\n" +
 	"\x12originating_commit\x18\f \x01(\tR\x11originatingCommit\x121\n" +
 	"\x14originating_incident\x18\r \x01(\tR\x13originatingIncident\x12E\n" +
-	"\asources\x18\x0e \x03(\v2+.sdodev.contracts.v1alpha1.ProposedGoSourceR\asources\"\xeb\x01\n" +
+	"\asources\x18\x0e \x03(\v2+.sdodev.contracts.v1alpha1.ProposedGoSourceR\asources:\x02\x18\x01\"\xef\x01\n" +
 	"\x10ProposedPlaybook\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05owner\x18\x02 \x01(\tR\x05owner\x12\x1f\n" +
@@ -3044,17 +3050,17 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"faultClass\x121\n" +
 	"\x14originating_incident\x18\x04 \x01(\tR\x13originatingIncident\x12\x1a\n" +
 	"\bmarkdown\x18\x05 \x01(\tR\bmarkdown\x12A\n" +
-	"\ascripts\x18\x06 \x03(\v2'.sdodev.contracts.v1alpha1.MemoryScriptR\ascripts\"q\n" +
+	"\ascripts\x18\x06 \x03(\v2'.sdodev.contracts.v1alpha1.MemoryScriptR\ascripts:\x02\x18\x01\"u\n" +
 	"\x18ProposedTrafficGenerator\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12E\n" +
-	"\asources\x18\x02 \x03(\v2+.sdodev.contracts.v1alpha1.ProposedGoSourceR\asources\"\xd0\x03\n" +
+	"\asources\x18\x02 \x03(\v2+.sdodev.contracts.v1alpha1.ProposedGoSourceR\asources:\x02\x18\x01\"\xd4\x03\n" +
 	"\x1bOperationalArtifactProposal\x12I\n" +
 	"\tdetectors\x18\x01 \x03(\v2+.sdodev.contracts.v1alpha1.ProposedDetectorR\tdetectors\x12I\n" +
 	"\tplaybooks\x18\x02 \x03(\v2+.sdodev.contracts.v1alpha1.ProposedPlaybookR\tplaybooks\x12b\n" +
 	"\x12traffic_generators\x18\x03 \x03(\v23.sdodev.contracts.v1alpha1.ProposedTrafficGeneratorR\x11trafficGenerators\x12W\n" +
 	"\x11traffic_workloads\x18\x04 \x03(\v2*.sdodev.contracts.v1alpha1.TrafficWorkloadR\x10trafficWorkloads\x12.\n" +
 	"\x13delete_detector_ids\x18\x05 \x03(\tR\x11deleteDetectorIds\x12.\n" +
-	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds\"\x9b\n" +
+	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds:\x02\x18\x01\"\x9b\n" +
 	"\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +

@@ -17,11 +17,6 @@ from sdo.contracts import (
     DeploymentPlan,
     HealthJudgeRequest,
     HealthJudgeResult,
-    MemoryWatch,
-    OperationalArtifactProposal,
-    ProposedDetector,
-    ProposedGoSource,
-    ProposedPlaybook,
     RawManifestStrategy,
     SourceDeploymentRequest,
     SourceDeploymentResult,
@@ -132,37 +127,39 @@ spec:
             source_commit=request.accepted_source_commit,
             agent_session_id="fixture-architecture",
         )
-    elif task.task_type == "health-judgment":
+    elif task.task_type == "health-judgment-direct-v1":
         request = HealthJudgeRequest()
         assert task.request.Unpack(request)
-        proposal = OperationalArtifactProposal(
-            detectors=[
-                ProposedDetector(
-                    id="health-objective",
-                    detector_class="health",
-                    owner="health_judge",
-                    constructor="New",
-                    watches=[MemoryWatch(api_version="apps/v1", kind="Deployment")],
-                    interval="30s",
-                    firing=2,
-                    clearing=2,
-                    severity="critical",
-                    debounce="500ms",
-                    possible_playbook_ids=["health-objective"],
-                    originating_commit="lifecycle-bootstrap",
-                    sources=[ProposedGoSource(name="detector.go", content=DETECTOR)],
-                )
-            ],
-            playbooks=[
-                ProposedPlaybook(
-                    id="health-objective",
-                    owner="responder",
-                    fault_class="health-objective-failure",
-                    originating_incident="lifecycle-bootstrap",
-                    markdown=PLAYBOOK,
-                )
-            ],
+        detector = checkout / ".sdo/diagnostics/detectors/health/health-objective"
+        detector.mkdir(parents=True, exist_ok=True)
+        (detector / "manifest.yaml").write_text("""apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: health-objective
+constructor: New
+class: health
+owner: health_judge
+watches:
+  - apiVersion: apps/v1
+    kind: Deployment
+interval: 30s
+persistence:
+  firing: 2
+  clearing: 2
+batching:
+  severity: critical
+  debounce: 500ms
+possiblePlaybooks: [health-objective]
+originatingCommit: lifecycle-bootstrap
+""")
+        (detector / "detector.go").write_text(DETECTOR)
+        playbooks = checkout / ".sdo/playbooks"
+        (playbooks / "health-objective").mkdir(parents=True, exist_ok=True)
+        (playbooks / "health-objective/README.md").write_text(
+            "---\nschema_version: 1\nowner: responder\nfault_class: health-objective-failure\n"
+            "originating_incident: lifecycle-bootstrap\n---\n" + PLAYBOOK
         )
+        (playbooks / "README.md").write_text("# Playbooks\n\n- [health-objective](health-objective/README.md)\n")
         digest = hashlib.sha256(request.health_objective.strip().encode()).hexdigest()
         typed = HealthJudgeResult(
             authored=True,
@@ -170,7 +167,6 @@ spec:
             agent_session_id="fixture-judge",
             objective_digest=digest,
             detector_ids=["health-objective"],
-            artifact_proposal=proposal,
         )
     else:
         raise ValueError(f"unsupported task type {task.task_type}")

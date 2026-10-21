@@ -143,14 +143,16 @@ message OperationalMemorySnapshot {
   repeated MemoryPlaybook playbooks = 6;
 }
 
-// Workers propose logical artifacts; the Go memory edge alone chooses paths,
-// frontmatter, manifest layout, and commit representation.
+// Retired wire-only proposal messages. Direct-edit capabilities reject these;
+// retain their descriptors for Buf compatibility. No production writer consumes them.
 message ProposedGoSource {
+  option deprecated = true;
   string name = 1;
   string content = 2;
 }
 
 message ProposedDetector {
+  option deprecated = true;
   string id = 1;
   string detector_class = 2;
   string owner = 3;
@@ -168,6 +170,7 @@ message ProposedDetector {
 }
 
 message ProposedPlaybook {
+  option deprecated = true;
   string id = 1;
   string owner = 2;
   string fault_class = 3;
@@ -177,11 +180,13 @@ message ProposedPlaybook {
 }
 
 message ProposedTrafficGenerator {
+  option deprecated = true;
   string id = 1;
   repeated ProposedGoSource sources = 2;
 }
 
 message OperationalArtifactProposal {
+  option deprecated = true;
   repeated ProposedDetector detectors = 1;
   repeated ProposedPlaybook playbooks = 2;
   repeated ProposedTrafficGenerator traffic_generators = 3;
