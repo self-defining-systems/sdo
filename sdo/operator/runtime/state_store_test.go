@@ -301,7 +301,8 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 	config.ClearThreshold = 1
 	primary := controllerDetector("primary", time.Second, stateFinding("primary-fault"), sdk.Finding{})
 	secondary := controllerDetector("secondary", time.Second, sdk.Finding{}, stateFinding("secondary-fault"))
-	firstDispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 2)}
+	firstDispatcher := &blockingDispatcher{requests: make(chan IncidentRequest, 2), release: make(chan struct{}, 1)}
+	t.Cleanup(func() { close(firstDispatcher.release) })
 	client := fake.NewSimpleClientset()
 	store := NewConfigMapStateStore(client, "demo", "state")
 	controller, err := NewController(config, []sdk.Detector{primary, secondary}, staticProvider{snapshot: sdktest.Snapshot{}}, firstDispatcher, start)
@@ -328,9 +329,36 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 	if err := controller.Step(ctx, start.Add(time.Second), nil); err != nil {
 		t.Fatalf("secondary firing during response: %v", err)
 	}
+	if effect, ok := controller.PendingDispatchEffect(); ok {
+		t.Fatalf("new fault dispatched while primary responder is running: %#v", effect)
+	}
+	state := controller.ExportState()
+	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentID != firstEffect.Request.IncidentID {
+		t.Fatalf("new fault replaced the running primary incident: %#v", state.IncidentRequest)
+	}
+	if len(state.PendingBatch.Findings) != 1 || state.PendingBatch.Findings[0].Fingerprint != "secondary-fault" {
+		t.Fatalf("new fault was not buffered exactly once: %#v", state.PendingBatch.Findings)
+	}
+
+	// Receiving the request does not imply that Dispatch has returned or that
+	// its completion is queued. Hold the responder through the late finding,
+	// then synchronize on its queued completion before the next controller step.
+	firstDispatcher.release <- struct{}{}
+	select {
+	case completion := <-controller.results:
+		controller.results <- completion
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for primary responder completion")
+	}
+	if err := controller.Step(ctx, start.Add(time.Second), nil); err != nil {
+		t.Fatalf("dispatch buffered secondary fault after primary completion: %v", err)
+	}
 	deferredEffect, ok := controller.PendingDispatchEffect()
-	if !ok || deferredEffect.Request.Findings[0].Fingerprint != "secondary-fault" {
+	if !ok || len(deferredEffect.Request.Findings) != 1 || deferredEffect.Request.Findings[0].Fingerprint != "secondary-fault" {
 		t.Fatalf("new fault was not deferred exactly once: %#v", deferredEffect)
+	}
+	if deferredEffect.Request.IncidentID == firstEffect.Request.IncidentID {
+		t.Fatal("deferred fault reused the primary incident ID")
 	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist deferred effect: %v", err)
