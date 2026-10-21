@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from google.protobuf import json_format
 
 from sdo.agents.responder import KubernetesResultPublisher, ReflectionTurn, run_reflection_task, run_worker_task
 from sdo.agents.views import IncidentRequest, IncidentResult, OperationalArtifactDraft
+from sdo.contracts import OperationalArtifactProposal
 
 PROGRAM_ID = "service-targetport-mismatch"
 PROGRAM_SOURCE = Path("/opt/sdo-scripted/targetport")
@@ -326,7 +328,10 @@ class ScriptedReflector:
                 ],
                 timeout=120,
             )
-            proposal = OperationalArtifactDraft.model_validate(json.loads(output))
+            typed = json_format.Parse(output, OperationalArtifactProposal())
+            proposal = OperationalArtifactDraft.model_validate(
+                json_format.MessageToDict(typed, preserving_proto_field_name=True)
+            )
         return ReflectionTurn(
             summary="Compiled target port program from captured repair",
             learning_decision="updated",
