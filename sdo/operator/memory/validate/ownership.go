@@ -180,16 +180,18 @@ func changesManifests(paths []string) bool {
 	return false
 }
 
-// candidateManifests are the candidate's registrations by detector ID. A
-// manifest that failed to parse is present with a nil value.
+// candidateManifests are the candidate's registrations by manifest path. Keep
+// both classes when their IDs collide: the semantic layer rejects duplicate
+// IDs, but ownership must still compare every registration with its own base.
+// A manifest that failed to parse is present with a nil detector.manifest.
 func (s *run) candidateManifests() map[string]*detector {
-	byID := map[string]*detector{}
+	byPath := map[string]*detector{}
 	for _, det := range s.sortedDetectors() {
 		if det.hasManifest {
-			byID[det.id] = det
+			byPath[det.manifestAt] = det
 		}
 	}
-	return byID
+	return byPath
 }
 
 // upkeepMigration lets Upkeep touch detectors only as part of a schema
@@ -230,7 +232,7 @@ func (s *run) upkeepMigration(base string) error {
 		return nil
 	}
 	for _, prior := range legacy {
-		current, ok := after[prior.ID]
+		current, ok := after[layout.DetectorManifestPath(prior.DetectorClass(), prior.ID)]
 		if !ok || (current.manifest != nil && !reflect.DeepEqual(prior, *current.manifest)) {
 			fail(fmt.Sprintf("migration changed detector %s", prior.ID))
 		}
@@ -269,35 +271,35 @@ func (s *run) detectorOwnership(base string) error {
 	}
 	old := map[string]layout.DetectorManifest{}
 	for _, det := range before {
-		old[det.Manifest.ID] = det.Manifest
+		old[layout.DetectorManifestPath(det.Class, det.Manifest.ID)] = det.Manifest
 	}
-	ids := make([]string, 0, len(after))
-	for id := range after {
-		ids = append(ids, id)
+	paths := make([]string, 0, len(after))
+	for p := range after {
+		paths = append(paths, p)
 	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		det := after[id]
-		prior, existed := old[id]
+	sort.Strings(paths)
+	for _, p := range paths {
+		det := after[p]
+		prior, existed := old[p]
 		if det.manifest == nil {
 			continue
 		}
 		current := *det.manifest
 		switch {
 		case existed && prior.DetectorClass() == protected && !reflect.DeepEqual(prior, current):
-			deny(RuleProtectedDetector, det.manifestAt, fmt.Sprintf("actor %s changed protected %s detector %s", actor, protected, id))
+			deny(RuleProtectedDetector, det.manifestAt, fmt.Sprintf("actor %s changed protected %s detector %s", actor, protected, det.id))
 		case !existed && det.class == protected:
-			deny(RuleProtectedDetector, det.manifestAt, fmt.Sprintf("actor %s added protected %s detector %s", actor, protected, id))
+			deny(RuleProtectedDetector, det.manifestAt, fmt.Sprintf("actor %s added protected %s detector %s", actor, protected, det.id))
 		}
 		if existed && actor == Responder && prior.DetectorClass() == layout.ClassIncident && (prior.OriginatingIncident != current.OriginatingIncident || prior.OriginatingCommit != current.OriginatingCommit) {
-			deny(RuleProvenanceRewrite, det.manifestAt, fmt.Sprintf("responder rewrote detector %s provenance", id))
+			deny(RuleProvenanceRewrite, det.manifestAt, fmt.Sprintf("responder rewrote detector %s provenance", det.id))
 		}
 		if actor == Responder && det.class == layout.ClassIncident && (!existed || !reflect.DeepEqual(prior, current)) && current.Persistence.Firing != 1 {
-			deny(RuleResponderFiring, det.manifestAt, fmt.Sprintf("new or changed incident detector %s must fire on first match (persistence.firing: 1)", id))
+			deny(RuleResponderFiring, det.manifestAt, fmt.Sprintf("new or changed incident detector %s must fire on first match (persistence.firing: 1)", det.id))
 		}
 	}
 	for _, det := range before {
-		if det.Class == protected && after[det.Manifest.ID] == nil {
+		if det.Class == protected && after[layout.DetectorManifestPath(det.Class, det.Manifest.ID)] == nil {
 			deny(RuleProtectedDetector, layout.DetectorManifestPath(det.Class, det.Manifest.ID), fmt.Sprintf("actor %s removed protected %s detector %s", actor, protected, det.Manifest.ID))
 		}
 	}
