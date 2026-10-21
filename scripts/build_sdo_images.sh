@@ -5,8 +5,6 @@ set -euo pipefail
 tag="${SDO_IMAGE_TAG:-v0.1.0}"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# SDO_IMAGE_TAG builds under a private tag so shared v0.1.0 images stay untouched.
-tag="${SDO_IMAGE_TAG:-v0.1.0}"
 # Compute the validator schema identity from the sources baked into the image.
 validator_schema_identity="$(cd "${repo_root}/sdo/operator" && go run ./cmd/sdo-operator schema-identity)"
 docker build \
@@ -27,16 +25,21 @@ docker build \
   --target responder \
   --tag sdo-responder:${tag} \
   "${repo_root}"
-responder_target="sregym-responder"
 if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
-  responder_target="scripted-worker"
+  docker build \
+    --load \
+    --file "${repo_root}/sdo/operator/Dockerfile.runtime" \
+    --target scripted-worker \
+    --tag sdo-sregym-responder:${tag} \
+    "${repo_root}"
+else
+  docker build \
+    --load \
+    --file "${repo_root}/sdo/operator/Dockerfile.runtime" \
+    --target sregym-responder \
+    --tag sdo-sregym-responder:${tag} \
+    "${repo_root}"
 fi
-docker build \
-  --load \
-  --file "${repo_root}/sdo/operator/Dockerfile.runtime" \
-  --target "${responder_target}" \
-  --tag sdo-sregym-responder:${tag} \
-  "${repo_root}"
 for image in sdo-detector-validator sdo-controller sdo-responder sdo-sregym-responder; do
   docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
     command -v go >/dev/null

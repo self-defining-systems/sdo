@@ -62,6 +62,20 @@ def test_checkpoint_round_trips_exact_protojson_and_digest_capture(tmp_path: Pat
     assert (tmp_path / "checkpoints").stat().st_mode & 0o777 == 0o700
 
 
+def test_captured_kubernetes_api_serves_accepted_source_for_repair() -> None:
+    from benchmarks.sregym.fastloop.replay_worker import CapturedKubernetesAPI
+
+    opened = {"services": [{"metadata": {"name": "front"}, "spec": {"ports": [{"port": 80, "targetPort": 9999}]}}]}
+    fixed = {"services": [{"metadata": {"name": "front"}, "spec": {"ports": [{"port": 80, "targetPort": 8080}]}}]}
+    api = CapturedKubernetesAPI(
+        {"open@pre-apply.json": json.dumps(opened).encode(), "fixed.json": json.dumps(fixed).encode()}
+    )
+
+    assert api.tool("source", "Service/hotel/front")["source"]["spec"]["ports"][0]["targetPort"] == 8080
+    with pytest.raises(CheckpointError, match="uncaptured source"):
+        api.tool("source", "Service/hotel/missing")
+
+
 def test_checkpoint_rejects_tampered_capture(tmp_path: Path) -> None:
     request, result = _task_and_result()
     store = CheckpointStore(tmp_path)

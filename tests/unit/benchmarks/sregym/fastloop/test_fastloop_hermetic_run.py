@@ -14,6 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import yaml
+from google.protobuf.any_pb2 import Any as ProtoAny
+
 from benchmarks.sregym import adapter
 from benchmarks.sregym.adapter import scripted_worker
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
@@ -25,6 +28,7 @@ from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
 from benchmarks.sregym.fastloop.records import load_records
 from sdo.agents.views import IncidentRequest
+from sdo.contracts import AgentResult, AgentTask, ProtoIncidentRequest, ProtoIncidentResult, to_canonical_json
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
 
 if TYPE_CHECKING:
@@ -104,13 +108,21 @@ class Application:
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
         for name in COMPONENTS:
             for kind in ("Service", "Deployment"):
-                item = scripted_worker._manifest(workspace, kind, name)
+                item = next(
+                    item
+                    for path in (workspace / "kubernetes").rglob("*.yaml")
+                    for item in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+                    if item and item.get("kind") == kind and item.get("metadata", {}).get("name") == name
+                )
                 item.setdefault("metadata", {})["namespace"] = NAMESPACE
                 self.objects[kind, name] = item
         self.baseline = deepcopy(self.objects)
 
     def list_objects(self, _namespace: str) -> list[dict[str, Any]]:
-        return deepcopy(list(self.objects.values()))
+        return [
+            self.read("deployment", name) if kind == "Deployment" else deepcopy(item)
+            for (kind, name), item in self.objects.items()
+        ]
 
     def apply(self, _namespace: str, item: dict[str, Any]) -> None:
         self.objects[item["kind"], item["metadata"]["name"]] = deepcopy(item)
@@ -320,6 +332,10 @@ class Controller(FakeOps):
 
     def tool(self, *args: str) -> dict[str, Any]:
         self.commands.append(args[0])
+        if args[0] == "source":
+            kind, namespace, name = args[1].split("/", 2)
+            assert namespace == NAMESPACE
+            return {"source": deepcopy(self.app.baseline[kind, name])}
         if args[0] == "diagnose":
             if self.incidents == 2:
                 assert (self.app.workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
@@ -439,6 +455,31 @@ class Controller(FakeOps):
         )
         return receipt
 
+    def configmaps(self) -> list[dict[str, Any]]:
+        incident = f"incident-{self.incidents}"
+        request, result = ProtoAny(), ProtoAny()
+        request.Pack(ProtoIncidentRequest(schema_version="sdo.dev/v1alpha1", incident_id=incident))
+        result.Pack(ProtoIncidentResult(schema_version="sdo.dev/v1alpha1", incident_id=incident))
+        task = AgentTask(
+            schema_version="sdo.dev/v1alpha1",
+            task_id=incident,
+            agent_id="sdo-responder",
+            task_type="incident-response",
+            request=request,
+            workspace={"proposal_id": incident},
+        )
+        response = AgentResult(
+            schema_version="sdo.dev/v1alpha1",
+            task_id=incident,
+            proposal_id=incident,
+            status="completed",
+            response=result,
+        )
+        return [
+            {"data": {"agent-task.json": to_canonical_json(task)}},
+            {"data": {"agent-result.json": to_canonical_json(response)}},
+        ]
+
 
 def test_scripted_fastloop_reuses_reflected_target_port_program(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -480,6 +521,11 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         lambda _namespace: DeployedLifecycle(DeployedLifecycleContext("healthy", []), "seed"),
     )
     monkeypatch.setattr(adapter, "launch_native_lifecycle", lambda *_args: None)
+    monkeypatch.setattr(
+        adapter,
+        "kubectl",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps({"items": controller.configmaps()})),
+    )
     monkeypatch.setattr(composite, "reader_for", lambda *_args: app.read)
     monkeypatch.setattr(
         fault_tracker,
@@ -515,6 +561,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                 str(STREAM),
                 "--diagnosis-grading",
                 "off",
+                "--time-scale",
+                "0.01",
+                "--health-timeout",
+                "2",
             ]
         )
         == 0
@@ -534,6 +584,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     assert controller.registrations == [REGISTRATIONS, REGISTRATIONS]
     assert (workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
     assert (workspace / ".sdo/corpus/targetport-incident-1/open.json").is_file()
+    assert (tmp_path / "results/hermetic/checkpoints/000/responder/checkpoint.json").is_file()
     committed = subprocess.run(
         ["git", "show", "--pretty=", "--name-only", "HEAD"],
         cwd=workspace,

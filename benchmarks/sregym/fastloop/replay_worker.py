@@ -72,6 +72,13 @@ class CapturedKubernetesAPI:
         raise CheckpointError(f"uncaptured Kubernetes command: {argv[:6]}")
 
     def tool(self, *args: str) -> dict[str, Any]:
+        if args[0] == "source":
+            if len(args) != 2:
+                raise CheckpointError(f"invalid source reference: {args[1:]}")
+            parts = args[1].split("/", 2)
+            if len(parts) != 3 or (parts[0], parts[2]) not in self.fixed:
+                raise CheckpointError(f"uncaptured source {args[1]!r}")
+            return {"source": json.loads(json.dumps(self.fixed[parts[0], parts[2]]))}
         if args[0] == "diagnose":
             return {"program_runs": self.runs}
         if args[0] == "plan":
