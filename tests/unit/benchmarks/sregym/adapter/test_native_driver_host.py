@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -107,6 +108,67 @@ def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
 
 def test_unseeded_workspace_has_no_accepted_lifecycle(tmp_path: Path) -> None:
     assert driver._has_accepted_lifecycle(tmp_path) is False
+
+
+def test_scripted_worker_override_requires_accepted_lifecycle_before_cluster_access(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(
+        driver,
+        "prepare_benchmark_resources",
+        lambda *_args, **_kwargs: pytest.fail("cluster was accessed without a lifecycle seed"),
+    )
+    with pytest.raises(ValueError, match="accepted lifecycle seed"):
+        driver._launch_native_lifecycle(
+            driver._parse_args(["--agent-registrations", str(tmp_path / "registrations")]),
+            repository=tmp_path,
+            namespace="demo",
+            application="demo",
+            health_objective="healthy",
+            api_base="",
+            persistent=True,
+        )
+
+
+def test_seeded_workspace_publishes_scripted_worker_registrations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sdo = tmp_path / ".sdo"
+    (sdo / "diagnostics").mkdir(parents=True)
+    (sdo / "diagnostics" / "manifest.yaml").write_text("detectors: []\n", encoding="utf-8")
+    (sdo / "lifecycle-provenance.yaml").write_text("{}\n", encoding="utf-8")
+    registrations = tmp_path / "registrations"
+    registrations.mkdir()
+    (registrations / "responder.json").write_text('{"agent_id":"scripted"}', encoding="utf-8")
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "wait_submission_bridge", lambda *_args: None)
+    monkeypatch.setattr(
+        driver, "install_existing", lambda *_args: type("Receipt", (), {"reused": False, "accepted_commit": "a" * 40})()
+    )
+    monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
+    applied: list[dict[str, object]] = []
+
+    def apply(args: list[str], **kwargs: object) -> object:
+        assert args == ["apply", "-f", "-"]
+        applied.append(json.loads(str(kwargs["input_text"])))
+        return object()
+
+    monkeypatch.setattr(driver, "kubectl", apply)
+    driver._launch_native_lifecycle(
+        driver._parse_args(["--agent-registrations", str(registrations)]),
+        repository=tmp_path,
+        namespace="demo",
+        application="demo",
+        health_objective="healthy",
+        api_base="",
+        persistent=True,
+    )
+    assert applied[0]["metadata"] == {"name": "sdo-agent-registrations", "namespace": "demo-sdo"}
+    assert applied[0]["data"] == {"responder.json": '{"agent_id":"scripted"}'}
 
 
 def test_fastloop_native_launch_has_recorded_action_repairs_and_no_submission_transport(

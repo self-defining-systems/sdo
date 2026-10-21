@@ -143,6 +143,15 @@ def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_
     assert selected.repair_policy == "commit"
 
 
+def test_sdo_accepts_scripted_worker_registration_override(tmp_path: Path) -> None:
+    registrations = tmp_path / "registrations"
+    registrations.mkdir()
+    args = build_parser().parse_args(
+        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--agent-registrations", str(registrations)]
+    )
+    assert args.agent_registrations == registrations
+
+
 def test_up_builds_the_same_one_worker_kind_lane_as_the_experiments(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop.cli import up_worker_environment
 
@@ -261,6 +270,15 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     monkeypatch.setattr(cli, "SregymFaultDriver", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])
+    from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
+
+    monkeypatch.setattr(
+        "benchmarks.sregym.fastloop.fault_tracker.describe_sregym_faults",
+        lambda ids, **_kwargs: {
+            problem_id: (FaultSpec("target_port", "reservation"), FaultSpec("incorrect_image", "rate"))
+            for problem_id in ids
+        },
+    )
 
     assert (
         main(

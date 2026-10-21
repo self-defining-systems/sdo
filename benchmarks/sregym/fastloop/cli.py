@@ -293,6 +293,7 @@ def _sdo_agent(
         controller_namespace=control_namespace_for(environment.namespace),
         kind_cluster_name=environment.cluster,
         persistent=True,
+        agent_registrations=args.agent_registrations.resolve() if args.agent_registrations else None,
     )
     settings = SdoAgentSettings(
         repository=environment.workspace,
@@ -652,6 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
+    run.add_argument("--agent-registrations", type=Path, help="SDO worker registration directory")
     run.add_argument("--problem", action="append", help="problem id; repeat to cycle through several")
     run.add_argument("--stream", type=Path, help="JSON array or object with incidents and grading settings")
     run.add_argument("-n", "--incidents", type=int, default=1)

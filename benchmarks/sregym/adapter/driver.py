@@ -503,6 +503,31 @@ def _has_accepted_lifecycle(repository: Path) -> bool:
     return (sdo / "diagnostics" / "manifest.yaml").is_file() and (sdo / "lifecycle-provenance.yaml").is_file()
 
 
+def _publish_agent_registrations(directory: Path, control_namespace: str, kubeconfig: Path) -> None:
+    files = sorted(directory.glob("*.json"))
+    if not files:
+        raise ValueError(f"agent registration directory {directory} has no JSON files")
+    data: dict[str, str] = {}
+    for path in files:
+        content = path.read_text(encoding="utf-8")
+        if not isinstance(json.loads(content), dict):
+            raise ValueError(f"agent registration {path} must be a JSON object")
+        data[path.name] = content
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=control_namespace,
+        kubeconfig=kubeconfig,
+        input_text=json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "sdo-agent-registrations", "namespace": control_namespace},
+                "data": data,
+            }
+        ),
+    )
+
+
 def _launch_native_lifecycle(
     args: argparse.Namespace,
     *,
@@ -515,6 +540,8 @@ def _launch_native_lifecycle(
 ) -> dict[str, Any]:
     """Provision benchmark transport, then run the production Go host lifecycle."""
 
+    if args.agent_registrations and not _has_accepted_lifecycle(repository):
+        raise ValueError("worker registration override requires an accepted lifecycle seed")
     kind_cluster_name = (args.kind_cluster_name or os.getenv("SREGYM_KIND_CLUSTER_NAME", "")).strip()
     if not kind_cluster_name:
         raise RuntimeError("native benchmark operation requires SREGYM_KIND_CLUSTER_NAME or --kind-cluster-name")
@@ -572,6 +599,8 @@ def _launch_native_lifecycle(
     if _has_accepted_lifecycle(repository):
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
         # detectors): install the controller over it instead of running the deployer and health judge again.
+        if args.agent_registrations:
+            _publish_agent_registrations(Path(args.agent_registrations), control_namespace, kubeconfig)
         receipt = install_existing(install)
         _wait_for_installed_controller(install)
         return {"installed": True, "seeded": True, "reused": receipt.reused, "accepted_commit": receipt.accepted_commit}

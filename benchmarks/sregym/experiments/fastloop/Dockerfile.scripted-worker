@@ -1,0 +1,10 @@
+ARG BASE=sdo-sregym-responder:fastloop
+FROM ${BASE}
+
+# Keep the production worker runtime and replace only the registered agent
+# entry points. Removing model CLIs makes an accidental model call fail closed.
+RUN npm uninstall --global @openai/codex @anthropic-ai/claude-code >/dev/null 2>&1; \
+    rm -f /usr/local/bin/codex /usr/local/bin/claude
+COPY benchmarks/sregym/adapter/scripted_worker.py /opt/sdo/benchmarks/sregym/adapter/
+COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo-scripted/targetport
+RUN chmod -R a+rX /opt/sdo/benchmarks/sregym/adapter /opt/sdo-scripted

@@ -187,6 +187,11 @@ def test_unknown_fault_kind_is_rejected() -> None:
 
 def test_all_playbook_stream_ids_resolve_to_registered_fault_probes_without_a_cluster() -> None:
     root = Path(__file__).resolve().parents[5]
+    chart = (
+        root / "third_party" / "sregym" / "SREGym-applications" / "hotelReservation" / "helm-chart" / "hotelreservation"
+    )
+    if not chart.is_dir():
+        pytest.skip("SREGym application chart is not initialized in this worktree")
     streams = [
         load_stream(root / "benchmarks" / "sregym" / "experiments" / "fastloop" / f"pbprog_{name}.json")
         for name in ("smoke", "explicit", "repeat", "compose")
