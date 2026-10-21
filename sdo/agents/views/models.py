@@ -25,6 +25,7 @@ class FindingSeverity(str, Enum):
     INFO = "info"
     WARNING = "warn"
     CRITICAL = "critical"
+    LATENT = "latent"
 
 
 class DetectorEvaluationStatus(str, Enum):
@@ -69,6 +70,24 @@ class Finding(ContractModel):
             update = {**update, "playbook_ids": update["playbooks"]}
             del update["playbooks"]
         return super().model_copy(update=update, deep=deep)
+
+
+class DriftField(ContractModel):
+    path: str
+    old: str = ""
+    new: str = ""
+
+
+class DriftEvent(ContractModel):
+    ref: ObjectRef
+    fields: list[DriftField] = Field(default_factory=list)
+    source: str = ""
+    manager: str = ""
+    operation: str = ""
+    manager_at: datetime | None = None
+    observed_at: datetime
+    classification: Literal["fault", "unexplained"]
+    program_id: str = ""
 
 
 class DetectorEvaluation(ContractModel):
@@ -216,6 +235,7 @@ class IncidentView(ContractModel):
     blocking_findings: list[Finding] = Field(default_factory=list)
     clearing_findings: list[Finding] = Field(default_factory=list)
     state_changes: StateChanges | None = None
+    drift_events: list[DriftEvent] = Field(default_factory=list)
 
 
 class FollowUpContext(ContractModel):
@@ -368,6 +388,7 @@ class IncidentRequest(ContractModel):
     memory_snapshot: OperationalMemorySnapshot | None = None
     initial_program_runs: list[ProgramRun] = Field(default_factory=list)
     max_response_loops: int = 0
+    drift_events: list[DriftEvent] = Field(default_factory=list)
 
 
 #: Live evidence kinds a root cause may cite. Static artifacts (manifests,

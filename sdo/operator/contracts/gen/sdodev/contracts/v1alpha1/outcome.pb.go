@@ -55,6 +55,7 @@ type OutcomeRecord struct {
 	ProgramFailureSignals    []string                 `protobuf:"bytes,26,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
 	ResponseLoopsUsed        int32                    `protobuf:"varint,27,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
 	ResponseLoopExhausted    bool                     `protobuf:"varint,28,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
+	DriftEvents              []*DriftEvent            `protobuf:"bytes,29,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -283,6 +284,13 @@ func (x *OutcomeRecord) GetResponseLoopExhausted() bool {
 		return x.ResponseLoopExhausted
 	}
 	return false
+}
+
+func (x *OutcomeRecord) GetDriftEvents() []*DriftEvent {
+	if x != nil {
+		return x.DriftEvents
+	}
+	return nil
 }
 
 type OutcomeTimestamps struct {
@@ -653,7 +661,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xe7\x0e\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xb1\x0f\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12(\n" +
 	"\vincident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -686,7 +694,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x11plan_applications\x18\x19 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\x10planApplications\x126\n" +
 	"\x17program_failure_signals\x18\x1a \x03(\tR\x15programFailureSignals\x12.\n" +
 	"\x13response_loops_used\x18\x1b \x01(\x05R\x11responseLoopsUsed\x126\n" +
-	"\x17response_loop_exhausted\x18\x1c \x01(\bR\x15responseLoopExhaustedB\x10\n" +
+	"\x17response_loop_exhausted\x18\x1c \x01(\bR\x15responseLoopExhausted\x12H\n" +
+	"\fdrift_events\x18\x1d \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEventsB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commit\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
@@ -755,7 +764,8 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
 	(*ProgramToolCall)(nil),          // 11: sdodev.contracts.v1alpha1.ProgramToolCall
 	(*ProgramRun)(nil),               // 12: sdodev.contracts.v1alpha1.ProgramRun
 	(*PlanApplication)(nil),          // 13: sdodev.contracts.v1alpha1.PlanApplication
-	(*timestamppb.Timestamp)(nil),    // 14: google.protobuf.Timestamp
+	(*DriftEvent)(nil),               // 14: sdodev.contracts.v1alpha1.DriftEvent
+	(*timestamppb.Timestamp)(nil),    // 15: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	6,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.detector_history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
@@ -769,19 +779,20 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	11, // 8: sdodev.contracts.v1alpha1.OutcomeRecord.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
 	12, // 9: sdodev.contracts.v1alpha1.OutcomeRecord.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
 	13, // 10: sdodev.contracts.v1alpha1.OutcomeRecord.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	14, // 11: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	14, // 12: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	14, // 13: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	14, // 14: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	14, // 15: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	3,  // 16: sdodev.contracts.v1alpha1.DiagnosisVerification.evidence:type_name -> sdodev.contracts.v1alpha1.OutcomeEvidenceCheck
-	4,  // 17: sdodev.contracts.v1alpha1.DiagnosisVerification.detectors:type_name -> sdodev.contracts.v1alpha1.OutcomeDetectorFlip
-	5,  // 18: sdodev.contracts.v1alpha1.DiagnosisVerification.repair:type_name -> sdodev.contracts.v1alpha1.OutcomeRepairAttribution
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	14, // 11: sdodev.contracts.v1alpha1.OutcomeRecord.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	15, // 12: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	15, // 13: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	15, // 14: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	15, // 15: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	15, // 16: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	3,  // 17: sdodev.contracts.v1alpha1.DiagnosisVerification.evidence:type_name -> sdodev.contracts.v1alpha1.OutcomeEvidenceCheck
+	4,  // 18: sdodev.contracts.v1alpha1.DiagnosisVerification.detectors:type_name -> sdodev.contracts.v1alpha1.OutcomeDetectorFlip
+	5,  // 19: sdodev.contracts.v1alpha1.DiagnosisVerification.repair:type_name -> sdodev.contracts.v1alpha1.OutcomeRepairAttribution
+	20, // [20:20] is the sub-list for method output_type
+	20, // [20:20] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }

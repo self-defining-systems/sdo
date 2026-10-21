@@ -86,6 +86,28 @@ def test_a_cold_incidents_request_parses() -> None:
     assert [change.name for change in request.state_changes.changes] == ["frontend"]
 
 
+def test_a_latent_incident_carries_classified_drift() -> None:
+    raw = _raw("incident_request.json")
+    raw["findings"][0]["severity"] = "latent"
+    raw["drift_events"] = [
+        {
+            "ref": {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "frontend"},
+            "fields": [{"path": "spec.ports[0].targetPort", "old": "8080", "new": "9999"}],
+            "source": "differs from accepted manifest",
+            "manager": "unknown-editor",
+            "operation": "Update",
+            "observed_at": "1970-01-01T00:00:01Z",
+            "classification": "fault",
+            "program_id": "targetport",
+        }
+    ]
+
+    request = IncidentRequest.model_validate(raw)
+
+    assert request.findings[0].severity.value == "latent"
+    assert request.drift_events[0].program_id == "targetport"
+
+
 def test_a_repaired_closure_carries_the_f17_facts() -> None:
     closure = BrokerClosure.model_validate(_raw("closure_repaired.json"))
 

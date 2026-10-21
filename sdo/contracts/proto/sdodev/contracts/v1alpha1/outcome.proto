@@ -40,6 +40,7 @@ message OutcomeRecord {
   repeated string program_failure_signals = 26;
   int32 response_loops_used = 27;
   bool response_loop_exhausted = 28;
+  repeated DriftEvent drift_events = 29;
 }
 
 message OutcomeTimestamps {

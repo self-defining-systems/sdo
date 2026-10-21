@@ -84,6 +84,17 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	}
 }
 
+func TestDeriveCarriesClassifiedDriftEvidence(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Request.DriftEvents = []*contractsv1alpha1.DriftEvent{{Ref: &contractsv1alpha1.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"},
+		Fields: []*contractsv1alpha1.DriftField{{Path: "spec.ports[0].targetPort", Old: "8080", New: "9999"}},
+		Source: "differs from accepted manifest", Manager: "unknown-editor", Classification: "fault", ProgramId: "targetport", ObservedAt: closure.DetectedAt}}
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil || len(result.Record.GetDriftEvents()) != 1 || result.Record.GetDriftEvents()[0].GetProgramId() != "targetport" {
+		t.Fatalf("classified drift lost from outcome: %+v, %v", result.Record, err)
+	}
+}
+
 func TestDeriveConfirmsLatentCauseFromProgramVerdictFlip(t *testing.T) {
 	// TODO: Add a hermetic e2e latent targetPort repair case with pre-fix
 	// Match and verified post-fix NoMatch once that suite lands here.

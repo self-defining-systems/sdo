@@ -49,6 +49,38 @@ class Finding(_message.Message):
     metadata: _struct_pb2.Struct
     def __init__(self, detector_id: _Optional[str] = ..., rule_id: _Optional[str] = ..., status: _Optional[str] = ..., severity: _Optional[str] = ..., summary: _Optional[str] = ..., evidence: _Optional[str] = ..., primary_resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., related_resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., fingerprint: _Optional[str] = ..., metadata: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
 
+class DriftField(_message.Message):
+    __slots__ = ("path", "old", "new")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    OLD_FIELD_NUMBER: _ClassVar[int]
+    NEW_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    old: str
+    new: str
+    def __init__(self, path: _Optional[str] = ..., old: _Optional[str] = ..., new: _Optional[str] = ...) -> None: ...
+
+class DriftEvent(_message.Message):
+    __slots__ = ("ref", "fields", "source", "manager", "operation", "observed_at", "classification", "program_id", "manager_at")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    FIELDS_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    MANAGER_FIELD_NUMBER: _ClassVar[int]
+    OPERATION_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
+    CLASSIFICATION_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
+    MANAGER_AT_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    fields: _containers.RepeatedCompositeFieldContainer[DriftField]
+    source: str
+    manager: str
+    operation: str
+    observed_at: _timestamp_pb2.Timestamp
+    classification: str
+    program_id: str
+    manager_at: _timestamp_pb2.Timestamp
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., fields: _Optional[_Iterable[_Union[DriftField, _Mapping]]] = ..., source: _Optional[str] = ..., manager: _Optional[str] = ..., operation: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., classification: _Optional[str] = ..., program_id: _Optional[str] = ..., manager_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
 class DetectorEvaluation(_message.Message):
     __slots__ = ("detector_id", "evaluated_at", "status", "fingerprints", "error")
     DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
@@ -371,7 +403,7 @@ class OperationalArtifactProposal(_message.Message):
     def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ..., libraries: _Optional[_Iterable[_Union[ProposedLibrary, _Mapping]]] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
-    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "follow_up", "memory_snapshot", "initial_program_runs", "max_response_loops")
+    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "follow_up", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -392,6 +424,7 @@ class IncidentRequest(_message.Message):
     MEMORY_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     INITIAL_PROGRAM_RUNS_FIELD_NUMBER: _ClassVar[int]
     MAX_RESPONSE_LOOPS_FIELD_NUMBER: _ClassVar[int]
+    DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     application: str
     namespace: str
@@ -412,7 +445,8 @@ class IncidentRequest(_message.Message):
     memory_snapshot: OperationalMemorySnapshot
     initial_program_runs: _containers.RepeatedCompositeFieldContainer[_program_pb2.ProgramRun]
     max_response_loops: int
-    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., follow_up: _Optional[_Union[FollowUpContext, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ...) -> None: ...
+    drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
+    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., follow_up: _Optional[_Union[FollowUpContext, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ...) -> None: ...
 
 class RootCauseEvidence(_message.Message):
     __slots__ = ("kind", "source", "observation")
@@ -586,20 +620,22 @@ class LateFindingsPull(_message.Message):
     def __init__(self, incident_id: _Optional[str] = ..., pull_count: _Optional[int] = ..., detector_ids: _Optional[_Iterable[str]] = ..., playbook_ids: _Optional[_Iterable[str]] = ..., report_digest: _Optional[str] = ...) -> None: ...
 
 class IncidentView(_message.Message):
-    __slots__ = ("incident_id", "observed_at", "blocking_detectors", "blocking_findings", "clearing_findings", "state_changes")
+    __slots__ = ("incident_id", "observed_at", "blocking_detectors", "blocking_findings", "clearing_findings", "state_changes", "drift_events")
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
     BLOCKING_DETECTORS_FIELD_NUMBER: _ClassVar[int]
     BLOCKING_FINDINGS_FIELD_NUMBER: _ClassVar[int]
     CLEARING_FINDINGS_FIELD_NUMBER: _ClassVar[int]
     STATE_CHANGES_FIELD_NUMBER: _ClassVar[int]
+    DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     incident_id: str
     observed_at: _timestamp_pb2.Timestamp
     blocking_detectors: _containers.RepeatedScalarFieldContainer[str]
     blocking_findings: _containers.RepeatedCompositeFieldContainer[Finding]
     clearing_findings: _containers.RepeatedCompositeFieldContainer[Finding]
     state_changes: StateChanges
-    def __init__(self, incident_id: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., blocking_detectors: _Optional[_Iterable[str]] = ..., blocking_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., clearing_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ...) -> None: ...
+    drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
+    def __init__(self, incident_id: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., blocking_detectors: _Optional[_Iterable[str]] = ..., blocking_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., clearing_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ...) -> None: ...
 
 class DetectorTimelineEntry(_message.Message):
     __slots__ = ("detector_id", "detector_class", "owner", "rule_id", "fingerprint", "parameter_bindings", "surfaced_playbook_ids", "first_activated_at", "last_seen_at", "cleared_at", "relation", "activations")

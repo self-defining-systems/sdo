@@ -32,7 +32,7 @@ message Finding {
   string detector_id = 1 [(buf.validate.field).string.min_len = 1];
   string rule_id = 2 [(buf.validate.field).string.min_len = 1];
   string status = 3 [(buf.validate.field).string = {in: ["active", "resolved"]}];
-  string severity = 4 [(buf.validate.field).string = {in: ["info", "warn", "critical"]}];
+  string severity = 4 [(buf.validate.field).string = {in: ["info", "warn", "critical", "latent"]}];
   string summary = 5 [(buf.validate.field).string.min_len = 1];
   string evidence = 6 [(buf.validate.field).string.min_len = 1];
   ObjectRef primary_resource = 7 [(buf.validate.field).required = true];
@@ -41,6 +41,24 @@ message Finding {
   map<string, ObjectRef> parameter_bindings = 10;
   string fingerprint = 11;
   google.protobuf.Struct metadata = 12;
+}
+
+message DriftField {
+  string path = 1;
+  string old = 2;
+  string new = 3;
+}
+
+message DriftEvent {
+  ObjectRef ref = 1;
+  repeated DriftField fields = 2;
+  string source = 3;
+  string manager = 4;
+  string operation = 5;
+  google.protobuf.Timestamp observed_at = 6;
+  string classification = 7 [(buf.validate.field).string = {in: ["fault", "unexplained"]}];
+  string program_id = 8;
+  google.protobuf.Timestamp manager_at = 9;
 }
 
 // DetectorEvaluation is one detector's status at a point in time.
@@ -255,6 +273,7 @@ message IncidentRequest {
   OperationalMemorySnapshot memory_snapshot = 20;
   repeated ProgramRun initial_program_runs = 21;
   int32 max_response_loops = 22;
+  repeated DriftEvent drift_events = 23;
 }
 
 message RootCauseEvidence {
@@ -421,6 +440,7 @@ message IncidentView {
   repeated Finding blocking_findings = 4;
   repeated Finding clearing_findings = 5;
   StateChanges state_changes = 6;
+  repeated DriftEvent drift_events = 7;
 }
 
 // DetectorTimelineEntry summarizes one finding's firing history within an

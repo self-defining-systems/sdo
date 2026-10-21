@@ -113,6 +113,7 @@ type ControllerConfig struct {
 	MaxResponseLoops     int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
 	DiagnosisDeadline    *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
 	DiagnosisSettleDelay *durationpb.Duration `protobuf:"bytes,57,opt,name=diagnosis_settle_delay,json=diagnosisSettleDelay,proto3" json:"diagnosis_settle_delay,omitempty"`
+	DriftSweepInterval   *durationpb.Duration `protobuf:"bytes,58,opt,name=drift_sweep_interval,json=driftSweepInterval,proto3" json:"drift_sweep_interval,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -532,11 +533,18 @@ func (x *ControllerConfig) GetDiagnosisSettleDelay() *durationpb.Duration {
 	return nil
 }
 
+func (x *ControllerConfig) GetDriftSweepInterval() *durationpb.Duration {
+	if x != nil {
+		return x.DriftSweepInterval
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xbd\x17\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\x8a\x18\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -599,7 +607,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
 	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
 	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12O\n" +
-	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelayB\x14\n" +
+	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelay\x12K\n" +
+	"\x14drift_sweep_interval\x18: \x01(\v2\x19.google.protobuf.DurationR\x12driftSweepIntervalB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13R\x06brokerR\vbroker_argsB\x88\x02\n" +
@@ -633,11 +642,12 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
 	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
 	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_settle_delay:type_name -> google.protobuf.Duration
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.drift_sweep_interval:type_name -> google.protobuf.Duration
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }
