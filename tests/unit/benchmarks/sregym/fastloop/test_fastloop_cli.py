@@ -151,6 +151,37 @@ def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
     assert fast.time_scale == 0.1
 
 
+def test_detection_timeout_reaches_single_and_composite_sdo_stages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import cli, composite
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fastloop-w0",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="hotel-reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    monkeypatch.setattr(cli, "_cluster_ops", lambda *_args: object())
+    monkeypatch.setattr(composite, "reader_for", lambda *_args: lambda *_read: None)
+    default = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+    selected = build_parser().parse_args(
+        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--detection-timeout", "12"]
+    )
+
+    assert (
+        cli._sdo_agent(default, environment, tmp_path).stage_inputs("stage", tmp_path, "fp").detection_timeout_seconds
+        is None
+    )
+    for composite_mode in (False, True):
+        agent = cli._sdo_agent(selected, environment, tmp_path, composite=composite_mode)
+        assert agent.stage_inputs("stage", tmp_path, "fp").detection_timeout_seconds == 12
+
+
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
     assert args.repair_policy == "recorded-actions"

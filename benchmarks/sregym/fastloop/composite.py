@@ -35,6 +35,7 @@ from benchmarks.sregym.adapter import (
     drain_pending_incident,
     pause_controller,
 )
+from benchmarks.sregym.adapter.persistent import DetectionMissError
 from benchmarks.sregym.fastloop.fault_tracker import (
     BackgroundPoller,
     FaultSpec,
@@ -290,6 +291,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 )
                 stop_reason = "closure_failed"
                 wedged = True
+            except DetectionMissError:
+                stop_reason = "detection_miss"
+                raise
             except PersistentControllerError as stage_error:
                 if not injected:
                     raise
