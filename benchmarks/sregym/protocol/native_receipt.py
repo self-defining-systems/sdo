@@ -132,6 +132,10 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
         or (decision.get("learning_decision") == "updated" and reflection is None)
     ):
         raise ProductionReceiptValidationError("native required reflection is incomplete")
+    if isinstance(decision, dict) and decision.get("learning_decision") == "failed":
+        _nonempty(decision.get("error"), "reflection failure error")
+        if reflection is not None:
+            raise ProductionReceiptValidationError("native failed reflection cannot have a reflection commit")
     expectation = ledger.get("rollout_expectation")
     if expectation is not None:
         expected = _object(expectation, "rollout expectation")

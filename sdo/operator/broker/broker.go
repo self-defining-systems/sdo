@@ -178,6 +178,13 @@ func (b *Broker) Publish(ctx context.Context, incidentID string, actor Actor, ph
 	return b.publish(ctx, incidentID, actor, phase, "", nil)
 }
 
+// ProposalValidationError is a deterministic rejection of candidate content.
+// A caller can finish incident closure while preserving the failed learning result.
+type ProposalValidationError struct{ Err error }
+
+func (e *ProposalValidationError) Error() string { return e.Err.Error() }
+func (e *ProposalValidationError) Unwrap() error { return e.Err }
+
 // PublishVerifiedSource accepts an initial source proposal only when its full
 // Git tree still matches the tree deployed and observed by the trusted adapter.
 // The check and accepted commit occur under the broker's publishing lock.
@@ -271,7 +278,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		for _, path := range paths {
 			if err := checkOwnership(path, actor, phase); err != nil {
-				return err
+				return &ProposalValidationError{Err: err}
 			}
 		}
 		if expectedSourceTree != "" {
@@ -300,10 +307,10 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 			}
 		}
 		if err := validateCandidate(ctx, stage, b.target, actor, phase, paths); err != nil {
-			return fmt.Errorf("candidate validation: %w", err)
+			return &ProposalValidationError{Err: fmt.Errorf("candidate validation: %w", err)}
 		}
 		if err := b.validator(ctx, stage, paths); err != nil {
-			return fmt.Errorf("proposal validation: %w", err)
+			return &ProposalValidationError{Err: fmt.Errorf("proposal validation: %w", err)}
 		}
 		if expectedSourceTree != "" {
 			stagedTree, err := ProposalTreeDigest(ctx, stage)

@@ -157,6 +157,29 @@ def test_native_receipt_accepts_no_change_reflection_without_a_commit() -> None:
     validate_production_receipt(_receipt(ledger))
 
 
+def test_native_receipt_keeps_verified_mitigation_when_learning_fails() -> None:
+    ledger = _ledger()
+    ledger["reflection_commit"] = ""
+    ledger["receipt"]["reflection_commit"] = ""  # type: ignore[index]
+    ledger["reflection_decision"] = {
+        "learning_decision": "failed",
+        "error": 'detector "image-pull" sources: expected at least one Go source',
+    }
+    receipt = _receipt(ledger)
+    validate_production_receipt(receipt)
+    assert receipt["resolution"] == "sdo_mitigated"
+    assert receipt["native_ledger"]["reflection_decision"]["learning_decision"] == "failed"  # type: ignore[index]
+
+
+def test_native_receipt_requires_reason_for_failed_learning() -> None:
+    ledger = _ledger()
+    ledger["reflection_commit"] = ""
+    ledger["receipt"]["reflection_commit"] = ""  # type: ignore[index]
+    ledger["reflection_decision"] = {"learning_decision": "failed"}
+    with pytest.raises(ProductionReceiptValidationError, match="reflection failure error"):
+        _receipt(ledger)
+
+
 def test_native_receipt_requires_verified_detector_rollout_when_expected() -> None:
     ledger = _ledger()
     ledger["rollout_expectation"] = {

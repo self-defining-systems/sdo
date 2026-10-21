@@ -447,7 +447,7 @@ func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
 	}
 }
 
-func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
+func TestNativeBrokerCompletesAfterDeterministicReflectionRejectionAndRunsNextIncident(t *testing.T) {
 	t.Parallel()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
@@ -455,14 +455,15 @@ func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invalid := true
+	calls := 0
 	native := NativeIncidentBroker{
 		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
 		Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
 			return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
 		}),
 		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, w IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
-			if !invalid {
+			calls++
+			if w.IncidentID != "inc-reject" {
 				return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already learned"}, nil
 			}
 			return ReflectionDecision{LearningDecision: "updated"}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte("bad playbook\n"), 0o644)
@@ -476,15 +477,27 @@ func TestNativeBrokerRejectsReflectionAndRecreatesItsCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	closure := nativeClosure(workspace)
-	if _, err := native.ProcessClosure(context.Background(), closure); err == nil {
-		t.Fatal("invalid reflection accepted")
+	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+		t.Fatalf("invalid learning blocked verified closure: %v", err)
 	}
 	if _, err := repositoryBroker.ProposalInfo("inc-reject", broker.ReflectionPhase); err == nil {
 		t.Fatal("rejected reflection checkout remained")
 	}
-	invalid = false
 	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
 		t.Fatal(err)
+	}
+	ledger, err := native.readLedger("inc-reject")
+	if err != nil || !ledger.ReflectionProcessed || ledger.ReflectionDecision == nil || ledger.ReflectionDecision.LearningDecision != "failed" || !strings.Contains(ledger.ReflectionDecision.Error, "playbook") || calls != 1 {
+		t.Fatalf("rejection was retried or lost: ledger=%+v calls=%d err=%v", ledger, calls, err)
+	}
+	next, err := native.PrepareIncident(context.Background(), "inc-next")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextClosure := nativeClosure(next)
+	nextClosure.Request.RepairPolicy = "recorded-actions"
+	if _, err := native.ProcessClosure(context.Background(), nextClosure); err != nil {
+		t.Fatalf("next incident blocked by failed learning: %v", err)
 	}
 	if got := nativeGit(t, target, "show", "HEAD:.sdo/playbooks/base/README.md"); strings.Contains(got, "bad playbook") {
 		t.Fatal("rejected reflection reached accepted state")

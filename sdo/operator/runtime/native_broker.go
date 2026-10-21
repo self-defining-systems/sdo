@@ -382,18 +382,38 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					}
 					if n.SessionRoot != "" {
 						if err := memory.ValidateCapturedCorpusTree(n.SessionRoot, proposal.Path, id, paths); err != nil {
-							return fmt.Errorf("reflection corpus provenance: %w", err)
+							if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
+								return fmt.Errorf("reflection corpus provenance: %v; reset proposal: %w", err, resetErr)
+							}
+							ledger.ReflectionDecision.LearningDecision = "failed"
+							ledger.ReflectionDecision.Error = fmt.Sprintf("reflection corpus provenance: %v", err)
+							ledger.ReflectionProcessed = true
+							if err := n.saveLedger(ledger); err != nil {
+								return err
+							}
 						}
 					}
-					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ReflectionPhase)
-					if err != nil {
-						if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
-							return fmt.Errorf("reflection rejected: %v; reset proposal: %w", err, resetErr)
+					if !ledger.ReflectionProcessed {
+						accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ReflectionPhase)
+						if err != nil {
+							if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
+								return fmt.Errorf("reflection rejected: %v; reset proposal: %w", err, resetErr)
+							}
+							var rejected *broker.ProposalValidationError
+							if !errors.As(err, &rejected) {
+								return err
+							}
+							ledger.ReflectionDecision.LearningDecision = "failed"
+							ledger.ReflectionDecision.Error = err.Error()
+							ledger.ReflectionProcessed = true
+							if err := n.saveLedger(ledger); err != nil {
+								return err
+							}
+						} else {
+							ledger.ReflectionCommit = accepted.Commit
+							reflectionPaths = accepted.ChangedPaths
 						}
-						return err
 					}
-					ledger.ReflectionCommit = accepted.Commit
-					reflectionPaths = accepted.ChangedPaths
 				} else if (ledger.ReflectionDecision.LearningDecision == "sdk_gap" && len(ledger.ReflectionDecision.SDKGaps) == 0) ||
 					(ledger.ReflectionDecision.LearningDecision != "sdk_gap" && (ledger.ReflectionDecision.LearningDecision != "no_change" || strings.TrimSpace(ledger.ReflectionDecision.NoChangeReason) == "")) {
 					return errors.New("no-op reflection requires sdk_gap or no_change decision with concrete reason")
