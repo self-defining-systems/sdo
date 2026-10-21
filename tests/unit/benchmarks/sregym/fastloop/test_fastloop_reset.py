@@ -8,6 +8,8 @@ import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, LoopConfig, run_incidents
+from benchmarks.sregym.fastloop.records import OracleVerdict
 from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
 
 if TYPE_CHECKING:
@@ -35,8 +37,9 @@ class FakeCluster:
     def delete(self, namespace: str, kind: str, name: str) -> None:
         self.objects = [item for item in self.objects if item["metadata"]["name"] != name]
 
-    def reset_controller(self, seed_commit: str) -> None:
-        self.accepted_commit = seed_commit
+    def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None:
+        if not preserve_repository:
+            self.accepted_commit = seed_commit
         self.sessions.clear()
         self.state.clear()
         self.jobs.clear()
@@ -111,3 +114,95 @@ def test_reset_accepts_up_cluster_before_controller_install(tmp_path: Path, monk
     KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40)
 
     assert calls == [["get", "namespace", "sdo"]]
+
+
+def test_fail_soft_controller_reset_preserves_accepted_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_kubectl(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[:2] == ["get", "pods"]:
+            return subprocess.CompletedProcess(
+                args, 0, '{"items":[{"metadata":{"name":"controller"},"status":{"phase":"Running"}}]}', ""
+            )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.reset.kubectl", fake_kubectl)
+    KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40, preserve_repository=True)
+
+    command = next(args for args in calls if args[:1] == ["exec"])
+    assert "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees" in command
+    assert all("git -C /workspace/application" not in arg for arg in command)
+
+
+def test_failed_learning_keeps_program_for_third_incident(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        seed_commit="a" * 40,
+    )
+    baseline = ApplicationBaseline(
+        "hotel",
+        [{"kind": "Deployment", "metadata": {"name": "app", "namespace": "hotel"}, "spec": {"replicas": 1}}],
+    )
+    environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
+    cluster = FakeCluster()
+    now = datetime(2026, 10, 21, tzinfo=timezone.utc)
+
+    class Agent:
+        name = "sdo"
+        model = "test"
+
+        def resolve(self, index: int, _problem: str, inject: Any) -> AgentOutcome:
+            window = inject()
+            if index == 2:
+                assert cluster.accepted_commit == "program-commit"
+            return AgentOutcome(injection=window, incident_id=f"incident-{index}")
+
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            if outcome.incident_id == "incident-0":
+                cluster.accepted_commit = "program-commit"
+            if outcome.incident_id == "incident-1":
+                raise RuntimeError("learning failed")
+            return outcome
+
+        def close(self) -> None:
+            pass
+
+    class Driver:
+        def inject(self, _problem: str) -> InjectionWindow:
+            return InjectionWindow(started_at=now, finished_at=now)
+
+        def oracle(self) -> OracleVerdict:
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=True)
+
+        def recover(self) -> float:
+            return 0.0
+
+    config = LoopConfig(
+        run_id="test",
+        problems=("fault",),
+        incidents=3,
+        results_path=tmp_path / "incidents.jsonl",
+        continue_on_error=True,
+    )
+    records = run_incidents(
+        Agent(),
+        Driver(),
+        config,
+        on_failed_incident=lambda: reset_environment(environment, cluster, FakeWorker(), preserve_repository=True),
+    )
+    assert len(records) == 3
+    assert "learning failed" in (records[1].error or "")
+    assert records[2].error is None
+    assert cluster.accepted_commit == "program-commit"

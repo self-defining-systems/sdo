@@ -25,7 +25,7 @@ class ResetCluster(Protocol):
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None: ...
 
-    def reset_controller(self, seed_commit: str) -> None: ...
+    def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None: ...
 
 
 class HealthWorker(Protocol):
@@ -37,7 +37,7 @@ class KubectlResetCluster(KubectlApplicationCluster):
         super().__init__(kubeconfig)
         self.control_namespace = control_namespace
 
-    def reset_controller(self, seed_commit: str) -> None:
+    def reset_controller(self, seed_commit: str, *, preserve_repository: bool = False) -> None:
         namespace = self.control_namespace
         control_namespace = kubectl(
             ["get", "namespace", namespace],
@@ -72,6 +72,12 @@ class KubectlResetCluster(KubectlApplicationCluster):
                 kubeconfig=self.kubeconfig,
                 input_text='{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"sdo-controller-maintenance"},"data":{"state":"paused"}}',
             )
+            cleanup = "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees"
+            if not preserve_repository:
+                cleanup = (
+                    'git -C /workspace/application reset --hard "$1" && '
+                    "git -C /workspace/application clean -fd && " + cleanup
+                )
             kubectl(
                 [
                     "exec",
@@ -81,9 +87,7 @@ class KubectlResetCluster(KubectlApplicationCluster):
                     "--",
                     "sh",
                     "-c",
-                    'git -C /workspace/application reset --hard "$1" && '
-                    "git -C /workspace/application clean -fd && "
-                    "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees",
+                    cleanup,
                     "reset",
                     seed_commit,
                 ],
@@ -102,13 +106,15 @@ class KubectlResetCluster(KubectlApplicationCluster):
         )
 
 
-def reset_environment(environment: FastloopEnvironment, cluster: ResetCluster, worker: HealthWorker) -> None:
+def reset_environment(
+    environment: FastloopEnvironment, cluster: ResetCluster, worker: HealthWorker, *, preserve_repository: bool = False
+) -> None:
     if not environment.seed_commit:
         raise ValueError("reset requires a seed commit captured by fastloop up")
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
     if baselines is None:
         raise ValueError("reset requires an application baseline captured by fastloop up")
-    cluster.reset_controller(environment.seed_commit)
+    cluster.reset_controller(environment.seed_commit, preserve_repository=preserve_repository)
     for baseline in baselines:
         reconcile_application(cluster, baseline, baseline.namespace)
     environment.state_path.unlink(missing_ok=True)

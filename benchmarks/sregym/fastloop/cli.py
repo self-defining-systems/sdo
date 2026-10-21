@@ -501,8 +501,8 @@ def _run(args: argparse.Namespace) -> int:
                 environment,
                 KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
                 worker,
+                preserve_repository=True,
             )
-            _restore_seed(environment)
 
         if args.agent == "sdo":
             records = run_incidents(
