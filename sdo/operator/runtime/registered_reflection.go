@@ -164,7 +164,13 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
-	if result == nil || result.GetSchemaVersion() != task.SchemaVersion || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID || result.GetStatus() != "completed" {
+	if result == nil || result.GetSchemaVersion() != task.SchemaVersion || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID {
+		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
+	}
+	if result.GetStatus() == "failed" && result.GetErrorSummary() != "" {
+		return ReflectionDecision{LearningDecision: "failed", Error: result.GetErrorSummary()}, nil
+	}
+	if result.GetStatus() != "completed" {
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
 	}
 	if result.GetResponse() == nil {

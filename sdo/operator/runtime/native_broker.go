@@ -46,6 +46,7 @@ type ReflectionWorker interface {
 type ReflectionDecision struct {
 	LearningDecision string              `json:"learning_decision"`
 	NoChangeReason   string              `json:"no_change_reason,omitempty"`
+	Error            string              `json:"error,omitempty"`
 	SDKGaps          []*contracts.SdkGap `json:"sdk_gaps,omitempty"`
 	Usage            *UsageMetrics       `json:"usage,omitempty"`
 }
@@ -295,7 +296,15 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					}
 					return errors.New("reflection changes lack a durable worker decision; proposal reset")
 				}
-				if len(paths) > 0 {
+				if ledger.ReflectionDecision.LearningDecision == "failed" && ledger.ReflectionDecision.Error != "" {
+					if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
+						return err
+					}
+					ledger.ReflectionProcessed = true
+					if err := n.saveLedger(ledger); err != nil {
+						return err
+					}
+				} else if len(paths) > 0 {
 					if ledger.ReflectionDecision.LearningDecision != "updated" {
 						if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
 							return err
@@ -325,12 +334,14 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 					return errors.New("no-op reflection requires sdk_gap or no_change decision with concrete reason")
 				}
 			}
-			if err := n.setRolloutExpectation(ctx, &ledger, reflectionPaths); err != nil {
-				return err
-			}
-			ledger.ReflectionProcessed = true
-			if err := n.saveLedger(ledger); err != nil {
-				return err
+			if !ledger.ReflectionProcessed {
+				if err := n.setRolloutExpectation(ctx, &ledger, reflectionPaths); err != nil {
+					return err
+				}
+				ledger.ReflectionProcessed = true
+				if err := n.saveLedger(ledger); err != nil {
+					return err
+				}
 			}
 		}
 		if ledger.OutcomeCommit == "" {

@@ -17,6 +17,7 @@ from sdo.agents.responder.reflection import (
     ClaudeSessionBackend,
     CodexSessionBackend,
     ReflectionGuidance,
+    ReflectionProposalError,
     ReflectionSessionMode,
     ReflectionTurn,
     SessionReflector,
@@ -109,16 +110,38 @@ def run_reflection_task(
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")
     selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
-    turn = selected.resume(
-        session_id=prior_session or "",
-        incident_id=outcome.incident_id,
-        worktree=Path(task.workspace.checkout_path),
-        outcome=outcome,
-        history=history,
-        outcome_commit=request.outcome_commit,
-        session_mode=cast("ReflectionSessionMode", session_mode),
-        closure=closure,
-    )
+    proposal = None
+    feedback = None
+    for _ in range(3):
+        try:
+            turn = selected.resume(
+                session_id=prior_session or "",
+                incident_id=outcome.incident_id,
+                worktree=Path(task.workspace.checkout_path),
+                outcome=outcome,
+                history=history,
+                outcome_commit=request.outcome_commit,
+                session_mode=cast("ReflectionSessionMode", session_mode),
+                closure=closure,
+                validation_feedback=feedback,
+            )
+            if turn.artifact_proposal is not None:
+                proposal = json_format.ParseDict(
+                    turn.artifact_proposal.model_dump(mode="json", by_alias=True), OperationalArtifactProposal()
+                )
+            break
+        except (ReflectionProposalError, json_format.ParseError) as exc:
+            feedback = str(exc)[:4000]
+    else:
+        result = AgentResult(
+            schema_version="sdo.dev/v1alpha1",
+            task_id=task.task_id,
+            status="failed",
+            proposal_id=task.workspace.proposal_id,
+            error_summary=f"invalid reflection proposal after 3 attempts: {feedback}",
+        )
+        publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
+        return result
     if turn.proposed_changes:
         raise ValueError("logical reflection cannot return physical paths")
     if turn.learning_decision == "updated" and turn.artifact_proposal is None:
@@ -148,10 +171,8 @@ def run_reflection_task(
             reason=gap.reason,
             scratch_script=gap.scratch_script,
         )
-    if turn.artifact_proposal is not None:
-        typed_result.artifact_proposal.CopyFrom(
-            json_format.ParseDict(turn.artifact_proposal.model_dump(mode="json"), OperationalArtifactProposal())
-        )
+    if proposal is not None:
+        typed_result.artifact_proposal.CopyFrom(proposal)
     result = AgentResult(
         schema_version="sdo.dev/v1alpha1",
         task_id=task.task_id,
