@@ -302,6 +302,12 @@ class ProgramBinding(ContractModel):
     object: ObjectRef
 
 
+class RelationCoveredFinding(ContractModel):
+    finding_fingerprint: str
+    program_id: str
+    bindings: list[ProgramBinding] = Field(default_factory=list)
+
+
 class ProgramEvidence(ContractModel):
     resource: ObjectRef | None = None
     fact: str
@@ -573,6 +579,7 @@ class IncidentResult(ContractModel):
     resolution_path: Literal["", "fast_path", "responder"] = ""
     fast_path_programs: list[str] = Field(default_factory=list)
     fast_path_skipped_reason: str = ""
+    fast_path_relation_covered_findings: list[RelationCoveredFinding] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_repair_action_ids(self) -> IncidentResult:

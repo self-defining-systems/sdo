@@ -15,6 +15,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 func testDerivedOutcome(id, classification string, reflect bool) DerivedOutcome {
@@ -257,7 +258,8 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	}
 	closure := nativeClosure(workspace)
 	closure.Request.RepairPolicy = "recorded-actions"
-	closure.Result.FastPathSkippedReason = FastPathSkipUnexplainedFinding
+	closure.Result.FastPathSkippedReason = FastPathSkipUncoveredFinding
+	closure.Result.FastPathRelationCoveredFindings = []RelationCoveredFinding{{FindingFingerprint: "health/service/api", ProgramID: "repair", Bindings: program.Bindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}}
 	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
 		t.Fatal(err)
 	}
@@ -268,8 +270,11 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ledger.FastPathSkippedReason != FastPathSkipUnexplainedFinding {
+	if ledger.FastPathSkippedReason != FastPathSkipUncoveredFinding {
 		t.Fatalf("fast-path skip reason missing from native ledger: %+v", ledger)
+	}
+	if len(ledger.FastPathRelationCoveredFindings) != 1 || ledger.FastPathRelationCoveredFindings[0].Bindings["workload"].Name != "api" {
+		t.Fatalf("relation coverage missing from native ledger: %+v", ledger)
 	}
 	var previous time.Time
 	for _, phase := range []string{"closure_start", "outcome_write", "broker_commit", "reflection_dispatch", "worker_result_picked_up"} {

@@ -110,6 +110,15 @@ def test_proto_schema_models_pydantic_result_serialization() -> None:
             "status": "completed",
             "usage": {"llm_calls": 1, "input_tokens": 10, "output_tokens": 4, "reasoning_output_tokens": 1},
             "timing": {"started_at": "1970-01-01T00:00:01Z", "completed_at": "1970-01-01T00:00:02Z"},
+            "fast_path_relation_covered_findings": [
+                {
+                    "finding_fingerprint": "health/service/api",
+                    "program_id": "repair",
+                    "bindings": [
+                        {"name": "workload", "object": {"kind": "Deployment", "namespace": "app", "name": "api"}}
+                    ],
+                }
+            ],
             "repair_actions": [
                 {
                     "action_id": "a1",
@@ -128,3 +137,4 @@ def test_proto_schema_models_pydantic_result_serialization() -> None:
     result = parse_json(pyd.model_dump_json(), IncidentResult())
     assert result.incident_id == "demo-1"
     assert result.repair_actions[0].action_id == "a1"
+    assert result.fast_path_relation_covered_findings[0].bindings[0].object.name == "api"

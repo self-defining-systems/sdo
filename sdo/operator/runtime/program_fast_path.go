@@ -12,15 +12,22 @@ import (
 )
 
 type FastPathAttempt struct {
-	Attempted     bool
-	SkippedReason FastPathSkipReason
-	Resolved      bool
-	Programs      []string
-	Summary       string
-	RolledBack    bool
-	RollbackErr   string
-	Findings      []sdk.Finding
-	Verification  ToolResponse
+	Attempted               bool
+	SkippedReason           FastPathSkipReason
+	Resolved                bool
+	Programs                []string
+	Summary                 string
+	RolledBack              bool
+	RollbackErr             string
+	Findings                []sdk.Finding
+	Verification            ToolResponse
+	RelationCoveredFindings []RelationCoveredFinding
+}
+
+type RelationCoveredFinding struct {
+	FindingFingerprint string           `json:"finding_fingerprint"`
+	ProgramID          string           `json:"program_id"`
+	Bindings           program.Bindings `json:"bindings"`
 }
 
 type FastPathSkipReason string
@@ -36,7 +43,7 @@ const (
 	FastPathSkipNoFindings          FastPathSkipReason = "no_active_findings"
 	FastPathSkipSnapshotFailed      FastPathSkipReason = "snapshot_failed"
 	FastPathSkipNeedsJudgement      FastPathSkipReason = "needs_judgement"
-	FastPathSkipUnexplainedFinding  FastPathSkipReason = "unexplained_finding"
+	FastPathSkipUncoveredFinding    FastPathSkipReason = "uncovered_finding"
 	FastPathSkipAmbiguousMatch      FastPathSkipReason = "ambiguous_match"
 	FastPathSkipUntrustedProgram    FastPathSkipReason = "untrusted_program"
 	FastPathSkipNoSelectedProgram   FastPathSkipReason = "no_selected_program"
@@ -44,11 +51,11 @@ const (
 	FastPathSkipInvalidPlan         FastPathSkipReason = "invalid_plan"
 )
 
-func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust map[string]ProgramTrust, minSuccesses int) ([]ProgramRun, FastPathSkipReason) {
+func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust map[string]ProgramTrust, minSuccesses int, view sdk.DetectionContext) ([]ProgramRun, []RelationCoveredFinding, FastPathSkipReason) {
 	matches := make(map[string]map[string]ProgramRun)
 	for _, run := range runs {
 		if run.Verdict.Result == program.NeedsJudgement {
-			return nil, FastPathSkipNeedsJudgement
+			return nil, nil, FastPathSkipNeedsJudgement
 		}
 		if run.Verdict.Result != program.Match || run.FindingFingerprint == "" {
 			continue
@@ -61,18 +68,20 @@ func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust 
 	}
 	selected := make([]ProgramRun, 0, len(findings))
 	seen := map[string]bool{}
+	uncovered := make([]sdk.Finding, 0)
 	for _, finding := range findings {
 		covered := matches[FindingFingerprint(finding)]
 		if len(covered) == 0 {
-			return nil, FastPathSkipUnexplainedFinding
+			uncovered = append(uncovered, finding)
+			continue
 		}
 		if len(covered) != 1 {
-			return nil, FastPathSkipAmbiguousMatch
+			return nil, nil, FastPathSkipAmbiguousMatch
 		}
 		for key, run := range covered {
 			state := trust[run.ProgramID]
 			if !state.Trusted || state.Failures != 0 || state.VerifiedSuccesses < minSuccesses || run.ProgramRevision == "" || state.LastChange != run.ProgramRevision {
-				return nil, FastPathSkipUntrustedProgram
+				return nil, nil, FastPathSkipUntrustedProgram
 			}
 			if !seen[key] {
 				selected = append(selected, run)
@@ -81,9 +90,32 @@ func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust 
 		}
 	}
 	if len(selected) == 0 {
-		return nil, FastPathSkipNoSelectedProgram
+		if len(uncovered) > 0 {
+			return nil, nil, FastPathSkipUncoveredFinding
+		}
+		return nil, nil, FastPathSkipNoSelectedProgram
 	}
-	return selected, ""
+	related := make([]RelationCoveredFinding, 0, len(uncovered))
+	for _, finding := range uncovered {
+		matched := false
+		for _, run := range selected {
+			for _, bound := range run.Bindings {
+				if !fastPathDirectlyRelated(view, finding.PrimaryResource, bound) {
+					continue
+				}
+				related = append(related, RelationCoveredFinding{FindingFingerprint: FindingFingerprint(finding), ProgramID: run.ProgramID, Bindings: run.Bindings})
+				matched = true
+				break
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			return nil, nil, FastPathSkipUncoveredFinding
+		}
+	}
+	return selected, related, ""
 }
 
 // TryTrustedFastPath makes one settled, verified plan attempt for an incident.
@@ -154,17 +186,22 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	l.findings = findings
 	fillProgramRevisions(ctx, l.runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	runs = l.runs[len(l.runs)-len(runs):]
-	selected, reason := selectTrustedFastPathRuns(findings, runs, l.Trust, minSuccesses)
-	if reason != "" {
-		return skip(reason)
-	}
-	view, err := l.snapshotView(ctx)
+	snapshot, err := l.Provider.Snapshot(ctx)
 	if err != nil {
 		return skip(FastPathSkipSnapshotFailed)
 	}
+	if l.ReadView == nil {
+		return skip(FastPathSkipSnapshotFailed)
+	}
+	view := l.ReadView(snapshot)
+	selected, related, reason := selectTrustedFastPathRuns(findings, runs, l.Trust, minSuccesses, snapshot)
+	if reason != "" {
+		return skip(reason)
+	}
 	batch := program.Plan{}
 	selectedPlans := make([]selectedPlan, 0, len(selected))
-	attempt := FastPathAttempt{Programs: make([]string, 0, len(selected)), Findings: append([]sdk.Finding(nil), findings...)}
+	attempt := FastPathAttempt{Programs: make([]string, 0, len(selected)), Findings: append([]sdk.Finding(nil), findings...), RelationCoveredFindings: related}
+	l.fastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), related...)
 	for _, run := range selected {
 		mitigator, ok := l.Programs.Mitigator(run.ProgramID)
 		if !ok {
@@ -202,6 +239,20 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	}
 	attempt.Verification = response
 	attempt.Resolved = applyErr == nil && result.VerificationPassed && response.Healthy
+	if attempt.Resolved {
+		verified := map[string]bool{}
+		for _, state := range response.DetectorStates {
+			if state.Status == DetectorEvaluationClear {
+				verified[state.DetectorID] = true
+			}
+		}
+		for _, finding := range attempt.Findings {
+			if !strings.HasPrefix(finding.DetectorID, "drift/") && !verified[finding.DetectorID] {
+				attempt.Resolved = false
+				break
+			}
+		}
+	}
 	if attempt.Resolved {
 		for _, run := range response.ProgramRuns {
 			if run.Verdict.Result != program.NoMatch {

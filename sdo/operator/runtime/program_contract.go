@@ -28,6 +28,27 @@ func programRunContract(run ProgramRun) *contracts.ProgramRun {
 	return result
 }
 
+func relationCoveredFindingContract(covered RelationCoveredFinding) *contracts.RelationCoveredFinding {
+	result := &contracts.RelationCoveredFinding{FindingFingerprint: covered.FindingFingerprint, ProgramId: covered.ProgramID}
+	keys := make([]string, 0, len(covered.Bindings))
+	for key := range covered.Bindings {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result.Bindings = append(result.Bindings, &contracts.Binding{Name: key, Object: objectRefContract(covered.Bindings[key])})
+	}
+	return result
+}
+
+func relationCoveredFindingState(covered *contracts.RelationCoveredFinding) RelationCoveredFinding {
+	result := RelationCoveredFinding{FindingFingerprint: covered.GetFindingFingerprint(), ProgramID: covered.GetProgramId(), Bindings: program.Bindings{}}
+	for _, binding := range covered.GetBindings() {
+		result.Bindings[binding.GetName()] = objectRefState(binding.GetObject())
+	}
+	return result
+}
+
 func verdictContract(verdict program.Verdict) *contracts.Verdict {
 	result := &contracts.Verdict{Question: verdict.Question}
 	switch verdict.Result {

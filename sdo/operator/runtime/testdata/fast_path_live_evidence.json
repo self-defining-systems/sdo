@@ -159,6 +159,39 @@
           }
         ]
       }
-    ]
+    ],
+    "snapshot": {
+      "namespace": "hotel-reservation",
+      "services": [
+        {
+          "metadata": {
+            "name": "profile",
+            "namespace": "hotel-reservation"
+          },
+          "spec": {
+            "selector": {
+              "app": "profile"
+            }
+          }
+        }
+      ],
+      "deployments": [
+        {
+          "metadata": {
+            "name": "profile",
+            "namespace": "hotel-reservation"
+          },
+          "spec": {
+            "template": {
+              "metadata": {
+                "labels": {
+                  "app": "profile"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
   }
 }

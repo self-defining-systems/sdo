@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"regexp"
 
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 )
@@ -53,6 +56,40 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		compactMeta(&copy.Spec.Template.ObjectMeta)
 		redactPodSpec(&copy.Spec.Template.Spec)
 		s.DeploymentList = append(s.DeploymentList, copy)
+	}
+	if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
+		for _, object := range extended.StatefulSets() {
+			if object.Namespace != namespace {
+				continue
+			}
+			copy := *object.DeepCopy()
+			compactMeta(&copy.ObjectMeta)
+			compactMeta(&copy.Spec.Template.ObjectMeta)
+			redactPodSpec(&copy.Spec.Template.Spec)
+			s.StatefulSetList = append(s.StatefulSetList, copy)
+		}
+	}
+	if extended, ok := view.(interface {
+		HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	}); ok {
+		for _, object := range extended.HorizontalPodAutoscalers() {
+			if object.Namespace == namespace {
+				copy := *object.DeepCopy()
+				compactMeta(&copy.ObjectMeta)
+				s.HPAList = append(s.HPAList, copy)
+			}
+		}
+	}
+	if extended, ok := view.(interface {
+		PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	}); ok {
+		for _, object := range extended.PodDisruptionBudgets() {
+			if object.Namespace == namespace {
+				copy := *object.DeepCopy()
+				compactMeta(&copy.ObjectMeta)
+				s.PDBList = append(s.PDBList, copy)
+			}
+		}
 	}
 	for _, object := range view.ReplicaSets() {
 		if object.Namespace != namespace {

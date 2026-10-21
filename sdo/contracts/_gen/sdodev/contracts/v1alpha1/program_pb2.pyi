@@ -40,6 +40,16 @@ class Binding(_message.Message):
     object: _common_pb2.ObjectRef
     def __init__(self, name: _Optional[str] = ..., object: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ...) -> None: ...
 
+class RelationCoveredFinding(_message.Message):
+    __slots__ = ("finding_fingerprint", "program_id", "bindings")
+    FINDING_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    finding_fingerprint: str
+    program_id: str
+    bindings: _containers.RepeatedCompositeFieldContainer[Binding]
+    def __init__(self, finding_fingerprint: _Optional[str] = ..., program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ...) -> None: ...
+
 class Verdict(_message.Message):
     __slots__ = ("result", "evidence", "question")
     class Result(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):

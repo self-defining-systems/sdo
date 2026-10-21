@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	policyv1 "k8s.io/api/policy/v1"
+
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
@@ -27,6 +31,7 @@ func TestLiveEvidenceTrustAndFastPathCoverage(t *testing.T) {
 		LiveIncident  struct {
 			Findings  []sdk.Finding     `json:"findings"`
 			MatchRuns []json.RawMessage `json:"match_runs"`
+			Snapshot  sdktest.Snapshot  `json:"snapshot"`
 		} `json:"live_incident"`
 	}
 	data, err := os.ReadFile("testdata/fast_path_live_evidence.json")
@@ -59,18 +64,74 @@ func TestLiveEvidenceTrustAndFastPathCoverage(t *testing.T) {
 		run.Verdict.Result = program.Match
 		runs = append(runs, run)
 	}
-	_, reason := selectTrustedFastPathRuns(fixture.LiveIncident.Findings, runs, trust, 3)
-	if reason != FastPathSkipUnexplainedFinding {
-		t.Fatalf("live incident rejection = %q, want unexplained finding", reason)
+	selected, related, reason := selectTrustedFastPathRuns(fixture.LiveIncident.Findings, runs, trust, 3, fixture.LiveIncident.Snapshot)
+	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != FindingFingerprint(fixture.LiveIncident.Findings[2]) || related[0].ProgramID != "health-objective-failure" || related[0].Bindings["affected"].Name != "profile" {
+		t.Fatalf("live incident eligibility: selected=%+v related=%+v reason=%q", selected, related, reason)
+	}
+	unrelated := append([]sdk.Finding(nil), fixture.LiveIncident.Findings...)
+	unrelated[2].PrimaryResource.Name = "other"
+	unrelated[2].Fingerprint = "other-service"
+	_, _, reason = selectTrustedFastPathRuns(unrelated, runs, trust, 3, fixture.LiveIncident.Snapshot)
+	if reason != FastPathSkipUncoveredFinding {
+		t.Fatalf("unrelated Service skip = %q", reason)
 	}
 
 	// The same trusted diagnosis can be associated with a hint and a finding.
 	// Repeated observations of either association must not create ambiguity.
 	covered := fixture.LiveIncident.Findings[:2]
 	runs = append(runs, runs[0], runs[1])
-	selected, reason := selectTrustedFastPathRuns(covered, runs, trust, 3)
-	if reason != "" || len(selected) != 1 || selected[0].ProgramID != "health-objective-failure" {
+	selected, related, reason = selectTrustedFastPathRuns(covered, runs, trust, 3, fixture.LiveIncident.Snapshot)
+	if reason != "" || len(selected) != 1 || len(related) != 0 || selected[0].ProgramID != "health-objective-failure" {
 		t.Fatalf("equivalent matches should select one program: selected=%+v reason=%q", selected, reason)
+	}
+}
+
+func TestFastPathRelationCoverageUsesSnapshotObjects(t *testing.T) {
+	bound := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
+	run := ProgramRun{ProgramID: "repair", ProgramRevision: "rev", FindingFingerprint: "deployment", Bindings: program.Bindings{"workload": bound}, Verdict: program.Verdict{Result: program.Match}}
+	trust := map[string]ProgramTrust{"repair": {Trusted: true, VerifiedSuccesses: 3, LastChange: "rev"}}
+	controller := true
+	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}, ReplicaSetList: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api", Controller: &controller}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "api-rs", Controller: &controller}}}}}}
+	snapshot.HPAList = []autoscalingv2.HorizontalPodAutoscaler{{ObjectMeta: metav1.ObjectMeta{Name: "api-hpa", Namespace: "app"}, Spec: autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "Deployment", Name: "api"}}}}
+	snapshot.PDBList = []policyv1.PodDisruptionBudget{{ObjectMeta: metav1.ObjectMeta{Name: "api-pdb", Namespace: "app"}, Spec: policyv1.PodDisruptionBudgetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}}}}
+	for _, ref := range []sdk.ObjectRef{{Kind: "Service", Namespace: "app", Name: "api"}, {Kind: "ReplicaSet", Namespace: "app", Name: "api-rs"}, {Kind: "Pod", Namespace: "app", Name: "api-pod"}, {Kind: "HorizontalPodAutoscaler", Namespace: "app", Name: "api-hpa"}, {Kind: "PodDisruptionBudget", Namespace: "app", Name: "api-pdb"}} {
+		findings := []sdk.Finding{{Fingerprint: "deployment", PrimaryResource: bound}, {Fingerprint: ref.Kind, PrimaryResource: ref}}
+		_, related, reason := selectTrustedFastPathRuns(findings, []ProgramRun{run}, trust, 3, snapshot)
+		if reason != "" || len(related) != 1 || related[0].FindingFingerprint != ref.Kind {
+			t.Fatalf("%s relation: %+v %q", ref.Kind, related, reason)
+		}
+	}
+	for _, ref := range []sdk.ObjectRef{{Kind: "Service", Namespace: "other", Name: "api"}, {Kind: "Service", Namespace: "app", Name: "missing"}, {Kind: "Pod", Namespace: "app", Name: "unowned"}} {
+		_, _, reason := selectTrustedFastPathRuns([]sdk.Finding{{Fingerprint: "deployment", PrimaryResource: bound}, {Fingerprint: ref.Kind + ref.Namespace + ref.Name, PrimaryResource: ref}}, []ProgramRun{run}, trust, 3, snapshot)
+		if reason != FastPathSkipUncoveredFinding {
+			t.Fatalf("unrelated %s accepted: %q", ref.Kind, reason)
+		}
+	}
+}
+
+func TestFastPathRelationCoverageForStatefulSetAndPolicyNearMisses(t *testing.T) {
+	controller := true
+	bound := sdk.ObjectRef{Kind: "StatefulSet", Namespace: "app", Name: "database"}
+	snapshot := sdktest.Snapshot{NamespaceName: "app", StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}, Spec: appsv1.StatefulSetSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "database"}}}}}}, ReplicaSetList: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{Name: "database-rs", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "database", Controller: &controller}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "database-0", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "database", Controller: &controller}}}}}, HPAList: []autoscalingv2.HorizontalPodAutoscaler{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}, Spec: autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "StatefulSet", Name: "database"}}}}, PDBList: []policyv1.PodDisruptionBudget{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}, Spec: policyv1.PodDisruptionBudgetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "database"}}}}}}
+	run := ProgramRun{ProgramID: "repair", ProgramRevision: "rev", FindingFingerprint: "workload", Bindings: program.Bindings{"workload": bound}, Verdict: program.Verdict{Result: program.Match}}
+	trust := map[string]ProgramTrust{"repair": {Trusted: true, VerifiedSuccesses: 3, LastChange: "rev"}}
+	for _, kind := range []string{"Pod", "ReplicaSet", "HorizontalPodAutoscaler", "PodDisruptionBudget"} {
+		name := "database"
+		if kind == "Pod" {
+			name = "database-0"
+		} else if kind == "ReplicaSet" {
+			name = "database-rs"
+		}
+		findings := []sdk.Finding{{Fingerprint: "workload", PrimaryResource: bound}, {Fingerprint: kind, PrimaryResource: sdk.ObjectRef{Kind: kind, Namespace: "app", Name: name}}}
+		_, related, reason := selectTrustedFastPathRuns(findings, []ProgramRun{run}, trust, 3, snapshot)
+		if reason != "" || len(related) != 1 {
+			t.Fatalf("%s coverage: %+v %q", kind, related, reason)
+		}
+	}
+	snapshot.PDBList[0].Spec.Selector.MatchLabels["app"] = "other"
+	_, _, reason := selectTrustedFastPathRuns([]sdk.Finding{{Fingerprint: "workload", PrimaryResource: bound}, {Fingerprint: "pdb", PrimaryResource: sdk.ObjectRef{Kind: "PodDisruptionBudget", Namespace: "app", Name: "database"}}}, []ProgramRun{run}, trust, 3, snapshot)
+	if reason != FastPathSkipUncoveredFinding {
+		t.Fatalf("wrong PDB selector covered: %q", reason)
 	}
 }
 
@@ -160,7 +221,7 @@ func TestTrustedProgramFastPathRequiresEveryFindingExplained(t *testing.T) {
 			}
 			wantReason := FastPathSkipUntrustedProgram
 			if tc.other {
-				wantReason = FastPathSkipUnexplainedFinding
+				wantReason = FastPathSkipUncoveredFinding
 			}
 			if attempt.SkippedReason != wantReason {
 				t.Fatalf("skip reason = %q, want %q", attempt.SkippedReason, wantReason)
@@ -170,6 +231,24 @@ func TestTrustedProgramFastPathRequiresEveryFindingExplained(t *testing.T) {
 				t.Fatalf("ineligible plan changed service: %+v %v", service, err)
 			}
 		})
+	}
+}
+
+func TestTrustedProgramFastPathSkipsUnrelatedService(t *testing.T) {
+	loop, client := trustedPortLoop(t, false, true, true)
+	if _, err := client.CoreV1().Services("app").Create(context.Background(), &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "other"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}}}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	finding := sdk.Finding{DetectorID: "other-service", RuleID: "no-endpoints", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "other"}}
+	loop.Request.Findings = append(loop.Request.Findings, finding)
+	loop.Detectors = append(loop.Detectors, loopDetector{finding: finding})
+	attempt := loop.TryTrustedFastPath(context.Background(), 3)
+	if attempt.Attempted || attempt.SkippedReason != FastPathSkipUncoveredFinding {
+		t.Fatalf("unrelated Service eligibility: %+v", attempt)
+	}
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 9999 {
+		t.Fatalf("skipped plan changed Service: %+v %v", service, err)
 	}
 }
 

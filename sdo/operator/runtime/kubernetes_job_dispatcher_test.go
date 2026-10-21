@@ -81,38 +81,63 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	}
 }
 
-type liveShapePortDetector struct{}
+type liveShapeImageDetector struct{}
 
-func (liveShapePortDetector) Spec() sdk.DetectorSpec { return (fastloopDetector{}).Spec() }
+func (liveShapeImageDetector) Spec() sdk.DetectorSpec { return (fastloopDetector{}).Spec() }
 
-func (liveShapePortDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+func (liveShapeImageDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
 	findings, err := (fastloopDetector{}).Detect(ctx, view)
 	if err != nil || len(findings) == 0 {
 		return findings, err
 	}
 	drift := findings[0]
-	drift.DetectorID = "drift/service-targetport-mismatch"
-	drift.ParameterBindings = map[string]sdk.ObjectRef{"service": drift.PrimaryResource}
-	return []sdk.Finding{drift, findings[0]}, nil
+	drift.DetectorID = "drift/image-pull-failure"
+	drift.ParameterBindings = map[string]sdk.ObjectRef{"deployment": drift.PrimaryResource}
+	service := sdk.Finding{DetectorID: "availability", RuleID: "service-without-ready-endpoints", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}
+	return []sdk.Finding{drift, findings[0], service}, nil
 }
 
 func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *testing.T) {
-	loop, client := trustedPortLoop(t, false, false, true)
-	loop.Detectors = []sdk.Detector{liveShapePortDetector{}}
-	drift := loop.Request.Findings[0]
-	drift.DetectorID = "drift/service-targetport-mismatch"
-	drift.ParameterBindings = map[string]sdk.ObjectRef{"service": drift.PrimaryResource}
+	client := fastloopClient("good:v1")
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+	if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	provider := fastloopObjects{client: client}
+	view, err := provider.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := (liveShapeImageDetector{}).Detect(context.Background(), view)
+	if err != nil || len(findings) != 3 {
+		t.Fatalf("live-shaped findings: %+v %v", findings, err)
+	}
+	registry, err := program.NewRegistry([]program.Diagnoser{fastloopImageProgram{}}, []program.Mitigator{fastloopImageProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := goldenRequest(t)
 	request.Namespace = "app"
 	request.RepairPolicy = "recorded-actions"
 	request.SourceCommit = "tree-a"
-	request.Findings = []sdk.Finding{drift, loop.Request.Findings[0]}
+	request.Findings = findings
 	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
+	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{liveShapeImageDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	loop.DiagnosisSettleDelay = time.Millisecond
+	loop.CorpusReplayPassed = true
+	loop.InitialDiagnose(context.Background())
 	outcomes := []memory.Outcome{}
 	for index := 0; index < 3; index++ {
 		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
-			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
-			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
+			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "image-pull-failure", ProgramRevision: "tree-a"}},
+			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"image-pull-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
 		}})
 	}
 	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Image: "responder:test", Command: []string{"/responder"}, ProgramFastPath: true,
@@ -121,7 +146,6 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 			loop.Request = request
 			return loop
 		}}
-	var err error
 	request, err = dispatcher.PrepareDispatch(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +153,9 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	result, err := dispatcher.Dispatch(context.Background(), request)
 	if err != nil || result.ResolutionPath != "fast_path" || len(result.FastPathPrograms) != 1 || result.Usage.GetInputTokens() != 0 {
 		t.Fatalf("fast path result: %+v %v", result, err)
+	}
+	if len(result.FastPathRelationCoveredFindings) != 1 || result.FastPathRelationCoveredFindings[0].FindingFingerprint != FindingFingerprint(findings[2]) || result.FastPathRelationCoveredFindings[0].Bindings["deployment"].Name != "api" {
+		t.Fatalf("Service symptom relation not recorded: %+v", result.FastPathRelationCoveredFindings)
 	}
 	matchedSources := map[string]bool{}
 	for _, run := range result.ProgramRuns {
@@ -140,7 +167,7 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 		t.Fatalf("live-shaped hint and finding runs were lost: %+v", result.ProgramRuns)
 	}
 	replayed, err := dispatcher.Dispatch(context.Background(), request)
-	if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 1 || len(replayed.RepairActions) != 1 {
+	if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 1 || len(replayed.RepairActions) != 1 || len(replayed.FastPathRelationCoveredFindings) != 1 {
 		t.Fatalf("fast path was not durable across dispatch replay: %+v %v", replayed, err)
 	}
 	jobs, err := client.BatchV1().Jobs("app").List(context.Background(), metav1.ListOptions{})
@@ -283,6 +310,89 @@ func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) 
 	}
 	if !strings.Contains(incident.GetFastPathSummary(), "service-targetport-mismatch") || !strings.Contains(incident.GetFastPathSummary(), "rollback true") {
 		t.Fatalf("responder missed failed attempt: %q", incident.GetFastPathSummary())
+	}
+	cancel()
+	<-finished
+}
+
+func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
+	client := fastloopClient("good:v1")
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+	if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	provider := fastloopObjects{client: client}
+	view, err := provider.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageFindings, err := (fastloopDetector{}).Detect(context.Background(), view)
+	if err != nil || len(imageFindings) != 1 {
+		t.Fatalf("image finding: %+v %v", imageFindings, err)
+	}
+	symptom := sdk.Finding{DetectorID: "health", RuleID: "service-without-ready-endpoints", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}
+	registry, err := program.NewRegistry([]program.Diagnoser{fastloopImageProgram{}}, []program.Mitigator{fastloopImageProgram{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := goldenRequest(t)
+	request.Namespace, request.SourceCommit, request.RepairPolicy = "app", "tree-a", "recorded-actions"
+	request.Findings = append(imageFindings, symptom)
+	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
+	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{fastloopDetector{}, loopDetector{finding: symptom}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	loop.DiagnosisSettleDelay = time.Millisecond
+	loop.CorpusReplayPassed = true
+	outcomes := make([]memory.Outcome, 3)
+	for index := range outcomes {
+		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "image-pull-failure", ProgramRevision: "tree-a"}}, PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"image-pull-failure"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}}}
+	}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Image: "responder:test", Command: []string{"/responder"}, ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace", ProgramFastPath: true, Outcomes: priorOutcomeReader{outcomes: outcomes}, PollInterval: time.Millisecond, LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
+	request, err = dispatcher.PrepareDispatch(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() { _, err := dispatcher.Dispatch(ctx, request); finished <- err }()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err != nil {
+		t.Fatalf("responder handoff absent: %v", err)
+	}
+	taskMap, err := client.CoreV1().ConfigMaps("app").Get(context.Background(), IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := new(contracts.AgentTask)
+	if err := protojson.Unmarshal([]byte(taskMap.Data[jobRequestDataKey]), task); err != nil {
+		t.Fatal(err)
+	}
+	incident := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(incident); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(incident.GetFastPathSummary(), "image-pull-failure") || !strings.Contains(incident.GetFastPathSummary(), "rollback true") {
+		t.Fatalf("responder missed failed relation verification: %q", incident.GetFastPathSummary())
+	}
+	deployment, err := client.AppsV1().Deployments("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil || deployment.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
+		t.Fatalf("failed relation verification left mutation: %+v %v", deployment, err)
+	}
+	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure") {
+		t.Fatalf("relation and trust evidence: %+v %+v", loop.fastPathRelationCoveredFindings, loop.FailureSignals())
 	}
 	cancel()
 	<-finished

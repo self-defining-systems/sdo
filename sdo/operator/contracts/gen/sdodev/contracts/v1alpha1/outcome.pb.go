@@ -26,41 +26,42 @@ const (
 // Independently verified, durable incident evidence. This is the logical
 // contract; the memory adapter alone chooses its repository representation.
 type OutcomeRecord struct {
-	state                    protoimpl.MessageState   `protogen:"open.v1"`
-	SchemaVersion            int32                    `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
-	IncidentId               string                   `protobuf:"bytes,2,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
-	SourceCommit             string                   `protobuf:"bytes,3,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
-	DeployedCommit           string                   `protobuf:"bytes,4,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
-	DetectorHistory          []*DetectorEvaluation    `protobuf:"bytes,5,rep,name=detector_history,json=detectorHistory,proto3" json:"detector_history,omitempty"`
-	Findings                 []*Finding               `protobuf:"bytes,6,rep,name=findings,proto3" json:"findings,omitempty"`
-	SurfacedPlaybooks        []string                 `protobuf:"bytes,7,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
-	InspectedPlaybooks       []string                 `protobuf:"bytes,8,rep,name=inspected_playbooks,json=inspectedPlaybooks,proto3" json:"inspected_playbooks,omitempty"`
-	ConfirmedPlaybooks       []string                 `protobuf:"bytes,9,rep,name=confirmed_playbooks,json=confirmedPlaybooks,proto3" json:"confirmed_playbooks,omitempty"`
-	RejectedPlaybooks        []string                 `protobuf:"bytes,10,rep,name=rejected_playbooks,json=rejectedPlaybooks,proto3" json:"rejected_playbooks,omitempty"`
-	AppliedPlaybooks         []string                 `protobuf:"bytes,11,rep,name=applied_playbooks,json=appliedPlaybooks,proto3" json:"applied_playbooks,omitempty"`
-	ConfirmedRootCauses      []*ConfirmedRootCause    `protobuf:"bytes,12,rep,name=confirmed_root_causes,json=confirmedRootCauses,proto3" json:"confirmed_root_causes,omitempty"`
-	FinalHealthDetectorState []*DetectorEvaluation    `protobuf:"bytes,13,rep,name=final_health_detector_state,json=finalHealthDetectorState,proto3" json:"final_health_detector_state,omitempty"`
-	Classification           string                   `protobuf:"bytes,14,opt,name=classification,proto3" json:"classification,omitempty"`
-	RepairCommit             *string                  `protobuf:"bytes,15,opt,name=repair_commit,json=repairCommit,proto3,oneof" json:"repair_commit,omitempty"`
-	RepairActions            []*RepairActionReceipt   `protobuf:"bytes,16,rep,name=repair_actions,json=repairActions,proto3" json:"repair_actions,omitempty"`
-	MemoryCommit             *string                  `protobuf:"bytes,17,opt,name=memory_commit,json=memoryCommit,proto3,oneof" json:"memory_commit,omitempty"`
-	ResponderBackend         string                   `protobuf:"bytes,18,opt,name=responder_backend,json=responderBackend,proto3" json:"responder_backend,omitempty"`
-	ResponderModel           string                   `protobuf:"bytes,19,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
-	Usage                    *UsageMetrics            `protobuf:"bytes,20,opt,name=usage,proto3" json:"usage,omitempty"`
-	Timestamps               *OutcomeTimestamps       `protobuf:"bytes,21,opt,name=timestamps,proto3" json:"timestamps,omitempty"`
-	DiagnosisVerification    []*DiagnosisVerification `protobuf:"bytes,22,rep,name=diagnosis_verification,json=diagnosisVerification,proto3" json:"diagnosis_verification,omitempty"`
-	ProgramToolCalls         []*ProgramToolCall       `protobuf:"bytes,23,rep,name=program_tool_calls,json=programToolCalls,proto3" json:"program_tool_calls,omitempty"`
-	ProgramRuns              []*ProgramRun            `protobuf:"bytes,24,rep,name=program_runs,json=programRuns,proto3" json:"program_runs,omitempty"`
-	PlanApplications         []*PlanApplication       `protobuf:"bytes,25,rep,name=plan_applications,json=planApplications,proto3" json:"plan_applications,omitempty"`
-	ProgramFailureSignals    []string                 `protobuf:"bytes,26,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
-	ResponseLoopsUsed        int32                    `protobuf:"varint,27,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
-	ResponseLoopExhausted    bool                     `protobuf:"varint,28,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
-	DriftEvents              []*DriftEvent            `protobuf:"bytes,29,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
-	ResolutionPath           string                   `protobuf:"bytes,30,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
-	FastPathPrograms         []string                 `protobuf:"bytes,31,rep,name=fast_path_programs,json=fastPathPrograms,proto3" json:"fast_path_programs,omitempty"`
-	FastPathSkippedReason    string                   `protobuf:"bytes,32,opt,name=fast_path_skipped_reason,json=fastPathSkippedReason,proto3" json:"fast_path_skipped_reason,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	state                           protoimpl.MessageState    `protogen:"open.v1"`
+	SchemaVersion                   int32                     `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	IncidentId                      string                    `protobuf:"bytes,2,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
+	SourceCommit                    string                    `protobuf:"bytes,3,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
+	DeployedCommit                  string                    `protobuf:"bytes,4,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
+	DetectorHistory                 []*DetectorEvaluation     `protobuf:"bytes,5,rep,name=detector_history,json=detectorHistory,proto3" json:"detector_history,omitempty"`
+	Findings                        []*Finding                `protobuf:"bytes,6,rep,name=findings,proto3" json:"findings,omitempty"`
+	SurfacedPlaybooks               []string                  `protobuf:"bytes,7,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
+	InspectedPlaybooks              []string                  `protobuf:"bytes,8,rep,name=inspected_playbooks,json=inspectedPlaybooks,proto3" json:"inspected_playbooks,omitempty"`
+	ConfirmedPlaybooks              []string                  `protobuf:"bytes,9,rep,name=confirmed_playbooks,json=confirmedPlaybooks,proto3" json:"confirmed_playbooks,omitempty"`
+	RejectedPlaybooks               []string                  `protobuf:"bytes,10,rep,name=rejected_playbooks,json=rejectedPlaybooks,proto3" json:"rejected_playbooks,omitempty"`
+	AppliedPlaybooks                []string                  `protobuf:"bytes,11,rep,name=applied_playbooks,json=appliedPlaybooks,proto3" json:"applied_playbooks,omitempty"`
+	ConfirmedRootCauses             []*ConfirmedRootCause     `protobuf:"bytes,12,rep,name=confirmed_root_causes,json=confirmedRootCauses,proto3" json:"confirmed_root_causes,omitempty"`
+	FinalHealthDetectorState        []*DetectorEvaluation     `protobuf:"bytes,13,rep,name=final_health_detector_state,json=finalHealthDetectorState,proto3" json:"final_health_detector_state,omitempty"`
+	Classification                  string                    `protobuf:"bytes,14,opt,name=classification,proto3" json:"classification,omitempty"`
+	RepairCommit                    *string                   `protobuf:"bytes,15,opt,name=repair_commit,json=repairCommit,proto3,oneof" json:"repair_commit,omitempty"`
+	RepairActions                   []*RepairActionReceipt    `protobuf:"bytes,16,rep,name=repair_actions,json=repairActions,proto3" json:"repair_actions,omitempty"`
+	MemoryCommit                    *string                   `protobuf:"bytes,17,opt,name=memory_commit,json=memoryCommit,proto3,oneof" json:"memory_commit,omitempty"`
+	ResponderBackend                string                    `protobuf:"bytes,18,opt,name=responder_backend,json=responderBackend,proto3" json:"responder_backend,omitempty"`
+	ResponderModel                  string                    `protobuf:"bytes,19,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
+	Usage                           *UsageMetrics             `protobuf:"bytes,20,opt,name=usage,proto3" json:"usage,omitempty"`
+	Timestamps                      *OutcomeTimestamps        `protobuf:"bytes,21,opt,name=timestamps,proto3" json:"timestamps,omitempty"`
+	DiagnosisVerification           []*DiagnosisVerification  `protobuf:"bytes,22,rep,name=diagnosis_verification,json=diagnosisVerification,proto3" json:"diagnosis_verification,omitempty"`
+	ProgramToolCalls                []*ProgramToolCall        `protobuf:"bytes,23,rep,name=program_tool_calls,json=programToolCalls,proto3" json:"program_tool_calls,omitempty"`
+	ProgramRuns                     []*ProgramRun             `protobuf:"bytes,24,rep,name=program_runs,json=programRuns,proto3" json:"program_runs,omitempty"`
+	PlanApplications                []*PlanApplication        `protobuf:"bytes,25,rep,name=plan_applications,json=planApplications,proto3" json:"plan_applications,omitempty"`
+	ProgramFailureSignals           []string                  `protobuf:"bytes,26,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
+	ResponseLoopsUsed               int32                     `protobuf:"varint,27,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
+	ResponseLoopExhausted           bool                      `protobuf:"varint,28,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
+	DriftEvents                     []*DriftEvent             `protobuf:"bytes,29,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
+	ResolutionPath                  string                    `protobuf:"bytes,30,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
+	FastPathPrograms                []string                  `protobuf:"bytes,31,rep,name=fast_path_programs,json=fastPathPrograms,proto3" json:"fast_path_programs,omitempty"`
+	FastPathSkippedReason           string                    `protobuf:"bytes,32,opt,name=fast_path_skipped_reason,json=fastPathSkippedReason,proto3" json:"fast_path_skipped_reason,omitempty"`
+	FastPathRelationCoveredFindings []*RelationCoveredFinding `protobuf:"bytes,33,rep,name=fast_path_relation_covered_findings,json=fastPathRelationCoveredFindings,proto3" json:"fast_path_relation_covered_findings,omitempty"`
+	unknownFields                   protoimpl.UnknownFields
+	sizeCache                       protoimpl.SizeCache
 }
 
 func (x *OutcomeRecord) Reset() {
@@ -315,6 +316,13 @@ func (x *OutcomeRecord) GetFastPathSkippedReason() string {
 		return x.FastPathSkippedReason
 	}
 	return ""
+}
+
+func (x *OutcomeRecord) GetFastPathRelationCoveredFindings() []*RelationCoveredFinding {
+	if x != nil {
+		return x.FastPathRelationCoveredFindings
+	}
+	return nil
 }
 
 type OutcomeTimestamps struct {
@@ -685,7 +693,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xe0\x10\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xe1\x11\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12(\n" +
 	"\vincident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -722,7 +730,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\fdrift_events\x18\x1d \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12F\n" +
 	"\x0fresolution_path\x18\x1e \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\tfast_pathR\tresponderR\x0eresolutionPath\x12,\n" +
 	"\x12fast_path_programs\x18\x1f \x03(\tR\x10fastPathPrograms\x127\n" +
-	"\x18fast_path_skipped_reason\x18  \x01(\tR\x15fastPathSkippedReasonB\x10\n" +
+	"\x18fast_path_skipped_reason\x18  \x01(\tR\x15fastPathSkippedReason\x12\x7f\n" +
+	"#fast_path_relation_covered_findings\x18! \x03(\v21.sdodev.contracts.v1alpha1.RelationCoveredFindingR\x1ffastPathRelationCoveredFindingsB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commit\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
@@ -792,7 +801,8 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
 	(*ProgramRun)(nil),               // 12: sdodev.contracts.v1alpha1.ProgramRun
 	(*PlanApplication)(nil),          // 13: sdodev.contracts.v1alpha1.PlanApplication
 	(*DriftEvent)(nil),               // 14: sdodev.contracts.v1alpha1.DriftEvent
-	(*timestamppb.Timestamp)(nil),    // 15: google.protobuf.Timestamp
+	(*RelationCoveredFinding)(nil),   // 15: sdodev.contracts.v1alpha1.RelationCoveredFinding
+	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	6,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.detector_history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
@@ -807,19 +817,20 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	12, // 9: sdodev.contracts.v1alpha1.OutcomeRecord.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
 	13, // 10: sdodev.contracts.v1alpha1.OutcomeRecord.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
 	14, // 11: sdodev.contracts.v1alpha1.OutcomeRecord.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	15, // 12: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	15, // 13: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	15, // 14: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	15, // 15: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	15, // 16: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	3,  // 17: sdodev.contracts.v1alpha1.DiagnosisVerification.evidence:type_name -> sdodev.contracts.v1alpha1.OutcomeEvidenceCheck
-	4,  // 18: sdodev.contracts.v1alpha1.DiagnosisVerification.detectors:type_name -> sdodev.contracts.v1alpha1.OutcomeDetectorFlip
-	5,  // 19: sdodev.contracts.v1alpha1.DiagnosisVerification.repair:type_name -> sdodev.contracts.v1alpha1.OutcomeRepairAttribution
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	15, // 12: sdodev.contracts.v1alpha1.OutcomeRecord.fast_path_relation_covered_findings:type_name -> sdodev.contracts.v1alpha1.RelationCoveredFinding
+	16, // 13: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	16, // 14: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	16, // 15: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	16, // 16: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	16, // 17: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	3,  // 18: sdodev.contracts.v1alpha1.DiagnosisVerification.evidence:type_name -> sdodev.contracts.v1alpha1.OutcomeEvidenceCheck
+	4,  // 19: sdodev.contracts.v1alpha1.DiagnosisVerification.detectors:type_name -> sdodev.contracts.v1alpha1.OutcomeDetectorFlip
+	5,  // 20: sdodev.contracts.v1alpha1.DiagnosisVerification.repair:type_name -> sdodev.contracts.v1alpha1.OutcomeRepairAttribution
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }

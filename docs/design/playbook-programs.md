@@ -201,13 +201,20 @@ Failure signals recorded for reflection, the corpus and trust:
   resets the count.
 - The fast path is implemented behind `--program-fast-path` (default off) and
   requires `recorded-actions`. After the settle re-diagnosis, every active
-  finding must have exactly one trusted `Match`, with no `NeedsJudgement` or
-  unexplained finding. The controller applies the batch through `PlanExecutor`,
-  verifies program `NoMatch` and detector health, and closes without a responder
+  finding must have exactly one trusted `Match`, or be directly related to a
+  bound object of a selected trusted run. Direct relations come only from the
+  settled snapshot: a Service selector matching workload pod template labels
+  in the same namespace, a Pod or ReplicaSet owned by the bound Deployment or
+  StatefulSet, or an HPA or PDB targeting the bound workload. An unrelated
+  finding skips with `uncovered_finding`. The controller applies the batch
+  through `PlanExecutor`, verifies program `NoMatch` and that every finding's
+  detector clears, and closes without a responder
   or reflection turn. It allows one attempt per incident. An unsuccessful
   attempt restores captured pre-images and hands its summary to the responder.
 - The outcome records `resolution_path`, `fast_path_programs`, plan verification,
-  rollback, and failure signals. The fastloop row exports the path and programs.
+  rollback, failure signals, and `fast_path_relation_covered_findings` with the
+  finding fingerprint, program ID, and binding. The ledger and fastloop row
+  export the same relation evidence alongside the path and programs.
 
 ## Reflection
 

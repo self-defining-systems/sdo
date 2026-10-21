@@ -149,30 +149,31 @@ type RepairActionReceipt struct {
 }
 
 type IncidentResult struct {
-	SchemaVersion         string                    `json:"schema_version"`
-	IncidentID            string                    `json:"incident_id"`
-	Status                IncidentStatus            `json:"status"`
-	ConfirmedRootCauses   []ConfirmedRootCause      `json:"confirmed_root_causes"`
-	AppliedPlaybooks      []AppliedPlaybook         `json:"applied_playbooks"`
-	RepairChanges         []string                  `json:"repair_changes"`
-	RepairActions         []RepairActionReceipt     `json:"repair_actions"`
-	FinalDetectorStates   []DetectorEvaluation      `json:"final_detector_states"`
-	ProposedArtifactIDs   []string                  `json:"proposed_artifact_ids"`
-	VerificationEvidence  []VerificationEvidence    `json:"verification_evidence"`
-	Usage                 UsageMetrics              `json:"usage"`
-	Timing                TimingMetrics             `json:"timing"`
-	ResponderSessionID    string                    `json:"responder_session_id,omitempty"`
-	LateFindingsPull      *LateFindingsPull         `json:"late_findings_pull,omitempty"`
-	Error                 string                    `json:"error,omitempty"`
-	ProgramToolCalls      []ToolCall                `json:"program_tool_calls,omitempty"`
-	ProgramRuns           []ProgramRun              `json:"program_runs,omitempty"`
-	PlanApplications      []RecordedPlanApplication `json:"plan_applications,omitempty"`
-	ProgramFailureSignals []string                  `json:"program_failure_signals,omitempty"`
-	ResponseLoopsUsed     int                       `json:"response_loops_used,omitempty"`
-	ResponseLoopExhausted bool                      `json:"response_loop_exhausted,omitempty"`
-	ResolutionPath        string                    `json:"resolution_path,omitempty"`
-	FastPathPrograms      []string                  `json:"fast_path_programs,omitempty"`
-	FastPathSkippedReason FastPathSkipReason        `json:"fast_path_skipped_reason,omitempty"`
+	SchemaVersion                   string                    `json:"schema_version"`
+	IncidentID                      string                    `json:"incident_id"`
+	Status                          IncidentStatus            `json:"status"`
+	ConfirmedRootCauses             []ConfirmedRootCause      `json:"confirmed_root_causes"`
+	AppliedPlaybooks                []AppliedPlaybook         `json:"applied_playbooks"`
+	RepairChanges                   []string                  `json:"repair_changes"`
+	RepairActions                   []RepairActionReceipt     `json:"repair_actions"`
+	FinalDetectorStates             []DetectorEvaluation      `json:"final_detector_states"`
+	ProposedArtifactIDs             []string                  `json:"proposed_artifact_ids"`
+	VerificationEvidence            []VerificationEvidence    `json:"verification_evidence"`
+	Usage                           UsageMetrics              `json:"usage"`
+	Timing                          TimingMetrics             `json:"timing"`
+	ResponderSessionID              string                    `json:"responder_session_id,omitempty"`
+	LateFindingsPull                *LateFindingsPull         `json:"late_findings_pull,omitempty"`
+	Error                           string                    `json:"error,omitempty"`
+	ProgramToolCalls                []ToolCall                `json:"program_tool_calls,omitempty"`
+	ProgramRuns                     []ProgramRun              `json:"program_runs,omitempty"`
+	PlanApplications                []RecordedPlanApplication `json:"plan_applications,omitempty"`
+	ProgramFailureSignals           []string                  `json:"program_failure_signals,omitempty"`
+	ResponseLoopsUsed               int                       `json:"response_loops_used,omitempty"`
+	ResponseLoopExhausted           bool                      `json:"response_loop_exhausted,omitempty"`
+	ResolutionPath                  string                    `json:"resolution_path,omitempty"`
+	FastPathPrograms                []string                  `json:"fast_path_programs,omitempty"`
+	FastPathSkippedReason           FastPathSkipReason        `json:"fast_path_skipped_reason,omitempty"`
+	FastPathRelationCoveredFindings []RelationCoveredFinding  `json:"fast_path_relation_covered_findings,omitempty"`
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

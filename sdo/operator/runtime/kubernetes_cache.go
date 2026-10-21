@@ -6,10 +6,13 @@ import (
 	"sync"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
@@ -243,8 +246,23 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 	}
 }
 
-func (c *KubernetesCache) Snapshot(context.Context) (sdk.DetectionContext, error) {
+func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace}
+	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list statefulsets: %w", err)
+	}
+	hpas, err := c.config.Client.AutoscalingV2().HorizontalPodAutoscalers(c.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list horizontalpodautoscalers: %w", err)
+	}
+	pdbs, err := c.config.Client.PolicyV1().PodDisruptionBudgets(c.config.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list poddisruptionbudgets: %w", err)
+	}
+	snapshot.StatefulSetList = append([]appsv1.StatefulSet(nil), statefulSets.Items...)
+	snapshot.HPAList = append([]autoscalingv2.HorizontalPodAutoscaler(nil), hpas.Items...)
+	snapshot.PDBList = append([]policyv1.PodDisruptionBudget(nil), pdbs.Items...)
 	c.informerMu.RLock()
 	defer c.informerMu.RUnlock()
 	for key, informer := range c.informers {

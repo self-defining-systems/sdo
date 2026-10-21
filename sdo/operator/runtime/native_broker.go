@@ -105,25 +105,26 @@ type ControllerRolloutHandoff struct {
 }
 
 type nativeLedger struct {
-	IncidentID              string                        `json:"incident_id"`
-	ClosurePhases           map[string]time.Time          `json:"closure_phase_timestamps,omitempty"`
-	Closure                 json.RawMessage               `json:"closure,omitempty"`
-	ProposalCommit          string                        `json:"proposal_commit,omitempty"`
-	OutcomeDocument         json.RawMessage               `json:"outcome_document,omitempty"`
-	RequiresReflection      bool                          `json:"requires_reflection,omitempty"`
-	ReflectionSkippedReason string                        `json:"reflection_skipped_reason,omitempty"`
-	FastPathSkippedReason   FastPathSkipReason            `json:"fast_path_skipped_reason,omitempty"`
-	OutcomeCommit           string                        `json:"outcome_commit,omitempty"`
-	ReflectionProcessed     bool                          `json:"reflection_processed,omitempty"`
-	ReflectionStarted       bool                          `json:"reflection_started,omitempty"`
-	ReflectionAttempts      int                           `json:"reflection_attempts,omitempty"`
-	ReflectionDecision      *ReflectionDecision           `json:"reflection_decision,omitempty"`
-	ReflectionCommit        string                        `json:"reflection_commit,omitempty"`
-	RolloutExpectation      *ControllerRolloutExpectation `json:"rollout_expectation,omitempty"`
-	RolloutReceipts         []ControllerRolloutReceipt    `json:"rollout_receipts,omitempty"`
-	Receipt                 *ClosureReceipt               `json:"receipt,omitempty"`
-	Acknowledged            bool                          `json:"acknowledged,omitempty"`
-	AcknowledgedAt          time.Time                     `json:"acknowledged_at,omitempty"`
+	IncidentID                      string                        `json:"incident_id"`
+	ClosurePhases                   map[string]time.Time          `json:"closure_phase_timestamps,omitempty"`
+	Closure                         json.RawMessage               `json:"closure,omitempty"`
+	ProposalCommit                  string                        `json:"proposal_commit,omitempty"`
+	OutcomeDocument                 json.RawMessage               `json:"outcome_document,omitempty"`
+	RequiresReflection              bool                          `json:"requires_reflection,omitempty"`
+	ReflectionSkippedReason         string                        `json:"reflection_skipped_reason,omitempty"`
+	FastPathSkippedReason           FastPathSkipReason            `json:"fast_path_skipped_reason,omitempty"`
+	FastPathRelationCoveredFindings []RelationCoveredFinding      `json:"fast_path_relation_covered_findings,omitempty"`
+	OutcomeCommit                   string                        `json:"outcome_commit,omitempty"`
+	ReflectionProcessed             bool                          `json:"reflection_processed,omitempty"`
+	ReflectionStarted               bool                          `json:"reflection_started,omitempty"`
+	ReflectionAttempts              int                           `json:"reflection_attempts,omitempty"`
+	ReflectionDecision              *ReflectionDecision           `json:"reflection_decision,omitempty"`
+	ReflectionCommit                string                        `json:"reflection_commit,omitempty"`
+	RolloutExpectation              *ControllerRolloutExpectation `json:"rollout_expectation,omitempty"`
+	RolloutReceipts                 []ControllerRolloutReceipt    `json:"rollout_receipts,omitempty"`
+	Receipt                         *ClosureReceipt               `json:"receipt,omitempty"`
+	Acknowledged                    bool                          `json:"acknowledged,omitempty"`
+	AcknowledgedAt                  time.Time                     `json:"acknowledged_at,omitempty"`
 }
 
 type closurePhaseContextKey struct{}
@@ -214,6 +215,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			ledger.Closure = encoded
 			if closure.Result != nil {
 				ledger.FastPathSkippedReason = closure.Result.FastPathSkippedReason
+				ledger.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), closure.Result.FastPathRelationCoveredFindings...)
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err

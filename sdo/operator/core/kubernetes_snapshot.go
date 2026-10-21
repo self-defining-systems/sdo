@@ -7,9 +7,11 @@ import (
 	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
@@ -87,6 +89,18 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 	if err != nil {
 		return DetectionSnapshot{}, fmt.Errorf("list replicasets: %w", err)
 	}
+	statefulSets, err := p.Client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list statefulsets: %w", err)
+	}
+	hpas, err := p.Client.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list horizontalpodautoscalers: %w", err)
+	}
+	pdbs, err := p.Client.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return DetectionSnapshot{}, fmt.Errorf("list poddisruptionbudgets: %w", err)
+	}
 	endpoints, err := p.Client.CoreV1().Endpoints(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return DetectionSnapshot{}, fmt.Errorf("list endpoints: %w", err)
@@ -111,6 +125,9 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		PodList:           pods.Items,
 		DeploymentList:    deployments.Items,
 		ReplicaSetList:    replicaSets.Items,
+		StatefulSetList:   statefulSets.Items,
+		HPAList:           hpas.Items,
+		PDBList:           pdbs.Items,
 		EndpointList:      endpoints.Items,
 		EndpointSliceList: endpointSlices.Items,
 		NetworkPolicyList: networkPolicies.Items,
@@ -125,12 +142,48 @@ type DetectionSnapshot struct {
 	PodList           []corev1.Pod
 	DeploymentList    []appsv1.Deployment
 	ReplicaSetList    []appsv1.ReplicaSet
+	StatefulSetList   []appsv1.StatefulSet
+	HPAList           []autoscalingv2.HorizontalPodAutoscaler
+	PDBList           []policyv1.PodDisruptionBudget
 	EndpointList      []corev1.Endpoints
 	EndpointSliceList []discoveryv1.EndpointSlice
 	NetworkPolicyList []networkingv1.NetworkPolicy
 	EventList         []corev1.Event
 	// TrafficWindows holds synthetic-traffic observations by workload name.
 	TrafficWindows map[string]traffic.Window
+}
+
+func (s DetectionSnapshot) StatefulSets() []appsv1.StatefulSet {
+	items := make([]appsv1.StatefulSet, len(s.StatefulSetList))
+	for index := range s.StatefulSetList {
+		items[index] = *s.StatefulSetList[index].DeepCopy()
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return lessSnapshotObject(items[left].Namespace, items[left].Name, items[right].Namespace, items[right].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler {
+	items := make([]autoscalingv2.HorizontalPodAutoscaler, len(s.HPAList))
+	for index := range s.HPAList {
+		items[index] = *s.HPAList[index].DeepCopy()
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return lessSnapshotObject(items[left].Namespace, items[left].Name, items[right].Namespace, items[right].Name)
+	})
+	return items
+}
+
+func (s DetectionSnapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
+	items := make([]policyv1.PodDisruptionBudget, len(s.PDBList))
+	for index := range s.PDBList {
+		items[index] = *s.PDBList[index].DeepCopy()
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return lessSnapshotObject(items[left].Namespace, items[left].Name, items[right].Namespace, items[right].Name)
+	})
+	return items
 }
 
 // TrafficWindow implements traffic.Source.

@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 )
@@ -47,5 +49,13 @@ func TestCaptureSnapshotDropsKubernetesWriteMetadata(t *testing.T) {
 	}
 	if view.PodList[0].ResourceVersion != "123" {
 		t.Fatal("capture changed live metadata")
+	}
+}
+
+func TestCaptureSnapshotPreservesWorkloadRelations(t *testing.T) {
+	view := Snapshot{NamespaceName: "app", StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}}, {ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "elsewhere"}}}, HPAList: []autoscalingv2.HorizontalPodAutoscaler{{ObjectMeta: metav1.ObjectMeta{Name: "scale", Namespace: "app"}, Spec: autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "StatefulSet", Name: "database"}}}}, PDBList: []policyv1.PodDisruptionBudget{{ObjectMeta: metav1.ObjectMeta{Name: "budget", Namespace: "app"}, Spec: policyv1.PodDisruptionBudgetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "database"}}}}}}
+	captured, err := CaptureSnapshot(view, "app")
+	if err != nil || len(captured.StatefulSetList) != 1 || len(captured.HPAList) != 1 || len(captured.PDBList) != 1 || captured.HPAList[0].Spec.ScaleTargetRef.Name != "database" || captured.PDBList[0].Spec.Selector.MatchLabels["app"] != "database" {
+		t.Fatalf("relation objects missing from capture: %+v %v", captured, err)
 	}
 }

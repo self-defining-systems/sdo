@@ -285,6 +285,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		result.ResolutionPath = "responder"
 		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
 		result.FastPathSkippedReason = loop.fastPathSkippedReason
+		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
 		result.ResponseLoopExhausted = loop.Exhausted()
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed

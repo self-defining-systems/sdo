@@ -28,6 +28,12 @@ message Binding {
   ObjectRef object = 2 [(buf.validate.field).required = true];
 }
 
+message RelationCoveredFinding {
+  string finding_fingerprint = 1;
+  string program_id = 2;
+  repeated Binding bindings = 3;
+}
+
 message Verdict {
   option (buf.validate.message).cel = {
     id: "verdict.question_for_judgement"

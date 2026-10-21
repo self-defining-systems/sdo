@@ -14,7 +14,8 @@ func fastPathResult(request IncidentRequest, loop *ResponderLoop, attempt FastPa
 		FinalDetectorStates: append([]DetectorEvaluation(nil), attempt.Verification.DetectorStates...),
 		ProgramRuns:         loop.ProgramRuns(), PlanApplications: loop.PlanApplications(), ProgramFailureSignals: loop.FailureSignals(),
 		ResolutionPath: "fast_path", FastPathPrograms: append([]string(nil), attempt.Programs...),
-		VerificationEvidence: []VerificationEvidence{{Name: "trusted program diagnosis and health", Passed: true, Details: attempt.Summary, ObservedAt: completed}},
+		FastPathRelationCoveredFindings: append([]RelationCoveredFinding(nil), attempt.RelationCoveredFindings...),
+		VerificationEvidence:            []VerificationEvidence{{Name: "trusted program diagnosis and health", Passed: true, Details: attempt.Summary, ObservedAt: completed}},
 	}
 	result.RepairActions = ProgramRepairReceipts(result.PlanApplications, nil)
 	for _, finding := range attempt.Findings {
