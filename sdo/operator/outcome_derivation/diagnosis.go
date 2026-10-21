@@ -46,6 +46,33 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 			}
 		}
 	}
+	// A detector that activates while the responder is still receiving its
+	// settled diagnosis observed the incident before any repair could begin.
+	if closure.GetDispatchedAt() != nil {
+		cutoff := closure.GetDispatchedAt().AsTime().Add(15 * time.Second)
+		for _, call := range result.GetProgramToolCalls() {
+			if call.GetAt() != nil && call.GetAt().AsTime().After(cutoff) {
+				cutoff = call.GetAt().AsTime()
+			}
+			break
+		}
+		for _, action := range result.GetRepairActions() {
+			if action.GetStartedAt() != nil && action.GetStartedAt().AsTime().Before(cutoff) {
+				cutoff = action.GetStartedAt().AsTime()
+			}
+		}
+		for _, entry := range closure.GetDetectorTimeline() {
+			if entry.GetFirstActivatedAt() == nil || entry.GetFirstActivatedAt().AsTime().After(cutoff) {
+				continue
+			}
+			if entry.GetDetectorId() != "" {
+				fired[entry.GetDetectorId()] = true
+			}
+			if entry.GetFingerprint() != "" {
+				findings[entry.GetFingerprint()] = true
+			}
+		}
+	}
 	latest := map[string]*contractsv1alpha1.DetectorEvaluation{}
 	evaluations := append(append([]*contractsv1alpha1.DetectorEvaluation{}, closure.GetFinalDetectorStates()...), closure.GetIncidentDetectorStates()...)
 	sort.SliceStable(evaluations, func(i, j int) bool {

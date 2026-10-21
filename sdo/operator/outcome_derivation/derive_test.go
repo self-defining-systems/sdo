@@ -104,6 +104,32 @@ func TestDeriveVerifiesQualifiedDetectorFinding(t *testing.T) {
 	}
 }
 
+func TestDeriveCreditsDetectorFiringDuringSettleBeforeResponderTool(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.ConfirmedRootCauses[0].ExplainedDetectors = []string{"health", "deployment-image-pull-backoff"}
+	closure.DetectorTimeline = []*contractsv1alpha1.DetectorTimelineEntry{{DetectorId: "deployment-image-pull-backoff", Fingerprint: "deployment-image-pull-backoff/hotel-reservation/search", FirstActivatedAt: timestamppb.New(closure.DispatchedAt.AsTime().Add(time.Second)), LastSeenAt: timestamppb.New(closure.DispatchedAt.AsTime().Add(10 * time.Second))}}
+	closure.Result.ProgramToolCalls = []*contractsv1alpha1.ProgramToolCall{{Command: "diagnose", At: timestamppb.New(closure.DispatchedAt.AsTime().Add(30 * time.Second))}}
+	closure.Result.RepairActions[0].StartedAt = timestamppb.New(closure.DispatchedAt.AsTime().Add(45 * time.Second))
+	closure.FinalDetectorStates = append(closure.FinalDetectorStates, &contractsv1alpha1.DetectorEvaluation{DetectorId: "deployment-image-pull-backoff", Status: "clear", EvaluatedAt: closure.VerifiedAt})
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	flip := result.Record.GetDiagnosisVerification()[0].GetDetectors()[1]
+	if !flip.GetFiredAtDispatch() || !flip.GetFlipped() {
+		t.Fatalf("settle-window detector firing was not credited: %+v", flip)
+	}
+	closure.DetectorTimeline[0].FirstActivatedAt = timestamppb.New(closure.DispatchedAt.AsTime().Add(46 * time.Second))
+	closure.DetectorTimeline[0].LastSeenAt = closure.DetectorTimeline[0].FirstActivatedAt
+	result, err = Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Record.GetDiagnosisVerification()[0].GetDetectors()[1].GetFiredAtDispatch() {
+		t.Fatal("detector firing after repair was credited as dispatch evidence")
+	}
+}
+
 func TestDeriveConfirmsVerifiedFindingWithSupplementalLiveObservation(t *testing.T) {
 	closure := fixtureClosure()
 	closure.Result.ConfirmedRootCauses[0].ExplainedDetectors = append(closure.Result.ConfirmedRootCauses[0].ExplainedDetectors, "deployment-image-pull-backoff")
