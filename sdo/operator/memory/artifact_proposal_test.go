@@ -71,6 +71,46 @@ func TestMaterializeFormatsGoProposalAndRejectsSyntaxErrors(t *testing.T) {
 	}
 }
 
+func TestMaterializePlaybookAcceptsMatchingReadmeFrontMatter(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, ".sdo", "diagnostics", "manifest.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, []byte("apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\ndetectors: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{
+		Id: "service-targetport-mismatch", Owner: "responder", FaultClass: "service-targetport-mismatch", OriginatingIncident: "incident-0",
+		Markdown: "---\nfault_class: service-targetport-mismatch\nowner: responder\n---\n\n# Service targetPort mismatch\n\nCheck the bound Service.\n",
+	}}}
+	if err := MaterializeArtifacts(root, proposal, ResponderArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".sdo", "playbooks", "service-targetport-mismatch", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "---\n") != 2 || !strings.Contains(string(data), "# Service targetPort mismatch") {
+		t.Fatalf("README front matter was duplicated or body lost: %s", data)
+	}
+}
+
+func TestMaterializePlaybookRejectsConflictingReadmeMetadata(t *testing.T) {
+	root := t.TempDir()
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{
+		Id: "service-targetport-mismatch", Owner: "responder", FaultClass: "service-targetport-mismatch", OriginatingIncident: "incident-0",
+		Markdown: "---\nfault_class: other-fault\n---\n\n# Service targetPort mismatch\n",
+	}}}
+	err := MaterializeArtifacts(root, proposal, ResponderArtifacts)
+	if err == nil || !strings.Contains(err.Error(), "front matter fault_class") || !strings.Contains(err.Error(), "other-fault") {
+		t.Fatalf("conflicting README metadata was accepted or lost context: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sdo")); !os.IsNotExist(err) {
+		t.Fatalf("conflicting README mutated checkout: %v", err)
+	}
+}
+
 func TestMaterializeRejectsUntrustedPathsBeforeMutation(t *testing.T) {
 	root := t.TempDir()
 	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{Id: "../../outside", DetectorClass: "incident", Owner: "responder", Sources: []*contracts.ProposedGoSource{{Name: "detector.go", Content: "package bad"}}}}}

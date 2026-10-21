@@ -89,6 +89,31 @@ func TestProposalValidateUsesAuthoritativeContextAndMemoryEdge(t *testing.T) {
 	}
 }
 
+func TestProposalValidateAndMaterializeAgreeOnReadmeFrontMatter(t *testing.T) {
+	app := draftFixtureApp(t)
+	proposal := &contracts.OperationalArtifactProposal{Playbooks: []*contracts.ProposedPlaybook{{
+		Id: "service-targetport-mismatch", FaultClass: "service-targetport-mismatch",
+		Markdown: "---\nfault_class: service-targetport-mismatch\nowner: responder\n---\n\n# Service targetPort mismatch\n\nCheck <SERVICE>.\n",
+	}}}
+	data, err := protojson.Marshal(proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "proposal.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path, IncidentID: "incident-0", OutcomeCommit: "outcome-commit"}); err != nil {
+		t.Fatalf("proposal validate rejected README input: %v", err)
+	}
+	if err := memory.FillResponderProposalContext(proposal, "incident-0", "outcome-commit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.MaterializeArtifacts(app, proposal, memory.ResponderArtifacts); err != nil {
+		t.Fatalf("validated proposal failed materialization: %v", err)
+	}
+}
+
 func TestHermeticReflectionCorrectsMissingDetectorSourceAndCommits(t *testing.T) {
 	ctx := context.Background()
 	app := draftFixtureApp(t)

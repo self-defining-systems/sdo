@@ -196,7 +196,10 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 		if err := os.MkdirAll(base, 0o755); err != nil {
 			return err
 		}
-		body := strings.TrimSpace(item.GetMarkdown())
+		body, err := playbookMarkdownBody(item)
+		if err != nil {
+			return fmt.Errorf("playbook %q: %w", item.GetId(), err)
+		}
 		frontmatter := fmt.Sprintf("---\nschema_version: 1\nowner: %s\nfault_class: %s\noriginating_incident: %s\n---\n\n%s\n", strconv.Quote(item.GetOwner()), strconv.Quote(item.GetFaultClass()), strconv.Quote(item.GetOriginatingIncident()), body)
 		if err := os.WriteFile(filepath.Join(base, "README.md"), []byte(frontmatter), 0o644); err != nil {
 			return err
@@ -447,8 +450,8 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		if strings.TrimSpace(item.GetOriginatingIncident()) == "" || strings.ContainsAny(item.GetOriginatingIncident(), "\r\n") {
 			failures = append(failures, "originating_incident: expected nonempty incident ID on one line")
 		}
-		if strings.TrimSpace(item.GetMarkdown()) == "" || strings.HasPrefix(strings.TrimSpace(item.GetMarkdown()), "---") {
-			failures = append(failures, "markdown: expected nonempty body without front matter")
+		if _, err := playbookMarkdownBody(item); err != nil {
+			failures = append(failures, err.Error())
 		}
 		if len(failures) > 0 {
 			return fmt.Errorf("playbook %q: %s", item.GetId(), strings.Join(failures, "; "))
@@ -550,6 +553,49 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		}
 	}
 	return nil
+}
+
+// playbookMarkdownBody accepts either a typed proposal body or a complete
+// README. The typed fields remain authoritative when README metadata is present.
+func playbookMarkdownBody(item *contracts.ProposedPlaybook) (string, error) {
+	markdown := strings.TrimSpace(item.GetMarkdown())
+	if markdown == "" {
+		return "", errors.New("markdown: expected a nonempty README body")
+	}
+	if !strings.HasPrefix(markdown, "---") {
+		return markdown, nil
+	}
+	if !strings.HasPrefix(markdown, "---\n") {
+		return "", errors.New("markdown: front matter must start with --- on its own line")
+	}
+	parts := strings.SplitN(markdown[4:], "\n---\n", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return "", errors.New("markdown: front matter needs a closing --- line and a nonempty body")
+	}
+	var metadata struct {
+		SchemaVersion       *int   `yaml:"schema_version"`
+		Owner               string `yaml:"owner"`
+		FaultClass          string `yaml:"fault_class"`
+		OriginatingIncident string `yaml:"originating_incident"`
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(parts[0]))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&metadata); err != nil {
+		return "", fmt.Errorf("markdown: invalid front matter: %w", err)
+	}
+	if metadata.SchemaVersion != nil && *metadata.SchemaVersion != 1 {
+		return "", errors.New("markdown: front matter schema_version must be 1")
+	}
+	for _, field := range []struct{ name, actual, expected string }{
+		{"owner", metadata.Owner, item.GetOwner()},
+		{"fault_class", metadata.FaultClass, item.GetFaultClass()},
+		{"originating_incident", metadata.OriginatingIncident, item.GetOriginatingIncident()},
+	} {
+		if field.actual != "" && field.actual != field.expected {
+			return "", fmt.Errorf("markdown: front matter %s %q conflicts with typed value %q", field.name, field.actual, field.expected)
+		}
+	}
+	return strings.TrimSpace(parts[1]), nil
 }
 
 func safeLibraryPackage(path string) bool {
