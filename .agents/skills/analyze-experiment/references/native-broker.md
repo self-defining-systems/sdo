@@ -25,6 +25,62 @@ Program and drift integration: controller state and broker ledgers use generated
 
 Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains controller-owned rollback pre-images, concrete applied actions, patches and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
 
+### In-flight plans and fast-path recovery
+
+The dispatcher saves a separate incident ConfigMap named
+`<IncidentJobName(incident_id)>-tools-state` through the controller's CAS state
+store. Its `data["runtime-state.json"]` is canonical `ControllerState` ProtoJSON;
+`responder_tool_state_json` (proto field 35, maximum 700,000 decoded bytes) is a
+base64-encoded bytes field containing version-1 JSON. Decode the outer ProtoJSON
+bytes before reading this inner journal. Its keys use Go field names, including
+`Version`, `IncidentID`, `SourceCommit`, `Plans`, `Applications`, `ApplicationsLog`,
+`Batches`, `FailureSignals`, `Calls`, `Runs`, `Findings`, `FastPathPrograms`,
+`FastPathSkippedReason` and `FastPathRelationCoveredFindings`. This is controller
+state, not worker-authored memory or an additional outcome.
+
+Prepared plans retain IDs, program IDs, bindings and concrete typed actions.
+Applications retain pre-images, ordered patches with before/after objects,
+`PendingAction`, `ActionsApplied`, `Applied`, `RollingBack`, `RollbackCompleted`,
+`RolledBack`, verification state and rollback errors. The log also keeps consumed
+`PlanIDs`, `Pending` and timing. Budget and application identity are saved before
+mutations; checkpoints surround writes and rollback progress, and tool state is
+saved before replies. Rejoin restores this journal before serving tools, checks
+incident/source identity, and selects log entries with `Pending` or `RollingBack`
+for reconciliation and compensation without replaying the forward mutation.
+Inspect `PendingAction` as well when a write receipt was lost. Reusing a
+consumed plan returns its existing application handle and an error. Conflicting
+recovery retains the handle and failure evidence. An attempted batch consumes
+budget even when its write fails or is rolled back.
+
+The separate `<IncidentJobName(incident_id)>-fast-path` ConfigMap records
+`state=attempting`, `failed` or `resolved`. Its data can include `tool_state`
+(plain inner JSON), `application`, `preimages`, `program_ids`,
+`trust_failure_signals` (a JSON string array), `summary`, `skip_reason`, and the
+resolved `result` (IncidentResult ProtoJSON). Before mutation it freezes the
+program IDs, pre-images and revision-bound failure signals. Those signals are
+failure-only evidence: a resolved or skipped attempt does not publish them as
+outcome failures. Failed/interrupted recovery restores the attempt and suspicion,
+merges missing fast-path evidence into any newer responder journal, and retries
+conditional rollback. Markers retain pre-images and journals through rollback
+failure. A legacy marker containing only pre-images cannot safely replace a
+current object spec; inspect its missing-field-journal diagnostic.
+
+Apply and rollback include observed object UID/resourceVersion preconditions.
+Rollback compares before/after field images with current values to identify
+changes and conflicts. Equal-length arrays are traversed by index; compare
+element identities and final values when auditing a reordered list. Compare a
+resolved marker's cached result with the tool journal and actual object state.
+`PlanApplication` in a completed result retains its typed pre-images, applied
+actions and merge patches; the loader reconstructs field images from these.
+The richer in-flight journal holds pending-write and rollback-progress state.
+Correlate both ConfigMaps with the completed controller result, broker ledger and
+accepted outcome before claiming successful recovery or a new trust credit.
+
+Sources: `controller_state.proto`, `runtime/kubernetes_job_dispatcher_state.go`,
+`runtime/responder_loop_state.go`, `runtime/plan_executor{,_journal}.go` and
+`runtime/kubernetes_fast_path.go`. For accepted success/failure evidence, see
+[program trust evidence](fastloop-results.md#program-trust-evidence).
+
 Foreign NetworkPolicy drift uses the existing typed DriftEvent evidence: `source` states absence from accepted source and the `spec` field records create/edit values. Admission requires a confirmed source-absence read and reviewed kind, not a failed source lookup. A learned repeat is `drift.networkpolicy-service-isolation`; policy deletion triggers replay on the retained binding and requires explicit NoMatch before clearing. Normal controller churn remains excluded.
 
 Namespace sweeps persist `program_sweep_cursors` in controller state as the next mixed-radix assignment per program. Stable binding sets rotate through the complete required and optional parameter product with at most 64 new diagnoses per program per sweep; optional parameters may remain unbound. A controller restart preserves this progress.

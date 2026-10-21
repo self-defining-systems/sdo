@@ -36,6 +36,73 @@ Brief rollout mismatches should appear only as pending or `not_persisted`
 observations; rollouts that remain mismatched beyond the configured duration can
 still activate, regardless of which actor changed the object.
 
-A newly introduced program can earn one learning success from its originating incident even though the responder repaired it before the program existed. The trust reader joins a successful immutable outcome to a captured root-cause corpus introduced in a broker-validated reflection commit for that incident. Captured open/fixed hashes must match accepted Git objects; the program must include a mitigation and be newly introduced there. Credit is bound to the original accepted program/dependency revision, is counted only once, and cannot erase later failure signals. This is a trust-only projection; the stored outcome does not claim a program application that never happened. Synthetic cases, unsuccessful incidents, unvalidated commits and subsequent program revisions earn no learning credit. A generic `adhoc_coverage_gap` on the learning outcome is expected before the program exists and does not block this credit; failure signals scoped to that program still invalidate it. With `--program-trust-threshold=1` the first repeat can use the fast path; the production default remains 3.
-
 For a confirmed watch-time program match, `DriftEvent.source` is `watch event program match` for both owned and unowned objects. Owned-field diffs, manager/operation attribution and original watch timestamps remain attached as evidence. `differs from accepted manifest` remains the ordinary attributed path when no learned program matches. Older owned-object matches can carry that ordinary source string even though their detector and hint binding identify the learned program; do not confuse those historical labels with periodic sweep discovery.
+
+## Program trust evidence
+
+`runtime/program_trust.go` derives trust from accepted outcomes in completion order.
+The default threshold is three verified successes; `--program-trust-threshold=1`
+changes eligibility, not the evidence required. An application earns credit only
+when all of the following hold:
+
+- The independently derived outcome classification is `success`, and the
+  application was neither a dry run nor rolled back. Application errors,
+  rollback errors and program-scoped failure signals disqualify it.
+- The application's health verification is `NO_MATCH`. This field alone is a
+  health-only verdict and does not prove the program diagnosed the repair.
+- Successful controller-recorded `plan` and `apply` tool calls connect the plan
+  IDs to the application ID and its selected program and named bindings. The
+  apply call is at or after `completed_at`; its response contains explicit
+  post-apply `NoMatch` for every selected binding of that program. Compare full
+  object refs, including API version, namespace and name, and the accepted
+  dependency revision. Missing/truncated history, wrong bindings or revisions,
+  diagnosis errors, `Unknown`, `NeedsJudgement` and `Match` earn no credit.
+
+Ordinary unapplied applications are ignored; fast-path records are also inspected
+when unapplied so attempted failures can revoke trust. At most one success per
+program is credited from an outcome. These evidence rules apply
+to ordinary, fast-path and equivalent-repair applications; an application ID
+prefix or a flat `program_runs` list supplies no exception. Current fast paths
+record controller-authored plan/apply calls. An `equivalent-repair-*` record
+without the required bound tool evidence earns no credit. Failed, partial,
+cancelled, external-recovery, unclassified and unverified outcomes cannot earn
+successes even when an immediate health check passed.
+
+Trust is bound to `program_runs.program_revision`: the digest of accepted program
+Git objects and their transitive shared-library imports. A revision change starts
+a new success streak. Failed applications reset successes and retain suspicion
+for that dependency revision. Missing or inconclusive bound evidence also resets
+the success streak. The counters are derived values, exposed by `sdo status`;
+they are not a separately authoritative durable trust record.
+
+`program_failure_signals` can contain
+`fast_path_failure:<program_id>@<accepted_dependency_revision>`. The fast-path
+marker freezes this revision before mutation, then restores the signal on failed
+handoff or interrupted recovery. Failures remain associated with that revision
+after unrelated source commits, edits and later reversions; later successes do
+not erase them. Legacy `fast_path_failure:<program_id>` uses the known program
+revision, falling back to the source commit only when none is available. Generic
+signals such as `adhoc_coverage_gap` are not a failure of every program. Inspect
+the marker and tool journal described in [native broker evidence](native-broker.md)
+when an outcome has not yet been committed.
+
+### Learning credit
+
+A newly introduced program may earn one credit from its original independently
+successful incident, although it did not perform that repair. The memory reader
+joins the immutable outcome by incident ID to captured root-cause labels in the
+introducing accepted reflection commit. It requires the broker's incident,
+actor, phase and passed-validation trailers, matching open/fixed capture hashes,
+and newly introduced diagnosis and mitigation sources. Synthetic cases and later
+revalidation of an existing program do not supply new learning credit.
+
+The dispatcher additionally checks that the current accepted program/dependency
+revision equals the introducing revision, loads immutable accepted captures and
+phase recordings, validates bindings and capture hashes, and executes diagnosis:
+open must be `Match`, fixed must be `NoMatch` on the same binding. Inconclusive
+replay or an unsuccessful original outcome earns nothing. The dispatcher makes a
+transient `learned-repair-*` application and plan/apply-shaped replay receipt for
+the trust calculation. It never rewrites the original outcome or publishes those
+receipts as live tool calls. Audit the outcome, introducing commit, corpus
+provenance and replay together; do not look for a live learned-program application
+in the original outcome. Program-scoped failures still invalidate this credit.
