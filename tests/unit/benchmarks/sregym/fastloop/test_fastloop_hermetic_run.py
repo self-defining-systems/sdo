@@ -18,7 +18,7 @@ import yaml
 from google.protobuf.any_pb2 import Any as ProtoAny
 
 from benchmarks.sregym import adapter
-from benchmarks.sregym.adapter import scripted_worker
+from benchmarks.sregym.adapter import driver, scripted_worker
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import PersistentState
 from benchmarks.sregym.fastloop import cli, composite, fault_tracker
@@ -502,6 +502,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
 ) -> None:
     workspace = tmp_path / "application_workspace"
     shutil.copytree(FIXTURE_SEED, workspace)
+    diagnostics = workspace / ".sdo/diagnostics"
+    diagnostics.mkdir(parents=True)
+    (diagnostics / "manifest.yaml").write_text("detectors: []\n")
+    (workspace / ".sdo/lifecycle-provenance.yaml").write_text("{}\n")
     subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
     subprocess.run(["git", "add", "."], cwd=workspace, check=True)
     subprocess.run(
@@ -536,7 +540,16 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         "deployed_lifecycle",
         lambda _namespace: DeployedLifecycle(DeployedLifecycleContext("healthy", []), "seed"),
     )
-    monkeypatch.setattr(adapter, "launch_native_lifecycle", lambda *_args: None)
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "unused-kubeconfig"))
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_publish_agent_registrations", lambda *_args: None)
+    monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
+
+    def install(config: object) -> object:
+        assert config.deployed_manifest_paths == ("kubernetes",)
+        return SimpleNamespace(reused=False, accepted_commit="a" * 40)
+
+    monkeypatch.setattr(driver, "install_existing", install)
     monkeypatch.setattr(
         adapter,
         "kubectl",

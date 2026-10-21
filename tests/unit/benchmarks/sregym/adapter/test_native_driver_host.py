@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import fields
 from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.sregym.adapter import driver
+from benchmarks.sregym.adapter import driver, native_operator
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
@@ -198,9 +199,10 @@ def test_native_launch_passes_configured_repair_policy_to_installer(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     policies: list[str] = []
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
 
     def launch(args: object, **_kwargs: object) -> dict[str, object]:
-        policies.append(args.repair_policy)
+        policies.append(_kwargs["install_config"].repair_policy)
         return {}
 
     monkeypatch.setattr(driver, "_launch_native_lifecycle", launch)
@@ -219,3 +221,76 @@ def test_native_launch_passes_configured_repair_policy_to_installer(
         driver.launch_native_lifecycle(RuntimeConfig(**base, repair_policy=policy), "healthy", "")
 
     assert policies == ["recorded-actions", "commit"]
+
+
+@pytest.mark.parametrize("seeded", [False, True])
+def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, seeded: bool
+) -> None:
+    if seeded:
+        sdo = tmp_path / ".sdo"
+        (sdo / "diagnostics").mkdir(parents=True)
+        (sdo / "diagnostics" / "manifest.yaml").write_text("detectors: []\n")
+        (sdo / "lifecycle-provenance.yaml").write_text("{}\n")
+    registrations = tmp_path / "registrations"
+    registrations.mkdir()
+    config = RuntimeConfig(
+        repository=tmp_path,
+        namespace="demo",
+        application="demo",
+        controller_image="controller:test",
+        responder_image="responder:test",
+        validator_image="validator:test",
+        repository_pvc="repository",
+        credentials_secret="credentials",
+        model="gpt-6-luna",
+        timeout_seconds=41,
+        verification_timeout_seconds=43,
+        repair_policy="recorded-actions",
+        agent_provider="claude",
+        reflection_session="fresh",
+        reflection_guidance="generalize",
+        force_reflection=True,
+        late_findings="pull",
+        max_follow_ups=2,
+        max_response_loops=4,
+        follow_up_cooldown_seconds=17,
+        healthy_baseline=True,
+        controller_namespace="demo-sdo",
+        kind_cluster_name="fastloop-w0",
+        persistent=True,
+        agent_registrations=registrations if seeded else None,
+        deployed_manifest_paths=("kubernetes",),
+    )
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "_publish_agent_registrations", lambda *_args: None)
+    monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
+    installed: list[native_operator.NativeInstallConfig] = []
+    controller_args: list[str] = []
+
+    def run(_command: str, args: list[str], **_kwargs: object) -> dict[str, object]:
+        controller_args.extend(args)
+        return {"installed": True, "reused": False, "fingerprint": "abc", "accepted_commit": "a" * 40}
+
+    def install(value: native_operator.NativeInstallConfig) -> object:
+        installed.append(value)
+        return native_operator.install_existing(value)
+
+    monkeypatch.setattr(native_operator, "_run", run)
+    monkeypatch.setattr(driver, "install_existing", install)
+    monkeypatch.setattr(driver, "launch_host", lambda host: installed.append(host.install) or {"installed": True})
+
+    driver.launch_native_lifecycle(config, "healthy", "")
+
+    assert len(installed) == 1
+    actual = installed[0]
+    for field in fields(native_operator.NativeInstallConfig):
+        if hasattr(config, field.name):
+            assert getattr(actual, field.name) == getattr(config, field.name), field.name
+    assert actual.control_namespace == config.controller_namespace
+    assert actual.response_timeout_seconds == config.timeout_seconds
+    assert actual.verification_timeout_seconds == config.verification_timeout_seconds
+    assert actual.deployed_manifest_paths == ("kubernetes",)
+    if seeded:
+        assert controller_args[controller_args.index("--deployed-manifest-path") + 1] == "kubernetes"
