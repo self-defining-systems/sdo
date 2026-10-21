@@ -18,8 +18,8 @@ import (
 )
 
 type IncidentEvidenceConfig struct {
-	Sync                   install.SyncConfig
-	IncidentID, Kubeconfig string
+	Sync                               install.SyncConfig
+	IncidentID, Kubeconfig, Repository string
 }
 
 type IncidentEvidenceResult struct {
@@ -38,6 +38,7 @@ func ParseIncidentEvidenceLaunch(args []string) (IncidentEvidenceConfig, error) 
 	pvc := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	image := flags.String("controller-image", "", "controller image")
 	id := flags.String("incident-id", "", "logical incident ID")
+	repository := flags.String("repository", "", "optional accepted repository destination for a single-pod sync")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes configuration")
 	if err := flags.Parse(args[1:]); err != nil {
 		return IncidentEvidenceConfig{}, err
@@ -48,7 +49,10 @@ func ParseIncidentEvidenceLaunch(args []string) (IncidentEvidenceConfig, error) 
 	if *kubeconfig != "" && !filepath.IsAbs(*kubeconfig) {
 		return IncidentEvidenceConfig{}, errors.New("kubeconfig path must be absolute")
 	}
-	return IncidentEvidenceConfig{Sync: install.SyncConfig{ControlNamespace: *control, RepositoryPVC: *pvc, ControllerImage: *image}, IncidentID: *id, Kubeconfig: *kubeconfig}, nil
+	if *repository != "" && !filepath.IsAbs(*repository) {
+		return IncidentEvidenceConfig{}, errors.New("repository path must be absolute")
+	}
+	return IncidentEvidenceConfig{Sync: install.SyncConfig{ControlNamespace: *control, RepositoryPVC: *pvc, ControllerImage: *image}, IncidentID: *id, Kubeconfig: *kubeconfig, Repository: *repository}, nil
 }
 
 func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (IncidentEvidenceResult, error) {
@@ -62,7 +66,15 @@ func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (Incid
 	}
 	var data []byte
 	installer := install.Installer{Client: client}
-	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
+	if cfg.Repository != "" {
+		installer.SyncRepository = install.KubectlTarSynchronizerWithKubeconfig(cfg.Repository, cfg.Kubeconfig)
+	}
+	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, syncConfig install.Config) error {
+		if installer.SyncRepository != nil {
+			if err := installer.SyncRepository(ctx, syncConfig); err != nil {
+				return fmt.Errorf("synchronize accepted repository: %w", err)
+			}
+		}
 		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "cat", path)
 		if cfg.Kubeconfig != "" {
 			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
@@ -70,7 +82,9 @@ func RunIncidentEvidence(ctx context.Context, cfg IncidentEvidenceConfig) (Incid
 		output, readErr := command.Output()
 		if readErr != nil {
 			var exit *exec.ExitError
-			if errors.As(readErr,&exit) { return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr))) }
+			if errors.As(readErr, &exit) {
+				return fmt.Errorf("read native incident ledger: %w: %s", readErr, strings.TrimSpace(string(exit.Stderr)))
+			}
 			return fmt.Errorf("read native incident ledger: %w", readErr)
 		}
 		data = output

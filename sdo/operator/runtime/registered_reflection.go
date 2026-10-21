@@ -223,6 +223,9 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			if err := memory.MaterializeArtifacts(workspace.Worktree, proposal, memory.ResponderArtifacts, captureDir); err != nil {
 				return ReflectionDecision{}, fmt.Errorf("materialize reflection artifacts: %w", err)
 			}
+			if err := recordClosurePhase(ctx, "memory_edge_materialization"); err != nil {
+				return ReflectionDecision{}, err
+			}
 		} else if response.GetArtifactProposal() != nil {
 			return ReflectionDecision{}, errors.New("reflection without updated learning cannot propose artifacts")
 		}

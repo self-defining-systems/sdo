@@ -43,6 +43,7 @@ type KubernetesValidationJobClient struct {
 	HealthyBaseline      bool
 	PollInterval         time.Duration
 	Timeout              time.Duration
+	OnPhase              func(context.Context, string) error
 }
 
 func (k KubernetesValidationJobClient) Validate(ctx context.Context, request ValidationJobRequest) (ValidationJobReceipt, error) {
@@ -108,8 +109,18 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 		}
 	}
 	job := k.validationJob(name, subPath, request.CandidateTree, useBaseline)
+	if k.OnPhase != nil {
+		if err := k.OnPhase(validationCtx, "gofmt"); err != nil {
+			return ValidationJobReceipt{}, err
+		}
+	}
 	if err := k.createJob(validationCtx, job); err != nil {
 		return ValidationJobReceipt{}, err
+	}
+	if k.OnPhase != nil {
+		if err := k.OnPhase(validationCtx, "validator_job_created"); err != nil {
+			return ValidationJobReceipt{}, err
+		}
 	}
 	if err := k.waitJob(validationCtx, name); err != nil {
 		return ValidationJobReceipt{}, fmt.Errorf("validator build and source checks: %w", err)
@@ -171,12 +182,27 @@ func (k KubernetesValidationJobClient) createJob(ctx context.Context, job *batch
 func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string) error {
 	ticker := time.NewTicker(k.PollInterval)
 	defer ticker.Stop()
+	track := k.OnPhase != nil && !strings.HasSuffix(name, "-allow") && !strings.HasSuffix(name, "-deny")
+	started := false
 	for {
 		job, err := k.Client.BatchV1().Jobs(k.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("inspect Job %s: %w", name, err)
 		}
+		if track && !started && (job.Status.Active > 0 || job.Status.StartTime != nil || job.Status.Succeeded > 0) {
+			if err := k.OnPhase(ctx, "validator_job_started"); err != nil {
+				return err
+			}
+			started = true
+		}
 		if job.Status.Succeeded > 0 && job.Status.CompletionTime != nil {
+			if track {
+				for _, phase := range []string{"program_build_compile", "corpus_replay_validation", "validator_job_finished"} {
+					if err := k.OnPhase(ctx, phase); err != nil {
+						return err
+					}
+				}
+			}
 			return nil
 		}
 		if job.Status.Failed > 0 {

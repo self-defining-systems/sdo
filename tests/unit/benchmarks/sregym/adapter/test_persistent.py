@@ -22,6 +22,7 @@ from benchmarks.sregym.adapter.persistent import (
     PersistentState,
     ReceiptRejectedError,
     StageInputs,
+    _wait_for_reflection_drain,
     collect_followup_incident,
     control_namespace_for,
     drain_pending_incident,
@@ -937,3 +938,11 @@ def test_stage_can_wait_out_a_detector_review_stop_when_asked_to(tmp_path: Path)
         )
 
     assert not isinstance(raised.value, DetectorReviewRequiredError)
+
+
+def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaunch() -> None:
+    ops = FakeOps(states={"demo-sdo": {"last_acknowledged_incident_id": "incident-1"}})
+    state = _wait_for_reflection_drain(
+        ops, "demo-sdo", "incident-1", 1.0, Clock(sleep=lambda _: pytest.fail("closure should already be drained"))
+    )
+    assert state["last_acknowledged_incident_id"] == "incident-1"

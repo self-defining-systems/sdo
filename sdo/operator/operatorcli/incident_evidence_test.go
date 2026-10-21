@@ -13,4 +13,8 @@ func TestParseIncidentEvidenceLaunch(t *testing.T) {
 	if _, err := ParseIncidentEvidenceLaunch([]string{"incident-evidence", "--control-namespace", "sdo", "--repository-pvc", "repo", "--controller-image", "controller:test"}); err == nil {
 		t.Fatal("missing incident accepted")
 	}
+	withSync, err := ParseIncidentEvidenceLaunch([]string{"incident-evidence", "--control-namespace", "sdo", "--repository-pvc", "repo", "--controller-image", "controller:test", "--incident-id", "incident-1", "--repository", "/tmp/accepted"})
+	if err != nil || withSync.Repository != "/tmp/accepted" {
+		t.Fatalf("single-pod repository sync unavailable: %+v, %v", withSync, err)
+	}
 }
