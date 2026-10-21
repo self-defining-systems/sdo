@@ -14,8 +14,10 @@ from benchmarks.sregym.adapter.persistent import (
     Clock,
     ClosureFailedError,
     ControllerPod,
+    ControllerRecord,
     DetectionMissError,
     DetectorReviewRequiredError,
+    PendingIncident,
     PersistentControllerError,
     PersistentState,
     ReceiptRejectedError,
@@ -25,6 +27,8 @@ from benchmarks.sregym.adapter.persistent import (
     drain_pending_incident,
     publish_deferred_receipts,
     run_persistent_stage,
+    runtime_config_from_payload,
+    runtime_config_payload,
     teardown,
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
@@ -304,6 +308,72 @@ def test_control_namespace_is_per_application_and_valid() -> None:
     assert control_namespace_for("hotel-reservation") == "hotel-reservation-sdo"
     with pytest.raises(PersistentControllerError):
         control_namespace_for("x" * 60)
+
+
+def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_path: Path) -> None:
+    config = RuntimeConfig(
+        repository=tmp_path / "repository",
+        namespace="hotel",
+        application="Hotel Reservation",
+        controller_image="controller:test",
+        responder_image="responder:test",
+        repository_pvc="repository",
+        credentials_secret="credentials",
+        model="gpt-test",
+        timeout_seconds=61,
+        validator_image="validator:test",
+        verification_timeout_seconds=121,
+        wait_for_completion=True,
+        repair_policy="recorded-actions",
+        agent_provider="claude",
+        reflection_session="fresh",
+        reflection_guidance="generalize",
+        late_findings="pull",
+        max_follow_ups=2,
+        max_response_loops=6,
+        follow_up_cooldown_seconds=31,
+        healthy_baseline=True,
+        controller_namespace="hotel-sdo",
+        reuse_existing=True,
+        submission_api_base="http://submit",
+        submission_relay_target_base="http://relay",
+        allow_test_lifecycle=True,
+        artifacts_dir=tmp_path / "artifacts",
+        persistent=True,
+        buildkit_image="buildkit:test",
+        registry_push_secret="registry",
+        kind_cluster_name="kind-test",
+        max_deployment_attempts=4,
+        agent_registrations=tmp_path / "scripted-agents.json",
+    )
+    payload = runtime_config_payload(config)
+    assert runtime_config_from_payload(payload) == config
+
+    pending = PendingIncident(
+        incident_id="incident-1",
+        stage_label="s0",
+        receipt_dir=tmp_path / "receipt",
+        repository=config.repository,
+        verified_at=DETECTED,
+        stage_receipt={},
+    )
+    record = ControllerRecord(
+        application=config.application,
+        namespace=config.namespace,
+        control_namespace=config.control_namespace,
+        lifecycle_fingerprint="topology-1",
+        controller_pod_uid="uid",
+        controller_pod_name="pod",
+        installed_by_stage="s0",
+        installed_at=DETECTED,
+        runtime_config=payload,
+        pending=pending,
+    )
+    path = tmp_path / "state.json"
+    PersistentState(controllers={config.namespace: record}).save(path)
+    loaded = PersistentState.load(path)
+    assert loaded.controllers[config.namespace].pending == pending
+    assert runtime_config_from_payload(loaded.controllers[config.namespace].runtime_config) == config
 
 
 def test_one_controller_serves_both_stages_and_the_second_skips_install_and_lifecycle(tmp_path: Path) -> None:
