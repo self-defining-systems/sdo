@@ -65,6 +65,17 @@ def _timestamp(value: object) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _closure_phase_seconds(ledger: dict[str, Any]) -> dict[str, float]:
+    phases = ledger.get("closure_phase_timestamps")
+    if not isinstance(phases, dict):
+        return {}
+    ordered = sorted(
+        ((at, name) for name, value in phases.items() if isinstance(name, str) for at in [_timestamp(value)] if at),
+        key=lambda item: item[0],
+    )
+    return {name: (at - ordered[index - 1][0]).total_seconds() for index, (at, name) in enumerate(ordered) if index > 0}
+
+
 def _last_successful_repair(repairs: object) -> datetime | None:
     completions = [
         completed
@@ -298,6 +309,7 @@ class SdoPersistentAgent:
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
             reflection_attempts=attempts if isinstance(attempts, int) else None,
             reflection_skipped_reason=skipped if isinstance(skipped, str) else None,
+            closure_phase_seconds=_closure_phase_seconds(ledger),
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             **_program_metrics(outcome_document),
             error=error,

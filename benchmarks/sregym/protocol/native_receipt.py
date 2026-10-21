@@ -117,6 +117,14 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
         ):
             raise ProductionReceiptValidationError("native successful outcome lacks accepted repair evidence")
     decision = ledger.get("reflection_decision")
+    skipped = ledger.get("reflection_skipped_reason")
+    if skipped is not None and (
+        not isinstance(skipped, str)
+        or not skipped.strip()
+        or ledger.get("requires_reflection") is True
+        or decision is not None
+    ):
+        raise ProductionReceiptValidationError("native reflection skip conflicts with broker decision")
     if ledger.get("requires_reflection") is True and (
         ledger.get("reflection_processed") is not True
         or not isinstance(decision, dict)
@@ -207,6 +215,7 @@ def native_production_receipt(
         "outcome_commit": ledger.get("outcome_commit"),
         "reflection_commit": ledger.get("reflection_commit") or None,
         "reflection_usage": (ledger.get("reflection_decision") or {}).get("usage"),
+        "reflection_skipped_reason": ledger.get("reflection_skipped_reason"),
         "outcome_classification": classification,
         "resolution": resolution,
     }

@@ -129,6 +129,7 @@ class IncidentRecord(_PersistedModel):
     match_reasons: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
     #: ``sdo_mitigated``, ``external_recovery`` or ``cleared_without_sdo_action`` from the validated strict
     #: receipt; ``None`` for the baseline or when no receipt validated.
     sdo_resolution: str | None = None

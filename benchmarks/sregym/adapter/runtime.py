@@ -14,7 +14,6 @@ from benchmarks.sregym.adapter.native_operator import (
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
-    sync_existing,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError
 from benchmarks.sregym.protocol import validate_production_receipt as validate_receipt_contract
@@ -49,6 +48,7 @@ class RuntimeConfig:
     agent_provider: str = "codex"
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
+    force_reflection: bool = False
     late_findings: str = "off"
     max_follow_ups: int = 0
     max_response_loops: int = 5
@@ -137,6 +137,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         late_findings=config.late_findings,
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
+        force_reflection=config.force_reflection,
         healthy_baseline=config.healthy_baseline,
         max_follow_ups=config.max_follow_ups,
         max_response_loops=config.max_response_loops,
@@ -167,8 +168,7 @@ def collect_production_receipt(config: RuntimeConfig, incident_id: str, artifact
 
     del artifacts_dir
     native = native_install_config(config)
-    sync_existing(native)
-    return collect_native_receipt(native, incident_id)
+    return collect_native_receipt(native, incident_id, sync_repository=True)
 
 
 def _responder_instructions() -> str:

@@ -44,6 +44,7 @@ class NativeInstallConfig:
     late_findings: str = "off"
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
+    force_reflection: bool = False
     max_follow_ups: int = 0
     max_response_loops: int = 5
     follow_up_cooldown_seconds: int = 30
@@ -250,7 +251,9 @@ def set_maintenance(
         raise NativeOperatorError("Go maintenance returned unexpected stdout")
 
 
-def read_incident_evidence(config: NativeInstallConfig, incident_id: str) -> dict[str, Any]:
+def read_incident_evidence(
+    config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
+) -> dict[str, Any]:
     if not incident_id.strip():
         raise ValueError("incident ID must be non-empty")
     args = [
@@ -265,6 +268,8 @@ def read_incident_evidence(config: NativeInstallConfig, incident_id: str) -> dic
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
+    if sync_repository:
+        args.extend(("--repository", str(config.repository)))
     value = _run("incident-evidence", args, timeout=120)
     ledger = value.get("ledger")
     if (
@@ -297,8 +302,10 @@ def _kubectl_json(config: NativeInstallConfig, *args: str) -> dict[str, Any]:
     return document
 
 
-def collect_native_receipt(config: NativeInstallConfig, incident_id: str) -> dict[str, Any]:
-    evidence = read_incident_evidence(config, incident_id)
+def collect_native_receipt(
+    config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
+) -> dict[str, Any]:
+    evidence = read_incident_evidence(config, incident_id, sync_repository=sync_repository)
     job_name = evidence["responder_job_name"]
     job = _kubectl_json(config, "get", f"job/{job_name}")
     job_metadata = job.get("metadata")
@@ -375,6 +382,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args.extend(("--late-findings", config.late_findings))
     args.extend(("--reflection-session", config.reflection_session))
     args.extend(("--reflection-guidance", config.reflection_guidance))
+    if config.force_reflection:
+        args.append("--force-reflection")
     args.extend(("--max-follow-ups", str(config.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))
@@ -429,6 +438,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--late-findings", config.install.late_findings))
     args.extend(("--reflection-session", config.install.reflection_session))
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
+    if config.install.force_reflection:
+        args.append("--force-reflection")
     args.extend(("--max-follow-ups", str(config.install.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.install.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.install.follow_up_cooldown_seconds}s"))

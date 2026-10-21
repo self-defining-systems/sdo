@@ -259,6 +259,26 @@ def test_learning_drains_reflection_and_reads_tokens_and_warm_path_from_the_stri
     assert state.controllers["hotel-reservation"].pending is None
 
 
+def test_learning_exports_monotonic_closure_phase_durations(tmp_path: Path) -> None:
+    receipt = _receipt("incident-1", warm=True)
+    receipt["native_ledger"] = {
+        "closure_phase_timestamps": {
+            "closure_start": "2026-09-27T12:01:00Z",
+            "outcome_write": "2026-09-27T12:01:02Z",
+            "reflection_dispatch": "2026-09-27T12:01:03Z",
+            "worker_result_picked_up": "2026-09-27T12:01:05Z",
+        }
+    }
+    ops, calls = FakeOps(receipt_override=receipt), []
+    agent = _agent(tmp_path, ops, calls)
+    learned = agent.learn(agent.resolve(0, "p", _inject))
+    assert learned.closure_phase_seconds == {
+        "outcome_write": 2.0,
+        "reflection_dispatch": 1.0,
+        "worker_result_picked_up": 2.0,
+    }
+
+
 def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_next_incident(tmp_path: Path) -> None:
     ops, calls = FakeOps(reject_receipts=True), []
     agent = _agent(tmp_path, ops, calls)

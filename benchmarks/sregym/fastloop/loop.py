@@ -68,6 +68,7 @@ class AgentOutcome:
     match_reasons: tuple[str, ...] = ()
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    closure_phase_seconds: dict[str, float] = field(default_factory=dict)
     #: How the strict receipt says the incident closed (``sdo_mitigated``, ``external_recovery`` or
     #: ``cleared_without_sdo_action``); ``None`` when no receipt validated. Only ``sdo_mitigated`` is SDO's own fix.
     sdo_resolution: str | None = None
@@ -364,6 +365,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "match_reasons": list(outcome.match_reasons),
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
+        "closure_phase_seconds": dict(outcome.closure_phase_seconds),
         "sdo_resolution": outcome.sdo_resolution,
         "reflection_seconds": outcome.reflection_seconds,
         "baseline_gate_seconds": outcome.baseline_gate_seconds,
