@@ -38,6 +38,7 @@ type KubernetesExecutor struct {
 	RepositoryMountPath   string
 	RepositoryPVCSubPath  string
 	SessionPVCSubPath     string
+	HealthyBaseline       bool
 	CredentialsSecret     string
 	LateFindingsConfigMap string
 	Environment           map[string]string
@@ -193,6 +194,11 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
 	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})
 	memoryAuthor := reflection || judge
+	baseline := ""
+	if reflection && e.HealthyBaseline {
+		baseline = "/sdo/healthy-baseline"
+		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: baseline, SubPath: path.Join(e.RepositoryPVCSubPath, ".sdo-baseline/healthy"), ReadOnly: true})
+	}
 	if memoryAuthor {
 		actor, phase := "responder", "reflection"
 		if judge {
@@ -200,7 +206,10 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		}
 		env = append(env, corev1.EnvVar{Name: "SDO_ACTOR", Value: actor}, corev1.EnvVar{Name: "SDO_PHASE", Value: phase}, corev1.EnvVar{Name: "SDO_BASE_COMMIT", Value: task.GetWorkspace().GetBaseCommit()})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor}
+	if reflection {
+		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline})
+	}
+	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {

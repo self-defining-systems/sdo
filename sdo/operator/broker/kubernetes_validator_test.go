@@ -275,3 +275,35 @@ func hasEnv(env []corev1.EnvVar, name string) bool {
 	}
 	return false
 }
+
+func TestKubernetesValidatorReturnsTypedContentFailure(t *testing.T) {
+	for _, rule := range []string{"detector.compile", "detector.test"} {
+		t.Run(rule, func(t *testing.T) {
+			const jobName = "sdo-validator-content"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/apis/batch/v1/namespaces/sdo/jobs/" + jobName:
+					_ = json.NewEncoder(w).Encode(batchv1.Job{Status: batchv1.JobStatus{Failed: 1}})
+				case "/api/v1/namespaces/sdo/pods":
+					_ = json.NewEncoder(w).Encode(corev1.PodList{Items: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: jobName + "-pod"}}}})
+				case "/api/v1/namespaces/sdo/pods/" + jobName + "-pod/log":
+					_, _ = w.Write([]byte(`SDO_MEMORY_REPORT:{"diagnostics":[{"rule":"` + rule + `","path":".sdo/diagnostics/detectors/incidents/cache/detector.go","line":4,"message":"undefined: missing"}]}` + "\n"))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", PollInterval: time.Millisecond}
+			err = launcher.waitJob(context.Background(), jobName)
+			ds, typed := RejectionDiagnostics(err)
+			if !typed || len(ds) != 1 || ds[0].Rule != rule || ds[0].Line != 4 {
+				t.Fatalf("lost typed failure: %v %v %v", typed, ds, err)
+			}
+		})
+	}
+}

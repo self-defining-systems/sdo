@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
-	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 )
 
 var gitTreeID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -180,6 +180,14 @@ func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string)
 		if job.Status.Failed > 0 {
 			failure := fmt.Errorf("Job %s failed", name)
 			if logs := k.failedJobLogs(name); logs != "" {
+				if !strings.HasSuffix(name, "-allow") && !strings.HasSuffix(name, "-deny") {
+					if ds, err := validate.ParseReport(logs); err == nil && len(ds) > 0 {
+						return validate.Err(ds)
+					}
+				}
+				if len(logs) > 8192 {
+					logs = logs[:8192]
+				}
 				return fmt.Errorf("%w; Pod logs: %s", failure, logs)
 			}
 			return failure
@@ -200,19 +208,17 @@ func (k KubernetesValidationJobClient) failedJobLogs(name string) string {
 		return ""
 	}
 	pod := pods.Items[0]
-	stream, err := k.Client.CoreV1().Pods(k.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{TailLines: int64Pointer(100)}).Stream(ctx)
+	stream, err := k.Client.CoreV1().Pods(k.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{}).Stream(ctx)
 	if err != nil {
 		return ""
 	}
 	defer stream.Close()
-	contents, err := io.ReadAll(io.LimitReader(stream, 8192))
+	contents, err := io.ReadAll(io.LimitReader(stream, int64(validate.MaxReportBytes+len(validate.ReportPrefix)+2)))
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(contents))
 }
-
-func int64Pointer(value int64) *int64 { return &value }
 
 func (k KubernetesValidationJobClient) cleanup(name string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -288,31 +294,13 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 	}}
 	if useBaseline {
 		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts,
-			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: ".sdo-baseline/healthy", ReadOnly: true})
+			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, ".sdo-baseline/healthy")), ReadOnly: true})
 	}
 	return job
 }
 
-func candidateHasIncidentDetector(candidate string) (bool, error) {
-	detectors, err := layout.ReadDetectors(filepath.Join(candidate, layout.DiagnosticsDir))
-	if err != nil {
-		return false, err
-	}
-	for _, detector := range detectors {
-		if detector.Class == layout.ClassIncident {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func baselineGateRequired(candidate string, changedPaths []string) (bool, error) {
-	for _, path := range changedPaths {
-		if kind, _, ok := layout.Classify(path); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
-			return candidateHasIncidentDetector(candidate)
-		}
-	}
-	return false, nil
+	return validate.BaselineGateRequired(candidate, changedPaths)
 }
 
 func validatorTreeCheckCommand(root, scratch string) string {

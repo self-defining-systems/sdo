@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -20,8 +21,8 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
-	"sdo.dev/operator/operatorcli"
 )
 
 const parityFixture = "../memory/validate/testdata/good"
@@ -93,6 +94,13 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	baseline := t.TempDir()
+	put(t, baseline, "healthy.json", `{"namespace":"demo","services":[],"pods":[]}`, 0644)
+	schema, err := builder.SchemaIdentity(operatorRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	type parityCase struct {
 		name            string
 		actor           validate.Actor
@@ -145,6 +153,39 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			put(t, r, ".sdo/playbooks/base/scripts/fix.sh", "#!/bin/bash\ntrue\n", 0o755)
 		}, []string{"ownership.unknown-actor"}, false},
 	}
+	cases = append(cases, []parityCase{
+		{"snapshot projection", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			old := ".sdo/diagnostics/detectors/incidents/cache/detector.go"
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/implementation.go", parityDetector(t, "cache"), 0644)
+			if err := os.Remove(filepath.Join(r, old)); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{validate.RuleSnapshotProjection}, false},
+
+		{"trailing whitespace", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Repair \n")
+		}, []string{validate.RuleWhitespace}, false},
+		{"aggregate snapshot budget", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			for _, id := range []string{"large-a", "large-b", "large-c"} {
+				put(t, r, ".sdo/playbooks/"+id+"/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: "+id+"\noriginating_incident: incident\n---\nRepair <RESOURCE_NAME>.\n"+strings.Repeat("Verified guidance paragraph.\n", 7000), 0644)
+			}
+			replaceParityText(t, r, ".sdo/playbooks/README.md", "# Playbooks", "# Playbooks\n- [large-a](large-a/README.md)\n- [large-b](large-b/README.md)\n- [large-c](large-c/README.md)")
+		}, []string{validate.RuleSnapshotBudget}, false},
+		{"always firing on healthy baseline", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", strings.Replace(parityDetector(t, "cache"), "return nil, nil", `return []sdk.Finding{{DetectorID:"cache",RuleID:"always",Status:sdk.FindingActive}}, nil`, 1), 0644)
+		}, []string{validate.RuleDetectorTest}, false},
+		{"missing accepted outcome", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Carefully repair")
+		}, []string{validate.RuleAcceptedOutcome}, false},
+		{"decision IDs absent from diff", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Carefully repair")
+		}, []string{validate.RuleReflectionDecision}, false},
+		{"no_change with edits", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			replaceParityText(t, r, ".sdo/playbooks/base/README.md", "Repair", "Carefully repair")
+		}, []string{validate.RuleReflectionDecision}, false},
+		{"initial unverified source", validate.Deployer, validate.InitialPhase, func(t *testing.T, r string) { put(t, r, "app.txt", "changed source\n", 0644) }, []string{validate.RuleBootstrapClosed, validate.RuleVerifiedSource}, false},
+	}...)
+
 	// Reuse the validator’s bad trees through both public entry points.
 	// Ownership may add diagnostics; every fixture must still name its rule.
 	for name, rule := range map[string]string{
@@ -267,11 +308,90 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			runGit(t, root, "add", "-A")
 			runGit(t, root, "commit", "-q", "-m", "base")
 			test.edit(t, root)
+			// Git omits FIFOs; the proposal sandbox still contains them, and the
+			// structural validator must reject them before publication copies files.
+			var nonregular []string
+			if err := filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				rel, _ := filepath.Rel(root, p)
+				if rel == ".git" {
+					return filepath.SkipDir
+				}
+				if !e.IsDir() && !e.Type().IsRegular() {
+					nonregular = append(nonregular, rel)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			paths, err := validate.ChangedPaths(context.Background(), root, "HEAD")
+			if err != nil {
+				t.Fatal(err)
+			}
+			accepted := filepath.Join(t.TempDir(), "accepted")
+			if out, err := exec.Command("git", "clone", "--quiet", "--no-local", root, accepted).CombinedOutput(); err != nil {
+				t.Fatalf("clone accepted: %v %s", err, out)
+			}
+			repository, err := broker.New(accepted, t.TempDir(), broker.JobValidator(subprocessParityJob{binary: binary, operatorRoot: operatorRoot, schema: schema, baseline: baseline}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.phase == validate.ReflectionPhase && test.name != "missing accepted outcome" {
+				if _, err := repository.RecordOutcome(context.Background(), "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			proposalPhase := test.phase
+			if proposalPhase == "unknown" {
+				proposalPhase = validate.ProposalPhase
+			}
+			proposal, err := repository.CreateProposalForPhase(context.Background(), "incident", proposalPhase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range append(paths, nonregular...) {
+				copyParityChange(t, root, proposal.Path, name)
+			}
+			root = proposal.Path
+			decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
+			if len(paths) == 0 {
+				decision.LearningDecision = "no_change"
+				decision.NoChangeReason = "already covered"
+			}
+			ids := map[string]bool{}
+			for _, p := range paths {
+				kind, id, ok := layout.Classify(p)
+				id, _, _ = strings.Cut(id, "/")
+				if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript) {
+					ids[id] = true
+				}
+			}
+			for id := range ids {
+				decision.PlaybookIds = append(decision.PlaybookIds, id)
+			}
+			sort.Strings(decision.PlaybookIds)
+			if test.name == "decision IDs absent from diff" {
+				decision.PlaybookIds = []string{"unrelated"}
+			}
+			if test.name == "no_change with edits" {
+				decision.LearningDecision = "no_change"
+				decision.NoChangeReason = "covered"
+			}
+			if test.phase == validate.ReflectionPhase {
+				data, err := protojson.Marshal(decision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, root, ".git/"+validate.DecisionFile, string(data), 0600)
+			}
 
 			var stdout, stderr bytes.Buffer
 			command := exec.Command(binary, "memory", "check", "--json")
 			command.Dir = root
-			command.Env = append(os.Environ(), "SDO_ACTOR="+string(test.actor), "SDO_PHASE="+string(test.phase), "SDO_BASE_COMMIT=HEAD", "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE=")
+			command.Env = append(os.Environ(), "SDO_ACTOR="+string(test.actor), "SDO_PHASE="+string(test.phase), "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline)
 			command.Stdout, command.Stderr = &stdout, &stderr
 			code := 0
 			if err := command.Run(); err != nil {
@@ -289,12 +409,40 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 				t.Fatalf("CLI output is not a MemoryCheckReport: %v\n%s", err, stdout.String())
 			}
 
-			brokerDiagnostics, err := broker.CheckCandidate(context.Background(), root, "HEAD", test.actor, test.phase, nil, func(ctx context.Context, root string, _ []string) error {
-				return operatorcli.RunValidate(ctx, builder.Config{ApplicationRoot: root, OperatorRoot: operatorRoot})
-			})
-			if err == nil {
-				err = validate.Err(brokerDiagnostics)
+			var publishErr error
+			var receipt broker.Receipt
+			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
+				receipt, publishErr = repository.PublishReflection(context.Background(), "incident", decision)
+			} else {
+				receipt, publishErr = repository.Publish(context.Background(), "incident", test.actor, test.phase)
 			}
+			err = publishErr
+			head, headErr := exec.Command("git", "-C", accepted, "rev-parse", "HEAD").Output()
+			if headErr != nil {
+				t.Fatal(headErr)
+			}
+			if err != nil || len(paths) == 0 {
+				if strings.TrimSpace(string(head)) != proposal.BaseCommit {
+					t.Fatal("rejected or no-op candidate changed accepted HEAD")
+				}
+			} else {
+				if receipt.Commit == "" || receipt.Commit != strings.TrimSpace(string(head)) {
+					t.Fatalf("publication omitted accepted commit: %+v", receipt)
+				}
+				candidateTree, treeErr := broker.ProposalTreeDigest(context.Background(), root)
+				if treeErr != nil {
+					t.Fatal(treeErr)
+				}
+				acceptedTree, treeErr := exec.Command("git", "-C", accepted, "rev-parse", "HEAD^{tree}").Output()
+				if treeErr != nil {
+					t.Fatal(treeErr)
+				}
+				if candidateTree != strings.TrimSpace(string(acceptedTree)) {
+					t.Fatal("publication changed authored bytes")
+				}
+			}
+			var brokerDiagnostics []validate.Diagnostic
+
 			var failure *validate.Failure
 			switch {
 			case err == nil:
@@ -319,14 +467,23 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 				}
 			}
 			got := rules(report.Diagnostics, nil).cli
+			want := append([]string(nil), test.want...)
+			if test.phase == validate.InitialPhase && test.actor != validate.Upkeep && test.actor != validate.HealthJudge && test.name != "initial unverified source" {
+				want = append(want, validate.RuleBootstrapClosed)
+			}
+			if test.name == "architecture alone" {
+				want = append(want, validate.RuleVerifiedSource)
+			}
+			sort.Strings(want)
+
 			if test.allowAdditional {
-				for _, rule := range test.want {
+				for _, rule := range want {
 					if !slices.Contains(got, rule) {
 						t.Errorf("missing rule %s: %v", rule, report.Diagnostics)
 					}
 				}
-			} else if !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("rules = %v, want %v\n%v", got, test.want, report.Diagnostics)
+			} else if !reflect.DeepEqual(got, want) {
+				t.Fatalf("rules = %v, want %v\n%v", got, want, report.Diagnostics)
 			}
 		})
 	}
@@ -424,4 +581,55 @@ func replaceParityText(t *testing.T, root, rel, before, after string) {
 		t.Fatal(err)
 	}
 	put(t, root, rel, strings.Replace(string(data), before, after, 1), info.Mode().Perm())
+}
+
+// subprocessParityJob replaces only cluster scheduling/isolation, which are
+// outside acceptance rules. Publication stages the real tree and invokes the
+// shipped validator binary, including healthy replay and its report transport.
+type subprocessParityJob struct{ binary, operatorRoot, schema, baseline string }
+
+func (j subprocessParityJob) Validate(ctx context.Context, r broker.ValidationJobRequest) (broker.ValidationJobReceipt, error) {
+	args := []string{"validate", "--app", r.CandidateRoot, "--operator-root", j.operatorRoot, "--expect-schema", j.schema}
+	needed, err := validate.BaselineGateRequired(r.CandidateRoot, r.ChangedPaths)
+	if err != nil {
+		return broker.ValidationJobReceipt{}, err
+	}
+	if needed {
+		args = append(args, "--healthy-baseline", j.baseline)
+	}
+	cmd := exec.CommandContext(ctx, j.binary, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	diagnostics, err := validate.ParseReport(stdout.String())
+	if err != nil {
+		return broker.ValidationJobReceipt{}, fmt.Errorf("validator subprocess: %v: %v: %s", runErr, err, stderr.String())
+	}
+	if err := validate.Err(diagnostics); err != nil {
+		return broker.ValidationJobReceipt{}, err
+	}
+	if runErr != nil {
+		return broker.ValidationJobReceipt{}, runErr
+	}
+	return broker.ValidationJobReceipt{CandidateTree: r.CandidateTree, Accepted: true, DetectorCompiled: true, SourceValidated: true, ReadOnlyMountObserved: true, NoPublishingCredentialsObserved: true, EgressIsolationCanaryPassed: true}, nil
+}
+
+func copyParityChange(t *testing.T, source, target, name string) {
+	t.Helper()
+	from, to := filepath.Join(source, name), filepath.Join(target, name)
+	if err := os.RemoveAll(to); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(from); errors.Is(err, os.ErrNotExist) {
+		return
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(to), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("cp", "-a", "--", from, to).CombinedOutput(); err != nil {
+		t.Fatalf("copy candidate %s: %v %s", name, err, out)
+	}
 }

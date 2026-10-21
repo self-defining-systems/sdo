@@ -2,6 +2,16 @@ package validate
 
 // Rule IDs are stable: agents, the CLI, and tests match on them.
 const (
+	// Publication content and lifecycle context.
+	RuleEmptyDiff          = "diff.empty"
+	RuleBootstrapClosed    = "lifecycle.bootstrap-closed"
+	RuleAcceptedOutcome    = "lifecycle.accepted-outcome"
+	RuleVerifiedSource     = "lifecycle.verified-source"
+	RuleReflectionDecision = "reflection.decision"
+	RuleWhitespace         = "diff.whitespace"
+	RuleSnapshotBudget     = "memory.snapshot-budget"
+	RuleSnapshotProjection = "memory.snapshot"
+
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"
 	RuleInvalidID        = "id.pattern"

@@ -484,7 +484,7 @@ func TestReflectionUsesFreshProposalAfterOutcome(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reflection.Path, ".sdo", "playbooks", "README.md"), []byte("# Playbooks\n\n- [base](base/README.md)\n- [foo](foo/README.md)\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Publish(context.Background(), "inc-4", Responder, ReflectionPhase); err != nil {
+	if _, err := b.PublishReflection(context.Background(), "inc-4", &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"foo"}}); err != nil {
 		t.Fatal(err)
 	}
 }

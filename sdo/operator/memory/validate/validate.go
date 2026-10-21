@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 // Actor is the party that authored a candidate change.
@@ -63,6 +65,11 @@ const (
 type Request struct {
 	// Root is the checkout to validate.
 	Root string
+	// Publication is broker-derived context. CLI callers load its provisioned
+	// copy from the proposal's private Git directory; the broker never trusts it.
+	Publication *PublicationContext
+	// Decision is the intended reflection result, checked against the actual diff.
+	Decision *contracts.ReflectionDecision
 	// Base is the Git revision, resolvable inside Root, that the candidate
 	// changes. Ownership needs it; with it, memory is validated only when the
 	// diff touches it. Without it, the whole of Root is validated.

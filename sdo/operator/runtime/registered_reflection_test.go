@@ -115,8 +115,8 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 		{name: "update", decision: "updated", edit: true},
 		{name: "no change", decision: "no_change", reason: "already covered"},
 		{name: "SDK gap", decision: "sdk_gap", reason: "SDK lacks the observation"},
-		{name: "hidden edit", decision: "no_change", reason: "already covered", edit: true, wantError: true},
-		{name: "empty update", decision: "updated", wantError: true},
+		{name: "hidden edit", decision: "no_change", reason: "already covered", edit: true},
+		{name: "empty update", decision: "updated"},
 		{name: "legacy proposal", decision: "updated", edit: true, legacy: true, wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

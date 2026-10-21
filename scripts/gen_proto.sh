@@ -84,8 +84,8 @@ if timeout 60 buf generate --include-imports --template buf.gen.validate.yaml -o
     cp -r "${VALIDATE_TMP}/_gen_validate/buf" sdo/contracts/_gen/buf
 elif grep -qi 'resource_exhausted' "${VALIDATE_TMP}/error" && [ -d "${VALIDATE_TMP}/cached-validate" ]; then
     echo "   using unchanged cached buf.validate gencode after BSR rate limit" >&2
-    mkdir -p sdo/contracts/_gen/buf
-    cp -r "${VALIDATE_TMP}/cached-validate" sdo/contracts/_gen/buf/validate
+    mkdir -p sdo/contracts/_gen/buf/validate
+    cp -a "${VALIDATE_TMP}/cached-validate/." sdo/contracts/_gen/buf/validate/
 else
     cat "${VALIDATE_TMP}/error" >&2
     exit 1
