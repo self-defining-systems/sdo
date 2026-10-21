@@ -2,9 +2,14 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,6 +20,59 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
+
+func TestLiveEvidenceTrustAndFastPathCoverage(t *testing.T) {
+	var fixture struct {
+		PriorOutcomes []json.RawMessage `json:"prior_outcomes"`
+		LiveIncident  struct {
+			Findings  []sdk.Finding     `json:"findings"`
+			MatchRuns []json.RawMessage `json:"match_runs"`
+		} `json:"live_incident"`
+	}
+	data, err := os.ReadFile("testdata/fast_path_live_evidence.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	outcomes := make([]*contracts.OutcomeRecord, 0, len(fixture.PriorOutcomes))
+	for _, raw := range fixture.PriorOutcomes {
+		outcome := new(contracts.OutcomeRecord)
+		if err := protojson.Unmarshal(raw, outcome); err != nil {
+			t.Fatal(err)
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	trust := ProgramTrustStats(outcomes, 3)
+	state := trust["health-objective-failure"]
+	if !state.Trusted || state.VerifiedSuccesses != 3 || state.Failures != 0 {
+		t.Fatalf("live successes did not establish trust: %+v", state)
+	}
+	runs := make([]ProgramRun, 0, len(fixture.LiveIncident.MatchRuns))
+	for _, raw := range fixture.LiveIncident.MatchRuns {
+		message := new(contracts.ProgramRun)
+		if err := protojson.Unmarshal(raw, message); err != nil {
+			t.Fatal(err)
+		}
+		run := programRunState(message)
+		run.Verdict.Result = program.Match
+		runs = append(runs, run)
+	}
+	_, reason := selectTrustedFastPathRuns(fixture.LiveIncident.Findings, runs, trust, 3)
+	if reason != FastPathSkipUnexplainedFinding {
+		t.Fatalf("live incident rejection = %q, want unexplained finding", reason)
+	}
+
+	// The same trusted diagnosis can be associated with a hint and a finding.
+	// Repeated observations of either association must not create ambiguity.
+	covered := fixture.LiveIncident.Findings[:2]
+	runs = append(runs, runs[0], runs[1])
+	selected, reason := selectTrustedFastPathRuns(covered, runs, trust, 3)
+	if reason != "" || len(selected) != 1 || selected[0].ProgramID != "health-objective-failure" {
+		t.Fatalf("equivalent matches should select one program: selected=%+v reason=%q", selected, reason)
+	}
+}
 
 func trustedPortLoop(t *testing.T, withOtherFault, trusted, healthyVerifier bool) (*ResponderLoop, *fake.Clientset) {
 	t.Helper()
@@ -99,6 +157,13 @@ func TestTrustedProgramFastPathRequiresEveryFindingExplained(t *testing.T) {
 			attempt := loop.TryTrustedFastPath(context.Background(), 3)
 			if attempt.Attempted || attempt.Resolved {
 				t.Fatalf("ineligible attempt: %+v", attempt)
+			}
+			wantReason := FastPathSkipUntrustedProgram
+			if tc.other {
+				wantReason = FastPathSkipUnexplainedFinding
+			}
+			if attempt.SkippedReason != wantReason {
+				t.Fatalf("skip reason = %q, want %q", attempt.SkippedReason, wantReason)
 			}
 			service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
 			if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 9999 {

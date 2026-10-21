@@ -66,6 +66,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	}
 	var candidates []candidate
 	seen := map[string]bool{}
+	aliases := map[string][]candidate{}
 	add := func(id string, bindings program.Bindings, fingerprint, source string) {
 		if len(options.Affected) > 0 {
 			matched := false
@@ -82,6 +83,9 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 		}
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
+			if fingerprint != "" {
+				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings})
+			}
 			return
 		}
 		seen[key] = true
@@ -168,6 +172,16 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 		bind(0, program.Bindings{})
 	}
 	results := make(chan ProgramRun, len(candidates))
+	appendAssociations := func(runs []ProgramRun, run ProgramRun) []ProgramRun {
+		runs = append(runs, run)
+		for _, alias := range aliases[run.ProgramID+"\x00"+bindingKey(run.Bindings)] {
+			associated := run
+			associated.FindingFingerprint = alias.fingerprint
+			associated.BindingSource = alias.source
+			runs = append(runs, associated)
+		}
+		return runs
+	}
 	for _, item := range candidates {
 		go func(candidate candidate) {
 			started := time.Now()
@@ -183,7 +197,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	for range candidates {
 		select {
 		case run := <-results:
-			runs = append(runs, run)
+			runs = appendAssociations(runs, run)
 		case <-ctx.Done():
 			for _, candidate := range candidates {
 				found := false
@@ -194,7 +208,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 					}
 				}
 				if !found {
-					runs = append(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
+					runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline})
 				}
 			}
 			sortProgramRuns(runs)

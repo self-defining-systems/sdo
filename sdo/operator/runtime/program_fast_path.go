@@ -12,14 +12,78 @@ import (
 )
 
 type FastPathAttempt struct {
-	Attempted    bool
-	Resolved     bool
-	Programs     []string
-	Summary      string
-	RolledBack   bool
-	RollbackErr  string
-	Findings     []sdk.Finding
-	Verification ToolResponse
+	Attempted     bool
+	SkippedReason FastPathSkipReason
+	Resolved      bool
+	Programs      []string
+	Summary       string
+	RolledBack    bool
+	RollbackErr   string
+	Findings      []sdk.Finding
+	Verification  ToolResponse
+}
+
+type FastPathSkipReason string
+
+const (
+	FastPathSkipRepairPolicy        FastPathSkipReason = "repair_policy"
+	FastPathSkipProgramsUnavailable FastPathSkipReason = "programs_unavailable"
+	FastPathSkipCorpusReplay        FastPathSkipReason = "corpus_replay_unavailable"
+	FastPathSkipResponseStarted     FastPathSkipReason = "response_started"
+	FastPathSkipSettleCancelled     FastPathSkipReason = "settle_cancelled"
+	FastPathSkipRefreshFailed       FastPathSkipReason = "settle_refresh_failed"
+	FastPathSkipInvestigatorFinding FastPathSkipReason = "investigator_finding"
+	FastPathSkipNoFindings          FastPathSkipReason = "no_active_findings"
+	FastPathSkipSnapshotFailed      FastPathSkipReason = "snapshot_failed"
+	FastPathSkipNeedsJudgement      FastPathSkipReason = "needs_judgement"
+	FastPathSkipUnexplainedFinding  FastPathSkipReason = "unexplained_finding"
+	FastPathSkipAmbiguousMatch      FastPathSkipReason = "ambiguous_match"
+	FastPathSkipUntrustedProgram    FastPathSkipReason = "untrusted_program"
+	FastPathSkipNoSelectedProgram   FastPathSkipReason = "no_selected_program"
+	FastPathSkipMitigatorMissing    FastPathSkipReason = "mitigator_missing"
+	FastPathSkipInvalidPlan         FastPathSkipReason = "invalid_plan"
+)
+
+func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust map[string]ProgramTrust, minSuccesses int) ([]ProgramRun, FastPathSkipReason) {
+	matches := make(map[string]map[string]ProgramRun)
+	for _, run := range runs {
+		if run.Verdict.Result == program.NeedsJudgement {
+			return nil, FastPathSkipNeedsJudgement
+		}
+		if run.Verdict.Result != program.Match || run.FindingFingerprint == "" {
+			continue
+		}
+		if matches[run.FindingFingerprint] == nil {
+			matches[run.FindingFingerprint] = map[string]ProgramRun{}
+		}
+		key := run.ProgramID + "\x00" + bindingKey(run.Bindings)
+		matches[run.FindingFingerprint][key] = run
+	}
+	selected := make([]ProgramRun, 0, len(findings))
+	seen := map[string]bool{}
+	for _, finding := range findings {
+		covered := matches[FindingFingerprint(finding)]
+		if len(covered) == 0 {
+			return nil, FastPathSkipUnexplainedFinding
+		}
+		if len(covered) != 1 {
+			return nil, FastPathSkipAmbiguousMatch
+		}
+		for key, run := range covered {
+			state := trust[run.ProgramID]
+			if !state.Trusted || state.Failures != 0 || state.VerifiedSuccesses < minSuccesses || run.ProgramRevision == "" || state.LastChange != run.ProgramRevision {
+				return nil, FastPathSkipUntrustedProgram
+			}
+			if !seen[key] {
+				selected = append(selected, run)
+				seen[key] = true
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return nil, FastPathSkipNoSelectedProgram
+	}
+	return selected, ""
 }
 
 // TryTrustedFastPath makes one settled, verified plan attempt for an incident.
@@ -27,8 +91,21 @@ type FastPathAttempt struct {
 func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int) FastPathAttempt {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.Request.RepairPolicy != "recorded-actions" || l.Programs == nil || !l.CorpusReplayPassed || l.batches > 0 {
-		return FastPathAttempt{}
+	skip := func(reason FastPathSkipReason) FastPathAttempt {
+		l.fastPathSkippedReason = reason
+		return FastPathAttempt{SkippedReason: reason}
+	}
+	if l.Request.RepairPolicy != "recorded-actions" {
+		return skip(FastPathSkipRepairPolicy)
+	}
+	if l.Programs == nil {
+		return skip(FastPathSkipProgramsUnavailable)
+	}
+	if !l.CorpusReplayPassed {
+		return skip(FastPathSkipCorpusReplay)
+	}
+	if l.batches > 0 {
+		return skip(FastPathSkipResponseStarted)
 	}
 	delay := l.DiagnosisSettleDelay
 	if delay <= 0 {
@@ -38,18 +115,18 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return FastPathAttempt{}
+		return skip(FastPathSkipSettleCancelled)
 	case <-timer.C:
 	}
 	l.capturePhase = "open@settle"
 	findings, runs, refreshError := l.refresh(ctx)
 	l.capturePhase = ""
 	if refreshError != "" {
-		return FastPathAttempt{}
+		return skip(FastPathSkipRefreshFailed)
 	}
 	for _, finding := range l.Request.Findings {
 		if finding.DetectorID == "drift/investigator" {
-			return FastPathAttempt{}
+			return skip(FastPathSkipInvestigatorFinding)
 		}
 		if !strings.HasPrefix(finding.DetectorID, "drift/") || finding.Status != sdk.FindingActive {
 			continue
@@ -57,7 +134,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		findings = append(findings, finding)
 	}
 	if len(findings) == 0 {
-		return FastPathAttempt{}
+		return skip(FastPathSkipNoFindings)
 	}
 	driftFindings := make([]sdk.Finding, 0)
 	for _, finding := range findings {
@@ -68,7 +145,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if len(driftFindings) > 0 {
 		view, err := l.snapshotView(ctx)
 		if err != nil {
-			return FastPathAttempt{}
+			return skip(FastPathSkipSnapshotFailed)
 		}
 		driftRuns := SelectProgramCandidatesWithOptions(ctx, l.Programs, view, driftFindings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 		l.runs = append(l.runs, driftRuns...)
@@ -77,39 +154,13 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	l.findings = findings
 	fillProgramRevisions(ctx, l.runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	runs = l.runs[len(l.runs)-len(runs):]
-	matches := make(map[string][]ProgramRun)
-	for _, run := range runs {
-		if run.Verdict.Result == program.NeedsJudgement {
-			return FastPathAttempt{}
-		}
-		if run.Verdict.Result == program.Match && run.FindingFingerprint != "" {
-			matches[run.FindingFingerprint] = append(matches[run.FindingFingerprint], run)
-		}
-	}
-	selected := make([]ProgramRun, 0, len(findings))
-	seen := map[string]bool{}
-	for _, finding := range findings {
-		covered := matches[FindingFingerprint(finding)]
-		if len(covered) != 1 {
-			return FastPathAttempt{}
-		}
-		run := covered[0]
-		trust := l.Trust[run.ProgramID]
-		if !trust.Trusted || trust.Failures != 0 || trust.VerifiedSuccesses < minSuccesses || run.ProgramRevision == "" || trust.LastChange != run.ProgramRevision {
-			return FastPathAttempt{}
-		}
-		key := run.ProgramID + "\x00" + bindingKey(run.Bindings)
-		if !seen[key] {
-			selected = append(selected, run)
-			seen[key] = true
-		}
-	}
-	if len(selected) == 0 {
-		return FastPathAttempt{}
+	selected, reason := selectTrustedFastPathRuns(findings, runs, l.Trust, minSuccesses)
+	if reason != "" {
+		return skip(reason)
 	}
 	view, err := l.snapshotView(ctx)
 	if err != nil {
-		return FastPathAttempt{}
+		return skip(FastPathSkipSnapshotFailed)
 	}
 	batch := program.Plan{}
 	selectedPlans := make([]selectedPlan, 0, len(selected))
@@ -117,11 +168,11 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	for _, run := range selected {
 		mitigator, ok := l.Programs.Mitigator(run.ProgramID)
 		if !ok {
-			return FastPathAttempt{}
+			return skip(FastPathSkipMitigatorMissing)
 		}
 		plan, err := mitigator.Mitigate(ctx, view, run.Bindings)
 		if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
-			return FastPathAttempt{}
+			return skip(FastPathSkipInvalidPlan)
 		}
 		selectedPlans = append(selectedPlans, selectedPlan{programID: run.ProgramID, bindings: run.Bindings, plan: plan})
 		batch.Actions = append(batch.Actions, plan.Actions...)

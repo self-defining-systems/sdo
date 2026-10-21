@@ -34,6 +34,25 @@ func TestSelectProgramCandidatesOnlyDiagnosesAffectedBindings(t *testing.T) {
 	}
 }
 
+func TestSelectProgramCandidatesPreservesFindingAssociationsForOneBinding(t *testing.T) {
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}
+	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict {
+		return program.Verdict{Result: program.Match}
+	}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}}}}}
+	findings := []sdk.Finding{
+		{DetectorID: "drift/targetport", RuleID: "wrong-port", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"service": ref}},
+		{DetectorID: "availability", RuleID: "wrong-port", Status: sdk.FindingActive, PrimaryResource: ref},
+	}
+	runs := SelectProgramCandidates(context.Background(), registry, view, findings, time.Second)
+	if len(runs) != 2 || runs[0].FindingFingerprint == runs[1].FindingFingerprint || runs[0].Verdict.Result != program.Match || runs[1].Verdict.Result != program.Match {
+		t.Fatalf("one diagnosis lost a finding association: %+v", runs)
+	}
+}
+
 func TestSelectProgramCandidatesSweepsUnnamedResourceAndDeduplicates(t *testing.T) {
 	geo := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "geo"}
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {

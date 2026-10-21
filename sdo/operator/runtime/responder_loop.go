@@ -75,32 +75,33 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	Request              IncidentRequest
-	Programs             program.ProgramRegistry
-	Provider             SnapshotProvider
-	Detectors            []sdk.Detector
-	Executor             PlanExecutor
-	ReadView             func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline    time.Duration
-	DiagnosisSettleDelay time.Duration
-	CandidateSweepLimit  int
-	MaxBatches           int
-	Trust                map[string]ProgramTrust
-	CorpusReplayPassed   bool
-	BeforeFastPathApply  func(context.Context, []string, []PlanPreImage) error
-	CorpusSessionRoot    string
-	capturePhase         string
-	preApplyCaptured     bool
-	mu                   sync.Mutex
-	plans                map[string]selectedPlan
-	applications         map[string]PlanApplicationResult
-	applicationsLog      []RecordedPlanApplication
-	failureSignals       []string
-	calls                []ToolCall
-	runs                 []ProgramRun
-	findings             []sdk.Finding
-	batches              int
-	fastPathPrograms     []string
+	Request               IncidentRequest
+	Programs              program.ProgramRegistry
+	Provider              SnapshotProvider
+	Detectors             []sdk.Detector
+	Executor              PlanExecutor
+	ReadView              func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline     time.Duration
+	DiagnosisSettleDelay  time.Duration
+	CandidateSweepLimit   int
+	MaxBatches            int
+	Trust                 map[string]ProgramTrust
+	CorpusReplayPassed    bool
+	BeforeFastPathApply   func(context.Context, []string, []PlanPreImage) error
+	CorpusSessionRoot     string
+	capturePhase          string
+	preApplyCaptured      bool
+	mu                    sync.Mutex
+	plans                 map[string]selectedPlan
+	applications          map[string]PlanApplicationResult
+	applicationsLog       []RecordedPlanApplication
+	failureSignals        []string
+	calls                 []ToolCall
+	runs                  []ProgramRun
+	findings              []sdk.Finding
+	batches               int
+	fastPathPrograms      []string
+	fastPathSkippedReason FastPathSkipReason
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {

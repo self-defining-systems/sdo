@@ -81,13 +81,32 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	}
 }
 
+type liveShapePortDetector struct{}
+
+func (liveShapePortDetector) Spec() sdk.DetectorSpec { return (fastloopDetector{}).Spec() }
+
+func (liveShapePortDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	findings, err := (fastloopDetector{}).Detect(ctx, view)
+	if err != nil || len(findings) == 0 {
+		return findings, err
+	}
+	drift := findings[0]
+	drift.DetectorID = "drift/service-targetport-mismatch"
+	drift.ParameterBindings = map[string]sdk.ObjectRef{"service": drift.PrimaryResource}
+	return []sdk.Finding{drift, findings[0]}, nil
+}
+
 func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *testing.T) {
 	loop, client := trustedPortLoop(t, false, false, true)
+	loop.Detectors = []sdk.Detector{liveShapePortDetector{}}
+	drift := loop.Request.Findings[0]
+	drift.DetectorID = "drift/service-targetport-mismatch"
+	drift.ParameterBindings = map[string]sdk.ObjectRef{"service": drift.PrimaryResource}
 	request := goldenRequest(t)
 	request.Namespace = "app"
 	request.RepairPolicy = "recorded-actions"
 	request.SourceCommit = "tree-a"
-	request.Findings = loop.Request.Findings
+	request.Findings = []sdk.Finding{drift, loop.Request.Findings[0]}
 	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
 	outcomes := []memory.Outcome{}
 	for index := 0; index < 3; index++ {
@@ -110,6 +129,15 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	result, err := dispatcher.Dispatch(context.Background(), request)
 	if err != nil || result.ResolutionPath != "fast_path" || len(result.FastPathPrograms) != 1 || result.Usage.GetInputTokens() != 0 {
 		t.Fatalf("fast path result: %+v %v", result, err)
+	}
+	matchedSources := map[string]bool{}
+	for _, run := range result.ProgramRuns {
+		if run.Verdict.Result == program.Match {
+			matchedSources[run.BindingSource] = true
+		}
+	}
+	if !matchedSources["hint"] || !matchedSources["finding"] {
+		t.Fatalf("live-shaped hint and finding runs were lost: %+v", result.ProgramRuns)
 	}
 	replayed, err := dispatcher.Dispatch(context.Background(), request)
 	if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 1 || len(replayed.RepairActions) != 1 {
