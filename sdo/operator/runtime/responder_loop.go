@@ -20,6 +20,7 @@ const maxRecordedToolResponse = 2048
 
 type ToolRequest struct {
 	Command       string           `json:"command"`
+	Ref           *sdk.ObjectRef   `json:"ref,omitempty"`
 	ProgramID     string           `json:"program_id,omitempty"`
 	Bindings      program.Bindings `json:"bindings,omitempty"`
 	PlanIDs       []string         `json:"plan_ids,omitempty"`
@@ -28,6 +29,7 @@ type ToolRequest struct {
 
 type ToolResponse struct {
 	Command        string                  `json:"command"`
+	Source         map[string]any          `json:"source,omitempty"`
 	Error          string                  `json:"error,omitempty"`
 	Summary        string                  `json:"summary"`
 	PlanID         string                  `json:"plan_id,omitempty"`
@@ -229,6 +231,30 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("%d program diagnoses", len(response.ProgramRuns))
 	case "plan":
 		l.plan(ctx, request, &response)
+	case "source":
+		if request.Ref == nil || l.Executor.Source == nil || l.Request.SourceCommit == "" {
+			response.Error = "source requires a resource and accepted source"
+			break
+		}
+		if err := validatePlanRef(*request.Ref); err != nil {
+			response.Error = err.Error()
+			break
+		}
+		if request.Ref.Namespace != l.Request.Namespace {
+			response.Error = "source resource is outside incident namespace"
+			break
+		}
+		object, err := l.Executor.Source.AcceptedManifest(ctx, l.Request.SourceCommit, *request.Ref)
+		if err != nil {
+			response.Error = err.Error()
+			break
+		}
+		if object == nil || !samePlanRef(object, *request.Ref) {
+			response.Error = "accepted source object does not match requested resource"
+			break
+		}
+		response.Source = object.Object
+		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.capturePreApply()
 		if l.capturePhase != "" {

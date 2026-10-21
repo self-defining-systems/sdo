@@ -123,7 +123,7 @@ def scripted_drift_investigation(request: DriftInvestigationTask) -> DriftInvest
 
 def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
     kind, name = ref["kind"], ref["name"]
-    source = _manifest(Path(request.repository_worktree), kind, name)
+    source = _tool("source", f"{kind}/{request.namespace}/{name}")["source"]
     if kind == "Service":
         patch = {"spec": {"ports": source["spec"]["ports"]}}
     elif kind == "Deployment":

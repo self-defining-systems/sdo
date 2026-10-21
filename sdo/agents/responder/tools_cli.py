@@ -21,6 +21,10 @@ def _binding(value: str) -> tuple[str, dict[str, str]]:
     return name, {"api_version": api_version, "kind": kind, "namespace": namespace, "name": resource}
 
 
+def _resource(value: str) -> dict[str, str]:
+    return _binding("resource=" + value)[1]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sdo")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -30,6 +34,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("program_id", nargs="?" if name == "diagnose" else None)
         command.add_argument("--bind", action="append", type=_binding, default=[])
     commands.add_parser("apply").add_argument("plan_ids", nargs="+")
+    commands.add_parser("source").add_argument("ref", type=_resource)
     commands.add_parser("verify")
     commands.add_parser("rollback").add_argument("application_id")
     return parser
@@ -49,6 +54,8 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
         request["plan_ids"] = args.plan_ids
     elif args.command == "rollback":
         request["application_id"] = args.application_id
+    elif args.command == "source":
+        request["ref"] = args.ref
     return request
 
 

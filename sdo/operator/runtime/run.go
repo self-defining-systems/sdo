@@ -440,7 +440,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot},
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
 				}, *maxResponseLoops)
 				loop.DiagnosisDeadline = *diagnosisDeadline
@@ -450,7 +450,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+						Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
 			},
@@ -506,7 +506,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop.DiagnosisDeadline = *diagnosisDeadline
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
-						Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: task.GetAcceptedCommit()}
+						Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: task.GetAcceptedCommit()}
 				}
 				return loop
 			}}
@@ -543,7 +543,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
-				Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: resolvedSourceCommit}
+					Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: resolvedSourceCommit}
 		},
 	})
 	// The load term reads host pressure from a Linux PSI file; the backlog term

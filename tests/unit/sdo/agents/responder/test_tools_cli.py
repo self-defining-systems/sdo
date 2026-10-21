@@ -41,3 +41,22 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
     output = capsys.readouterr().out
     assert '"command": "diagnose"' in output
     assert "one match" in output
+
+
+def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return {"command": "source", "summary": "rendered source", "source": {"kind": "Deployment"}}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+
+    assert tools_cli.main(["source", "Deployment/app/rate"]) == 0
+    assert seen == [
+        {
+            "command": "source",
+            "ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "rate"},
+        }
+    ]
+    assert '"source": {"kind": "Deployment"}' in capsys.readouterr().out

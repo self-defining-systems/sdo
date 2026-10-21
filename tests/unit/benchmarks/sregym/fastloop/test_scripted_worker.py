@@ -62,39 +62,6 @@ def test_matched_program_runs_use_the_real_tool_binding_shape(monkeypatch: pytes
 
 
 @pytest.mark.parametrize("seed_source", SEED_SOURCES)
-def test_source_lookup_uses_raw_deployment_manifests_in_seed_copy(tmp_path: Path, seed_source: Path) -> None:
-    seed = tmp_path / "seed"
-    shutil.copytree(seed_source, seed, ignore=shutil.ignore_patterns(".git"))
-
-    service = scripted_worker._manifest(seed, "Service", "reservation")
-    deployment = scripted_worker._manifest(seed, "Deployment", "rate")
-
-    assert service["spec"]["ports"]
-    assert deployment["spec"]["template"]["spec"]["containers"][0]["image"]
-
-
-def test_source_lookup_skips_unparseable_raw_manifest_and_other_variants(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    raw = tmp_path / "kubernetes"
-    raw.mkdir()
-    (raw / "a.yaml").write_text('{{ include "template" . }}\n', encoding="utf-8")
-    (raw / "b.yaml").write_text(
-        "apiVersion: v1\nkind: Service\nmetadata:\n  name: reservation\nspec:\n  ports:\n  - targetPort: 8087\n",
-        encoding="utf-8",
-    )
-    other = tmp_path / "knative"
-    other.mkdir()
-    (other / "service.yaml").write_text(
-        "apiVersion: v1\nkind: Service\nmetadata:\n  name: reservation\nspec:\n  ports:\n  - targetPort: 9999\n",
-        encoding="utf-8",
-    )
-
-    assert scripted_worker._manifest(tmp_path, "Service", "reservation")["spec"]["ports"][0]["targetPort"] == 8087
-    assert "skipping unparseable source manifest" in caplog.text
-
-
-@pytest.mark.parametrize("seed_source", SEED_SOURCES)
 def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed_source: Path
 ) -> None:
@@ -160,6 +127,13 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     def tool(*args: str) -> dict[str, Any]:
         if args[0] == "diagnose":
             return {"program_runs": []}
+        if args[0] == "source":
+            kind, _, name = args[1].split("/")
+            if kind == "Service":
+                return {"source": {"spec": {"ports": [{"port": 8084, "targetPort": 8087}]}}}
+            return {
+                "source": {"spec": {"template": {"spec": {"containers": [{"name": name, "image": "built:source"}]}}}}
+            }
         if args[0] == "verify":
             service = api.objects[("Service", "reservation")]["spec"]["ports"][0]
             image = api.objects[("Deployment", "rate")]["spec"]["template"]["spec"]["containers"][0]["image"]
@@ -177,6 +151,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     assert result.response.Unpack(response)
     assert result.status == "completed"
     assert {action.target for action in response.repair_actions} == {"Service/reservation", "Deployment/rate"}
+    assert api.objects[("Deployment", "rate")]["spec"]["template"]["spec"]["containers"][0]["image"] == "built:source"
 
     capture = tmp_path / "capture"
     capture.mkdir()
@@ -323,6 +298,7 @@ def test_scripted_source_repair_preserves_deployment_container_fields(
         return ""
 
     monkeypatch.setattr(scripted_worker, "_command", command)
+    monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"source": manifest})
     scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "front"})
 
     assert calls[0][:7] == ["kubectl", "-n", "hotel", "patch", "deployment", "front", "--type=strategic"]
