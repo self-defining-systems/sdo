@@ -331,6 +331,49 @@ func TestNativeBrokerSkipsOnlyExactAcceptedRepairReplayUnlessForced(t *testing.T
 	}
 }
 
+func TestNativeBrokerCompletesClosureAfterTypedReflectionFailure(t *testing.T) {
+	accepted := nativeRepository(t)
+	repository, err := broker.New(accepted, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	native := NativeIncidentBroker{
+		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"),
+		ResponderBackend: "test", ResponderModel: "test",
+		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+			return testDerivedOutcome(closure.Request.IncidentID, "success", true), nil
+		}),
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string) (ReflectionDecision, error) {
+			calls++
+			return ReflectionDecision{LearningDecision: "failed", Error: "watch namespace is not a proto field"}, nil
+		}),
+	}
+	workspace, err := native.PrepareIncident(context.Background(), "inc-reflection-failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace.Worktree, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closure := nativeClosure(workspace)
+	first, err := native.ProcessClosure(context.Background(), closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := native.ProcessClosure(context.Background(), closure)
+	if err != nil || first != second || calls != 1 {
+		t.Fatalf("failed reflection retried: first=%+v second=%+v calls=%d err=%v", first, second, calls, err)
+	}
+	ledger, err := native.readLedger(workspace.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ledger.ReflectionProcessed || ledger.ReflectionDecision == nil || ledger.ReflectionDecision.Error != "watch namespace is not a proto field" || ledger.ReflectionCommit != "" {
+		t.Fatalf("reflection failure not recorded: %+v", ledger)
+	}
+}
+
 func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
 	t.Parallel()
 	target := nativeRepository(t)

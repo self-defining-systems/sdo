@@ -11,7 +11,8 @@ import pytest
 from benchmarks.sregym.adapter import ControllerInstallError, RuntimeConfig
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
 from benchmarks.sregym.adapter.persistent import Clock, ControllerPod, PersistentState, control_namespace_for
-from benchmarks.sregym.fastloop.loop import InjectionWindow
+from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
+from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 
 if TYPE_CHECKING:
@@ -172,6 +173,8 @@ def _agent(
     tmp_path: Path,
     ops: FakeOps,
     lifecycle_calls: list[str],
+    *,
+    detection_timeout_seconds: float | None = None,
 ) -> SdoPersistentAgent:
     repository = tmp_path / "application_workspace"
     repository.mkdir(exist_ok=True)
@@ -196,6 +199,7 @@ def _agent(
         state_path=tmp_path / "sdo_persistent_controller.json",
         results_dir=tmp_path / "incidents",
         verification_timeout_seconds=600,
+        detection_timeout_seconds=detection_timeout_seconds,
     )
     context = DeployedLifecycleContext(health_objective="objective", active_resources=[])
 
@@ -237,6 +241,74 @@ def test_first_incident_installs_once_and_reports_resolution_from_controller_evi
     assert outcome.lifecycle_validation_source is None  # the validation cache is opt-in
     assert outcome.previous_reflection_drain_seconds == pytest.approx(0.0)
     assert outcome.artifacts_dir == str(tmp_path / "incidents" / "000_missing_configmap_hotel_reservation")
+
+
+def test_undetected_fault_is_graded_recovered_and_next_incident_runs(tmp_path: Path) -> None:
+    class LatentFirstOps(FakeOps):
+        def inject_after_resume(
+            self, control_namespace: str, generation: str, inject: Callable[[], None]
+        ) -> dict[str, float]:
+            if self.incidents == 0:
+                inject()
+                self.incidents += 1
+                return {"controller_baseline_wait": 1.5}
+            return super().inject_after_resume(control_namespace, generation, inject)
+
+    class Driver:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+            self.incident = 0
+            self.recovered = False
+
+        def inject(self, problem_id: str) -> InjectionWindow:
+            self.events.append(f"inject:{problem_id}")
+            self.incident += 1
+            self.recovered = False
+            return _inject()
+
+        def oracle(self) -> OracleVerdict:
+            self.events.append("oracle")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=self.recovered or self.incident == 2)
+
+        def recover(self) -> float:
+            self.events.append("recover")
+            self.recovered = True
+            return 0.0
+
+    ops, calls, driver = LatentFirstOps(), [], Driver()
+    agent = _agent(tmp_path, ops, calls, detection_timeout_seconds=10)
+    config = LoopConfig(
+        run_id="detection-miss",
+        problems=("latent", "visible"),
+        incidents=2,
+        results_path=tmp_path / "results" / "incidents.jsonl",
+    )
+
+    records = run_incidents(agent, driver, config)
+
+    assert [record.problem_id for record in records] == ["latent", "visible"]
+    assert "no incident opened within 10s" in (records[0].error or "")
+    assert records[0].detected_at is None
+    assert records[0].mitigation_applied_at is None
+    assert records[0].oracle is not None
+    assert not records[0].oracle.success
+    assert records[0].recovery_oracle is not None
+    assert records[0].recovery_oracle.success
+    assert "no incident opened" not in (records[1].error or "")
+    assert records[1].detected_at == DETECTED
+    assert records[1].oracle is not None
+    assert records[1].oracle.success
+    assert driver.events == [
+        "inject:latent",
+        "oracle",
+        "recover",
+        "oracle",
+        "inject:visible",
+        "oracle",
+        "recover",
+        "oracle",
+    ]
+    assert len(load_records(config.results_path)) == 2
 
 
 def test_learning_drains_reflection_and_reads_tokens_and_warm_path_from_the_strict_receipt(tmp_path: Path) -> None:

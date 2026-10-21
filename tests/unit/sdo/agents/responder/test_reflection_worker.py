@@ -6,11 +6,12 @@ import pytest
 from google.protobuf import json_format
 from google.protobuf.any_pb2 import Any
 
-from sdo.agents.responder.reflection import ReflectionTurn
+from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_worker import run_reflection_task
 from sdo.agents.views import PlanApplication, ProgramRun, ProgramToolCall
 from sdo.contracts import AgentResult, AgentTask, ReflectionRequest, ReflectionResult
 from sdo.contracts.proto import IncidentClosure, parse_json, to_canonical_json
+from tests.structured_turns import ScriptedAgent, reply
 from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 
 FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "go" / "closure_repaired.json"
@@ -219,6 +220,75 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
     assert decision.learning_decision == "no_change"
+
+
+def _reflection_task(tmp_path: Path) -> Path:
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=_outcome(closure.request.incident_id),
+        outcome_commit="outcome-commit",
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-repair",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "reflection-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("corrected", [True, False])
+def test_reflection_worker_repairs_proto_rejection_or_returns_typed_failure(tmp_path: Path, corrected: bool) -> None:
+    incident_id = _closure().request.incident_id
+    calls = 0
+
+    def respond(request: object) -> object:
+        nonlocal calls
+        calls += 1
+        watch = {"api_version": "v1", "kind": "Service"}
+        if calls == 1 or not corrected:
+            watch["namespace"] = "demo"
+        return reply(
+            "codex",
+            {
+                "summary": "Learned a service detector",
+                "learning_decision": "updated",
+                "proposed_changes": [],
+                "artifact_proposal": {
+                    "detectors": [
+                        {
+                            "id": "service-missing",
+                            "watches": [watch],
+                            "originating_commit": "outcome-commit",
+                            "originating_incident": incident_id,
+                        }
+                    ]
+                },
+            },
+            session_id="reflection-session",
+        )
+
+    agent = ScriptedAgent(respond)
+    reflector = SessionReflector(CodexSessionBackend(executor=agent.executor))
+    publisher = Publisher()
+    result = run_reflection_task(_reflection_task(tmp_path), "result-map", publisher, reflector=reflector)
+
+    assert publisher.payload is not None
+    assert result.status == ("completed" if corrected else "failed")
+    assert calls == (2 if corrected else 3)
+    assert "namespace" in agent.requests[1].stdin
+    if corrected:
+        response = ReflectionResult()
+        assert result.response.Unpack(response)
+        assert response.artifact_proposal.detectors[0].watches[0].kind == "Service"
+    else:
+        assert "namespace" in result.error_summary
 
 
 def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: Path) -> None:

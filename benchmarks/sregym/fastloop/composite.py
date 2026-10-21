@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
     ClosureFailedError,
+    DetectionMissError,
     DetectorReviewRequiredError,
     PersistentControllerError,
     PersistentState,
@@ -290,6 +291,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 )
                 stop_reason = "closure_failed"
                 wedged = True
+            except DetectionMissError:
+                stop_reason = "detection_miss"
+                raise
             except PersistentControllerError as stage_error:
                 if not injected:
                     raise

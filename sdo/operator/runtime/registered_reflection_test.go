@@ -38,6 +38,18 @@ func TestRegisteredReflectionWorkerExportsTurnUsage(t *testing.T) {
 	}
 }
 
+func TestRegisteredReflectionWorkerReturnsTypedFailure(t *testing.T) {
+	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
+	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "failed", ErrorSummary: "watch namespace is not a proto field"}, nil
+	})
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}
+	decision, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome")
+	if err != nil || decision.LearningDecision != "failed" || decision.Error != "watch namespace is not a proto field" {
+		t.Fatalf("typed failure lost: %+v, %v", decision, err)
+	}
+}
+
 func TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit(t *testing.T) {
 	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -59,7 +71,7 @@ func TestRegisteredReflectionWorkerReturnsTypedSDKGap(t *testing.T) {
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		response, err := anypb.New(&contracts.ReflectionResult{
 			LearningDecision: "sdk_gap",
-			SdkGaps: []*contracts.SdkGap{{FaultClass: "service-port-mismatch", Primitive: "ProbeUDP", Reason: "The incident required a UDP probe", ScratchScript: "kubectl run probe"}},
+			SdkGaps:          []*contracts.SdkGap{{FaultClass: "service-port-mismatch", Primitive: "ProbeUDP", Reason: "The incident required a UDP probe", ScratchScript: "kubectl run probe"}},
 		})
 		if err != nil {
 			return nil, err

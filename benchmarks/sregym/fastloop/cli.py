@@ -355,6 +355,7 @@ def _sdo_agent(
         verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300)
         * args.time_scale,
         reflection_wait_seconds=3600.0 * args.time_scale,
+        detection_timeout_seconds=args.detection_timeout,
     )
     ops = _cluster_ops(args, environment.namespace)
 
@@ -846,6 +847,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
     run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
+    run.add_argument(
+        "--detection-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="SDO: fail an incident if no detector opens it within this many seconds (default: disabled)",
+    )
     run.add_argument("--health-timeout", type=float, default=300.0, help="seconds to wait for health after recovery")
     run.add_argument("--proxy-port", type=int, default=0, help="Codex baseline API proxy port (default: free port)")
     run.add_argument("--run-id", default=None)
