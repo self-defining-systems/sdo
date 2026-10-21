@@ -17,8 +17,13 @@ from typing import Any
 import yaml
 from google.protobuf import json_format
 
-from sdo.agents.responder import KubernetesResultPublisher, ReflectionTurn, run_reflection_task, run_worker_task
-from sdo.agents.responder.drift_worker import run_drift_task
+from sdo.agents.responder import (
+    KubernetesResultPublisher,
+    ReflectionTurn,
+    run_drift_task,
+    run_reflection_task,
+    run_worker_task,
+)
 from sdo.agents.views import IncidentRequest, IncidentResult, OperationalArtifactDraft
 from sdo.contracts import DriftInvestigationResult, DriftInvestigationTask, OperationalArtifactProposal
 
@@ -47,7 +52,7 @@ def _tool(*args: str) -> dict[str, Any]:
 
 
 def _manifest(root: Path, kind: str, name: str) -> dict[str, Any]:
-    manifest_root = root / "kubernetes"
+    manifest_root = root / "kubernetes" if (root / "kubernetes").is_dir() else root
     for path in sorted((*manifest_root.rglob("*.yaml"), *manifest_root.rglob("*.yml"))):
         if "templates" in path.relative_to(manifest_root).parts:
             continue

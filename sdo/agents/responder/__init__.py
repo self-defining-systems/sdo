@@ -12,6 +12,7 @@ from sdo.agents.responder.cause_admissibility import (
     review_confirmed_causes,
 )
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.drift_worker import run_drift_task
 from sdo.agents.responder.incident_status import (
     IncidentStatusReport,
     IncidentStatusState,
@@ -64,6 +65,7 @@ __all__ = [
     "reflection_output_schema",
     "review_confirmed_causes",
     "run_incident_status_cli",
+    "run_drift_task",
     "run_reflection_task",
     "run_worker_task",
     "write_application_kubeconfig",
