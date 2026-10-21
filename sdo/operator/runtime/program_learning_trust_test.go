@@ -65,9 +65,15 @@ func TestLearningRepairAtThresholdOneDispatchesFastPathWithoutResponder(t *testi
 		t.Fatal(err)
 	}
 	trust, err := dispatcher.programTrust(context.Background(), request)
-	if err != nil || !trust["service-targetport-mismatch"].Trusted {
-		t.Fatalf("verified learning repair earned no trust: %+v %v", trust, err)
+	if err != nil || trust["service-targetport-mismatch"].Trusted || trust["service-targetport-mismatch"].VerifiedSuccesses != 0 {
+		t.Fatalf("learning projection substituted for bound post-apply evidence: %+v %v", trust, err)
 	}
+	revision, err := programDependencyRevision(context.Background(), root, commit, "service-targetport-mismatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes = append(outcomes, memory.Outcome{IncidentID: "verified-repair", Record: verifiedTrustOutcome(t, "service-targetport-mismatch", revision)})
+	dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
 	result, err := dispatcher.Dispatch(context.Background(), prepared)
 	if err != nil || result.ResolutionPath != "fast_path" || result.Usage.GetInputTokens() != 0 || result.Usage.GetOutputTokens() != 0 {
 		t.Fatalf("learning repeat: %+v %v", result, err)

@@ -52,9 +52,15 @@ func TestLiveEvidenceTrustAndFastPathCoverage(t *testing.T) {
 	}
 	trust := ProgramTrustStats(outcomes, 3)
 	state := trust["health-objective-failure"]
-	if !state.Trusted || state.VerifiedSuccesses != 3 || state.Failures != 0 {
-		t.Fatalf("live successes did not establish trust: %+v", state)
+	if state.Trusted || state.VerifiedSuccesses != 0 {
+		t.Fatalf("legacy health-only fixture established trust: %+v", state)
 	}
+	// Exercise coverage with independently verified, binding-scoped outcomes.
+	proven := []*contracts.OutcomeRecord{}
+	for i := 0; i < 3; i++ {
+		proven = append(proven, verifiedTrustOutcome(t, "health-objective-failure", outcomes[0].ProgramRuns[0].ProgramRevision))
+	}
+	trust = ProgramTrustStats(proven, 3)
 	runs := make([]ProgramRun, 0, len(fixture.LiveIncident.MatchRuns))
 	for _, raw := range fixture.LiveIncident.MatchRuns {
 		message := new(contracts.ProgramRun)
