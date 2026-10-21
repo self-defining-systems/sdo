@@ -160,6 +160,7 @@ class FakeOps:
     states: dict[str, dict[str, Any]] = field(default_factory=dict)
     logs: dict[str, list[str]] = field(default_factory=dict)
     reject_receipts: bool = False
+    controller_result_override: dict[str, Any] = field(default_factory=dict)
     #: Replaces the synthetic receipt, for a test that needs one that passes strict validation.
     receipt_override: dict[str, Any] | None = None
     #: Reflection finishes before the driver's first poll sees the verified closure.
@@ -235,6 +236,7 @@ class FakeOps:
                 "confirmed_root_causes": ROOT_CAUSES,
                 "repair_actions": REPAIRS,
                 "usage": {"input_tokens": 300000, "output_tokens": 3000},
+                **self.controller_result_override,
             },
             "detected_at": DETECTED.isoformat(),
             "dispatched_at": DETECTED.isoformat(),
@@ -483,7 +485,10 @@ def test_learning_exports_monotonic_closure_phase_durations(tmp_path: Path) -> N
 
 
 def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_next_incident(tmp_path: Path) -> None:
-    ops, calls = FakeOps(reject_receipts=True), []
+    ops, calls = (
+        FakeOps(reject_receipts=True, controller_result_override={"fast_path_skipped_reason": "untrusted_program"}),
+        [],
+    )
     agent = _agent(tmp_path, ops, calls)
 
     learned = agent.learn(agent.resolve(0, "p", _inject))
@@ -491,6 +496,7 @@ def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_
     assert learned.error is not None
     assert "receipt" in learned.error
     assert learned.responder_tokens.input_tokens == 300000
+    assert learned.fast_path_skipped_reason == "untrusted_program"
     assert (
         PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending
         is None

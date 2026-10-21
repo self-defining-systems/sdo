@@ -303,6 +303,10 @@ class SdoPersistentAgent:
             previous_reflection_drain_seconds=costs.get("previous_incident_reflection_drain"),
             incident_id=str(resolution["incident_id"]),
             artifacts_dir=str(receipt_dir),
+            resolution_path=resolution.get("resolution_path"),
+            fast_path_programs=tuple(resolution.get("fast_path_programs") or []),
+            fast_path_relation_covered_findings=tuple(resolution.get("fast_path_relation_covered_findings") or []),
+            fast_path_skipped_reason=resolution.get("fast_path_skipped_reason"),
         )
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
@@ -358,6 +362,17 @@ class SdoPersistentAgent:
         ledger = ledger if isinstance(ledger, dict) else {}
         outcome_document = ledger.get("outcome_document")
         outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
+        program_metrics = _program_metrics(
+            outcome_document, tuple(str(reason) for reason in memory.get("match_reasons", []) or [])
+        )
+        program_metrics["resolution_path"] = program_metrics["resolution_path"] or outcome.resolution_path
+        program_metrics["fast_path_programs"] = program_metrics["fast_path_programs"] or outcome.fast_path_programs
+        program_metrics["fast_path_relation_covered_findings"] = (
+            program_metrics["fast_path_relation_covered_findings"] or outcome.fast_path_relation_covered_findings
+        )
+        program_metrics["fast_path_skipped_reason"] = (
+            program_metrics["fast_path_skipped_reason"] or outcome.fast_path_skipped_reason
+        )
         rollout_receipts = ledger.get("rollout_receipts")
         rollout_receipts = rollout_receipts if isinstance(rollout_receipts, list) else []
         rebuild_verified = next(
@@ -390,9 +405,7 @@ class SdoPersistentAgent:
             reflection_skipped_reason=skipped,
             closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
-            **_program_metrics(
-                outcome_document, tuple(str(reason) for reason in memory.get("match_reasons", []) or [])
-            ),
+            **program_metrics,
             error=error,
         )
 
