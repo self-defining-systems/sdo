@@ -19,6 +19,7 @@ func TestRuntimeArtifactsNeverRecordCredentialsOrCaches(t *testing.T) {
 		"sessions/id/model_io/token.json",
 		"codex/sessions/auth.json",
 		"claude/projects/credential.jsonl",
+		"sessions/id/claude/projects/app/cache/session.jsonl",
 		"sessions/id/codex/sessions/2026/10/21/rollout-a.jsonl",
 		"sessions/id/model_io/request/response.json",
 		"sessions/id/session.jsonl",
@@ -41,7 +42,7 @@ func TestRuntimeArtifactsNeverRecordCredentialsOrCaches(t *testing.T) {
 	if err := extractRuntimeArtifacts(&archive, root); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range files[6:] {
+	for _, name := range files[7:] {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("missing allowed evidence %s: %v", name, err)
 		}

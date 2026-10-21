@@ -61,7 +61,7 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 	installer := install.Installer{Client: client}
 	err = installer.WithSyncPod(ctx, cfg.Sync, func(ctx context.Context, _ install.Config) error {
 		// Archive only evidence files; extraction applies the same allowlist.
-		script := `cd /workspace/.sdo-runtime 2>/dev/null || exit 0; find usage telemetry sessions codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do base=${path##*/}; lower=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]'); case "$lower" in *auth*|*credential*|*token*) [ "$lower" = token_usage.json ] || continue;; esac; case "$path" in usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
+		script := `cd /workspace/.sdo-runtime 2>/dev/null || exit 0; find usage telemetry sessions codex/sessions claude/projects -type f 2>/dev/null | while IFS= read -r path; do lower_path=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]'); case "$lower_path" in *cache*|*plugin*|*catalog*) continue;; esac; base=${lower_path##*/}; case "$base" in *auth*|*credential*|*token*) [ "$base" = token_usage.json ] || continue;; esac; case "$path" in usage/*.jsonl|telemetry/*.jsonl|telemetry/*.jsonl.1|sessions/*/*.jsonl|sessions/*/token_usage.json|sessions/*/corpus/*.json|sessions/*/model_io/*/*.json|sessions/*/codex/sessions/*/rollout-*.jsonl|sessions/*/claude/projects/*.jsonl|codex/sessions/*/rollout-*.jsonl|claude/projects/*.jsonl) printf '%s\n' "$path";; esac; done | tar -cf - -T -`
 		command := exec.CommandContext(ctx, "kubectl", "--namespace", cfg.Sync.ControlNamespace, "exec", install.RepositorySyncPodName, "--", "sh", "-c", script)
 		if cfg.Kubeconfig != "" {
 			command.Env = append(os.Environ(), "KUBECONFIG="+cfg.Kubeconfig)
@@ -96,6 +96,10 @@ func RunRuntimeArtifacts(ctx context.Context, cfg RuntimeArtifactsConfig) (Runti
 
 func allowedRuntimeArtifact(name string) bool {
 	parts := strings.Split(name, "/")
+	lowerPath := strings.ToLower(name)
+	if strings.Contains(lowerPath, "cache") || strings.Contains(lowerPath, "plugin") || strings.Contains(lowerPath, "catalog") {
+		return false
+	}
 	base := strings.ToLower(parts[len(parts)-1])
 	if base != "token_usage.json" && (strings.Contains(base, "auth") || strings.Contains(base, "credential") || strings.Contains(base, "token")) {
 		return false
