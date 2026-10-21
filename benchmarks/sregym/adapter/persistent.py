@@ -28,10 +28,10 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -217,15 +217,18 @@ class VerifiedIncident:
 
 
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
-    payload = {field: getattr(config, field) for field in RuntimeConfig.__dataclass_fields__}
+    payload = {field.name: getattr(config, field.name) for field in fields(RuntimeConfig)}
     return {key: str(value) if isinstance(value, Path) else value for key, value in payload.items()}
 
 
 def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     values = dict(payload)
-    values["repository"] = Path(values["repository"])
-    if values.get("artifacts_dir") is not None:
-        values["artifacts_dir"] = Path(values["artifacts_dir"])
+    hints = get_type_hints(RuntimeConfig)
+    for field in fields(RuntimeConfig):
+        value = values.get(field.name)
+        hint = hints[field.name]
+        if value is not None and Path in (hint, *get_args(hint)):
+            values[field.name] = Path(value)
     return RuntimeConfig(**values)
 
 
