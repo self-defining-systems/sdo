@@ -605,7 +605,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	for _, plan := range selected {
 		programIDs = append(programIDs, plan.programID)
 	}
-	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, Result: result, StartedAt: started, CompletedAt: completed}
+	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
 	if err != nil {
 		entry.Error = err.Error()
 	}

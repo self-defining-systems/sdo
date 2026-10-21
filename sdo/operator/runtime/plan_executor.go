@@ -53,6 +53,8 @@ type PlanApplicationResult struct {
 	Plan                  program.Plan
 	Applied               bool
 	DryRun                bool
+	RolledBack            bool
+	RollbackError         string
 	VerificationPassed    bool
 	VerificationCompleted bool
 	ActionsApplied        []program.Action
@@ -72,7 +74,19 @@ type PlanExecutor struct {
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	started := time.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
-	defer func() { result.Duration = time.Since(started) }()
+	defer func() {
+		result.Duration = time.Since(started)
+		if err != nil && result.Applied {
+			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if rollbackErr := e.Rollback(recoveryCtx, result); rollbackErr != nil {
+				result.RollbackError = rollbackErr.Error()
+				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
+			} else {
+				result.RolledBack = true
+			}
+		}
+	}()
 	if err := plan.Validate(); err != nil {
 		return result, fmt.Errorf("validate plan: %w", err)
 	}
@@ -135,6 +149,13 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch})
 		current[ref] = next
 	}
+	if client, ok := e.Client.(planDryRunner); ok {
+		for _, patch := range result.Patches {
+			if err := client.DryRunPatch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
+				return result, fmt.Errorf("server dry-run %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
+			}
+		}
+	}
 	if dryRun {
 		return result, nil
 	}
@@ -142,6 +163,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
 			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
+		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
 	}
 	result.Applied = true
