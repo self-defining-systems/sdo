@@ -56,6 +56,7 @@ type IncidentRequest struct {
 	Namespace            string                 `json:"namespace"`
 	IncidentID           string                 `json:"incident_id"`
 	Findings             []sdk.Finding          `json:"findings"`
+	DriftEvents          []sdk.DriftEvent       `json:"drift_events,omitempty"`
 	DetectorHistory      []DetectorEvaluation   `json:"detector_history"`
 	SurfacedPlaybooks    []SurfacedPlaybook     `json:"surfaced_playbooks"`
 	RelevantOutcomes     []PriorOutcomeEvidence `json:"relevant_outcomes"`

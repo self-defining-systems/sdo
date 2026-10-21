@@ -2,6 +2,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +12,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -47,6 +52,71 @@ func TestLiveReadViewIgnoresKubernetesDefaultsAbsentFromSource(t *testing.T) {
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil || diff.Changed {
 		t.Fatalf("Kubernetes defaults are not source drift: %+v %v", diff, err)
+	}
+}
+
+func TestLiveReadViewNormalizesSourceWithServerSideDryRun(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		called = request.Method == http.MethodPatch && request.URL.Query().Get("fieldManager") == "sdo-deployer" && request.URL.Query().Get("dryRun") == metav1.DryRunAll && request.URL.Query().Get("force") == "true" && request.Header.Get("Content-Type") == "application/apply-patch+yaml"
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(&corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}})
+	}))
+	defer server.Close()
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, Protocol: corev1.ProtocolTCP}}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	diff, err := view.DiffAgainstSource(ref)
+	if err != nil || diff.Changed || !called {
+		t.Fatalf("source was not normalized by dry run: %+v, %v, called=%v", diff, err, called)
+	}
+}
+
+func TestLiveReadViewDiffsDeclaredLabelsAgainstSource(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Labels: map[string]string{"app": "accepted"}}})
+	}))
+	defer server.Close()
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Labels: map[string]string{"app": "changed"}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "app", "name": "settings", "labels": map[string]any{"app": "accepted"}}}}}}
+	diff, err := view.DiffAgainstSource(ref)
+	if err != nil || !diff.Changed {
+		t.Fatalf("declared label change was not source drift: %+v %v", diff, err)
+	}
+}
+
+func TestLiveReadViewIgnoresDeploymentRevisionStamp(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "settings"}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(&corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app"}})
+	}))
+	defer server.Close()
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "app", Annotations: map[string]string{"sdo.dev/source-tree": "abc"}}}}}, Client: client, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"namespace": "app", "name": "settings"}}}}}
+	diff, err := view.DiffAgainstSource(ref)
+	if err != nil || diff.Changed {
+		t.Fatalf("deployer's revision stamp was treated as drift: %+v %v", diff, err)
+	}
+}
+
+func TestLiveReadViewReportsDeletedAcceptedObject(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}, SourceCommit: "accepted", Source: planFakeSource{source: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": map[string]any{"namespace": "app", "name": "api"}, "spec": map[string]any{"ports": []any{map[string]any{"port": float64(80)}}}}}}}
+	diff, err := view.DiffAgainstSource(ref)
+	if err != nil || !diff.Changed {
+		t.Fatalf("deleted source object was not drift: %+v, %v", diff, err)
 	}
 }
 

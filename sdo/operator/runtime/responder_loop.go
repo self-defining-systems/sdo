@@ -35,6 +35,7 @@ type ToolResponse struct {
 	Patches        []PlanPatch             `json:"patches,omitempty"`
 	ProgramRuns    []ProgramRun            `json:"program_runs,omitempty"`
 	Findings       []sdk.Finding           `json:"findings,omitempty"`
+	DriftEvents    []sdk.DriftEvent        `json:"drift_events,omitempty"`
 	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
 	LoopsUsed      int                     `json:"loops_used"`
 	LoopsAllowed   int                     `json:"loops_allowed"`
@@ -194,6 +195,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	switch request.Command {
 	case "status":
 		l.capturePreApply()
+		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
 		response.Findings, response.ProgramRuns, response.Error = l.refresh(ctx)
 		response.Healthy = response.Error == "" && len(l.findings) == 0

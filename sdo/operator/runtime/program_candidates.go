@@ -20,6 +20,7 @@ const DefaultSweepLimit = 64
 type CandidateOptions struct {
 	Deadline   time.Duration
 	SweepLimit int
+	Affected   []sdk.ObjectRef
 }
 
 // ProgramRun is one diagnosis for a concrete finding, hint, or sweep binding.
@@ -66,6 +67,19 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	var candidates []candidate
 	seen := map[string]bool{}
 	add := func(id string, bindings program.Bindings, fingerprint, source string) {
+		if len(options.Affected) > 0 {
+			matched := false
+			for _, ref := range bindings {
+				for _, affected := range options.Affected {
+					if ref.Kind == affected.Kind && ref.Namespace == affected.Namespace && ref.Name == affected.Name {
+						matched = true
+					}
+				}
+			}
+			if !matched {
+				return
+			}
+		}
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
 			return

@@ -166,6 +166,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
+	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",
@@ -236,8 +237,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 {
-		return errors.New("max-response-loops and diagnosis-deadline must be positive")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 {
+		return errors.New("max-response-loops, diagnosis-deadline, and drift-sweep-interval must be positive")
 	}
 	if *exitAfterClosure && *restartAfterClosure {
 		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
@@ -360,7 +361,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stateConfigMapName = controllerStateConfigMap
 	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName,
+		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -484,6 +485,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval,
+		View: func(snapshot sdk.DetectionContext) program.ReadView {
+			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
+				Source: GitPlanSource{Repository: resolvedRoot}, SourceCommit: resolvedSourceCommit}
+		},
+	})
 	// The load term reads host pressure from a Linux PSI file; the backlog term
 	// needs no gauge. A gauge is attached only when the load term is enabled.
 	if admission.Enabled && admission.HighWatermark > 0 {
@@ -724,6 +731,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		startTraffic()
 		waitState()
 		kubernetesCache.TakeEvents()
+		kubernetesCache.TakeObjectChanges()
 		applied = desired
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -788,6 +796,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				stopState()
 				kubernetesCache.Stop()
 				kubernetesCache.TakeEvents()
+				kubernetesCache.TakeObjectChanges()
 				applied = desired
 				if err := encoder.Encode(applied.Record()); err != nil {
 					fmt.Fprintln(stderr, err)
@@ -803,6 +812,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			if applied.Paused {
 				kubernetesCache.TakeEvents()
+				kubernetesCache.TakeObjectChanges()
 				continue
 			}
 			if err := controller.StepEvents(runCtx, time.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {

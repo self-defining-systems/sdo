@@ -10,6 +10,8 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -23,6 +25,13 @@ type KubernetesCacheConfig struct {
 	Namespace          string
 	Client             kubernetes.Interface
 	StateConfigMapName string
+	TrackDrift         bool
+}
+
+type ObjectChange struct {
+	Old     *unstructured.Unstructured
+	New     *unstructured.Unstructured
+	Initial bool
 }
 
 // KubernetesCache coalesces informer notifications into a set of pending watch
@@ -45,10 +54,12 @@ type KubernetesCache struct {
 	parent     context.Context
 	cancel     context.CancelFunc
 
-	mu      sync.Mutex
-	pending map[string]sdk.WatchKind
-	order   []string
-	notify  chan struct{}
+	mu          sync.Mutex
+	pending     map[string]sdk.WatchKind
+	order       []string
+	changes     map[string]ObjectChange
+	changeOrder []string
+	notify      chan struct{}
 }
 
 func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) (*KubernetesCache, error) {
@@ -59,7 +70,7 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 		return nil, fmt.Errorf("Kubernetes client is required")
 	}
 	result := &KubernetesCache{
-		config: config, pending: make(map[string]sdk.WatchKind), notify: make(chan struct{}, 1),
+		config: config, pending: make(map[string]sdk.WatchKind), changes: make(map[string]ObjectChange), notify: make(chan struct{}, 1),
 	}
 	declared := make(map[string]sdk.WatchKind)
 	for _, detector := range detectors {
@@ -71,6 +82,18 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				// Synthetic-traffic results arrive through Notify, not an informer.
 				continue
 			}
+			watch.Namespace = config.Namespace
+			declared[watch.APIVersion+"/"+watch.Kind] = watch
+		}
+	}
+	if config.TrackDrift {
+		for _, watch := range []sdk.WatchKind{
+			{APIVersion: "v1", Kind: "ConfigMap"}, {APIVersion: "v1", Kind: "Service"},
+			{APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"},
+			{APIVersion: "apps/v1", Kind: "ReplicaSet"}, {APIVersion: "v1", Kind: "Endpoints"},
+			{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
+			{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		} {
 			watch.Namespace = config.Namespace
 			declared[watch.APIVersion+"/"+watch.Kind] = watch
 		}
@@ -186,6 +209,18 @@ func (c *KubernetesCache) TakeEvents() []sdk.WatchKind {
 	return events
 }
 
+func (c *KubernetesCache) TakeObjectChanges() []ObjectChange {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	changes := make([]ObjectChange, 0, len(c.changeOrder))
+	for _, key := range c.changeOrder {
+		changes = append(changes, c.changes[key])
+	}
+	c.changes = make(map[string]ObjectChange)
+	c.changeOrder = nil
+	return changes
+}
+
 // Notify queues a watch event that no informer produces, such as a synthetic
 // traffic result, for the observed namespace.
 func (c *KubernetesCache) Notify(watch sdk.WatchKind) {
@@ -242,19 +277,63 @@ func (c *KubernetesCache) Snapshot(context.Context) (sdk.DetectionContext, error
 }
 
 func (c *KubernetesCache) eventHandler(watch sdk.WatchKind) cache.ResourceEventHandler {
-	emit := func(object any) {
-		if watch.Kind == "ConfigMap" && objectName(object) == c.config.StateConfigMapName {
+	emit := func(previous, object any, initial bool) {
+		identity := object
+		if identity == nil {
+			identity = previous
+		}
+		if watch.Kind == "ConfigMap" && objectName(identity) == c.config.StateConfigMapName {
 			return
+		}
+		if c.config.TrackDrift {
+			old := driftObject(previous, watch)
+			newObject := driftObject(object, watch)
+			identity := old
+			if newObject != nil {
+				identity = newObject
+			}
+			if identity != nil {
+				key := watch.APIVersion + "/" + watch.Kind + "/" + identity.GetNamespace() + "/" + identity.GetName()
+				c.mu.Lock()
+				if existing, ok := c.changes[key]; ok {
+					if existing.Old != nil {
+						old = existing.Old
+					} else if old != nil {
+						old = existing.New
+					}
+				} else {
+					c.changeOrder = append(c.changeOrder, key)
+				}
+				c.changes[key] = ObjectChange{Old: old, New: newObject, Initial: initial}
+				c.mu.Unlock()
+			}
 		}
 		c.enqueue(watch)
 	}
-	return cache.ResourceEventHandlerFuncs{
-		AddFunc: emit,
-		UpdateFunc: func(_ any, current any) {
-			emit(current)
+	return cache.ResourceEventHandlerDetailedFuncs{
+		AddFunc: func(object any, initial bool) { emit(nil, object, initial) },
+		UpdateFunc: func(previous, current any) {
+			emit(previous, current, false)
 		},
-		DeleteFunc: emit,
+		DeleteFunc: func(object any) { emit(object, nil, false) },
 	}
+}
+
+func driftObject(object any, watch sdk.WatchKind) *unstructured.Unstructured {
+	if tombstone, ok := object.(cache.DeletedFinalStateUnknown); ok {
+		object = tombstone.Obj
+	}
+	if object == nil {
+		return nil
+	}
+	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		return nil
+	}
+	result := &unstructured.Unstructured{Object: content}
+	result.SetAPIVersion(watch.APIVersion)
+	result.SetKind(watch.Kind)
+	return result
 }
 
 func objectName(object any) string {

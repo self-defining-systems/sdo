@@ -49,6 +49,19 @@ func objectRefsContract(refs []sdk.ObjectRef) []*contracts.ObjectRef {
 	return result
 }
 
+func driftEventsContract(events []sdk.DriftEvent) []*contracts.DriftEvent {
+	result := make([]*contracts.DriftEvent, 0, len(events))
+	for _, event := range events {
+		item := &contracts.DriftEvent{Ref: objectRefContract(event.Ref), Source: event.Source, Manager: event.Manager,
+			Operation: event.Operation, ManagerAt: optionalContractTimestamp(event.ManagerAt), ObservedAt: contractTimestamp(event.ObservedAt), Classification: string(event.Classification), ProgramId: event.ProgramID}
+		for _, field := range event.Fields {
+			item.Fields = append(item.Fields, &contracts.DriftField{Path: field.Path, Old: field.Old, New: field.New})
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
 func objectRefsState(refs []*contracts.ObjectRef) []sdk.ObjectRef {
 	result := make([]sdk.ObjectRef, 0, len(refs))
 	for _, ref := range refs {
@@ -177,6 +190,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		ResponseDeadline: contractTimestamp(request.ResponseDeadline), CancellationToken: request.CancellationToken,
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
+		DriftEvents:      driftEventsContract(request.DriftEvents),
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))

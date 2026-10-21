@@ -8,8 +8,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/sdk"
@@ -33,6 +35,8 @@ type LiveReadView struct {
 	Baseline       *StateChanges
 	BaselineSource StateBaseline
 }
+
+var errSnapshotObjectAbsent = errors.New("object is absent from snapshot")
 
 func (v LiveReadView) context() context.Context {
 	if v.Context != nil {
@@ -97,7 +101,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		return program.Diff{}, errors.New("accepted source is unavailable")
 	}
 	observed, err := v.snapshotObject(ref)
-	if err != nil {
+	if err != nil && !errors.Is(err, errSnapshotObjectAbsent) {
 		return program.Diff{}, err
 	}
 	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
@@ -109,8 +113,24 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	if source == nil || !samePlanRef(source, ref) {
 		return program.Diff{}, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
 	}
+	if observed == nil {
+		if v.Client != nil {
+			if _, err := dryRunAcceptedSource(ctx, v.Client, ref, source); err != nil {
+				return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
+			}
+		}
+		return program.Diff{Changed: true, Text: "accepted object is absent from snapshot"}, nil
+	}
 	left := comparableFields(source.Object)
 	right := projectSourceFields(comparableFields(observed.Object), left)
+	if v.Client != nil {
+		normalized, normalizeErr := dryRunAcceptedSource(ctx, v.Client, ref, source)
+		if normalizeErr != nil {
+			return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, normalizeErr)
+		}
+		left = comparableFields(normalized.Object)
+		right = comparableFields(observed.Object)
+	}
 	before, err := json.Marshal(left)
 	if err != nil {
 		return program.Diff{}, err
@@ -125,14 +145,88 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	return program.Diff{Changed: true, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 }
 
+func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	patch, err := json.Marshal(source.Object)
+	if err != nil {
+		return nil, err
+	}
+	force := true
+	options := metav1.PatchOptions{FieldManager: "sdo-deployer", Force: &force, DryRun: []string{metav1.DryRunAll}}
+	var object any
+	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/Service":
+		object, err = client.CoreV1().Services(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "v1/ConfigMap":
+		object, err = client.CoreV1().ConfigMaps(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "v1/Pod":
+		object, err = client.CoreV1().Pods(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "apps/v1/Deployment":
+		object, err = client.AppsV1().Deployments(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "apps/v1/ReplicaSet":
+		object, err = client.AppsV1().ReplicaSets(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "v1/Endpoints":
+		object, err = client.CoreV1().Endpoints(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "discovery.k8s.io/v1/EndpointSlice":
+		object, err = client.DiscoveryV1().EndpointSlices(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	case "networking.k8s.io/v1/NetworkPolicy":
+		object, err = client.NetworkingV1().NetworkPolicies(ref.Namespace).Patch(ctx, ref.Name, types.ApplyPatchType, patch, options)
+	default:
+		return nil, fmt.Errorf("source diff does not support %s/%s", ref.APIVersion, ref.Kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		return nil, err
+	}
+	return &unstructured.Unstructured{Object: content}, nil
+}
+
 func comparableFields(object map[string]any) map[string]any {
+	object = kruntime.DeepCopyJSON(object)
+	if metadata, ok := object["metadata"].(map[string]any); ok {
+		removeRevisionStamp(metadata)
+	}
+	if spec, ok := object["spec"].(map[string]any); ok {
+		if template, ok := spec["template"].(map[string]any); ok {
+			if metadata, ok := template["metadata"].(map[string]any); ok {
+				removeRevisionStamp(metadata)
+				if len(metadata) == 0 {
+					delete(template, "metadata")
+				}
+			}
+		}
+	}
 	result := map[string]any{}
 	for _, key := range []string{"spec", "data", "binaryData"} {
 		if value, ok := object[key]; ok {
 			result[key] = value
 		}
 	}
+	if metadata, ok := object["metadata"].(map[string]any); ok {
+		selected := map[string]any{}
+		for _, key := range []string{"labels", "annotations"} {
+			if value, ok := metadata[key]; ok {
+				selected[key] = value
+			}
+		}
+		if len(selected) > 0 {
+			result["metadata"] = selected
+		}
+	}
 	return result
+}
+
+func removeRevisionStamp(metadata map[string]any) {
+	annotations, ok := metadata["annotations"].(map[string]any)
+	if !ok {
+		return
+	}
+	delete(annotations, "sdo.dev/source-tree")
+	if len(annotations) == 0 {
+		delete(metadata, "annotations")
+	}
 }
 
 func projectSourceFields(observed, declared any) any {
@@ -217,11 +311,39 @@ func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructu
 				break
 			}
 		}
+	case "ReplicaSet":
+		for _, item := range v.ReplicaSets() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "Endpoints":
+		for _, item := range v.Endpoints() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "EndpointSlice":
+		for _, item := range v.EndpointSlices() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	case "NetworkPolicy":
+		for _, item := range v.NetworkPolicies() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
 	default:
 		return nil, fmt.Errorf("source diff does not support %s", ref.Kind)
 	}
 	if object == nil {
-		return nil, fmt.Errorf("%s/%s is absent from snapshot", ref.Kind, ref.Name)
+		return nil, fmt.Errorf("%w: %s/%s", errSnapshotObjectAbsent, ref.Kind, ref.Name)
 	}
 	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
 	if err != nil {

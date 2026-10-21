@@ -32,6 +32,7 @@ type RuntimeState struct {
 	FindingStates            map[string]FindingState `json:"finding_states"`
 	PendingBatch             BatcherState            `json:"pending_batch"`
 	History                  []DetectorEvaluation    `json:"history"`
+	DriftEvents              []sdk.DriftEvent        `json:"drift_events,omitempty"`
 	IncidentOpen             bool                    `json:"incident_open"`
 	ResponderDone            bool                    `json:"responder_done"`
 	IncidentRequest          *IncidentRequest        `json:"incident_request,omitempty"`
@@ -260,6 +261,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	// Lists stay lists when empty: the responder's and the broker's schemas
 	// reject null (a cold incident surfaces no playbook and no outcome).
 	copy.Findings = append(make([]sdk.Finding, 0, len(request.Findings)), request.Findings...)
+	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
 	copy.DetectorHistory = cloneEvaluations(request.DetectorHistory)
 	copy.SurfacedPlaybooks = append(make([]SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)), request.SurfacedPlaybooks...)
 	copy.RelevantOutcomes = append(make([]PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)), request.RelevantOutcomes...)

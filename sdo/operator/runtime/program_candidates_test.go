@@ -20,6 +20,20 @@ type candidateProgram struct {
 	run  func(context.Context, program.Bindings) program.Verdict
 }
 
+func TestSelectProgramCandidatesOnlyDiagnosesAffectedBindings(t *testing.T) {
+	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(context.Context, program.Bindings) program.Verdict {
+		return program.Verdict{Result: program.Match}
+	}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}}, {ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "app"}}}}}
+	got := SelectProgramCandidatesWithOptions(context.Background(), registry, view, nil, CandidateOptions{Deadline: time.Second, Affected: []sdk.ObjectRef{{Kind: "Service", Namespace: "app", Name: "api"}}})
+	if len(got) != 1 || got[0].Bindings["service"].Name != "api" {
+		t.Fatalf("unaffected binding diagnosed: %+v", got)
+	}
+}
+
 func TestSelectProgramCandidatesSweepsUnnamedResourceAndDeduplicates(t *testing.T) {
 	geo := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "geo"}
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {

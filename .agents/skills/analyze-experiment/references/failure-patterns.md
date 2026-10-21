@@ -44,6 +44,12 @@ Such a seed (for example `30e023d`) carries checks written knowing the SREGym fa
 
 Inspect firing/clearing thresholds, debounce state, snapshot versions, durable controller state, leader transitions, and incident idempotency keys.
 
+## Latent drift classification
+
+**Signature:** a `latent` finding or an outcome `drift_events` entry names a matching program while health detectors remain clear, or a changed object is recorded as `unexplained` without an incident.
+
+Join the event's logical resource, changed fields, manager/operation/time, and `program_id` to the incident request and program verdict. Check that the field was owned by `sdo-deployer` in the pre-image and that the accepted-source dry run still differed. An HPA-owned replica change should not appear. An unexplained event is observation only in P1; it is not a benign label or a learning decision. A latent incident from the 60 s fallback sweep may have no drift event.
+
 ## Link reachability finding (latent dependency fault)
 
 **Signature:** a finding with rule `link-reachability.<from>.<to>.<port>` (detector `traffic-<workload>` for a `purpose: link-probe` workload in `.sdo/diagnostics/traffic/workloads/`) while every `scenario-slo.*` scenario stays green.
