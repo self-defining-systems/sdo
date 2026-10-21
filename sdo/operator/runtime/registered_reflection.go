@@ -39,6 +39,7 @@ type RegisteredReflectionWorker struct {
 	SessionExecutor      func(incidentID string) (ReflectionTaskExecutor, error)
 	FreshSessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
 	UsageLogPath         func(incidentID string) string
+	CorpusSessionRoot    string
 }
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
@@ -173,6 +174,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err := result.GetResponse().UnmarshalTo(response); err != nil {
 		return ReflectionDecision{}, fmt.Errorf("reflection result contract: %w", err)
 	}
+	if wire, err := protojson.Marshal(result); err != nil {
+		return ReflectionDecision{}, err
+	} else if len(wire) > 700<<10 {
+		return ReflectionDecision{}, fmt.Errorf("reflection result is %d bytes; use corpus references and keep the worker result below the transport limit", len(wire))
+	}
 	if response.GetLearningDecision() != "updated" && response.GetLearningDecision() != "no_change" && response.GetLearningDecision() != "sdk_gap" {
 		return ReflectionDecision{}, errors.New("reflection result requires an explicit learning decision")
 	}
@@ -207,7 +213,14 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 					detector.OriginatingCommit = outcomeCommit
 				}
 			}
-			if err := memory.MaterializeArtifacts(workspace.Worktree, proposal, memory.ResponderArtifacts); err != nil {
+			captureDir := ""
+			if w.CorpusSessionRoot != "" {
+				captureDir, err = memory.IncidentCorpusDir(w.CorpusSessionRoot, workspace.IncidentID)
+				if err != nil {
+					return ReflectionDecision{}, err
+				}
+			}
+			if err := memory.MaterializeArtifacts(workspace.Worktree, proposal, memory.ResponderArtifacts, captureDir); err != nil {
 				return ReflectionDecision{}, fmt.Errorf("materialize reflection artifacts: %w", err)
 			}
 		} else if response.GetArtifactProposal() != nil {

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from sdo.agents.views.models import ObjectRef  # noqa: TC001 - Pydantic resolves this annotation at runtime.
+
 
 class ArtifactDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -25,13 +27,41 @@ class ScriptDraft(ArtifactDraft):
     content: str = Field(min_length=1)
 
 
+class CorpusBindingDraft(ArtifactDraft):
+    name: str = Field(min_length=1)
+    object: ObjectRef
+
+
+class CorpusCaptureReferenceDraft(ArtifactDraft):
+    incident_id: str = Field(min_length=1)
+    capture_label: str = Field(pattern=r"^open(@(detect|settle|pre-apply))?$")
+    open_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    fixed_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    recordings_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    bindings: list[CorpusBindingDraft] = Field(default_factory=list)
+    peer_bindings: list[CorpusBindingDraft] = Field(default_factory=list)
+    root_cause_program_ids: list[str] = Field(default_factory=list)
+    no_match_program_ids: list[str] = Field(default_factory=list)
+
+
 class CorpusCaseDraft(ArtifactDraft):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*$")
-    open_json: str = Field(min_length=1)
-    fixed_json: str = Field(min_length=1)
-    healthy_json: str = Field(min_length=1)
-    recordings_json: str = Field(min_length=1)
-    labels_json: str = Field(min_length=1)
+    open_json: str = ""
+    fixed_json: str = ""
+    healthy_json: str = ""
+    recordings_json: str = ""
+    labels_json: str = ""
+    reference: CorpusCaptureReferenceDraft | None = None
+
+    @model_validator(mode="after")
+    def require_one_source(self) -> CorpusCaseDraft:
+        inline = all((self.open_json, self.fixed_json, self.healthy_json, self.recordings_json, self.labels_json))
+        if (self.reference is not None) == inline or (
+            self.reference is not None
+            and any((self.open_json, self.fixed_json, self.healthy_json, self.recordings_json, self.labels_json))
+        ):
+            raise ValueError("corpus case requires exactly one inline body or capture reference")
+        return self
 
 
 class ProgramDraft(ArtifactDraft):

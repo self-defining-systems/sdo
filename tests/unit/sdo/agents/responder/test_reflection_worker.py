@@ -372,6 +372,32 @@ def test_reflection_worker_returns_logical_artifact_proposal(tmp_path: Path) -> 
     assert decision.artifact_proposal.playbooks[0].id == "missing-service"
 
 
+def test_reflection_worker_rejects_oversized_result(tmp_path: Path) -> None:
+    class OversizedReflector(LogicalReflector):
+        def resume(self, **kwargs: object) -> ReflectionTurn:
+            return super().resume(**kwargs).model_copy(update={"summary": "x" * (701 << 10)})
+
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit="outcome-commit"
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-large",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    publisher = Publisher()
+    with pytest.raises(ValueError, match="use corpus references"):
+        run_reflection_task(path, "result-map", publisher, reflector=OversizedReflector())
+    assert publisher.payload is None
+
+
 @pytest.mark.parametrize("reflector", [ProgramReflector(), SdkGapReflector()])
 def test_reflection_worker_serializes_programs_and_sdk_gaps(tmp_path: Path, reflector: Reflector) -> None:
     closure = _closure()

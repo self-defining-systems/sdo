@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -298,27 +299,26 @@ func capturedCorpusCase(config ProgramProposeConfig, programID string) (*contrac
 			return nil, fmt.Errorf("peer binding %q must have kind %s", name, ref.Kind)
 		}
 	}
-	labels, err := json.Marshal(struct {
-		RootCauseProgramIDs []string         `json:"root_cause_program_ids"`
-		Bindings            program.Bindings `json:"bindings"`
-		PeerBindings        program.Bindings `json:"peer_bindings"`
-		Provenance          struct {
-			IncidentID  string `json:"incident_id"`
-			OpenAt      string `json:"open_at,omitempty"`
-			OpenSHA256  string `json:"open_sha256"`
-			FixedSHA256 string `json:"fixed_sha256"`
-		} `json:"provenance"`
-	}{RootCauseProgramIDs: []string{programID}, Bindings: bindings, PeerBindings: peer, Provenance: struct {
-		IncidentID  string `json:"incident_id"`
-		OpenAt      string `json:"open_at,omitempty"`
-		OpenSHA256  string `json:"open_sha256"`
-		FixedSHA256 string `json:"fixed_sha256"`
-	}{config.CorpusFromIncident, phase, fmt.Sprintf("%x", sha256.Sum256(open)), fmt.Sprintf("%x", sha256.Sum256(fixed))}})
-	if err != nil {
-		return nil, err
+	label := "open"
+	if phase != "" {
+		label = "open@" + phase
+	}
+	reference := &contracts.CorpusCaptureReference{IncidentId: config.CorpusFromIncident, CaptureLabel: label, OpenSha256: fmt.Sprintf("%x", sha256.Sum256(open)), FixedSha256: fmt.Sprintf("%x", sha256.Sum256(fixed)), RecordingsSha256: fmt.Sprintf("%x", sha256.Sum256(recordings)), RootCauseProgramIds: []string{programID}}
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ref := bindings[name]
+		reference.Bindings = append(reference.Bindings, &contracts.CorpusBinding{Name: name, Object: &contracts.ObjectRef{ApiVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}})
+	}
+	for _, name := range names {
+		ref := peer[name]
+		reference.PeerBindings = append(reference.PeerBindings, &contracts.CorpusBinding{Name: name, Object: &contracts.ObjectRef{ApiVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}})
 	}
 	caseID := programID + "-" + fmt.Sprintf("%x", sha256.Sum256([]byte(config.CorpusFromIncident)))[:8]
-	return &contracts.ProposedCorpusCase{Id: caseID, OpenJson: string(open), FixedJson: string(fixed), HealthyJson: string(fixed), RecordingsJson: string(recordings), LabelsJson: string(labels)}, nil
+	return &contracts.ProposedCorpusCase{Id: caseID, Reference: reference}, nil
 }
 
 func parseProgramBindings(values []string, snapshot sdktest.Snapshot) (program.Bindings, error) {
@@ -421,6 +421,9 @@ func RunProgramPropose(ctx context.Context, config ProgramProposeConfig, output 
 	if err != nil {
 		return err
 	}
+	if len(data) > 700<<10 {
+		return fmt.Errorf("program proposal is %d bytes; keep the worker result under the transport limit by using corpus references and smaller Go sources", len(data))
+	}
 	file, err := os.CreateTemp("", "sdo-program-proposal-*.json")
 	if err != nil {
 		return err
@@ -441,7 +444,7 @@ func RunProgramPropose(ctx context.Context, config ProgramProposeConfig, output 
 	if root == "" {
 		root = "/opt/sdo/sdo/operator"
 	}
-	if err := RunDraftTest(ctx, DraftTestConfig{ApplicationRoot: app, OperatorRoot: root, ProposalJSON: file.Name()}); err != nil {
+	if err := RunDraftTest(ctx, DraftTestConfig{ApplicationRoot: app, OperatorRoot: root, ProposalJSON: file.Name(), CaptureDir: config.CaptureDir}); err != nil {
 		return fmt.Errorf("program draft-test: %w", err)
 	}
 	_, err = output.Write(append(data, '\n'))

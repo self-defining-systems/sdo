@@ -25,6 +25,7 @@ type DraftTestConfig struct {
 	ApplicationRoot string
 	OperatorRoot    string
 	ProposalJSON    string
+	CaptureDir      string
 }
 
 func ParseDraftTestLaunch(args []string) (DraftTestConfig, error) {
@@ -36,13 +37,14 @@ func ParseDraftTestLaunch(args []string) (DraftTestConfig, error) {
 	app := flags.String("app", "", "accepted application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "baked operator sources")
 	proposalJSON := flags.String("proposal-json", "", "typed OperationalArtifactProposal ProtoJSON file")
+	captureDir := flags.String("capture-dir", "", "local or session incident capture directory")
 	if err := flags.Parse(args[1:]); err != nil {
 		return DraftTestConfig{}, err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(*app) == "" || strings.TrimSpace(*proposalJSON) == "" {
 		return DraftTestConfig{}, errors.New("draft-test requires application checkout and typed proposal JSON")
 	}
-	return DraftTestConfig{ApplicationRoot: *app, OperatorRoot: *operatorRoot, ProposalJSON: *proposalJSON}, nil
+	return DraftTestConfig{ApplicationRoot: *app, OperatorRoot: *operatorRoot, ProposalJSON: *proposalJSON, CaptureDir: *captureDir}, nil
 }
 
 // RunDraftTest gives an agent local compiler feedback without publishing or
@@ -101,7 +103,14 @@ func RunDraftTest(ctx context.Context, config DraftTestConfig) error {
 	if _, err := gitDraft(ctx, scratch, "checkout", "--quiet", "--detach", commit); err != nil {
 		return err
 	}
-	if err := memory.MaterializeArtifacts(scratch, proposal, memory.ResponderArtifacts); err != nil {
+	captureDir := config.CaptureDir
+	if captureDir == "" {
+		captureDir = os.Getenv("SDO_CAPTURED_CORPUS_DIR")
+	}
+	if captureDir == "" {
+		captureDir = "/sdo/session/corpus"
+	}
+	if err := memory.MaterializeArtifacts(scratch, proposal, memory.ResponderArtifacts, captureDir); err != nil {
 		return fmt.Errorf("materialize typed artifact draft: %w", err)
 	}
 	if err := broker.ValidateNewProgramCorpus(scratch, app); err != nil {

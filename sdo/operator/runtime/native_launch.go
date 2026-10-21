@@ -105,9 +105,10 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	native.Reflector = RegisteredReflectionWorker{
 		Executor: freshExecutor,
 		AgentID:  "sdo-reflector", Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
-		SessionMode: config.GetReflectionSession(),
-		Guidance:    config.GetReflectionGuidance(),
-		Catalog:     memory.OpenCatalogReader(config.GetAppRoot()),
+		SessionMode:       config.GetReflectionSession(),
+		Guidance:          config.GetReflectionGuidance(),
+		Catalog:           memory.OpenCatalogReader(config.GetAppRoot()),
+		CorpusSessionRoot: config.GetRepositoryMountPath(),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
 			return sessionExecutor(incidentID, true)
 		},

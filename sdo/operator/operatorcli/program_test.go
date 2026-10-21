@@ -97,7 +97,7 @@ func TestProgramProposeCanonicalizesGoSources(t *testing.T) {
 
 func TestProgramProposeBuildsCorpusFromIncidentCapture(t *testing.T) {
 	root := t.TempDir()
-	view := sdktest.Snapshot{NamespaceName: "demo", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo"}}, {ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "demo"}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "peer-pod", Namespace: "demo"}}}}
+	view := sdktest.Snapshot{NamespaceName: "demo", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo"}}, {ObjectMeta: metav1.ObjectMeta{Name: "peer", Namespace: "demo"}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "peer-pod", Namespace: "demo"}}}, ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "settings", Namespace: "demo"}, Data: map[string]string{"configuration": strings.Repeat("x", 1400000)}}}}
 	if err := memory.CaptureIncidentSnapshot(root, "inc-42", "open", view, "demo"); err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,15 @@ func TestProgramProposeBuildsCorpusFromIncidentCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := proposal.Playbooks[0].Program.CorpusCases
-	if len(cases) != 1 || cases[0].FixedJson != cases[0].HealthyJson || !strings.Contains(cases[0].LabelsJson, `"incident_id":"inc-42"`) || !strings.Contains(cases[0].LabelsJson, "open_sha256") {
+	wire, err := protojson.Marshal(proposal)
+	if err != nil || len(wire) > 20<<10 {
+		t.Fatalf("1.4 MB capture produced %d-byte proposal: %v", len(wire), err)
+	}
+	if len(cases) != 1 || cases[0].GetReference() == nil || cases[0].GetReference().GetIncidentId() != "inc-42" || cases[0].OpenJson != "" {
 		t.Fatalf("not a captured corpus case: %+v", cases)
 	}
-	if !strings.Contains(cases[0].OpenJson, `"name":"front"`) {
-		t.Fatal("captured snapshot missing application object")
+	if len(cases[0].GetReference().GetBindings()) != 1 || len(cases[0].GetReference().GetPeerBindings()) != 1 {
+		t.Fatal("captured reference missing bindings")
 	}
 	if _, err := AssembleProgramProposal(ProgramProposeConfig{Dir: dir, Incident: "inc-42", CorpusFromIncident: "inc-42", Bindings: []string{"service=Service/demo/front"}, PeerBindings: []string{"service=Pod/demo/peer-pod"}, CaptureDir: captureDir}); err == nil || !strings.Contains(err.Error(), "must have kind Service") {
 		t.Fatalf("different-kind peer accepted: %v", err)
@@ -153,7 +157,7 @@ func TestProgramProposeSelectsLatestPremitigationCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(proposal.Playbooks[0].Program.CorpusCases[0].OpenJson, "open@pre-apply") {
+	if proposal.Playbooks[0].Program.CorpusCases[0].GetReference().GetCaptureLabel() != "open@pre-apply" {
 		t.Fatal("latest open capture was not selected")
 	}
 	config.OpenAt = "detect"
@@ -161,7 +165,7 @@ func TestProgramProposeSelectsLatestPremitigationCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(proposal.Playbooks[0].Program.CorpusCases[0].OpenJson, "open@detect") {
+	if proposal.Playbooks[0].Program.CorpusCases[0].GetReference().GetCaptureLabel() != "open@detect" {
 		t.Fatal("requested open capture was not selected")
 	}
 }

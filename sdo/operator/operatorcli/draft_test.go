@@ -2,6 +2,7 @@ package operatorcli
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -205,6 +206,41 @@ func TestDraftTestValidatesProgramProposal(t *testing.T) {
 	config := DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path}
 	if err := RunDraftTest(context.Background(), config); err != nil {
 		t.Fatalf("valid program draft: %v", err)
+	}
+	captureDir := t.TempDir()
+	for _, name := range []string{"open.json", "fixed.json", "recordings.json"} {
+		if err := os.WriteFile(filepath.Join(captureDir, name), []byte(read("corpus/targetport-mismatch/"+name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var fixedView, healthyView sdktest.Snapshot
+	if err := json.Unmarshal([]byte(read("corpus/targetport-mismatch/fixed.json")), &fixedView); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(read("corpus/targetport-mismatch/healthy.json")), &healthyView); err != nil {
+		t.Fatal(err)
+	}
+	fixedView.ServiceList = append(fixedView.ServiceList, healthyView.ServiceList...)
+	fixedView.PodList = append(fixedView.PodList, healthyView.PodList...)
+	combinedFixed, err := json.Marshal(fixedView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(captureDir, "fixed.json"), combinedFixed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest := func(name string) string {
+		data, err := os.ReadFile(filepath.Join(captureDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("%x", sha256.Sum256(data))
+	}
+	proposal.Playbooks[0].Program.CorpusCases[0] = &contracts.ProposedCorpusCase{Id: "targetport-mismatch", Reference: &contracts.CorpusCaptureReference{IncidentId: "targetport-incident", CaptureLabel: "open", OpenSha256: digest("open.json"), FixedSha256: digest("fixed.json"), RecordingsSha256: digest("recordings.json"), RootCauseProgramIds: []string{"service-targetport-mismatch"}, Bindings: []*contracts.CorpusBinding{{Name: "service", Object: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}}}, PeerBindings: []*contracts.CorpusBinding{{Name: "service", Object: &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "peer"}}}}}
+	write()
+	config.CaptureDir = captureDir
+	if err := RunDraftTest(context.Background(), config); err != nil {
+		t.Fatalf("referenced program draft: %v", err)
 	}
 	proposal.Libraries[0].Sources[0].Content = "package ports\nimport \"net/http\"\nvar _ = http.Get\n"
 	write()

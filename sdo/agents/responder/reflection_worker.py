@@ -159,7 +159,13 @@ def run_reflection_task(
         proposal_id=task.workspace.proposal_id,
     )
     result.response.Pack(typed_result)
-    publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
+    payload = to_canonical_json(result)
+    if len(payload.encode("utf-8")) > 700 << 10:
+        raise ValueError(
+            "reflection result exceeds the worker transport budget; "
+            "use corpus references and reduce proposal source size"
+        )
+    publisher.publish_payload(result_name, "agent-result.json", payload)
     return result
 
 
