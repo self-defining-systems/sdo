@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -222,6 +223,14 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	sort.Strings(attempt.Programs)
 	l.fastPathPrograms = append([]string(nil), attempt.Programs...)
 	started := time.Now().UTC()
+	planIDs := make([]string, 0, len(selectedPlans))
+	for i, plan := range selectedPlans {
+		id := fmt.Sprintf("fast-path-plan-%d", i+1)
+		planIDs = append(planIDs, id)
+		requestJSON, _ := json.Marshal(ToolRequest{Command: "plan", ProgramID: plan.programID, Bindings: plan.bindings})
+		responseJSON, _ := json.Marshal(ToolResponse{Command: "plan", PlanID: id})
+		l.calls = append(l.calls, ToolCall{Command: "plan", At: started, RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Summary: "trusted program prepared plan"})
+	}
 	l.batches++
 	attempt.Attempted = true
 	l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true})
@@ -247,6 +256,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if result.Applied {
 		l.verify(ctx, selectedPlans, &response)
 	}
+	fillProgramRevisions(ctx, response.ProgramRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	attempt.Verification = response
 	attempt.Resolved = applyErr == nil && result.VerificationPassed && response.Healthy
 	if attempt.Resolved {
@@ -317,6 +327,17 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 			l.applicationsLog[i].Result = result
 		}
 	}
+	response.Command = "apply"
+	response.ApplicationID = "fast-path-1"
+	if applyErr != nil {
+		response.Error = applyErr.Error()
+	}
+	if !attempt.Resolved && response.Error == "" {
+		response.Error = "trusted fast-path verification failed"
+	}
+	requestJSON, _ := json.Marshal(ToolRequest{Command: "apply", PlanIDs: planIDs})
+	responseJSON, _ := json.Marshal(response)
+	l.calls = append(l.calls, ToolCall{Command: "apply", At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: attempt.Summary})
 	l.calls = append(l.calls, ToolCall{Command: "fast-path", At: time.Now().UTC(), Summary: boundedToolText(attempt.Summary)})
 	return attempt
 }

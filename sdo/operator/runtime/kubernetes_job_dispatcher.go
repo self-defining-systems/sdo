@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -360,14 +359,13 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 			if alreadyRecorded {
 				continue
 			}
-			// This projection is only for trust derivation. The immutable outcome
-			// remains an honest record of the responder's original repair.
-			// A generic adhoc_coverage_gap is expected before learning exists;
-			// ProgramTrustStats still rejects signals tied to this program.
-			credited := proto.Clone(record).(*contracts.OutcomeRecord)
-			credited.ProgramRuns = append(credited.ProgramRuns, &contracts.ProgramRun{ProgramId: learned.ProgramID, ProgramRevision: originRevision})
-			credited.PlanApplications = append(credited.PlanApplications, &contracts.PlanApplication{ApplicationId: "learned-repair-" + learned.ProgramID, Applied: true, ProgramIds: []string{learned.ProgramID}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}})
-			records[index] = credited
+			credited, err := d.learningReplayCredit(ctx, request, learned, originRevision, record)
+			if err != nil {
+				return nil, fmt.Errorf("read validated learning replay: %w", err)
+			}
+			if credited != nil {
+				records[index] = credited
+			}
 		}
 	}
 	return ProgramTrustStats(records, d.ProgramTrustThreshold), nil

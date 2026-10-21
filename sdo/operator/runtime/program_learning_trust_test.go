@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 func learningTrustRepository(t *testing.T) (string, string) {
@@ -21,10 +23,12 @@ func learningTrustRepository(t *testing.T) (string, string) {
 	files := map[string]string{
 		".sdo/playbooks/service-targetport-mismatch/diagnose.go": "package targetport\n",
 		".sdo/playbooks/service-targetport-mismatch/mitigate.go": "package targetport\n",
-		".sdo/corpus/learning/open.json":                         "{\"namespace\":\"app\"}\n",
-		".sdo/corpus/learning/fixed.json":                        "{\"namespace\":\"app\",\"services\":[]}\n",
+		".sdo/corpus/learning/open.json":                         `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"},"spec":{"ports":[{"port":80,"targetPort":9999}]}}]}`,
+		".sdo/corpus/learning/fixed.json":                        `{"namespace":"app","services":[{"metadata":{"namespace":"app","name":"api"},"spec":{"ports":[{"port":80,"targetPort":8080}]}}]}`,
 	}
-	labels := map[string]any{"root_cause_program_ids": []string{"service-targetport-mismatch"}, "provenance": map[string]string{
+	files[".sdo/corpus/learning/healthy.json"] = files[".sdo/corpus/learning/fixed.json"]
+	files[".sdo/corpus/learning/recordings.json"] = "[]"
+	labels := map[string]any{"bindings": program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}, "root_cause_program_ids": []string{"service-targetport-mismatch"}, "provenance": map[string]string{
 		"incident_id": "learning", "open_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(files[".sdo/corpus/learning/open.json"]))),
 		"fixed_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(files[".sdo/corpus/learning/fixed.json"]))),
 	}}
@@ -65,16 +69,12 @@ func TestLearningRepairAtThresholdOneDispatchesFastPathWithoutResponder(t *testi
 		t.Fatal(err)
 	}
 	trust, err := dispatcher.programTrust(context.Background(), request)
-	if err != nil || trust["service-targetport-mismatch"].Trusted || trust["service-targetport-mismatch"].VerifiedSuccesses != 0 {
-		t.Fatalf("learning projection substituted for bound post-apply evidence: %+v %v", trust, err)
+	if err != nil || !trust["service-targetport-mismatch"].Trusted || trust["service-targetport-mismatch"].VerifiedSuccesses != 1 {
+		t.Fatalf("validated learning replay earned no bound credit: %+v %v", trust, err)
 	}
-	revision, err := programDependencyRevision(context.Background(), root, commit, "service-targetport-mismatch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	outcomes = append(outcomes, memory.Outcome{IncidentID: "verified-repair", Record: verifiedTrustOutcome(t, "service-targetport-mismatch", revision)})
-	dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
-	result, err := dispatcher.Dispatch(context.Background(), prepared)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, err := dispatcher.Dispatch(ctx, prepared)
 	if err != nil || result.ResolutionPath != "fast_path" || result.Usage.GetInputTokens() != 0 || result.Usage.GetOutputTokens() != 0 {
 		t.Fatalf("learning repeat: %+v %v", result, err)
 	}
@@ -87,12 +87,23 @@ func TestLearningRepairAtThresholdOneDispatchesFastPathWithoutResponder(t *testi
 	if err != nil || trust["service-targetport-mismatch"].Trusted || trust["service-targetport-mismatch"].VerifiedSuccesses != 1 {
 		t.Fatalf("default threshold changed: %+v %v", trust, err)
 	}
+	defaultLoop, _ := trustedPortLoop(t, false, false, true)
+	defaultLoop.Request = request
+	defaultLoop.Detectors = []sdk.Detector{fastloopClearDetector{}}
+	defaultLoop.Trust = trust
+	attempt := defaultLoop.TryTrustedFastPath(context.Background(), 3)
+	if attempt.Attempted || attempt.Resolved || attempt.SkippedReason != FastPathSkipUntrustedProgram {
+		t.Fatalf("first repeat used default-threshold fast path: %+v", attempt)
+	}
 }
 
 func TestLearningCreditRequiresSuccessfulOutcomeAndOriginalProgramRevision(t *testing.T) {
 	root, commit := learningTrustRepository(t)
 	record := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "failure"}
 	dispatcher := KubernetesJobDispatcher{ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: record}}}}
+	replayLoop, _ := trustedPortLoop(t, false, false, true)
+	dispatcher.LoopFactory = func(IncidentRequest) *ResponderLoop { return replayLoop }
+
 	request := IncidentRequest{RepositoryWorktree: root, SourceCommit: commit}
 	trust, err := dispatcher.programTrust(context.Background(), request)
 	if err != nil || trust["service-targetport-mismatch"].Trusted {
@@ -176,6 +187,9 @@ func TestLearningCreditCannotEraseSubsequentFastPathFailure(t *testing.T) {
 	learning := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success"}
 	failure := &contracts.OutcomeRecord{IncidentId: "repeat", Classification: "failure", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: revision}}, ProgramFailureSignals: []string{"fast_path_failure:service-targetport-mismatch"}}
 	dispatcher := KubernetesJobDispatcher{ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: learning}, {IncidentID: "repeat", Record: failure}}}}
+	replayLoop, _ := trustedPortLoop(t, false, false, true)
+	dispatcher.LoopFactory = func(IncidentRequest) *ResponderLoop { return replayLoop }
+
 	trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: root, SourceCommit: commit})
 	state := trust["service-targetport-mismatch"]
 	if err != nil || state.Trusted || state.Failures != 1 || state.VerifiedSuccesses != 0 {
@@ -183,5 +197,40 @@ func TestLearningCreditCannotEraseSubsequentFastPathFailure(t *testing.T) {
 	}
 	if len(learning.ProgramRuns) != 0 || len(learning.PlanApplications) != 0 {
 		t.Fatal("trust projection rewrote immutable learning outcome")
+	}
+}
+
+type learningReplayDiagnoser struct{ fixed program.Result }
+
+func (p learningReplayDiagnoser) Spec() program.ProgramSpec { return (fastloopPortProgram{}).Spec() }
+func (p learningReplayDiagnoser) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	for _, service := range view.Services() {
+		if service.Name == bindings["service"].Name && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			return program.Verdict{Result: program.Match}, nil
+		}
+	}
+	return program.Verdict{Result: p.fixed}, nil
+}
+func TestLearningCreditRequiresCapturedBoundFixedNoMatch(t *testing.T) {
+	for _, fixed := range []program.Result{program.Unknown, program.Match, program.NoMatch} {
+		t.Run(string(fixed), func(t *testing.T) {
+			root, commit := learningTrustRepository(t)
+			p := learningReplayDiagnoser{fixed: fixed}
+			registry, err := program.NewRegistry([]program.Diagnoser{p}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatcher := KubernetesJobDispatcher{ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success"}}}}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
+				return NewResponderLoop(request, registry, nil, nil, PlanExecutor{}, 1)
+			}}
+			trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: root, SourceCommit: commit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := trust[p.Spec().ID]
+			if state.Trusted != (fixed == program.NoMatch) {
+				t.Fatalf("fixed %s credit %+v", fixed, state)
+			}
+		})
 	}
 }

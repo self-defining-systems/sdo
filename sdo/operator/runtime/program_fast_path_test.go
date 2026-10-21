@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"testing"
 	"time"
@@ -312,5 +313,28 @@ func TestTrustedProgramFastPathLeavesUnexplainedDriftToResponder(t *testing.T) {
 	loop.findings = []sdk.Finding{finding}
 	if attempt := loop.TryTrustedFastPath(context.Background(), 1); attempt.Attempted || attempt.Resolved {
 		t.Fatalf("unexplained drift bypassed responder: %+v", attempt)
+	}
+}
+
+func TestSuccessfulFastPathAddsBoundTrustCredit(t *testing.T) {
+	loop, _ := trustedPortLoop(t, false, true, true)
+	attempt := loop.TryTrustedFastPath(context.Background(), 3)
+	if !attempt.Resolved {
+		t.Fatalf("fast path failed: %+v", attempt)
+	}
+	result := fastPathResult(loop.Request, loop, attempt, time.Now())
+	fillProgramRevisions(context.Background(), result.ProgramRuns, loop.Request.RepositoryWorktree, loop.Request.SourceCommit)
+	message, err := incidentResultContract(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "tree-a", ProgramRuns: message.ProgramRuns, PlanApplications: message.PlanApplications, ProgramToolCalls: message.ProgramToolCalls}
+	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]
+	if state.VerifiedSuccesses != 1 || !state.Trusted {
+		t.Fatalf("successful fast path lost bound evidence: %+v calls=%+v", state, message.ProgramToolCalls)
+	}
+	outcome.Classification = "partial"
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]; state.Trusted || state.VerifiedSuccesses != 0 {
+		t.Fatalf("unverified fast path earned credit: %+v", state)
 	}
 }
