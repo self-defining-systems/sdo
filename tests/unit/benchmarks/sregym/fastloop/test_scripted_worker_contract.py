@@ -92,7 +92,7 @@ def test_scripted_reflector_accepts_real_program_propose_output(
     turn = scripted_worker.ScriptedReflector().resume(
         worktree=app,
         incident_id="scripted-incident",
-        closure=SimpleNamespace(request=SimpleNamespace(namespace="demo")),
+        closure=SimpleNamespace(request=SimpleNamespace(namespace="demo", drift_events=[])),
     )
 
     assert turn.learning_decision == "updated"
