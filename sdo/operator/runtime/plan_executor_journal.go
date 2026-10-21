@@ -2,7 +2,11 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	jsonpatch "github.com/evanphx/json-patch"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/sdk"
 )
 
 // Reconcile determines whether a write interrupted before its receipt reached
@@ -85,4 +89,43 @@ func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bo
 		return bok == lok && planValuesEqual(before, live)
 	}
 	return aok == lok && planValuesEqual(after, live)
+}
+
+// The existing PlanApplication contract persists pre-images and ordered merge
+// patches. Reconstruct field images from that journal when loading a completed
+// application through ProtoJSON, without expanding rollback ownership.
+func hydratePlanPatches(application PlanApplicationResult) (PlanApplicationResult, error) {
+	current := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	for _, image := range application.PreImages {
+		if image.Object != nil {
+			current[image.Ref] = image.Object.DeepCopy()
+		}
+	}
+	patches := append([]PlanPatch(nil), application.Patches...)
+	for i, patch := range patches {
+		if patch.Before == nil || patch.After == nil {
+			before := current[patch.Ref]
+			if before == nil {
+				return application, fmt.Errorf("missing field pre-image for %s/%s", patch.Ref.Kind, patch.Ref.Name)
+			}
+			from, err := json.Marshal(before.Object)
+			if err != nil {
+				return application, err
+			}
+			merged, err := jsonpatch.MergePatch(from, patch.Patch)
+			if err != nil {
+				return application, err
+			}
+			after := new(unstructured.Unstructured)
+			if err := json.Unmarshal(merged, &after.Object); err != nil {
+				return application, err
+			}
+			patch.Before = before.DeepCopy()
+			patch.After = after
+			patches[i] = patch
+		}
+		current[patch.Ref] = patch.After.DeepCopy()
+	}
+	application.Patches = patches
+	return application, nil
 }

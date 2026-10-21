@@ -256,6 +256,11 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 	if e.Client == nil {
 		return errors.New("plan object client is required")
 	}
+	hydrated, err := hydratePlanPatches(application)
+	if err != nil {
+		return err
+	}
+	application = hydrated
 	application.RollingBack = true
 	if e.Checkpoint != nil {
 		if err := e.Checkpoint(ctx, application); err != nil {

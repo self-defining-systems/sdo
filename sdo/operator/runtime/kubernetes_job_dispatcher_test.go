@@ -393,7 +393,7 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	if err != nil || deployment.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
 		t.Fatalf("failed relation verification left mutation: %+v %v", deployment, err)
 	}
-	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure") {
+	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure@tree-a") {
 		t.Fatalf("relation and trust evidence: %+v %+v", loop.fastPathRelationCoveredFindings, loop.FailureSignals())
 	}
 	cancel()

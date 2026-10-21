@@ -62,6 +62,9 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		summary := marker.Data["summary"]
 		if summary == "" {
 			summary = "previous trusted program fast path was interrupted before application"
+			if marker.Data["preimages"] != "" && marker.Data["application"] == "" {
+				summary = "previous trusted program fast path was interrupted; rollback requires missing field journal"
+			}
 		}
 		for i := range loop.applicationsLog {
 			entry := &loop.applicationsLog[i]
