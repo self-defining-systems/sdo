@@ -41,6 +41,8 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 
 When changing operational-memory formats or experiment result structures, update `.agents/skills/analyze-experiment/references/`. When moving production or benchmark boundaries, update `docs/architecture.md` (including its component map, artifact ownership matrix, and repository scope table).
 
+Experiment run outputs must stay outside this repository. Do not commit learned programs, generated detectors, cluster captures, corpora, worker results, or model-authored run files. Tests use minimal clearly synthetic fixtures or construct them at test time. Source app inputs are allowed.
+
 ## Validation after code edits
 
 ```bash

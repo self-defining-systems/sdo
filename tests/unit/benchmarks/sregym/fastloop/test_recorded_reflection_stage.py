@@ -233,9 +233,12 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
     }
     labels = json.loads((corpus / "labels.json").read_text())
     files = readme_files()
-    program = ROOT / "sdo/operator/runtime/testdata/direct_reflection/service-targetport-mismatch"
-    for path in sorted(program.glob("*.go")):
-        files[f".sdo/playbooks/service-targetport-mismatch/{path.name}"] = path.read_bytes()
+    # Reuse the kept hand-written program, its library, and its module definition.
+    for name in ("diagnose.go", "mitigate.go"):
+        path = fixture / "playbooks/service-targetport-mismatch" / name
+        files[f".sdo/playbooks/service-targetport-mismatch/{name}"] = path.read_bytes()
+    files[".sdo/lib/ports/ports.go"] = (fixture / "lib/ports/ports.go").read_bytes()
+    files[".sdo/diagnostics/go.mod"] = (fixture / "diagnostics/go.mod").read_bytes()
     labels["provenance"] = {
         "incident_id": _closure().request.incident_id,
         "open_at": "detect",

@@ -41,16 +41,16 @@ the fake Kubernetes API, source repairs, native controller and broker closure,
 real responder tool transport, captured corpus phases, direct file editing, shared memory checks
 and program compilation, and bounded worker result encoding without a cluster or LLM.
 The learned-program test runs the real CLI and broker, checks exact authored-tree acceptance,
-and requires identical rejection diagnostics for a README with a physical memory path. The recorded result
-fixtures under `sdo/operator/runtime/testdata/recorded_results/` replay real
-redacted worker envelopes through contract decoding and the native broker.
+and requires identical rejection diagnostics for a README with a physical memory path. Synthetic worker responses exercise contract decoding and the native broker.
+New replay fixtures are hand-written toy data or constructed during tests; experiment
+outputs stay outside the repository.
 
 Historical plumbing regressions have focused checks in the same suites:
 
 | Regression | Contract check |
 | --- | --- |
 | Pre-image persistence | `TestHermeticResponderProgramReuseThroughRealToolTransport` saves and reloads plan applications through a ConfigMap; `TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence` covers JSON round trips. |
-| Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestRecordedWorkerResultsReplayThroughContracts` rejects them in fixtures. |
+| Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestSyntheticWorkerResultsThroughContracts` covers typed worker envelopes; responder validation rejects physical tool evidence. |
 | Plan apply RBAC | `sdo/operator/install` tests check Service and Deployment get/patch grants. |
 | Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |
 | Capture size and timing | `sdo/operator/operatorcli` draft tests reject oversized captures; the responder loop checks detect, settle, and pre-apply snapshots. |

@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +10,6 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,64 +23,47 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-func TestLiveEvidenceTrustAndFastPathCoverage(t *testing.T) {
-	var fixture struct {
-		PriorOutcomes []json.RawMessage `json:"prior_outcomes"`
-		LiveIncident  struct {
-			Findings  []sdk.Finding     `json:"findings"`
-			MatchRuns []json.RawMessage `json:"match_runs"`
-			Snapshot  sdktest.Snapshot  `json:"snapshot"`
-		} `json:"live_incident"`
-	}
-	data, err := os.ReadFile("testdata/fast_path_live_evidence.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	outcomes := make([]*contracts.OutcomeRecord, 0, len(fixture.PriorOutcomes))
-	for _, raw := range fixture.PriorOutcomes {
-		outcome := new(contracts.OutcomeRecord)
-		if err := protojson.Unmarshal(raw, outcome); err != nil {
-			t.Fatal(err)
-		}
-		outcomes = append(outcomes, outcome)
+func TestSyntheticTrustAndFastPathCoverage(t *testing.T) {
+	// Invented outcomes and one Deployment/Service relation; no captured run data.
+	outcomes := []*contracts.OutcomeRecord{}
+	for range 3 {
+		outcomes = append(outcomes, &contracts.OutcomeRecord{Classification: "success", SourceCommit: "revision-a",
+			ProgramRuns:      []*contracts.ProgramRun{{ProgramId: "repair", ProgramRevision: "revision-a"}},
+			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"repair"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}}})
 	}
 	trust := ProgramTrustStats(outcomes, 3)
-	state := trust["health-objective-failure"]
-	if !state.Trusted || state.VerifiedSuccesses != 3 || state.Failures != 0 {
-		t.Fatalf("live successes did not establish trust: %+v", state)
+	if state := trust["repair"]; !state.Trusted || state.VerifiedSuccesses != 3 || state.Failures != 0 {
+		t.Fatalf("synthetic successes did not establish trust: %+v", state)
 	}
-	runs := make([]ProgramRun, 0, len(fixture.LiveIncident.MatchRuns))
-	for _, raw := range fixture.LiveIncident.MatchRuns {
-		message := new(contracts.ProgramRun)
-		if err := protojson.Unmarshal(raw, message); err != nil {
-			t.Fatal(err)
-		}
-		run := programRunState(message)
-		run.Verdict.Result = program.Match
-		runs = append(runs, run)
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	findings := []sdk.Finding{
+		{Fingerprint: "drift", PrimaryResource: ref},
+		{Fingerprint: "health", PrimaryResource: ref},
+		{Fingerprint: "service", PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}},
 	}
-	selected, related, reason := selectTrustedFastPathRuns(fixture.LiveIncident.Findings, runs, trust, 3, fixture.LiveIncident.Snapshot)
-	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != FindingFingerprint(fixture.LiveIncident.Findings[2]) || related[0].ProgramID != "health-objective-failure" || related[0].Bindings["affected"].Name != "profile" {
-		t.Fatalf("live incident eligibility: selected=%+v related=%+v reason=%q", selected, related, reason)
+	snapshot := sdktest.Snapshot{NamespaceName: "app",
+		DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}},
+		ServiceList:    []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}},
 	}
-	unrelated := append([]sdk.Finding(nil), fixture.LiveIncident.Findings...)
+	runs := []ProgramRun{}
+	for _, finding := range findings[:2] {
+		runs = append(runs, ProgramRun{ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: finding.Fingerprint,
+			Bindings: program.Bindings{"affected": ref}, Verdict: program.Verdict{Result: program.Match}})
+	}
+	selected, related, reason := selectTrustedFastPathRuns(findings, runs, trust, 3, snapshot)
+	if reason != "" || len(selected) != 1 || len(related) != 1 || related[0].FindingFingerprint != "service" || related[0].ProgramID != "repair" || related[0].Bindings["affected"] != ref {
+		t.Fatalf("related service: selected=%+v related=%+v reason=%q", selected, related, reason)
+	}
+	unrelated := append([]sdk.Finding(nil), findings...)
 	unrelated[2].PrimaryResource.Name = "other"
-	unrelated[2].Fingerprint = "other-service"
-	_, _, reason = selectTrustedFastPathRuns(unrelated, runs, trust, 3, fixture.LiveIncident.Snapshot)
+	_, _, reason = selectTrustedFastPathRuns(unrelated, runs, trust, 3, snapshot)
 	if reason != FastPathSkipUncoveredFinding {
 		t.Fatalf("unrelated Service skip = %q", reason)
 	}
-
-	// The same trusted diagnosis can be associated with a hint and a finding.
-	// Repeated observations of either association must not create ambiguity.
-	covered := fixture.LiveIncident.Findings[:2]
 	runs = append(runs, runs[0], runs[1])
-	selected, related, reason = selectTrustedFastPathRuns(covered, runs, trust, 3, fixture.LiveIncident.Snapshot)
-	if reason != "" || len(selected) != 1 || len(related) != 0 || selected[0].ProgramID != "health-objective-failure" {
-		t.Fatalf("equivalent matches should select one program: selected=%+v reason=%q", selected, reason)
+	selected, related, reason = selectTrustedFastPathRuns(findings[:2], runs, trust, 3, snapshot)
+	if reason != "" || len(selected) != 1 || len(related) != 0 {
+		t.Fatalf("equivalent matches: selected=%+v reason=%q", selected, reason)
 	}
 }
 
@@ -215,7 +195,7 @@ func TestTrustedFastPathPlansFromTheSettledMatchSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:broken"}}}}})}}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "hotel-reservation-1792598104937982241", Namespace: ref.Namespace, SourceCommit: "tree-a", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic-settled-match", Namespace: ref.Namespace, SourceCommit: "tree-a", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 	}

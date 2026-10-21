@@ -112,7 +112,7 @@ func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"image": "search:broken"}}}}})}}
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "hotel-reservation-1792598104937982241", Namespace: ref.Namespace, Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{loopDetector{finding: finding}}, PlanExecutor{Client: client}, 5)
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic-incident", Namespace: ref.Namespace, Findings: []sdk.Finding{finding}}, registry, provider, []sdk.Detector{loopDetector{finding: finding}}, PlanExecutor{Client: client}, 5)
 	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}

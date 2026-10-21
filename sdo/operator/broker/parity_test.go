@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 )
@@ -55,6 +56,11 @@ func copyParityTree(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, root, ".sdo/diagnostics/go.mod", string(module), 0644)
 	return root
 }
 
@@ -856,9 +862,7 @@ func copyParityChange(t *testing.T, source, target, name string) {
 func parityProgram(t *testing.T, root string) {
 	t.Helper()
 	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
-	if err := os.CopyFS(filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch"), os.DirFS("../runtime/testdata/direct_reflection/service-targetport-mismatch")); err != nil {
-		t.Fatal(err)
-	}
+	testutil.CopyPortProgram(t, root, fixture)
 	if err := os.CopyFS(filepath.Join(root, ".sdo/corpus/targetport-mismatch"), os.DirFS(filepath.Join(fixture, "corpus/targetport-mismatch"))); err != nil {
 		t.Fatal(err)
 	}

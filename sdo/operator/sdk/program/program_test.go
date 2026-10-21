@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/program/testdata/targetport"
@@ -148,5 +152,32 @@ func TestDetectorCannotUseLiveReadView(t *testing.T) {
 	findings, err := d.Detect(context.Background(), sdktest.Snapshot{})
 	if err != nil || len(findings) != 0 {
 		t.Fatalf("findings: %+v, %v", findings, err)
+	}
+}
+
+// Synthetic cases retain the matching/near-miss contract formerly bundled with a learned program.
+func TestExampleProgramSyntheticPortMatchesAndNearMisses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target intstr.IntOrString
+		noPods bool
+		want   program.Result
+	}{
+		{"numeric match", intstr.FromInt32(8080), false, program.NoMatch},
+		{"numeric mismatch", intstr.FromInt32(9999), false, program.Match},
+		{"named match", intstr.FromString("web"), false, program.NoMatch},
+		{"named mismatch", intstr.FromString("absent"), false, program.Match},
+		{"no selected pods", intstr.FromInt32(8080), true, program.Unknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snapshot := sdktest.Snapshot{NamespaceName: "demo", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "front", Namespace: "demo"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "front"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: tc.target}}}}}}
+			if !tc.noPods {
+				snapshot.PodList = []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "front-1", Namespace: "demo", Labels: map[string]string{"app": "front"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Ports: []corev1.ContainerPort{{Name: "web", ContainerPort: 8080}}}}}}}
+			}
+			got := program.RunDiagnose(context.Background(), targetport.Program{}, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{"service": serviceRef}, time.Second)
+			if got.Result != tc.want {
+				t.Fatalf("got %s, want %s", got.Result, tc.want)
+			}
+		})
 	}
 }

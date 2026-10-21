@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 )
@@ -351,8 +352,7 @@ func writeCapturedProgramCorpus(t *testing.T, root, capture, incidentID, program
 	}
 }
 
-// The program diagnosis comes from driftlive4; its replayable mitigation derives
-// the target port from selected pods. Kubernetes evidence is a hermetic fixture.
+// Hand-written program and toy snapshots exercise direct-edit publication without run outputs.
 func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 	ctx := context.Background()
 	operatorRoot, err := filepath.Abs("..")
@@ -369,6 +369,13 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 		t.Run(fmt.Sprintf("physical_path_%v", physical), func(t *testing.T) {
 			target := nativeRepository(t)
 			copyFastloopTree(t, "../memory/validate/testdata/good/.sdo", filepath.Join(target, ".sdo"))
+			module, err := os.ReadFile("../../../tests/fixtures/sdo/playbook_program_app/.sdo/diagnostics/go.mod")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(target, ".sdo/diagnostics/go.mod"), module, 0644); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.Chmod(filepath.Join(target, ".sdo/playbooks/base/scripts/fix.sh"), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -431,7 +438,7 @@ func TestReflectionLearnedProgramCLIAndBroker(t *testing.T) {
 			worker := RegisteredReflectionWorker{AgentID: "reflector", TaskType: reflectionTaskType(t), Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute}
 			worker.Executor = reflectionTaskExecutorFunc(func(ctx context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 				checkout := task.Workspace.CheckoutPath
-				copyFastloopTree(t, "testdata/direct_reflection/service-targetport-mismatch", filepath.Join(checkout, ".sdo/playbooks/service-targetport-mismatch"))
+				testutil.CopyPortProgram(t, checkout, "../../../tests/fixtures/sdo/playbook_program_app/.sdo")
 				writeCapturedProgramCorpus(t, checkout, capture, incidentID, "service-targetport-mismatch", "service", "Service", "demo", "front", "peer", "detect")
 				index := filepath.Join(checkout, ".sdo/playbooks/README.md")
 				data, err := os.ReadFile(index)
