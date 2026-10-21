@@ -203,8 +203,6 @@ func (l *ResponderLoop) RestoreInitialMatches(ctx context.Context) error {
 // RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
 // The caller starts this while the responder Job is being dispatched.
 func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
-	l.operationMu.Lock()
-	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	inconclusive := false
 	for _, run := range l.runs {
@@ -225,6 +223,8 @@ func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
 		return
 	case <-timer.C:
 	}
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.batches == 0 {

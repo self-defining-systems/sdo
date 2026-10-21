@@ -132,3 +132,38 @@ func TestPlanExecutorRollbackPreservesUnrelatedFieldsAndRejectsConflicts(t *test
 		})
 	}
 }
+
+type dryRunRejectingClient struct {
+	*planFakeClient
+	dryRuns int
+}
+
+func (c *dryRunRejectingClient) DryRunPatch(context.Context, sdk.ObjectRef, types.PatchType, []byte) error {
+	c.dryRuns++
+	return errors.New("admission dry-run denied")
+}
+func TestPlanExecutorChecksAdmissionBeforeAnyWrite(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	for _, dryRun := range []bool{false, true} {
+		client := &dryRunRejectingClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}}
+		executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+		_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}}, dryRun)
+		if err == nil || client.dryRuns != 1 || len(client.patches) != 0 {
+			t.Fatalf("admission bypass: dryRun=%t checks=%d writes=%d err=%v", dryRun, client.dryRuns, len(client.patches), err)
+		}
+	}
+}
+func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})}}, failRollback: true}
+	loop := recoveryLoop(t, client)
+	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}, program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8081}}}}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"two-actions"}})
+	if response.Error == "" || response.ApplicationID == "" {
+		t.Fatalf("lost partial rollback handle: %+v", response)
+	}
+	entry := loop.PlanApplications()[0]
+	if !entry.Result.Applied || entry.Result.RollbackError == "" || !entry.Result.RollingBack {
+		t.Fatalf("lost recovery state: %+v", entry)
+	}
+}

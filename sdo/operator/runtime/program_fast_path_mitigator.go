@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	policyv1 "k8s.io/api/policy/v1"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -59,6 +62,19 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 		// Each accessor returns defensive copies. Timed-out executions keep only this
 		// private snapshot and read capabilities, never maps owned by ResponderLoop.
 		snapshot := sdktest.Snapshot{NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(), PodList: view.Pods(), DeploymentList: view.Deployments(), ReplicaSetList: view.ReplicaSets(), EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(), EventList: view.Events()}
+		if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
+			snapshot.StatefulSetList = extended.StatefulSets()
+		}
+		if extended, ok := view.(interface {
+			HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+		}); ok {
+			snapshot.HPAList = extended.HorizontalPodAutoscalers()
+		}
+		if extended, ok := view.(interface {
+			PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+		}); ok {
+			snapshot.PDBList = extended.PodDisruptionBudgets()
+		}
 		isolated := mitigationReadView{Snapshot: snapshot, ctx: ctx, live: view}
 		plan, err := p.Mitigate(ctx, isolated, bindings)
 		if err == nil {
