@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/sdk/program"
@@ -235,5 +236,49 @@ func TestFastPathTrustFailureInputRestoresProgramsAndSignals(t *testing.T) {
 	empty := NewResponderLoop(IncidentRequest{}, nil, nil, nil, PlanExecutor{}, 1)
 	if err := empty.restoreFastPathTrustFailureSignals(`["fast_path_failure:targetport@revision-a","invalid"]`); err == nil || len(empty.FailureSignals()) != 0 {
 		t.Fatalf("malformed trust input partially restored: %v %v", empty.FailureSignals(), err)
+	}
+}
+
+func TestProgramTrustRejectsDiagnosisFromDifferentAPIGroup(t *testing.T) {
+	outcome := boundTrustOutcome(t, "application-1", "success", program.NoMatch)
+	outcome.ProgramToolCalls[1].ResponseJson = strings.ReplaceAll(outcome.ProgramToolCalls[1].ResponseJson, `"api_version":"v1"`, `"api_version":"other.example/v1"`)
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+		t.Fatalf("different API group earned binding trust: %+v", got)
+	}
+}
+
+func TestProgramTrustConsumesRealResponderApplyEvidence(t *testing.T) {
+	loop, _ := trustedPortLoop(t, false, false, true)
+	run := loop.ProgramRuns()[0]
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: run.ProgramID, Bindings: run.Bindings})
+	if planned.Error != "" || planned.PlanID == "" {
+		t.Fatalf("plan failed: %+v", planned)
+	}
+	applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if applied.Error != "" || !applied.Healthy {
+		t.Fatalf("apply failed: %+v", applied)
+	}
+	outcome := &contracts.OutcomeRecord{SourceCommit: "tree-a", Classification: "success"}
+	for _, run := range loop.ProgramRuns() {
+		run.ProgramRevision = "tree-a"
+		outcome.ProgramRuns = append(outcome.ProgramRuns, programRunContract(run))
+	}
+	for _, entry := range loop.PlanApplications() {
+		application, err := entry.Result.Proto()
+		if err != nil {
+			t.Fatal(err)
+		}
+		application.ApplicationId, application.ProgramIds, application.CompletedAt = entry.ID, entry.ProgramIDs, timestamppb.New(entry.CompletedAt)
+		outcome.PlanApplications = append(outcome.PlanApplications, application)
+	}
+	for _, call := range loop.ToolCalls() {
+		outcome.ProgramToolCalls = append(outcome.ProgramToolCalls, toolCallContract(call))
+	}
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; !got.Trusted || got.VerifiedSuccesses != 1 {
+		t.Fatalf("real successful apply earned no trust: %+v", got)
+	}
+	outcome.Classification = "partial"
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; got.Trusted || got.VerifiedSuccesses != 0 {
+		t.Fatalf("real locally green apply in controller-failed outcome earned trust: %+v", got)
 	}
 }
