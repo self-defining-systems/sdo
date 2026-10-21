@@ -19,12 +19,58 @@ class GoSourceDraft(ArtifactDraft):
 class WatchDraft(ArtifactDraft):
     api_version: str = Field(min_length=1)
     kind: str = Field(min_length=1)
-    namespace: str = ""
+
+
+class TrafficSLODraft(ArtifactDraft):
+    window: int | None = None
+    min_samples: int | None = None
+    max_age: str | None = None
+    max_error_rate: float | None = None
+    max_timeout_rate: float | None = None
+    latency_percentile: int | None = None
+    max_latency: str | None = None
+
+
+class TrafficScenarioDraft(ArtifactDraft):
+    id: str
+    weight: int = 0
+    slo: TrafficSLODraft | None = None
+
+
+class TrafficLinkDraft(ArtifactDraft):
+    from_: str = Field(alias="from")
+    to: str
+    port: int
+    protocol: str = ""
+
+
+class TrafficWorkloadDraft(ArtifactDraft):
+    api_version: str
+    kind: str
+    name: str
+    description: str = ""
+    purpose: str
+    arrival: str = ""
+    rate_per_second: float = 0
+    duration: str | None = None
+    timeout: str = ""
+    iteration_timeout: str = ""
+    seed: int = 0
+    slo: TrafficSLODraft | None = None
+    scenarios: list[TrafficScenarioDraft] = Field(default_factory=list)
+    links: list[TrafficLinkDraft] = Field(default_factory=list)
+    interval: str | None = None
+    failures: int | None = None
 
 
 class ScriptDraft(ArtifactDraft):
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]*\.sh$")
     content: str = Field(min_length=1)
+
+
+class TrafficGeneratorDraft(ArtifactDraft):
+    id: str
+    sources: list[GoSourceDraft] = Field(default_factory=list)
 
 
 class CorpusBindingDraft(ArtifactDraft):
@@ -104,13 +150,23 @@ class PlaybookDraft(ArtifactDraft):
 class OperationalArtifactDraft(ArtifactDraft):
     detectors: list[DetectorDraft] = Field(default_factory=list)
     playbooks: list[PlaybookDraft] = Field(default_factory=list)
+    traffic_generators: list[TrafficGeneratorDraft] = Field(default_factory=list)
+    traffic_workloads: list[TrafficWorkloadDraft] = Field(default_factory=list)
     libraries: list[LibraryDraft] = Field(default_factory=list)
     delete_detector_ids: list[str] = Field(default_factory=list)
     delete_playbook_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def require_mutation(self) -> OperationalArtifactDraft:
-        if not (self.detectors or self.playbooks or self.delete_detector_ids or self.delete_playbook_ids):
+        if not (
+            self.detectors
+            or self.playbooks
+            or self.traffic_generators
+            or self.traffic_workloads
+            or self.libraries
+            or self.delete_detector_ids
+            or self.delete_playbook_ids
+        ):
             raise ValueError("artifact proposal must contain at least one logical mutation")
         return self
 
@@ -118,6 +174,8 @@ class OperationalArtifactDraft(ArtifactDraft):
         return [
             *(item.id for item in self.detectors),
             *(item.id for item in self.playbooks),
+            *(item.id for item in self.traffic_generators),
+            *(item.name for item in self.traffic_workloads),
             *self.delete_detector_ids,
             *self.delete_playbook_ids,
         ]
