@@ -607,6 +607,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         skipped_reasons: list[str] = []
         paths: list[str] = []
         fast_programs: list[str] = []
+        relation_covered: list[dict[str, Any]] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             if not receipt and item.get("fallback_usage"):
@@ -635,6 +636,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if metrics["resolution_path"] is not None:
                 paths.append(metrics["resolution_path"])
             fast_programs.extend(metrics["fast_path_programs"])
+            relation_covered.extend(metrics["fast_path_relation_covered_findings"])
             reasons.extend(metrics["match_reasons"])
             binding_sources.extend(metrics["binding_sources"])
             if metrics["fast_path_skipped_reason"]:
@@ -683,6 +685,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if paths
             else None,
             fast_path_programs=tuple(dict.fromkeys(fast_programs)),
+            fast_path_relation_covered_findings=tuple(relation_covered),
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

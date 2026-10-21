@@ -133,6 +133,7 @@ class IncidentRecord(_PersistedModel):
     reflection_skipped_reason: str | None = None
     resolution_path: str | None = None
     fast_path_programs: list[str] = Field(default_factory=list)
+    fast_path_relation_covered_findings: list[dict[str, Any]] = Field(default_factory=list)
     fast_path_skipped_reason: str | None = None
     closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = Field(default_factory=dict)

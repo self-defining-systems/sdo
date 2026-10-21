@@ -189,6 +189,9 @@ def _program_metrics(result: dict[str, Any], memory_reasons: tuple[str, ...] = (
         if result.get("resolution_path") in ("fast_path", "responder")
         else None,
         "fast_path_programs": tuple(str(item) for item in result.get("fast_path_programs", []) or []),
+        "fast_path_relation_covered_findings": tuple(
+            item for item in result.get("fast_path_relation_covered_findings", []) or [] if isinstance(item, dict)
+        ),
         "fast_path_skipped_reason": result.get("fast_path_skipped_reason") or None,
         "match_reasons": tuple(dict.fromkeys(match_reasons)),
         "binding_sources": tuple(dict.fromkeys(binding_sources)),
