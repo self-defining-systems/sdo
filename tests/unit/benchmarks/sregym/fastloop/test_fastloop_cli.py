@@ -149,6 +149,65 @@ def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
 
     assert normal.time_scale == 1.0
     assert fast.time_scale == 0.1
+    from benchmarks.sregym.fastloop.cli import _composite_settings
+
+    settings = _composite_settings(fast)
+    assert settings.deadline_seconds == pytest.approx(fast.composite_deadline * 0.1)
+    assert settings.idle_seconds == pytest.approx(fast.composite_idle * 0.1)
+    assert settings.stable_seconds == pytest.approx(2.0)
+    assert settings.poll_seconds == pytest.approx(0.2)
+
+
+def test_program_fast_path_is_explicit_and_defaults_off() -> None:
+    ordinary = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
+    enabled = build_parser().parse_args(
+        ["run", "--run-dir", "x", "--agent", "sdo", "--program-fast-path", "--program-trust-threshold", "4"]
+    )
+    assert ordinary.program_fast_path is False
+    assert ordinary.program_trust_threshold == 3
+    assert enabled.program_fast_path is True
+    assert enabled.program_trust_threshold == 4
+
+
+def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(cli.time, "sleep", sleeps.append)
+
+    cli._scaled_clock(0.1).sleep(1.0)
+
+    assert sleeps == [0.1]
+
+
+def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=tmp_path / "private",
+    ).save()
+    checked: list[list[str]] = []
+
+    def missing_secret(args: list[str], **_kwargs: object) -> SimpleNamespace:
+        checked.append(args)
+        return SimpleNamespace(
+            returncode=1, stderr='Error from server (NotFound): secrets "sdo-agent-credentials" not found'
+        )
+
+    monkeypatch.setattr(cli, "kubectl", missing_secret)
+    monkeypatch.setattr(cli, "_worker", lambda _environment: pytest.fail("worker started before credential preflight"))
+
+    with pytest.raises(SystemExit, match="credentials Secret.*sdo-agent-credentials.*missing"):
+        main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+
+    assert checked == [["get", "secret", "sdo-agent-credentials"]]
 
 
 def test_detection_timeout_reaches_single_and_composite_sdo_stages(
@@ -338,6 +397,7 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
         return object()
 
     monkeypatch.setattr(cli, "_worker", lambda _env: Worker())
+    monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "SregymFaultDriver", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])

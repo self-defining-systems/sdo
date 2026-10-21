@@ -201,6 +201,11 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
     for event in request.drift_events:
         if event.investigation_verdict != "bug" or event.ref.kind != "Service":
             continue
+        if not any(
+            finding.detector_id == "drift/investigator" and finding.primary_resource == event.ref
+            for finding in request.findings
+        ):
+            continue
         ref = event.ref.model_dump(mode="json")
         action_start = _now()
         _patch_from_source(request, ref)

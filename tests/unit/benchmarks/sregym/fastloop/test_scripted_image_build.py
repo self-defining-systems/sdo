@@ -9,6 +9,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[5]
 
 
+def test_runtime_and_validator_images_carry_the_prebuilt_go_cache() -> None:
+    runtime = (ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
+    validator = (ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
+    assert "COPY --from=go-runtime /go/build-cache /opt/sdo/go-build-cache" in runtime
+    assert "SDO_GO_CACHE_SEED=/opt/sdo/go-build-cache" in runtime
+    assert "SDO_GO_CACHE_SEED=/go/build-cache" in validator
+
+
 def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

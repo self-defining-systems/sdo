@@ -2187,6 +2187,7 @@ type IncidentRequest struct {
 	InitialProgramRuns   []*ProgramRun              `protobuf:"bytes,21,rep,name=initial_program_runs,json=initialProgramRuns,proto3" json:"initial_program_runs,omitempty"`
 	MaxResponseLoops     int32                      `protobuf:"varint,22,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
 	DriftEvents          []*DriftEvent              `protobuf:"bytes,23,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
+	FastPathSummary      string                     `protobuf:"bytes,24,opt,name=fast_path_summary,json=fastPathSummary,proto3" json:"fast_path_summary,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -2366,6 +2367,13 @@ func (x *IncidentRequest) GetDriftEvents() []*DriftEvent {
 		return x.DriftEvents
 	}
 	return nil
+}
+
+func (x *IncidentRequest) GetFastPathSummary() string {
+	if x != nil {
+		return x.FastPathSummary
+	}
+	return ""
 }
 
 type RootCauseEvidence struct {
@@ -2954,6 +2962,8 @@ type IncidentResult struct {
 	ResponseLoopsUsed     int32                   `protobuf:"varint,19,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
 	ResponseLoopExhausted bool                    `protobuf:"varint,20,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
 	ProgramFailureSignals []string                `protobuf:"bytes,21,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
+	ResolutionPath        string                  `protobuf:"bytes,22,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
+	FastPathPrograms      []string                `protobuf:"bytes,23,rep,name=fast_path_programs,json=fastPathPrograms,proto3" json:"fast_path_programs,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -3131,6 +3141,20 @@ func (x *IncidentResult) GetResponseLoopExhausted() bool {
 func (x *IncidentResult) GetProgramFailureSignals() []string {
 	if x != nil {
 		return x.ProgramFailureSignals
+	}
+	return nil
+}
+
+func (x *IncidentResult) GetResolutionPath() string {
+	if x != nil {
+		return x.ResolutionPath
+	}
+	return ""
+}
+
+func (x *IncidentResult) GetFastPathPrograms() []string {
+	if x != nil {
+		return x.FastPathPrograms
 	}
 	return nil
 }
@@ -3838,7 +3862,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11traffic_workloads\x18\x04 \x03(\v2*.sdodev.contracts.v1alpha1.TrafficWorkloadR\x10trafficWorkloads\x12.\n" +
 	"\x13delete_detector_ids\x18\x05 \x03(\tR\x11deleteDetectorIds\x12.\n" +
 	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds\x12H\n" +
-	"\tlibraries\x18\a \x03(\v2*.sdodev.contracts.v1alpha1.ProposedLibraryR\tlibraries\"\xec\v\n" +
+	"\tlibraries\x18\a \x03(\v2*.sdodev.contracts.v1alpha1.ProposedLibraryR\tlibraries\"\x98\f\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -3863,7 +3887,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0fmemory_snapshot\x18\x14 \x01(\v24.sdodev.contracts.v1alpha1.OperationalMemorySnapshotR\x0ememorySnapshot\x12W\n" +
 	"\x14initial_program_runs\x18\x15 \x03(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\x12initialProgramRuns\x12,\n" +
 	"\x12max_response_loops\x18\x16 \x01(\x05R\x10maxResponseLoops\x12H\n" +
-	"\fdrift_events\x18\x17 \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEventsJ\x04\b\v\x10\fJ\x04\b\f\x10\rR\x19architecture_summary_pathR\x15health_objective_path\"\xbf\x01\n" +
+	"\fdrift_events\x18\x17 \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12*\n" +
+	"\x11fast_path_summary\x18\x18 \x01(\tR\x0ffastPathSummaryJ\x04\b\v\x10\fJ\x04\b\f\x10\rR\x19architecture_summary_pathR\x15health_objective_path\"\xbf\x01\n" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +
@@ -3933,7 +3958,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
 	"reversible:n\xbaHk\x1ai\n" +
-	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x9c\r\n" +
+	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x92\x0e\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12(\n" +
@@ -3958,7 +3983,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11plan_applications\x18\x12 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\x10planApplications\x12.\n" +
 	"\x13response_loops_used\x18\x13 \x01(\x05R\x11responseLoopsUsed\x126\n" +
 	"\x17response_loop_exhausted\x18\x14 \x01(\bR\x15responseLoopExhausted\x126\n" +
-	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
+	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12F\n" +
+	"\x0fresolution_path\x18\x16 \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\tfast_pathR\tresponderR\x0eresolutionPath\x12,\n" +
+	"\x12fast_path_programs\x18\x17 \x03(\tR\x10fastPathPrograms:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
 	"\x15_responder_session_idB\b\n" +
 	"\x06_error\"\xbd\x01\n" +

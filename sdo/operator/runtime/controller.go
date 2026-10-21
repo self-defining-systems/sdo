@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -874,7 +875,7 @@ func (c *Controller) detectorOrigins() map[string]string {
 
 func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) IncidentRequest {
 	incidentID := fmt.Sprintf("%s-%d", c.config.Application, now.UnixNano())
-	driftEvents := append([]sdk.DriftEvent(nil), c.driftEvents...)
+	driftEvents := driftEventsForFindings(c.driftEvents, findings)
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
@@ -889,6 +890,36 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 		CancellationToken: "cancel-" + incidentID,
 		RepairPolicy:      c.config.RepairPolicy,
 	}
+}
+
+func driftEventsForFindings(history []sdk.DriftEvent, findings []sdk.Finding) []sdk.DriftEvent {
+	events := make([]sdk.DriftEvent, 0)
+	seen := make(map[string]bool)
+	for _, finding := range findings {
+		if finding.Status != sdk.FindingActive {
+			continue
+		}
+		encoded, err := json.Marshal(finding.Metadata["drift_event"])
+		if err != nil || string(encoded) == "null" {
+			continue
+		}
+		var linked sdk.DriftEvent
+		if err := json.Unmarshal(encoded, &linked); err != nil {
+			continue
+		}
+		key := driftEventKey(linked) + "\x00" + linked.ObservedAt.Format(time.RFC3339Nano)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, event := range history {
+			if event.Ref == linked.Ref && event.ObservedAt.Equal(linked.ObservedAt) && driftEventKey(event) == driftEventKey(linked) {
+				linked = event
+			}
+		}
+		events = append(events, linked)
+	}
+	return events
 }
 
 func compactDetectorHistory(history []DetectorEvaluation) []DetectorEvaluation {

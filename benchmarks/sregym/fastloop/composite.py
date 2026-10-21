@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import (
     ClosureFailedError,
+    DetectionMissError,
     DetectorReviewRequiredError,
     PersistentControllerError,
     PersistentState,
@@ -35,7 +36,6 @@ from benchmarks.sregym.adapter import (
     drain_pending_incident,
     pause_controller,
 )
-from benchmarks.sregym.adapter.persistent import DetectionMissError
 from benchmarks.sregym.fastloop.fault_tracker import (
     BackgroundPoller,
     FaultSpec,
@@ -368,6 +368,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
                 self._incidents.append(
                     {"incident_id": followup["incident_id"], "receipt_dir": str(receipt_dir), "outcome": outcomes[-1]}
                 )
+        except Exception:
+            logger.exception("composite %s failed before completion", problem_id)
+            raise
         finally:
             sampler_stop.set()
             sampler.join(timeout=30)
@@ -375,10 +378,14 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if "poll_start" in marks:
                 poller.__exit__(None, None, None)
             try:
-                if stop_reason in {"detector_review_required", "no_closure_within_deadline", "closure_failed"}:
+                if injected and stop_reason in {
+                    "detector_review_required",
+                    "no_closure_within_deadline",
+                    "closure_failed",
+                }:
                     # The controller stopped itself; nothing will acknowledge a pause.
                     self._ops.set_maintenance(control, paused=True, generation=f"composite-{index:03d}-wedged")
-                else:
+                elif injected:
                     pause_controller(self._ops, control, label=f"composite-{index:03d}", clock=self._clock)
             except Exception:
                 logger.exception("could not pause the controller after the composite")
@@ -583,7 +590,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
         usage = TokenCounts()
         reflection = TokenCounts()
         attempts = 0
-        from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+        from benchmarks.sregym.fastloop.sdo_agent import _program_metrics, _receipt_closure_fields
 
         diagnoses = 0
         calls = 0
@@ -594,6 +601,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
         reasons: list[str] = []
         receipts_seen = 0
         rebuild_verified = None
+        closure_phases: dict[str, float] = {}
+        skipped_reasons: list[str] = []
+        paths: list[str] = []
+        fast_programs: list[str] = []
         for item in self._incidents:
             receipt = self._receipt(Path(item["receipt_dir"]))
             if not receipt and item.get("fallback_usage"):
@@ -604,6 +615,11 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if not receipt:
                 continue
             receipts_seen += 1
+            phases, skipped = _receipt_closure_fields(receipt)
+            for name, seconds in phases.items():
+                closure_phases[name] = closure_phases.get(name, 0.0) + seconds
+            if skipped:
+                skipped_reasons.append(skipped)
             ledger = receipt.get("native_ledger")
             ledger = ledger if isinstance(ledger, dict) else {}
             for rollout in ledger.get("rollout_receipts") or []:
@@ -614,6 +630,9 @@ class CompositeSdoAgent(SdoPersistentAgent):
             outcome_document = ledger.get("outcome_document")
             outcome_document = outcome_document if isinstance(outcome_document, dict) else {}
             metrics = _program_metrics(outcome_document)
+            if metrics["resolution_path"] is not None:
+                paths.append(metrics["resolution_path"])
+            fast_programs.extend(metrics["fast_path_programs"])
             diagnoses += metrics["program_diagnoses"] or 0
             calls += metrics["program_tool_calls"] or 0
             loops += metrics["response_loops_used"] or 0
@@ -639,6 +658,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
             reflection_attempts=attempts,
+            reflection_skipped_reason="; ".join(dict.fromkeys(skipped_reasons)) or None,
+            closure_phase_seconds=closure_phases,
             reflection_seconds=self._reflection_drain_seconds + self._clock.monotonic() - started,
             reflection_started_at=self._reflection_started_at or observed_at,
             reflection_finished_at=self._clock.now(),
@@ -648,6 +669,12 @@ class CompositeSdoAgent(SdoPersistentAgent):
             program_tool_calls=calls,
             tool_commands=commands,
             response_loops_used=loops,
+            resolution_path="fast_path"
+            if paths and all(path == "fast_path" for path in paths)
+            else "responder"
+            if paths
+            else None,
+            fast_path_programs=tuple(dict.fromkeys(fast_programs)),
             error="; ".join(filter(None, [outcome.error, error])) or None,
         )
 

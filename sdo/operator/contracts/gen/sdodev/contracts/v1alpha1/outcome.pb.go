@@ -56,6 +56,8 @@ type OutcomeRecord struct {
 	ResponseLoopsUsed        int32                    `protobuf:"varint,27,opt,name=response_loops_used,json=responseLoopsUsed,proto3" json:"response_loops_used,omitempty"`
 	ResponseLoopExhausted    bool                     `protobuf:"varint,28,opt,name=response_loop_exhausted,json=responseLoopExhausted,proto3" json:"response_loop_exhausted,omitempty"`
 	DriftEvents              []*DriftEvent            `protobuf:"bytes,29,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
+	ResolutionPath           string                   `protobuf:"bytes,30,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
+	FastPathPrograms         []string                 `protobuf:"bytes,31,rep,name=fast_path_programs,json=fastPathPrograms,proto3" json:"fast_path_programs,omitempty"`
 	unknownFields            protoimpl.UnknownFields
 	sizeCache                protoimpl.SizeCache
 }
@@ -289,6 +291,20 @@ func (x *OutcomeRecord) GetResponseLoopExhausted() bool {
 func (x *OutcomeRecord) GetDriftEvents() []*DriftEvent {
 	if x != nil {
 		return x.DriftEvents
+	}
+	return nil
+}
+
+func (x *OutcomeRecord) GetResolutionPath() string {
+	if x != nil {
+		return x.ResolutionPath
+	}
+	return ""
+}
+
+func (x *OutcomeRecord) GetFastPathPrograms() []string {
+	if x != nil {
+		return x.FastPathPrograms
 	}
 	return nil
 }
@@ -661,7 +677,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xb1\x0f\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xa7\x10\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12(\n" +
 	"\vincident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -695,7 +711,9 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x17program_failure_signals\x18\x1a \x03(\tR\x15programFailureSignals\x12.\n" +
 	"\x13response_loops_used\x18\x1b \x01(\x05R\x11responseLoopsUsed\x126\n" +
 	"\x17response_loop_exhausted\x18\x1c \x01(\bR\x15responseLoopExhausted\x12H\n" +
-	"\fdrift_events\x18\x1d \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEventsB\x10\n" +
+	"\fdrift_events\x18\x1d \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12F\n" +
+	"\x0fresolution_path\x18\x1e \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\tfast_pathR\tresponderR\x0eresolutionPath\x12,\n" +
+	"\x12fast_path_programs\x18\x1f \x03(\tR\x10fastPathProgramsB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commit\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +

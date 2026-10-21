@@ -70,10 +70,12 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     GOMAXPROCS=2 \
     GOFLAGS="-mod=mod -p=2" \
     CGO_ENABLED=0 \
+    SDO_GO_CACHE_SEED=/opt/sdo/go-build-cache \
     SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs
 COPY --from=go-runtime /usr/local/go /usr/local/go
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-runtime /go/pkg/mod /go/pkg/mod
+COPY --from=go-runtime /go/build-cache /opt/sdo/go-build-cache
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 COPY examples/playbook-programs /opt/sdo/examples/playbook-programs

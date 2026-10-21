@@ -27,8 +27,9 @@ uv run python -m benchmarks.sregym.fastloop run \
 ```
 
 `--time-scale` defaults to 1. It scales controller detector intervals, finding
-debounce, drift baseline settle, diagnosis settle, verification waits, and the
-fastloop reflection wait. `--continue-on-error` records a failed incident and
+debounce, drift baseline settle, diagnosis settle, verification waits, the
+fastloop reflection wait, controller and fault-gate polling, recovery health
+polling, and composite stability and deadline waits. `--continue-on-error` records a failed incident and
 moves on only when recovery has passed its oracle. A new dev lane uses the
 `fastloop-dev-w` cluster prefix; choose another prefix if that name is taken.
 

@@ -39,6 +39,8 @@ type Config struct {
 	RepairPolicy, AgentProvider                             string
 	ReflectionSession, ReflectionGuidance                   string
 	ForceReflection                                         bool
+	ProgramFastPath                                         bool
+	ProgramTrustThreshold                                   int
 	LateFindings                                            string
 	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
 	HealthyBaseline                                         bool
@@ -166,6 +168,12 @@ func (c Config) validate() error {
 	}
 	if c.MaxFollowUps < 0 || c.FollowUpCooldownSeconds < 0 || c.MaxResponseLoops < 0 {
 		return errors.New("follow-up limits cannot be negative")
+	}
+	if c.ProgramTrustThreshold < 0 {
+		return errors.New("program trust threshold cannot be negative")
+	}
+	if c.ProgramFastPath && c.RepairPolicy != "recorded-actions" {
+		return errors.New("program fast path requires recorded-actions repair policy")
 	}
 	for _, arg := range c.ExtraControllerArgs {
 		if strings.Contains(arg, "broker-mode") || strings.Contains(arg, "worker-mount-mode") || strings.HasPrefix(arg, "--broker-arg") {
@@ -357,6 +365,12 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
 	}
+	if c.ProgramFastPath {
+		args = append(args, "--program-fast-path")
+	}
+	if c.ProgramTrustThreshold > 0 {
+		args = append(args, "--program-trust-threshold", fmt.Sprint(c.ProgramTrustThreshold))
+	}
 	if c.RepairPolicy != "" {
 		args = append(args, "--repair-policy", c.RepairPolicy)
 	}
@@ -425,7 +439,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
 			{Name: "GOTMPDIR", Value: "/workspace/.sdo-runtime/build/go-tmp"},
 			{Name: "GOCACHE", Value: "/workspace/.sdo-runtime/build/go-cache"},
-			{Name: "SDO_GO_CACHE_SEED", Value: "/opt/sdo/go-build-cache"},
+			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},
 			{Name: "SDO_CONTROLLER_JOB", Value: ControllerJobName},
 			{Name: "SDO_CONTROLLER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},

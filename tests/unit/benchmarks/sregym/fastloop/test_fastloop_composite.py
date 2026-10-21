@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -261,11 +261,15 @@ def _agent(
             return None
         return {"metadata": {"generation": 1}, "spec": {"replicas": 1}, "status": {"observedGeneration": 1}}
 
+    def run_lifecycle(_received: DeployedLifecycleContext) -> bool:
+        ops.install(replace(settings.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
     return CompositeSdoAgent(
         settings,
         ops=ops,
         lifecycle_inputs=lambda: DeployedLifecycle(fingerprint="fp", context=context),
-        run_lifecycle=lambda received: True,
+        run_lifecycle=run_lifecycle,
         clock=_clock(),
         reader=reader,
         report_dir=tmp_path / "reports",
@@ -295,6 +299,45 @@ def test_controller_keeps_serving_until_every_fault_is_resolved(tmp_path: Path) 
     assert outcome.warm_path is True
     assert "cause of incident-1" in outcome.diagnosis
     assert "cause of incident-2" in outcome.diagnosis
+
+
+def test_composite_row_carries_closure_phases_and_reflection_skip(tmp_path: Path) -> None:
+    ops = FakeOps(second_incident=False)
+    collect = ops.collect_receipt
+
+    def receipt(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+        result = collect(config, incident_id, artifacts_dir)
+        result["reflection_skipped_reason"] = "verified repeat"
+        result["native_ledger"] = {
+            "closure_phase_timestamps": {
+                "closure_start": "2026-10-01T12:00:00Z",
+                "broker_commit": "2026-10-01T12:00:02Z",
+            }
+        }
+        return result
+
+    ops.collect_receipt = receipt  # type: ignore[method-assign]
+    agent = _agent(tmp_path, ops)
+
+    learned = agent.learn(agent.resolve(0, PROBLEM, _inject))
+
+    assert learned.reflection_skipped_reason == "verified repeat"
+    assert learned.closure_phase_seconds == {"broker_commit": 2.0}
+
+
+def test_lifecycle_failure_before_injection_skips_pause_and_logs_cause(tmp_path: Path, caplog: Any) -> None:
+    ops = FakeOps()
+    agent = _agent(tmp_path, ops)
+
+    def fail_lifecycle(_context: DeployedLifecycleContext) -> bool:
+        raise RuntimeError("lifecycle fixture failed")
+
+    agent._run_lifecycle = fail_lifecycle
+    with pytest.raises(RuntimeError, match="lifecycle fixture failed"):
+        agent.resolve(0, PROBLEM, _inject)
+
+    assert ops.maintenance == []
+    assert "lifecycle fixture failed" in caplog.text
 
 
 def test_composite_detection_miss_stays_a_detection_miss(tmp_path: Path) -> None:

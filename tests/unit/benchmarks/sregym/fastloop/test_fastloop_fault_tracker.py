@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,25 @@ from benchmarks.sregym.fastloop.fault_tracker import (
     stream_faults,
 )
 from benchmarks.sregym.fastloop.stream import load_stream
+
+
+def test_fault_description_uses_the_deployed_application_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from benchmarks.sregym.fastloop import fault_tracker
+
+    source = tmp_path / "application_workspace"
+
+    def run(_command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert kwargs["env"]["SREGYM_APP_SOURCE_DIR"] == str(source)
+        return subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"paired": [{"kind": "target_port", "component": "geo"}]})
+        )
+
+    monkeypatch.setattr(fault_tracker.subprocess, "run", run)
+    assert describe_sregym_faults(("paired",), sregym_dir=tmp_path, app_source_dir=source) == {
+        "paired": (fault_tracker.FaultSpec("target_port", "geo"),)
+    }
 
 
 class _Clock:

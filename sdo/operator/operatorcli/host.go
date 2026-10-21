@@ -66,6 +66,8 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
@@ -153,6 +155,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,

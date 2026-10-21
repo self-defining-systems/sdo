@@ -41,7 +41,7 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			Resources: refs, Summary: "applied program plan " + strings.Join(application.ProgramIDs, ", "),
 			Details:   fmt.Sprintf("controller applied %d plan actions in %s", len(application.Result.ActionsApplied), application.ID),
 			StartedAt: application.StartedAt, CompletedAt: application.CompletedAt,
-			Success: true, Reversible: len(application.Result.PreImages) >= len(refs),
+			Success: !application.RolledBack && application.RollbackError == "", Reversible: len(application.Result.PreImages) >= len(refs),
 		})
 	}
 	return result

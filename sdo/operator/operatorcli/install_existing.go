@@ -53,6 +53,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
@@ -105,12 +107,16 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *duration < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return InstallExistingConfig{}, errors.New("controller timeouts must be positive")
 	}
+	if *programTrustThreshold < 1 {
+		return InstallExistingConfig{}, errors.New("program trust threshold must be positive")
+	}
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		LateFindings:    *lateFindings,
 		HealthyBaseline: *healthyBaseline,
 		TimeoutSeconds:  int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),

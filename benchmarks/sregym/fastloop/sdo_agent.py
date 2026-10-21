@@ -83,6 +83,13 @@ def _closure_phase_seconds(ledger: dict[str, Any]) -> dict[str, float]:
     return {name: (at - ordered[index - 1][0]).total_seconds() for index, (at, name) in enumerate(ordered) if index > 0}
 
 
+def _receipt_closure_fields(receipt: dict[str, Any]) -> tuple[dict[str, float], str | None]:
+    ledger = receipt.get("native_ledger")
+    ledger = ledger if isinstance(ledger, dict) else {}
+    skipped = receipt.get("reflection_skipped_reason") or ledger.get("reflection_skipped_reason")
+    return _closure_phase_seconds(ledger), skipped if isinstance(skipped, str) else None
+
+
 def _last_successful_repair(repairs: object) -> datetime | None:
     completions = [
         completed
@@ -144,6 +151,10 @@ def _program_metrics(result: dict[str, Any]) -> dict[str, Any]:
     loops = result.get("response_loops_used")
     return {
         "program_diagnoses": len(runs) if isinstance(runs, list) else None,
+        "resolution_path": result.get("resolution_path")
+        if result.get("resolution_path") in ("fast_path", "responder")
+        else None,
+        "fast_path_programs": tuple(str(item) for item in result.get("fast_path_programs", []) or []),
         "program_verdicts": verdicts,
         "program_tool_calls": len(calls) if isinstance(calls, list) else None,
         "tool_commands": commands,
@@ -191,6 +202,7 @@ class SdoPersistentAgent:
             verification_timeout_seconds=settings.verification_timeout_seconds,
             detection_timeout_seconds=settings.detection_timeout_seconds,
             stop_on_detector_review=self._stop_on_detector_review,
+            lifecycle_installs_controller=True,
         )
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
@@ -234,6 +246,8 @@ class SdoPersistentAgent:
             diagnosis=_summaries(resolution.get("confirmed_root_causes")),
             mitigation=_summaries(repairs, successful_only=True),
             baseline_gate_seconds=gate.get("controller_baseline_wait"),
+            driver_phase_timings_seconds=resolution.get("driver_phase_timings_seconds") or {},
+            fault_gate_timings_seconds=gate,
             setup_seconds=float(costs.get("inventory_and_lifecycle", 0.0))
             + float(costs.get("controller_install_or_reuse", 0.0)),
             controller_installed=controller.get("installed_this_stage"),
@@ -290,9 +304,9 @@ class SdoPersistentAgent:
         memory = receipt.get("memory_reuse")
         memory = memory if isinstance(memory, dict) else {}
         attempts = receipt.get("reflection_attempts")
-        skipped = receipt.get("reflection_skipped_reason")
         # When reflection finished between polls the driver never saw the closure; the receipt has it.
         detected, verified = _receipt_closure_times(receipt)
+        closure_phases, skipped = _receipt_closure_fields(receipt)
         ledger = receipt.get("native_ledger")
         ledger = ledger if isinstance(ledger, dict) else {}
         outcome_document = ledger.get("outcome_document")
@@ -325,8 +339,8 @@ class SdoPersistentAgent:
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
             match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
             reflection_attempts=attempts if isinstance(attempts, int) else None,
-            reflection_skipped_reason=skipped if isinstance(skipped, str) else None,
-            closure_phase_seconds=_closure_phase_seconds(ledger),
+            reflection_skipped_reason=skipped,
+            closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
             **_program_metrics(outcome_document),
             error=error,

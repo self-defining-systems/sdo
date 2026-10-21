@@ -111,6 +111,8 @@ message PlanApplication {
   repeated string program_ids = 6;
   string error = 7;
   google.protobuf.Duration duration = 8;
+  bool rolled_back = 9;
+  string rollback_error = 10;
 }
 
 message ProgramToolCall {

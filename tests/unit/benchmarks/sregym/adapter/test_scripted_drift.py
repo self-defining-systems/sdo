@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from benchmarks.sregym.adapter import scripted_worker
+from sdo.agents.views.models import DriftEvent, ObjectRef
 from sdo.contracts import DriftInvestigationTask
 
 
@@ -63,3 +66,33 @@ def test_scripted_drift_is_unsure_without_selected_pods(monkeypatch, tmp_path: P
     )
 
     assert scripted_worker.scripted_drift_investigation(request).events[0].verdict == "unsure"
+
+
+def test_scripted_responder_does_not_repair_prior_incident_drift(monkeypatch) -> None:
+    old = ObjectRef(api_version="v1", kind="Service", namespace="app", name="reservation")
+    current = ObjectRef(api_version="v1", kind="Service", namespace="app", name="peer")
+    stale = DriftEvent(
+        ref=old, observed_at=datetime.now(timezone.utc), classification="fault", investigation_verdict="bug"
+    )
+    request = SimpleNamespace(
+        incident_id="second",
+        namespace="app",
+        drift_events=[stale],
+        state_changes=None,
+        findings=[
+            SimpleNamespace(
+                detector_id="drift/service-targetport-mismatch",
+                primary_resource=current,
+                summary="peer targetPort drift",
+                evidence="peer is broken",
+            )
+        ],
+    )
+    patches = []
+    monkeypatch.setattr(scripted_worker, "_patch_from_source", lambda _request, ref: patches.append(ref))
+    monkeypatch.setattr(scripted_worker, "_tool", lambda *_args: {"healthy": True})
+
+    result = scripted_worker.scripted_responder(request)
+
+    assert patches == []
+    assert result.repair_actions == []

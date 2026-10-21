@@ -29,6 +29,50 @@ type driftReadView struct {
 
 func (v driftReadView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) { return v.diff, nil }
 
+func TestIncidentRequestCarriesOnlyFindingDriftAndPreservesStatusHistory(t *testing.T) {
+	start := time.Unix(10, 0).UTC()
+	config := testControllerConfig()
+	config.Namespace = "app"
+	controller, err := NewController(config, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}},
+		&recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "reservation"},
+		ObservedAt: start, Classification: sdk.DriftFault, ProgramID: "targetport", InvestigationVerdict: "bug"}
+	current := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"},
+		ObservedAt: start.Add(time.Minute), Classification: sdk.DriftFault, ProgramID: "targetport"}
+	controller.driftEvents = []sdk.DriftEvent{old, current}
+	finding := sdk.Finding{DetectorID: "drift/targetport", RuleID: "targetport", Status: sdk.FindingActive,
+		PrimaryResource: current.Ref, Metadata: map[string]any{"drift_event": current}}
+	request := controller.incidentRequest(start.Add(2*time.Minute), []sdk.Finding{finding})
+	if len(request.DriftEvents) != 1 || request.DriftEvents[0].Ref != current.Ref {
+		t.Fatalf("request carried unrelated historical drift: %+v", request.DriftEvents)
+	}
+	if events := controller.ExportState().DriftEvents; len(events) != 2 || events[0].Ref != old.Ref {
+		t.Fatalf("status lost drift history: %+v", events)
+	}
+}
+
+func TestIncidentRequestCarriesProgramSweepDriftFinding(t *testing.T) {
+	start := time.Unix(10, 0).UTC()
+	config := testControllerConfig()
+	config.Namespace = "app"
+	controller, err := NewController(config, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}},
+		&recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"},
+		ObservedAt: start, Classification: sdk.DriftFault, ProgramID: "targetport"}
+	finding := sdk.Finding{DetectorID: "drift/targetport", RuleID: "targetport", Status: sdk.FindingActive,
+		PrimaryResource: event.Ref, Metadata: map[string]any{"drift_event": event}}
+	request := controller.incidentRequest(start.Add(time.Second), []sdk.Finding{finding})
+	if len(request.DriftEvents) != 1 || request.DriftEvents[0].ProgramID != "targetport" {
+		t.Fatalf("program sweep evidence missing from request: %+v", request.DriftEvents)
+	}
+}
+
 func TestDriftClassifierIgnoresHPAOwnedReplicas(t *testing.T) {
 	before := int32(2)
 	after := int32(3)

@@ -29,6 +29,12 @@ fi
 echo "==> buf lint"
 buf lint
 
+VALIDATE_TMP="$(mktemp -d)"
+trap 'rm -rf "${VALIDATE_TMP}"' EXIT
+if [ -d sdo/contracts/_gen/buf/validate ]; then
+    cp -a sdo/contracts/_gen/buf/validate "${VALIDATE_TMP}/cached-validate"
+fi
+
 echo "==> buf generate"
 buf generate
 
@@ -37,10 +43,16 @@ buf generate
 # codebase's classic protobuf runtime (see buf.gen.validate.yaml). buf.gen.yaml
 # uses clean:true, so this must run after `buf generate`.
 echo "==> vendor buf.validate python gencode"
-VALIDATE_TMP="$(mktemp -d)"
-trap 'rm -rf "${VALIDATE_TMP}"' EXIT
-buf generate --include-imports --template buf.gen.validate.yaml -o "${VALIDATE_TMP}" buf.build/bufbuild/protovalidate
-rm -rf sdo/contracts/_gen/buf
-cp -r "${VALIDATE_TMP}/_gen_validate/buf" sdo/contracts/_gen/buf
+if buf generate --include-imports --template buf.gen.validate.yaml -o "${VALIDATE_TMP}" buf.build/bufbuild/protovalidate 2>"${VALIDATE_TMP}/error"; then
+    rm -rf sdo/contracts/_gen/buf
+    cp -r "${VALIDATE_TMP}/_gen_validate/buf" sdo/contracts/_gen/buf
+elif grep -qi 'resource_exhausted: too many requests' "${VALIDATE_TMP}/error" && [ -d "${VALIDATE_TMP}/cached-validate" ]; then
+    echo "   using unchanged cached buf.validate gencode after BSR rate limit" >&2
+    mkdir -p sdo/contracts/_gen/buf
+    cp -r "${VALIDATE_TMP}/cached-validate" sdo/contracts/_gen/buf/validate
+else
+    cat "${VALIDATE_TMP}/error" >&2
+    exit 1
+fi
 
 echo "Proto code regenerated."

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -44,6 +45,8 @@ type KubernetesJobDispatcher struct {
 	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
+	ProgramFastPath       bool
+	ProgramTrustThreshold int
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -168,6 +171,39 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err := d.Registry.ValidateTask(task); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent task: %w", err)
 	}
+	if d.ProgramFastPath && loop != nil {
+		fastResult, summary, resolved, err := d.tryFastPath(ctx, request, loop)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		if resolved {
+			return fastResult, nil
+		}
+		if summary != "" {
+			request.FastPathSummary = summary
+			prepared := new(contracts.IncidentRequest)
+			if err := task.GetRequest().UnmarshalTo(prepared); err != nil {
+				return IncidentResult{}, fmt.Errorf("decode prepared incident for fast-path handoff: %w", err)
+			}
+			prepared.FastPathSummary = summary
+			task.Request, err = anypb.New(prepared)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+			payload, err := canonicalProtoJSON(task)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+			request.PreparedAgentTask = string(payload)
+			task = new(contracts.AgentTask)
+			if err := protojson.Unmarshal(payload, task); err != nil {
+				return IncidentResult{}, fmt.Errorf("decode fast-path handoff task: %w", err)
+			}
+			if err := d.Registry.ValidateTask(task); err != nil {
+				return IncidentResult{}, fmt.Errorf("validate fast-path handoff task: %w", err)
+			}
+		}
+	}
 	environment := make(map[string]string, len(d.Environment))
 	for name, value := range d.Environment {
 		environment[name] = value
@@ -246,6 +282,8 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
 		result.ProgramFailureSignals = loop.FailureSignals()
 		result.ResponseLoopsUsed = loop.LoopsUsed()
+		result.ResolutionPath = "responder"
+		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
 		result.ResponseLoopExhausted = loop.Exhausted()
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
@@ -279,7 +317,7 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context) (map[string]P
 			records = append(records, outcome.Record)
 		}
 	}
-	return ProgramTrustStats(records), nil
+	return ProgramTrustStats(records, d.ProgramTrustThreshold), nil
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.

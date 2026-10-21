@@ -103,6 +103,10 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
+	boolFlag("--program-fast-path", config.GetProgramFastPath())
+	if config.GetProgramTrustThreshold() > 0 {
+		args = append(args, "--program-trust-threshold", strconv.Itoa(int(config.GetProgramTrustThreshold())))
+	}
 	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
 	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
 	dur("--drift-investigation-window", config.GetDriftInvestigationWindow())

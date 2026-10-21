@@ -53,6 +53,8 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		VerificationTimeout:        durationpb.New(120000000000),  // 2m
 		MaxFollowUps:               3,
 		MaxResponseLoops:           4,
+		ProgramFastPath:            true,
+		ProgramTrustThreshold:      3,
 		FollowUpCooldown:           durationpb.New(30000000000), // 30s
 		RepairPolicy:               "recorded-actions",
 		LeaseName:                  "sdo-controller",
@@ -176,6 +178,7 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		"--repair-policy":      "recorded-actions",
 		"--max-follow-ups":     "3",
 		"--max-response-loops": "4",
+		"--program-trust-threshold": "3",
 		"--response-timeout":   "30m0s",
 		"--lease-duration":     "1m0s",
 	}
@@ -194,6 +197,9 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	// exit-after-closure true is a bare switch.
 	if !contains(args, "--exit-after-closure") {
 		t.Fatalf("expected --exit-after-closure in args: %v", args)
+	}
+	if !contains(args, "--program-fast-path") {
+		t.Fatalf("expected --program-fast-path in args: %v", args)
 	}
 	// Repeated fields expand once per element as --flag=value.
 	for _, flag := range []string{"--dispatcher-arg=--model", "--dispatcher-arg=luna", "--responder-env=FOO=bar", "--responder-env=BAZ=qux", "--deployed-manifest-path=kubernetes"} {

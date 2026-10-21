@@ -38,6 +38,39 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	return application, nil
 }
 
+func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
+	result := PlanApplicationResult{Applied: application.GetApplied(), DryRun: application.GetDryRun()}
+	if application.GetPlan() != nil {
+		result.Plan.Rationale = application.GetPlan().GetRationale()
+		for _, action := range application.GetPlan().GetActions() {
+			var decoded program.Action
+			switch kind := action.GetKind().(type) {
+			case *contracts.Action_ReconcileFromSource:
+				decoded = program.ReconcileFromSource{Ref: objectRefState(kind.ReconcileFromSource.GetRef())}
+			case *contracts.Action_Rollback:
+				decoded = program.Rollback{Ref: objectRefState(kind.Rollback.GetRef()), ToRevision: kind.Rollback.GetToRevision()}
+			case *contracts.Action_SetField:
+				decoded = program.SetField{Ref: objectRefState(kind.SetField.GetRef()), Path: kind.SetField.GetPath(), Value: kind.SetField.GetValue().AsInterface(), Reason: kind.SetField.GetReason()}
+			case *contracts.Action_RestartRollout:
+				decoded = program.RestartRollout{Ref: objectRefState(kind.RestartRollout.GetRef()), Reason: kind.RestartRollout.GetReason()}
+			}
+			if decoded != nil {
+				result.Plan.Actions = append(result.Plan.Actions, decoded)
+			}
+		}
+	}
+	if result.Applied {
+		result.ActionsApplied = append([]program.Action(nil), result.Plan.Actions...)
+	}
+	result.VerificationCompleted = application.GetVerification() != nil
+	result.VerificationPassed = application.GetVerification().GetResult() == contracts.Verdict_RESULT_NO_MATCH
+	if application.GetDuration() != nil {
+		result.Duration = application.GetDuration().AsDuration()
+	}
+	return RecordedPlanApplication{ID: application.GetApplicationId(), ProgramIDs: append([]string(nil), application.GetProgramIds()...), Result: result,
+		Error: application.GetError(), RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError()}
+}
+
 func planActionProto(action program.Action) (*contracts.Action, error) {
 	switch a := action.(type) {
 	case program.ReconcileFromSource:

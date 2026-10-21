@@ -56,6 +56,13 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     assert '"program_id": "targetport"' in prompt
 
 
+def test_program_prompt_includes_failed_fast_path_handoff() -> None:
+    raw = json.loads(_fixture("incident_request.json"))
+    raw["fast_path_summary"] = "trusted targetport attempted; verification failed; rollback true"
+    prompt = _responder_prompt(IncidentRequest.model_validate(raw))
+    assert raw["fast_path_summary"] in prompt
+
+
 def test_codex_responder_captures_resumable_session_id() -> None:
     request = IncidentRequest.model_validate_json(_fixture("incident_request.json"))
     result = IncidentResult.model_validate_json(_fixture("incident_result.json")).model_copy(

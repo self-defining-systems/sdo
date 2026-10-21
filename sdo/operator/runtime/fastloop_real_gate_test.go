@@ -522,7 +522,7 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 			return fastloopDriftView{driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: changed}}}
 		}, Investigation: DriftInvestigationConfig{Worker: driftWorker, BatchWindow: time.Nanosecond, BuildTask: buildDriftTask}})
 	})
-	if len(driftWorker.requests) != 1 || len(firstRequest.Findings) != 1 || firstRequest.Findings[0].DetectorID != "drift/investigator" || len(firstRequest.DriftEvents) != 2 {
+	if len(driftWorker.requests) != 1 || len(firstRequest.Findings) != 1 || firstRequest.Findings[0].DetectorID != "drift/investigator" || len(firstRequest.DriftEvents) != 1 || firstRequest.DriftEvents[0].Ref.Name != "api" {
 		t.Fatalf("first incident did not follow investigator verdict: %+v", firstRequest)
 	}
 	if firstRequest.DetectorHistory[0].Status != DetectorEvaluationClear || !firstRequest.DetectorHistory[0].EvaluatedAt.Before(start) {
@@ -630,11 +630,12 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 		t.Fatalf("changed peer was not classified: %+v %v; before=%+v after=%+v owned=%+v managed=%+v", classified, err, flattenDriftObject(change.Old), flattenDriftObject(change.New), ownedDriftPaths(change.Old, "sdo-deployer"), change.Old.GetManagedFields())
 	}
 	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
+		controller.driftEvents = append([]sdk.DriftEvent(nil), first.ExportState().DriftEvents...)
 		controller.ConfigureDrift(DriftControllerConfig{Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 		}, Investigation: DriftInvestigationConfig{Worker: driftWorker, BatchWindow: time.Nanosecond, BuildTask: buildDriftTask}})
 	})
-	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
+	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Ref.Name != "peer" || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
 		t.Fatalf("second fault missed sweep-on-change: %+v", secondRequest.DriftEvents)
 	}
 	if len(driftWorker.requests) != 1 {
@@ -710,6 +711,13 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	}
 	if secondStored.Record.GetClassification() != "success" || !secondStored.Record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() {
 		t.Fatalf("second outcome attribution: %+v", secondStored.Record)
+	}
+	for _, action := range secondStored.Record.GetRepairActions() {
+		for _, resource := range action.GetResources() {
+			if resource.GetName() == "api" {
+				t.Fatalf("second incident reapplied first repair: %+v", action)
+			}
+		}
 	}
 	if reflected != 2 {
 		t.Fatalf("reflection decisions: %d", reflected)

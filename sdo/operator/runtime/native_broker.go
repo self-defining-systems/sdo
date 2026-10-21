@@ -263,7 +263,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 			ledger.OutcomeDocument = encoded
 			ledger.RequiresReflection = derived.RequiresReflection
-			if derived.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
+			if derived.Record.GetResolutionPath() == "fast_path" {
+				ledger.RequiresReflection = false
+				ledger.ReflectionSkippedReason = "trusted program fast path"
+			}
+			if ledger.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
 				prior, err := n.PriorOutcomes.List(ctx)
 				if err != nil {
 					return fmt.Errorf("read accepted repair outcomes: %w", err)

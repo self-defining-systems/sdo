@@ -1,0 +1,18 @@
+{
+  "diagnosis_grading": "deferred",
+  "judge_model_id": "codex-gpt-6-luna",
+  "incidents": [
+    "incorrect_image__v_hotel_reservation_rate_nonexistent_tag",
+    "readiness_probe_misconfiguration__v_hotel_reservation_geo_wrong_path_1",
+    "incorrect_image__v_hotel_reservation_search_nonexistent_registry",
+    "readiness_probe_misconfiguration__v_hotel_reservation_frontend_wrong_port_1",
+    "incorrect_image__v_hotel_reservation_user_wrong_base_image",
+    "readiness_probe_misconfiguration__v_hotel_reservation_geo_exec_false_1",
+    "incorrect_image__v_hotel_reservation_recommendation_nonexistent_tag",
+    "readiness_probe_misconfiguration__v_hotel_reservation_frontend_wrong_path_1",
+    "incorrect_image__v_hotel_reservation_profile_nonexistent_registry",
+    "incorrect_image__v_hotel_reservation_reservation_nonexistent_tag",
+    "readiness_probe_misconfiguration__v_hotel_reservation_geo_wrong_port_1",
+    "incorrect_image__v_hotel_reservation_geo_wrong_base_image"
+  ]
+}

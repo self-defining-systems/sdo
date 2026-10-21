@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 from copy import deepcopy
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -532,6 +533,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         private_tmp=None,
     ).save()
     monkeypatch.setattr(cli, "_worker", lambda _environment: worker)
+    monkeypatch.setattr(cli, "kubectl", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
     monkeypatch.setattr(cli, "_cluster_ops", lambda _args, _namespace: controller)
     monkeypatch.setattr(cli, "KubectlApplicationCluster", lambda _kubeconfig: app)
     monkeypatch.setattr(cli, "_composite_settings", lambda _args: CompositeSettings(20, 1, 0.001, 0.001))
@@ -550,6 +552,11 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
         return SimpleNamespace(reused=False, accepted_commit="a" * 40)
 
     monkeypatch.setattr(driver, "install_existing", install)
+    monkeypatch.setattr(
+        adapter,
+        "launch_native_lifecycle",
+        lambda config, *_args: controller.install(replace(config, persistent=True, wait_for_completion=False)),
+    )
     monkeypatch.setattr(
         adapter,
         "kubectl",
@@ -611,7 +618,11 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     assert all("responder_tokens" in row and "reflection_tokens" in row for row in rows)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
     assert controller.installs == 1
-    assert controller.registrations == [REGISTRATIONS, REGISTRATIONS]
+    assert controller.registrations == [REGISTRATIONS]
+    assert records[0].run_prelude_phase_seconds["total_before_first_incident"] >= 0
+    assert records[1].run_prelude_phase_seconds == {}
+    assert records[1].driver_phase_timings_seconds["controller_install_inspection"] == 0
+    assert records[1].fault_gate_timings_seconds["controller_baseline_wait"] >= 0
     assert (workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
     assert (workspace / ".sdo/corpus/targetport-incident-1/open.json").is_file()
     assert (tmp_path / "results/hermetic/checkpoints/000/responder/checkpoint.json").is_file()

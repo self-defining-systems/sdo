@@ -56,12 +56,14 @@ type ToolCall struct {
 }
 
 type RecordedPlanApplication struct {
-	ID          string
-	ProgramIDs  []string
-	Result      PlanApplicationResult
-	Error       string
-	StartedAt   time.Time
-	CompletedAt time.Time
+	ID            string
+	ProgramIDs    []string
+	Result        PlanApplicationResult
+	Error         string
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	RolledBack    bool
+	RollbackError string
 }
 
 type selectedPlan struct {
@@ -84,6 +86,8 @@ type ResponderLoop struct {
 	CandidateSweepLimit  int
 	MaxBatches           int
 	Trust                map[string]ProgramTrust
+	CorpusReplayPassed   bool
+	BeforeFastPathApply  func(context.Context, []string, []PlanPreImage) error
 	CorpusSessionRoot    string
 	capturePhase         string
 	preApplyCaptured     bool
@@ -96,6 +100,7 @@ type ResponderLoop struct {
 	runs                 []ProgramRun
 	findings             []sdk.Finding
 	batches              int
+	fastPathPrograms     []string
 }
 
 func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry, provider SnapshotProvider, detectors []sdk.Detector, executor PlanExecutor, maxBatches int) *ResponderLoop {

@@ -18,7 +18,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.dd33f357f4b4aed7"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.dea6a548b4f0243e"
 
 type repeatable []string
 
@@ -65,6 +65,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
@@ -99,6 +101,12 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown <= 0 {
 		return builder.RunConfig{}, false, errors.New("follow-up limit must be at most 1000 and cooldown positive")
 	}
+	if *programTrustThreshold < 1 {
+		return builder.RunConfig{}, false, errors.New("program trust threshold must be positive")
+	}
+	if *programFastPath && *repairPolicy != "recorded-actions" {
+		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
+	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
 		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *schemaIdentity == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
@@ -123,6 +131,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ProberImage:      *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline,
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)

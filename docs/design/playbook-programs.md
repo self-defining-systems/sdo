@@ -195,15 +195,19 @@ Failure signals recorded for reflection, the corpus and trust:
 
 ## Fast path and trust
 
-- A program is trusted after K = 3 verified successes in the responder loop
-  with no failures since its last change, and it passes the corpus replay. Any
-  failure or edit resets the count.
-- Fast path: if there is exactly one `Match` on a trusted program and no
-  `NeedsJudgement`, SDO applies its plan and verifies without dispatching an
-  LLM. It allows one attempt per incident. On failure it rolls back and hands
-  over to the responder with what it tried.
-- Version 1 records trust statistics only. The fast path is off until the data
-  shows programs reaching the threshold.
+- A program is trusted after K verified successes (default 3, set with
+  `--program-trust-threshold`) with no failures since its last change. Accepted
+  program revisions have passed the broker's corpus replay. Any failure or edit
+  resets the count.
+- The fast path is implemented behind `--program-fast-path` (default off) and
+  requires `recorded-actions`. After the settle re-diagnosis, every active
+  finding must have exactly one trusted `Match`, with no `NeedsJudgement` or
+  unexplained finding. The controller applies the batch through `PlanExecutor`,
+  verifies program `NoMatch` and detector health, and closes without a responder
+  or reflection turn. It allows one attempt per incident. An unsuccessful
+  attempt restores captured pre-images and hands its summary to the responder.
+- The outcome records `resolution_path`, `fast_path_programs`, plan verification,
+  rollback, and failure signals. The fastloop row exports the path and programs.
 
 ## Reflection
 

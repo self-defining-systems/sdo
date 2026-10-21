@@ -119,6 +119,8 @@ type ControllerConfig struct {
 	DriftInvestigationTokensPerHour     int64                `protobuf:"varint,61,opt,name=drift_investigation_tokens_per_hour,json=driftInvestigationTokensPerHour,proto3" json:"drift_investigation_tokens_per_hour,omitempty"`
 	ForceReflection                     bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
 	DeployedManifestPaths               []string             `protobuf:"bytes,63,rep,name=deployed_manifest_paths,json=deployedManifestPaths,proto3" json:"deployed_manifest_paths,omitempty"`
+	ProgramFastPath                     bool                 `protobuf:"varint,64,opt,name=program_fast_path,json=programFastPath,proto3" json:"program_fast_path,omitempty"`
+	ProgramTrustThreshold               int32                `protobuf:"varint,65,opt,name=program_trust_threshold,json=programTrustThreshold,proto3" json:"program_trust_threshold,omitempty"`
 	unknownFields                       protoimpl.UnknownFields
 	sizeCache                           protoimpl.SizeCache
 }
@@ -580,11 +582,25 @@ func (x *ControllerConfig) GetDeployedManifestPaths() []string {
 	return nil
 }
 
+func (x *ControllerConfig) GetProgramFastPath() bool {
+	if x != nil {
+		return x.ProgramFastPath
+	}
+	return false
+}
+
+func (x *ControllerConfig) GetProgramTrustThreshold() int32 {
+	if x != nil {
+		return x.ProgramTrustThreshold
+	}
+	return 0
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xea\x1a\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xd7\x1b\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -653,7 +669,9 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"'drift_investigation_dispatches_per_hour\x18< \x01(\x05R#driftInvestigationDispatchesPerHour\x12L\n" +
 	"#drift_investigation_tokens_per_hour\x18= \x01(\x03R\x1fdriftInvestigationTokensPerHour\x12)\n" +
 	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x126\n" +
-	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPathsB\x14\n" +
+	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12*\n" +
+	"\x11program_fast_path\x18@ \x01(\bR\x0fprogramFastPath\x12?\n" +
+	"\x17program_trust_threshold\x18A \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x15programTrustThresholdB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13R\x06brokerR\vbroker_argsB\x88\x02\n" +

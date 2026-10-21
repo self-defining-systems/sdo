@@ -195,6 +195,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents),
+		FastPathSummary: request.FastPathSummary,
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -246,6 +247,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		Timing:               &contracts.TimingMetrics{StartedAt: contractTimestamp(result.Timing.StartedAt), CompletedAt: contractTimestamp(result.Timing.CompletedAt)},
 		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
+		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...),
 	}
 	for _, call := range result.ProgramToolCalls {
 		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
@@ -259,6 +261,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 			return nil, err
 		}
 		encoded.ApplicationId, encoded.ProgramIds, encoded.Duration, encoded.Error = application.ID, append([]string(nil), application.ProgramIDs...), durationpb.New(application.Result.Duration), application.Error
+		encoded.RolledBack, encoded.RollbackError = application.RolledBack, application.RollbackError
 		message.PlanApplications = append(message.PlanApplications, encoded)
 	}
 	for _, cause := range result.ConfirmedRootCauses {
@@ -339,12 +342,16 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
+		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...),
 	}
 	for _, call := range message.GetProgramToolCalls() {
 		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))
 	}
 	for _, run := range message.GetProgramRuns() {
 		result.ProgramRuns = append(result.ProgramRuns, programRunState(run))
+	}
+	for _, application := range message.GetPlanApplications() {
+		result.PlanApplications = append(result.PlanApplications, planApplicationState(application))
 	}
 	if message.GetUsage() != nil {
 		result.Usage = *proto.Clone(message.GetUsage()).(*contracts.UsageMetrics)

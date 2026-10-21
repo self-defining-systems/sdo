@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -31,6 +31,7 @@ from benchmarks.sregym.adapter.persistent import (
     runtime_config_from_payload,
     runtime_config_payload,
     teardown,
+    wait_for_maintenance_ack,
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
@@ -237,6 +238,75 @@ def _clock(ops: FakeOps) -> Clock:
     return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: DETECTED)
 
 
+def test_maintenance_ack_timeout_follows_time_scale(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
+
+    class NoAck:
+        def controller_logs(self, _control: str) -> str:
+            return ""
+
+    elapsed = [0.0]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    with pytest.raises(PersistentControllerError, match="did not acknowledge maintenance"):
+        wait_for_maintenance_ack(NoAck(), "hotel-sdo", "generation", clock)  # type: ignore[arg-type]
+
+    assert elapsed[0] == pytest.approx(60.0)
+
+
+def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None:
+    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
+
+    ops = FakeOps()
+    record = _drained_record(tmp_path, ops)
+    collect = ops.collect_receipt
+    elapsed = [0.0]
+
+    def timed_collect(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+        elapsed[0] += 35.0
+        return collect(config, incident_id, artifacts_dir)
+
+    ops.collect_receipt = timed_collect  # type: ignore[method-assign]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    drain_pending_incident(
+        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
+    )
+
+    receipt = json.loads((record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert receipt["reflection_drain"]["phase_seconds"]["collect_settled_receipt"] == pytest.approx(35.0)
+    assert set(receipt["reflection_drain"]["phase_timestamps"]) == {
+        "drain_started",
+        "ack_observed",
+        "receipt_collected",
+    }
+
+
+def test_closeout_settle_timeout_follows_time_scale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
+
+    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
+    ops = FakeOps()
+    record = _drained_record(tmp_path, ops)
+    collect = ops.collect_receipt
+
+    def unsettled(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+        receipt = collect(config, incident_id, artifacts_dir)
+        receipt["completed"] = False
+        return receipt
+
+    ops.collect_receipt = unsettled  # type: ignore[method-assign]
+    elapsed = [0.0]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    with pytest.raises(ReceiptRejectedError):
+        drain_pending_incident(
+            record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
+        )
+
+    assert elapsed[0] == pytest.approx(12.0)
+
+
 def _config(tmp_path: Path, namespace: str = "hotel", stage: str = "s0") -> RuntimeConfig:
     repository = tmp_path / stage / "application_workspace"
     repository.mkdir(parents=True, exist_ok=True)
@@ -391,12 +461,53 @@ def test_one_controller_serves_both_stages_and_the_second_skips_install_and_life
     assert first["persistent_controller"]["installed_this_stage"] is True
     assert second["persistent_controller"]["installed_this_stage"] is False
     assert second["persistent_controller"]["lifecycle_revalidation_skipped"] is True
+    assert "controller_inventory" in first["driver_phase_timings_seconds"]
+    assert "lifecycle" in first["driver_phase_timings_seconds"]
+    assert "controller_install_inspection" in first["driver_phase_timings_seconds"]
+    assert second["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
     kinds = [
         event[0] for event in ops.events if event[0] in {"install", "reuse", "active", "paused", "fault", "delete"}
     ]
-    assert kinds == ["install", "active", "fault", "paused", "reuse", "active", "fault", "paused"]
+    assert kinds == ["install", "active", "fault", "paused", "active", "fault", "paused"]
     # Each stage correlates its own incident.
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
+
+
+def test_fresh_lifecycle_controller_is_used_without_a_second_install_inspection(tmp_path: Path) -> None:
+    ops = FakeOps()
+    inputs = _inputs(tmp_path, "s0")
+
+    def lifecycle() -> bool:
+        ops.install(replace(inputs.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    assert [event[0] for event in ops.events if event[0] in {"install", "reuse"}] == ["install"]
+    assert result["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
+
+
+def test_fresh_lifecycle_waits_for_its_pod_instead_of_reinstalling(tmp_path: Path) -> None:
+    class DelayedOps(FakeOps):
+        unseen = 1
+
+        def controller_pod(self, control_namespace: str) -> ControllerPod | None:
+            if self.pods and self.unseen:
+                self.unseen -= 1
+                return None
+            return super().controller_pod(control_namespace)
+
+    ops = DelayedOps()
+    inputs = replace(_inputs(tmp_path, "s0"), lifecycle_installs_controller=True)
+
+    def lifecycle() -> bool:
+        ops.install(replace(inputs.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    assert [event[0] for event in ops.events if event[0] in {"install", "reuse"}] == ["install"]
+    assert result["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
 
 
 def test_stage_reports_resolution_at_verified_health_before_reflection_finishes(tmp_path: Path) -> None:
