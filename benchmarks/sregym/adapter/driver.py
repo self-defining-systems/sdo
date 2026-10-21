@@ -503,15 +503,25 @@ def _has_accepted_lifecycle(repository: Path) -> bool:
     return (sdo / "diagnostics" / "manifest.yaml").is_file() and (sdo / "lifecycle-provenance.yaml").is_file()
 
 
-def _publish_agent_registrations(directory: Path, control_namespace: str, kubeconfig: Path) -> None:
+def _publish_agent_registrations(
+    directory: Path, control_namespace: str, kubeconfig: Path, responder_image: str, loaded_images: set[str]
+) -> None:
     files = sorted(directory.glob("*.json"))
     if not files:
         raise ValueError(f"agent registration directory {directory} has no JSON files")
     data: dict[str, str] = {}
     for path in files:
         content = path.read_text(encoding="utf-8")
-        if not isinstance(json.loads(content), dict):
+        registration = json.loads(content)
+        if not isinstance(registration, dict):
             raise ValueError(f"agent registration {path} must be a JSON object")
+        job = registration.get("kubernetes_job")
+        if isinstance(job, dict):
+            if job.get("image") == "${RESPONDER_IMAGE}":
+                job["image"] = responder_image
+            if job.get("image") not in loaded_images:
+                raise ValueError(f"agent registration {path} uses image {job.get('image')!r} not loaded into kind")
+            content = json.dumps(registration)
         data[path.name] = content
     kubectl(
         ["apply", "-f", "-"],
@@ -615,7 +625,13 @@ def _launch_native_lifecycle(
         # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
         # detectors): install the controller over it instead of running the deployer and health judge again.
         if args.agent_registrations:
-            _publish_agent_registrations(Path(args.agent_registrations), control_namespace, kubeconfig)
+            _publish_agent_registrations(
+                Path(args.agent_registrations),
+                control_namespace,
+                kubeconfig,
+                install.responder_image,
+                {install.controller_image, install.responder_image, install.validator_image},
+            )
         receipt = install_existing(install)
         _wait_for_installed_controller(install)
         return {"installed": True, "seeded": True, "reused": receipt.reused, "accepted_commit": receipt.accepted_commit}

@@ -9,7 +9,7 @@
     }
   ],
   "kubernetes_job": {
-    "image": "sdo-sregym-responder:scripted-fastloop",
+    "image": "${RESPONDER_IMAGE}",
     "command": ["python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "responder"]
   }
 }

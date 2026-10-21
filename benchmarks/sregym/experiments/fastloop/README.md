@@ -92,6 +92,12 @@ uses the existing target-port and bad-image faults; it requires those fault
 variants in the local SREGym checkout. Do not use `pbprog_smoke.json` for this
 mode until its two composite specs are present.
 
+The drift stream can record an expected pre-existing difference for the
+`jaeger` Service: SREGym replaces the source Service with a `kubectl-create`
+object that has no ports. Its unchanged `unsure` verdict must remain recorded
+without being investigated again after each repair. It does not block later
+target-port drift incidents in the stream.
+
 ## Offline stage replay
 
 Each SDO `fastloop run` writes `checkpoints/<incident-number>/<stage>/` under
@@ -132,6 +138,4 @@ recorded turns. A missing turn fails with both digests. Add
 `--live-on-cache-miss` to call `gpt-6-luna` and record a new turn. Live replay
 points `KUBECONFIG` at a local HTTP API backed by the captured snapshot.
 Explicit `--agent-registrations`, including the scripted registrations above,
-keep their own worker commands. The current branch has no registered drift
-worker contract; `--stage drift` can capture future drift tasks but cannot
-execute one until that contract is present.
+keep their own worker commands.
