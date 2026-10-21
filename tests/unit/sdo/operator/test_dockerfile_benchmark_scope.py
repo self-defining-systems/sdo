@@ -53,6 +53,11 @@ def _local_copy_sources(dockerfile: Path) -> list[str]:
     return sources
 
 
+def _stage_copy_sources(dockerfile: Path, stage: str) -> list[str]:
+    text = dockerfile.read_text(encoding="utf-8").split(f" AS {stage}\n", 1)[1].split("\nFROM ", 1)[0]
+    return [token for match in _COPY_LOCAL.finditer(text) for token in match.group(1).split()]
+
+
 def _expand(paths: list[str]) -> set[str]:
     """*paths* (files or directories, repo-root relative) expanded to a flat set of files."""
 
@@ -98,7 +103,9 @@ def test_runtime_dockerfile_never_copies_the_whole_benchmarks_tree() -> None:
 
 
 def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
-    sources = [src for src in _local_copy_sources(RUNTIME_DOCKERFILE) if src.startswith("benchmarks")]
+    sources = [
+        src for src in _stage_copy_sources(RUNTIME_DOCKERFILE, "sregym-responder") if src.startswith("benchmarks")
+    ]
     copied = _expand(sources)
 
     leaked = {path for path in copied if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)}
@@ -165,7 +172,19 @@ def test_sregym_responder_copy_matches_exactly_what_its_entry_points_import() ->
     needed = _entry_point_module_closure(
         ("benchmarks.sregym.adapter.submission", "benchmarks.sregym.adapter.submission_relay")
     )
-    copied = _expand([src for src in _local_copy_sources(RUNTIME_DOCKERFILE) if src.startswith("benchmarks")])
+    copied = _expand(
+        [src for src in _stage_copy_sources(RUNTIME_DOCKERFILE, "sregym-responder") if src.startswith("benchmarks")]
+    )
 
     assert needed - copied == set(), f"the image is missing modules its entry points import: {needed - copied}"
     assert copied - needed == set(), f"the image copies files its entry points never import: {copied - needed}"
+
+
+def test_scripted_worker_stage_contains_only_its_entry_point_and_program() -> None:
+    copied = _expand(_stage_copy_sources(RUNTIME_DOCKERFILE, "scripted-worker"))
+    assert copied == {
+        "benchmarks/sregym/adapter/scripted_worker.py",
+        "benchmarks/sregym/fastloop/scripted_program/README.md",
+        "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
+        "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+    }

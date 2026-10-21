@@ -19,6 +19,18 @@ def test_image_build_checks_the_benchmark_adapter_as_the_runtime_uid() -> None:
     assert "--target sregym-responder" in script
     assert "--user 65532:65532" in script
     assert "benchmarks.sregym.adapter.submission --help" in script
+    assert "from sdo.agents.responder import run_drift_task" in script
+
+
+def test_scripted_image_build_checks_the_drift_entry_point_as_the_runtime_uid() -> None:
+    script = (Path(__file__).parents[5] / "scripts/build_sdo_images.sh").read_text()
+
+    assert "--target scripted-worker" in script
+    entry_point = (
+        "from benchmarks.sregym.adapter.scripted_worker import "
+        "scripted_responder, ScriptedReflector, scripted_drift_investigation"
+    )
+    assert entry_point in script
 
 
 def test_image_build_tag_is_overridable_without_touching_the_shared_default() -> None:
