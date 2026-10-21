@@ -53,3 +53,47 @@ propose --corpus-from-incident`. The image removes model CLIs. This stream
 uses the existing target-port and bad-image faults; it requires those fault
 variants in the local SREGym checkout. Do not use `pbprog_smoke.json` for this
 mode until its two composite specs are present.
+
+## Offline stage replay
+
+Each SDO `fastloop run` writes `checkpoints/<incident-number>/<stage>/` under
+`results/<run-id>/`. A checkpoint keeps the exact worker task and result
+ProtoJSON, its logical memory snapshot or accepted commit in the task, the
+matching broker ledger when settled, and redacted namespace snapshots and
+recordings from the incident corpus. Capture files are stored once by SHA-256
+under `checkpoints/blobs/`. Tasks and results have a 1 MiB checkpoint limit,
+so an oversized worker result remains available to debug its transport failure.
+Corpus snapshots have the SDK's 4 MiB per-file limit and a
+32 MiB bundle limit. Keep the run directory private because exact agent
+requests and results can contain incident text.
+
+Replay from the repository root, with the results run directory rather than
+the warm environment directory:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop replay \
+  --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage responder
+uv run python -m benchmarks.sregym.fastloop replay \
+  --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage reflection
+uv run python -m benchmarks.sregym.fastloop replay \
+  --run-dir /path/to/fastloop/results/<run-id> --incident 0 --stage broker
+```
+
+`responder` and `reflection` run the current scripted worker entry points in
+an isolated source clone. The responder's Kubernetes reads and patches use
+the captured open and fixed snapshots. `broker` runs the current Go memory
+materializer, broker validation, gofmt and program build in a temporary local
+repository. Replay never needs the warm cluster. It reports the new typed
+result and whether it matches the recorded result, ignoring response
+timestamps.
+
+The default Codex worker registrations record each agentshim Codex CLI turn
+under the exported incident session's `model_io/` directory, keyed by task and
+prompt digests. Use `--agent live` to run the current agent code with those
+recorded turns. A missing turn fails with both digests. Add
+`--live-on-cache-miss` to call `gpt-6-luna` and record a new turn. Live replay
+points `KUBECONFIG` at a local HTTP API backed by the captured snapshot.
+Explicit `--agent-registrations`, including the scripted registrations above,
+keep their own worker commands. The current branch has no registered drift
+worker contract; `--stage drift` can capture future drift tasks but cannot
+execute one until that contract is present.
