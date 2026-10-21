@@ -296,11 +296,12 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		if err := validateCandidate(ctx, stage, proposal.BaseCommit, actor, phase); err != nil {
-			return fmt.Errorf("candidate validation: %w", err)
-		}
-		if err := b.validator(ctx, stage, paths); err != nil {
+		diagnostics, err := checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator)
+		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
+		}
+		if err := validate.Err(diagnostics); err != nil {
+			return fmt.Errorf("candidate validation: %w", err)
 		}
 		if expectedSourceTree != "" {
 			stagedTree, err := ProposalTreeDigest(ctx, stage)

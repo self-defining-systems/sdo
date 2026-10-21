@@ -12,9 +12,11 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 )
 
 const goodFixture = "../memory/validate/testdata/good"
@@ -44,7 +46,21 @@ func copyFixture(t *testing.T, from string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	gitRun(t, to, "init", "-q")
+	gitRun(t, to, "config", "user.name", "T")
+	gitRun(t, to, "config", "user.email", "t@example.com")
+	gitRun(t, to, "add", "-A")
+	gitRun(t, to, "commit", "-qm", "base")
 	return to
+}
+
+func memoryCheckEnv(t *testing.T) map[string]string {
+	t.Helper()
+	operatorRoot, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "HEAD", "SDO_OPERATOR_ROOT": operatorRoot}
 }
 
 func runMemory(t *testing.T, env map[string]string, args ...string) (int, string, string) {
@@ -56,7 +72,9 @@ func runMemory(t *testing.T, env map[string]string, args ...string) (int, string
 
 func TestMemoryCheckCleanTreeExitsZero(t *testing.T) {
 	root := copyFixture(t, goodFixture)
-	code, stdout, stderr := runMemory(t, nil, "check", "--root", root)
+	env := memoryCheckEnv(t)
+	t.Chdir(root)
+	code, stdout, stderr := runMemory(t, env, "check")
 	if code != 0 || stdout != "" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
@@ -67,7 +85,7 @@ func TestMemoryCheckReportsDiagnosticsAsLines(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".sdo/notes.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, _ := runMemory(t, nil, "check", "--root", root)
+	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root)
 	if code != 1 {
 		t.Fatalf("code = %d, want 1", code)
 	}
@@ -81,7 +99,7 @@ func TestMemoryCheckJSONIsMemoryCheckReport(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("9\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, _ := runMemory(t, nil, "check", "--root", root, "--json")
+	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
 	if code != 1 {
 		t.Fatalf("code = %d", code)
 	}
@@ -89,14 +107,17 @@ func TestMemoryCheckJSONIsMemoryCheckReport(t *testing.T) {
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal([]byte(stdout), report); err != nil {
 		t.Fatalf("not a MemoryCheckReport: %v\n%s", err, stdout)
 	}
-	if len(report.Diagnostics) == 0 || report.Diagnostics[0].Rule != "schema.version" || report.Diagnostics[0].Line != 1 {
-		t.Fatalf("diagnostics = %v", report.Diagnostics)
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Rule == validate.RuleSchemaVersion && diagnostic.Line == 1 {
+			return
+		}
 	}
+	t.Fatalf("schema diagnostic missing: %v", report.Diagnostics)
 }
 
 func TestMemoryCheckCleanJSONHasEmptyDiagnosticList(t *testing.T) {
 	root := copyFixture(t, goodFixture)
-	code, stdout, _ := runMemory(t, nil, "check", "--root", root, "--json")
+	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
 	if code != 0 || !regexp.MustCompile(`"diagnostics":\s+\[\]`).MatchString(stdout) {
 		t.Fatalf("code=%d stdout=%s", code, stdout)
 	}
@@ -136,14 +157,15 @@ func TestMemoryCheckActorAndPhaseDefaultFromEnvironment(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".sdo/goal.md"), []byte("---\nschema_version: 1\nowner: human\napplication: demo\n---\nChanged.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection"}
-	code, stdout, stderr := runMemory(t, env, "check", "--root", root, "--base", "HEAD")
+	env := memoryCheckEnv(t)
+	code, stdout, stderr := runMemory(t, env, "check", "--root", root)
 	if code != 1 || !strings.Contains(stdout, "ownership.denied") {
 		t.Fatalf("env defaults: code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
-	code, stdout, stderr = runMemory(t, env, "check", "--root", root, "--base", "HEAD", "--actor", "human", "--phase", "initial")
+	env["SDO_ACTOR"], env["SDO_PHASE"] = "human", "initial"
+	code, stdout, stderr = runMemory(t, env, "check", "--root", root)
 	if code != 0 {
-		t.Fatalf("flag must override env: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		t.Fatalf("human ownership: code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 }
 
@@ -194,8 +216,8 @@ func TestMemoryNewScaffoldsPassCheck(t *testing.T) {
 			t.Fatalf("%v: code=%d stderr=%q", args, code, stderr)
 		}
 	}
-	if code, stdout, _ := runMemory(t, nil, "check", "--root", root); code != 0 {
-		t.Fatalf("scaffolds fail memory check: %s", stdout)
+	if diagnostics, err := validate.Validate(context.Background(), validate.Request{Root: root, Layers: validate.Structural | validate.Semantic}); err != nil || len(diagnostics) > 0 {
+		t.Fatalf("scaffolds fail static validation: %v %v", diagnostics, err)
 	}
 	tree, err := layout.ReadTree(root)
 	if err != nil {
@@ -264,8 +286,21 @@ func TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runMemory(t, nil, "check", "--root", root, "--layers", "compile", "--operator-root", operatorRoot)
-	if code != 0 {
-		t.Fatalf("compile layer: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	if err := RunValidate(context.Background(), builder.Config{ApplicationRoot: root, OperatorRoot: operatorRoot}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMemoryCheckNoFlagsFailsClosedWithoutAcceptanceInputs(t *testing.T) {
+	for _, env := range []map[string]string{
+		nil,
+		{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection"},
+		{"SDO_BASE_COMMIT": "HEAD", "SDO_ACTOR": "responder"},
+		{"SDO_BASE_COMMIT": "HEAD", "SDO_PHASE": "reflection"},
+	} {
+		code, _, stderr := runMemory(t, env, "check")
+		if code != 2 || stderr == "" {
+			t.Fatalf("missing inputs accepted: env=%v code=%d stderr=%s", env, code, stderr)
+		}
 	}
 }

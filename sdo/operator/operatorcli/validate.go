@@ -49,7 +49,7 @@ func ParseValidateLaunch(args []string) (builder.Config, error) {
 // layer over the staged candidate. The broker has already run the read-only
 // layers in its own process.
 func RunValidate(ctx context.Context, config builder.Config) error {
-	diagnostics, err := validate.Validate(ctx, validate.Request{
+	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{
 		Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
 	})
 	if err != nil {
