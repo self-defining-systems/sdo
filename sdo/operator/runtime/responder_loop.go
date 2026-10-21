@@ -67,6 +67,8 @@ type RecordedPlanApplication struct {
 	CompletedAt   time.Time
 	RolledBack    bool
 	RollbackError string
+	PlanIDs       []string
+	Pending       bool
 }
 
 type selectedPlan struct {
@@ -95,6 +97,7 @@ type ResponderLoop struct {
 	CorpusSessionRoot               string
 	capturePhase                    string
 	preApplyCaptured                bool
+	saveToolState                   func(context.Context, []byte) error
 	operationMu                     sync.Mutex
 	mu                              sync.Mutex
 	plans                           map[string]selectedPlan
@@ -266,6 +269,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			responseJSON, _ = json.Marshal(map[string]any{"command": response.Command, "summary": boundedToolText(response.Summary), "error": boundedToolText(response.Error), "healthy": response.Healthy, "unresolved": response.Unresolved, "loops_used": response.LoopsUsed, "loops_allowed": response.LoopsAllowed, "findings_count": len(response.Findings), "program_runs_count": len(response.ProgramRuns), "detector_states_count": len(response.DetectorStates), "patches_count": len(response.Patches), "truncated": true})
 		}
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
+		if err := l.persistToolState(ctx); err != nil {
+			response.Error = err.Error()
+			response.Summary = response.Error
+		}
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 	switch request.Command {
@@ -365,7 +372,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
 			break
 		}
-		if err := l.Executor.Rollback(ctx, application); err != nil {
+		executor := l.applicationExecutor(request.ApplicationID)
+		if err := executor.Rollback(ctx, application); err != nil {
 			response.Error = err.Error()
 			break
 		}
@@ -581,6 +589,18 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 }
 
 func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	for _, entry := range l.applicationsLog {
+		for _, consumed := range entry.PlanIDs {
+			for _, requested := range request.PlanIDs {
+				if consumed == requested {
+					response.ApplicationID = entry.ID
+					response.Error = "prepared plan already consumed by " + entry.ID
+					response.Unresolved = l.batches >= l.MaxBatches
+					return
+				}
+			}
+		}
+	}
 	if l.batches >= l.MaxBatches {
 		response.Error = "response loop budget exhausted"
 		response.Unresolved = true
@@ -603,24 +623,37 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	l.batches++
 	started := time.Now().UTC()
-	result, err := l.Executor.Apply(ctx, l.Request, batch, false)
-	completed := time.Now().UTC()
-	id := fmt.Sprintf("application-%d", len(l.applications)+1)
-	if result.Applied {
-		l.applications[id] = result
-		response.ApplicationID = id
-	}
+	id := fmt.Sprintf("application-%d", len(l.applicationsLog)+1)
 	programIDs := make([]string, 0, len(selected))
 	for _, plan := range selected {
 		programIDs = append(programIDs, plan.programID)
 	}
-	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
+	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, PlanIDs: append([]string(nil), request.PlanIDs...), Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true}
+	l.applicationsLog = append(l.applicationsLog, entry)
+	if err := l.persistToolState(ctx); err != nil {
+		response.Error = err.Error()
+		return
+	}
+	executor := l.applicationExecutor(id)
+	result, err := executor.Apply(ctx, l.Request, batch, false)
+	completed := time.Now().UTC()
+	if result.Applied || result.PendingAction != nil {
+		l.applications[id] = result
+		response.ApplicationID = id
+	}
+	entry.Result = result
+	entry.CompletedAt = completed
+	entry.Pending = false
+	entry.RolledBack = result.RolledBack
+	entry.RollbackError = result.RollbackError
 	if err != nil {
 		entry.Error = err.Error()
-	}
-	l.applicationsLog = append(l.applicationsLog, entry)
-	if err != nil {
 		response.Error = err.Error()
+	}
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == id {
+			l.applicationsLog[i] = entry
+		}
 	}
 	l.verify(ctx, selected, response)
 	if response.Error == "" {

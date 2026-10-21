@@ -456,8 +456,11 @@ type ControllerState struct {
 	DriftAdmission             *DriftAdmissionState              `protobuf:"bytes,33,opt,name=drift_admission,json=driftAdmission,proto3" json:"drift_admission,omitempty"`
 	// Next namespace assignment per learned program, preserved across restarts.
 	ProgramSweepCursors map[string]string `protobuf:"bytes,34,rep,name=program_sweep_cursors,json=programSweepCursors,proto3" json:"program_sweep_cursors,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Incident-scoped, versioned responder tool journal. Stored through the same
+	// ConfigMap CAS edge before mutations; never supplied by a worker.
+	ResponderToolStateJson []byte `protobuf:"bytes,35,opt,name=responder_tool_state_json,json=responderToolStateJson,proto3" json:"responder_tool_state_json,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -717,6 +720,13 @@ func (x *ControllerState) GetDriftAdmission() *DriftAdmissionState {
 func (x *ControllerState) GetProgramSweepCursors() map[string]string {
 	if x != nil {
 		return x.ProgramSweepCursors
+	}
+	return nil
+}
+
+func (x *ControllerState) GetResponderToolStateJson() []byte {
+	if x != nil {
+		return x.ResponderToolStateJson
 	}
 	return nil
 }
@@ -1552,7 +1562,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x0elast_failed_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\flastFailedAt\x12B\n" +
 	"\x0fnext_attempt_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\rnextAttemptAt\x12\x1c\n" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
-	"\x06action\x18\t \x01(\tR\x06action\"\xbb\x1e\n" +
+	"\x06action\x18\t \x01(\tR\x06action\"\x81\x1f\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -1588,7 +1598,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\fdrift_events\x18\x1e \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12a\n" +
 	"\x12ownership_adoption\x18\x1f \x01(\v22.sdodev.contracts.v1alpha1.OwnershipAdoptionStatusR\x11ownershipAdoption\x12W\n" +
 	"\x0fdrift_admission\x18! \x01(\v2..sdodev.contracts.v1alpha1.DriftAdmissionStateR\x0edriftAdmission\x12w\n" +
-	"\x15program_sweep_cursors\x18\" \x03(\v2C.sdodev.contracts.v1alpha1.ControllerState.ProgramSweepCursorsEntryR\x13programSweepCursors\x1aa\n" +
+	"\x15program_sweep_cursors\x18\" \x03(\v2C.sdodev.contracts.v1alpha1.ControllerState.ProgramSweepCursorsEntryR\x13programSweepCursors\x12D\n" +
+	"\x19responder_tool_state_json\x18# \x01(\fB\t\xbaH\x06z\x04\x18\xe0\xdc*R\x16responderToolStateJson\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +

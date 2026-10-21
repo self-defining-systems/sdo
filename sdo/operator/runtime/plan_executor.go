@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -56,6 +55,9 @@ type PlanApplicationResult struct {
 	Plan                  program.Plan
 	Applied               bool
 	DryRun                bool
+	PendingAction         *int
+	RollingBack           bool
+	RollbackCompleted     int
 	RolledBack            bool
 	RollbackError         string
 	VerificationPassed    bool
@@ -67,11 +69,12 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
-	Client   PlanObjectClient
-	Source   PlanSource
-	Rollouts PlanRollouts
-	Verifier PlanVerifier
-	Now      func() time.Time
+	Client     PlanObjectClient
+	Source     PlanSource
+	Rollouts   PlanRollouts
+	Verifier   PlanVerifier
+	Now        func() time.Time
+	Checkpoint func(context.Context, PlanApplicationResult) error
 }
 
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
@@ -79,6 +82,16 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
 	defer func() {
 		result.Duration = time.Since(started)
+		if err != nil && result.PendingAction != nil {
+			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			reconciled, reconcileErr := e.Reconcile(recoveryCtx, result)
+			cancel()
+			result = reconciled
+			if reconcileErr != nil {
+				err = errors.Join(err, reconcileErr)
+				return
+			}
+		}
 		if err != nil && result.Applied {
 			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
@@ -87,6 +100,13 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
 			} else {
 				result.RolledBack = true
+			}
+		}
+		if !dryRun && e.Checkpoint != nil {
+			durableCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if checkpointErr := e.Checkpoint(durableCtx, result); checkpointErr != nil {
+				err = errors.Join(err, checkpointErr)
 			}
 		}
 	}()
@@ -166,6 +186,11 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if dryRun {
 		return result, nil
 	}
+	if e.Checkpoint != nil {
+		if err := e.Checkpoint(ctx, result); err != nil {
+			return result, err
+		}
+	}
 	versions := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	for index, patch := range result.Patches {
 		if previous := versions[patch.Ref]; previous != nil {
@@ -176,11 +201,24 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			}
 			result.Patches[index].Patch = patch.Patch
 		}
+		pending := index
+		result.PendingAction = &pending
+		if e.Checkpoint != nil {
+			if err := e.Checkpoint(ctx, result); err != nil {
+				return result, err
+			}
+		}
 		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
 			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
+		result.PendingAction = nil
+		if e.Checkpoint != nil {
+			if err := e.Checkpoint(ctx, result); err != nil {
+				return result, err
+			}
+		}
 		observed, getErr := e.Client.Get(ctx, patch.Ref)
 		if getErr != nil {
 			return result, fmt.Errorf("read applied version: %w", getErr)
@@ -189,10 +227,11 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			return result, errors.New("applied object was recreated")
 		}
 		for _, field := range []string{"spec", "data", "binaryData"} {
-			if !reflect.DeepEqual(observed.Object[field], patch.After.Object[field]) {
+			if !planValuesEqual(observed.Object[field], patch.After.Object[field]) {
 				return result, fmt.Errorf("concurrent change after action %d", index)
 			}
 		}
+		result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		versions[patch.Ref] = observed
 	}
 	result.Applied = true
@@ -210,10 +249,19 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 
 // Rollback restores only this application's writes, with identity and version guards.
 func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationResult) error {
+	if application.RolledBack {
+		return nil
+	}
 	if e.Client == nil {
 		return errors.New("plan object client is required")
 	}
-	for index := len(application.ActionsApplied) - 1; index >= 0; index-- {
+	application.RollingBack = true
+	if e.Checkpoint != nil {
+		if err := e.Checkpoint(ctx, application); err != nil {
+			return err
+		}
+	}
+	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
 		if index >= len(application.Patches) {
 			return errors.New("rollback requires journaled field writes")
 		}
@@ -250,6 +298,12 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 			return err
 		}
 		if string(delta) == "{}" {
+			application.RollbackCompleted++
+			if e.Checkpoint != nil {
+				if err := e.Checkpoint(ctx, application); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		delta, err = conditionalPlanPatch(delta, current)
@@ -259,6 +313,18 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
 			return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
 		}
+		application.RollbackCompleted++
+		if e.Checkpoint != nil {
+			if err := e.Checkpoint(ctx, application); err != nil {
+				return err
+			}
+		}
+	}
+	application.RollingBack = false
+	application.RolledBack = true
+	application.RollbackError = ""
+	if e.Checkpoint != nil {
+		return e.Checkpoint(ctx, application)
 	}
 	return nil
 }
@@ -278,10 +344,10 @@ func conditionalPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]
 // Descend into equal-length arrays so a probe repair cannot roll back an image update.
 // Array shape changes are atomic and conservatively conflict.
 func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok bool) (any, bool, error) {
-	if bok == aok && reflect.DeepEqual(before, after) {
+	if bok == aok && planValuesEqual(before, after) {
 		return live, lok, nil
 	}
-	if bok == lok && reflect.DeepEqual(before, live) {
+	if bok == lok && planValuesEqual(before, live) {
 		return live, lok, nil
 	} // already compensated
 	bm, bmap := before.(map[string]any)
@@ -326,7 +392,7 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 		}
 		return result, true, nil
 	}
-	if aok != lok || !reflect.DeepEqual(after, live) {
+	if aok != lok || !planValuesEqual(after, live) {
 		return nil, false, errors.New("field no longer holds application value")
 	}
 	return before, bok, nil
@@ -487,4 +553,15 @@ func (s *planFindingSink) Emit(_ context.Context, finding sdk.Finding) error {
 		s.firing = true
 	}
 	return nil
+}
+
+// Unstructured reloads integral JSON numbers as int64; compare JSON values rather
+// than Go number representations across the durable boundary.
+func planValuesEqual(left, right any) bool {
+	a, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	b, err := json.Marshal(right)
+	return err == nil && string(a) == string(b)
 }
