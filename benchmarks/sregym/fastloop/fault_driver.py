@@ -139,7 +139,7 @@ class SregymFaultDriver:
         return float(seconds)
 
     def recover(self) -> float:
-        """Recover faults, restore the application baseline, then wait for health."""
+        """Recover faults, restore the application baseline, then wait for health and rollouts."""
 
         started = self._monotonic()
         self.last_cleanup = RecoveryCleanup()
@@ -156,13 +156,41 @@ class SregymFaultDriver:
             self.last_cleanup.skipped_reason = "application baseline unavailable"
         deadline = started + self._health_timeout
         health: dict[str, Any] = {}
+        unready_rollouts: list[str] = []
         while True:
             health = self._worker.request("health", namespace=self._namespace, timeout=60)
             if health.get("healthy"):
-                return self._monotonic() - started
+                unready_rollouts = self._unready_rollouts()
+                if not unready_rollouts:
+                    return self._monotonic() - started
             if self._monotonic() >= deadline:
                 raise FastloopFaultError(
                     f"{self._namespace} is not healthy {self._health_timeout:.0f}s after recovery; "
-                    f"unready: {health.get('unready')}"
+                    f"unready: {health.get('unready')}; rollouts: {unready_rollouts}"
                 )
             self._sleep(HEALTH_POLL_SECONDS)
+
+    def _unready_rollouts(self) -> list[str]:
+        if self._cluster is None:
+            return []
+        namespaces = (baseline.namespace for baseline in self._baselines) if self._baselines else (self._namespace,)
+        unready: list[str] = []
+        for namespace in namespaces:
+            for value in self._cluster.list_objects(namespace):
+                kind = value.get("kind")
+                metadata = value.get("metadata", {})
+                if kind == "Pod" and metadata.get("deletionTimestamp"):
+                    unready.append(f"{namespace}/Pod/{metadata.get('name')}")
+                if kind not in {"Deployment", "StatefulSet"}:
+                    continue
+                spec = value.get("spec", {})
+                status = value.get("status", {})
+                replicas = spec.get("replicas", 1)
+                if (
+                    status.get("observedGeneration", 0) < metadata.get("generation", 0)
+                    or status.get("updatedReplicas", 0) != replicas
+                    or status.get("readyReplicas", 0) != replicas
+                    or status.get("replicas", 0) != replicas
+                ):
+                    unready.append(f"{namespace}/{kind}/{metadata.get('name')}")
+        return unready

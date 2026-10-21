@@ -56,6 +56,100 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
     assert seconds == pytest.approx(2 * 2.0)
 
 
+def test_recovery_waits_for_rollouts_in_every_application_namespace() -> None:
+    class Cluster:
+        calls = 0
+
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            self.calls += 1
+            ready = self.calls >= 4
+            return [
+                {
+                    "kind": "Deployment" if namespace == "hotel" else "StatefulSet",
+                    "metadata": {"namespace": namespace, "name": "app", "generation": 2},
+                    "spec": {"replicas": 1},
+                    "status": {
+                        "observedGeneration": 2 if ready else 1,
+                        "updatedReplicas": 1,
+                        "readyReplicas": 1 if ready else 0,
+                        "replicas": 1,
+                    },
+                },
+                {
+                    "kind": "Pod",
+                    "metadata": {
+                        "namespace": namespace,
+                        "name": "old-app",
+                        "ownerReferences": [{"name": "app"}],
+                        **({"deletionTimestamp": "now"} if not ready else {}),
+                    },
+                },
+            ]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            raise AssertionError(kind)
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError(value)
+
+    cluster = Cluster()
+    driver = _driver(FakeWorker())
+    driver._baselines = tuple(
+        ApplicationBaseline(
+            namespace,
+            [
+                {
+                    "kind": "Deployment" if namespace == "hotel" else "StatefulSet",
+                    "metadata": {"namespace": namespace, "name": "app"},
+                    "spec": {"replicas": 1},
+                }
+            ],
+        )
+        for namespace in ("hotel", "db")
+    )
+    driver._cluster = cluster
+
+    assert driver.recover() == pytest.approx(2.0)
+    assert cluster.calls == 6
+
+
+def test_recovery_rollout_timeout_reports_unready_workload() -> None:
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            return [
+                {
+                    "kind": "Deployment",
+                    "metadata": {"namespace": namespace, "name": "rate", "generation": 2},
+                    "spec": {"replicas": 1},
+                    "status": {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 0},
+                }
+            ]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            raise AssertionError(kind)
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError(value)
+
+    driver = _driver(FakeWorker(), timeout=5.0)
+    driver._baselines = (
+        ApplicationBaseline(
+            "hotel-reservation",
+            [
+                {
+                    "kind": "Deployment",
+                    "metadata": {"namespace": "hotel-reservation", "name": "rate"},
+                    "spec": {"replicas": 1},
+                }
+            ],
+        ),
+    )
+    driver._cluster = Cluster()
+
+    with pytest.raises(FastloopFaultError, match="Deployment/rate"):
+        driver.recover()
+
+
 def test_recovery_that_never_becomes_healthy_fails_the_loop() -> None:
     with pytest.raises(FastloopFaultError, match="mongodb-geo"):
         _driver(FakeWorker(health_sequence=[False]), timeout=5.0).recover()
@@ -89,7 +183,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
 
     driver.recover()
 
-    assert events == ["recover", "list", "delete", "health"]
+    assert events == ["recover", "list", "delete", "health", "list"]
     assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
