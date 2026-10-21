@@ -95,7 +95,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if err != nil && result.Applied {
 			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
-			if rollbackErr := e.Rollback(recoveryCtx, result); rollbackErr != nil {
+			if rollbackErr := e.rollback(recoveryCtx, &result); rollbackErr != nil {
 				result.RollbackError = rollbackErr.Error()
 				result.RollingBack = true
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
@@ -250,20 +250,25 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 
 // Rollback restores only this application's writes, with identity and version guards.
 func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationResult) error {
+	return e.rollback(ctx, &application)
+}
+
+// rollback advances the caller's result even when compensation stops partway.
+func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplicationResult) error {
 	if application.RolledBack {
 		return nil
 	}
 	if e.Client == nil {
 		return errors.New("plan object client is required")
 	}
-	hydrated, err := hydratePlanPatches(application)
+	hydrated, err := hydratePlanPatches(*application)
 	if err != nil {
 		return err
 	}
-	application = hydrated
+	*application = hydrated
 	application.RollingBack = true
 	if e.Checkpoint != nil {
-		if err := e.Checkpoint(ctx, application); err != nil {
+		if err := e.Checkpoint(ctx, *application); err != nil {
 			return err
 		}
 	}
@@ -306,7 +311,7 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 		if string(delta) == "{}" {
 			application.RollbackCompleted++
 			if e.Checkpoint != nil {
-				if err := e.Checkpoint(ctx, application); err != nil {
+				if err := e.Checkpoint(ctx, *application); err != nil {
 					return err
 				}
 			}
@@ -321,7 +326,7 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 		}
 		application.RollbackCompleted++
 		if e.Checkpoint != nil {
-			if err := e.Checkpoint(ctx, application); err != nil {
+			if err := e.Checkpoint(ctx, *application); err != nil {
 				return err
 			}
 		}
@@ -330,7 +335,7 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 	application.RolledBack = true
 	application.RollbackError = ""
 	if e.Checkpoint != nil {
-		return e.Checkpoint(ctx, application)
+		return e.Checkpoint(ctx, *application)
 	}
 	return nil
 }

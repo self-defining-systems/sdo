@@ -30,5 +30,10 @@ func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request I
 		revision = next
 		return nil
 	}
+	// A resolved marker can carry finalization missing from an older journal.
+	// Consult it before interpreting Pending as authority to undo a mutation.
+	if err := d.restoreFastPathResolution(ctx, request, loop); err != nil {
+		return err
+	}
 	return loop.reconcileApplications(ctx)
 }

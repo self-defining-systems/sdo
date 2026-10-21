@@ -649,7 +649,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	entry.Result = result
 	entry.CompletedAt = completed
-	entry.Pending = false
+	entry.Pending = result.PendingAction != nil || result.RollingBack
 	entry.RolledBack = result.RolledBack
 	entry.RollbackError = result.RollbackError
 	if err != nil {
