@@ -129,6 +129,7 @@ class LoopConfig:
     incidents: int
     results_path: Path
     stream: tuple[tuple[str, ...], ...] = ()
+    continue_on_error: bool = False
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -153,6 +154,7 @@ def run_incidents(
     grader: DiagnosisGrader | None = None,
     diagnosis_grading: str = "off",
     grading_timeout_seconds: float = 1800.0,
+    on_failed_incident: Callable[[], None] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> list[IncidentRecord]:
@@ -178,6 +180,20 @@ def run_incidents(
                 now=now,
                 grader=grader if diagnosis_grading == "inline" else None,
             )
+            baseline_ready = recovered or (record.recovery_oracle is not None and record.recovery_oracle.success)
+            if (
+                config.continue_on_error
+                and record.error
+                and index + 1 < config.incidents
+                and on_failed_incident is not None
+            ):
+                try:
+                    on_failed_incident()
+                    baseline_ready = True
+                except Exception as exc:
+                    logger.exception("reset failed after incident %d", index)
+                    record.error = f"{record.error}; reset failed: {_describe(exc)}"
+                    baseline_ready = False
             append_record(config.results_path, record)
             records.append(record)
             if pool is not None and grader is not None:
@@ -193,7 +209,7 @@ def run_incidents(
                 record.incident_wall_seconds or 0.0,
                 record.error,
             )
-            if not recovered:
+            if (not config.continue_on_error and not recovered) or (config.continue_on_error and not baseline_ready):
                 logger.error("stopping: incident %d did not clear the recovery and learning gate", index)
                 break
     finally:

@@ -24,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
+	"sdo.dev/operator/devmount"
 )
 
 var gitTreeID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -290,6 +291,9 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 	if useBaseline {
 		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: ".sdo-baseline/healthy", ReadOnly: true})
+	}
+	if devmount.Enabled() {
+		devmount.Apply(&job.Spec.Template.Spec)
 	}
 	return job
 }

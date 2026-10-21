@@ -31,7 +31,7 @@ class SregymWorkerError(RuntimeError):
 
 
 def worker_argv(sregym_dir: Path, *, private_tmp: Path | None) -> list[str]:
-    command = ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "sregym.fastloop.worker"]
+    command = ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.fastloop.worker_bridge"]
     if private_tmp is None:
         return command
     return ["bwrap", "--dev-bind", "/", "/", "--bind", str(private_tmp), "/tmp", *command]

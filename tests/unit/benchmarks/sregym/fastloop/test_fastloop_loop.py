@@ -220,6 +220,48 @@ def test_next_injection_waits_for_learning_and_failed_learning_stops_stream(tmp_
     assert "rollout was not verified" in str(records[0].error)
 
 
+def test_continue_on_error_records_failed_learning_and_runs_next_incident(tmp_path: Path) -> None:
+    clock = FakeClock()
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            if outcome.incident_id == "incident-0":
+                raise RuntimeError("reflection failed")
+            return super().learn(outcome)
+
+    driver = FakeDriver(clock)
+    reset_calls: list[str] = []
+    records = run_incidents(
+        Agent(clock),
+        driver,
+        LoopConfig(
+            run_id="run-1",
+            problems=("p1", "p2"),
+            incidents=2,
+            results_path=tmp_path / "incidents.jsonl",
+            continue_on_error=True,
+        ),
+        monotonic=clock.monotonic,
+        on_failed_incident=lambda: reset_calls.append("reset"),
+    )
+
+    assert len(records) == 2
+    assert "reflection failed" in str(records[0].error)
+    assert records[1].error is None
+    assert driver.events == ["inject:p1", "oracle", "recover", "oracle", "inject:p2", "oracle", "recover", "oracle"]
+    assert reset_calls == ["reset"]
+
+
+def test_continue_on_error_still_stops_when_baseline_recovery_fails(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock, recover_fails=True)
+    config = LoopConfig(
+        run_id="run-1", problems=("p1",), incidents=2, results_path=tmp_path / "incidents.jsonl", continue_on_error=True
+    )
+
+    assert len(run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)) == 1
+
+
 def test_oracle_failure_is_recorded_and_recovery_finishes_before_next_injection(tmp_path: Path) -> None:
     clock = FakeClock()
     records = run_incidents(

@@ -236,6 +236,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	timeScale, err := developmentTimeScale()
+	if err != nil {
+		return err
+	}
+	detectors = scaleDetectors(detectors, timeScale)
+	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
+	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
+	*followUpCooldown = scaledDuration(*followUpCooldown, timeScale)
 	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 {
 		return errors.New("max-response-loops and diagnosis-deadline must be positive")
 	}
@@ -473,12 +481,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		VerificationTimeout: *verificationTimeout,
 		MaxFollowUps:        *maxFollowUps, FollowUpCooldown: *followUpCooldown,
 		RepairPolicy:    *repairPolicy,
-		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
-		ConfirmationInterval: time.Second,
+		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
+		ConfirmationInterval: scaledDuration(time.Second, timeScale),
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
-		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second},
+		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: scaledDuration(2*time.Second, timeScale), Interval: scaledDuration(time.Second, timeScale)},
 		Admission:        admission,
 	}, detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
@@ -497,7 +505,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return errors.New("job controller requires the Go incident broker")
 	}
 	if *stateBaseline {
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace})
+		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
 		controller.Baseline = stateTracker
 		defer stateTracker.Stop()
 	}

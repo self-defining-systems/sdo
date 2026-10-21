@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/devmount"
 )
 
 const (
@@ -247,6 +248,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 				},
 			},
 		},
+	}
+	if devmount.Enabled() {
+		devmount.Apply(&job.Spec.Template.Spec)
 	}
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("create agent Job: %w", err)

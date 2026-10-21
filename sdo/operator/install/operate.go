@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/devmount"
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -162,6 +164,13 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
 	pod.Containers = []corev1.Container{container}
+	if devmount.Enabled() {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		devmount.Apply(pod)
+	}
+	if scale := os.Getenv("SDO_TIME_SCALE"); scale != "" {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
+	}
 	return job, nil
 }
 func provider(c Config) string {
