@@ -593,7 +593,7 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 		}
 	}
 	stored, err := memory.OpenReader(accepted).Get(ctx, firstRequest.IncidentID)
-	if err != nil || stored.Record.GetClassification() != "success" {
+	if err != nil || stored.Record.GetClassification() != "success" || !stored.Record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() {
 		t.Fatalf("broker outcome: %+v %v", stored, err)
 	}
 	deployment, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
@@ -632,10 +632,13 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
 		controller.ConfigureDrift(DriftControllerConfig{Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
-		}})
+		}, Investigation: DriftInvestigationConfig{Worker: driftWorker, BatchWindow: time.Nanosecond, BuildTask: buildDriftTask}})
 	})
 	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
 		t.Fatalf("second fault missed sweep-on-change: %+v", secondRequest.DriftEvents)
+	}
+	if len(driftWorker.requests) != 1 {
+		t.Fatalf("second incident called the investigator %d times", len(driftWorker.requests)-1)
 	}
 	secondView, err := provider.Snapshot(ctx)
 	if err != nil {
@@ -705,8 +708,8 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondStored.Record.GetClassification() != "success" {
-		t.Fatalf("second outcome classification: %s", secondStored.Record.GetClassification())
+	if secondStored.Record.GetClassification() != "success" || !secondStored.Record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() {
+		t.Fatalf("second outcome attribution: %+v", secondStored.Record)
 	}
 	if reflected != 2 {
 		t.Fatalf("reflection decisions: %d", reflected)
