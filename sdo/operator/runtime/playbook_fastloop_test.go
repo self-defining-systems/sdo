@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -213,14 +214,16 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	command.Dir = filepath.Join("..", "..", "..")
 	command.Env = append(os.Environ(), "SDO_TOOLS_DIR="+directory)
 	command.WaitDelay = time.Second
-	output, err := command.CombinedOutput()
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
 	if err != nil {
-		t.Fatalf("sdo %v: %v: %s", args, err, output)
+		t.Fatalf("sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
 	}
 	var response ToolResponse
 	encoded := []byte(strings.SplitN(string(output), "\n", 2)[0])
 	if err := json.Unmarshal(encoded, &response); err != nil {
-		t.Fatalf("decode sdo %v: %s: %v", args, output, err)
+		t.Fatalf("decode sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
 	}
 	if destination := os.Getenv("SDO_SCRIPTED_TOOL_RESPONSES"); destination != "" {
 		name := args[0]

@@ -159,6 +159,14 @@ jobs:
         with:
           go-version: "${{ matrix.go-version }}"
           cache-dependency-path: ${{ matrix.directory }}/go.sum
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
+        if: matrix.module == 'runtime'
+        with:
+          version: "0.9.24"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+        if: matrix.module == 'runtime'
       # TestReplay* and TestChaos* have dedicated, 5-minute-capped jobs below;
       # skip them here so the runtime module's tests aren't compiled and run a
       # second time in this job.
