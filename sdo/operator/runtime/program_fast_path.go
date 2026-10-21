@@ -121,6 +121,8 @@ func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust 
 // TryTrustedFastPath makes one settled, verified plan attempt for an incident.
 // The caller hands an unsuccessful attempt to the responder with Summary.
 func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int) FastPathAttempt {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	skip := func(reason FastPathSkipReason) FastPathAttempt {
@@ -208,7 +210,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		plan := preview.Plan
 		var err error
 		if !cached {
-			plan, err = mitigator.Mitigate(ctx, matchedView, run.Bindings)
+			plan, err = l.runMitigator(ctx, run.ProgramID, mitigator, matchedView, run.Bindings)
 		}
 		if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
 			return skip(FastPathSkipInvalidPlan)

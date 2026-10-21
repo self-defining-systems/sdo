@@ -95,6 +95,7 @@ type ResponderLoop struct {
 	CorpusSessionRoot               string
 	capturePhase                    string
 	preApplyCaptured                bool
+	operationMu                     sync.Mutex
 	mu                              sync.Mutex
 	plans                           map[string]selectedPlan
 	applications                    map[string]PlanApplicationResult
@@ -141,6 +142,8 @@ func (l *ResponderLoop) FailureSignals() []string {
 }
 
 func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.capturePhase = "open@detect"
@@ -151,6 +154,8 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 // RestoreInitialMatches prepares plans from the dispatch capture when the
 // responder loop is recreated after the initial diagnosis was persisted.
 func (l *ResponderLoop) RestoreInitialMatches(ctx context.Context) error {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.CorpusSessionRoot == "" || l.Programs == nil {
@@ -195,6 +200,8 @@ func (l *ResponderLoop) RestoreInitialMatches(ctx context.Context) error {
 // RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
 // The caller starts this while the responder Job is being dispatched.
 func (l *ResponderLoop) RetryInitialDiagnose(ctx context.Context) {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	inconclusive := false
 	for _, run := range l.runs {
@@ -236,6 +243,8 @@ func (l *ResponderLoop) Exhausted() bool {
 }
 
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	defer func() { l.capturePhase = "" }()
@@ -489,7 +498,7 @@ func (l *ResponderLoop) rememberMatchedViews(ctx context.Context, runs []Program
 			if !ok {
 				continue
 			}
-			plan, err := mitigator.Mitigate(ctx, view, run.Bindings)
+			plan, err := l.runMitigator(ctx, run.ProgramID, mitigator, view, run.Bindings)
 			if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
 				continue
 			}
@@ -546,7 +555,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 	plan := preview.Plan
 	if !matched || l.batches > 0 {
 		var err error
-		plan, err = mitigator.Mitigate(ctx, view, request.Bindings)
+		plan, err = l.runMitigator(ctx, request.ProgramID, mitigator, view, request.Bindings)
 		if err != nil {
 			response.Error = err.Error()
 			return
