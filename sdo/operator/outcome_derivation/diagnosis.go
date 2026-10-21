@@ -420,12 +420,36 @@ type repairs struct {
 	healthClearedAt *time.Time
 }
 
-func newRepairs(closure *contractsv1alpha1.IncidentClosure) repairs {
+func repairClearAt(closure *contractsv1alpha1.IncidentClosure) *time.Time {
 	var cleared *time.Time
 	if closure.GetHealthClearedAt() != nil {
 		value := closure.GetHealthClearedAt().AsTime()
 		cleared = &value
 	}
+	if cleared != nil && closure.GetDispatchedAt() != nil && cleared.Before(closure.GetDispatchedAt().AsTime()) {
+		cleared = nil
+		for _, state := range closure.GetIncidentDetectorStates() {
+			if state.GetStatus() != "clear" || state.GetEvaluatedAt() == nil {
+				continue
+			}
+			at := state.GetEvaluatedAt().AsTime()
+			if at.Before(closure.GetDispatchedAt().AsTime()) {
+				continue
+			}
+			if cleared == nil || at.After(*cleared) {
+				cleared = &at
+			}
+		}
+	}
+	if cleared == nil && closure.GetVerifiedAt() != nil {
+		at := closure.GetVerifiedAt().AsTime()
+		cleared = &at
+	}
+	return cleared
+}
+
+func newRepairs(closure *contractsv1alpha1.IncidentClosure) repairs {
+	cleared := repairClearAt(closure)
 	actions := []actionWithKeys{}
 	for _, receipt := range closure.GetResult().GetRepairActions() {
 		if receipt.GetSuccess() && (cleared == nil || !receipt.GetStartedAt().AsTime().After(*cleared)) {

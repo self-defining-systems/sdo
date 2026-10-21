@@ -320,6 +320,10 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 		return
 	}
 	c.closureReceipt = cloneClosureReceipt(&completion.receipt)
+	c.config.SourceCommit = completion.receipt.OutcomeCommit
+	if completion.receipt.ReflectionCommit != "" {
+		c.config.SourceCommit = completion.receipt.ReflectionCommit
+	}
 	c.closureFailure = nil
 	c.closureState = "committed"
 	c.emitLifecycleLocked(LifecycleEvent{

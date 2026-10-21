@@ -534,8 +534,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				if err != nil {
 					return nil, err
 				}
-				if snapshot.GetAcceptedCommit() != resolvedSourceCommit {
-					return nil, fmt.Errorf("drift memory snapshot differs from accepted commit")
+				acceptedCommit := controller.CurrentAcceptedCommit()
+				if snapshot.GetAcceptedCommit() != acceptedCommit {
+					return nil, fmt.Errorf("drift memory snapshot commit %s differs from controller accepted commit %s", snapshot.GetAcceptedCommit(), acceptedCommit)
 				}
 				view, err := snapshotProvider.Snapshot(ctx)
 				if err != nil {
@@ -553,7 +554,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return nil, err
 				}
 				return &contractsv1alpha1.DriftInvestigationTask{SchemaVersion: ProtocolSchemaVersion, BatchId: batchID,
-					Application: *application, Namespace: *namespace, AcceptedCommit: resolvedSourceCommit,
+					Application: *application, Namespace: *namespace, AcceptedCommit: acceptedCommit,
 					MemorySnapshot: snapshot, Events: driftEventsContract(events), CaptureId: batchID,
 					CaptureSha256: fmt.Sprintf("%x", sha256.Sum256(captured)), RepositoryWorktree: resolvedRoot}, nil
 			}
@@ -562,7 +563,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
-				Source: planSource, SourceCommit: resolvedSourceCommit}
+				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit()}
 		},
 	})
 	// The load term reads host pressure from a Linux PSI file; the backlog term

@@ -818,16 +818,30 @@ func (c *Controller) trackClearStreak(detectorID string, now time.Time, clear bo
 	}
 }
 
-// healthClearedAtLocked is when the closure gate's detectors began their
-// final clear streak: the latest streak start among them. A repair action
-// that started after it cannot have restored health. nil when a gate
-// detector has no clear streak on record. Called with c.mu held.
+// healthClearedAtLocked bounds repair attribution by the incident's findings.
+// Latent findings can dispatch while health has been clear since before the
+// incident; that earlier streak cannot be the repair cutoff. Called with c.mu held.
 func (c *Controller) healthClearedAtLocked(finalStates []DetectorEvaluation) *time.Time {
+	states := finalStates
+	if c.currentIncidentRequest != nil {
+		ids := map[string]bool{}
+		for _, finding := range c.currentIncidentRequest.Findings {
+			ids[finding.DetectorID] = true
+		}
+		for id := range ids {
+			if since, ok := c.detectorClearSince[id]; ok && !since.Before(c.incidentDispatchedAt) {
+				states = append(states, DetectorEvaluation{DetectorID: id})
+			}
+		}
+	}
 	var cleared time.Time
-	for _, state := range finalStates {
+	for _, state := range states {
 		since, ok := c.detectorClearSince[state.DetectorID]
 		if !ok {
-			return nil
+			continue
+		}
+		if since.Before(c.incidentDispatchedAt) {
+			continue
 		}
 		if since.After(cleared) {
 			cleared = since
@@ -837,6 +851,13 @@ func (c *Controller) healthClearedAtLocked(finalStates []DetectorEvaluation) *ti
 		return nil
 	}
 	return &cleared
+}
+
+// CurrentAcceptedCommit returns the repository revision used for new tasks.
+func (c *Controller) CurrentAcceptedCommit() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.config.SourceCommit
 }
 
 // detectorOrigins maps each learned incident detector to the incident it was

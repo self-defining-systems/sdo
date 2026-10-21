@@ -76,7 +76,11 @@ func (c *Controller) dispatchDriftInvestigation(ctx context.Context, now time.Ti
 	}
 	if c.driftInvestigation.config.Async {
 		task, err := c.driftInvestigation.PrepareReady(ctx, now)
-		if err != nil || task == nil {
+		if err != nil {
+			c.driftRetryAt = now.Add(2 * time.Second)
+			return err
+		}
+		if task == nil {
 			return err
 		}
 		c.driftRunning = true
@@ -217,6 +221,18 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 			event.InvestigationStatus = "pending"
 		}
 		c.mu.Lock()
+		unchanged := false
+		for _, previous := range c.driftEvents {
+			if previous.InvestigationStatus == "completed" && driftEventKey(previous) == driftEventKey(*event) &&
+				previous.Manager == event.Manager && reflect.DeepEqual(previous.Fields, event.Fields) {
+				unchanged = true
+				break
+			}
+		}
+		if unchanged {
+			c.mu.Unlock()
+			continue
+		}
 		replaced := false
 		if event.Classification == sdk.DriftUnexplained && c.driftInvestigation != nil && c.driftInvestigation.state.RequestJSON == "" {
 			for index := range c.driftEvents {

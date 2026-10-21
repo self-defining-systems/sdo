@@ -86,11 +86,8 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	if result != nil {
 		mitigatedAt = closure.GetResponderCompletedAt()
 		if healthVerified {
-			clearedAt := closure.GetHealthClearedAt()
-			cutoff := clearedAt
-			if cutoff == nil {
-				cutoff = closure.GetVerifiedAt()
-			}
+			clearedAt := repairClearAt(closure)
+			cutoff := timestamppb.New(*clearedAt)
 			for _, action := range result.GetRepairActions() {
 				completed := action.GetCompletedAt()
 				if !action.GetSuccess() || completed == nil || !completed.IsValid() ||
@@ -102,7 +99,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 				}
 			}
 			if mitigatedAt == closure.GetResponderCompletedAt() && clearedAt != nil {
-				mitigatedAt = clearedAt
+				mitigatedAt = cutoff
 			}
 		}
 	}
