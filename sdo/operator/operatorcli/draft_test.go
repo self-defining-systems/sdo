@@ -14,7 +14,9 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -84,6 +86,79 @@ func TestProposalValidateUsesAuthoritativeContextAndMemoryEdge(t *testing.T) {
 	err = RunDraftTest(context.Background(), DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: path, IncidentID: "incident-1", OutcomeCommit: "commit-1"})
 	if err == nil || !strings.Contains(err.Error(), "firing: expected 1") {
 		t.Fatalf("invalid firing lacked named feedback: %v", err)
+	}
+}
+
+func TestHermeticReflectionCorrectsMissingDetectorSourceAndCommits(t *testing.T) {
+	ctx := context.Background()
+	app := draftFixtureApp(t)
+	repository, err := broker.New(app, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := repository.RecordOutcome(ctx, "incident-1", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident-1", Classification: "success"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := filepath.Join(t.TempDir(), "proposal.json")
+	proposal := &contracts.OperationalArtifactProposal{Detectors: []*contracts.ProposedDetector{{
+		Id: "image-pull", Constructor: "New", Interval: "30s", Severity: "warn", Debounce: "500ms", Firing: 1, Clearing: 2,
+		Watches: []*contracts.MemoryWatch{{ApiVersion: "v1", Kind: "Pod"}},
+	}}}
+	write := func() {
+		t.Helper()
+		data, err := protojson.Marshal(proposal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(draft, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	validate := func() error {
+		return RunDraftTest(ctx, DraftTestConfig{ApplicationRoot: app, OperatorRoot: "..", ProposalJSON: draft, IncidentID: "incident-1", OutcomeCommit: outcome.Commit})
+	}
+	write()
+	if err := validate(); err == nil || !strings.Contains(err.Error(), "sources: expected at least one Go source") {
+		t.Fatalf("first reflection did not receive named feedback: %v", err)
+	}
+	proposal.Detectors[0].Sources = []*contracts.ProposedGoSource{{Name: "detector.go", Content: strings.ReplaceAll(`package imagepull
+
+import (
+	"context"
+	"time"
+	"sdo.dev/operator/sdk"
+)
+
+type detector struct{ spec sdk.DetectorSpec }
+
+func New() sdk.Detector { return detector{spec: sdk.DetectorSpec{
+	ID: "image-pull", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+	Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}, Interval: 30*time.Second,
+	Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 2},
+	Batching: sdk.BatchingPolicy{Severity: sdk.SeverityWarning, Debounce: 500*time.Millisecond},
+	Playbooks: []string{}, OriginatingIncident: "incident-1", OriginatingCommit: "OUTCOME_COMMIT",
+}} }
+func (d detector) Spec() sdk.DetectorSpec { return d.spec }
+func (d detector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) { return nil, nil }
+`, "OUTCOME_COMMIT", outcome.Commit)}}
+	write()
+	if err := validate(); err != nil {
+		t.Fatalf("corrected detector was rejected: %v", err)
+	}
+	reflection, err := repository.CreateProposalForPhase(ctx, "incident-1", broker.ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.FillResponderProposalContext(proposal, "incident-1", outcome.Commit); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.MaterializeArtifacts(reflection.Path, proposal, memory.ResponderArtifacts); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := repository.Publish(ctx, "incident-1", broker.Responder, broker.ReflectionPhase)
+	if err != nil || accepted.Commit == "" {
+		t.Fatalf("corrected reflection did not commit: %+v, %v", accepted, err)
 	}
 }
 
