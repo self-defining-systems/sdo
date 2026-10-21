@@ -62,6 +62,12 @@ the experiment lead because it builds images and changes a kind cluster.
 The scripted Level 1 check in `tests/unit/benchmarks/sregym/fastloop/`
 exercises responder and reflection worker entry points with a copied hotel
 seed, typed tasks, and a fake Kubernetes API, without a cluster.
+Run `uv run --extra test pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py`
+before Level 2. It drives the real fastloop CLI, composite agent, persistent
+state save and reload, reflection drain, baseline recovery, and result rows for
+two scripted incidents with a fake application API and controller boundary. It
+compiles the accepted Go program and runs its diagnosis and plan against the
+second incident's snapshot, so the gate needs a Go toolchain.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.
 
