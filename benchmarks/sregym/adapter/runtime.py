@@ -66,6 +66,7 @@ class RuntimeConfig:
     kind_cluster_name: str | None = None
     max_deployment_attempts: int = 3
     agent_registrations: Path | None = None
+    deployed_manifest_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field in (
@@ -145,6 +146,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
+        deployed_manifest_paths=config.deployed_manifest_paths,
     )
 
 

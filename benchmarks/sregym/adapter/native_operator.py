@@ -55,6 +55,7 @@ class NativeInstallConfig:
     healthy_baseline: bool = False
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
+    deployed_manifest_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.repository.is_absolute():
@@ -384,6 +385,8 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args.extend(("--reflection-guidance", config.reflection_guidance))
     if config.force_reflection:
         args.append("--force-reflection")
+    for path in config.deployed_manifest_paths:
+        args.extend(("--deployed-manifest-path", path))
     args.extend(("--max-follow-ups", str(config.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))

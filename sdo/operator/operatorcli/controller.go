@@ -73,6 +73,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	var deployedManifestPaths repeatable
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
 	if err := flags.Parse(args[1:]); err != nil {
 		return builder.RunConfig{}, false, err
 	}
@@ -110,7 +112,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	launch := &contracts.ControllerConfig{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
+		DeployedManifestPaths: deployedManifestPaths,
+		Dispatcher:            "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,

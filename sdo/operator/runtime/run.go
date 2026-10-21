@@ -128,6 +128,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
+	var deployedManifestPaths repeatedFlag
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
 	dispatcherCommand := flags.String("dispatcher", "", "incident responder executable")
 	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode: job (production) or local (development)")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
@@ -429,6 +431,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
 		defer stateTracker.Stop()
 	}
+	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths}
 	var dispatcher Dispatcher
 	switch *dispatcherMode {
 	case "local":
@@ -456,7 +459,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker},
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
 				}, *maxResponseLoops)
 				loop.DiagnosisDeadline = *diagnosisDeadline
@@ -466,7 +469,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-						Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
 				}
 				return loop
 			},
@@ -522,7 +525,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop.DiagnosisDeadline = *diagnosisDeadline
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
-						Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: task.GetAcceptedCommit()}
+						Source: planSource, SourceCommit: task.GetAcceptedCommit()}
 				}
 				return loop
 			}}
@@ -556,10 +559,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 		}
 	}
-	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, Client: bootstrapProvider.Client, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
+	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, Investigation: investigation,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client,
-				Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker}, SourceCommit: resolvedSourceCommit}
+				Source: planSource, SourceCommit: resolvedSourceCommit}
 		},
 	})
 	// The load term reads host pressure from a Linux PSI file; the backlog term

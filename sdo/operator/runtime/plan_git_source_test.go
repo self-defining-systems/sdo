@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,10 +48,10 @@ func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 	}
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "rate"}
 	image := "example/app:sregym-src"
-	if _, err := (GitPlanSource{Repository: repo}).AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref); err == nil {
+	if _, err := (GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}).AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref); err == nil {
 		t.Fatal("mutable raw image restored without deployed image evidence")
 	}
-	source := GitPlanSource{Repository: repo, Images: fixedSourceImages{image}}
+	source := GitPlanSource{Repository: repo, Images: fixedSourceImages{image}, ManifestPaths: []string{"app.yaml"}}
 	manifests, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
 	if err != nil || len(manifests) != 1 || manifests[0].GetName() != "rate" || manifests[0].Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] != image {
 		t.Fatalf("adoption source lost rendered image: %+v, %v", manifests, err)
@@ -113,8 +114,98 @@ func TestGitPlanSourceReadsManifestAtAcceptedCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	object, err := (GitPlanSource{Repository: repo}).AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref)
+	object, err := (GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}).AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref)
 	if err != nil || object.GetName() != "api" {
 		t.Fatalf("accepted manifest: %+v %v", object, err)
+	}
+}
+
+func TestGitPlanSourceUsesOnlyDeployedManifestSet(t *testing.T) {
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, output, err)
+		}
+	}
+	for _, path := range []string{"kubernetes/geo/service.yaml", "kubernetes/rate/service.yaml", "knative/geo-service.yaml", "failures/buggy-geo-service.yaml"} {
+		full := filepath.Join(repo, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		manifest, err := os.ReadFile(filepath.Join("testdata", "deployed_variants", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, manifest, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-m", "seed"}} {
+		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, output, err)
+		}
+	}
+	commit, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}}
+	objects, err := selection.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
+	if err != nil || len(objects) != 2 {
+		t.Fatalf("deployed objects = %+v, %v", objects, err)
+	}
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "geo"}
+	object, err := selection.AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports, _, _ := unstructured.NestedSlice(object.Object, "spec", "ports")
+	if len(ports) != 1 || fmt.Sprint(ports[0].(map[string]any)["targetPort"]) != "8080" {
+		t.Fatalf("selected variant ports = %+v", ports)
+	}
+	if _, err := (GitPlanSource{Repository: repo}).AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app"); err == nil {
+		t.Fatal("ambiguous deployed set was guessed")
+	}
+}
+
+func TestGitPlanSourceSelectsDeployedHotelSeed(t *testing.T) {
+	seed := os.Getenv("SDO_DRIFT_SEED")
+	if seed == "" {
+		t.Skip("real hotel seed is unavailable")
+	}
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.com"}} {
+		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, output, err)
+		}
+	}
+	for _, variant := range []string{"kubernetes", "knative", "failures"} {
+		copyFastloopTree(t, filepath.Join(seed, variant), filepath.Join(repo, variant))
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-m", "hotel seed"}} {
+		if output, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, output, err)
+		}
+	}
+	commit, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}, Images: fixedSourceImages{"example/app@sha256:" + strings.Repeat("a", 64)}}
+	objects, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "hotel-res")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 39 {
+		t.Fatalf("deployed object count = %d, want 39", len(objects))
+	}
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "hotel-res", Name: "geo"}
+	geo, err := source.AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports, _, _ := unstructured.NestedSlice(geo.Object, "spec", "ports")
+	if len(ports) != 1 || fmt.Sprint(ports[0].(map[string]any)["targetPort"]) != "8083" {
+		t.Fatalf("selected geo Service ports = %+v", ports)
 	}
 }

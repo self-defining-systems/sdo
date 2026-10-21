@@ -27,19 +27,28 @@ type SourceImages interface {
 
 // GitPlanSource reads accepted manifests and applies the deployment renderer.
 type GitPlanSource struct {
-	Repository string
-	Images     SourceImages
+	Repository    string
+	Images        SourceImages
+	ManifestPaths []string
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
 // the drift change feed can own.
 func (s GitPlanSource) AcceptedManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
+	return s.manifests(ctx, revision, namespace, true)
+}
+
+func (s GitPlanSource) manifests(ctx context.Context, revision, namespace string, render bool) ([]*unstructured.Unstructured, error) {
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
 	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "--name-only", revision).Output()
 	if err != nil {
 		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
+	}
+	paths, err := deployment.SelectManifestPaths(strings.Fields(string(files)), s.ManifestPaths)
+	if err != nil {
+		return nil, err
 	}
 	treeBytes, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "rev-parse", revision+"^{tree}").Output()
 	if err != nil {
@@ -48,16 +57,13 @@ func (s GitPlanSource) AcceptedManifests(ctx context.Context, revision, namespac
 	tree := strings.TrimSpace(string(treeBytes))
 	objects := make([]*unstructured.Unstructured, 0)
 	seen := map[sdk.ObjectRef]bool{}
-	for _, path := range strings.Split(string(files), "\n") {
-		if strings.HasPrefix(path, ".sdo/") || (!strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json")) {
-			continue
-		}
+	for _, path := range paths {
 		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+path).Output()
 		if err != nil {
 			return nil, fmt.Errorf("read accepted manifest %s: %w", path, err)
 		}
 		if len(data) > 2<<20 {
-			continue
+			return nil, fmt.Errorf("accepted manifest %s exceeds 2 MiB", path)
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
 		for {
@@ -65,7 +71,7 @@ func (s GitPlanSource) AcceptedManifests(ctx context.Context, revision, namespac
 			if err := decoder.Decode(&document); err == io.EOF {
 				break
 			} else if err != nil {
-				break
+				return nil, fmt.Errorf("decode accepted manifest %s: %w", path, err)
 			}
 			object := &unstructured.Unstructured{Object: document}
 			if object.GetAPIVersion() == "" || object.GetKind() == "" || object.GetName() == "" {
@@ -79,9 +85,14 @@ func (s GitPlanSource) AcceptedManifests(ctx context.Context, revision, namespac
 				continue
 			}
 			if seen[ref] {
-				return nil, fmt.Errorf("duplicate accepted manifest for %s/%s", ref.Kind, ref.Name)
+				return nil, fmt.Errorf("%w: duplicate accepted manifest for %s/%s", deployment.ErrManifestSelectionUnavailable, ref.Kind, ref.Name)
 			}
 			seen[ref] = true
+			if !render {
+				object.SetNamespace(namespace)
+				objects = append(objects, object)
+				continue
+			}
 			rendered, err := s.renderDocument(document, tree, ref, path)
 			if err != nil {
 				return nil, err
@@ -101,53 +112,13 @@ func (s GitPlanSource) Revision(ctx context.Context, ref sdk.ObjectRef, revision
 }
 
 func (s GitPlanSource) manifest(ctx context.Context, revision string, ref sdk.ObjectRef, render bool) (*unstructured.Unstructured, error) {
-	if s.Repository == "" || !gitRevision.MatchString(revision) {
-		return nil, fmt.Errorf("accepted repository and full commit revision are required")
-	}
-	treeBytes, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "rev-parse", revision+"^{tree}").Output()
+	objects, err := s.manifests(ctx, revision, ref.Namespace, render)
 	if err != nil {
-		return nil, fmt.Errorf("source tree at %s: %w", revision, err)
+		return nil, err
 	}
-	tree := strings.TrimSpace(string(treeBytes))
-	files, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "ls-tree", "-r", "--name-only", revision).Output()
-	if err != nil {
-		return nil, fmt.Errorf("list manifests at %s: %w", revision, err)
-	}
-	for _, path := range strings.Split(string(files), "\n") {
-		if !strings.HasSuffix(path, ".yaml") && !strings.HasSuffix(path, ".yml") && !strings.HasSuffix(path, ".json") {
-			continue
-		}
-		if strings.HasPrefix(path, ".sdo/") {
-			continue
-		}
-		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+path).Output()
-		if err != nil {
-			return nil, fmt.Errorf("read accepted manifest %s: %w", path, err)
-		}
-		if len(data) > 2<<20 {
-			continue
-		}
-		decoder := yaml.NewDecoder(bytes.NewReader(data))
-		for {
-			var document map[string]any
-			if err := decoder.Decode(&document); err == io.EOF {
-				break
-			} else if err != nil {
-				break
-			}
-			if document["apiVersion"] != ref.APIVersion || document["kind"] != ref.Kind {
-				continue
-			}
-			object := &unstructured.Unstructured{Object: document}
-			if object.GetNamespace() == "" {
-				object.SetNamespace(ref.Namespace)
-			}
-			if object.GetNamespace() == ref.Namespace && object.GetName() == ref.Name {
-				if !render {
-					return object, nil
-				}
-				return s.renderDocument(document, tree, ref, path)
-			}
+	for _, object := range objects {
+		if object.GetAPIVersion() == ref.APIVersion && object.GetKind() == ref.Kind && object.GetName() == ref.Name && object.GetNamespace() == ref.Namespace {
+			return object, nil
 		}
 	}
 	return nil, fmt.Errorf("accepted manifest for %s/%s/%s is absent at %s", ref.Kind, ref.Namespace, ref.Name, revision)

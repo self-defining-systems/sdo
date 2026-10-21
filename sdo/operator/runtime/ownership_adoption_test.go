@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,14 +17,25 @@ import (
 	"k8s.io/client-go/rest"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type adoptionSource struct{ object *unstructured.Unstructured }
+type adoptionSource struct {
+	object *unstructured.Unstructured
+	err    error
+	calls  *int
+}
 
 func (s adoptionSource) AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error) {
+	if s.calls != nil {
+		*s.calls++
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
 	return []*unstructured.Unstructured{s.object.DeepCopy()}, nil
 }
 
@@ -95,13 +107,75 @@ func TestControllerAdoptsSeededServiceThenDispatchesLaterDrift(t *testing.T) {
 	if len(events) != 1 || events[0].Classification != sdk.DriftUnexplained || events[0].Fields[0].Path != "spec.ports[0].targetPort" || controller.driftInvestigation.Pending() != 1 {
 		t.Fatalf("later drift did not reach investigator: %+v", controller.ExportState())
 	}
-	investigator := &adoptionInvestigator{}
+	investigator := &adoptionInvestigator{result: &contracts.DriftInvestigationResult{Events: []*contracts.DriftEventInvestigation{{
+		EventIndex: 0, Verdict: "bug", Reason: "target port is unserved", Evidence: []*contracts.DriftEvidence{
+			{Kind: "source_contradiction", Observation: "accepted source targets 8080"},
+			{Kind: "violated_relation", Observation: "no selected pod serves 9999"},
+		},
+	}}}}
 	controller.driftInvestigation.config.Worker = investigator
 	if err := controller.StepEvents(context.Background(), start.Add(22*time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
-	if investigator.calls != 1 {
-		t.Fatalf("drift investigator dispatched %d times", investigator.calls)
+	if investigator.calls != 1 || !controller.IncidentOpen() || controller.ExportState().DriftEvents[0].InvestigationVerdict != "bug" {
+		t.Fatalf("drift investigator failed to open latent incident: calls=%d state=%+v", investigator.calls, controller.ExportState())
+	}
+}
+
+func TestControllerKeepsDetectingWhileAdoptionRetries(t *testing.T) {
+	detector := controllerDetector("health", time.Second, sdk.Finding{}, sdk.Finding{}, sdk.Finding{})
+	controller, _, source, closeServer := adoptionController(t, 8080, detector)
+	defer closeServer()
+	calls := 0
+	source.err = errors.New("accepted manifest source temporarily unavailable")
+	source.calls = &calls
+	controller.drift.Source = source
+	start := time.Unix(10, 0).UTC()
+	if err := controller.StepEvents(context.Background(), start, nil); err != nil {
+		t.Fatal(err)
+	}
+	status := controller.ExportState().OwnershipAdoption
+	if status.LastError == "" || !status.RetryAt.After(start) || calls != 1 {
+		t.Fatalf("adoption failure status = %+v; calls=%d", status, calls)
+	}
+	wire, err := json.Marshal(controller.ExportState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted RuntimeState
+	if err := json.Unmarshal(wire, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.OwnershipAdoption.LastError != status.LastError || !persisted.OwnershipAdoption.RetryAt.Equal(status.RetryAt) {
+		t.Fatalf("adoption retry status was not durable: %+v", persisted.OwnershipAdoption)
+	}
+	if err := controller.StepEvents(context.Background(), start.Add(time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if detector.calls < 2 || calls != 1 {
+		t.Fatalf("health stopped or adoption ignored backoff: detector=%d adoption=%d", detector.calls, calls)
+	}
+	controller.drift.Source = adoptionSource{object: source.object, calls: &calls}
+	if err := controller.StepEvents(context.Background(), status.RetryAt, nil); err != nil {
+		t.Fatal(err)
+	}
+	status = controller.ExportState().OwnershipAdoption
+	if status.LastError != "" || status.AdoptedObjects != 1 || calls != 2 {
+		t.Fatalf("adoption did not recover: %+v; calls=%d", status, calls)
+	}
+}
+
+func TestControllerRecordsSkippedAdoptionWithoutDeployedPlan(t *testing.T) {
+	controller, _, source, closeServer := adoptionController(t, 8080)
+	defer closeServer()
+	source.err = deployment.ErrManifestSelectionUnavailable
+	controller.drift.Source = source
+	if err := controller.StepEvents(context.Background(), time.Unix(10, 0).UTC(), nil); err != nil {
+		t.Fatal(err)
+	}
+	status := controller.ExportState().OwnershipAdoption
+	if status.SkippedReason == "" || status.LastError != "" || status.AdoptedObjects != 0 || controller.adoptionNeeded {
+		t.Fatalf("unknown deployed set was adopted or hidden: %+v", status)
 	}
 }
 
@@ -159,7 +233,7 @@ func (f *fixedObjectChanges) TakeObjectChanges() []ObjectChange {
 	return changes
 }
 
-func adoptionController(t *testing.T, target int32) (*Controller, *adoptionServiceAPI, adoptionSource, func()) {
+func adoptionController(t *testing.T, target int32, detectors ...sdk.Detector) (*Controller, *adoptionServiceAPI, adoptionSource, func()) {
 	t.Helper()
 	service := *driftService(target)
 	service.TypeMeta = metav1.TypeMeta{APIVersion: "v1", Kind: "Service"}
@@ -174,7 +248,7 @@ func adoptionController(t *testing.T, target int32) (*Controller, *adoptionServi
 	provider := adoptionSnapshot{api: api}
 	config := testControllerConfig()
 	config.Namespace, config.SourceCommit = "app", "accepted"
-	controller, err := NewController(config, nil, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
+	controller, err := NewController(config, detectors, provider, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, time.Unix(10, 0).UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,9 +264,12 @@ func (s adoptionSnapshot) Snapshot(context.Context) (sdk.DetectionContext, error
 	return sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{s.api.service}}, nil
 }
 
-type adoptionInvestigator struct{ calls int }
+type adoptionInvestigator struct {
+	calls  int
+	result *contracts.DriftInvestigationResult
+}
 
 func (a *adoptionInvestigator) Investigate(context.Context, *contracts.DriftInvestigationTask) (*contracts.DriftInvestigationResult, error) {
 	a.calls++
-	return nil, nil
+	return a.result, nil
 }

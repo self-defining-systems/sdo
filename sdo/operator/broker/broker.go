@@ -65,6 +65,7 @@ type SourceEvidence struct {
 	StrategyID         string   `json:"strategy_id"`
 	Images             []string `json:"images"`
 	ResourceIDs        []string `json:"resource_ids"`
+	ManifestPaths      []string `json:"manifest_paths,omitempty"`
 	Ready              bool     `json:"ready"`
 	AcceptedCommit     string   `json:"accepted_commit,omitempty"`
 }

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -14,16 +15,48 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 )
 
 // OwnershipAdoptionStatus records the transfer of accepted manifest fields to
 // the deployer's field manager for one accepted source commit.
 type OwnershipAdoptionStatus struct {
-	SourceCommit       string   `json:"source_commit,omitempty"`
-	AdoptedObjects     int      `json:"adopted_objects,omitempty"`
-	ConflictsTakenOver int      `json:"conflicts_taken_over,omitempty"`
-	FromManagers       []string `json:"from_managers,omitempty"`
+	SourceCommit       string    `json:"source_commit,omitempty"`
+	AdoptedObjects     int       `json:"adopted_objects,omitempty"`
+	ConflictsTakenOver int       `json:"conflicts_taken_over,omitempty"`
+	FromManagers       []string  `json:"from_managers,omitempty"`
+	LastError          string    `json:"last_error,omitempty"`
+	SkippedReason      string    `json:"skipped_reason,omitempty"`
+	RetryAt            time.Time `json:"retry_at,omitempty"`
+	Failures           int       `json:"failures,omitempty"`
+}
+
+func (c *Controller) recordAdoptionError(now time.Time, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	status := c.ownershipAdoption
+	if status.SourceCommit != c.config.SourceCommit {
+		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit}
+	}
+	if errors.Is(err, deployment.ErrManifestSelectionUnavailable) {
+		status.SkippedReason = err.Error()
+		status.LastError = ""
+		status.RetryAt = time.Time{}
+		c.adoptionNeeded = false
+	} else {
+		status.LastError = err.Error()
+		status.Failures++
+		delay := 2 * time.Second
+		for step := 1; step < status.Failures && delay < time.Minute; step++ {
+			delay *= 2
+		}
+		if delay > time.Minute {
+			delay = time.Minute
+		}
+		status.RetryAt = now.Add(delay)
+	}
+	c.ownershipAdoption = status
 }
 
 func supportsAcceptedSource(ref sdk.ObjectRef) bool {
@@ -144,6 +177,10 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		status.FromManagers = append(status.FromManagers, manager)
 	}
 	sort.Strings(status.FromManagers)
+	status.LastError = ""
+	status.SkippedReason = ""
+	status.RetryAt = time.Time{}
+	status.Failures = 0
 	c.mu.Lock()
 	c.ownershipAdoption = status
 	c.mu.Unlock()

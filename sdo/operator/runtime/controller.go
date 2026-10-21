@@ -408,8 +408,17 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 	if c.adoptionNeeded {
-		if err := c.adoptOwnership(ctx, now, snapshot); err != nil {
-			return err
+		c.mu.Lock()
+		retryAt := c.ownershipAdoption.RetryAt
+		retryCommit := c.ownershipAdoption.SourceCommit
+		c.mu.Unlock()
+		if retryCommit != c.config.SourceCommit || !now.Before(retryAt) {
+			if err := c.adoptOwnership(ctx, now, snapshot); err != nil {
+				c.recordAdoptionError(now, err)
+				if c.OnError != nil {
+					c.OnError(fmt.Errorf("ownership adoption: %w", err))
+				}
+			}
 		}
 	}
 

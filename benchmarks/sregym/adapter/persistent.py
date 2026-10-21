@@ -223,6 +223,7 @@ def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
 
 def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     values = dict(payload)
+    values["deployed_manifest_paths"] = tuple(values.get("deployed_manifest_paths", ()))
     hints = get_type_hints(RuntimeConfig)
     for field in fields(RuntimeConfig):
         value = values.get(field.name)

@@ -72,7 +72,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ProposalTreeDigest != tree || !strings.Contains(backend.applied, tree) || !strings.Contains(backend.applied, "registry.example/app@sha256:") {
+	if receipt.ProposalTreeDigest != tree || len(receipt.ManifestPaths) != 1 || receipt.ManifestPaths[0] != "deployment.yaml" || !strings.Contains(backend.applied, tree) || !strings.Contains(backend.applied, "registry.example/app@sha256:") {
 		t.Fatalf("unbound deployment: %+v, %s", receipt, backend.applied)
 	}
 	for _, args := range [][]string{{"add", "-A"}, {"commit", "-qm", "accepted source"}} {
@@ -107,5 +107,29 @@ func TestRawStrategyRejectsEscapingManifestPath(t *testing.T) {
 	}
 	if _, err := registry.ApplyAndVerify(context.Background(), checkout, &contracts.DeploymentPlan{StrategyId: "raw-manifests", StrategyConfig: config}); err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("escaping plan accepted or rejected for wrong reason: %v", err)
+	}
+}
+
+func TestRawStrategyAppliesOnlySelectedManifestDirectory(t *testing.T) {
+	checkout := candidateRepository(t)
+	for path, name := range map[string]string{"kubernetes/app.yaml": "app", "knative/app.yaml": "alternate"} {
+		full := filepath.Join(checkout, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatal(err)
+		}
+		manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: " + name + "\nspec:\n  template:\n    spec:\n      containers:\n      - name: app\n        image: registry.example/app@sha256:" + strings.Repeat("b", 64) + "\n"
+		if err := os.WriteFile(full, []byte(manifest), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backend := &fakeRawBackend{}
+	tree, err := broker.ProposalTreeDigest(context.Background(), checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend.tree = tree
+	_, err = (RawStrategy{Namespace: "default", Backend: backend}).ApplyAndVerify(context.Background(), checkout, tree, &contracts.RawManifestStrategy{ManifestPaths: []string{"kubernetes"}, ExpectedWorkloadIds: []string{"Deployment/default/app"}})
+	if err != nil || strings.Contains(backend.applied, "alternate") || !strings.Contains(backend.applied, "name: app") {
+		t.Fatalf("selected deployment = %s, %v", backend.applied, err)
 	}
 }

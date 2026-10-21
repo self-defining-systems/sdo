@@ -34,6 +34,7 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		Application:                "hotel-reservation",
 		SourceCommit:               "abc123",
 		DeployedCommit:             "def456",
+		DeployedManifestPaths:      []string{"kubernetes"},
 		Dispatcher:                 "/usr/local/bin/responder",
 		DispatcherMode:             "job",
 		DispatcherArgs:             []string{"--model", "luna"},
@@ -195,7 +196,7 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		t.Fatalf("expected --exit-after-closure in args: %v", args)
 	}
 	// Repeated fields expand once per element as --flag=value.
-	for _, flag := range []string{"--dispatcher-arg=--model", "--dispatcher-arg=luna", "--responder-env=FOO=bar", "--responder-env=BAZ=qux"} {
+	for _, flag := range []string{"--dispatcher-arg=--model", "--dispatcher-arg=luna", "--responder-env=FOO=bar", "--responder-env=BAZ=qux", "--deployed-manifest-path=kubernetes"} {
 		if !contains(args, flag) {
 			t.Fatalf("expected %q in args: %v", flag, args)
 		}

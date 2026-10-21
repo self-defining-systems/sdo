@@ -120,7 +120,11 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	}
 	var rendered bytes.Buffer
 	workloads := map[string][]string{}
-	for _, path := range plan.ManifestPaths {
+	manifestPaths, err := candidateManifestPaths(checkout, plan.ManifestPaths)
+	if err != nil {
+		return Observation{}, err
+	}
+	for _, path := range manifestPaths {
 		resolved, err := safeCandidatePath(checkout, path)
 		if err != nil {
 			return Observation{}, err

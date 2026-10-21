@@ -347,13 +347,13 @@ func TestVerifiedSourceRejectsMutationAfterDeployment(t *testing.T) {
 		t.Fatalf("accepted tree %s differs from deployed tree %s", acceptedTree, expected)
 	}
 	recovered, ok, err := b.SourceEvidence(ctx, "source")
-	if err != nil || !ok || recovered.AcceptedCommit != receipt.Commit || recovered.ProposalTreeDigest != expected {
+	if err != nil || !ok || recovered.AcceptedCommit != receipt.Commit || recovered.ProposalTreeDigest != expected || len(recovered.ManifestPaths) != 1 || recovered.ManifestPaths[0] != "deploy/app.yaml" {
 		t.Fatalf("source evidence not durable: %+v, %v, %v", recovered, ok, err)
 	}
 }
 
 func sourceEvidence(tree string) SourceEvidence {
-	return SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", Images: []string{"registry.example/app@sha256:" + strings.Repeat("a", 64)}, ResourceIDs: []string{"Deployment/default/app"}, Ready: true}
+	return SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", Images: []string{"registry.example/app@sha256:" + strings.Repeat("a", 64)}, ResourceIDs: []string{"Deployment/default/app"}, ManifestPaths: []string{"deploy/app.yaml"}, Ready: true}
 }
 
 func TestSourceEvidenceRecoversCommitAfterInterruptedLedgerFinalization(t *testing.T) {

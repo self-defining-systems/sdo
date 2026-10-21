@@ -64,6 +64,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	var deployedManifestPaths repeatable
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
 	}
@@ -125,6 +127,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 			return InstallExistingConfig{}, fmt.Errorf("invalid responder environment %q", value)
 		}
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--responder-env="+value)
+	}
+	for _, path := range deployedManifestPaths {
+		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--deployed-manifest-path="+path)
 	}
 	if *duration > 0 {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--duration", duration.String())

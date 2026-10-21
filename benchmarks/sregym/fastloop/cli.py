@@ -316,6 +316,7 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
+        deployed_manifest_paths=("kubernetes",),
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
         model=args.model,

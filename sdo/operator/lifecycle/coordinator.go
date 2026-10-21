@@ -59,6 +59,7 @@ type DeploymentReceipt struct {
 	StrategyID         string
 	Images             []string
 	ResourceIDs        []string
+	ManifestPaths      []string
 	Ready              bool
 }
 
@@ -77,6 +78,10 @@ type HealthVerifier interface {
 
 type RuntimeInstaller interface {
 	Install(ctx context.Context, acceptedCommit, namespace string) error
+}
+
+type deploymentPlanInstaller interface {
+	InstallDeployment(context.Context, string, string, DeploymentReceipt) error
 }
 
 type Coordinator struct {
@@ -162,7 +167,13 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			feedback = finding
 			continue
 		}
-		if err := c.Installer.Install(ctx, judgeReceipt.Commit, cfg.Namespace); err != nil {
+		install := func() error {
+			if typed, ok := c.Installer.(deploymentPlanInstaller); ok {
+				return typed.InstallDeployment(ctx, judgeReceipt.Commit, cfg.Namespace, deployment)
+			}
+			return c.Installer.Install(ctx, judgeReceipt.Commit, cfg.Namespace)
+		}
+		if err := install(); err != nil {
 			return result, fmt.Errorf("install controller: %w", err)
 		}
 		return result, nil
@@ -311,19 +322,22 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 	}
 	leftImages, rightImages := slices.Clone(left.Images), slices.Clone(right.Images)
 	leftResources, rightResources := slices.Clone(left.ResourceIDs), slices.Clone(right.ResourceIDs)
+	leftPaths, rightPaths := slices.Clone(left.ManifestPaths), slices.Clone(right.ManifestPaths)
 	slices.Sort(leftImages)
 	slices.Sort(rightImages)
 	slices.Sort(leftResources)
 	slices.Sort(rightResources)
-	return slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources)
+	slices.Sort(leftPaths)
+	slices.Sort(rightPaths)
+	return slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
 }
 
 func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
-	return broker.SourceEvidence{ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), Ready: receipt.Ready}
+	return broker.SourceEvidence{ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
 }
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
-	return DeploymentReceipt{ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), Ready: evidence.Ready}
+	return DeploymentReceipt{ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
 }
 
 func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, feedback string) (broker.Receipt, bool, string, error) {
