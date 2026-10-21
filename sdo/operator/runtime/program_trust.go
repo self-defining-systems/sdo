@@ -2,10 +2,11 @@ package runtime
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 
 	"sdo.dev/operator/sdk/program"
-	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -28,6 +29,22 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 	ordered := append([]*contracts.OutcomeRecord(nil), outcomes...)
 	sort.SliceStable(ordered, func(i, j int) bool { return outcomeCompletedAt(ordered[i]).Before(outcomeCompletedAt(ordered[j])) })
 	stats := map[string]ProgramTrust{}
+	// Keep failures by dependency revision, including across a later reversion.
+	failures := map[string]map[string]int{}
+	stateForRevision := func(id, revision string) ProgramTrust {
+		state := stats[id]
+		if revision != state.LastChange {
+			state = ProgramTrust{LastChange: revision, Failures: failures[id][revision]}
+		}
+		return state
+	}
+	recordFailure := func(id, revision string) int {
+		if failures[id] == nil {
+			failures[id] = map[string]int{}
+		}
+		failures[id][revision]++
+		return failures[id][revision]
+	}
 	for _, outcome := range ordered {
 		if outcome == nil {
 			continue
@@ -41,7 +58,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 			revisions[run.GetProgramId()] = revision
 			state := stats[run.GetProgramId()]
 			if revision != "" && revision != state.LastChange {
-				stats[run.GetProgramId()] = ProgramTrust{LastChange: revision}
+				stats[run.GetProgramId()] = stateForRevision(run.GetProgramId(), revision)
 			}
 		}
 		failedInApplication := map[string]bool{}
@@ -56,18 +73,17 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 				if revision == "" {
 					revision = outcome.GetSourceCommit()
 				}
-				if revision != state.LastChange {
-					state = ProgramTrust{LastChange: revision}
-				}
+				state = stateForRevision(id, revision)
 				failed := outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH
 				for _, signal := range outcome.GetProgramFailureSignals() {
-					if strings.HasSuffix(signal, ":"+id) {
+					failedID, failedRevision, fastFailure := parseFastPathTrustFailureSignal(signal)
+					if strings.HasSuffix(signal, ":"+id) || (fastFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
 						failed = true
 						break
 					}
 				}
 				if failed {
-					state.Failures++
+					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
 				} else if !boundPostApplyNoMatch(outcome, application, id, revision) {
@@ -82,24 +98,40 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 				stats[id] = state
 			}
 		}
+		seenFailures := map[string]bool{}
 		for _, signal := range outcome.GetProgramFailureSignals() {
-			id, ok := strings.CutPrefix(signal, "fast_path_failure:")
-			if !ok || id == "" || failedInApplication[id] {
+			id, revision, ok := parseFastPathTrustFailureSignal(signal)
+			if !ok {
 				continue
 			}
-			state := stats[id]
-			revision := revisions[id]
+			if revision == "" {
+				revision = revisions[id]
+			}
+			if revision == "" {
+				revision = stats[id].LastChange
+			}
 			if revision == "" {
 				revision = outcome.GetSourceCommit()
 			}
-			if revision != state.LastChange {
-				state = ProgramTrust{LastChange: revision}
+			key := id + "@" + revision
+			if seenFailures[key] {
+				continue
 			}
-			state.Failures++
+			seenFailures[key] = true
+			// An application may already have counted this exact failure.
+			if failedInApplication[id] && stats[id].LastChange == revision && failures[id][revision] > 0 {
+				continue
+			}
+			count := recordFailure(id, revision)
+			state := stats[id]
+			if state.LastChange != "" && state.LastChange != revision {
+				continue
+			}
+			state.LastChange = revision
+			state.Failures = count
 			state.VerifiedSuccesses = 0
 			state.Trusted = false
 			stats[id] = state
-			failedInApplication[id] = true
 		}
 	}
 	return stats
@@ -170,4 +202,66 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 		return selected
 	}
 	return false
+}
+
+// fastPathTrustFailureSignals is the durable trust input for a fast-path
+// marker. Persist its JSON string array under "trust_failure_signals" before
+// application, retain it through failed recovery, and restore it on handoff.
+// The revision comes from the accepted trust snapshot, not the source commit
+// of a later responder outcome.
+func (l *ResponderLoop) fastPathTrustFailureSignals(ids []string) []string {
+	signals := make([]string, 0, len(ids))
+	for _, id := range ids {
+		revision := l.Trust[id].LastChange
+		if revision == "" {
+			revision = l.Request.SourceCommit
+		}
+		signal := "fast_path_failure:" + id
+		if revision != "" {
+			signal += "@" + revision
+		}
+		signals = append(signals, signal)
+	}
+	return signals
+}
+
+// restoreFastPathTrustFailureSignals restores only trust evidence. The marker
+// owner remains responsible for restoring applications and rollback state.
+func (l *ResponderLoop) restoreFastPathTrustFailureSignals(encoded string) error {
+	if encoded == "" {
+		return nil
+	}
+	var signals []string
+	if err := json.Unmarshal([]byte(encoded), &signals); err != nil {
+		return fmt.Errorf("decode fast-path trust failures: %w", err)
+	}
+	for _, signal := range signals {
+		if _, _, ok := parseFastPathTrustFailureSignal(signal); !ok {
+			return fmt.Errorf("invalid fast-path trust failure signal %q", signal)
+		}
+	}
+	for _, signal := range signals {
+		id, _, _ := parseFastPathTrustFailureSignal(signal)
+		l.addFailureSignal(signal)
+		exists := false
+		for _, prior := range l.fastPathPrograms {
+			exists = exists || prior == id
+		}
+		if !exists {
+			l.fastPathPrograms = append(l.fastPathPrograms, id)
+		}
+	}
+	return nil
+}
+
+func parseFastPathTrustFailureSignal(signal string) (id, revision string, ok bool) {
+	payload, ok := strings.CutPrefix(signal, "fast_path_failure:")
+	if !ok {
+		return "", "", false
+	}
+	id, revision, bound := strings.Cut(payload, "@")
+	if id == "" || strings.ContainsAny(id, ":@") || (bound && (revision == "" || strings.ContainsAny(revision, ":@"))) {
+		return "", "", false
+	}
+	return id, revision, true
 }

@@ -169,3 +169,71 @@ func TestProgramTrustCreditsAnOutcomeAtMostOnce(t *testing.T) {
 		t.Fatalf("one outcome supplied multiple success credits: %+v", got)
 	}
 }
+
+func TestDurableFastPathFailureSignalRevokesSameRevisionAfterRestart(t *testing.T) {
+	for _, signal := range []string{"fast_path_failure:targetport", "fast_path_failure:targetport@revision-a"} {
+		t.Run(signal, func(t *testing.T) {
+			outcomes := []*contracts.OutcomeRecord{}
+			for i := 0; i < 3; i++ {
+				outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
+			}
+			// The marker's trust input survives process memory loss. There is
+			// deliberately no application log or diagnosis in the resumed result.
+			encoded, err := json.Marshal([]string{signal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored []string
+			if err := json.Unmarshal(encoded, &restored); err != nil {
+				t.Fatal(err)
+			}
+			outcomes = append(outcomes, &contracts.OutcomeRecord{SourceCommit: "unrelated-source-edit", ProgramFailureSignals: restored})
+			// Even later successful outcomes cannot erase this revision's failure.
+			for i := 0; i < 3; i++ {
+				outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
+			}
+			if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures == 0 {
+				t.Fatalf("restarted failure evidence lost suspicion: %+v", got)
+			}
+		})
+	}
+}
+
+func TestFailedProgramRevisionStaysSuspiciousAfterReversion(t *testing.T) {
+	outcomes := []*contracts.OutcomeRecord{verifiedTrustOutcome(t, "targetport", "revision-a")}
+	outcomes = append(outcomes, &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: "revision-a"}}, ProgramFailureSignals: []string{"fast_path_failure:targetport"}})
+	outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-b"))
+	for i := 0; i < 3; i++ {
+		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
+	}
+	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures == 0 {
+		t.Fatalf("reverting to failed revision restored eligibility: %+v", got)
+	}
+}
+
+func TestFastPathTrustFailureInputRestoresProgramsAndSignals(t *testing.T) {
+	original := NewResponderLoop(IncidentRequest{SourceCommit: "source-a"}, nil, nil, nil, PlanExecutor{}, 1)
+	original.Trust = map[string]ProgramTrust{"targetport": {LastChange: "revision-a", Trusted: true}}
+	encoded, err := json.Marshal(original.fastPathTrustFailureSignals([]string{"targetport"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewResponderLoop(IncidentRequest{SourceCommit: "unrelated-source-edit"}, nil, nil, nil, PlanExecutor{}, 1)
+	if err := restarted.restoreFastPathTrustFailureSignals(string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.restoreFastPathTrustFailureSignals(string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	if len(restarted.fastPathPrograms) != 1 || restarted.fastPathPrograms[0] != "targetport" || len(restarted.FailureSignals()) != 1 || restarted.FailureSignals()[0] != "fast_path_failure:targetport@revision-a" {
+		t.Fatalf("lost or duplicated trust input: programs=%v signals=%v", restarted.fastPathPrograms, restarted.FailureSignals())
+	}
+	outcomes := []*contracts.OutcomeRecord{verifiedTrustOutcome(t, "targetport", "revision-a"), {SourceCommit: restarted.Request.SourceCommit, ProgramFailureSignals: restarted.FailureSignals()}}
+	if got := ProgramTrustStats(outcomes, 1)["targetport"]; got.Trusted || got.Failures != 1 {
+		t.Fatalf("restored trust input did not revoke eligibility: %+v", got)
+	}
+	empty := NewResponderLoop(IncidentRequest{}, nil, nil, nil, PlanExecutor{}, 1)
+	if err := empty.restoreFastPathTrustFailureSignals(`["fast_path_failure:targetport@revision-a","invalid"]`); err == nil || len(empty.FailureSignals()) != 0 {
+		t.Fatalf("malformed trust input partially restored: %v %v", empty.FailureSignals(), err)
+	}
+}
