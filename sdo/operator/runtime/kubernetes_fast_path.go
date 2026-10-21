@@ -45,6 +45,11 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 	}
 	if existing {
 		if marker.Data["state"] == "resolved" {
+			for _, entry := range loop.applicationsLog {
+				if entry.ID == "fast-path-1" && (entry.Pending || entry.RolledBack || entry.Result.RolledBack || entry.Result.RollingBack || entry.Result.PendingAction != nil) {
+					return IncidentResult{}, "", false, fmt.Errorf("resolved fast-path marker conflicts with application journal")
+				}
+			}
 			message := new(contracts.IncidentResult)
 			if err := protojson.Unmarshal([]byte(marker.Data["result"]), message); err != nil {
 				return IncidentResult{}, "", false, fmt.Errorf("decode durable fast-path result: %w", err)
@@ -74,7 +79,7 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 				executor := loop.applicationExecutor(entry.ID)
 				result, recoveryErr := executor.Reconcile(ctx, entry.Result)
 				if recoveryErr == nil {
-					recoveryErr = executor.Rollback(ctx, result)
+					recoveryErr = executor.rollback(ctx, &result)
 				}
 				if recoveryErr != nil {
 					result.RollbackError = recoveryErr.Error()
@@ -129,8 +134,10 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		marker.Data["trust_failure_signals"] = string(encodedSignals)
 		return save(ctx)
 	}
+	var checkpointed PlanApplicationResult
 	previousCheckpoint := loop.Executor.Checkpoint
 	loop.Executor.Checkpoint = func(ctx context.Context, result PlanApplicationResult) error {
+		checkpointed = result
 		if previousCheckpoint != nil {
 			if err := previousCheckpoint(ctx, result); err != nil {
 				return err
@@ -145,6 +152,18 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 	}
 	defer func() { loop.Executor.Checkpoint = previousCheckpoint }()
 	attempt := loop.TryTrustedFastPath(ctx, minimum)
+	// The fast-path loop uses the error-only Rollback API. Retain the executor's
+	// advanced compensation cursor when that loop finalizes its value copy.
+	for i := range loop.applicationsLog {
+		entry := &loop.applicationsLog[i]
+		if entry.ID == "fast-path-1" && checkpointed.RollbackCompleted > entry.Result.RollbackCompleted {
+			entry.Result.RollbackCompleted = checkpointed.RollbackCompleted
+			entry.Result.RollingBack = checkpointed.RollingBack
+			entry.Result.RolledBack = checkpointed.RolledBack
+			entry.RolledBack = checkpointed.RolledBack
+			loop.applications[entry.ID] = entry.Result
+		}
+	}
 	if !attempt.Attempted {
 		log.Printf("incident %s trusted program fast path skipped: %s", request.IncidentID, attempt.SkippedReason)
 	}
@@ -160,6 +179,11 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		}
 		encoded, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(message)
 		if err != nil {
+			return IncidentResult{}, "", false, err
+		}
+		// Finalization clears Pending and records verification/tool receipts. Make
+		// that journal durable before resolution can become visible to a rejoin.
+		if err := loop.persistToolState(ctx); err != nil {
 			return IncidentResult{}, "", false, err
 		}
 		marker.Data["state"] = "resolved"
@@ -259,4 +283,57 @@ func restoreFastPathMarker(loop *ResponderLoop, data map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// restoreFastPathResolution reconciles a published resolution with the tool
+// journal before restart recovery can mutate the application. Only the pending
+// fast-path entry is superseded; newer responder work and recovery are retained.
+func (d KubernetesJobDispatcher) restoreFastPathResolution(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
+	marker, err := d.Client.CoreV1().ConfigMaps(d.Namespace).Get(ctx, IncidentJobName(request.IncidentID)+"-fast-path", metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read fast-path resolution: %w", err)
+	}
+	if marker.Data["state"] != "resolved" {
+		return nil
+	}
+	message := new(contracts.IncidentResult)
+	if err := protojson.Unmarshal([]byte(marker.Data["result"]), message); err != nil {
+		return fmt.Errorf("decode durable fast-path result: %w", err)
+	}
+	if err := validateIncidentResultFor(incidentResultState(message), request); err != nil {
+		return err
+	}
+	finalized := NewResponderLoop(request, nil, nil, nil, PlanExecutor{}, loop.MaxBatches)
+	if err := finalized.restoreToolSnapshot([]byte(marker.Data["tool_state"])); err != nil {
+		return err
+	}
+	for _, entry := range finalized.applicationsLog {
+		if entry.ID != "fast-path-1" {
+			continue
+		}
+		if entry.Pending || entry.RolledBack || entry.Result.RolledBack || entry.Result.RollingBack || entry.Result.PendingAction != nil || !entry.Result.VerificationCompleted || !entry.Result.VerificationPassed {
+			return fmt.Errorf("resolved fast-path marker has no finalized successful application")
+		}
+		for i, known := range loop.applicationsLog {
+			if known.ID != entry.ID {
+				continue
+			}
+			if known.RolledBack || known.Result.RolledBack || known.Result.RollingBack || known.Result.RollbackCompleted > 0 {
+				return fmt.Errorf("resolved fast-path marker conflicts with application recovery")
+			}
+			if !known.Pending && known.Result.PendingAction == nil {
+				return nil
+			}
+			loop.applicationsLog[i] = entry
+			loop.applications[entry.ID] = entry.Result
+			return loop.persistToolState(ctx)
+		}
+		loop.applicationsLog = append(loop.applicationsLog, entry)
+		loop.applications[entry.ID] = entry.Result
+		return loop.persistToolState(ctx)
+	}
+	return fmt.Errorf("resolved fast-path marker is missing its application journal")
 }

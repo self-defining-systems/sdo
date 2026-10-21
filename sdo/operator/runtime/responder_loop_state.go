@@ -115,14 +115,14 @@ func (l *ResponderLoop) applicationExecutor(id string) PlanExecutor {
 func (l *ResponderLoop) reconcileApplications(ctx context.Context) error {
 	for i := range l.applicationsLog {
 		entry := l.applicationsLog[i]
-		if !entry.Pending && !entry.Result.RollingBack {
+		if !entry.Pending && !entry.Result.RollingBack && entry.Result.PendingAction == nil {
 			continue
 		}
 		executor := l.applicationExecutor(entry.ID)
 		result, err := executor.Reconcile(ctx, entry.Result)
 		l.addFailureSignal("interrupted_application:" + entry.ID)
 		if err == nil && len(result.ActionsApplied) > 0 && !result.RolledBack {
-			err = executor.Rollback(ctx, result)
+			err = executor.rollback(ctx, &result)
 			if err == nil {
 				result.RolledBack = true
 				result.RollingBack = false
