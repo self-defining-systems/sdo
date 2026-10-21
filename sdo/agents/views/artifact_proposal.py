@@ -142,7 +142,13 @@ class PlaybookDraft(ArtifactDraft):
     owner: str = "responder"
     fault_class: str = Field(min_length=1)
     originating_incident: str = ""
-    markdown: str = Field(min_length=1)
+    markdown: str = Field(
+        min_length=1,
+        description=(
+            "Nonempty README body. A full README with YAML front matter is accepted when "
+            "owner, fault_class, and originating_incident match the typed fields."
+        ),
+    )
     scripts: list[ScriptDraft] = Field(default_factory=list)
     program: ProgramDraft | None = None
 

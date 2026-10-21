@@ -225,7 +225,10 @@ def _logical_learning_request(
         f"{example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
         f"{example_dir}/corpus/targetport-mismatch/ for a complete example. "
         "Keep playbook README prose to judgement and context, "
-        "with no shell commands; never persist scratch scripts. "
+        "with no shell commands; never persist scratch scripts. In artifact_proposal.playbooks[].markdown, "
+        "supply a nonempty README body such as '# Service targetPort mismatch\\n\\nCheck <SERVICE>.'; "
+        "a full README with YAML front matter is also accepted when its owner, fault_class, and "
+        "originating_incident agree with the typed fields. "
         "Use proposed_changes=[]; the artifact IDs are derived from artifact_proposal. "
         "Return learning_decision=updated only with a nonempty artifact_proposal. "
         "Return learning_decision=sdk_gap for gaps only, or no_change with a specific reason when existing "
@@ -338,11 +341,20 @@ class SessionReflector:
             # Re-sending the responder transcript on every model request is the
             # dominant retry cost, and the rejected diff plus the validator's
             # error is all the retry needs from the first attempt.
+            markdown_hint = (
+                "Playbook markdown rule: artifact_proposal.playbooks[].markdown needs a nonempty README body. "
+                'Minimal valid example: markdown: "# Service targetPort mismatch\\n\\nCheck <SERVICE>.". '
+                "A full README may include YAML front matter with matching owner, fault_class, and "
+                "originating_incident; the materializer writes that metadata once.\n\n"
+                if "markdown:" in validation_feedback
+                else ""
+            )
             prompt = (
                 "You are correcting an operational-memory proposal that SDO's isolated validator rejected. The "
                 "controller has independently verified incident closure and committed its authoritative outcome; "
                 "the responder's session transcript is intentionally not available.\n\n"
                 f"Validator error:\n{validation_feedback}\n\n"
+                f"{markdown_hint}"
                 "The rejected proposal was rolled back, so the worktree is clean at the accepted outcome commit. "
                 "Rejected proposal diff against that commit (reapply what was valid, fix every reported error):\n"
                 f"```diff\n{_bounded_diff(rejected_proposal_diff)}```\n\n"

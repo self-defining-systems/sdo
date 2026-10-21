@@ -292,6 +292,26 @@ def test_draft_test_rejection_is_shown_to_reflection_retry(tmp_path: Path) -> No
     assert "+func Diagnose() {}" in str(backend.calls[0]["prompt"])
 
 
+def test_markdown_rejection_explains_proposal_shape_with_example(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        validation_feedback=(
+            'playbook "service-targetport-mismatch": markdown: expected nonempty body without front matter'
+        ),
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    assert 'markdown: "# Service targetPort mismatch\\n\\nCheck <SERVICE>."' in prompt
+    assert "full README" in prompt
+    assert "fault_class" in prompt
+
+
 def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) -> None:
     from sdo.agents.responder.reflection_brief import incident_brief
 

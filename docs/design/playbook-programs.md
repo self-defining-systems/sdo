@@ -108,6 +108,11 @@ type Plan struct {
 .sdo/corpus/<case>/  # shared: snapshots (incident open, after fix, healthy) + recorded primitive results + root-cause labels
 ```
 
+Typed playbook proposals may provide either the README body or a complete
+README with YAML front matter. The memory edge checks any supplied front matter
+against the typed owner, fault class, and originating incident, then writes one
+canonical front matter block. The body must be nonempty.
+
 Because effects are confined to `Plan` values, shared libraries need no
 read-only versus mutating split.
 
