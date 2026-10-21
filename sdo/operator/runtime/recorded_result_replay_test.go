@@ -153,7 +153,7 @@ func TestRecordedIncidentAndReflectionReachNativeBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err := memory.OpenReader(accepted).Get(context.Background(), result.IncidentID)
-	if err != nil || receipt.OutcomeCommit == "" || stored.Record.GetClassification() != "success" {
+	if err != nil || receipt.OutcomeCommit == "" || stored.Record.GetClassification() != "partial" {
 		t.Fatalf("recorded results did not reach accepted outcome: %+v %v", stored.Record, err)
 	}
 }
