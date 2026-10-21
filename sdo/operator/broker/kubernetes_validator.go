@@ -306,7 +306,7 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 		Name: "validator", Image: k.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-eu", "-c", command}, WorkingDir: "/workspace", TerminationMessagePath: "/dev/termination-log", TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		Env: []corev1.EnvVar{
 			{Name: "SDO_CANDIDATE_TREE", Value: tree}, {Name: "SDO_SCHEMA_IDENTITY", Value: k.SchemaIdentity},
-			{Name: "HOME", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "SDO_GO_CACHE_SEED", Value: "/opt/sdo/go-build-cache"},
+			{Name: "HOME", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "GOMODCACHE", Value: "/go/pkg/mod"}, {Name: "GOPROXY", Value: "off"}, {Name: "GOSUMDB", Value: "off"},
 			{Name: "GOMAXPROCS", Value: "2"}, {Name: "GOFLAGS", Value: "-mod=mod -p=2"}, {Name: "PYTHONDONTWRITEBYTECODE", Value: "1"},
 		},

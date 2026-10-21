@@ -36,6 +36,9 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 	if workspace == nil || workspace.Directory == "" {
 		return "", errors.New("workspace is required")
 	}
+	if err := seedGoBuildCache(ctx); err != nil {
+		return "", err
+	}
 	binary := filepath.Join(workspace.Directory, "sdo-controller")
 	for _, args := range [][]string{{"mod", "tidy"}, {"test", "./..."}, {"build", "-buildvcs=false", "-o", binary, "./cmd/controller"}} {
 		command := exec.CommandContext(ctx, "go", args...)
@@ -53,6 +56,39 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 		}
 	}
 	return binary, nil
+}
+
+func seedGoBuildCache(ctx context.Context) error {
+	seed := os.Getenv("SDO_GO_CACHE_SEED")
+	if seed == "" {
+		return nil
+	}
+	if _, err := os.Stat(seed); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect Go build cache seed: %w", err)
+	}
+	cache := os.Getenv("GOCACHE")
+	if cache == "" {
+		return errors.New("GOCACHE is required when SDO_GO_CACHE_SEED is set")
+	}
+	marker := filepath.Join(cache, ".sdo-seeded")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Go build cache: %w", err)
+	}
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return fmt.Errorf("create Go build cache: %w", err)
+	}
+	command := exec.CommandContext(ctx, "cp", "-R", seed+string(os.PathSeparator)+".", cache)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("seed Go build cache: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		return fmt.Errorf("mark seeded Go build cache: %w", err)
+	}
+	return nil
 }
 
 func (workspace *Workspace) Close() error {

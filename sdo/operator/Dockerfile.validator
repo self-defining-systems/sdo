@@ -26,7 +26,8 @@ ENV HOME=/tmp \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS="-mod=mod -p=2"
+    GOFLAGS="-mod=mod -p=2" \
+    SDO_GO_CACHE_SEED=/go/build-cache
 RUN cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 # Pin the embedded schema identity into the image. The validator recomputes
 # it from the baked SDK before compiling a candidate.

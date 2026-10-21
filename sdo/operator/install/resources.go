@@ -406,7 +406,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
 			{Name: "GOTMPDIR", Value: "/workspace/.sdo-runtime/build/go-tmp"},
 			{Name: "GOCACHE", Value: "/workspace/.sdo-runtime/build/go-cache"},
-			{Name: "SDO_GO_CACHE_SEED", Value: "/opt/sdo/go-build-cache"},
+			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},
 			{Name: "SDO_CONTROLLER_JOB", Value: ControllerJobName},
 			{Name: "SDO_CONTROLLER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
