@@ -255,6 +255,7 @@ message IncidentRequest {
   OperationalMemorySnapshot memory_snapshot = 20;
   repeated ProgramRun initial_program_runs = 21;
   int32 max_response_loops = 22;
+  string fast_path_summary = 23;
 }
 
 message RootCauseEvidence {
@@ -400,6 +401,8 @@ message IncidentResult {
   int32 response_loops_used = 19;
   bool response_loop_exhausted = 20;
   repeated string program_failure_signals = 21;
+  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
+  repeated string fast_path_programs = 23;
 }
 
 // A responder claim that it read controller-published findings during its turn.

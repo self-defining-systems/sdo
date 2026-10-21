@@ -73,6 +73,7 @@ type IncidentRequest struct {
 	// stayed active after an earlier responder completed.
 	FollowUp           *FollowUpContext `json:"follow_up,omitempty"`
 	InitialProgramRuns []ProgramRun     `json:"initial_program_runs,omitempty"`
+	FastPathSummary    string           `json:"fast_path_summary,omitempty"`
 	MaxResponseLoops   int              `json:"max_response_loops,omitempty"`
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string `json:"prepared_agent_task,omitempty"`
@@ -168,6 +169,8 @@ type IncidentResult struct {
 	ProgramFailureSignals []string                  `json:"program_failure_signals,omitempty"`
 	ResponseLoopsUsed     int                       `json:"response_loops_used,omitempty"`
 	ResponseLoopExhausted bool                      `json:"response_loop_exhausted,omitempty"`
+	ResolutionPath        string                    `json:"resolution_path,omitempty"`
+	FastPathPrograms      []string                  `json:"fast_path_programs,omitempty"`
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

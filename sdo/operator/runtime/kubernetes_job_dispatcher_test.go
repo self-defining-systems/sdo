@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -74,6 +77,155 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	}
 	if left, right := session(first), session(second); left == right {
 		t.Fatalf("separate incidents share agent session volume: %q", left)
+	}
+}
+
+func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *testing.T) {
+	loop, client := trustedPortLoop(t, false, false, true)
+	request := goldenRequest(t)
+	request.Namespace = "app"
+	request.RepairPolicy = "recorded-actions"
+	request.SourceCommit = "tree-a"
+	request.Findings = loop.Request.Findings
+	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
+	outcomes := []memory.Outcome{}
+	for index := 0; index < 3; index++ {
+		outcomes = append(outcomes, memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
+			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
+			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
+		}})
+	}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Image: "responder:test", Command: []string{"/responder"}, ProgramFastPath: true,
+		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
+		Outcomes: priorOutcomeReader{outcomes: outcomes}, LoopFactory: func(request IncidentRequest) *ResponderLoop {
+			loop.Request = request
+			return loop
+		}}
+	var err error
+	request, err = dispatcher.PrepareDispatch(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := dispatcher.Dispatch(context.Background(), request)
+	if err != nil || result.ResolutionPath != "fast_path" || len(result.FastPathPrograms) != 1 || result.Usage.GetInputTokens() != 0 {
+		t.Fatalf("fast path result: %+v %v", result, err)
+	}
+	replayed, err := dispatcher.Dispatch(context.Background(), request)
+	if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 1 || len(replayed.RepairActions) != 1 {
+		t.Fatalf("fast path was not durable across dispatch replay: %+v %v", replayed, err)
+	}
+	jobs, err := client.BatchV1().Jobs("app").List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(jobs.Items) != 0 {
+		t.Fatalf("responder Job dispatched: %+v %v", jobs, err)
+	}
+}
+
+func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) {
+	loop, client := trustedPortLoop(t, false, true, false)
+	request := goldenRequest(t)
+	request.Namespace = "app"
+	request.RepairPolicy = "recorded-actions"
+	request.SourceCommit = "tree-a"
+	request.Findings = loop.Request.Findings
+	request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
+	outcomes := make([]memory.Outcome, 3)
+	for index := range outcomes {
+		outcomes[index] = memory.Outcome{IncidentID: fmt.Sprintf("prior-%d", index), Record: &contracts.OutcomeRecord{
+			SourceCommit: "tree-a", ProgramRuns: []*contracts.ProgramRun{{ProgramId: "service-targetport-mismatch", ProgramRevision: "tree-a"}},
+			PlanApplications: []*contracts.PlanApplication{{Applied: true, ProgramIds: []string{"service-targetport-mismatch"}, Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
+		}}
+	}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Image: "responder:test", Command: []string{"/responder"},
+		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace",
+		ProgramFastPath: true, Outcomes: priorOutcomeReader{outcomes: outcomes}, PollInterval: time.Millisecond,
+		LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
+	var err error
+	request, err = dispatcher.PrepareDispatch(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() { _, err := dispatcher.Dispatch(ctx, request); finished <- err }()
+	select {
+	case err := <-finished:
+		t.Fatalf("responder dispatch ended before Job: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err == nil {
+			break
+		}
+		select {
+		case err := <-finished:
+			t.Fatalf("responder dispatch ended before Job: %v", err)
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := client.BatchV1().Jobs("app").Get(context.Background(), IncidentJobName(request.IncidentID), metav1.GetOptions{}); err != nil {
+		t.Fatalf("responder Job absent: %v", err)
+	}
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 9999 {
+		t.Fatalf("failed fast path left mutation: %+v %v", service, err)
+	}
+	taskMap, err := client.CoreV1().ConfigMaps("app").Get(context.Background(), IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := new(contracts.AgentTask)
+	if err := protojson.Unmarshal([]byte(taskMap.Data[jobRequestDataKey]), task); err != nil {
+		t.Fatal(err)
+	}
+	incident := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(incident); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(incident.GetFastPathSummary(), "service-targetport-mismatch") || !strings.Contains(incident.GetFastPathSummary(), "rollback true") {
+		t.Fatalf("responder missed failed attempt: %q", incident.GetFastPathSummary())
+	}
+	cancel()
+	<-finished
+}
+
+func TestInterruptedFastPathRestoresPersistedPreImages(t *testing.T) {
+	loop, client := trustedPortLoop(t, false, true, true)
+	request := loop.Request
+	request.IncidentID = "interrupted"
+	ref := request.Findings[0].PrimaryResource
+	before, err := (TypedPlanClient{Client: client}).Get(context.Background(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preImages, err := json.Marshal([]PlanPreImage{{Ref: ref, Object: before}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.CoreV1().ConfigMaps("app").Create(context.Background(), &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: IncidentJobName(request.IncidentID) + "-fast-path"},
+		Data:       map[string]string{"state": "attempting", "preimages": string(preImages), "program_ids": `["service-targetport-mismatch"]`},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+	if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app"}
+	_, summary, resolved, err := dispatcher.tryFastPath(context.Background(), request, loop)
+	if err != nil || resolved || !strings.Contains(summary, "rollback true") {
+		t.Fatalf("interrupted attempt: summary=%q resolved=%t err=%v", summary, resolved, err)
+	}
+	service, err = client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+	if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 9999 {
+		t.Fatalf("interrupted mutation not restored: %+v %v", service, err)
 	}
 }
 

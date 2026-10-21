@@ -277,6 +277,42 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	}
 }
 
+func TestNativeBrokerSkipsReflectionAfterTrustedFastPath(t *testing.T) {
+	target := nativeRepository(t)
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reflections := 0
+	native := NativeIncidentBroker{
+		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"),
+		ResponderBackend: "test", ResponderModel: "test", ForceReflection: true,
+		Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+			derived := testDerivedOutcome(closure.Request.IncidentID, "success", true)
+			derived.Record.ResolutionPath = "fast_path"
+			derived.Record.FastPathPrograms = []string{"targetport"}
+			return derived, nil
+		}),
+		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string) (ReflectionDecision, error) {
+			reflections++
+			return ReflectionDecision{}, nil
+		}),
+	}
+	workspace, err := native.PrepareIncident(context.Background(), "trusted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closure := nativeClosure(workspace)
+	closure.Request.RepairPolicy = "recorded-actions"
+	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := native.readLedger("trusted")
+	if err != nil || reflections != 0 || ledger.ReflectionSkippedReason != "trusted program fast path" {
+		t.Fatalf("fast path reflection: ledger=%+v calls=%d err=%v", ledger, reflections, err)
+	}
+}
+
 type priorOutcomeReader struct{ outcomes []memory.Outcome }
 
 func (r priorOutcomeReader) List(context.Context) ([]memory.Outcome, error) { return r.outcomes, nil }

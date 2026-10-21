@@ -345,6 +345,8 @@ class PlanApplication(ContractModel):
     program_ids: list[str] = Field(default_factory=list)
     error: str = ""
     duration: str = ""
+    rolled_back: bool = False
+    rollback_error: str = ""
 
 
 class IncidentRequest(ContractModel):
@@ -367,6 +369,7 @@ class IncidentRequest(ContractModel):
     follow_up: FollowUpContext | None = None
     memory_snapshot: OperationalMemorySnapshot | None = None
     initial_program_runs: list[ProgramRun] = Field(default_factory=list)
+    fast_path_summary: str = ""
     max_response_loops: int = 0
 
 
@@ -535,6 +538,8 @@ class IncidentResult(ContractModel):
     response_loops_used: int = 0
     response_loop_exhausted: bool = False
     program_failure_signals: list[str] = Field(default_factory=list)
+    resolution_path: Literal["", "fast_path", "responder"] = ""
+    fast_path_programs: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_repair_action_ids(self) -> IncidentResult:

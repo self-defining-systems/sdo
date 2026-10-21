@@ -128,6 +128,12 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
 	}
+	if cfg.ProgramFastPath {
+		args = append(args, "--program-fast-path")
+	}
+	if cfg.ProgramTrustThreshold > 0 {
+		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
+	}
 	if cfg.RegistryHost != "" {
 		args = append(args, "--registry-host", cfg.RegistryHost)
 	}

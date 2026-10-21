@@ -109,4 +109,6 @@ message ControllerConfig {
   google.protobuf.Duration diagnosis_deadline = 56;
   google.protobuf.Duration diagnosis_settle_delay = 57;
   bool force_reflection = 58;
+  bool program_fast_path = 59;
+  int32 program_trust_threshold = 60 [(buf.validate.field).int32.gte = 0];
 }

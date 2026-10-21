@@ -867,6 +867,8 @@ type PlanApplication struct {
 	ProgramIds    []string               `protobuf:"bytes,6,rep,name=program_ids,json=programIds,proto3" json:"program_ids,omitempty"`
 	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
 	Duration      *durationpb.Duration   `protobuf:"bytes,8,opt,name=duration,proto3" json:"duration,omitempty"`
+	RolledBack    bool                   `protobuf:"varint,9,opt,name=rolled_back,json=rolledBack,proto3" json:"rolled_back,omitempty"`
+	RollbackError string                 `protobuf:"bytes,10,opt,name=rollback_error,json=rollbackError,proto3" json:"rollback_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -955,6 +957,20 @@ func (x *PlanApplication) GetDuration() *durationpb.Duration {
 		return x.Duration
 	}
 	return nil
+}
+
+func (x *PlanApplication) GetRolledBack() bool {
+	if x != nil {
+		return x.RolledBack
+	}
+	return false
+}
+
+func (x *PlanApplication) GetRollbackError() string {
+	if x != nil {
+		return x.RollbackError
+	}
+	return ""
 }
 
 type ProgramToolCall struct {
@@ -1098,7 +1114,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12/\n" +
 	"\x13finding_fingerprint\x18\x06 \x01(\tR\x12findingFingerprint\x12)\n" +
 	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12D\n" +
-	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\"\xde\x02\n" +
+	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\"\xa6\x03\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -1108,7 +1124,11 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\vprogram_ids\x18\x06 \x03(\tR\n" +
 	"programIds\x12\x14\n" +
 	"\x05error\x18\a \x01(\tR\x05error\x125\n" +
-	"\bduration\x18\b \x01(\v2\x19.google.protobuf.DurationR\bduration\"\xb5\x01\n" +
+	"\bduration\x18\b \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x1f\n" +
+	"\vrolled_back\x18\t \x01(\bR\n" +
+	"rolledBack\x12%\n" +
+	"\x0erollback_error\x18\n" +
+	" \x01(\tR\rrollbackError\"\xb5\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +

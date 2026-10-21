@@ -40,6 +40,8 @@ message OutcomeRecord {
   repeated string program_failure_signals = 26;
   int32 response_loops_used = 27;
   bool response_loop_exhausted = 28;
+  string resolution_path = 29 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
+  repeated string fast_path_programs = 30;
 }
 
 message OutcomeTimestamps {

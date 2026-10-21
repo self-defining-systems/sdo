@@ -84,6 +84,17 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	}
 }
 
+func TestDerivePreservesTrustedFastPathEvidence(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.ResolutionPath = "fast_path"
+	closure.Result.FastPathPrograms = []string{"targetport"}
+	closure.Result.PlanApplications = []*contractsv1alpha1.PlanApplication{{ApplicationId: "fast-path-1", Applied: true, ProgramIds: []string{"targetport"}, Verification: &contractsv1alpha1.Verdict{Result: contractsv1alpha1.Verdict_RESULT_NO_MATCH}}}
+	derived, err := Derive(context.Background(), closure, "", "codex", "test-model")
+	if err != nil || derived.Record.GetResolutionPath() != "fast_path" || len(derived.Record.GetFastPathPrograms()) != 1 || len(derived.Record.GetPlanApplications()) != 1 {
+		t.Fatalf("fast path evidence missing: %+v %v", derived.Record, err)
+	}
+}
+
 func TestDeriveConfirmsLatentCauseFromProgramVerdictFlip(t *testing.T) {
 	// TODO: Add a hermetic e2e latent targetPort repair case with pre-fix
 	// Match and verified post-fix NoMatch once that suite lands here.

@@ -165,6 +165,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration(
@@ -248,8 +250,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 {
-		return errors.New("max-response-loops and diagnosis-deadline must be positive")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *programTrustThreshold < 1 {
+		return errors.New("max-response-loops, diagnosis-deadline, and program-trust-threshold must be positive")
+	}
+	if *programFastPath && *repairPolicy != "recorded-actions" {
+		return errors.New("program fast path requires recorded-actions repair policy")
 	}
 	if *exitAfterClosure && *restartAfterClosure {
 		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
@@ -444,12 +449,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
 			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
+			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: GitPlanSource{Repository: resolvedRoot, Images: stateTracker},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
 				}, *maxResponseLoops)
 				loop.DiagnosisDeadline = *diagnosisDeadline
+				loop.CorpusReplayPassed = options.NativeBroker != nil
 				loop.DiagnosisSettleDelay = *diagnosisSettleDelay
 				if options.NativeBroker != nil {
 					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
