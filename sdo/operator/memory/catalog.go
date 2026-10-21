@@ -56,12 +56,38 @@ func (s *JSONStore) Snapshot(ctx context.Context) (*contracts.OperationalMemoryS
 	} else if dirty != "" {
 		return nil, errors.New("operational memory differs from the accepted commit")
 	}
+	snapshot, err := CandidateSnapshot(root, commit)
+	if err != nil {
+		return nil, err
+	}
+	if finalCommit, err := git("rev-parse", "HEAD"); err != nil {
+		return nil, err
+	} else if finalCommit != commit {
+		return nil, errors.New("accepted commit changed while reading operational memory")
+	}
+	if dirty, err := git("status", "--porcelain", "--", layout.Dir); err != nil {
+		return nil, err
+	} else if dirty != "" {
+		return nil, errors.New("operational memory changed while building worker snapshot")
+	}
+	return snapshot, nil
+}
+
+// MaxSnapshotBytes is the aggregate logical memory budget of a worker task.
+const MaxSnapshotBytes = 512 * 1024
+
+var ErrSnapshotBudget = errors.New("operational memory snapshot exceeds worker task budget")
+var ErrSnapshotIncomplete = errors.New("operational memory needs a goal, an architecture, and detectors")
+
+// CandidateSnapshot projects authored files exactly as dispatch does, without
+// requiring an accepted clean checkout. Acceptance uses the same size witness.
+func CandidateSnapshot(root, acceptedCommit string) (*contracts.OperationalMemorySnapshot, error) {
 	tree, err := layout.ReadTree(root)
 	if err != nil {
-		return nil, fmt.Errorf("read accepted operational memory: %w", err)
+		return nil, err
 	}
 	if tree.Goal == nil || tree.Architecture == nil || len(tree.Detectors) == 0 {
-		return nil, errors.New("accepted operational memory needs a goal, an architecture, and detectors")
+		return nil, ErrSnapshotIncomplete
 	}
 	goal, err := layout.LogicalText(tree.Goal.Source)
 	if err != nil {
@@ -71,7 +97,7 @@ func (s *JSONStore) Snapshot(ctx context.Context) (*contracts.OperationalMemoryS
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &contracts.OperationalMemorySnapshot{AcceptedCommit: commit, GoalMarkdown: goal, ArchitectureMarkdown: architecture}
+	snapshot := &contracts.OperationalMemorySnapshot{AcceptedCommit: acceptedCommit, GoalMarkdown: goal, ArchitectureMarkdown: architecture}
 	for _, detector := range tree.Detectors {
 		manifest := detector.Manifest
 		code := ""
@@ -125,18 +151,8 @@ func (s *JSONStore) Snapshot(ctx context.Context) (*contracts.OperationalMemoryS
 		indexLines = append(indexLines, "- "+playbook.Id)
 	}
 	snapshot.PlaybookIndexMarkdown = strings.Join(indexLines, "\n") + "\n"
-	if proto.Size(snapshot) > 512*1024 {
-		return nil, errors.New("operational memory snapshot exceeds worker task budget")
-	}
-	if finalCommit, err := git("rev-parse", "HEAD"); err != nil {
-		return nil, err
-	} else if finalCommit != commit {
-		return nil, errors.New("accepted commit changed while reading operational memory")
-	}
-	if dirty, err := git("status", "--porcelain", "--", layout.Dir); err != nil {
-		return nil, err
-	} else if dirty != "" {
-		return nil, errors.New("operational memory changed while building worker snapshot")
+	if proto.Size(snapshot) > MaxSnapshotBytes {
+		return nil, ErrSnapshotBudget
 	}
 	return snapshot, nil
 }

@@ -22,10 +22,32 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 	if compile == nil {
 		return nil, errors.New("memory check requires a compile runner")
 	}
+	if diagnostics := PhaseDiagnostics(request.Phase); len(diagnostics) > 0 {
+		return diagnostics, nil
+	}
 	request.Layers = Static
 	diagnostics, err := Validate(ctx, request)
-	if err != nil || len(diagnostics) > 0 {
-		return diagnostics, err
+	if err != nil {
+		return nil, err
+	}
+	// Publication content gates run before executing candidate Go code.
+	extra, err := publicationChecks(ctx, request, len(diagnostics) == 0)
+	if err != nil {
+		return nil, err
+	}
+	diagnostics = append(diagnostics, extra...)
+	sortDiagnostics(diagnostics)
+	if len(diagnostics) > 0 {
+		return diagnostics, nil
+	}
+	if request.Phase == ReflectionPhase && request.Decision != nil && request.Decision.GetLearningDecision() != "updated" {
+		// A validated no-op has no candidate code to execute or commit.
+		return nil, nil
+	}
+
+	request, err = compileRequest(ctx, request)
+	if err != nil {
+		return nil, err
 	}
 	request.Layers = Compile
 	return compile(ctx, request)

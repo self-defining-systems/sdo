@@ -10,6 +10,7 @@ import (
 
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory/validate"
 )
 
 type rejectionHarness struct {
@@ -25,9 +26,14 @@ type rejectionHarness struct {
 // scripted by behave(call) where call is the 1-based dispatch count.
 func newRejectionHarness(t *testing.T, incident string, behave func(call int, w IncidentWorkspace) (ReflectionDecision, error)) *rejectionHarness {
 	t.Helper()
+	return newRejectionHarnessValidator(t, incident, behave, func(context.Context, string, []string) error { return nil })
+}
+
+func newRejectionHarnessValidator(t *testing.T, incident string, behave func(int, IncidentWorkspace) (ReflectionDecision, error), validator broker.Validator) *rejectionHarness {
+	t.Helper()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
-	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), validator)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,10 +257,57 @@ func TestNativeBrokerBindsDurableReflectionIDsToAcceptedDiff(t *testing.T) {
 		decision.PlaybookIDs = []string{"unrelated"}
 		return decision, err
 	})
-	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err == nil {
-		t.Fatal("reflection whose IDs do not match its authored diff was published")
+	receipt, err := h.native.ProcessClosure(context.Background(), h.closure)
+	if err != nil || receipt.ReflectionCommit != "" {
+		t.Fatalf("mismatched decision: receipt=%+v err=%v", receipt, err)
+	}
+	ledger, err := h.native.readLedger("inc-result-ids")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected {
+		t.Fatalf("decision rejection bypassed retry accounting: %+v", ledger)
+	}
+	for i, rejection := range ledger.ReflectionRejections {
+		if rejection.Attempt != uint32(i+1) || rejection.Diagnostics[0].Rule != "reflection.decision" {
+			t.Fatalf("lost decision feedback: %+v", rejection)
+		}
 	}
 	if _, accepted, err := h.native.Repository.AcceptedCommit(context.Background(), "inc-result-ids", broker.ReflectionPhase); err != nil || accepted {
 		t.Fatalf("mismatched reflection reached accepted state: accepted=%v error=%v", accepted, err)
+	}
+}
+
+func TestNativeBrokerCompileRejectionAdvancesAttempt(t *testing.T) {
+	checks := 0
+	validator := func(_ context.Context, _ string, paths []string) error {
+		for _, p := range paths {
+			if strings.HasPrefix(p, ".sdo/playbooks/") {
+				checks++
+				if checks == 1 {
+					ds, err := validate.ParseReport(`SDO_MEMORY_REPORT:{"diagnostics":[{"rule":"detector.compile","message":"undefined: missing","path":".sdo/diagnostics/detectors/incidents/cache/detector.go","line":4}]}`)
+					if err != nil {
+						return err
+					}
+					return validate.Err(ds)
+				}
+			}
+		}
+		return nil
+	}
+	h := newRejectionHarnessValidator(t, "inc-compile-retry", func(_ int, w IncidentWorkspace) (ReflectionDecision, error) { return writeGoodPlaybook(w) }, validator)
+	receipt, err := h.native.ProcessClosure(context.Background(), h.closure)
+	if err != nil || receipt.ReflectionCommit == "" {
+		t.Fatalf("compile retry failed: %+v %v", receipt, err)
+	}
+	if len(h.calls) != 2 || h.calls[0].Attempt != 1 || h.calls[1].Attempt != 2 || len(h.calls[1].Diagnostics) != 1 || h.calls[1].Diagnostics[0].Rule != validate.RuleDetectorCompile {
+		t.Fatalf("compile failure lost attempt/typed feedback: %+v", h.calls)
+	}
+	ledger, err := h.native.readLedger("inc-compile-retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ledger.ReflectionRejections) != 1 || ledger.ReflectionRejections[0].Attempt != 1 {
+		t.Fatalf("compile rejection not durable: %+v", ledger.ReflectionRejections)
 	}
 }

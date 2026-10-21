@@ -51,6 +51,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
 		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
 		CredentialsSecret:     "agent-provider-credentials",
+		HealthyBaseline:       true,
 		LateFindingsConfigMap: "sdo-late-incident",
 		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged"},
 	}
@@ -78,7 +79,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	if container.WorkingDir != task.Workspace.CheckoutPath {
 		t.Fatalf("wrong working directory: %q", container.WorkingDir)
 	}
-	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc"} {
+	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/healthy-baseline"} {
 		found := 0
 		for _, env := range container.Env {
 			if env.Name == name {
@@ -114,6 +115,12 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		}
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
+		}
+		if mount.MountPath == "/sdo/healthy-baseline" {
+			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-baseline/healthy" {
+				t.Fatalf("baseline must be narrow and read-only: %+v", mount)
+			}
+			continue
 		}
 		if mount.Name == "repository" && mount.MountPath != "/sdo/session" &&
 			(mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {

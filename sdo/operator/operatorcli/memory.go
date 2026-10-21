@@ -22,11 +22,16 @@ import (
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
 commands:
-  check [--root .] [--json]
+  check [--root .] [--json] [--decision FILE]
         Run structural, semantic, ownership, build, vet, and detector tests.
         SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources
         default to $SDO_OPERATOR_ROOT or /opt/sdo/sdo/operator. Optional recorded
-        healthy snapshots come from SDO_HEALTHY_BASELINE. Exit 0 when clean,
+        healthy snapshots come from SDO_HEALTHY_BASELINE. Publication context is
+        provisioned in .git/sdo-check-context.json. Reflection must write its
+        intended ReflectionDecision JSON (learning_decision, no_change_reason,
+        playbook_ids) to .git/sdo-reflection-decision.json or --decision FILE.
+        The returned result must use the same decision and logical IDs.
+        Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
@@ -130,6 +135,7 @@ func writeJSON(stdout io.Writer, message proto.Message) error {
 
 func memoryCheck(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
+	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
 	root := flags.String("root", ".", "repository checkout to validate")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
 	positional, err := parseFlags(flags, args)
@@ -144,8 +150,23 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		return exitInfra, err
 	}
 	actor, phase, base := getenv(memoryActorEnv), getenv(memoryPhaseEnv), getenv("SDO_BASE_COMMIT")
+	publication, err := validate.LoadPublicationContext(ctx, absolute)
+	if err != nil {
+		return exitInfra, err
+	}
+	if publication == nil && getenv(memoryIncidentEnv) != "" {
+		publication = &validate.PublicationContext{BaseCommit: base, IncidentID: getenv(memoryIncidentEnv)}
+	}
+	var decision *contracts.ReflectionDecision
+	if phase == string(validate.ReflectionPhase) {
+		decision, err = validate.LoadReflectionDecision(ctx, absolute, *decisionPath)
+		if err != nil {
+			return exitInfra, err
+		}
+	}
+
 	diagnostics, err := validate.Check(ctx, validate.Request{
-		Root: absolute, Base: base, Actor: validate.Actor(actor), Phase: validate.Phase(phase),
+		Root: absolute, Base: base, Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
 	}, validate.CompileCandidate)
 	if err != nil {

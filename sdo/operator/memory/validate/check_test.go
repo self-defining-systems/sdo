@@ -50,7 +50,8 @@ func TestCheckCannotSelectPartialLayers(t *testing.T) {
 func TestCheckReturnsCompileDiagnosticsAndInfrastructureErrors(t *testing.T) {
 	root := goodTree(t)
 	commit(t, root, "base")
-	request := Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ReflectionPhase}
+	write(t, root, "app.txt", "repair\n")
+	request := Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ProposalPhase}
 	diagnostics, err := Check(context.Background(), request, func(context.Context, Request) ([]Diagnostic, error) {
 		return []Diagnostic{{Rule: RuleDetectorTest, Message: "failed detector test"}}, nil
 	})

@@ -306,21 +306,14 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 			return nil, errors.New("reflection changes lack a durable worker decision; proposal reset")
 		}
 		decision := ReflectionDecision{LearningDecision: ledger.ReflectionDecision.GetLearningDecision(), NoChangeReason: ledger.ReflectionDecision.GetNoChangeReason(), PlaybookIDs: ledger.ReflectionDecision.GetPlaybookIds()}
-		if err := decision.Validate(paths); err != nil {
-			if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
-				return nil, fmt.Errorf("reflection decision: %v; reset proposal: %w", err, resetErr)
-			}
-			ledger.ReflectionDecision = nil
-			if saveErr := n.saveLedger(ledger); saveErr != nil {
-				return nil, saveErr
-			}
-			return nil, err
-		}
-		if len(paths) == 0 {
+		err = decision.Validate(paths)
+		if err == nil && len(paths) == 0 {
 			return nil, nil
 		}
-
-		accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ReflectionPhase)
+		var accepted broker.Receipt
+		if err == nil {
+			accepted, err = n.Repository.PublishReflection(ctx, id, ledger.ReflectionDecision)
+		}
 		if err == nil {
 			ledger.ReflectionCommit = accepted.Commit
 			return accepted.ChangedPaths, nil

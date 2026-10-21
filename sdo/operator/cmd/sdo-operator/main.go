@@ -47,7 +47,7 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "validate" {
 		config, err := operatorcli.ParseValidateLaunch(os.Args[1:])
 		if err == nil {
-			err = operatorcli.RunValidate(context.Background(), config)
+			err = operatorcli.RunValidateReport(context.Background(), config, os.Stdout)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

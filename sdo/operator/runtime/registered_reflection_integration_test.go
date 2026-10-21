@@ -85,6 +85,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 						if err := os.WriteFile(readme, []byte("malformed README\n"), 0o644); err != nil {
 							return nil, err
 						}
+						writeReflectionCheckDecision(t, checkout, response)
 						report, code := runReflectionMemoryCheck(t, binary, checkout, base, operatorRoot)
 						if code != 1 || len(report.Diagnostics) == 0 {
 							t.Fatalf("malformed README passed CLI: %d %v", code, report)
@@ -103,6 +104,7 @@ func TestReflectionDirectFilesCLIAndBroker(t *testing.T) {
 						}
 					}
 				}
+				writeReflectionCheckDecision(t, checkout, response)
 				report, code := runReflectionMemoryCheck(t, binary, checkout, base, operatorRoot)
 				if code != 0 {
 					t.Fatalf("final memory check failed: %d %v", code, report)
@@ -291,5 +293,16 @@ func TestReflectionInfrastructureFailureDoesNotSpendLearningRetries(t *testing.T
 	}
 	if calls != 2 {
 		t.Fatalf("worker dispatched %d times", calls)
+	}
+}
+
+func writeReflectionCheckDecision(t *testing.T, root string, response *contracts.ReflectionResult) {
+	t.Helper()
+	data, err := protojson.Marshal(&contracts.ReflectionDecision{LearningDecision: response.LearningDecision, NoChangeReason: response.NoChangeReason, PlaybookIds: response.ProposedArtifactIds})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", validate.DecisionFile), data, 0600); err != nil {
+		t.Fatal(err)
 	}
 }

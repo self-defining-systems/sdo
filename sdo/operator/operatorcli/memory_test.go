@@ -70,8 +70,27 @@ func runMemory(t *testing.T, env map[string]string, args ...string) (int, string
 	return code, stdout.String(), stderr.String()
 }
 
+func prepareCleanReflection(t *testing.T, root string) {
+	t.Helper()
+	gitRun(t, root, "commit", "--allow-empty", "-qm", "outcome\n\nSDO-Incident: incident\nSDO-Phase: outcome")
+	if err := validate.WritePublicationContext(context.Background(), root, validate.PublicationContext{BaseCommit: "HEAD", IncidentID: "incident"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".sdo/playbooks/base/README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/base/README.md"), append(data, []byte("\nVerified recovery.\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", validate.DecisionFile), []byte(`{"learning_decision":"updated","playbook_ids":["base"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMemoryCheckCleanTreeExitsZero(t *testing.T) {
 	root := copyFixture(t, goodFixture)
+	prepareCleanReflection(t, root)
 	env := memoryCheckEnv(t)
 	t.Chdir(root)
 	code, stdout, stderr := runMemory(t, env, "check")
@@ -117,6 +136,7 @@ func TestMemoryCheckJSONIsMemoryCheckReport(t *testing.T) {
 
 func TestMemoryCheckCleanJSONHasEmptyDiagnosticList(t *testing.T) {
 	root := copyFixture(t, goodFixture)
+	prepareCleanReflection(t, root)
 	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
 	if code != 0 || !regexp.MustCompile(`"diagnostics":\s+\[\]`).MatchString(stdout) {
 		t.Fatalf("code=%d stdout=%s", code, stdout)
@@ -164,7 +184,7 @@ func TestMemoryCheckActorAndPhaseDefaultFromEnvironment(t *testing.T) {
 	}
 	env["SDO_ACTOR"], env["SDO_PHASE"] = "human", "initial"
 	code, stdout, stderr = runMemory(t, env, "check", "--root", root)
-	if code != 0 {
+	if code != 1 || !strings.Contains(stdout, validate.RuleBootstrapClosed) || strings.Contains(stdout, validate.RuleOwnershipDenied) {
 		t.Fatalf("human ownership: code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 }
