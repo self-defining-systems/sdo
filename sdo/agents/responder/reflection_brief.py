@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
-from sdo.contracts import timestamp_datetime
+from sdo.contracts import Verdict, timestamp_datetime, to_canonical_json
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -136,6 +136,13 @@ def _findings_section(closure: IncidentClosure) -> str:
         f"completed {_iso(closure.responder_completed_at)}, health verified {_iso(closure.verified_at)}.",
         "Findings:",
     ]
+    if request.HasField("state_changes"):
+        lines.append("State changes at dispatch (against healthy baseline):")
+        lines.append(_fenced(_clip(to_canonical_json(request.state_changes), 2_000)))
+    if closure.HasField("final_state_changes"):
+        lines.append("State changes at verification (against healthy baseline):")
+        lines.append(_fenced(_clip(to_canonical_json(closure.final_state_changes), 2_000)))
+    lines.append("Findings:")
     lines.extend(_finding(finding) for finding in request.findings[:_MAX_FULL_FINDINGS])
     lines.extend(
         f"- [{finding.severity}] {finding.detector_id} / {finding.rule_id}: {finding.summary} "
@@ -164,6 +171,45 @@ def _result_section(result: IncidentResult | None, dispatch_error: str) -> str:
         lines.append(f"No responder result was recorded (dispatch error: {dispatch_error or 'none'}).")
         return "\n".join(lines)
     lines.append(f"Status: {result.status}" + (f"; error: {result.error}" if result.error else ""))
+    verdict_names = {
+        "RESULT_MATCH": "Match",
+        "RESULT_NO_MATCH": "NoMatch",
+        "RESULT_UNKNOWN": "Unknown",
+        "RESULT_NEEDS_JUDGEMENT": "NeedsJudgement",
+    }
+    if result.program_runs:
+        by_program: dict[str, list[str]] = {}
+        for run in result.program_runs:
+            verdict = verdict_names.get(
+                Verdict.Result.Name(run.verdict.result), Verdict.Result.Name(run.verdict.result)
+            )
+            history = by_program.setdefault(run.program_id, [])
+            if not history or history[-1] != verdict:
+                history.append(verdict)
+        lines.append("Program diagnoses:")
+        lines.extend(f"- {program_id}: {' -> '.join(history)}" for program_id, history in list(by_program.items())[:12])
+        if len(by_program) > 12:
+            lines.append(f"- {len(by_program) - 12} more programs omitted")
+    if result.plan_applications:
+        lines.append("Program applications:")
+        for application in result.plan_applications[:12]:
+            verification = (
+                verdict_names.get(
+                    Verdict.Result.Name(application.verification.result),
+                    Verdict.Result.Name(application.verification.result),
+                )
+                if application.HasField("verification")
+                else "not recorded"
+            )
+            state = "applied" if application.applied else "not applied"
+            programs = ", ".join(application.program_ids) or "unknown program"
+            lines.append(
+                f"- {application.application_id or 'unnamed'}: {programs}; "
+                f"{state}; verification {verification}"
+                + (f"; error {_clip(application.error, 120)}" if application.error else "")
+            )
+        if len(result.plan_applications) > 12:
+            lines.append(f"- {len(result.plan_applications) - 12} more applications omitted")
     lines.append("Confirmed root causes:")
     lines.extend(
         f"- {cause.summary} [{'; '.join(_ref(ref) for ref in cause.resources)}]"

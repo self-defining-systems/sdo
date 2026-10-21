@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 from typing import Protocol, cast
 
-from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
+from google.protobuf import json_format
+
+from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
     REFLECTION_GUIDANCE_MODES,
@@ -26,11 +28,14 @@ from sdo.contracts import (
     IncidentClosure,
     ReflectionRequest,
     ReflectionResult,
+    SdkGap,
     parse_json,
     to_canonical_json,
     validate,
 )
 
+AGENT_ID = "sdo-reflector"
+TASK_TYPE = "outcome-reflection-direct-v1"
 DEFAULT_TASK_PATH = Path("/sdo/request/agent-task.json")
 _SESSION_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 
@@ -89,30 +94,47 @@ def run_reflection_task(
         raise ValueError(f"invalid reflection session mode {session_mode!r}")
     prior_session = closure.result.responder_session_id if closure.HasField("result") else ""
     if session_mode == "resume" and not _SESSION_TOKEN.fullmatch(prior_session or ""):
-        raise ValueError("resume reflection requires a valid responder session")
+        print("reflection: responder session ID is missing or invalid; starting fresh", file=sys.stderr)
+        session_mode = "fresh"
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")
     # The task, rather than inherited launcher environment, pins check ownership.
-    os.environ.update(SDO_ACTOR="responder", SDO_PHASE="reflection", SDO_BASE_COMMIT=task.workspace.base_commit)
+    environment = {
+        "SDO_ACTOR": "responder",
+        "SDO_PHASE": "reflection",
+        "SDO_BASE_COMMIT": task.workspace.base_commit,
+        "SDO_INCIDENT_ID": outcome.incident_id,
+        "SDO_CAPTURED_CORPUS_DIR": os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"),
+    }
+    previous = {key: os.environ.get(key) for key in environment}
     selected = reflector or _default_reflector(cast("ReflectionGuidance", guidance))
-    turn = selected.resume(
-        session_id=prior_session or "",
-        incident_id=outcome.incident_id,
-        worktree=Path(task.workspace.checkout_path),
-        outcome=outcome,
-        history=history,
-        outcome_commit=request.outcome_commit,
-        session_mode=cast("ReflectionSessionMode", session_mode),
-        closure=closure,
-        validation_attempt=request.validation_attempt or 1,
-        diagnostics=list(request.previous_diagnostics),
-    )
+    try:
+        os.environ.update(environment)
+        turn = selected.resume(
+            session_id=prior_session or "",
+            incident_id=outcome.incident_id,
+            worktree=Path(task.workspace.checkout_path),
+            outcome=outcome,
+            history=history,
+            outcome_commit=request.outcome_commit,
+            session_mode=cast("ReflectionSessionMode", session_mode),
+            closure=closure,
+            validation_attempt=request.validation_attempt or 1,
+            diagnostics=list(request.previous_diagnostics),
+        )
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     typed_result = ReflectionResult(
         summary=turn.summary,
         learning_decision=turn.learning_decision,
         no_change_reason=turn.no_change_reason or "",
         proposed_artifact_ids=turn.playbook_ids,
+        sdk_gaps=[json_format.ParseDict(gap.model_dump(), SdkGap()) for gap in turn.sdk_gaps],
     )
     result = AgentResult(
         schema_version=SCHEMA_VERSION,
@@ -121,7 +143,13 @@ def run_reflection_task(
         proposal_id=task.workspace.proposal_id,
     )
     result.response.Pack(typed_result)
-    publisher.publish_payload(result_name, "agent-result.json", to_canonical_json(result))
+    payload = to_canonical_json(result)
+    if len(payload.encode("utf-8")) > 700 << 10:
+        raise ValueError(
+            "reflection result exceeds the worker transport budget; "
+            "use corpus references and reduce proposal source size"
+        )
+    publisher.publish_payload(result_name, "agent-result.json", payload)
     return result
 
 
@@ -132,8 +160,8 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home()
-        prepare_claude_home()
+        prepare_codex_home(skills=AGENT_SKILLS["reflector"])
+        prepare_claude_home(skills=AGENT_SKILLS["reflector"])
         run_reflection_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

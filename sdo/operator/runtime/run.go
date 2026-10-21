@@ -23,11 +23,13 @@ import (
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/worker_registry"
 )
 
 type RuntimeOptions struct {
+	Programs program.ProgramRegistry
 	Args     []string
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -57,7 +59,11 @@ func (values *repeatedFlag) Set(value string) error {
 }
 
 func Run(detectors []sdk.Detector) {
-	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{}); err != nil {
+	RunWithPrograms(detectors, nil)
+}
+
+func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry) {
+	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{Programs: programs}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -125,7 +131,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
-	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode; only job is supported")
+	var deployedManifestPaths repeatedFlag
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
+	flags.String("dispatcher", "", "deprecated; use agent registrations")
+	dispatcherMode := flags.String("dispatcher-mode", "job", "dispatcher mode: job (production) or local (development)")
 	responderImage := flags.String("responder-image", "", "responder container image for job mode")
 	agentRegistrationDirectory := flags.String("agent-registration-directory", "", "directory of strict ProtoJSON agent registrations; defaults to the built-in manifests in the controller image, launched with --responder-image")
 	responderAgentID := flags.String("responder-agent-id", "", "registered agent ID for incident response; defaults to the one agent registered for incident requests")
@@ -159,6 +168,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		0,
 		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
 	)
+	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
+	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
+	programMinDuration := flags.Duration("program-min-duration", DefaultProgramMinDuration, "minimum sustained duration for learned-program firing and clearing")
+	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
+	driftDispatchesPerHour := flags.Int("drift-dispatches-per-hour", 12, "maximum repeat drift responder dispatches per hour")
+	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "maximum responder tokens per hour for repeat drift")
+	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",
 		30*time.Second,
@@ -196,8 +215,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	restartAfterClosure := flags.Bool(
 		"restart-after-closure",
 		false,
-		"exit after each newly acknowledged closure so a supervisor can roll out learned detectors and relaunch",
+		"exit after each acknowledged closure in non-native mode",
 	)
+	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
 	)
@@ -227,6 +247,26 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	timeScale, err := developmentTimeScale()
+	if err != nil {
+		return err
+	}
+	detectors = scaleDetectors(detectors, timeScale)
+	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
+	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
+	*followUpCooldown = scaledDuration(*followUpCooldown, timeScale)
+	if options.NativeBroker != nil && *forceReflection {
+		options.NativeBroker.ForceReflection = true
+	}
+	if *programMinDuration < 0 {
+		return errors.New("program minimum duration must be nonnegative")
+	}
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *driftDispatchesPerHour < 0 || *driftTokensPerHour < 0 || *programTrustThreshold < 1 {
+		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows, and program trust threshold must be positive; drift budgets must be nonnegative")
+	}
+	if *programFastPath && *repairPolicy != "recorded-actions" {
+		return errors.New("program fast path requires recorded-actions repair policy")
 	}
 	if *exitAfterClosure && *restartAfterClosure {
 		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
@@ -355,7 +395,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stateConfigMapName = controllerStateConfigMap
 	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName,
+		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -401,6 +441,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
+	var stateTracker *StateTracker
+	if *stateBaseline {
+		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		defer stateTracker.Stop()
+	}
+	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths}
+	var primitiveProber PrimitiveProber
+	if proberAddress != nil {
+		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
+	}
+	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
 		var catalog memory.CatalogReader
@@ -413,7 +464,31 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
 			Environment: jobEnvironment, DispatchEnvironment: ProberEnvironment(responderProberAddress),
-			Catalog: catalog, RequireMemorySnapshot: options.NativeBroker != nil,
+			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
+			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+			LoopFactory: func(request IncidentRequest) *ResponderLoop {
+				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
+					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider},
+				}, *maxResponseLoops)
+				loop.CurrentEvidence = func() *IncidentRequest {
+					if controller == nil {
+						return nil
+					}
+					return controller.ExportState().IncidentRequest
+				}
+				loop.DiagnosisDeadline = *diagnosisDeadline
+				loop.CorpusReplayPassed = options.NativeBroker != nil
+				loop.DiagnosisSettleDelay = *diagnosisSettleDelay
+				if options.NativeBroker != nil {
+					loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
+				}
+				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+					return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: stateTracker}
+				}
+				return loop
+			},
 		}
 	}
 	admission := AdmissionConfig{
@@ -425,24 +500,35 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		RecheckInterval:             *admissionRecheckInterval,
 	}
 	start := time.Now().UTC()
-	controller, err := NewController(ControllerConfig{
+	corpusSessionRoot := ""
+	if options.NativeBroker != nil {
+		corpusSessionRoot = options.NativeBroker.SessionRoot
+	}
+	controller, err = NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
+		CorpusSessionRoot:   corpusSessionRoot,
 		VerificationTimeout: *verificationTimeout,
 		MaxFollowUps:        *maxFollowUps, FollowUpCooldown: *followUpCooldown,
 		RepairPolicy:    *repairPolicy,
-		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
-		ConfirmationInterval: time.Second,
+		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
+		ConfirmationInterval: scaledDuration(time.Second, timeScale),
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
-		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: 2 * time.Second, Interval: time.Second},
+		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: scaledDuration(2*time.Second, timeScale), Interval: scaledDuration(time.Second, timeScale)},
 		Admission:        admission,
 	}, detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
 		return err
 	}
+	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: *programMinDuration}, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, BatchWindow: *driftBatchWindow, DispatchesPerHour: *driftDispatchesPerHour, TokensPerHour: *driftTokensPerHour,
+		View: func(snapshot sdk.DetectionContext) program.ReadView {
+			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker}
+		},
+	})
 	// The load term reads host pressure from a Linux PSI file; the backlog term
 	// needs no gauge. A gauge is attached only when the load term is enabled.
 	if admission.Enabled && admission.HighWatermark > 0 {
@@ -455,11 +541,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	} else if jobDispatch {
 		return errors.New("job controller requires the Go incident broker")
 	}
-	var stateTracker *StateTracker
 	if *stateBaseline {
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace})
 		controller.Baseline = stateTracker
-		defer stateTracker.Stop()
 	}
 	if *cleanResponderHelpers {
 		controller.Helpers = KubernetesHelperCleaner{
@@ -623,6 +706,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			stateTracker.Reset()
 		}
 	}
+	persistControllerState := func() {
+		if err := controller.PersistState(ctx); err != nil {
+			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
+		}
+	}
 	if !desired.Paused {
 		kubernetesCache.Start(runCtx)
 		cacheStarted = true
@@ -639,10 +727,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	if err := controller.PersistState(ctx); err != nil {
-		return fmt.Errorf("persist controller state: %w", err)
-	}
-	if options.NativeBroker != nil && !desired.Paused {
+	persistControllerState()
+	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
+	// the closure acknowledgment waiting on it, so deferring it until resume restarts the controller in a loop.
+	// The handoff verifies the build's provenance against the accepted tree, not an evaluation.
+	if options.NativeBroker != nil {
 		if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 			return err
 		}
@@ -682,6 +771,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		startTraffic()
 		waitState()
 		kubernetesCache.TakeEvents()
+		kubernetesCache.TakeObjectChanges()
 		applied = desired
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -692,9 +782,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return err
 		}
-		if err := controller.PersistState(ctx); err != nil {
-			return fmt.Errorf("persist controller state: %w", err)
-		}
+		persistControllerState()
 		if options.NativeBroker != nil {
 			if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 				return err
@@ -748,6 +836,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				stopState()
 				kubernetesCache.Stop()
 				kubernetesCache.TakeEvents()
+				kubernetesCache.TakeObjectChanges()
 				applied = desired
 				if err := encoder.Encode(applied.Record()); err != nil {
 					fmt.Fprintln(stderr, err)
@@ -763,6 +852,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			if applied.Paused {
 				kubernetesCache.TakeEvents()
+				kubernetesCache.TakeObjectChanges()
 				continue
 			}
 			if err := controller.StepEvents(runCtx, time.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {
@@ -771,9 +861,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				return err
 			}
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -788,9 +876,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleDispatchCompletion(completion, time.Now().UTC())
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -805,9 +891,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleWorkspaceCompletion(completion)
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -822,9 +906,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleClosureCompletion(completion)
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := ClosureFailureError(controller); err != nil && *exitAfterClosure {
 				return err
 			}
@@ -839,9 +921,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return nil
 			}
 			controller.handleAcknowledgmentCompletion(completion)
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -851,10 +931,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if *exitAfterClosure && completion.err == nil {
 				return nil
 			}
-			if *restartAfterClosure && completion.err == nil {
-				if err := encoder.Encode(map[string]any{
-					"controller_closure_restart": controller.LastAcknowledgedIncidentID(),
-				}); err != nil {
+			if *restartAfterClosure && options.NativeBroker == nil && completion.err == nil {
+				if err := encoder.Encode(map[string]any{"controller_closure_restart": controller.LastAcknowledgedIncidentID()}); err != nil {
 					fmt.Fprintln(stderr, err)
 				}
 				return nil
@@ -889,9 +967,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				return err
 			}
-			if err := controller.PersistState(ctx); err != nil {
-				return fmt.Errorf("persist controller state: %w", err)
-			}
+			persistControllerState()
 			if err := reviewGate.check(controller); err != nil {
 				return err
 			}
@@ -1157,7 +1233,12 @@ func defaultIdentity() string {
 
 // executePausedEffects runs only operational-memory effects: a paused
 // controller neither prepares nor dispatches a responder.
-func executePausedEffects(ctx context.Context, controller *Controller) error {
+func executePausedEffects(ctx context.Context, controller *Controller) (err error) {
+	defer func() {
+		if errors.Is(err, ErrEffectNotDurable) {
+			err = nil
+		}
+	}()
 	if closure, ok := controller.PendingClosureEffect(); ok {
 		if err := controller.ExecuteClosureEffect(ctx, closure); err != nil {
 			return fmt.Errorf("execute persisted closure effect: %w", err)
@@ -1178,7 +1259,13 @@ func executePausedEffects(ctx context.Context, controller *Controller) error {
 	return nil
 }
 
-func executePendingEffects(ctx context.Context, controller *Controller) error {
+func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
+	// A failed state write leaves effects pending for the next successful save.
+	defer func() {
+		if errors.Is(err, ErrEffectNotDurable) {
+			err = nil
+		}
+	}()
 	if effect, ok := controller.PendingWorkspaceEffect(); ok {
 		if err := controller.ExecuteWorkspaceEffect(ctx, effect); err != nil {
 			return fmt.Errorf("execute persisted workspace effect: %w", err)

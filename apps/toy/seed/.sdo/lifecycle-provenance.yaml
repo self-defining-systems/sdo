@@ -1,0 +1,3 @@
+schema_version: sdo.toy-fixture/v1
+source: apps/toy
+note: Hand-authored deterministic validation seed; not a model lifecycle receipt.

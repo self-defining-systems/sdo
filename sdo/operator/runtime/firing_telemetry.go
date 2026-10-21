@@ -254,6 +254,11 @@ func (c *Controller) noteBatchedLocked(incidentID string, findings []sdk.Finding
 	for _, finding := range findings {
 		fingerprint := FindingFingerprint(finding)
 		spec := c.detectorSpecs[finding.DetectorID]
+		if spec.ID == "" {
+			spec.ID = finding.DetectorID
+			spec.Class = sdk.DetectorClassIncident
+			spec.Owner = sdk.DetectorOwnerResponder
+		}
 		if index := c.timelineIndexLocked(finding.DetectorID, fingerprint); index >= 0 {
 			c.timeline[index].Relation = RelationBeforeDispatch
 		}

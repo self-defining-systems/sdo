@@ -7,13 +7,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, RecoveryCleanup, reconcile_application
 from benchmarks.sregym.fastloop.loop import InjectionWindow
 from benchmarks.sregym.fastloop.records import OracleVerdict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-HEALTH_POLL_SECONDS = 2.0
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
+
+HEALTH_POLL_SECONDS = 1.0
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
 WORKER_OP_TIMEOUT_SECONDS = 900.0
 
@@ -67,19 +70,32 @@ class SregymFaultDriver:
         worker: WorkerRequester,
         *,
         namespace: str,
+        baseline: ApplicationBaseline | tuple[ApplicationBaseline, ...] | None = None,
+        cluster: ApplicationCluster | None = None,
         health_timeout_seconds: float = 300.0,
+        health_poll_seconds: float = HEALTH_POLL_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        before_inject: Callable[[str], None] | None = None,
     ) -> None:
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
+        if health_poll_seconds <= 0:
+            raise ValueError("health_poll_seconds must be positive")
         self._worker = worker
         self._namespace = namespace
+        self._baselines = (baseline,) if isinstance(baseline, ApplicationBaseline) else baseline
+        self._cluster = cluster
+        self.last_cleanup = RecoveryCleanup()
         self._health_timeout = health_timeout_seconds
+        self._health_poll = health_poll_seconds
         self._monotonic = monotonic
         self._sleep = sleep
+        self._before_inject = before_inject
 
     def inject(self, problem_id: str) -> InjectionWindow:
+        if self._before_inject is not None:
+            self._before_inject(problem_id)
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
         return _window(reply)
 
@@ -96,13 +112,23 @@ class SregymFaultDriver:
             raise ValueError(f"a composite fault lists a problem more than once: {problems}")
         faults: list[InjectedFault] = []
         for position, problem_id in enumerate(problems):
-            reply = self._worker.request(
-                "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
-            )
-            index = reply.get("fault")
-            if index != position:
-                raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {position}")
-            faults.append(InjectedFault(problem_id=problem_id, index=position, window=_window(reply)))
+            try:
+                reply = self._worker.request(
+                    "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
+                )
+                index = reply.get("fault")
+                if index != position:
+                    raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {position}")
+                faults.append(InjectedFault(problem_id=problem_id, index=position, window=_window(reply)))
+            except Exception as exc:
+                if faults:
+                    try:
+                        self.recover()
+                    except Exception as recovery_error:
+                        raise FastloopFaultError(
+                            f"composite injection failed at {problem_id}: {exc}; recovery failed: {recovery_error}"
+                        ) from recovery_error
+                raise FastloopFaultError(f"composite injection failed at {problem_id}: {exc}") from exc
         return CompositeInjection(faults=tuple(faults))
 
     def oracle(self, *, fault: int | None = None) -> OracleVerdict:
@@ -121,19 +147,58 @@ class SregymFaultDriver:
         return float(seconds)
 
     def recover(self) -> float:
-        """Recover every remaining fault the harness's way, then wait for the application to be healthy."""
+        """Recover faults, restore the application baseline, then wait for health and rollouts."""
 
         started = self._monotonic()
+        self.last_cleanup = RecoveryCleanup()
         self._worker.request("recover", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        if self._baselines is not None and self._cluster is not None:
+            for baseline in self._baselines:
+                cleaned = reconcile_application(self._cluster, baseline, baseline.namespace)
+                for kind, count in cleaned.deleted_counts.items():
+                    self.last_cleanup.deleted_counts[kind] = self.last_cleanup.deleted_counts.get(kind, 0) + count
+                self.last_cleanup.restored.extend(
+                    f"{baseline.namespace}/{name}" if len(self._baselines) > 1 else name for name in cleaned.restored
+                )
+        else:
+            self.last_cleanup.skipped_reason = "application baseline unavailable"
         deadline = started + self._health_timeout
         health: dict[str, Any] = {}
+        unready_rollouts: list[str] = []
         while True:
             health = self._worker.request("health", namespace=self._namespace, timeout=60)
             if health.get("healthy"):
-                return self._monotonic() - started
+                unready_rollouts = self._unready_rollouts()
+                if not unready_rollouts:
+                    return self._monotonic() - started
             if self._monotonic() >= deadline:
                 raise FastloopFaultError(
                     f"{self._namespace} is not healthy {self._health_timeout:.0f}s after recovery; "
-                    f"unready: {health.get('unready')}"
+                    f"unready: {health.get('unready')}; rollouts: {unready_rollouts}"
                 )
-            self._sleep(HEALTH_POLL_SECONDS)
+            self._sleep(self._health_poll)
+
+    def _unready_rollouts(self) -> list[str]:
+        if self._cluster is None:
+            return []
+        namespaces = (baseline.namespace for baseline in self._baselines) if self._baselines else (self._namespace,)
+        unready: list[str] = []
+        for namespace in namespaces:
+            for value in self._cluster.list_objects(namespace):
+                kind = value.get("kind")
+                metadata = value.get("metadata", {})
+                if kind == "Pod" and metadata.get("deletionTimestamp"):
+                    unready.append(f"{namespace}/Pod/{metadata.get('name')}")
+                if kind not in {"Deployment", "StatefulSet"}:
+                    continue
+                spec = value.get("spec", {})
+                status = value.get("status", {})
+                replicas = spec.get("replicas", 1)
+                if (
+                    status.get("observedGeneration", 0) < metadata.get("generation", 0)
+                    or status.get("updatedReplicas", 0) != replicas
+                    or status.get("readyReplicas", 0) != replicas
+                    or status.get("replicas", 0) != replicas
+                ):
+                    unready.append(f"{namespace}/{kind}/{metadata.get('name')}")
+        return unready

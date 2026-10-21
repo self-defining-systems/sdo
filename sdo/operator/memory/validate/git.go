@@ -46,8 +46,12 @@ func ChangedPaths(ctx context.Context, root, base string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	ignored, err := git(ctx, root, "ls-files", "--others", "-z", "--", layout.LibrariesDir, layout.CorpusDir)
+	if err != nil {
+		return nil, err
+	}
 	set := map[string]struct{}{}
-	for _, raw := range [][]byte{modified, untracked} {
+	for _, raw := range [][]byte{modified, untracked, ignored} {
 		for _, part := range strings.Split(string(raw), "\x00") {
 			if part != "" {
 				set[part] = struct{}{}

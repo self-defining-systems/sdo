@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -58,6 +59,34 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorVet
 	case strings.HasPrefix(stage.Stage, "test"):
 		rule = RuleDetectorTest
+	}
+	mitigationFailure := false
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay} {
+		if strings.Contains(stage.Output, rule) {
+			messages := map[string]bool{}
+			for _, line := range strings.Split(stage.Output, "\n") {
+				if index := strings.Index(line, rule+":"); index >= 0 {
+					messages[strings.TrimSpace(line[index:])] = true
+				}
+			}
+			ordered := make([]string, 0, len(messages))
+			for message := range messages {
+				ordered = append(ordered, message)
+			}
+			sort.Strings(ordered)
+			message := strings.Join(ordered, "; ")
+			if message == "" {
+				message = rule
+			}
+			if len(message) > maxCompileOutput {
+				message = message[:maxCompileOutput]
+			}
+			s.add(Compile, Diagnostic{Rule: rule, Path: layout.PlaybooksDir, Message: message, Hint: "mitigation must replay on the faulted fixture and clear its diagnosis"})
+			mitigationFailure = true
+		}
+	}
+	if mitigationFailure {
+		return nil
 	}
 	located := goLocation.FindAllStringSubmatch(stage.Output, -1)
 	reported := map[string]bool{}

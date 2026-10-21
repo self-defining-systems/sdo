@@ -17,9 +17,9 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// Cross-language contract fixtures. The Go controller writes each message as
-// canonical ProtoJSON into tests/fixtures/sdo/contracts/go/, and Python parses the same files
-// into the generated messages (tests/unit/sdo/contracts/
+// Cross-language contract fixtures. The Go controller writes each shape
+// Python parses into tests/fixtures/sdo/contracts/go/, and Python's strict
+// models parse the same files (tests/unit/sdo/contracts/
 // test_go_contract_fixtures.py, the broker and the SREGym receipt tests).
 // Any Go encoding change fails here until the fixtures are regenerated with
 //

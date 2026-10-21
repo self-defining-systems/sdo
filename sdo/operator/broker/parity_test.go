@@ -3,8 +3,11 @@ package broker_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"go/format"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -64,6 +67,11 @@ func runGit(t *testing.T, root string, args ...string) {
 
 func put(t *testing.T, root, rel, content string, mode os.FileMode) {
 	t.Helper()
+	if strings.HasSuffix(rel, ".go") {
+		if formatted, err := format.Source([]byte(content)); err == nil {
+			content = string(formatted)
+		}
+	}
 	target := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
@@ -140,7 +148,11 @@ func TestCLIAndBrokerAgreeOnAcceptance(t *testing.T) {
 		{"vet failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			source := strings.Replace(parityDetector(t, "cache"), `"context"`, `"context"; "fmt"`, 1)
 			source = strings.Replace(source, "return Detector{}", `_ = fmt.Sprintf("%d", "bad"); return Detector{}`, 1)
-			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", source, 0o644)
+			formatted, err := format.Source([]byte(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector.go", string(formatted), 0o644)
 		}, []string{validate.RuleDetectorVet}, false},
 		{"detector test failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			put(t, r, ".sdo/diagnostics/detectors/incidents/cache/detector_test.go", `package detector
@@ -298,6 +310,209 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			put(t, r, "app.txt", "changed again\n", 0o644)
 		}, want: []string{validate.RuleArchitectureAlone}},
 	}...)
+	cases = append(cases, []parityCase{
+		{"direct program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) { parityProgram(t, r) }, nil, false},
+
+		{"program mitigation leaves target port faulty", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
+import ("context"; "sdo.dev/operator/sdk/program")
+func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
+ verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
+ return program.Plan{Actions:[]program.Action{program.SetField{Ref:b["service"],Path:"spec.ports[0].targetPort",Value:9999}}},nil
+}
+`, 0644)
+		}, []string{"program.mitigation-not-repaired"}, false},
+		{"program mitigation cannot replay rollout", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
+import ("context"; "sdo.dev/operator/sdk/program")
+func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
+ verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
+ return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b["service"]}}},nil
+}
+`, 0644)
+		}, []string{"program.mitigation-unreplayable"}, false},
+
+		{"program README physical path", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := filepath.Join(r, ".sdo/playbooks/service-targetport-mismatch/README.md")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, ".sdo/playbooks/service-targetport-mismatch/README.md", string(data)+"\nSee .sdo/goal.md.\n", 0644)
+		}, []string{"text.physical-path"}, false},
+		{"program import policy", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, path, strings.Replace(string(data), "import (", "import (\n _ \"os/exec\"", 1), 0644)
+		}, []string{"program.invalid"}, false},
+		{"program compile failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/playbooks/service-targetport-mismatch/diagnose.go"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, path, strings.Replace(string(data), "type Program struct{}", "type Program struct{ missing UndefinedType }", 1), 0644)
+		}, []string{validate.RuleDetectorCompile}, false},
+		{"program replay failure", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/corpus/targetport-mismatch/labels.json"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var label map[string]any
+			if err := json.Unmarshal(data, &label); err != nil {
+				t.Fatal(err)
+			}
+			label["bindings"] = label["peer_bindings"]
+			data, err = json.Marshal(label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, path, string(data), 0644)
+		}, []string{validate.RuleDetectorTest}, false},
+		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/corpus/targetport-mismatch/labels.json"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var label map[string]any
+			if err := json.Unmarshal(data, &label); err != nil {
+				t.Fatal(err)
+			}
+			delete(label, "provenance")
+			data, err = json.Marshal(label)
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, path, string(data), 0644)
+		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+
+		{"program README shell policy", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			path := ".sdo/playbooks/service-targetport-mismatch/README.md"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, path, string(data)+"\n```sh\nkubectl get pods\n```\n", 0644)
+		}, []string{"program.invalid"}, false},
+		{"library import policy", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			put(t, r, ".sdo/lib/ports/ports.go", "package ports\nimport _ \"os/exec\"\n", 0644)
+		}, []string{"program.invalid"}, false},
+		{"trusted captured program", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			parityCaptures(t, r)
+		}, nil, false},
+		{"captured bytes differ", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			parityCaptures(t, r)
+			path := ".sdo/corpus/targetport-mismatch/recordings.json"
+			data, err := os.ReadFile(filepath.Join(r, path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, path, string(data)+" ", 0644)
+		}, []string{"program.capture-provenance"}, false},
+
+		{"positive corpus without capture environment", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			if err := os.RemoveAll(filepath.Join(filepath.Dir(r), "captures")); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{"program.capture-unavailable"}, false},
+		{"positive corpus with empty incident ID", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "" })
+		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		{"positive corpus references another incident", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityProgram(t, r)
+			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "other" })
+		}, []string{"program.capture-provenance"}, false},
+		{"existing program adds unproven positive case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/another-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
+				t.Fatal(err)
+			}
+			parityCaseLabel(t, r, "another-case", func(label map[string]any) { delete(label, "provenance") })
+		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		{"existing program adds captured positive case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/another-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, false},
+		{"existing program adds synthetic negative case without captures", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			dir := filepath.Join(r, ".sdo/corpus/another-case")
+			if err := os.CopyFS(dir, os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "fixed.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, ".sdo/corpus/another-case/open.json", string(data), 0644)
+			parityCaseLabel(t, r, "another-case", func(label map[string]any) {
+				delete(label, "provenance")
+				delete(label, "root_cause_program_ids")
+				label["no_match_program_ids"] = []string{"service-targetport-mismatch"}
+				label["synthetic_no_match_reason"] = "healthy same-kind peer has the correct target port"
+			})
+			if err := os.RemoveAll(filepath.Join(filepath.Dir(r), "captures")); err != nil {
+				t.Fatal(err)
+			}
+		}, nil, false},
+		{"existing program erases accepted provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			parityLabel(t, r, func(label map[string]any) { delete(label, "provenance") })
+		}, []string{"program.corpus-immutable"}, false},
+		{"existing program rewrites accepted labels", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			parityLabel(t, r, func(label map[string]any) { label["bindings"] = label["peer_bindings"] })
+		}, []string{"program.corpus-immutable"}, false},
+		{"existing program rewrites accepted incident", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "other" })
+		}, []string{"program.corpus-immutable"}, false},
+		{"existing program deletes accepted case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/retained-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, r, "add", "-f", ".sdo/corpus")
+			runGit(t, r, "commit", "-qm", "accept another case before proposing deletion")
+			if err := os.RemoveAll(filepath.Join(r, ".sdo/corpus/targetport-mismatch")); err != nil {
+				t.Fatal(err)
+			}
+		}, []string{"program.corpus-immutable", "program.invalid"}, false},
+		{"existing program erases accepted recordings", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			put(t, r, ".sdo/corpus/targetport-mismatch/recordings.json", "[]", 0644)
+		}, []string{"program.corpus-immutable"}, false},
+		{"existing program changes accepted snapshot", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			put(t, r, ".sdo/corpus/targetport-mismatch/open.json", `{ "namespace": "forged" }`, 0644)
+		}, []string{"program.corpus-immutable"}, false},
+		{"accepted case needs no current capture", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+			parityAcceptedProgram(t, r)
+			if err := os.RemoveAll(filepath.Join(filepath.Dir(r), "captures")); err != nil {
+				t.Fatal(err)
+			}
+			put(t, r, ".sdo/playbooks/base/README.md", "---\nschema_version: 1\nowner: responder\nfault_class: base\noriginating_incident: initial\n---\nRepair <RESOURCE_NAME>. Run fix.sh.\nAdditional guidance.\n", 0644)
+		}, nil, false},
+	}...)
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			root := copyParityTree(t)
@@ -355,6 +570,10 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			for _, name := range append(paths, nonregular...) {
 				copyParityChange(t, root, proposal.Path, name)
 			}
+			capture := filepath.Join(filepath.Dir(root), "captures")
+			if _, err := os.Stat(capture); os.IsNotExist(err) {
+				capture = ""
+			}
 			root = proposal.Path
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated"}
 			if len(paths) == 0 {
@@ -365,7 +584,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			for _, p := range paths {
 				kind, id, ok := layout.Classify(p)
 				id, _, _ = strings.Cut(id, "/")
-				if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript) {
+				if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript || kind == layout.KindPlaybookProgram) {
 					ids[id] = true
 				}
 			}
@@ -391,7 +610,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			var stdout, stderr bytes.Buffer
 			command := exec.Command(binary, "memory", "check", "--json")
 			command.Dir = root
-			command.Env = append(os.Environ(), "SDO_ACTOR="+string(test.actor), "SDO_PHASE="+string(test.phase), "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline)
+			command.Env = append(os.Environ(), "SDO_ACTOR="+string(test.actor), "SDO_PHASE="+string(test.phase), "SDO_BASE_COMMIT="+proposal.BaseCommit, "SDO_OPERATOR_ROOT="+operatorRoot, "SDO_HEALTHY_BASELINE="+baseline, "SDO_CAPTURED_CORPUS_DIR="+capture, "SDO_INCIDENT_ID=incident")
 			command.Stdout, command.Stderr = &stdout, &stderr
 			code := 0
 			if err := command.Run(); err != nil {
@@ -412,7 +631,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			var publishErr error
 			var receipt broker.Receipt
 			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
-				receipt, publishErr = repository.PublishReflection(context.Background(), "incident", decision)
+				receipt, publishErr = repository.PublishReflection(validate.WithCaptureSource(context.Background(), capture, "incident"), "incident", decision)
 			} else {
 				receipt, publishErr = repository.Publish(context.Background(), "incident", test.actor, test.phase)
 			}
@@ -453,7 +672,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 			}
 
 			if verdictCLI, verdictBroker := code == 0, err == nil; verdictCLI != verdictBroker {
-				t.Fatalf("verdicts differ: CLI clean=%v broker clean=%v", verdictCLI, verdictBroker)
+				t.Fatalf("verdicts differ: CLI clean=%v broker clean=%v\nCLI diagnostics: %v\nbroker diagnostics: %v\nCLI stderr: %s", verdictCLI, verdictBroker, report.Diagnostics, brokerDiagnostics, stderr.String())
 			}
 			if got := rules(report.Diagnostics, brokerDiagnostics); !reflect.DeepEqual(got.cli, got.broker) {
 				t.Fatalf("rule sets differ: CLI %v broker %v", got.cli, got.broker)
@@ -632,4 +851,123 @@ func copyParityChange(t *testing.T, source, target, name string) {
 	if out, err := exec.Command("cp", "-a", "--", from, to).CombinedOutput(); err != nil {
 		t.Fatalf("copy candidate %s: %v %s", name, err, out)
 	}
+}
+
+func parityProgram(t *testing.T, root string) {
+	t.Helper()
+	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
+	if err := os.CopyFS(filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch"), os.DirFS("../runtime/testdata/direct_reflection/service-targetport-mismatch")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(root, ".sdo/corpus/targetport-mismatch"), os.DirFS(filepath.Join(fixture, "corpus/targetport-mismatch"))); err != nil {
+		t.Fatal(err)
+	}
+	labels := filepath.Join(root, ".sdo/corpus/targetport-mismatch/labels.json")
+	data, err := os.ReadFile(labels)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var label map[string]any
+	if err := json.Unmarshal(data, &label); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := os.ReadFile(filepath.Join(root, ".sdo/corpus/targetport-mismatch/open.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed, err := os.ReadFile(filepath.Join(root, ".sdo/corpus/targetport-mismatch/fixed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := os.ReadFile(filepath.Join(root, ".sdo/corpus/targetport-mismatch/healthy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixedView, healthyView map[string]any
+	if err := json.Unmarshal(fixed, &fixedView); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(healthy, &healthyView); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range healthyView {
+		if items, ok := value.([]any); ok {
+			prior, _ := fixedView[key].([]any)
+			fixedView[key] = append(prior, items...)
+		}
+	}
+	fixed, err = json.Marshal(fixedView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"fixed.json", "healthy.json"} {
+		if err := os.WriteFile(filepath.Join(root, ".sdo/corpus/targetport-mismatch", name), fixed, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	label["provenance"] = map[string]string{"incident_id": "incident", "open_sha256": fmt.Sprintf("%x", sha256.Sum256(opened)), "fixed_sha256": fmt.Sprintf("%x", sha256.Sum256(fixed))}
+	data, err = json.Marshal(label)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(labels, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, ".sdo/playbooks/README.md")
+	data, err = os.ReadFile(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, append(data, []byte("\n- [service-targetport-mismatch](service-targetport-mismatch/README.md)\n")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	parityCaptures(t, root)
+}
+
+func parityCaptures(t *testing.T, root string) {
+	t.Helper()
+	capture := filepath.Join(filepath.Dir(root), "captures")
+	if err := os.MkdirAll(capture, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"open.json", "fixed.json", "recordings.json"} {
+		data, err := os.ReadFile(filepath.Join(root, ".sdo/corpus/targetport-mismatch", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(capture, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func parityAcceptedProgram(t *testing.T, root string) {
+	t.Helper()
+	parityProgram(t, root)
+	runGit(t, root, "add", "-f", ".sdo")
+	runGit(t, root, "commit", "-qm", "previously accepted program")
+}
+
+func parityLabel(t *testing.T, root string, edit func(map[string]any)) {
+	t.Helper()
+	parityCaseLabel(t, root, "targetport-mismatch", edit)
+}
+
+func parityCaseLabel(t *testing.T, root, caseID string, edit func(map[string]any)) {
+	t.Helper()
+	path := ".sdo/corpus/" + caseID + "/labels.json"
+	data, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var label map[string]any
+	if err := json.Unmarshal(data, &label); err != nil {
+		t.Fatal(err)
+	}
+	edit(label)
+	data, err = json.Marshal(label)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, root, path, string(data), 0644)
 }

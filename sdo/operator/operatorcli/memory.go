@@ -166,7 +166,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 
 	diagnostics, err := validate.Check(ctx, validate.Request{
-		Root: absolute, Base: base, Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
+		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
 	}, validate.CompileCandidate)
 	if err != nil {

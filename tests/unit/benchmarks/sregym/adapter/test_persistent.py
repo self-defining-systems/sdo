@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -12,19 +12,26 @@ from benchmarks.sregym.adapter.persistent import (
     RESOLUTION_FILENAME,
     STRICT_RECEIPT_FILENAME,
     Clock,
+    ClosureFailedError,
     ControllerPod,
+    ControllerRecord,
     DetectionMissError,
     DetectorReviewRequiredError,
+    PendingIncident,
     PersistentControllerError,
     PersistentState,
     ReceiptRejectedError,
     StageInputs,
+    _wait_for_reflection_drain,
     collect_followup_incident,
     control_namespace_for,
     drain_pending_incident,
     publish_deferred_receipts,
     run_persistent_stage,
+    runtime_config_from_payload,
+    runtime_config_payload,
     teardown,
+    wait_for_maintenance_ack,
 )
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
@@ -231,6 +238,75 @@ def _clock(ops: FakeOps) -> Clock:
     return Clock(monotonic=lambda: now[0], sleep=sleep, now=lambda: DETECTED)
 
 
+def test_maintenance_ack_timeout_follows_time_scale(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
+
+    class NoAck:
+        def controller_logs(self, _control: str) -> str:
+            return ""
+
+    elapsed = [0.0]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    with pytest.raises(PersistentControllerError, match="did not acknowledge maintenance"):
+        wait_for_maintenance_ack(NoAck(), "hotel-sdo", "generation", clock)  # type: ignore[arg-type]
+
+    assert elapsed[0] == pytest.approx(60.0)
+
+
+def test_drain_receipt_reports_ack_and_collection_phases(tmp_path: Path) -> None:
+    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
+
+    ops = FakeOps()
+    record = _drained_record(tmp_path, ops)
+    collect = ops.collect_receipt
+    elapsed = [0.0]
+
+    def timed_collect(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+        elapsed[0] += 35.0
+        return collect(config, incident_id, artifacts_dir)
+
+    ops.collect_receipt = timed_collect  # type: ignore[method-assign]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    drain_pending_incident(
+        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
+    )
+
+    receipt = json.loads((record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert receipt["reflection_drain"]["phase_seconds"]["collect_settled_receipt"] == pytest.approx(35.0)
+    assert set(receipt["reflection_drain"]["phase_timestamps"]) == {
+        "drain_started",
+        "ack_observed",
+        "receipt_collected",
+    }
+
+
+def test_closeout_settle_timeout_follows_time_scale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.unit.benchmarks.sregym.adapter.test_closeout_receipt_race import _drained_record
+
+    monkeypatch.setenv("SDO_TIME_SCALE", "0.1")
+    ops = FakeOps()
+    record = _drained_record(tmp_path, ops)
+    collect = ops.collect_receipt
+
+    def unsettled(config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+        receipt = collect(config, incident_id, artifacts_dir)
+        receipt["completed"] = False
+        return receipt
+
+    ops.collect_receipt = unsettled  # type: ignore[method-assign]
+    elapsed = [0.0]
+    clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+
+    with pytest.raises(ReceiptRejectedError):
+        drain_pending_incident(
+            record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
+        )
+
+    assert elapsed[0] == pytest.approx(12.0)
+
+
 def _config(tmp_path: Path, namespace: str = "hotel", stage: str = "s0") -> RuntimeConfig:
     repository = tmp_path / stage / "application_workspace"
     repository.mkdir(parents=True, exist_ok=True)
@@ -305,6 +381,72 @@ def test_control_namespace_is_per_application_and_valid() -> None:
         control_namespace_for("x" * 60)
 
 
+def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_path: Path) -> None:
+    config = RuntimeConfig(
+        repository=tmp_path / "repository",
+        namespace="hotel",
+        application="Hotel Reservation",
+        controller_image="controller:test",
+        responder_image="responder:test",
+        repository_pvc="repository",
+        credentials_secret="credentials",
+        model="gpt-test",
+        timeout_seconds=61,
+        validator_image="validator:test",
+        verification_timeout_seconds=121,
+        wait_for_completion=True,
+        repair_policy="recorded-actions",
+        agent_provider="claude",
+        reflection_session="fresh",
+        reflection_guidance="generalize",
+        late_findings="pull",
+        max_follow_ups=2,
+        max_response_loops=6,
+        follow_up_cooldown_seconds=31,
+        healthy_baseline=True,
+        controller_namespace="hotel-sdo",
+        reuse_existing=True,
+        submission_api_base="http://submit",
+        submission_relay_target_base="http://relay",
+        allow_test_lifecycle=True,
+        artifacts_dir=tmp_path / "artifacts",
+        persistent=True,
+        buildkit_image="buildkit:test",
+        registry_push_secret="registry",
+        kind_cluster_name="kind-test",
+        max_deployment_attempts=4,
+        agent_registrations=tmp_path / "scripted-agents.json",
+    )
+    payload = runtime_config_payload(config)
+    assert runtime_config_from_payload(payload) == config
+
+    pending = PendingIncident(
+        incident_id="incident-1",
+        stage_label="s0",
+        receipt_dir=tmp_path / "receipt",
+        repository=config.repository,
+        verified_at=DETECTED,
+        stage_receipt={},
+    )
+    record = ControllerRecord(
+        application=config.application,
+        namespace=config.namespace,
+        control_namespace=config.control_namespace,
+        lifecycle_fingerprint="topology-1",
+        controller_pod_uid="uid",
+        controller_pod_name="pod",
+        installed_by_stage="s0",
+        installed_at=DETECTED,
+        runtime_config=payload,
+        pending=pending,
+    )
+    path = tmp_path / "state.json"
+    PersistentState(controllers={config.namespace: record}).save(path)
+    loaded = PersistentState.load(path)
+    assert loaded.controllers[config.namespace].pending == pending
+    assert runtime_config_from_payload(loaded.controllers[config.namespace].runtime_config) == config
+
+
 def test_one_controller_serves_both_stages_and_the_second_skips_install_and_lifecycle(tmp_path: Path) -> None:
     ops = FakeOps()
     lifecycle_calls: list[str] = []
@@ -319,12 +461,53 @@ def test_one_controller_serves_both_stages_and_the_second_skips_install_and_life
     assert first["persistent_controller"]["installed_this_stage"] is True
     assert second["persistent_controller"]["installed_this_stage"] is False
     assert second["persistent_controller"]["lifecycle_revalidation_skipped"] is True
+    assert "controller_inventory" in first["driver_phase_timings_seconds"]
+    assert "lifecycle" in first["driver_phase_timings_seconds"]
+    assert "controller_install_inspection" in first["driver_phase_timings_seconds"]
+    assert second["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
     kinds = [
         event[0] for event in ops.events if event[0] in {"install", "reuse", "active", "paused", "fault", "delete"}
     ]
-    assert kinds == ["install", "active", "fault", "paused", "reuse", "active", "fault", "paused"]
+    assert kinds == ["install", "active", "fault", "paused", "active", "fault", "paused"]
     # Each stage correlates its own incident.
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
+
+
+def test_fresh_lifecycle_controller_is_used_without_a_second_install_inspection(tmp_path: Path) -> None:
+    ops = FakeOps()
+    inputs = _inputs(tmp_path, "s0")
+
+    def lifecycle() -> bool:
+        ops.install(replace(inputs.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    assert [event[0] for event in ops.events if event[0] in {"install", "reuse"}] == ["install"]
+    assert result["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
+
+
+def test_fresh_lifecycle_waits_for_its_pod_instead_of_reinstalling(tmp_path: Path) -> None:
+    class DelayedOps(FakeOps):
+        unseen = 1
+
+        def controller_pod(self, control_namespace: str) -> ControllerPod | None:
+            if self.pods and self.unseen:
+                self.unseen -= 1
+                return None
+            return super().controller_pod(control_namespace)
+
+    ops = DelayedOps()
+    inputs = replace(_inputs(tmp_path, "s0"), lifecycle_installs_controller=True)
+
+    def lifecycle() -> bool:
+        ops.install(replace(inputs.runtime_config, persistent=True, wait_for_completion=False))
+        return False
+
+    result = run_persistent_stage(inputs, ops=ops, run_lifecycle=lifecycle, inject=lambda: None, clock=_clock(ops))
+
+    assert [event[0] for event in ops.events if event[0] in {"install", "reuse"}] == ["install"]
+    assert result["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
 
 
 def test_stage_reports_resolution_at_verified_health_before_reflection_finishes(tmp_path: Path) -> None:
@@ -435,6 +618,75 @@ def test_teardown_drains_the_last_incident_and_stops_every_controller(tmp_path: 
     receipt = json.loads((tmp_path / "s0" / "agent" / STRICT_RECEIPT_FILENAME).read_text(encoding="utf-8"))
     assert receipt["reflection_drain"]["drained_by"] == "pipeline-teardown"
     assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers == {}
+
+
+def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+    from benchmarks.sregym.fastloop.reset import reset_environment
+
+    class RestartOps(FakeOps):
+        def install(self, config: RuntimeConfig) -> bool:
+            durable = self.states.get(config.control_namespace, {}).get("drift_verdicts")
+            installed = super().install(config)
+            if durable is not None:
+                self.states[config.control_namespace]["drift_verdicts"] = durable
+            return installed
+
+    class ResetCluster:
+        def __init__(self, ops: RestartOps) -> None:
+            self.ops = ops
+            self.objects: list[dict[str, Any]] = []
+
+        def list_objects(self, _namespace: str) -> list[dict[str, Any]]:
+            return self.objects
+
+        def delete(self, _namespace: str, _kind: str, _name: str) -> None:
+            self.objects.clear()
+
+        def apply(self, _namespace: str, value: dict[str, Any]) -> None:
+            self.objects = [value]
+
+        def reset_controller(self, _seed_commit: str, *, preserve_repository: bool = False) -> None:
+            assert preserve_repository
+            self.ops.pods.pop("hotel-sdo", None)
+
+    class HealthyWorker:
+        def request(self, op: str, **_kwargs: Any) -> dict[str, bool]:
+            return {"healthy": True} if op == "health" else {"success": True}
+
+    ops = RestartOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.existing_namespaces.add("hotel-sdo")
+    ops.states["hotel-sdo"]["drift_verdicts"] = {"service": "bug"}
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="Hotel Reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        seed_commit="a" * 40,
+    )
+    baseline = ApplicationBaseline("hotel", [{"kind": "Deployment", "metadata": {"name": "app"}}])
+    environment.baseline_path.write_text(json.dumps({"fastloop_application": {"namespaces": [baseline.__dict__]}}))
+
+    reset_environment(environment, ResetCluster(ops), HealthyWorker(), preserve_repository=True)
+    calls: list[str] = []
+    resolution = run_persistent_stage(
+        replace(_inputs(tmp_path, "s1"), lifecycle_installs_controller=True),
+        ops=ops,
+        run_lifecycle=lambda: calls.append("lifecycle"),
+        inject=lambda: ops.events.append(("fault", "s1")),
+        clock=_clock(ops),
+    )
+
+    assert calls == []
+    assert ("delete", "hotel-sdo") not in ops.events
+    assert ops.states["hotel-sdo"]["drift_verdicts"] == {"service": "bug"}
+    assert resolution["persistent_controller"]["installed_this_stage"]
 
 
 def test_deferred_receipts_are_published_into_the_run_the_harness_already_published(tmp_path: Path) -> None:
@@ -702,10 +954,11 @@ def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Pa
 
 
 def test_a_timeout_behind_a_permanently_failed_closure_says_so(tmp_path: Path) -> None:
-    with pytest.raises(PersistentControllerError) as raised:
+    with pytest.raises(ClosureFailedError) as raised:
         _run(tmp_path, _ClosureFailedOps(), "s0", [])
 
-    assert "closure of 'incident-0' failed permanently: broker exited 1" in str(raised.value)
+    assert "incident 'incident-0' closure permanently failed" in str(raised.value)
+    assert "broker exited 1" in str(raised.value)
 
 
 def test_an_unverified_incident_timeout_names_the_open_incident_and_why_it_is_stuck(tmp_path: Path) -> None:
@@ -865,3 +1118,11 @@ def test_stage_can_wait_out_a_detector_review_stop_when_asked_to(tmp_path: Path)
         )
 
     assert not isinstance(raised.value, DetectorReviewRequiredError)
+
+
+def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaunch() -> None:
+    ops = FakeOps(states={"demo-sdo": {"last_acknowledged_incident_id": "incident-1"}})
+    state = _wait_for_reflection_drain(
+        ops, "demo-sdo", "incident-1", 1.0, Clock(sleep=lambda _: pytest.fail("closure should already be drained"))
+    )
+    assert state["last_acknowledged_incident_id"] == "incident-1"

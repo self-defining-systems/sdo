@@ -67,6 +67,7 @@ type SourceEvidence struct {
 	StrategyID         string   `json:"strategy_id"`
 	Images             []string `json:"images"`
 	ResourceIDs        []string `json:"resource_ids"`
+	ManifestPaths      []string `json:"manifest_paths,omitempty"`
 	Ready              bool     `json:"ready"`
 	AcceptedCommit     string   `json:"accepted_commit,omitempty"`
 }
@@ -342,13 +343,12 @@ func (b *Broker) AcceptedCommit(ctx context.Context, incidentID string, phase Ph
 	return b.findAccepted(ctx, incidentID, phase)
 }
 
-// DiagnosticsFingerprint is the Git tree identity of the accepted detector
-// package at a specific commit. It supports incident-correlated rollouts.
+// DiagnosticsFingerprint identifies accepted source compiled into the controller.
 func (b *Broker) DiagnosticsFingerprint(ctx context.Context, commit string) (string, error) {
 	if commit == "" {
 		return "", errors.New("commit is required")
 	}
-	return gitText(ctx, b.target, "rev-parse", commit+":"+layout.DiagnosticsDir)
+	return memory.ControllerFingerprint(ctx, b.target, commit)
 }
 
 // ReleaseProposal removes a proposal checkout after acknowledgement or a
@@ -478,6 +478,9 @@ func (b *Broker) locked(fn func() error) error {
 }
 
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
+	if err := addIgnoredProgramMemory(ctx, stage, nil); err != nil {
+		return Receipt{}, err
+	}
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
 		return Receipt{}, err
 	}
@@ -576,6 +579,9 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	if _, err := run("add", "-A"); err != nil {
 		return "", err
 	}
+	if err := addIgnoredProgramMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
+		return "", err
+	}
 	tree, err := run("write-tree")
 	if err != nil {
 		return "", err
@@ -584,6 +590,26 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 		return "", errors.New("candidate Git tree has invalid identity")
 	}
 	return tree, nil
+}
+
+func addIgnoredProgramMemory(ctx context.Context, root string, env []string) error {
+	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir} {
+		path := filepath.Join(root, part)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("program memory root must be a directory: %s", path)
+		}
+		if _, err := runGitEnv(ctx, root, env, "add", "-f", "--all", "--", part); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func copyChange(sourceRoot, targetRoot, relative string) error {

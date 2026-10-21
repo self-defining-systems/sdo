@@ -53,6 +53,11 @@ const (
 	RuleArchitectureCommit   = "architecture.generated-at-commit"
 	RuleArchitectureBaseline = "architecture.source-commit"
 
+	RuleCorpusImmutable    = "program.corpus-immutable"
+	RuleCorpusProvenance   = "program.corpus-provenance"
+	RuleCaptureUnavailable = "program.capture-unavailable"
+	RuleCaptureProvenance  = "program.capture-provenance"
+
 	// Ownership.
 	RuleOwnershipDenied       = "ownership.denied"
 	RuleUnknownActor          = "ownership.unknown-actor"
@@ -70,7 +75,9 @@ const (
 	RuleGenericHealth = "bootstrap.generic-health"
 
 	// Compile.
-	RuleDetectorCompile = "detector.compile"
-	RuleDetectorVet     = "detector.vet"
-	RuleDetectorTest    = "detector.test"
+	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
+	RuleProgramMitigationReplay = "program.mitigation-unreplayable"
+	RuleDetectorCompile         = "detector.compile"
+	RuleDetectorVet             = "detector.vet"
+	RuleDetectorTest            = "detector.test"
 )

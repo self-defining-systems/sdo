@@ -47,6 +47,7 @@ type Playbook struct {
 	ID       string
 	Document Document
 	Scripts  []File
+	Programs []File
 }
 
 // ReadTree parses the operational memory below root. It fails on schema
@@ -221,6 +222,12 @@ func (c *collector) add(rel string, kind Kind, id string, read func() ([]byte, e
 		}
 		c.playbook(id).Document = document
 		c.readmes[id] = true
+	case KindPlaybookProgram:
+		data, err := read()
+		if err != nil {
+			return err
+		}
+		c.playbook(id).Programs = append(c.playbook(id).Programs, File{Name: path.Base(rel), Content: data})
 	case KindPlaybookScript:
 		playbookID, name, _ := strings.Cut(id, "/")
 		data, err := read()

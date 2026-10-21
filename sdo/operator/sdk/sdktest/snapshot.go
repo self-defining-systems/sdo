@@ -4,9 +4,11 @@ import (
 	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
 	"sdo.dev/operator/sdk/traffic"
@@ -14,19 +16,55 @@ import (
 
 type Snapshot struct {
 	// SourceName names the file a loaded snapshot came from, for messages.
-	SourceName        string                       `json:"-"`
-	NamespaceName     string                       `json:"namespace"`
-	ConfigMapList     []corev1.ConfigMap           `json:"configMaps"`
-	ServiceList       []corev1.Service             `json:"services"`
-	PodList           []corev1.Pod                 `json:"pods"`
-	DeploymentList    []appsv1.Deployment          `json:"deployments"`
-	ReplicaSetList    []appsv1.ReplicaSet          `json:"replicaSets"`
-	EndpointList      []corev1.Endpoints           `json:"endpoints"`
-	EndpointSliceList []discoveryv1.EndpointSlice  `json:"endpointSlices"`
-	NetworkPolicyList []networkingv1.NetworkPolicy `json:"networkPolicies"`
-	EventList         []corev1.Event               `json:"events"`
+	SourceName        string                                  `json:"-"`
+	NamespaceName     string                                  `json:"namespace"`
+	ConfigMapList     []corev1.ConfigMap                      `json:"configMaps"`
+	ServiceList       []corev1.Service                        `json:"services"`
+	PodList           []corev1.Pod                            `json:"pods"`
+	DeploymentList    []appsv1.Deployment                     `json:"deployments"`
+	StatefulSetList   []appsv1.StatefulSet                    `json:"statefulSets"`
+	ReplicaSetList    []appsv1.ReplicaSet                     `json:"replicaSets"`
+	HPAList           []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
+	PDBList           []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
+	EndpointList      []corev1.Endpoints                      `json:"endpoints"`
+	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
+	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
+	EventList         []corev1.Event                          `json:"events"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
+}
+
+func (s Snapshot) StatefulSets() []appsv1.StatefulSet {
+	items := make([]appsv1.StatefulSet, len(s.StatefulSetList))
+	for index := range s.StatefulSetList {
+		items[index] = *s.StatefulSetList[index].DeepCopy()
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return lessObject(items[left].Namespace, items[left].Name, items[right].Namespace, items[right].Name)
+	})
+	return items
+}
+
+func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler {
+	items := make([]autoscalingv2.HorizontalPodAutoscaler, len(s.HPAList))
+	for index := range s.HPAList {
+		items[index] = *s.HPAList[index].DeepCopy()
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return lessObject(items[left].Namespace, items[left].Name, items[right].Namespace, items[right].Name)
+	})
+	return items
+}
+
+func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
+	items := make([]policyv1.PodDisruptionBudget, len(s.PDBList))
+	for index := range s.PDBList {
+		items[index] = *s.PDBList[index].DeepCopy()
+	}
+	sort.Slice(items, func(left, right int) bool {
+		return lessObject(items[left].Namespace, items[left].Name, items[right].Namespace, items[right].Name)
+	})
+	return items
 }
 
 // TrafficWindow implements traffic.Source.

@@ -13,6 +13,24 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 2 && os.Args[1] == "program" {
+		var err error
+		switch os.Args[2] {
+		case "scaffold":
+			var config operatorcli.ProgramScaffoldConfig
+			config, err = operatorcli.ParseProgramScaffold(os.Args[1:])
+			if err == nil {
+				err = operatorcli.RunProgramScaffold(config)
+			}
+		default:
+			err = fmt.Errorf("unknown program command %q", os.Args[2])
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "baseline-write" {
 		if len(os.Args) != 2 {
 			fmt.Fprintln(os.Stderr, "baseline-write takes no arguments")

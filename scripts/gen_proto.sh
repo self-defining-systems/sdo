@@ -27,7 +27,7 @@ if ! command -v protoc-gen-go >/dev/null 2>&1; then
 fi
 
 echo "==> buf lint"
-buf lint
+timeout 30 buf lint
 
 VALIDATE_TMP="$(mktemp -d)"
 # Buf clean:true can remove generated files before a remote plugin fails.

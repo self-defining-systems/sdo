@@ -9,6 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
@@ -70,6 +71,41 @@ var (
 	configMapWatch  = sdk.WatchKind{APIVersion: "v1", Kind: "ConfigMap"}
 	deploymentWatch = sdk.WatchKind{APIVersion: "apps/v1", Kind: "Deployment"}
 )
+
+func TestKubernetesCacheRetainsObjectPreimageForDrift(t *testing.T) {
+	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(8080)}}}}
+	next := old.DeepCopy()
+	next.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+	informerCache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "demo"}).OnUpdate(old, next)
+	changes := informerCache.TakeObjectChanges()
+	if len(changes) != 1 || changes[0].Old.Object["spec"] == nil || changes[0].New.Object["spec"] == nil {
+		t.Fatalf("lost object change: %+v", changes)
+	}
+	if len(informerCache.TakeObjectChanges()) != 0 {
+		t.Fatal("drift change delivered twice")
+	}
+}
+
+func TestKubernetesCacheRetainsListedObjectBeforeFirstEdit(t *testing.T) {
+	informerCache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo"}}
+	next := old.DeepCopy()
+	next.Spec.Ports = []corev1.ServicePort{{Port: 80}}
+	handler := informerCache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "demo"})
+	handler.OnAdd(old, true)
+	handler.OnUpdate(old, next)
+	changes := informerCache.TakeObjectChanges()
+	if len(changes) != 1 || changes[0].Old == nil || changes[0].New == nil {
+		t.Fatalf("first edit lost its listed preimage: %+v", changes)
+	}
+}
 
 func TestKubernetesCacheDeliversConfigMapDeleteQueuedBehindPodBacklog(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{

@@ -1,0 +1,9 @@
+{
+  "diagnosis_grading": "off",
+  "incidents": [
+    "toy_target_port_frontend",
+    "toy_target_port_backend",
+    "toy_target_port_catalog",
+    "toy_image_catalog"
+  ]
+}

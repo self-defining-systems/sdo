@@ -16,6 +16,15 @@ import (
 // Job. Both transports run CompileCandidate; a missing runner is an error.
 type CompileRunner func(context.Context, Request) ([]Diagnostic, error)
 
+type captureSourceKey struct{}
+type captureSource struct{ directory, incidentID string }
+
+// WithCaptureSource supplies the trusted capture mount to a broker Check without
+// coupling the broker to incident-session storage. Agents use Request fields.
+func WithCaptureSource(ctx context.Context, directory, incidentID string) context.Context {
+	return context.WithValue(ctx, captureSourceKey{}, captureSource{directory, incidentID})
+}
+
 // Check is the complete memory acceptance pipeline. Callers cannot select
 // partial layers. Static failures block execution of candidate Go code.
 func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagnostic, error) {
@@ -24,6 +33,10 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 	}
 	if compile == nil {
 		return nil, errors.New("memory check requires a compile runner")
+	}
+	if source, ok := ctx.Value(captureSourceKey{}).(captureSource); ok {
+		request.CaptureRoot = ""
+		request.CaptureDirectory, request.IncidentID = source.directory, source.incidentID
 	}
 	if diagnostics := PhaseDiagnostics(request.Phase); len(diagnostics) > 0 {
 		return diagnostics, nil

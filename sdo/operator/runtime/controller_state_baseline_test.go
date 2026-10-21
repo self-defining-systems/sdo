@@ -61,3 +61,44 @@ func TestControllerAttachesStateChangesAndBaselinesOnlyHealthyEvaluations(t *tes
 		t.Fatalf("a request with state changes must validate: %v", err)
 	}
 }
+
+func TestHealthyBaselineResumesAfterRestartWithHistoricalFinding(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	config := testControllerConfig()
+	config.FiringThreshold = 10
+	before, err := NewController(config, []sdk.Detector{controllerDetector("health", time.Second, stateFinding("transient"))}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := before.Step(context.Background(), start, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := encodeControllerState(before.ExportState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := decodeControllerState(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.History) == 0 || len(state.FindingStates) == 0 {
+		t.Fatal("restart fixture lost historical finding")
+	}
+	after, err := NewController(config, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{}, sdk.Finding{}, sdk.Finding{})}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := after.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	baseline := &recordingBaseline{}
+	after.Baseline = baseline
+	for i := 1; i <= 3; i++ {
+		if err := after.Step(context.Background(), start.Add(time.Duration(i)*time.Second), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(baseline.observations) == 0 || !baseline.observations[len(baseline.observations)-1] {
+		t.Fatalf("historical finding blocked healthy baseline after restart: %v", baseline.observations)
+	}
+}

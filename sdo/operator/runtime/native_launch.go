@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -45,6 +48,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),
+		OnPhase:         recordClosurePhase,
 	}
 	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
 	if err != nil {
@@ -57,6 +61,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	return &NativeIncidentBroker{
 		Repository: repository, LedgerRoot: ledgerRoot,
 		Deriver: ProtoOutcomeDeriver{}, ResponderBackend: config.GetResponderBackend(), ResponderModel: config.GetResponderModel(),
+		PriorOutcomes: memory.OpenReader(config.GetAppRoot()), ForceReflection: config.GetForceReflection(), PhaseLog: os.Stdout,
 		LateFindingsVerifier: latefindings.Store{Client: client, Namespace: controlNamespace},
 		SessionRoot:          config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil
@@ -89,22 +94,37 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(),
 		Environment: map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"},
+		OnPhase:     recordClosurePhase,
+	}
+	sessionExecutor := func(incidentID string, resume bool) (ReflectionTaskExecutor, error) {
+		subPath, err := memory.PrepareIncidentSession(config.GetRepositoryMountPath(), config.GetRepositoryPvcSubpath(), incidentID)
+		if err != nil {
+			return nil, err
+		}
+		executor := freshExecutor
+		executor.SessionPVCSubPath = subPath
+		executor.CapturedCorpusReadOnly = true
+		executor.Environment = map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude", "SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"}
+		if resume {
+			executor.Environment["CODEX_HOME"] = "/sdo/session/codex"
+			executor.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		}
+		return executor, nil
 	}
 	native.Reflector = RegisteredReflectionWorker{
 		Executor: freshExecutor,
 		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
-		SessionMode: config.GetReflectionSession(),
-		Guidance:    config.GetReflectionGuidance(),
-		Catalog:     memory.OpenCatalogReader(config.GetAppRoot()),
+		SessionMode:       config.GetReflectionSession(),
+		Guidance:          config.GetReflectionGuidance(),
+		Catalog:           memory.OpenCatalogReader(config.GetAppRoot()),
+		CorpusSessionRoot: config.GetRepositoryMountPath(),
 		SessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) {
-			subPath, err := memory.PrepareIncidentSession(config.GetRepositoryMountPath(), config.GetRepositoryPvcSubpath(), incidentID)
-			if err != nil {
-				return nil, err
-			}
-			resumed := freshExecutor
-			resumed.SessionPVCSubPath = subPath
-			resumed.Environment = map[string]string{"CODEX_HOME": "/sdo/session/codex", "CLAUDE_CONFIG_DIR": "/sdo/session/claude"}
-			return resumed, nil
+			return sessionExecutor(incidentID, true)
+		},
+		FreshSessionExecutor: func(incidentID string) (ReflectionTaskExecutor, error) { return sessionExecutor(incidentID, false) },
+		UsageLogPath: func(incidentID string) string {
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]
+			return filepath.Join(config.GetRepositoryMountPath(), ".sdo-runtime", "sessions", digest, "reflection-usage.jsonl")
 		},
 	}
 	return nil

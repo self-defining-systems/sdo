@@ -25,7 +25,7 @@ from sdo.contracts import (
     PriorOutcomeEvidence,
     RootCauseEvidence,
 )
-from tests.proto_messages import evolve
+from tests.proto_messages import evolve, from_dict
 from tests.structured_turns import ScriptedAgent, failure
 
 
@@ -591,3 +591,35 @@ def test_prompt_inlines_a_small_architecture_summary(tmp_path: Path) -> None:
 
     large = evolve(request.memory_snapshot, architecture_markdown="y" * 20_000)
     assert "y" * 5_000 not in _responder_prompt(evolve(request, memory_snapshot=large))
+
+
+def test_program_prompt_guides_codex_and_claude_sessions() -> None:
+    raw = json.loads(_fixture("incident_request.json"))
+    raw["max_response_loops"] = 5
+    raw["initial_program_runs"] = [
+        {"program_id": "targetport", "verdict": {"result": "RESULT_MATCH"}, "duration": "0.02s"}
+    ]
+    request = from_dict(IncidentRequest, raw)
+    prompt = _responder_prompt(request)
+    assert "ranked program verdicts" in prompt
+    assert "sdo plan then sdo apply" in prompt
+    assert "Always finish with sdo verify" in prompt
+    assert "return the structured incident result immediately" in prompt
+    assert '"program_id": "targetport"' in prompt
+
+
+def test_program_prompt_includes_failed_fast_path_handoff() -> None:
+    raw = json.loads(_fixture("incident_request.json"))
+    raw["fast_path_summary"] = "trusted targetport attempted; verification failed; rollback true"
+    prompt = _responder_prompt(from_dict(IncidentRequest, raw))
+    assert raw["fast_path_summary"] in prompt
+
+
+def test_responder_prompt_keeps_reusable_checks_in_session_scratch() -> None:
+    prompt = _responder_prompt(from_dict(IncidentRequest, json.loads(_fixture("incident_request.json"))))
+    assert "multi-step or repeated check" in prompt
+    assert "session scratch directory" in prompt
+    assert "affected resources as arguments" in prompt
+    assert "no hard-coded resource names" in prompt
+    assert "one-off lookups" in prompt
+    assert "Never put scratch scripts in operational memory" in prompt

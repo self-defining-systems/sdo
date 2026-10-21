@@ -1,0 +1,229 @@
+{
+  "sregym_commit": "0a32595f82633ec0b6676eb1333a10ef9e9f1778",
+  "application_commit": "d1a7e02eb873520d2df3eea9f81f54eda5eb149d",
+  "problems": {
+    "k8s_target_port_misconfig_hotel_reservation__v_reservation_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "reservation"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_recommendation_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "recommendation"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "incorrect_image__v_hotel_reservation_rate_nonexistent_tag": {
+      "fault": {
+        "kind": "incorrect_image",
+        "component": "rate"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {},
+      "mitigation_oracle": "IncorrectImageMitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_geo_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "geo"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_search_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "search"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_rate_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "rate"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_frontend_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "frontend"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "readiness_probe_misconfiguration__v_hotel_reservation_user_wrong_path_1": {
+      "fault": {
+        "kind": "readiness",
+        "component": "user"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "probe_error_mode": "wrong_path",
+        "replica_count": 1
+      },
+      "mitigation_oracle": "MitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_profile_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "profile"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    },
+    "k8s_target_port_misconfig_hotel_reservation__v_user_9999": {
+      "fault": {
+        "kind": "target_port",
+        "component": "user"
+      },
+      "namespace": "hotel-reservation",
+      "parameters": {
+        "bad_port": 9999
+      },
+      "mitigation_oracle": "TargetPortMisconfigMitigationOracle"
+    }
+  },
+  "targets": {
+    "frontend": {
+      "container_ports": [
+        5000
+      ],
+      "pod_labels": {
+        "io.kompose.service": "frontend"
+      },
+      "service_ports": [
+        5000
+      ],
+      "selector": {
+        "io.kompose.service": "frontend"
+      }
+    },
+    "geo": {
+      "container_ports": [
+        8083
+      ],
+      "pod_labels": {
+        "io.kompose.service": "geo"
+      },
+      "service_ports": [
+        8083
+      ],
+      "selector": {
+        "io.kompose.service": "geo"
+      }
+    },
+    "profile": {
+      "container_ports": [
+        8081
+      ],
+      "pod_labels": {
+        "io.kompose.service": "profile"
+      },
+      "service_ports": [
+        8081
+      ],
+      "selector": {
+        "io.kompose.service": "profile"
+      }
+    },
+    "rate": {
+      "container_ports": [
+        8084
+      ],
+      "pod_labels": {
+        "io.kompose.service": "rate"
+      },
+      "service_ports": [
+        8084
+      ],
+      "selector": {
+        "io.kompose.service": "rate"
+      }
+    },
+    "recommendation": {
+      "container_ports": [
+        8085
+      ],
+      "pod_labels": {
+        "io.kompose.service": "recommendation"
+      },
+      "service_ports": [
+        8085
+      ],
+      "selector": {
+        "io.kompose.service": "recommendation"
+      }
+    },
+    "reservation": {
+      "container_ports": [
+        8087
+      ],
+      "pod_labels": {
+        "io.kompose.service": "reservation"
+      },
+      "service_ports": [
+        8087
+      ],
+      "selector": {
+        "io.kompose.service": "reservation"
+      }
+    },
+    "search": {
+      "container_ports": [
+        8082
+      ],
+      "pod_labels": {
+        "io.kompose.service": "search"
+      },
+      "service_ports": [
+        8082
+      ],
+      "selector": {
+        "io.kompose.service": "search"
+      }
+    },
+    "user": {
+      "container_ports": [
+        8086
+      ],
+      "pod_labels": {
+        "io.kompose.service": "user"
+      },
+      "service_ports": [
+        8086
+      ],
+      "selector": {
+        "io.kompose.service": "user"
+      }
+    }
+  }
+}

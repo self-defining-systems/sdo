@@ -146,6 +146,7 @@ class IncidentStatusReport:
                 "detail": self.controller_detail,
                 "observed_at": None if self.view is None else _observed_at(self.view),
                 "blocking_detectors": sorted({finding.detector_id for finding in self.blocking_findings}),
+                "drift_events": [_message_dict(event) for event in self.view.drift_events] if self.view else [],
                 "blocking_findings": [_message_dict(finding) for finding in self.blocking_findings],
                 "clearing_detectors": sorted({finding.detector_id for finding in self.clearing_findings}),
                 "clearing_findings": [_message_dict(finding) for finding in self.clearing_findings],

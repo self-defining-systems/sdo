@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 #: controller's detectors, or the benchmark adapter's goal and responder text.
 SCANNED_ROOTS = (
     "sdo",
+    "sdo/skills",
     "sdo/operator/sdk",
     "sdo/operator/core",
     "sdo/operator/runtime",
@@ -63,7 +64,13 @@ def _scanned_files() -> list[Path]:
             if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
                 continue
             # Tests may name benchmark faults; they never reach a prompt or a detector.
-            if path.name.endswith("_test.go") or "testdata" in path.parts or "__pycache__" in path.parts:
+            # Skill examples are the exception: agents read them, tests included.
+            in_skills = "skills" in path.relative_to(ROOT).parts[:2]
+            if (
+                (path.name.endswith("_test.go") and not in_skills)
+                or "testdata" in path.parts
+                or "__pycache__" in path.parts
+            ):
                 continue
             files.append(path)
     return files
@@ -77,7 +84,14 @@ def test_scan_covers_the_prompt_builders_and_templates() -> None:
         "sdo/agents/health_judge/worker.py",
         "sdo/agents/responder/codex.py",
         "sdo/agents/responder/reflection.py",
-        "sdo/agents/sdk_reference.py",
+        "sdo/skills/sdo-memory/SKILL.md",
+        "sdo/skills/sdo-detector-authoring/SKILL.md",
+        "sdo/skills/sdo-detector-authoring/references/sdk.md",
+        "sdo/skills/sdo-detector-authoring/references/rules.md",
+        "sdo/skills/sdo-playbook-authoring/SKILL.md",
+        "sdo/skills/sdo-playbook-authoring/references/rules.md",
+        "sdo/skills/sdo-playbook-authoring/assets/restart-loop/README.md",
+        "sdo/skills/sdo-detector-authoring/assets/restart-loop/detector_test.go",
         "sdo/operator/runtime/deploy/rbac.yaml",
         "benchmarks/sregym/adapter/driver.py",
         "benchmarks/sregym/adapter/runtime.py",

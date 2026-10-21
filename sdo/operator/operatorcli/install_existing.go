@@ -48,9 +48,14 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "fresh", "reflection session mode: fresh or resume")
+	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
+	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
+	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "repeat drift responder token budget per hour")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
@@ -62,6 +67,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	var deployedManifestPaths repeatable
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
 	}
@@ -101,15 +108,23 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *duration < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return InstallExistingConfig{}, errors.New("controller timeouts must be positive")
 	}
+	if *programTrustThreshold < 1 {
+		return InstallExistingConfig{}, errors.New("program trust threshold must be positive")
+	}
+	if *driftTokensPerHour <= 0 {
+		return InstallExistingConfig{}, errors.New("drift responder token budget must be positive")
+	}
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
-		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, AgentProvider: *provider,
-		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()),
-		LateFindings:    *lateFindings,
-		HealthyBaseline: *healthyBaseline,
-		TimeoutSeconds:  int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
+		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+		DriftTokensPerHour: *driftTokensPerHour,
+		LateFindings:       *lateFindings,
+		HealthyBaseline:    *healthyBaseline,
+		TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,
@@ -123,6 +138,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 			return InstallExistingConfig{}, fmt.Errorf("invalid responder environment %q", value)
 		}
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--responder-env="+value)
+	}
+	for _, path := range deployedManifestPaths {
+		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--deployed-manifest-path="+path)
 	}
 	if *duration > 0 {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--duration", duration.String())

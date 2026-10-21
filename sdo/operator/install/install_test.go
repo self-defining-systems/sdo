@@ -22,6 +22,33 @@ func testConfig() Config {
 	return Config{Namespace: "demo", ControlNamespace: "demo-sdo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push", RegistryPushDockerConfig: []byte("{}")}
 }
 
+func TestDevControllerUsesMountedSourceAndTimingConfig(t *testing.T) {
+	t.Setenv("SDO_DEV_MOUNT", "1")
+	t.Setenv("SDO_TIME_SCALE", "0.1")
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := plan.Job.Spec.Template.Spec.Containers[0]
+	foundSource := map[string]bool{"/opt/sdo/sdo": false, "/opt/sdo/libs": false}
+	foundBinary, foundScale := false, false
+	for _, mount := range container.VolumeMounts {
+		if strings.Contains(mount.MountPath, "benchmarks") || strings.Contains(mount.MountPath, "scripted") {
+			t.Fatalf("benchmark sources mounted in controller: %+v", mount)
+		}
+		if _, exists := foundSource[mount.MountPath]; exists {
+			foundSource[mount.MountPath] = mount.ReadOnly
+		}
+		foundBinary = foundBinary || mount.MountPath == "/usr/local/bin/sdo-operator" && mount.ReadOnly
+	}
+	for _, variable := range container.Env {
+		foundScale = foundScale || variable.Name == "SDO_TIME_SCALE" && variable.Value == "0.1"
+	}
+	if !foundSource["/opt/sdo/sdo"] || !foundSource["/opt/sdo/libs"] || !foundBinary || !foundScale {
+		t.Fatalf("dev controller mounts=%v env=%v", container.VolumeMounts, container.Env)
+	}
+}
+
 func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	plan, err := Resources(testConfig())
 	if err != nil {
@@ -52,6 +79,78 @@ func TestNativeJobSelectsBrokerAndProposalMountTogether(t *testing.T) {
 	for _, r := range plan.ControlRoles {
 		if r.Namespace != "demo-sdo" {
 			t.Fatal("control grant outside control namespace")
+		}
+	}
+}
+
+func TestControllerCanApplyProgramsOnlyInApplicationNamespace(t *testing.T) {
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var controller *rbacv1.Role
+	for _, role := range plan.AppRoles {
+		if role.Name == "sdo-controller" {
+			controller = role
+		}
+	}
+	if controller == nil || controller.Namespace != "demo" {
+		t.Fatalf("application controller role: %+v", controller)
+	}
+	for _, want := range []struct{ group, resource, verb string }{
+		{"", "services", "get"}, {"", "services", "patch"},
+		{"apps", "deployments", "get"}, {"apps", "deployments", "patch"},
+		{"apps", "statefulsets", "get"}, {"apps", "statefulsets", "patch"},
+		{"apps", "daemonsets", "get"}, {"apps", "daemonsets", "patch"},
+		{"apps", "replicasets", "get"}, {"apps", "replicasets", "list"},
+		{"apps", "controllerrevisions", "get"}, {"apps", "controllerrevisions", "list"},
+	} {
+		allowed := false
+		for _, rule := range controller.Rules {
+			if contains(rule.APIGroups, want.group) && contains(rule.Resources, want.resource) && contains(rule.Verbs, want.verb) {
+				allowed = true
+			}
+		}
+		if !allowed {
+			t.Errorf("missing %s %s/%s", want.verb, want.group, want.resource)
+		}
+	}
+	for _, role := range plan.ControlRoles {
+		if role.Name != "sdo-controller" {
+			continue
+		}
+		for _, rule := range role.Rules {
+			if contains(rule.Verbs, "patch") && (contains(rule.Resources, "services") || contains(rule.Resources, "deployments")) {
+				t.Fatal("program write permission leaked into control namespace")
+			}
+		}
+	}
+}
+
+func TestControllerCanAdoptRenderedManifestFields(t *testing.T) {
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app *rbacv1.Role
+	for _, role := range plan.AppRoles {
+		if role.Name == "sdo-controller" {
+			app = role
+		}
+	}
+	if app == nil {
+		t.Fatal("application controller role is absent")
+	}
+	for _, want := range []struct{ group, resource string }{
+		{"", "configmaps"}, {"", "pods"}, {"", "endpoints"},
+		{"apps", "replicasets"}, {"discovery.k8s.io", "endpointslices"}, {"networking.k8s.io", "networkpolicies"},
+	} {
+		allowed := false
+		for _, rule := range app.Rules {
+			allowed = allowed || contains(rule.APIGroups, want.group) && contains(rule.Resources, want.resource) && contains(rule.Verbs, "patch")
+		}
+		if !allowed {
+			t.Errorf("missing adoption patch for %s/%s", want.group, want.resource)
 		}
 	}
 }
@@ -243,6 +342,19 @@ func TestOperateMayApplySourceButControllerMayOnlyObserveApplication(t *testing.
 		}
 	}
 	t.Fatal("operate ServiceAccount is not bound to application deployment role")
+}
+
+func TestDriftUsesOnlyResponderPermissions(t *testing.T) {
+	plan, err := Resources(testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasServiceAccount(plan.ServiceAccounts, "sdo-drift-investigator") {
+		t.Fatal("removed investigator still installed")
+	}
+	if !hasServiceAccount(plan.ServiceAccounts, "sdo-responder") {
+		t.Fatal("ordinary responder missing")
+	}
 }
 
 func TestStartOperateRequiresPreparedCommitAndCreatesJob(t *testing.T) {

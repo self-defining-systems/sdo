@@ -7,6 +7,8 @@ import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/memory.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
+import "sdodev/contracts/v1alpha1/worker.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -24,6 +26,9 @@ message FindingState {
   int32 activations = 7;
   int32 clears = 8;
   int32 not_persisted = 9;
+  // Timed learned-program clearance and scheduled binding confirmation.
+  google.protobuf.Timestamp first_clear_at = 10;
+  google.protobuf.Timestamp last_observed_at = 11;
 }
 
 // BatcherState is the findings waiting for their debounce deadline.
@@ -117,14 +122,24 @@ message ControllerState {
   int32 evaluation_iteration = 27;
   repeated DetectorTimelineEntry detector_timeline = 28 [(buf.validate.field).repeated.max_items = 64];
   IncidentView incident_view = 29;
+  repeated DriftEvent drift_events = 30;
+  OwnershipAdoptionStatus ownership_adoption = 31;
+  DriftAdmissionState drift_admission = 33;
+  // Next namespace assignment per learned program, preserved across restarts.
+  map<string, string> program_sweep_cursors = 34;
+  reserved 32;
+  reserved "drift_investigation";
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
 // incident.
 message ReflectionDecision {
-  string learning_decision = 1 [(buf.validate.field).string = {in: ["updated", "no_change", "sdk_gap"]}];
+  string learning_decision = 1 [(buf.validate.field).string = {in: ["updated", "no_change", "sdk_gap", "failed"]}];
   string no_change_reason = 2;
   repeated string playbook_ids = 3;
+  string error = 4;
+  repeated SdkGap sdk_gaps = 5;
+  UsageMetrics usage = 6;
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the
@@ -191,4 +206,32 @@ message BrokerLedger {
   // True once the retry bound is spent: the closure completes without a
   // reflection commit and the last rejection is the terminal record.
   bool reflection_rejected = 16;
+  string reflection_skipped_reason = 17;
+  map<string, google.protobuf.Timestamp> closure_phase_timestamps = 18;
+  string fast_path_skipped_reason = 19;
+  repeated RelationCoveredFinding fast_path_relation_covered_findings = 20;
+}
+
+// Source field ownership adoption survives controller restarts.
+message OwnershipAdoptionStatus {
+  string source_commit = 1;
+  int32 adopted_objects = 2;
+  int32 conflicts_taken_over = 3;
+  repeated string from_managers = 4;
+  string last_error = 5;
+  string skipped_reason = 6;
+  google.protobuf.Timestamp retry_at = 7;
+  int32 failures = 8;
+}
+
+// Admission accounting for ordinary drift-only responder incidents. No worker
+// requests or verdicts are stored here; pending work is the normal batcher.
+message DriftAdmissionState {
+  repeated string seen_keys = 1;
+  repeated google.protobuf.Timestamp dispatch_at = 2;
+  repeated DriftAdmissionUse token_usage = 3;
+}
+message DriftAdmissionUse {
+  google.protobuf.Timestamp at = 1;
+  int64 tokens = 2;
 }

@@ -74,6 +74,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--application", config.GetApplication())
 	str("--source-commit", config.GetSourceCommit())
 	str("--deployed-commit", config.GetDeployedCommit())
+	repeated("--deployed-manifest-path", config.GetDeployedManifestPaths())
 
 	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
@@ -93,6 +94,24 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	if config.GetMaxFollowUps() > 0 {
 		args = append(args, "--max-follow-ups", strconv.Itoa(int(config.GetMaxFollowUps())))
 	}
+	if config.GetMaxResponseLoops() > 0 {
+		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
+	}
+	boolFlag("--program-fast-path", config.GetProgramFastPath())
+	if config.GetProgramTrustThreshold() > 0 {
+		args = append(args, "--program-trust-threshold", strconv.Itoa(int(config.GetProgramTrustThreshold())))
+	}
+	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
+	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
+	dur("--program-min-duration", config.GetProgramMinDuration())
+	dur("--drift-batch-window", config.GetDriftBatchWindow())
+	if config.GetDriftDispatchesPerHour() > 0 {
+		args = append(args, "--drift-dispatches-per-hour", strconv.Itoa(int(config.GetDriftDispatchesPerHour())))
+	}
+	if config.GetDriftTokensPerHour() > 0 {
+		args = append(args, "--drift-tokens-per-hour", strconv.FormatInt(config.GetDriftTokensPerHour(), 10))
+	}
+	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
 	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())
 
@@ -102,6 +121,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 
 	boolFlag("--exit-after-closure", config.GetExitAfterClosure())
 	boolFlag("--restart-after-closure", config.GetRestartAfterClosure())
+	boolFlag("--force-reflection", config.GetForceReflection())
 	str("--maintenance-configmap", config.GetMaintenanceConfigmap())
 	dur("--maintenance-poll-interval", config.GetMaintenancePollInterval())
 	dur("--resume-sync-timeout", config.GetResumeSyncTimeout())

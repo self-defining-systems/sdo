@@ -18,12 +18,15 @@ func SchemaIdentity(operatorRoot string) (string, error) {
 		return "", err
 	}
 	var files []string
-	for _, packageName := range []string{"sdk", "builder"} {
+	for _, packageName := range []string{"sdk", "builder", "memory/validate"} {
 		packageRoot := filepath.Join(root, packageName)
 		before := len(files)
 		err = filepath.WalkDir(packageRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
+			}
+			if entry.IsDir() && entry.Name() == "testdata" {
+				return filepath.SkipDir
 			}
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 				return nil

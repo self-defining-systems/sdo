@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import persistent
@@ -12,6 +13,35 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+
+
+def test_replacing_controller_preserves_externally_provisioned_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    objects = {
+        "jobs": {"sdo-controller-run", "sdo-responder-old", "sdo-validator-old"},
+        "deployments": {"sdo-benchmark-registry"},
+        "pods": {"sdo-repository-sync"},
+        "persistentvolumeclaims": {"sdo-application-repository"},
+        "configmaps": {"sdo-controller-state", "sdo-agent-registrations"},
+        "leases": {"sdo-controller"},
+        "secrets": {"sdo-agent-credentials"},
+    }
+
+    def kubectl(args: list[str], *, namespace: str | None, **_kwargs: object) -> SimpleNamespace:
+        assert args[0] == "delete"
+        if args[1] == "namespace/demo-sdo":
+            objects.clear()
+        else:
+            assert namespace == "demo-sdo"
+            assert "--all" in args
+            for kind in args[1].split(","):
+                objects.pop(kind, None)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(persistent, "kubectl", kubectl)
+    persistent.KubectlClusterOps().delete_controller("demo-sdo")
+    assert objects == {"secrets": {"sdo-agent-credentials"}}
 
 
 def test_persistent_maintenance_and_receipt_do_not_start_python_sync_pod(
@@ -117,3 +147,45 @@ def test_reusable_stage_inspects_live_go_controller_without_reinstall(
     monkeypatch.setattr(persistent, "go_inspect_existing", inspect)
     assert persistent.KubectlClusterOps().install(replace(config, reuse_existing=True))
     assert called == ["inspect"]
+
+
+def test_reset_stage_syncs_accepted_pvc_before_recreating_controller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.adapter import native_operator
+
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
+    config = RuntimeConfig(
+        repository=tmp_path / "stale-stage-checkout",
+        namespace="demo",
+        application="demo",
+        controller_image="controller:go",
+        responder_image="worker:python",
+        repository_pvc="repository",
+        credentials_secret="agent-credentials",
+        model="gpt-6-luna",
+        timeout_seconds=60,
+        controller_namespace="demo-sdo",
+        persistent=True,
+    )
+    config.repository.mkdir()
+    head = config.repository / "accepted-head"
+    head.write_text("stale")
+
+    def inspect(_config: object) -> object:
+        raise AssertionError("reset deleted the controller Job; inspection cannot restart it")
+
+    def sync(native: native_operator.NativeInstallConfig) -> None:
+        assert native.repository == config.repository
+        head.write_text("learned-pvc-head")
+
+    def install(native: native_operator.NativeInstallConfig) -> SimpleNamespace:
+        assert native.repository == config.repository
+        assert head.read_text() == "learned-pvc-head"
+        return SimpleNamespace(reused=False)
+
+    monkeypatch.setattr(persistent, "go_inspect_existing", inspect)
+    monkeypatch.setattr(native_operator, "sync_existing", sync)
+    monkeypatch.setattr(native_operator, "install_existing", install)
+
+    assert persistent.KubectlClusterOps().install(config) is False

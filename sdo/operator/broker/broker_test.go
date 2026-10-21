@@ -1,12 +1,15 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/memory/validate"
 	"strings"
 	"testing"
 
@@ -64,6 +67,197 @@ func memoryFixture(t *testing.T, root string) {
 	}
 	git(t, root, "add", ".")
 	git(t, root, "commit", "-qm", "initial memory")
+}
+
+func TestValidateMemoryTreeRejectsUnformattedGo(t *testing.T) {
+	root := repository(t)
+	memoryFixture(t, root)
+	path := filepath.Join(root, ".sdo", "diagnostics", "detectors", "health", "health", "detector.go")
+	if err := os.WriteFile(path, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics, err := validate.Validate(context.Background(), validate.Request{Root: root, Base: "HEAD", Actor: validate.Responder, Phase: validate.ReflectionPhase, Layers: validate.Structural | validate.Semantic})
+	if err == nil {
+		err = validate.Err(diagnostics)
+	}
+	if err == nil || !strings.Contains(err.Error(), "not gofmt formatted") {
+		t.Fatalf("unformatted direct edit accepted: %v", err)
+	}
+}
+
+func TestResponderProgramProposalIgnoresPreexistingUnformattedHealthGo(t *testing.T) {
+	ctx := context.Background()
+	target := repository(t)
+	memoryFixture(t, target)
+	health := filepath.Join(target, ".sdo", "diagnostics", "detectors", "health", "health", "detector.go")
+	if err := os.WriteFile(health, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(target, ".sdo", "lib", "base", "base.go")
+	if err := os.MkdirAll(filepath.Dir(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, []byte("package base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, target, "add", ".")
+	git(t, target, "commit", "-qm", "accepted memory")
+	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := b.CreateProposal(ctx, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "lib", "base", "base.go"), []byte("package base\n\nfunc Diagnose() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var warnings bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&warnings)
+	defer log.SetOutput(oldOutput)
+	if _, err := b.PublishReflection(ctx, "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err != nil {
+		t.Fatalf("program proposal rejected: %v", err)
+	}
+	if !strings.Contains(warnings.String(), "owner: health_judge") || !strings.Contains(warnings.String(), "detector.go") {
+		t.Fatalf("missing owner warning: %q", warnings.String())
+	}
+	if data, err := os.ReadFile(health); err != nil || string(data) != "package objective\nfunc f(){println(1)}\n" {
+		t.Fatalf("accepted health source changed: %q, %v", data, err)
+	}
+}
+
+func TestResponderDirectProgramEditRejectsUnformattedGo(t *testing.T) {
+	ctx := context.Background()
+	target := repository(t)
+	memoryFixture(t, target)
+	program := filepath.Join(target, ".sdo", "playbooks", "base", "diagnose.go")
+	if err := os.WriteFile(program, []byte("package base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, target, "add", ".")
+	git(t, target, "commit", "-qm", "accepted program")
+	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := b.CreateProposal(ctx, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proposal.Path, ".sdo", "playbooks", "base", "diagnose.go"), []byte("package base\nfunc Diagnose(){}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.PublishReflection(ctx, "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err == nil || !strings.Contains(err.Error(), "not gofmt formatted") {
+		t.Fatalf("unformatted direct program edit accepted: %v", err)
+	}
+}
+
+func TestNewProgramRequiresCapturedCorpus(t *testing.T) {
+	root := repository(t)
+	memoryFixture(t, root)
+	dir := filepath.Join(root, ".sdo", "playbooks", "fault")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "diagnose.go"), []byte("package fault\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	caseDir := filepath.Join(root, ".sdo", "corpus", "fault")
+	if err := os.MkdirAll(caseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"open.json": "{}", "fixed.json": "{}", "healthy.json": "{}", "recordings.json": "[]", "labels.json": `{"root_cause_program_ids":["fault"]}`} {
+		if err := os.WriteFile(filepath.Join(caseDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	diagnostics, err := validate.Validate(context.Background(), validate.Request{Root: root, Base: "HEAD", Actor: validate.Responder, Phase: validate.ReflectionPhase, Layers: validate.Structural | validate.Semantic})
+	if err == nil {
+		err = validate.Err(diagnostics)
+	}
+	if err == nil || !strings.Contains(err.Error(), "captured incident provenance") {
+		t.Fatalf("agent-authored matching corpus accepted: %v", err)
+	}
+}
+
+func TestResponderProposalCommitsCanonicalGo(t *testing.T) {
+	ctx := context.Background()
+	target := repository(t)
+	memoryFixture(t, target)
+	health := filepath.Join(target, ".sdo", "diagnostics", "detectors", "health", "health", "detector.go")
+	if err := os.WriteFile(health, []byte("package objective\nfunc f(){println(1)}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, target, "add", ".")
+	git(t, target, "commit", "-qm", "accepted unformatted health source")
+	b, err := New(target, filepath.Join(t.TempDir(), "workspaces"), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := b.CreateProposal(ctx, "incident")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "app.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "incident", Responder, ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.RecordOutcome(ctx, "incident", &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident", Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	proposal, err := b.CreateProposalForPhase(ctx, "incident", ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: fault\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n- apiVersion: v1\n  kind: Pod\ninterval: 30s\npersistence: {firing: 1, clearing: 1}\nbatching: {severity: critical, debounce: 500ms}\noriginatingIncident: incident\noriginatingCommit: accepted\npossiblePlaybooks: [base]\n"
+	dir := filepath.Join(proposal.Path, ".sdo/diagnostics/detectors/incidents/fault")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "detector.go"), []byte("package fault\n\nfunc New() { println(1) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := b.PublishReflection(ctx, "incident", &contracts.ReflectionDecision{LearningDecision: "updated"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, ".sdo", "diagnostics", "detectors", "incidents", "fault", "detector.go"))
+	if err != nil || string(data) != "package fault\n\nfunc New() { println(1) }\n" {
+		t.Fatalf("accepted Go is not canonical: %q, %v", data, err)
+	}
 }
 
 func TestInitialBootstrapUsesSequentialOwnedProposals(t *testing.T) {
@@ -173,13 +367,13 @@ func TestVerifiedSourceRejectsMutationAfterDeployment(t *testing.T) {
 		t.Fatalf("accepted tree %s differs from deployed tree %s", acceptedTree, expected)
 	}
 	recovered, ok, err := b.SourceEvidence(ctx, "source")
-	if err != nil || !ok || recovered.AcceptedCommit != receipt.Commit || recovered.ProposalTreeDigest != expected {
+	if err != nil || !ok || recovered.AcceptedCommit != receipt.Commit || recovered.ProposalTreeDigest != expected || len(recovered.ManifestPaths) != 1 || recovered.ManifestPaths[0] != "deploy/app.yaml" {
 		t.Fatalf("source evidence not durable: %+v, %v, %v", recovered, ok, err)
 	}
 }
 
 func sourceEvidence(tree string) SourceEvidence {
-	return SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", Images: []string{"registry.example/app@sha256:" + strings.Repeat("a", 64)}, ResourceIDs: []string{"Deployment/default/app"}, Ready: true}
+	return SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", Images: []string{"registry.example/app@sha256:" + strings.Repeat("a", 64)}, ResourceIDs: []string{"Deployment/default/app"}, ManifestPaths: []string{"deploy/app.yaml"}, Ready: true}
 }
 
 func TestSourceEvidenceRecoversCommitAfterInterruptedLedgerFinalization(t *testing.T) {

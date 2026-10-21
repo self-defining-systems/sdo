@@ -32,6 +32,8 @@ const (
 	ManifestFileName       = "manifest.yaml"
 	DetectorFileName       = "detector.go"
 	DetectorTestFileName   = "detector_test.go"
+	LibrariesDir           = Dir + "/lib"
+	CorpusDir              = Dir + "/corpus"
 	PlaybooksDir           = Dir + "/playbooks"
 	PlaybookIndexFile      = PlaybooksDir + "/README.md"
 	PlaybookFileName       = "README.md"
@@ -68,6 +70,9 @@ const (
 	KindIncidentDetectorSource   Kind = "incident-detector-source"
 	KindTrafficGenerator         Kind = "traffic-generator"
 	KindTrafficWorkload          Kind = "traffic-workload"
+	KindPlaybookProgram          Kind = "playbook-program"
+	KindLibrary                  Kind = "library"
+	KindCorpus                   Kind = "corpus"
 	KindPlaybookIndex            Kind = "playbook-index"
 	KindPlaybook                 Kind = "playbook"
 	KindPlaybookScript           Kind = "playbook-script"
@@ -192,6 +197,17 @@ func Classify(p string) (Kind, string, bool) {
 				return KindOutcome, match[1], true
 			}
 		}
+	case "lib":
+		if len(parts) >= 3 && ValidPlaybookID(parts[1]) && (strings.HasSuffix(p, ".go") || parts[len(parts)-1] == "metadata.yaml") {
+			return KindLibrary, parts[1], true
+		}
+	case "corpus":
+		if len(parts) == 3 && ValidPlaybookID(parts[1]) {
+			switch parts[2] {
+			case "open.json", "fixed.json", "healthy.json", "recordings.json", "labels.json":
+				return KindCorpus, parts[1], true
+			}
+		}
 	case "playbooks":
 		return classifyPlaybook(parts[1:])
 	case "diagnostics":
@@ -211,6 +227,8 @@ func classifyPlaybook(parts []string) (Kind, string, bool) {
 	switch {
 	case len(parts) == 1 && parts[0] == PlaybookFileName:
 		return KindPlaybookIndex, "", true
+	case len(parts) == 2 && ValidPlaybookID(parts[0]) && (parts[1] == "diagnose.go" || parts[1] == "mitigate.go" || strings.HasSuffix(parts[1], "_test.go")):
+		return KindPlaybookProgram, parts[0], true
 	case len(parts) == 2 && parts[1] == PlaybookFileName && ValidPlaybookID(parts[0]):
 		return KindPlaybook, parts[0], true
 	case len(parts) == 3 && parts[1] == PlaybookScriptsDir && ValidPlaybookID(parts[0]) && strings.HasSuffix(parts[2], ".sh") && len(parts[2]) > len(".sh"):
@@ -392,7 +410,7 @@ func ArtifactID(reference string) (string, error) {
 // change the detector program that a running controller must reload.
 func RequiresControllerRollout(changedPaths []string) bool {
 	for _, p := range changedPaths {
-		if kind, _, ok := Classify(p); ok && (kind == KindLegacyDetectorManifest || kind == KindIncidentDetectorManifest || kind == KindIncidentDetectorSource) {
+		if kind, _, ok := Classify(p); ok && (kind == KindLegacyDetectorManifest || kind == KindIncidentDetectorManifest || kind == KindIncidentDetectorSource || kind == KindPlaybookProgram || kind == KindLibrary) {
 			return true
 		}
 	}

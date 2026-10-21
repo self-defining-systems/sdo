@@ -54,6 +54,8 @@ jobs:
               - '.github/workflows/ci.yml'
             go:
               - 'sdo/operator/**'
+              - 'sdo/skills/**'
+              - 'scripts/gen_skill_references.sh'
               - 'sdo/contracts/proto/**'
               - 'sdo/contracts/_gen/**'
               - 'buf*.yaml'

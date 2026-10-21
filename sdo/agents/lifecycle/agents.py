@@ -20,7 +20,6 @@ from libs.agent_cli.structured import (
     StructuredTurnTimeout,
     run_structured_turn,
 )
-from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -196,6 +195,8 @@ _PARENT_PATH = re.compile(r"(?:^|[\s'\"=;(])\.\.(?:/[^\s'\";|&)]*)?(?=$|[\s'\";|
 _WRITE_REDIRECT_ABSOLUTE_PATH = re.compile(r"(?:^|[ \t])(?:\d*>>?|&>)\s*['\"]?(/[A-Za-z0-9_./*?{}$@%+=:,~-]+)")
 _GIT_OBJECT_PATH = re.compile(r"\b[0-9a-fA-F]{7,64}:(/[A-Za-z0-9_./*?{}$@%+=,~-]+)")
 _SYSTEM_COMMAND_ROOTS = tuple(Path(path) for path in ("/bin", "/usr/bin", "/usr/local/bin"))
+# Provisioned SDO skills live in the CLI home, outside the checkout, and are read by design.
+_SDO_SKILL_PATH = re.compile(r"/skills/sdo-(?:memory|detector-authoring|playbook-authoring)(?:/[^\s]*)?$")
 # One literal path segment: no globs, variables, or ``.``/``..`` traversal.
 _LITERAL_SEGMENT = r"[A-Za-z0-9_-][A-Za-z0-9_.-]*"
 
@@ -345,10 +346,11 @@ Validation feedback:
 {feedback}
 
 Author deterministic Go detector code and deterministic Go tests using only sdo.dev/operator/sdk's
-DetectionContext snapshot methods and Kubernetes API types already available to SDO diagnostics. Use the trusted
-SDK reference below; the application checkout is intentionally not expected to contain the controller SDK.
-
-{DETECTOR_SDK_REFERENCE}
+DetectionContext snapshot methods and Kubernetes API types already available to SDO diagnostics. The application
+checkout is intentionally not expected to contain the controller SDK. The trusted SDK reference is
+references/sdk.md of the `sdo-detector-authoring` skill (read it from the skill directory, which is the one place
+outside this checkout you may read). This session cannot edit files, so ignore the skill's file-editing workflow
+and return the source in the structured fields.
 
 Repository isolation is part of the evidence contract. Inspect only the current application checkout. Never use
 `..`, an absolute path outside this checkout, a sibling experiment, a package cache, or another SDO source tree.
@@ -534,6 +536,8 @@ def _command_escapes_repository(
         # ``Path`` keeps ``..`` segments, so ``<repository>/../x`` would look contained.
         if ".." in candidate.parts:
             return True
+        if _SDO_SKILL_PATH.search(raw_path):
+            continue
         if candidate == repository or repository in candidate.parents:
             continue
         if any(candidate == root or root in candidate.parents for root in _SYSTEM_COMMAND_ROOTS):

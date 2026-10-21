@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
+	"log"
+	"os"
 	"regexp"
 	"time"
 
@@ -36,9 +40,11 @@ type RegisteredReflectionWorker struct {
 	Timeout     time.Duration
 	SessionMode string
 	Guidance    string
-	// SessionExecutor supplies the narrow per-incident session transport only
-	// when resume is explicitly selected. Fresh reflection uses Executor.
-	SessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
+	// SessionExecutor supplies the narrow per-incident session transport for resume.
+	SessionExecutor      func(incidentID string) (ReflectionTaskExecutor, error)
+	FreshSessionExecutor func(incidentID string) (ReflectionTaskExecutor, error)
+	UsageLogPath         func(incidentID string) string
+	CorpusSessionRoot    string
 }
 
 var resumableSessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
@@ -59,9 +65,17 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		guidance = "baseline"
 	}
 	if mode == "resume" && (closure.Result == nil || !resumableSessionID.MatchString(closure.Result.ResponderSessionID)) {
-		return ReflectionDecision{}, errors.New("resumed reflection requires a valid responder session ID in the accepted closure")
+		log.Printf("reflection incident %s: responder session ID is missing or invalid; starting fresh", workspace.IncidentID)
+		mode = "fresh"
 	}
 	executor := w.Executor
+	if mode == "fresh" && w.FreshSessionExecutor != nil {
+		var err error
+		executor, err = w.FreshSessionExecutor(workspace.IncidentID)
+		if err != nil {
+			return ReflectionDecision{}, fmt.Errorf("prepare fresh reflection session: %w", err)
+		}
+	}
 	if mode == "resume" {
 		if w.SessionExecutor == nil {
 			return ReflectionDecision{}, errors.New("resumed reflection requires isolated incident session transport")
@@ -144,7 +158,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
-	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(workspace.IncidentID+"\x00"+outcomeCommit)))
+	identityInput := workspace.IncidentID + "\x00" + outcomeCommit
+	identity := fmt.Sprintf("%x", sha256.Sum256([]byte(identityInput)))
 	proposalID := "reflection-" + identity
 	if attempt > 1 {
 		// A retry is a new task: its Job and request ConfigMap must not collide
@@ -160,7 +175,13 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
-	if result == nil || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID || result.GetStatus() != "completed" {
+	if result == nil || result.GetSchemaVersion() != task.SchemaVersion || result.GetTaskId() != task.TaskId || result.GetProposalId() != proposalID {
+		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
+	}
+	if result.GetStatus() == "failed" && result.GetErrorSummary() != "" {
+		return w.withUsage(ReflectionDecision{LearningDecision: "failed", Error: result.GetErrorSummary()}, workspace.IncidentID)
+	}
+	if result.GetStatus() != "completed" {
 		return ReflectionDecision{}, errors.New("reflection worker returned a mismatched or incomplete result")
 	}
 	if err := wire.Validate(result); err != nil {
@@ -173,14 +194,59 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err := result.GetResponse().UnmarshalTo(response); err != nil {
 		return ReflectionDecision{}, fmt.Errorf("reflection result contract: %w", err)
 	}
+	if encoded, err := protojson.Marshal(result); err != nil {
+		return ReflectionDecision{}, err
+	} else if len(encoded) > 700<<10 {
+		return ReflectionDecision{}, fmt.Errorf("reflection result exceeds transport limit: %d bytes", len(encoded))
+	}
 	if err := wire.Validate(response); err != nil {
 		return ReflectionDecision{}, err
 	}
+	if response.GetLearningDecision() == "sdk_gap" && len(response.GetSdkGaps()) == 0 {
+		return ReflectionDecision{}, errors.New("sdk_gap reflection requires a typed SDK gap")
+	}
+	if response.GetLearningDecision() == "no_change" && len(response.GetSdkGaps()) > 0 {
+		return ReflectionDecision{}, errors.New("no-change reflection cannot report SDK gaps")
+	}
+	if response.GetLearningDecision() == "sdk_gap" && response.GetArtifactProposal() != nil {
+		return ReflectionDecision{}, errors.New("sdk_gap reflection cannot propose artifacts")
+	}
+	for _, gap := range response.GetSdkGaps() {
+		if gap.GetFaultClass() == "" || gap.GetPrimitive() == "" || gap.GetReason() == "" || gap.GetScratchScript() == "" {
+			return ReflectionDecision{}, errors.New("SDK gap requires fault class, primitive, reason, and scratch script")
+		}
+	}
+	if response.GetArtifactProposal() != nil {
+		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
+	}
+
 	// The direct-edit capability never accepts the retired content payload.
 	if response.GetArtifactProposal() != nil {
 		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
 	}
-	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...)}
+	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...), SDKGaps: response.GetSdkGaps()}
+	return w.withUsage(decision, workspace.IncidentID)
+}
+
+func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incidentID string) (ReflectionDecision, error) {
+	if w.UsageLogPath != nil {
+		data, err := os.ReadFile(w.UsageLogPath(incidentID))
+		if err == nil {
+			for _, line := range bytes.Split(data, []byte("\n")) {
+				if len(line) == 0 {
+					continue
+				}
+				var record struct {
+					Usage *UsageMetrics `json:"usage"`
+				}
+				if json.Unmarshal(line, &record) == nil && record.Usage != nil {
+					decision.Usage = record.Usage
+				}
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return ReflectionDecision{}, fmt.Errorf("read reflection usage: %w", err)
+		}
+	}
 	return decision, nil
 }
 

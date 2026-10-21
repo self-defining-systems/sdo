@@ -14,7 +14,6 @@ from benchmarks.sregym.adapter.native_operator import (
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
-    sync_existing,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError
 from benchmarks.sregym.protocol import validate_production_receipt as validate_receipt_contract
@@ -47,10 +46,15 @@ class RuntimeConfig:
     wait_for_completion: bool = False
     repair_policy: str = "commit"
     agent_provider: str = "codex"
-    reflection_session: str = "fresh"
+    reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
+    force_reflection: bool = False
+    program_fast_path: bool = False
+    program_trust_threshold: int = 3
+    drift_tokens_per_hour: int = 1_000_000
     late_findings: str = "off"
     max_follow_ups: int = 0
+    max_response_loops: int = 5
     follow_up_cooldown_seconds: int = 30
     healthy_baseline: bool = False
     controller_namespace: str | None = None
@@ -65,6 +69,7 @@ class RuntimeConfig:
     kind_cluster_name: str | None = None
     max_deployment_attempts: int = 3
     agent_registrations: Path | None = None
+    deployed_manifest_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for field in (
@@ -93,10 +98,16 @@ class RuntimeConfig:
             raise ValueError("invalid reflection_guidance")
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0:
+        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
             raise ValueError("invalid follow-up limit or cooldown")
         if self.max_deployment_attempts <= 0:
             raise ValueError("max_deployment_attempts must be positive")
+        if self.program_trust_threshold <= 0:
+            raise ValueError("program_trust_threshold must be positive")
+        if self.drift_tokens_per_hour <= 0:
+            raise ValueError("drift_tokens_per_hour must be positive")
+        if self.program_fast_path and self.repair_policy != "recorded-actions":
+            raise ValueError("program fast path requires recorded-actions repair policy")
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
             raise ValueError("agent_registrations path must be absolute")
 
@@ -136,12 +147,18 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         late_findings=config.late_findings,
         reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
+        force_reflection=config.force_reflection,
+        program_fast_path=config.program_fast_path,
+        program_trust_threshold=config.program_trust_threshold,
+        drift_tokens_per_hour=config.drift_tokens_per_hour,
         healthy_baseline=config.healthy_baseline,
         max_follow_ups=config.max_follow_ups,
+        max_response_loops=config.max_response_loops,
         follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
+        deployed_manifest_paths=config.deployed_manifest_paths,
     )
 
 
@@ -165,8 +182,7 @@ def collect_production_receipt(config: RuntimeConfig, incident_id: str, artifact
 
     del artifacts_dir
     native = native_install_config(config)
-    sync_existing(native)
-    return collect_native_receipt(native, incident_id)
+    return collect_native_receipt(native, incident_id, sync_repository=True)
 
 
 def _responder_instructions() -> str:

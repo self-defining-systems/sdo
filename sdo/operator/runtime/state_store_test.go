@@ -1,18 +1,131 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"testing"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
+
+func TestCloneIncidentResultPreservesEmptyCollectionsForBrokerProtocol(t *testing.T) {
+	result := completedResult("incident-empty-collections")
+	result.AppliedPlaybooks = []AppliedPlaybook{{PlaybookID: "health-objective", ScriptNames: []string{}}}
+	result.FinalDetectorStates = []DetectorEvaluation{}
+	result.ProposedArtifactIDs = []string{}
+	result.RepairActions = []RepairActionReceipt{}
+
+	typed, err := incidentResultContract(*cloneIncidentResult(&result))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := wire.Canonical(typed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(payload, []byte(":null")) {
+		t.Fatalf("canonical result emitted null: %s", payload)
+	}
+	var decoded contracts.IncidentResult
+	if err := wire.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.GetFinalDetectorStates()) != 0 || len(decoded.GetAppliedPlaybooks()[0].GetScriptNames()) != 0 {
+		t.Fatal("empty collections changed on ProtoJSON round trip")
+	}
+}
+
+func TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence(t *testing.T) {
+	ctx := context.Background()
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "api"}
+	before := planObject(ref, map[string]any{"replicas": float64(1)})
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	action := program.SetField{Ref: ref, Path: "spec.replicas", Value: 2, Reason: "restore capacity"}
+	application, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := map[string]ProgramTrust{"capacity": {VerifiedSuccesses: 3, LastChange: "abc", Trusted: true}}
+	response, err := json.Marshal(ToolResponse{Command: "status", Trust: trust, ProgramRuns: []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := RuntimeState{Version: RuntimeStateVersion, IncidentResult: &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: "program-state", Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)},
+		ProgramRuns:      []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}},
+		ProgramToolCalls: []ToolCall{{Command: "status", RequestJSON: `{"command":"status"}`, ResponseJSON: string(response), Summary: "healthy"}},
+		PlanApplications: []RecordedPlanApplication{{ID: "application-1", ProgramIDs: []string{"capacity"}, Result: application}},
+	}}
+	store := NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
+	if _, err := store.Save(ctx, state, ""); err != nil {
+		t.Fatalf("persist applied plan: %v", err)
+	}
+	loaded, _, err := store.Load(ctx)
+	if err != nil {
+		t.Fatalf("reload applied plan: %v", err)
+	}
+	result := loaded.IncidentResult
+	if len(result.ProgramRuns) != 1 || !reflect.DeepEqual(result.ProgramRuns[0].Bindings, state.IncidentResult.ProgramRuns[0].Bindings) ||
+		!reflect.DeepEqual(result.ProgramToolCalls, state.IncidentResult.ProgramToolCalls) {
+		t.Fatalf("program evidence changed after reload: %+v", result)
+	}
+	var restoredResponse ToolResponse
+	if err := json.Unmarshal([]byte(result.ProgramToolCalls[0].ResponseJSON), &restoredResponse); err != nil || !reflect.DeepEqual(restoredResponse.Trust, trust) {
+		t.Fatalf("trust stats after reload: %+v, %v", restoredResponse.Trust, err)
+	}
+	got := result.PlanApplications[0].Result
+	if len(got.PreImages) != 1 || len(got.ActionsApplied) != 1 {
+		t.Fatalf("applied plan lost rollback data: %+v", got)
+	}
+	if _, ok := got.ActionsApplied[0].(program.SetField); !ok {
+		t.Fatalf("applied action type = %T", got.ActionsApplied[0])
+	}
+	if err := executor.Rollback(ctx, got); err != nil {
+		t.Fatalf("rollback after reload: %v", err)
+	}
+	if !reflect.DeepEqual(client.objects[ref].Object, before.Object) {
+		t.Fatalf("rollback restored %+v, want %+v", client.objects[ref].Object, before.Object)
+	}
+}
+
+// A clean closing view has no changes. The broker's schema requires a list,
+// so a persisted closure must say "changes":[] and never "changes":null,
+// or every broker attempt fails and the closure fails permanently.
+func TestCloneIncidentClosureKeepsAnEmptyClosingViewDiffAList(t *testing.T) {
+	closure := nativeClosure(IncidentWorkspace{IncidentID: "empty-diff", Worktree: "/proposal", BaseCommit: "base"})
+	closure.FinalStateChanges = &StateChanges{BaselineAt: time.Unix(0, 0).UTC(), ObservedAt: time.Unix(1, 0).UTC(), Changes: []StateChange{}}
+	typed, err := incidentClosureContract(*cloneIncidentClosure(&closure))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := wire.Canonical(typed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(payload, []byte(":null")) {
+		t.Fatalf("canonical closure emitted null: %s", payload)
+	}
+	var decoded contracts.IncidentClosure
+	if err := wire.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.GetFinalStateChanges() == nil || len(decoded.GetFinalStateChanges().GetChanges()) != 0 {
+		t.Fatal("closing diff lost its empty logical list")
+	}
+}
 
 func TestConfigMapStateStoreRoundTripAndCASConflict(t *testing.T) {
 	ctx := context.Background()

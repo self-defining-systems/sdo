@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -36,6 +37,7 @@ def _record(index: int, *, agent: str = "sdo", warm: bool | None = True, passed:
         resolved_at=T0 + timedelta(seconds=70),
         oracle=OracleVerdict(kind="sregym-mitigation-oracle", success=passed, details={}),
         responder_tokens=TokenCounts(input_tokens=1000, cached_input_tokens=800, output_tokens=50),
+        drift_tokens=TokenCounts(input_tokens=12, output_tokens=2),
         reflection_tokens=TokenCounts(input_tokens=5000, cached_input_tokens=4000, output_tokens=100),
         warm_path=warm,
         reflection_seconds=30.0 if agent == "sdo" else None,
@@ -77,7 +79,32 @@ def test_records_round_trip_through_jsonl_with_derived_fields(tmp_path: Path) ->
     assert len(lines) == 2
     # Derived latencies are persisted so other tools need not recompute them.
     assert json.loads(lines[0])["injection_to_mitigation_seconds"] == pytest.approx(40.0)
+    assert json.loads(lines[0])["drift_tokens"]["total_tokens"] == 14
     assert [record.index for record in load_records(path)] == [0, 1]
+    with path.with_suffix(".csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 2
+    assert rows[0]["injection_to_mitigation_seconds"] == "40.0"
+    assert json.loads(rows[0]["drift_tokens"])["total_tokens"] == 14
+
+
+def test_timing_events_and_native_usage_survive_record_round_trip(tmp_path: Path) -> None:
+    record = _record(0).model_copy(
+        update={
+            "responder_started_at": T0 + timedelta(seconds=10),
+            "responder_finished_at": T0 + timedelta(seconds=39),
+            "oracle_finished_at": T0 + timedelta(seconds=80),
+            "reflection_started_at": T0 + timedelta(seconds=82),
+            "reflection_finished_at": T0 + timedelta(seconds=100),
+            "rebuild_done_at": T0 + timedelta(seconds=105),
+            "recovery_finished_at": T0 + timedelta(seconds=90),
+        }
+    )
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+
+    assert load_records(path)[0].rebuild_done_at == T0 + timedelta(seconds=105)
+    assert TokenCounts.from_usage({"inputTokens": "20", "outputTokens": "3"}).total_tokens == 23
 
 
 def test_summary_separates_agents_and_reports_warm_and_reflection() -> None:

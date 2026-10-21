@@ -1,0 +1,34 @@
+{
+ "diagnosis_grading": "deferred",
+ "judge_model_id": "codex-gpt-6-luna",
+ "incidents": [
+  "k8s_target_port_misconfig_hotel_reservation__v_geo_9999",
+  "incorrect_image__v_hotel_reservation_rate_nonexistent_tag",
+  [
+   "k8s_target_port_misconfig_hotel_reservation__v_profile_9999",
+   "incorrect_image__v_hotel_reservation_search_nonexistent_tag"
+  ],
+  "readiness_probe_misconfiguration__v_hotel_reservation_user_wrong_path_1",
+  [
+   "k8s_target_port_misconfig_hotel_reservation__v_rate_9999",
+   "readiness_probe_misconfiguration__v_hotel_reservation_geo_wrong_path_1"
+  ],
+  [
+   "incorrect_image__v_hotel_reservation_reservation_nonexistent_tag",
+   "readiness_probe_misconfiguration__v_hotel_reservation_search_wrong_path_1"
+  ],
+  "wrong_service_selector__v_hotel_reservation_profile_1_add_extra_label",
+  [
+   "k8s_target_port_misconfig_hotel_reservation__v_user_9999",
+   "wrong_service_selector__v_hotel_reservation_recommendation_1_add_extra_label"
+  ],
+  [
+   "incorrect_image__v_hotel_reservation_geo_nonexistent_tag",
+   "wrong_service_selector__v_hotel_reservation_rate_1_add_extra_label"
+  ],
+  [
+   "network_policy_block__v_hotel_reservation_search_both_descriptive",
+   "k8s_target_port_misconfig_hotel_reservation__v_reservation_9999"
+  ]
+ ]
+}

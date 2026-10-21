@@ -86,6 +86,10 @@ type Request struct {
 	// HealthyBaseline optionally names recorded healthy snapshots that
 	// incident detectors must stay quiet on during Compile.
 	HealthyBaseline string
+	// CaptureRoot and IncidentID bind proposed corpus to controller-owned captures.
+	CaptureRoot      string
+	CaptureDirectory string
+	IncidentID       string
 }
 
 // Diagnostic is one validation finding. Path is repository-relative and Line is

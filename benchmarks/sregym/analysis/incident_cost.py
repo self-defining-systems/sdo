@@ -777,7 +777,10 @@ def _reflection_usage(
     receipt's ``reflection_usage`` is used.
     """
 
-    recorded = TokenUsage.from_mapping(receipt.get("reflection_usage"))
+    ledger = receipt.get("native_ledger")
+    decision = ledger.get("reflection_decision") if isinstance(ledger, dict) else None
+    native_usage = decision.get("usage") if isinstance(decision, dict) else None
+    recorded = TokenUsage.from_mapping(receipt.get("reflection_usage") or native_usage)
     own = [turn for turn in rollout_turn_usages(own_rollouts or []) if turn.input_tokens]
     if receipt.get("reflection_session_mode") == "resume":
         shared = rollout_turn_usages(responder_rollouts)
@@ -807,6 +810,18 @@ def _usage_session_ids(paths: list[Path], *, incident_id: str | None = None) -> 
     return sessions
 
 
+def receipt_responder_usage(receipt: dict[str, Any]) -> TokenUsage:
+    """The responder's recorded usage: the legacy receipt's ``usage``, else the native ledger's closure result."""
+
+    legacy = receipt.get("usage")
+    if isinstance(legacy, dict):
+        return TokenUsage.from_mapping(legacy)
+    ledger = receipt.get("native_ledger")
+    closure = ledger.get("closure") if isinstance(ledger, dict) else None
+    result = closure.get("result") if isinstance(closure, dict) else None
+    return TokenUsage.from_mapping(result.get("usage") if isinstance(result, dict) else None)
+
+
 def _responder_usage(receipt: dict[str, Any], responder_rollouts: list[Path]) -> TokenUsage:
     """The responder turn's usage: its rollout's first turn when exported, else the receipt's.
 
@@ -814,7 +829,7 @@ def _responder_usage(receipt: dict[str, Any], responder_rollouts: list[Path]) ->
     reasoning tokens and the model-request count.
     """
 
-    recorded = TokenUsage.from_mapping(receipt.get("usage"))
+    recorded = receipt_responder_usage(receipt)
     turns = rollout_turn_usages(responder_rollouts)
     if turns and turns[0].input_tokens:
         return turns[0]

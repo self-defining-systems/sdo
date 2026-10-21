@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/format"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,7 +83,15 @@ func genericManifest(id, interval string, watches []layout.Watch) layout.Detecto
 
 func writeGenericDetector(root string, manifest layout.DetectorManifest, source string) error {
 	test := fmt.Sprintf("package %s\n\nimport \"testing\"\n\nfunc TestRegistration(t *testing.T) { if New().Spec().ID != %q { t.Fatal(\"unexpected detector ID\") } }\n", genericPackage(manifest.ID), manifest.ID)
-	files := []layout.File{{Name: layout.DetectorFileName, Content: []byte(source)}, {Name: layout.DetectorTestFileName, Content: []byte(test)}}
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		return err
+	}
+	formattedTest, err := format.Source([]byte(test))
+	if err != nil {
+		return err
+	}
+	files := []layout.File{{Name: layout.DetectorFileName, Content: formatted}, {Name: layout.DetectorTestFileName, Content: formattedTest}}
 	encoded, err := layout.MarshalDetectorManifest(manifest)
 	if err != nil {
 		return err

@@ -63,5 +63,5 @@ def test_sandboxed_worker_gets_a_private_tmp_so_fixed_fault_backup_paths_cannot_
 
     assert argv[:6] == ["bwrap", "--dev-bind", "/", "/", "--bind", str(tmp_path / "tmp")]
     assert argv[6] == "/tmp"
-    assert argv[-3:] == ["python", "-m", "sregym.fastloop.worker"]
+    assert argv[-3:] == ["python", "-m", "benchmarks.sregym.fastloop.worker_bridge"]
     assert worker_argv(tmp_path / "sregym", private_tmp=None)[0] == "uv"

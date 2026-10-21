@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,8 +38,11 @@ from benchmarks.sregym.adapter.healthy_baseline import capture_snapshots, kubect
 from benchmarks.sregym.adapter.native_operator import (
     NativeHostConfig,
     NativeInstallConfig,
+    NativeOperatorError,
     collect_native_receipt,
     export_runtime_artifacts,
+    inspect_existing,
+    install_existing,
     launch_host,
     sync_existing,
 )
@@ -52,7 +55,7 @@ from benchmarks.sregym.adapter.persistent import (
     persist_resolution,
     run_persistent_stage,
 )
-from benchmarks.sregym.adapter.runtime import RuntimeConfig, _responder_instructions
+from benchmarks.sregym.adapter.runtime import RuntimeConfig, _responder_instructions, native_install_config
 from benchmarks.sregym.adapter.submission import submit_solution
 from benchmarks.sregym.protocol.conductor import (
     get_api_base,
@@ -64,7 +67,7 @@ from benchmarks.sregym.protocol.conductor import (
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
-DEFAULT_REFLECTION_SESSION = "fresh"
+DEFAULT_REFLECTION_SESSION = "resume"
 
 DEFAULT_BUILDKIT_IMAGE = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
 
@@ -285,6 +288,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=int(config.get("max_follow_ups", 0)),
         help="follow-up responders for health findings left active after a response (0 = off)",
     )
+    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 5)))
     parser.add_argument(
         "--follow-up-cooldown-seconds",
         type=int,
@@ -323,6 +327,16 @@ def _application_repository() -> Path:
     if not repository.is_dir():
         raise RuntimeError(f"SREGYM_AGENT_WORKDIR is not a directory: {repository}")
     return repository
+
+
+def _application_label(app_info: dict[str, Any], repository: Path) -> str:
+    """The SREGym application's display name as the Kubernetes DNS label the Go operator requires."""
+
+    raw = str(app_info.get("app_name") or repository.name)
+    label = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")[:63].strip("-")
+    if not label:
+        raise ValueError(f"application name {raw!r} cannot be converted to a Kubernetes DNS label")
+    return label
 
 
 def _in_cluster_api_base(api_base: str) -> str:
@@ -467,6 +481,72 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
+def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seconds: float = 300.0) -> None:
+    """``install-existing`` returns once the controller is created; wait until it owns a ready Pod."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            inspect_existing(install)
+            return
+        except NativeOperatorError as exc:
+            if time.monotonic() >= deadline:
+                raise
+            logger.info("waiting for the seeded controller: %s", exc)
+            time.sleep(3)
+
+
+def _has_accepted_lifecycle(repository: Path) -> bool:
+    """Whether *repository* already holds an accepted SDO lifecycle (a seeded workspace)."""
+
+    sdo = repository / ".sdo"
+    if not (sdo / "lifecycle-provenance.yaml").is_file():
+        return False
+    diagnostics = sdo / "diagnostics"
+    return (diagnostics / "manifest.yaml").is_file() or any(
+        manifest.is_file() for manifest in (diagnostics / "detectors" / "health").glob("*/manifest.yaml")
+    )
+
+
+def _publish_agent_registrations(
+    directory: Path, control_namespace: str, kubeconfig: Path, responder_image: str, loaded_images: set[str]
+) -> None:
+    files = sorted(directory.glob("*.json"))
+    if not files:
+        raise ValueError(f"agent registration directory {directory} has no JSON files")
+    data: dict[str, str] = {}
+    for path in files:
+        content = path.read_text(encoding="utf-8")
+        registration = json.loads(content)
+        if not isinstance(registration, dict):
+            raise ValueError(f"agent registration {path} must be a JSON object")
+        job = registration.get("kubernetes_job")
+        if isinstance(job, dict):
+            if job.get("image") == "${RESPONDER_IMAGE}":
+                job["image"] = responder_image
+            if job.get("image") not in loaded_images:
+                raise ValueError(f"agent registration {path} uses image {job.get('image')!r} not loaded into kind")
+            content = json.dumps(registration)
+        data[path.name] = content
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=control_namespace,
+        kubeconfig=kubeconfig,
+        input_text=json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "sdo-agent-registrations", "namespace": control_namespace},
+                "data": data,
+            }
+        ),
+    )
+
+
+# Shared with the toy fastloop through the adapter facade.
+publish_agent_registrations = _publish_agent_registrations
+
+
 def _launch_native_lifecycle(
     args: argparse.Namespace,
     *,
@@ -476,9 +556,12 @@ def _launch_native_lifecycle(
     health_objective: str,
     api_base: str,
     persistent: bool,
+    install_config: NativeInstallConfig | None = None,
 ) -> dict[str, Any]:
     """Provision benchmark transport, then run the production Go host lifecycle."""
 
+    if args.agent_registrations and not _has_accepted_lifecycle(repository):
+        raise ValueError("worker registration override requires an accepted lifecycle seed")
     kind_cluster_name = (args.kind_cluster_name or os.getenv("SREGYM_KIND_CLUSTER_NAME", "")).strip()
     if not kind_cluster_name:
         raise RuntimeError("native benchmark operation requires SREGYM_KIND_CLUSTER_NAME or --kind-cluster-name")
@@ -490,8 +573,8 @@ def _launch_native_lifecycle(
     cluster = BenchmarkClusterResourcesConfig(
         namespace=namespace,
         control_namespace=control_namespace,
-        responder_image=args.responder_image,
-        credentials_secret=args.credentials_secret,
+        responder_image=install_config.responder_image if install_config else args.responder_image,
+        credentials_secret=install_config.credentials_secret if install_config else args.credentials_secret,
         registry_push_secret=args.registry_push_secret,
         registry_insecure=True,
         kind_cluster_name=kind_cluster_name,
@@ -500,7 +583,7 @@ def _launch_native_lifecycle(
     prepare_benchmark_resources(cluster, relay_target_base=relay_target, kubeconfig=kubeconfig)
     if relay_target is not None:
         wait_submission_bridge(control_namespace, kubeconfig)
-    install = NativeInstallConfig(
+    install = install_config or NativeInstallConfig(
         repository=repository.resolve(),
         namespace=namespace,
         control_namespace=control_namespace,
@@ -513,12 +596,13 @@ def _launch_native_lifecycle(
         model=args.model,
         kubeconfig=kubeconfig,
         agent_provider=args.provider,
-        repair_policy="recorded-actions",
+        repair_policy=getattr(args, "repair_policy", "recorded-actions"),
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         healthy_baseline=args.healthy_baseline,
         max_follow_ups=args.max_follow_ups,
+        max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
@@ -528,8 +612,38 @@ def _launch_native_lifecycle(
         responder_env=(
             f"SDO_SREGYM_API_BASE={_in_cluster_api_base(api_base)}",
             f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
-        ),
+        )
+        if api_base
+        else (),
     )
+    if install_config is not None:
+        install = replace(
+            install,
+            control_namespace=control_namespace,
+            duration_seconds=None if persistent else install.response_timeout_seconds,
+            exit_after_closure=not persistent,
+            registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
+            responder_env=(
+                f"SDO_SREGYM_API_BASE={_in_cluster_api_base(api_base)}",
+                f"SDO_RESPONDER_EXTRA_INSTRUCTIONS={_responder_instructions()}",
+            )
+            if api_base
+            else (),
+        )
+    if _has_accepted_lifecycle(repository):
+        # A seeded workspace already carries an independently accepted lifecycle (goal, architecture, health
+        # detectors): install the controller over it instead of running the deployer and health judge again.
+        if args.agent_registrations:
+            _publish_agent_registrations(
+                Path(args.agent_registrations),
+                control_namespace,
+                kubeconfig,
+                install.responder_image,
+                {install.controller_image, install.responder_image, install.validator_image},
+            )
+        receipt = install_existing(install)
+        _wait_for_installed_controller(install)
+        return {"installed": True, "seeded": True, "reused": receipt.reused, "accepted_commit": receipt.accepted_commit}
     host = NativeHostConfig(
         install=install,
         health_objective=health_objective,
@@ -549,22 +663,8 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
 
     args = argparse.Namespace(
         kind_cluster_name=config.kind_cluster_name,
-        controller_image=config.controller_image,
-        responder_image=config.responder_image,
-        validator_image=config.validator_image,
-        repository_pvc=config.repository_pvc,
-        credentials_secret=config.credentials_secret,
         registry_push_secret=config.registry_push_secret,
         buildkit_image=config.buildkit_image,
-        model=config.model,
-        provider=config.agent_provider,
-        late_findings=config.late_findings,
-        reflection_session=config.reflection_session,
-        reflection_guidance=config.reflection_guidance,
-        healthy_baseline=config.healthy_baseline,
-        max_follow_ups=config.max_follow_ups,
-        follow_up_cooldown_seconds=config.follow_up_cooldown_seconds,
-        timeout_sec=config.timeout_seconds,
         max_deployment_attempts=config.max_deployment_attempts,
         agent_registrations=config.agent_registrations,
     )
@@ -576,6 +676,7 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
         health_objective=health_objective,
         api_base=api_base,
         persistent=config.persistent,
+        install_config=native_install_config(config),
     )
 
 
@@ -603,6 +704,7 @@ def _native_install_for_run(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         max_follow_ups=args.max_follow_ups,
+        max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
@@ -762,7 +864,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
     app_info = get_app_info(api_base)
     repository = _application_repository()
     _configure_turn_usage_log(args.logs_dir)
-    application = str(app_info.get("app_name") or repository.name)
+    application = _application_label(app_info, repository)
     namespace = str(app_info.get("namespace") or "default")
     trusted_kubeconfig = os.getenv("SREGYM_BASE_KUBECONFIG", "").strip() or None
     if trusted_kubeconfig is not None:
@@ -794,6 +896,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         max_follow_ups=args.max_follow_ups,
+        max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         submission_api_base=_in_cluster_api_base(api_base),
         submission_relay_target_base=_relay_target_api_base(api_base),
@@ -847,7 +950,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     app_info = get_app_info(api_base)
     repository = _application_repository()
     _configure_turn_usage_log(args.logs_dir)
-    application = str(app_info.get("app_name") or repository.name)
+    application = _application_label(app_info, repository)
     namespace = str(app_info.get("namespace") or "default")
     lifecycle_context = _deployed_lifecycle_context(namespace)
     health_objective = lifecycle_context.health_objective

@@ -321,6 +321,10 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 		return
 	}
 	c.closureReceipt = cloneClosureReceipt(&completion.receipt)
+	c.config.SourceCommit = completion.receipt.OutcomeCommit
+	if completion.receipt.ReflectionCommit != "" {
+		c.config.SourceCommit = completion.receipt.ReflectionCommit
+	}
 	c.closureFailure = nil
 	c.closureState = "committed"
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
@@ -347,13 +351,14 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 			OutcomeCommit: c.closureReceipt.OutcomeCommit,
 		})
 	}
+	// Only findings represented by this closure are acknowledged. New faults
+	// observed during response or reflection must survive for the next incident.
+	if c.pendingClosure != nil {
+		c.batcher.RemoveKeys(findingKeys(c.pendingClosure.Request.Findings))
+	}
 	c.pendingClosure = nil
 	c.closureReceipt = nil
 	c.closureState = ""
-	// Any activation buffered before or during this incident is represented by
-	// the acknowledged closure. Drop it so crash restoration cannot redispatch
-	// the same evidence; a genuinely recurring fault must clear and reactivate.
-	c.batcher.Drain()
 	c.mu.Unlock()
 }
 

@@ -69,6 +69,9 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	if workspace == nil || workspace.Directory == "" {
 		return "", errors.New("workspace is required")
 	}
+	if err := seedGoBuildCache(ctx); err != nil {
+		return "", err
+	}
 	binary := filepath.Join(workspace.Directory, "sdo-controller")
 	stages := [][]string{{"mod", "tidy"}}
 	if vet {
@@ -89,6 +92,39 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 		}
 	}
 	return binary, nil
+}
+
+func seedGoBuildCache(ctx context.Context) error {
+	seed := os.Getenv("SDO_GO_CACHE_SEED")
+	if seed == "" {
+		return nil
+	}
+	if _, err := os.Stat(seed); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect Go build cache seed: %w", err)
+	}
+	cache := os.Getenv("GOCACHE")
+	if cache == "" {
+		return errors.New("GOCACHE is required when SDO_GO_CACHE_SEED is set")
+	}
+	marker := filepath.Join(cache, ".sdo-seeded")
+	if _, err := os.Stat(marker); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect Go build cache: %w", err)
+	}
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		return fmt.Errorf("create Go build cache: %w", err)
+	}
+	command := exec.CommandContext(ctx, "cp", "-R", seed+string(os.PathSeparator)+".", cache)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("seed Go build cache: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := os.WriteFile(marker, nil, 0o644); err != nil {
+		return fmt.Errorf("mark seeded Go build cache: %w", err)
+	}
+	return nil
 }
 
 func (workspace *Workspace) Close() error {
@@ -152,6 +188,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := os.MkdirAll(filepath.Join(directory, "generated"), 0o755); err != nil {
 		return nil, err
 	}
+	if err := stagePrograms(ctx, config, directory, module); err != nil {
+		return nil, fmt.Errorf("validate playbook programs: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Join(directory, "cmd", "controller"), 0o755); err != nil {
 		return nil, err
 	}
@@ -177,7 +216,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 			return nil, err
 		}
 	}
-	main := fmt.Sprintf("package main\n\nimport (\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { runtime.Run(generated.All()) }\n", module+"/generated")
+	main := fmt.Sprintf("package main\n\nimport (\n\t\"log\"\n\t\"sdo.dev/operator/runtime\"\n\t%q\n)\n\nfunc main() { programs, err := generated.Programs(); if err != nil { log.Fatal(err) }; runtime.RunWithPrograms(generated.All(), programs) }\n", module+"/generated")
 	if err := os.WriteFile(filepath.Join(directory, "cmd", "controller", "main.go"), []byte(main), 0o644); err != nil {
 		return nil, err
 	}

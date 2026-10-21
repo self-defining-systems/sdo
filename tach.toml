@@ -65,6 +65,7 @@ path = "benchmarks.sregym.fastloop"
 depends_on = [
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",
+    "sdo.agents.responder",
     "sdo.contracts",
 ]
 

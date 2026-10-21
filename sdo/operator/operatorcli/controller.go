@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.ef364da8a01df514"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.48458dc65fa032ec"
 
 type repeatable []string
 
@@ -60,16 +60,26 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "fresh", "reflection session mode: fresh or resume")
+	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
+	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
+	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "repeat drift responder token budget per hour")
+	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
+	programMinDuration := flags.Duration("program-min-duration", 10*time.Second, "minimum sustained learned-program firing and clearing duration")
+	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "delay before retrying inconclusive initial diagnoses")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
 	supervise := flags.Bool("supervise", false, "rebuild and relaunch after closure")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	var deployedManifestPaths repeatable
+	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment plan")
 	if err := flags.Parse(args[1:]); err != nil {
 		return builder.RunConfig{}, false, err
 	}
@@ -85,6 +95,18 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown <= 0 {
 		return builder.RunConfig{}, false, errors.New("follow-up limit must be at most 1000 and cooldown positive")
 	}
+	if *programTrustThreshold < 1 {
+		return builder.RunConfig{}, false, errors.New("program trust threshold must be positive")
+	}
+	if *programMinDuration < 0 {
+		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
+	}
+	if *driftTokensPerHour <= 0 {
+		return builder.RunConfig{}, false, errors.New("drift responder token budget must be positive")
+	}
+	if *programFastPath && *repairPolicy != "recorded-actions" {
+		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
+	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
 		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *schemaIdentity == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
@@ -98,16 +120,20 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	launch := &contracts.ControllerConfig{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
-		DispatcherMode: "job",
+		DeployedManifestPaths: deployedManifestPaths,
+		Dispatcher:            "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
 		ResponderImage: *responderImage, ResponderEnv: responderEnv,
 		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
-		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
+		RepairPolicy: *repairPolicy, MaxFollowUps: int32(*maxFollowUps), FollowUpCooldown: durationpb.New(*followUpCooldown), MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
 		ExitAfterClosure: *exitAfterClosure,
 		ProberImage:      *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
-		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, HealthyBaseline: *healthyBaseline,
+		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline,
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
+		DriftTokensPerHour: *driftTokensPerHour,
+		ProgramMinDuration: durationpb.New(*programMinDuration),
 	}
 	if *duration > 0 {
 		launch.Duration = durationpb.New(*duration)

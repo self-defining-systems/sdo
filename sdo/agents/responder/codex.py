@@ -196,6 +196,53 @@ def _incident_result_schema() -> dict[str, object]:
             "additionalProperties": False,
         },
     }
+    properties["drift_events"] = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "ref": object_ref,
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {key: {"type": "string"} for key in ("path", "old", "new", "source")},
+                        "required": ["path", "old", "new", "source"],
+                        "additionalProperties": False,
+                    },
+                },
+                "manager": {"type": "string"},
+                "classification": {"type": "string", "enum": ["fault", "unexplained"]},
+                "investigation_verdict": {"type": "string", "enum": ["bug", "benign", "unsure"]},
+                "investigation_reason": {"type": "string"},
+                "investigation_evidence": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["source_contradiction", "violated_relation", "observed_impact"],
+                            },
+                            "observation": {"type": "string"},
+                        },
+                        "required": ["kind", "observation"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": [
+                "ref",
+                "fields",
+                "manager",
+                "classification",
+                "investigation_verdict",
+                "investigation_reason",
+                "investigation_evidence",
+            ],
+            "additionalProperties": False,
+        },
+    }
     return {
         "type": "object",
         "properties": properties,
@@ -567,7 +614,8 @@ def _verification_instructions() -> str:
         "addressed, so keep investigating along those request paths. Only when it reports unavailable, rely on "
         "your own verification of the health objective. Record its final output as a verification_evidence entry "
         "named `sdo-incident-status`.\n\n"
-        "Every confirmed root cause needs live evidence: a detector finding (source: its detector ID), a failing "
+        "Every confirmed root cause needs live evidence: a detector finding (source: its detector ID or "
+        "finding fingerprint), a failing "
         "synthetic scenario (source: its scenario ID), a change listed since the last healthy state (source: its "
         "`Kind/name`; a change your own repair made is not evidence of the cause, and SDO checks that the change "
         "predates your repair of that object), or a live observation (source: the command; observation: what its "
@@ -588,7 +636,8 @@ def _no_action_instructions() -> str:
         "reports healthy before you make any change, or clears on its own while you are still investigating and "
         "nothing you did explains it, do not fabricate a repair. Return status `cancelled`, with no repair "
         "actions and no applied playbooks, and say in your summary that the finding had already cleared. Return "
-        "`completed` only when a repair you made or recorded was needed and applied; a `completed` result with no "
+        "`completed` only when a repair you made or recorded was needed and applied, or when all remaining drift "
+        "has an evidence-grounded benign disposition; a `completed` result with no "
         "successful repair action, submitted while every triggering finding is already clear, is treated as that "
         "same no-op, never credited as a mitigation, and never learned from, so returning `cancelled` costs "
         "nothing extra. Never return `completed` while the health objective is still failing: a completion claim "
@@ -659,16 +708,47 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "a separate reflection task may later edit operational memory in its own checkout. "
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
+    program_guidance = (
+        "Start with the ranked program verdicts and evidence in initial_program_runs. "
+        "For a Match, prefer sdo plan then sdo apply. "
+        "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
+        "Use a session-only bash fix when no program fits. Always finish with sdo verify. "
+        "When verify reports healthy and source changes are committed, "
+        "return the structured incident result immediately. "
+        if request.max_response_loops > 0
+        else ""
+    )
+    drift_guidance = (
+        "Unexplained drift is a question: first determine whether it is a fault. Before any mutation, "
+        "establish a concrete contradiction with accepted source AND a violated application relation or "
+        "observed impact using captured or tool observations. Source absence and missing containerPort "
+        "declarations alone are insufficient evidence. Missing evidence means unsure: take no action and "
+        "leave the finding unresolved. Quiet health alone does not establish benign drift. "
+        "For a checked benign observation, return its exact ref, fields and manager in drift_events with "
+        "investigation_verdict benign, a concrete reason and observation evidence. A wholly benign no-op "
+        "may return completed with no repairs; it earns no mitigation or learning credit. "
+        "For a fault, repair only after the evidence, follow the configured repair policy, and verify every "
+        "retained drift finding as well as health. Pull status/diagnose to read late drift before acting. "
+        if request.drift_events
+        else ""
+    )
     request_json = json.dumps(_prompt_request(request), indent=2)
     return (
         f"You are the SDO incident responder for incident {request.incident_id}.\n\n"
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
         f"{strategy}"
+        f"{program_guidance}"
+        f"{drift_guidance}"
         f"{surfaced_context}"
         f"{_no_action_instructions()}"
         f"{_verification_instructions()}"
         f"{_cause_admissibility_guidance()}"
         "During this response, "
+        "Write any multi-step or repeated check as a parameterized script in the session scratch directory "
+        "($SDO_SESSION_SCRATCH, or /tmp/sdo-session-scratch if unset). "
+        "Pass affected resources as arguments; use no hard-coded resource names. "
+        "Use plain commands for one-off lookups. Keep interpretation and decisions in natural language. "
+        "Never put scratch scripts in operational memory. "
         f"{memory_guard}Return only the IncidentResult JSON "
         "required by the output schema.\n\n"
         f"Repair evidence mode: {request.repair_policy}. For every live mutation, return a repair action receipt "

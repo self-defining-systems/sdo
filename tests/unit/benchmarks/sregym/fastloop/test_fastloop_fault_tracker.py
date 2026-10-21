@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,8 +11,30 @@ from benchmarks.sregym.fastloop.fault_tracker import (
     COMPOSITE_FAULTS,
     FaultTracker,
     composite_faults,
+    describe_sregym_faults,
     probes_for,
+    stream_faults,
 )
+from benchmarks.sregym.fastloop.stream import load_stream
+
+
+def test_fault_description_uses_the_deployed_application_source(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from benchmarks.sregym.fastloop import fault_tracker
+
+    source = tmp_path / "application_workspace"
+
+    def run(_command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert kwargs["env"]["SREGYM_APP_SOURCE_DIR"] == str(source)
+        return subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"paired": [{"kind": "target_port", "component": "geo"}]})
+        )
+
+    monkeypatch.setattr(fault_tracker.subprocess, "run", run)
+    assert describe_sregym_faults(("paired",), sregym_dir=tmp_path, app_source_dir=source) == {
+        "paired": (fault_tracker.FaultSpec("target_port", "geo"),)
+    }
 
 
 class _Clock:
@@ -179,6 +204,42 @@ def test_unknown_fault_kind_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="no probe"):
         probes_for((FaultSpec("mystery", "x"),), _reader({}))
+
+
+def test_all_playbook_stream_ids_resolve_to_registered_fault_probes_without_a_cluster() -> None:
+    root = Path(__file__).resolve().parents[5]
+    chart = (
+        root / "third_party" / "sregym" / "SREGym-applications" / "hotelReservation" / "helm-chart" / "hotelreservation"
+    )
+    if not chart.is_dir():
+        pytest.skip("SREGym application chart is not initialized in this worktree")
+    streams = [
+        load_stream(root / "tests" / "fixtures" / "sregym" / "fastloop" / f"pbprog_{name}.json")
+        for name in ("smoke", "explicit", "repeat", "compose")
+    ]
+    problem_ids = tuple(dict.fromkeys(problem_id for stream in streams for ids in stream for problem_id in ids))
+    catalog = describe_sregym_faults(problem_ids, sregym_dir=root / "third_party" / "sregym")
+
+    for stream in streams:
+        for ids in stream:
+            faults = stream_faults(ids, catalog=catalog)
+            assert faults
+            assert len(probes_for(faults, _reader({}))) == len(faults)
+            if ids[0].startswith("mf__"):
+                assert len(faults) == 2
+
+    policy = catalog["network_policy_block__v_hotel_reservation_search_both_descriptive"][0]
+    assert policy.policy_name == "deny-all-search"
+    objects = {
+        ("deployment", "search"): _deployment(1),
+        ("networkpolicy", policy.policy_name): {
+            "spec": {"podSelector": {"matchLabels": {policy.pod_label_key: "search"}}, "ingress": [], "egress": []}
+        },
+    }
+    probe = probes_for((policy,), _reader(objects))[policy.name]
+    assert probe() is False
+    objects[("networkpolicy", policy.policy_name)] = None
+    assert probe() is True
 
 
 def test_restart_makes_now_time_zero_and_drops_earlier_samples() -> None:

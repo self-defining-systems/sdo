@@ -9,7 +9,11 @@ part of resolution time.
 
 from __future__ import annotations
 
+import csv
+import json
+import os
 import statistics
+import tempfile
 from datetime import datetime  # noqa: TC003 - Pydantic resolves this annotation at runtime.
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
@@ -54,9 +58,9 @@ class TokenCounts(_PersistedModel):
         if not isinstance(usage, dict):
             return cls()
         return cls(
-            input_tokens=int(usage.get("input_tokens") or 0),
-            cached_input_tokens=int(usage.get("cached_input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
+            input_tokens=int(usage.get("input_tokens") or usage.get("inputTokens") or 0),
+            cached_input_tokens=int(usage.get("cached_input_tokens") or usage.get("cachedInputTokens") or 0),
+            output_tokens=int(usage.get("output_tokens") or usage.get("outputTokens") or 0),
         )
 
 
@@ -68,6 +72,20 @@ class OracleVerdict(BaseModel):
     kind: OracleKind
     success: bool
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class DiagnosisGrade(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    success: bool | None = None
+    judge_model_id: str | None = None
+    accuracy: float | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    judge_tokens: TokenCounts = Field(default_factory=TokenCounts)
+    latency_seconds: float = Field(default=0.0, ge=0)
+    error: str | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 def _seconds(start: datetime | None, end: datetime | None) -> float | None:
@@ -93,15 +111,34 @@ class IncidentRecord(_PersistedModel):
     mitigation_applied_at: AwareDatetime | None = None
     #: Independently verified health (SDO) or agent exit (baseline).
     resolved_at: AwareDatetime | None = None
+    responder_started_at: AwareDatetime | None = None
+    responder_finished_at: AwareDatetime | None = None
+    oracle_finished_at: AwareDatetime | None = None
+    reflection_started_at: AwareDatetime | None = None
+    reflection_finished_at: AwareDatetime | None = None
+    rebuild_done_at: AwareDatetime | None = None
+    recovery_finished_at: AwareDatetime | None = None
     oracle: OracleVerdict | None = None
+    recovery_oracle: OracleVerdict | None = None
+    diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""
     responder_tokens: TokenCounts = Field(default_factory=TokenCounts)
+    drift_tokens: TokenCounts = Field(default_factory=TokenCounts)
     reflection_tokens: TokenCounts = Field(default_factory=TokenCounts)
     warm_path: bool | None = None
     match_reasons: list[str] = Field(default_factory=list)
+    binding_sources: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    resolution_path: str | None = None
+    fast_path_programs: list[str] = Field(default_factory=list)
+    fast_path_relation_covered_findings: list[dict[str, Any]] = Field(default_factory=list)
+    fast_path_skipped_reason: str | None = None
+    closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
+    driver_phase_timings_seconds: dict[str, float] = Field(default_factory=dict)
+    fault_gate_timings_seconds: dict[str, float] = Field(default_factory=dict)
+    run_prelude_phase_seconds: dict[str, float] = Field(default_factory=dict)
     #: ``sdo_mitigated``, ``external_recovery`` or ``cleared_without_sdo_action`` from the validated strict
     #: receipt; ``None`` for the baseline or when no receipt validated.
     sdo_resolution: str | None = None
@@ -117,10 +154,18 @@ class IncidentRecord(_PersistedModel):
     #: Waiting for the previous incident's reflection before this one could start (part of the wall time).
     previous_reflection_drain_seconds: float | None = None
     fault_recovery_seconds: float | None = None
+    cleanup_deleted_counts: dict[str, int] = Field(default_factory=dict)
+    cleanup_restored: list[str] = Field(default_factory=list)
+    cleanup_skipped_reason: str | None = None
     #: Wall time from the start of this incident to the loop being ready for the next one.
     incident_wall_seconds: float | None = None
     incident_id: str | None = None
     artifacts_dir: str | None = None
+    program_diagnoses: int | None = None
+    program_verdicts: dict[str, int] = Field(default_factory=dict)
+    program_tool_calls: int | None = None
+    tool_commands: dict[str, int] = Field(default_factory=dict)
+    response_loops_used: int | None = None
     error: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
@@ -144,10 +189,50 @@ class IncidentRecord(_PersistedModel):
         return _seconds(self.injection_started_at, self.resolved_at)
 
 
+def _csv_row(record: IncidentRecord) -> dict[str, Any]:
+    row = record.model_dump(mode="json")
+    for key, value in row.items():
+        if isinstance(value, (dict, list)):
+            row[key] = json.dumps(value, sort_keys=True)
+    return row
+
+
 def append_record(path: Path, record: IncidentRecord) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(record.model_dump_json() + "\n")
+    csv_path = path.with_suffix(".csv")
+    row = _csv_row(record)
+    with csv_path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(row))
+        if handle.tell() == 0:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def write_records(path: Path, records: list[IncidentRecord]) -> None:
+    """Replace both result files after deferred grade updates are complete."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path = path.with_suffix(".csv")
+    for target in (path, csv_path):
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", newline="", dir=path.parent, delete=False
+        ) as handle:
+            temporary = handle.name
+            try:
+                if target == path:
+                    for record in records:
+                        handle.write(record.model_dump_json() + "\n")
+                elif records:
+                    rows = [_csv_row(record) for record in records]
+                    writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                    writer.writeheader()
+                    writer.writerows(rows)
+            except BaseException:
+                os.unlink(temporary)
+                raise
+        os.replace(temporary, target)
 
 
 def load_records(path: Path) -> list[IncidentRecord]:

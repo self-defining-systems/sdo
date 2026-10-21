@@ -22,6 +22,7 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+	"sdo.dev/operator/sdk"
 )
 
 // StateChange kinds.
@@ -216,6 +217,31 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	changes := diffStates(t.baseline, current)
 	changes.UnobservedKinds = append([]string(nil), t.unobserved...)
 	return changes
+}
+
+// BaselineImage returns the image recorded before the current incident changed a workload.
+func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init bool) (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.baseline == nil || ref.Namespace != t.config.Namespace {
+		return "", false
+	}
+	state := t.baseline.objects[ref.Kind+"/"+ref.Name]
+	prefix := "container"
+	if init {
+		prefix = "initContainer"
+	}
+	image := state[prefix+"["+container+"].image"]
+	return image, image != ""
+}
+
+func (t *StateTracker) BaselineTree(ref sdk.ObjectRef) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.baseline == nil || ref.Namespace != t.config.Namespace {
+		return ""
+	}
+	return t.baseline.objects[ref.Kind+"/"+ref.Name]["template.sourceTree"]
 }
 
 func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {
@@ -586,6 +612,7 @@ func podTemplateState(template corev1.PodTemplateSpec) objectState {
 		volumes = append(volumes, volume.Name+"="+source)
 	}
 	state := objectState{
+		"template.sourceTree":         template.Annotations["sdo.dev/source-tree"],
 		"template.labels":             renderLabels(podLabels),
 		"template.annotations":        bounded(renderLabels(template.Annotations)),
 		"template.serviceAccountName": spec.ServiceAccountName,

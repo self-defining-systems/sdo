@@ -62,7 +62,7 @@ var grants = []grant{
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindPlaybookIndex, layout.KindPlaybook}, only: healthObjectiveOnly},
 	{actor: Responder, phase: ReflectionPhase, kinds: []layout.Kind{
 		layout.KindIncidentDetectorManifest, layout.KindIncidentDetectorSource,
-		layout.KindPlaybookIndex, layout.KindPlaybook, layout.KindPlaybookScript,
+		layout.KindPlaybookIndex, layout.KindPlaybook, layout.KindPlaybookScript, layout.KindPlaybookProgram, layout.KindLibrary, layout.KindCorpus,
 	}},
 	{actor: Responder, phase: ReflectionPhase, kinds: []layout.Kind{layout.KindTrafficGenerator, layout.KindTrafficWorkload}, only: incidentTraffic},
 }

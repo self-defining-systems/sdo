@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
 from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFaultDriver
 
 
@@ -52,12 +53,178 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
     seconds = _driver(worker).recover()
 
     assert [op for op, _ in worker.requests] == ["recover", "health", "health", "health"]
-    assert seconds == pytest.approx(2 * 2.0)
+    assert seconds == pytest.approx(2 * 1.0)
+
+
+def test_recovery_poll_interval_can_follow_the_run_time_scale() -> None:
+    now = [0.0]
+    worker = FakeWorker(health_sequence=[False, True])
+
+    driver = SregymFaultDriver(
+        worker,
+        namespace="hotel-reservation",
+        health_poll_seconds=0.1,
+        monotonic=lambda: now[0],
+        sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+    )
+
+    assert driver.recover() == pytest.approx(0.1)
+
+
+def test_recovery_waits_for_rollouts_in_every_application_namespace() -> None:
+    class Cluster:
+        calls = 0
+
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            self.calls += 1
+            ready = self.calls >= 4
+            return [
+                {
+                    "kind": "Deployment" if namespace == "hotel" else "StatefulSet",
+                    "metadata": {"namespace": namespace, "name": "app", "generation": 2},
+                    "spec": {"replicas": 1},
+                    "status": {
+                        "observedGeneration": 2 if ready else 1,
+                        "updatedReplicas": 1,
+                        "readyReplicas": 1 if ready else 0,
+                        "replicas": 1,
+                    },
+                },
+                {
+                    "kind": "Pod",
+                    "metadata": {
+                        "namespace": namespace,
+                        "name": "old-app",
+                        "ownerReferences": [{"name": "app"}],
+                        **({"deletionTimestamp": "now"} if not ready else {}),
+                    },
+                },
+            ]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            raise AssertionError(kind)
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError(value)
+
+    cluster = Cluster()
+    driver = _driver(FakeWorker())
+    driver._baselines = tuple(
+        ApplicationBaseline(
+            namespace,
+            [
+                {
+                    "kind": "Deployment" if namespace == "hotel" else "StatefulSet",
+                    "metadata": {"namespace": namespace, "name": "app"},
+                    "spec": {"replicas": 1},
+                }
+            ],
+        )
+        for namespace in ("hotel", "db")
+    )
+    driver._cluster = cluster
+
+    assert driver.recover() == pytest.approx(1.0)
+    assert cluster.calls == 6
+
+
+def test_recovery_rollout_timeout_reports_unready_workload() -> None:
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            return [
+                {
+                    "kind": "Deployment",
+                    "metadata": {"namespace": namespace, "name": "rate", "generation": 2},
+                    "spec": {"replicas": 1},
+                    "status": {"observedGeneration": 1, "replicas": 1, "updatedReplicas": 1, "readyReplicas": 0},
+                }
+            ]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            raise AssertionError(kind)
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError(value)
+
+    driver = _driver(FakeWorker(), timeout=5.0)
+    driver._baselines = (
+        ApplicationBaseline(
+            "hotel-reservation",
+            [
+                {
+                    "kind": "Deployment",
+                    "metadata": {"namespace": "hotel-reservation", "name": "rate"},
+                    "spec": {"replicas": 1},
+                }
+            ],
+        ),
+    )
+    driver._cluster = Cluster()
+
+    with pytest.raises(FastloopFaultError, match="Deployment/rate"):
+        driver.recover()
 
 
 def test_recovery_that_never_becomes_healthy_fails_the_loop() -> None:
     with pytest.raises(FastloopFaultError, match="mongodb-geo"):
         _driver(FakeWorker(health_sequence=[False]), timeout=5.0).recover()
+
+
+def test_recovery_reconciles_before_waiting_for_health() -> None:
+    events: list[str] = []
+
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            events.append("list")
+            return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "grant-fix"}, "spec": {}}]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            events.append("delete")
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            events.append("apply")
+
+    class Worker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            events.append(op)
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(
+        Worker(),
+        namespace="hotel-reservation",
+        baseline=ApplicationBaseline("hotel-reservation", []),
+        cluster=Cluster(),
+    )
+
+    driver.recover()
+
+    assert events == ["recover", "list", "delete", "health", "list"]
+    assert driver.last_cleanup.deleted_counts == {"Job": 1}
+
+
+def test_recovery_cleans_every_recorded_application_namespace() -> None:
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            return [{"kind": "Job", "metadata": {"namespace": namespace, "name": "agent-fix"}, "spec": {}}]
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            deleted.append((namespace, kind, name))
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError(value)
+
+    deleted: list[tuple[str, str, str]] = []
+    driver = SregymFaultDriver(
+        FakeWorker(),
+        namespace="hotel-reservation",
+        baseline=(ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])),
+        cluster=Cluster(),
+    )
+
+    driver.recover()
+
+    assert deleted == [("hotel-reservation", "Job", "agent-fix"), ("hotel-db", "Job", "agent-fix")]
+    assert driver.last_cleanup.deleted_counts == {"Job": 2}
 
 
 def test_oracle_verdict_is_typed() -> None:
@@ -136,3 +303,17 @@ def test_a_composition_oracle_is_typed() -> None:
     assert driver.oracle().kind == "composition"
     driver.oracle(fault=0)
     assert worker.requests[-1] == ("oracle", {"fault": 0})
+
+
+def test_partial_composite_injection_recovers_the_first_fault() -> None:
+    class FailingWorker(ComposingWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            if op == "inject" and args.get("compose"):
+                raise RuntimeError("second fault unavailable")
+            return super().request(op, timeout=timeout, **args)
+
+    worker = FailingWorker()
+
+    with pytest.raises(FastloopFaultError, match="second fault unavailable"):
+        _driver(worker).inject_composite(["a", "b"])
+    assert [op for op, _ in worker.requests][-2:] == ["recover", "health"]

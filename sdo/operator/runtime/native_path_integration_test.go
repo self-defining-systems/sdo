@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"go/format"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,7 @@ import (
 // This exercises accepted Git and outcome memory across the native lifecycle
 // and controller. Worker turns and cluster side effects are deterministic fakes.
 func TestNativeLifecycleToIncidentOutcomeUsesAcceptedState(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	accepted := nativeRepository(t)
 	repository, err := broker.New(accepted, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error { return nil })
@@ -187,7 +189,7 @@ func (w *nativePathWorkers) Execute(_ context.Context, task *contracts.AgentTask
 			Batching:          layout.Batching{Severity: "critical", Debounce: "500ms"},
 			PossiblePlaybooks: []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
 		}
-		if err := layout.WriteDetector(checkout, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: []byte(`package objective
+		if err := layout.WriteDetector(checkout, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: []layout.File{{Name: "detector.go", Content: formattedNativePathSource(w.t, `package objective
 
 import (
  "time"
@@ -305,4 +307,13 @@ func manifestTaskType(request proto.Message) string {
 		panic(err)
 	}
 	return task
+}
+
+func formattedNativePathSource(t *testing.T, source string) []byte {
+	t.Helper()
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return formatted
 }

@@ -11,7 +11,8 @@ from sdo.agents.responder.cause_admissibility import (
     apply_cause_admissibility,
     review_confirmed_causes,
 )
-from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.codex import execute_incident
+from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.incident_status import (
     IncidentStatusReport,
     IncidentStatusState,
@@ -32,6 +33,8 @@ from sdo.agents.responder.reflection import (
     reflection_output_schema,
 )
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
+from sdo.agents.responder.reflection_worker import run_reflection_task
+from sdo.agents.responder.worker import run_worker_task
 
 __all__ = [
     "CAUSE_ADMISSIBILITY_ENV",
@@ -54,13 +57,17 @@ __all__ = [
     "VerifyScenarioVerdict",
     "apply_cause_admissibility",
     "current_outcome_view",
+    "execute_incident",
     "history_view",
     "incident_status",
     "live_incident_status",
+    "AGENT_SKILLS",
     "prepare_claude_home",
     "prepare_codex_home",
     "reflection_output_schema",
     "review_confirmed_causes",
     "run_incident_status_cli",
+    "run_reflection_task",
+    "run_worker_task",
     "write_application_kubeconfig",
 ]

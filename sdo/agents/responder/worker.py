@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from google.protobuf import json_format
 
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
-from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home
+from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
 from sdo.contracts import (
     SCHEMA_VERSION,
@@ -134,8 +134,8 @@ def main() -> int:
         print("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required", file=sys.stderr)
         return 2
     try:
-        prepare_codex_home()
-        prepare_claude_home()
+        prepare_codex_home(skills=AGENT_SKILLS["responder"])
+        prepare_claude_home(skills=AGENT_SKILLS["responder"])
         run_worker_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"regexp"
@@ -33,6 +34,24 @@ func (s *run) semantic(ctx context.Context) error {
 			return err
 		}
 		s.physicalPaths()
+		if err := s.programRules(ctx); err != nil {
+			return err
+		}
+		if s.req.Base != "" {
+			base, err := exportBase(ctx, s.req.Root, s.req.Base)
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(base)
+			if err := s.corpusRules(base); err != nil {
+				return err
+			}
+			if err := validateNewProgramCorpus(s.req.Root, base); err != nil {
+				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: layout.CorpusDir, Message: err.Error()})
+			}
+		} else if err := s.corpusRules(""); err != nil {
+			return err
+		}
 	}
 	return s.architectureCommit(ctx)
 }

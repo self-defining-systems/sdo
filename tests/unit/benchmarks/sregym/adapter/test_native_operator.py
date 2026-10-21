@@ -60,7 +60,17 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
         )
 
     monkeypatch.setattr(subprocess, "run", run)
-    receipt = install_existing(replace(_install(tmp_path), healthy_baseline=True))
+    receipt = install_existing(
+        replace(
+            _install(tmp_path),
+            healthy_baseline=True,
+            max_response_loops=3,
+            deployed_manifest_paths=("kubernetes",),
+            program_fast_path=True,
+            program_trust_threshold=4,
+            drift_tokens_per_hour=250000,
+        )
+    )
 
     assert receipt.reused
     assert receipt.accepted_commit == "a" * 40
@@ -70,6 +80,11 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert "--responder-env" in calls[0]
     assert "--late-findings" in calls[0]
     assert "--healthy-baseline" in calls[0]
+    assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
+    assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
+    assert "--program-fast-path" in calls[0]
+    assert calls[0][calls[0].index("--program-trust-threshold") + 1] == "4"
+    assert calls[0][calls[0].index("--drift-tokens-per-hour") + 1] == "250000"
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"
     assert "-m" not in calls[0]
@@ -232,6 +247,56 @@ def test_collect_native_receipt_binds_go_ledger_to_cluster_job_and_pod(
         {"incident_id": "incident-1", "job_name": "sdo-incident-1-hash", "job_uid": "worker-uid", "succeeded": True}
     ]
     assert any("job/sdo-incident-1-hash" in call for call in calls)
+
+
+def test_collect_native_fast_path_receipt_has_no_responder_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
+
+    ledger = _ledger()
+    ledger["proposal_commit"] = ""
+    ledger["receipt"]["proposal_commit"] = ""
+    ledger["receipt"]["reflection_commit"] = ""
+    ledger["reflection_commit"] = ""
+    ledger["reflection_decision"] = None
+    ledger["reflection_processed"] = False
+    ledger["reflection_skipped_reason"] = "trusted program fast path"
+    ledger["requires_reflection"] = False
+    ledger["outcome_document"]["repair_commit"] = ""
+    ledger["outcome_document"]["resolution_path"] = "fast_path"
+    ledger["outcome_document"]["fast_path_programs"] = ["targetport"]
+    ledger["closure"]["result"]["resolution_path"] = "fast_path"
+    ledger["closure"]["result"]["fast_path_programs"] = ["targetport"]
+    application = {"applied": True, "program_ids": ["targetport"], "verification": {"result": "RESULT_NO_MATCH"}}
+    ledger["closure"]["result"]["plan_applications"] = [application]
+    ledger["outcome_document"]["plan_applications"] = [application]
+    monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[0] == "/tmp/sdo-operator":
+            payload: object = {
+                "incident_id": "incident-1",
+                "responder_job_name": "sdo-incident-1-hash",
+                "ledger": ledger,
+            }
+        elif "job/sdo-controller-run" in command:
+            payload = {"metadata": {"uid": "controller-job-uid"}}
+        else:
+            payload = {
+                "items": [
+                    {
+                        "metadata": {"uid": "controller-uid", "ownerReferences": [{"uid": "controller-job-uid"}]},
+                        "status": {"phase": "Running"},
+                    }
+                ]
+            }
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    receipt = collect_native_receipt(replace(_install(tmp_path), namespace="demo"), "incident-1")
+    assert receipt["responder_job_evidence"] == []
+    assert not any("job/sdo-incident-1-hash" in call for call in calls)
 
 
 def test_collect_native_receipt_rejects_missing_successful_worker_job(

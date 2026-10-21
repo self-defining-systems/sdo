@@ -9,6 +9,33 @@ import (
 
 var stateNow = time.Date(2026, 9, 28, 9, 0, 0, 0, time.UTC)
 
+func TestFindingBindingPersistenceConfirmsClearingAfterStateRoundTrip(t *testing.T) {
+	tracker := NewFindingStateTracker(1, 1)
+	tracker.SetPolicy("drift.port", 1, 1, time.Second)
+	finding := stateFinding("port")
+	finding.DetectorID = "drift.port"
+	tracker.ObserveBinding(stateNow, finding, true)
+	if change := tracker.ObserveBinding(stateNow.Add(time.Second), finding, true); len(change.Activated) != 1 {
+		t.Fatal("sustained match was not activated")
+	}
+	if change := tracker.ObserveBinding(stateNow.Add(2*time.Second), finding, false); len(change.Cleared) != 0 {
+		t.Fatal("first clear sample cleared an active binding immediately")
+	}
+	contract, err := findingStatesContract(tracker.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := NewFindingStateTracker(1, 1)
+	restored.SetPolicy("drift.port", 1, 1, time.Second)
+	restored.Restore(findingStatesState(contract))
+	if change := restored.ObserveBinding(stateNow.Add(3*time.Second-time.Nanosecond), finding, false); len(change.Cleared) != 0 {
+		t.Fatal("clearance confirmed before its minimum duration")
+	}
+	if change := restored.ObserveBinding(stateNow.Add(3*time.Second), finding, false); len(change.Cleared) != 1 {
+		t.Fatal("clear confirmation did not survive restart")
+	}
+}
+
 func TestFindingStateRequiresTwoFiringsAndTwoClears(t *testing.T) {
 	tracker := NewFindingStateTracker(2, 2)
 	finding := stateFinding("fault-a")

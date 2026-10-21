@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -79,6 +81,26 @@ func TestIncidentTaskCarriesLogicalMemoryAtBrokerBase(t *testing.T) {
 	snapshot.AcceptedCommit = "different"
 	if _, _, err := encodeIncidentAgentTask(request, testIncidentRegistry(t, ""), testIncidentAgentID(t), snapshot); err == nil {
 		t.Fatal("stale logical memory accepted")
+	}
+}
+
+func TestIncidentTaskUsesCanonicalProtoJSONTimestamps(t *testing.T) {
+	request := goldenRequest(t)
+	request.ResponseDeadline = time.Date(2026, 10, 21, 4, 8, 25, 760700000, time.UTC)
+	_, payload, err := encodeIncidentAgentTask(request, testIncidentRegistry(t, ""), testIncidentAgentID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Request struct {
+			ResponseDeadline string `json:"response_deadline"`
+		} `json:"request"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if got := envelope.Request.ResponseDeadline; got != "2026-10-21T04:08:25.760700Z" {
+		t.Fatalf("noncanonical ProtoJSON timestamp: %q", got)
 	}
 }
 

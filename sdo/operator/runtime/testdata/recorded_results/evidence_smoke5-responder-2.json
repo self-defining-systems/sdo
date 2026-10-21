@@ -1,0 +1,153 @@
+{
+  "proposal_id": "hotel-reservation-1792555706073394247",
+  "response": {
+    "@type": "type.googleapis.com/sdodev.contracts.v1alpha1.IncidentResult",
+    "applied_playbooks": [
+      {
+        "playbook_id": "health-objective"
+      },
+      {
+        "playbook_id": "deployment-image-pull-failure"
+      }
+    ],
+    "confirmed_root_causes": [
+      {
+        "evidence": [
+          {
+            "kind": "live-observation",
+            "observation": "Search pod was waiting in ImagePullBackOff for app-image:latest; events reported pull access denied and no image ID.",
+            "source": "kubectl -n hotel-reservation describe pod -l io.kompose.service=search"
+          }
+        ],
+        "explained_detectors": [
+          "health-objective"
+        ],
+        "resources": [
+          {
+            "api_version": "apps/v1",
+            "kind": "Deployment",
+            "name": "search",
+            "namespace": "hotel-reservation"
+          }
+        ],
+        "static_context": [
+          "Pinned the previously verified image in kubernetes/search/search-deployment.yaml."
+        ],
+        "summary": "An invalid search image prevented startup and removed ready search endpoints."
+      },
+      {
+        "evidence": [
+          {
+            "kind": "state-change",
+            "observation": "Since the last healthy state, targetPort changed from 8083 to 9999.",
+            "source": "Service/geo"
+          },
+          {
+            "kind": "live-observation",
+            "observation": "Geo Service targeted 9999; geo server logs reported target port 8083.",
+            "source": "kubectl -n hotel-reservation get svc geo -o yaml; kubectl -n hotel-reservation logs deployment/geo --tail=20"
+          }
+        ],
+        "explained_detectors": [
+          "health-objective"
+        ],
+        "resources": [
+          {
+            "api_version": "v1",
+            "kind": "Service",
+            "name": "geo",
+            "namespace": "hotel-reservation"
+          }
+        ],
+        "static_context": [
+          "kubernetes/geo/geo-service.yaml already specified the correct targetPort 8083."
+        ],
+        "summary": "Geo Service port drift misdirected traffic."
+      }
+    ],
+    "incident_id": "hotel-reservation-1792555706073394247",
+    "repair_actions": [
+      {
+        "action_id": "restore-service-port",
+        "completed_at": "2026-10-21T04:09:53.516821Z",
+        "details": "Restored targetPort 8083 from reviewed source.",
+        "kind": "kubectl-patch",
+        "resources": [
+          {
+            "api_version": "v1",
+            "kind": "Service",
+            "name": "geo",
+            "namespace": "hotel-reservation"
+          }
+        ],
+        "reversible": true,
+        "started_at": "2026-10-21T04:09:53Z",
+        "success": true,
+        "summary": "Restored geo traffic routing.",
+        "target": "Service/hotel-reservation/geo"
+      },
+      {
+        "action_id": "restore-search-image",
+        "completed_at": "2026-10-21T04:10:25.075809Z",
+        "details": "Applied the committed manifest using yinfangchen/hotelreservation:sregym-src-hotel-reservation-luna-pilot-50. Rollout succeeded. SDO plan failed reading accepted manifests, so reconciliation used kubectl.",
+        "kind": "kubectl-apply",
+        "resources": [
+          {
+            "api_version": "apps/v1",
+            "kind": "Deployment",
+            "name": "search",
+            "namespace": "hotel-reservation"
+          }
+        ],
+        "reversible": true,
+        "started_at": "2026-10-21T04:10:24Z",
+        "success": true,
+        "summary": "Restored the verified search image.",
+        "target": "Deployment/hotel-reservation/search"
+      }
+    ],
+    "repair_changes": [
+      "Committed search image pin as 6cee6e51c96458d655ae5eb30b2f8441daa6b866; working tree clean."
+    ],
+    "responder_session_id": "01a15ca5-6c3b-7eb3-a551-d3a0b4b57b6c",
+    "schema_version": "sdo.dev/v1alpha1",
+    "status": "completed",
+    "timing": {
+      "completed_at": "2026-10-21T04:10:45.958518Z",
+      "started_at": "2026-10-21T04:08:26Z"
+    },
+    "usage": {
+      "cache_read_input_tokens": "638848",
+      "cache_write_1h_input_tokens": "0",
+      "cached_input_tokens": "638848",
+      "input_tokens": "691630",
+      "llm_calls": "1",
+      "model_requests": "16",
+      "output_tokens": "4569",
+      "reasoning_output_tokens": "372",
+      "uncached_input_tokens": "52782"
+    },
+    "verification_evidence": [
+      {
+        "details": "All 19 required Deployments available and required Services have ready endpoints. ExternalName aliases exempted. Frontend /, hotel search, recommendations, and user requests returned HTTP 200; hotel results were nonempty.",
+        "name": "independent-health-objective",
+        "observed_at": "2026-10-21T04:10:32Z",
+        "passed": true
+      },
+      {
+        "details": "UNAVAILABLE: SDO_PROBER_URL is not set. Used independent health-objective verification.",
+        "name": "sdo-incident-status",
+        "observed_at": "2026-10-21T04:10:32Z"
+      },
+      {
+        "details": "healthy=true; health-objective detector clear; unresolved=false.",
+        "name": "sdo verify",
+        "observed_at": "2026-10-21T04:10:45.958518Z",
+        "passed": true
+      }
+    ]
+  },
+  "schema_version": "sdo.dev/v1alpha1",
+  "status": "completed",
+  "task_id": "hotel-reservation-1792555706073394247"
+}

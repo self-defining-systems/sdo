@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/memory"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +32,7 @@ type ControllerConfig struct {
 	SourceCommit        string
 	DeployedCommit      string
 	RepositoryWorktree  string
+	CorpusSessionRoot   string
 	ResponseTimeout     time.Duration
 	VerificationTimeout time.Duration
 	FiringThreshold     int
@@ -68,15 +72,23 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
-	config     ControllerConfig
-	scheduler  *Scheduler
-	detectors  map[string]sdk.Detector
-	tracker    *FindingStateTracker
-	batcher    *Batcher
-	provider   SnapshotProvider
-	dispatcher Dispatcher
-	history    []DetectorEvaluation
-	results    chan dispatchCompletion
+	config              ControllerConfig
+	startedAt           time.Time
+	scheduler           *Scheduler
+	detectors           map[string]sdk.Detector
+	tracker             *FindingStateTracker
+	batcher             *Batcher
+	provider            SnapshotProvider
+	dispatcher          Dispatcher
+	history             []DetectorEvaluation
+	drift               *DriftControllerConfig
+	driftEvents         []sdk.DriftEvent
+	driftAdmission      *contracts.DriftAdmissionState
+	programSweepCursors map[string]string
+	ownershipAdoption   OwnershipAdoptionStatus
+	adoptionNeeded      bool
+	nextDriftSweep      time.Time
+	results             chan dispatchCompletion
 	// gateClears and gateProbes hold the submit gate's confirmation of active
 	// findings (GateConfirmationPolicy); they are never persisted, so a
 	// restarted controller confirms again from fresh evaluations.
@@ -252,7 +264,7 @@ func NewController(
 	}
 	sort.Strings(healthDetectorIDs)
 	return &Controller{
-		config: config, scheduler: NewScheduler(detectors, start), detectors: byID,
+		config: config, startedAt: start, scheduler: NewScheduler(detectors, start), detectors: byID,
 		tracker:    tracker,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
@@ -279,10 +291,24 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.processBrokerCompletions()
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
-	if len(detectors) == 0 && len(probes) == 0 {
+	var objectChanges []ObjectChange
+	sweepDrift := false
+	confirmDrift := false
+	if c.drift != nil {
+		at := c.nextProgramConfirmation()
+		confirmDrift = !at.IsZero() && !now.Before(at)
+		if c.drift.Events != nil {
+			objectChanges = c.drift.Events.TakeObjectChanges()
+		}
+		sweepDrift = !now.Before(c.nextDriftSweep)
+		if sweepDrift {
+			c.nextDriftSweep = now.Add(c.drift.SweepInterval)
+		}
+	}
+	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !sweepDrift && !confirmDrift && !c.adoptionNeeded && !c.hasRetainedDrift() {
 		c.forgetGate()
-		c.maybeCloseIncident(now)
-		err := c.dispatchReady(ctx, now)
+		c.maybeCloseIncident(ctx, now, nil)
+		err := c.dispatchReady(ctx, now, nil)
 		c.refreshIncidentView(now, false)
 		return err
 	}
@@ -290,6 +316,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err != nil {
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
+	c.processDrift(ctx, now, snapshot, objectChanges, sweepDrift)
 
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := false
@@ -368,9 +395,24 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.Baseline.Observe(now, !errored && c.quiet())
 		}
 	}
+	if c.adoptionNeeded {
+		c.mu.Lock()
+		retryAt := c.ownershipAdoption.RetryAt
+		retryCommit := c.ownershipAdoption.SourceCommit
+		c.mu.Unlock()
+		if retryCommit != c.config.SourceCommit || !now.Before(retryAt) {
+			if err := c.adoptOwnership(ctx, now, snapshot); err != nil {
+				c.recordAdoptionError(now, err)
+				if c.OnError != nil {
+					c.OnError(fmt.Errorf("ownership adoption: %w", err))
+				}
+			}
+		}
+	}
 
-	c.maybeCloseIncident(now)
-	err = c.dispatchReady(ctx, now)
+	c.refreshRetainedDrift(ctx, now, snapshot)
+	c.maybeCloseIncident(ctx, now, snapshot)
+	err = c.dispatchReady(ctx, now, snapshot)
 	c.refreshIncidentView(now, true)
 	return err
 }
@@ -389,6 +431,7 @@ func (c *Controller) quiet() bool {
 // EvaluateAll evaluates every detector against one fresh snapshot, for example
 // when observation resumes after a planned maintenance window.
 func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
+	c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
 	c.scheduler.ExpediteAll(now)
 	return c.StepEvents(ctx, now, nil)
 }
@@ -404,6 +447,9 @@ func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
 	for index, existing := range c.currentIncidentRequest.Findings {
 		if FindingStateKey(existing.DetectorID, FindingFingerprint(existing)) == key {
 			c.currentIncidentRequest.Findings[index] = finding
+			if c.incidentDispatchedAt.IsZero() {
+				c.currentIncidentRequest.PreparedAgentTask = ""
+			}
 			sortFindings(c.currentIncidentRequest.Findings)
 			return true
 		}
@@ -439,6 +485,7 @@ func (c *Controller) attachBeforeLaunch(findings []sdk.Finding) bool {
 		c.config.RepositoryWorktree, request.Findings, c.config.SourceCommit, c.detectorOrigins(),
 	)
 	request.DetectorHistory = compactDetectorHistory(c.history)
+	request.PreparedAgentTask = ""
 	c.incidentFindingKeys = findingKeys(request.Findings)
 	c.noteBatchedLocked(request.IncidentID, findings)
 	return true
@@ -528,7 +575,7 @@ func (c *Controller) emitAdmissionDeferredLocked(now time.Time, incidentID strin
 	})
 }
 
-func (c *Controller) dispatchReady(ctx context.Context, now time.Time) error {
+func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen
 	deferred := c.dispatchState == admissionDeferredState
@@ -558,7 +605,31 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time) error {
 	if len(batch) == 0 {
 		return nil
 	}
+	priorAdmission := cloneDriftAdmission(c.driftAdmission)
+	batch = c.admitDriftBatch(now, batch)
+	if len(batch) == 0 {
+		return nil
+	}
 	request := c.incidentRequest(now, batch)
+	requeue := func(err error) error {
+		c.driftAdmission = priorAdmission
+		for _, finding := range batch {
+			c.batcher.AddAt(finding, now)
+		}
+		return err
+	}
+	if c.config.CorpusSessionRoot != "" {
+		if snapshot == nil {
+			var err error
+			snapshot, err = c.provider.Snapshot(ctx)
+			if err != nil {
+				return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
+			}
+		}
+		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace); err != nil {
+			return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
+		}
+	}
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
@@ -621,13 +692,19 @@ func playbookIDs(playbooks []SurfacedPlaybook) []string {
 
 func severityAtLeast(actual sdk.FindingSeverity, threshold sdk.FindingSeverity) bool {
 	rank := map[sdk.FindingSeverity]int{
-		sdk.SeverityInfo: 1, sdk.SeverityWarning: 2, sdk.SeverityCritical: 3,
+		sdk.SeverityInfo: 1, sdk.SeverityWarning: 2, sdk.SeverityCritical: 3, sdk.SeverityLatent: 3,
 	}
 	return rank[actual] >= rank[threshold]
 }
 
 func (c *Controller) NextWake() time.Time {
 	next := c.scheduler.NextRun()
+	if at := c.nextProgramConfirmation(); !at.IsZero() && (next.IsZero() || at.Before(next)) {
+		next = at
+	}
+	if c.drift != nil && (next.IsZero() || c.nextDriftSweep.Before(next)) {
+		next = c.nextDriftSweep
+	}
 	c.mu.Lock()
 	// A batch deadline only matters when the batch can be dispatched or
 	// attached. Otherwise an expired deadline would spin the runtime loop for
@@ -722,16 +799,30 @@ func (c *Controller) trackClearStreak(detectorID string, now time.Time, clear bo
 	}
 }
 
-// healthClearedAtLocked is when the closure gate's detectors began their
-// final clear streak: the latest streak start among them. A repair action
-// that started after it cannot have restored health. nil when a gate
-// detector has no clear streak on record. Called with c.mu held.
+// healthClearedAtLocked bounds repair attribution by the incident's findings.
+// Latent findings can dispatch while health has been clear since before the
+// incident; that earlier streak cannot be the repair cutoff. Called with c.mu held.
 func (c *Controller) healthClearedAtLocked(finalStates []DetectorEvaluation) *time.Time {
+	states := finalStates
+	if c.currentIncidentRequest != nil {
+		ids := map[string]bool{}
+		for _, finding := range c.currentIncidentRequest.Findings {
+			ids[finding.DetectorID] = true
+		}
+		for id := range ids {
+			if since, ok := c.detectorClearSince[id]; ok && !since.Before(c.incidentDispatchedAt) {
+				states = append(states, DetectorEvaluation{DetectorID: id})
+			}
+		}
+	}
 	var cleared time.Time
-	for _, state := range finalStates {
+	for _, state := range states {
 		since, ok := c.detectorClearSince[state.DetectorID]
 		if !ok {
-			return nil
+			continue
+		}
+		if since.Before(c.incidentDispatchedAt) {
+			continue
 		}
 		if since.After(cleared) {
 			cleared = since
@@ -741,6 +832,13 @@ func (c *Controller) healthClearedAtLocked(finalStates []DetectorEvaluation) *ti
 		return nil
 	}
 	return &cleared
+}
+
+// CurrentAcceptedCommit returns the repository revision used for new tasks.
+func (c *Controller) CurrentAcceptedCommit() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.config.SourceCommit
 }
 
 // detectorOrigins maps each learned incident detector to the incident it was
@@ -757,9 +855,11 @@ func (c *Controller) detectorOrigins() map[string]string {
 
 func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) IncidentRequest {
 	incidentID := fmt.Sprintf("%s-%d", c.config.Application, now.UnixNano())
+	driftEvents := driftEventsForFindings(c.driftEvents, findings)
 	return IncidentRequest{
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
+		DriftEvents:     driftEvents,
 		DetectorHistory: compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
 		RelevantOutcomes: relevantOutcomeEvidence(
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
@@ -770,6 +870,36 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 		CancellationToken: "cancel-" + incidentID,
 		RepairPolicy:      c.config.RepairPolicy,
 	}
+}
+
+func driftEventsForFindings(history []sdk.DriftEvent, findings []sdk.Finding) []sdk.DriftEvent {
+	events := make([]sdk.DriftEvent, 0)
+	seen := make(map[string]bool)
+	for _, finding := range findings {
+		if finding.Status != sdk.FindingActive {
+			continue
+		}
+		encoded, err := json.Marshal(finding.Metadata["drift_event"])
+		if err != nil || string(encoded) == "null" {
+			continue
+		}
+		var linked sdk.DriftEvent
+		if err := json.Unmarshal(encoded, &linked); err != nil {
+			continue
+		}
+		key := driftEventKey(linked) + "\x00" + linked.ObservedAt.Format(time.RFC3339Nano)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, event := range history {
+			if event.Ref == linked.Ref && event.ObservedAt.Equal(linked.ObservedAt) && driftEventKey(event) == driftEventKey(linked) {
+				linked = event
+			}
+		}
+		events = append(events, linked)
+	}
+	return events
 }
 
 func compactDetectorHistory(history []DetectorEvaluation) []DetectorEvaluation {
@@ -860,13 +990,28 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentResult = nil
 		c.recordDispatchFailureLocked()
 	} else {
+		if !c.responderDone {
+			c.chargeDriftResponse(observedAt, completion.result)
+		}
 		c.responderDone = true
+		if len(completion.result.RepairActions) > 0 || len(completion.result.RepairChanges) > 0 {
+			c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
+			c.nextDriftSweep = observedAt
+		}
 		c.responderCompletedAt = observedAt.UTC()
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
 			c.responderCompletedAt = c.incidentDispatchedAt
 		}
 		c.dispatchState = "completed"
 		c.dispatchError = ""
+		completion.result.DriftEvents = checkedDriftAssessments(*c.currentIncidentRequest, completion.result.DriftEvents)
+		for _, label := range completion.result.DriftEvents {
+			for i, event := range c.currentIncidentRequest.DriftEvents {
+				if driftEventKey(label) == driftEventKey(event) && sameDriftObservation(label, event) {
+					c.currentIncidentRequest.DriftEvents[i] = label
+				}
+			}
+		}
 		c.currentIncidentResult = cloneIncidentResult(&completion.result)
 		c.resetDispatchRetryLocked()
 	}
@@ -902,7 +1047,7 @@ func (c *Controller) cleanupHelpers() {
 	}
 }
 
-func (c *Controller) maybeCloseIncident(now time.Time) {
+func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
 	c.mu.Lock()
 	if !c.incidentOpen || !c.responderDone || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
@@ -934,6 +1079,37 @@ func (c *Controller) maybeCloseIncident(now time.Time) {
 		}
 		c.mu.Unlock()
 		return
+	}
+	if c.config.CorpusSessionRoot != "" {
+		if snapshot == nil {
+			var err error
+			snapshot, err = c.provider.Snapshot(ctx)
+			if err != nil {
+				c.mu.Unlock()
+				c.reportBrokerError("capture verified snapshot", err)
+				return
+			}
+		}
+		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace); err != nil {
+			c.mu.Unlock()
+			c.reportBrokerError("capture verified snapshot", err)
+			return
+		}
+		if c.drift != nil && c.drift.View != nil {
+			incidentID := c.currentIncidentRequest.IncidentID
+			c.mu.Unlock()
+			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, c.drift.View)
+			c.mu.Lock()
+			if err != nil {
+				c.mu.Unlock()
+				c.reportBrokerError("capture verified program reads", err)
+				return
+			}
+			if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
+				c.mu.Unlock()
+				return
+			}
+		}
 	}
 	verifiedAt := now.UTC()
 	if verifiedAt.Before(c.responderCompletedAt) {
@@ -1145,13 +1321,20 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 		}
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
+		requireDriftClear := false
 		for _, finding := range c.currentIncidentRequest.Findings {
+			if strings.HasPrefix(finding.DetectorID, "drift.") {
+				requireDriftClear = true
+			}
 			if _, ok := seen[finding.DetectorID]; !ok {
 				seen[finding.DetectorID] = struct{}{}
 				ids = append(ids, finding.DetectorID)
 			}
 		}
 		sort.Strings(ids)
+		if requireDriftClear {
+			return c.latestEvaluations(ids, c.responderCompletedAt, true)
+		}
 		return c.latestEvaluations(ids, time.Time{}, false)
 	}
 	for _, detectorID := range c.healthDetectorIDs {
@@ -1159,7 +1342,22 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 			return nil, false
 		}
 	}
-	return c.latestEvaluations(c.healthDetectorIDs, c.responderCompletedAt, true)
+	ids := append([]string(nil), c.healthDetectorIDs...)
+	for _, finding := range c.currentIncidentRequest.Findings {
+		if strings.HasPrefix(finding.DetectorID, "drift.") {
+			if c.tracker.HasActiveDetector(finding.DetectorID) {
+				return nil, false
+			}
+			found := false
+			for _, id := range ids {
+				found = found || id == finding.DetectorID
+			}
+			if !found {
+				ids = append(ids, finding.DetectorID)
+			}
+		}
+	}
+	return c.latestEvaluations(ids, c.responderCompletedAt, true)
 }
 
 // incidentDetectorStates reports the latest evaluation since responder
@@ -1308,6 +1506,10 @@ func (c *Controller) ExportState() RuntimeState {
 		LastAcknowledgedIncidentID: c.lastAcknowledgedIncidentID,
 		PendingReleases:            append([]string(nil), c.pendingReleases...),
 		IncidentView:               cloneIncidentView(c.incidentView),
+		DriftEvents:                append([]sdk.DriftEvent(nil), c.driftEvents...),
+		DriftAdmission:             cloneDriftAdmission(c.driftAdmission),
+		ProgramSweepCursors:        maps.Clone(c.programSweepCursors),
+		OwnershipAdoption:          c.ownershipAdoption,
 		EvaluationIteration:        c.evaluationIteration,
 		DetectorTimeline:           cloneTimeline(c.timeline),
 	}
@@ -1331,6 +1533,10 @@ func (c *Controller) RestoreState(state RuntimeState) error {
 	c.responderDone = state.ResponderDone
 	c.currentIncidentRequest = cloneIncidentRequest(state.IncidentRequest)
 	c.currentIncidentResult = cloneIncidentResult(state.IncidentResult)
+	c.driftEvents = append([]sdk.DriftEvent(nil), state.DriftEvents...)
+	c.driftAdmission = cloneDriftAdmission(state.DriftAdmission)
+	c.programSweepCursors = maps.Clone(state.ProgramSweepCursors)
+	c.ownershipAdoption = state.OwnershipAdoption
 	c.dispatchError = state.DispatchError
 	c.incidentDetectedAt = state.IncidentDetectedAt
 	c.incidentDispatchedAt = state.IncidentDispatchedAt
@@ -1444,6 +1650,22 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	defer cancel()
 	state := c.ExportState()
+	if preparer, ok := c.dispatcher.(interface {
+		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
+	}); ok && state.DispatchState == "pending" && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
+		prepared, err := preparer.PrepareDispatch(actionCtx, *state.IncidentRequest)
+		if err != nil {
+			return fmt.Errorf("prepare responder dispatch: %w", err)
+		}
+		c.mu.Lock()
+		if c.currentIncidentRequest == nil || !sameIncidentRequest(*c.currentIncidentRequest, *state.IncidentRequest) {
+			c.mu.Unlock()
+			return ErrStateConflict
+		}
+		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
+		c.mu.Unlock()
+		state.IncidentRequest = cloneIncidentRequest(&prepared)
+	}
 	revision, err := c.stateStore.Save(actionCtx, state, c.stateRevision)
 	if err != nil {
 		// The write may or may not have landed; no effect recorded since the
@@ -1469,4 +1691,22 @@ func (c *Controller) actionContext(ctx context.Context) (context.Context, contex
 	}
 	actionCtx, cancel := context.WithCancel(ctx)
 	return actionCtx, cancel, nil
+}
+
+func (c *Controller) hasRetainedDrift() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentIncidentRequest != nil {
+		for _, f := range c.currentIncidentRequest.Findings {
+			if strings.HasPrefix(f.DetectorID, "drift.") {
+				return true
+			}
+		}
+	}
+	for _, f := range c.batcher.Snapshot().Findings {
+		if strings.HasPrefix(f.DetectorID, "drift.") {
+			return true
+		}
+	}
+	return false
 }

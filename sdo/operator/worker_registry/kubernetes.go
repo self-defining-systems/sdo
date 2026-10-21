@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"path"
 	"sort"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/devmount"
 )
 
 const (
@@ -30,19 +33,23 @@ const (
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
-	Client                kubernetes.Interface
-	Namespace             string
-	Registry              *Registry
-	ServiceAccount        string
-	RepositoryPVC         string
-	RepositoryMountPath   string
-	RepositoryPVCSubPath  string
-	SessionPVCSubPath     string
-	HealthyBaseline       bool
-	CredentialsSecret     string
-	LateFindingsConfigMap string
-	Environment           map[string]string
-	PollInterval          time.Duration
+	TaskPayload            string
+	CapturedCorpusReadOnly bool
+	RepositoryReadOnly     bool
+	OnPhase                func(context.Context, string) error
+	Client                 kubernetes.Interface
+	Namespace              string
+	Registry               *Registry
+	ServiceAccount         string
+	RepositoryPVC          string
+	RepositoryMountPath    string
+	RepositoryPVCSubPath   string
+	SessionPVCSubPath      string
+	HealthyBaseline        bool
+	CredentialsSecret      string
+	LateFindingsConfigMap  string
+	Environment            map[string]string
+	PollInterval           time.Duration
 }
 
 type JobFailedError struct{ JobName string }
@@ -86,6 +93,13 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err != nil {
 		return nil, fmt.Errorf("encode agent task: %w", err)
 	}
+	if e.TaskPayload != "" {
+		prepared := new(contracts.AgentTask)
+		if err := protojson.Unmarshal([]byte(e.TaskPayload), prepared); err != nil || !proto.Equal(prepared, task) {
+			return nil, errors.New("prepared agent task differs from validated task")
+		}
+		payload = []byte(e.TaskPayload)
+	}
 	jobName := JobName(task.GetTaskId())
 	requestName, resultName := jobName+"-request", jobName+"-result"
 	if err := e.ensureRequest(ctx, requestName, string(payload)); err != nil {
@@ -94,9 +108,44 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	if err := e.ensureJob(ctx, task, launch, jobName, requestName, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
+	if e.OnPhase != nil {
+		if err := e.OnPhase(ctx, "reflection_job_created"); err != nil {
+			return nil, err
+		}
+	}
 	ticker := time.NewTicker(e.PollInterval)
 	defer ticker.Stop()
+	observed := map[string]bool{}
 	for {
+		if e.OnPhase != nil && !observed["pod_ready"] {
+			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
+			if err == nil {
+				for _, pod := range pods.Items {
+					for _, condition := range pod.Status.Conditions {
+						if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue && !observed["pod_scheduled"] {
+							if err := e.OnPhase(ctx, "pod_scheduled"); err != nil {
+								return nil, err
+							}
+							observed["pod_scheduled"] = true
+						}
+					}
+					if pod.Status.StartTime != nil && !observed["pod_started"] {
+						if err := e.OnPhase(ctx, "pod_started"); err != nil {
+							return nil, err
+						}
+						observed["pod_started"] = true
+					}
+					for _, condition := range pod.Status.Conditions {
+						if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue && !observed["pod_ready"] {
+							if err := e.OnPhase(ctx, "pod_ready"); err != nil {
+								return nil, err
+							}
+							observed["pod_ready"] = true
+						}
+					}
+				}
+			}
+		}
 		job, jobErr := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{})
 		if jobErr != nil && !apierrors.IsNotFound(jobErr) {
 			return nil, fmt.Errorf("get agent Job: %w", jobErr)
@@ -106,6 +155,12 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		}
 		resultMap, err := e.Client.CoreV1().ConfigMaps(e.Namespace).Get(ctx, resultName, metav1.GetOptions{})
 		if err == nil {
+			if e.OnPhase != nil && !observed["worker_result_written"] {
+				if err := e.OnPhase(ctx, "worker_result_written"); err != nil {
+					return nil, err
+				}
+				observed["worker_result_written"] = true
+			}
 			data, ok := resultMap.Data[ResultDataKey]
 			if !ok {
 				return nil, fmt.Errorf("result ConfigMap %q has no %s", resultName, ResultDataKey)
@@ -156,6 +211,13 @@ func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload str
 	return nil
 }
 
+const (
+	codexHomesVolume = "codex-homes"
+	// CodexHomesMountPath is the private writable directory for per-turn Codex homes. Codex rejects a home under
+	// /tmp or the checkout, and the worker's root filesystem is read-only.
+	CodexHomesMountPath = "/sdo/codex-homes"
+)
+
 func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName, requestName, resultName, proposalSubPath string) error {
 	backoffLimit := int32(0)
 	ttl := int32(3600)
@@ -166,16 +228,23 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	envFrom := []corev1.EnvFromSource{}
 	mounts := []corev1.VolumeMount{
 		{Name: "request", MountPath: "/sdo/request", ReadOnly: true},
-		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath},
+		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath, ReadOnly: e.RepositoryReadOnly},
 		{Name: "scratch", MountPath: "/tmp"},
+		{Name: codexHomesVolume, MountPath: CodexHomesMountPath},
 	}
 	volumes := []corev1.Volume{
 		{Name: "request", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: requestName}}}},
 		{Name: "repository", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.RepositoryPVC}}},
 		{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: codexHomesVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	}
 	if e.SessionPVCSubPath != "" {
+		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
+		// leave the kubelet waiting forever for the pod's volumes.
 		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session", SubPath: e.SessionPVCSubPath})
+		if e.CapturedCorpusReadOnly {
+			mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/corpus", SubPath: path.Join(e.SessionPVCSubPath, "corpus"), ReadOnly: true})
+		}
 	}
 	if e.LateFindingsConfigMap != "" {
 		mounts = append(mounts, corev1.VolumeMount{Name: "late-findings", MountPath: "/sdo/late-findings", ReadOnly: true})
@@ -190,6 +259,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		{Name: "SDO_REQUEST_CONFIGMAP", Value: requestName},
 		{Name: "SDO_RESULT_CONFIGMAP", Value: resultName},
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
+		{Name: "SDO_CODEX_HOME_ROOT", Value: CodexHomesMountPath},
 	}
 	reflection := task.GetRequest().MessageIs(&contracts.ReflectionRequest{})
 	judge := task.GetRequest().MessageIs(&contracts.HealthJudgeRequest{})
@@ -209,7 +279,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline})
 	}
-	reserved := map[string]bool{"SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection}
+	reserved := map[string]bool{"SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -220,6 +290,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	for _, name := range names {
 		env = append(env, corev1.EnvVar{Name: name, Value: e.Environment[name]})
 	}
+	// Unconfined seccomp: Codex's bubblewrap sandbox needs unprivileged user namespaces, which RuntimeDefault denies
+	// (verified: `codex sandbox` fails under RuntimeDefault and runs under Unconfined). The pod stays non-root with
+	// every capability dropped and privilege escalation off.
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: e.Namespace},
 		Spec: batchv1.JobSpec{BackoffLimit: &backoffLimit, TTLSecondsAfterFinished: &ttl,
@@ -227,7 +300,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app.kubernetes.io/name": "sdo-worker", "sdo.dev/incident": jobName}},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever, ServiceAccountName: e.ServiceAccount,
-					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+					SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: &nonRoot, RunAsUser: &uid, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}},
 					Containers: []corev1.Container{{
 						Name: "agent", Image: launch.GetImage(), Command: append([]string(nil), launch.GetCommand()...),
 						WorkingDir: task.GetWorkspace().GetCheckoutPath(), EnvFrom: envFrom, Env: env, VolumeMounts: mounts,
@@ -237,6 +310,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 				},
 			},
 		},
+	}
+	if devmount.Enabled() {
+		devmount.Apply(&job.Spec.Template.Spec)
 	}
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("create agent Job: %w", err)

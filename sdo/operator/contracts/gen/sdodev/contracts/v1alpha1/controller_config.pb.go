@@ -115,9 +115,22 @@ type ControllerConfig struct {
 	ReflectionGuidance string `protobuf:"bytes,53,opt,name=reflection_guidance,json=reflectionGuidance,proto3" json:"reflection_guidance,omitempty"`
 	// Replays incident detectors on benchmark-supplied healthy snapshots. The
 	// validator receives only the bounded snapshot directory, read-only.
-	HealthyBaseline bool `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	HealthyBaseline        bool                 `protobuf:"varint,54,opt,name=healthy_baseline,json=healthyBaseline,proto3" json:"healthy_baseline,omitempty"`
+	MaxResponseLoops       int32                `protobuf:"varint,55,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
+	DiagnosisDeadline      *durationpb.Duration `protobuf:"bytes,56,opt,name=diagnosis_deadline,json=diagnosisDeadline,proto3" json:"diagnosis_deadline,omitempty"`
+	DiagnosisSettleDelay   *durationpb.Duration `protobuf:"bytes,57,opt,name=diagnosis_settle_delay,json=diagnosisSettleDelay,proto3" json:"diagnosis_settle_delay,omitempty"`
+	DriftSweepInterval     *durationpb.Duration `protobuf:"bytes,58,opt,name=drift_sweep_interval,json=driftSweepInterval,proto3" json:"drift_sweep_interval,omitempty"`
+	DriftBatchWindow       *durationpb.Duration `protobuf:"bytes,66,opt,name=drift_batch_window,json=driftBatchWindow,proto3" json:"drift_batch_window,omitempty"`
+	DriftDispatchesPerHour int32                `protobuf:"varint,67,opt,name=drift_dispatches_per_hour,json=driftDispatchesPerHour,proto3" json:"drift_dispatches_per_hour,omitempty"`
+	DriftTokensPerHour     int64                `protobuf:"varint,68,opt,name=drift_tokens_per_hour,json=driftTokensPerHour,proto3" json:"drift_tokens_per_hour,omitempty"`
+	ForceReflection        bool                 `protobuf:"varint,62,opt,name=force_reflection,json=forceReflection,proto3" json:"force_reflection,omitempty"`
+	DeployedManifestPaths  []string             `protobuf:"bytes,63,rep,name=deployed_manifest_paths,json=deployedManifestPaths,proto3" json:"deployed_manifest_paths,omitempty"`
+	ProgramFastPath        bool                 `protobuf:"varint,64,opt,name=program_fast_path,json=programFastPath,proto3" json:"program_fast_path,omitempty"`
+	ProgramTrustThreshold  int32                `protobuf:"varint,65,opt,name=program_trust_threshold,json=programTrustThreshold,proto3" json:"program_trust_threshold,omitempty"`
+	// Unset uses the runtime's 10-second firing and clearing confirmation.
+	ProgramMinDuration *durationpb.Duration `protobuf:"bytes,69,opt,name=program_min_duration,json=programMinDuration,proto3" json:"program_min_duration,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -516,11 +529,95 @@ func (x *ControllerConfig) GetHealthyBaseline() bool {
 	return false
 }
 
+func (x *ControllerConfig) GetMaxResponseLoops() int32 {
+	if x != nil {
+		return x.MaxResponseLoops
+	}
+	return 0
+}
+
+func (x *ControllerConfig) GetDiagnosisDeadline() *durationpb.Duration {
+	if x != nil {
+		return x.DiagnosisDeadline
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetDiagnosisSettleDelay() *durationpb.Duration {
+	if x != nil {
+		return x.DiagnosisSettleDelay
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetDriftSweepInterval() *durationpb.Duration {
+	if x != nil {
+		return x.DriftSweepInterval
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetDriftBatchWindow() *durationpb.Duration {
+	if x != nil {
+		return x.DriftBatchWindow
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetDriftDispatchesPerHour() int32 {
+	if x != nil {
+		return x.DriftDispatchesPerHour
+	}
+	return 0
+}
+
+func (x *ControllerConfig) GetDriftTokensPerHour() int64 {
+	if x != nil {
+		return x.DriftTokensPerHour
+	}
+	return 0
+}
+
+func (x *ControllerConfig) GetForceReflection() bool {
+	if x != nil {
+		return x.ForceReflection
+	}
+	return false
+}
+
+func (x *ControllerConfig) GetDeployedManifestPaths() []string {
+	if x != nil {
+		return x.DeployedManifestPaths
+	}
+	return nil
+}
+
+func (x *ControllerConfig) GetProgramFastPath() bool {
+	if x != nil {
+		return x.ProgramFastPath
+	}
+	return false
+}
+
+func (x *ControllerConfig) GetProgramTrustThreshold() int32 {
+	if x != nil {
+		return x.ProgramTrustThreshold
+	}
+	return 0
+}
+
+func (x *ControllerConfig) GetProgramMinDuration() *durationpb.Duration {
+	if x != nil {
+		return x.ProgramMinDuration
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe3\x15\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xdc\x1c\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -581,10 +678,22 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x12reflection_session\x184 \x01(\tB\x16\xbaH\x13r\x11R\x00R\x05freshR\x06resumeR\x11reflectionSession\x12_\n" +
 	"\x13reflection_guidance\x185 \x01(\tB.\xbaH+r)R\x00R\bbaselineR\n" +
 	"generalizeR\x0fgeneralize-specR\x12reflectionGuidance\x12)\n" +
-	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaselineB\x14\n" +
+	"\x10healthy_baseline\x186 \x01(\bR\x0fhealthyBaseline\x125\n" +
+	"\x12max_response_loops\x187 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x10maxResponseLoops\x12H\n" +
+	"\x12diagnosis_deadline\x188 \x01(\v2\x19.google.protobuf.DurationR\x11diagnosisDeadline\x12O\n" +
+	"\x16diagnosis_settle_delay\x189 \x01(\v2\x19.google.protobuf.DurationR\x14diagnosisSettleDelay\x12K\n" +
+	"\x14drift_sweep_interval\x18: \x01(\v2\x19.google.protobuf.DurationR\x12driftSweepInterval\x12G\n" +
+	"\x12drift_batch_window\x18B \x01(\v2\x19.google.protobuf.DurationR\x10driftBatchWindow\x129\n" +
+	"\x19drift_dispatches_per_hour\x18C \x01(\x05R\x16driftDispatchesPerHour\x121\n" +
+	"\x15drift_tokens_per_hour\x18D \x01(\x03R\x12driftTokensPerHour\x12)\n" +
+	"\x10force_reflection\x18> \x01(\bR\x0fforceReflection\x126\n" +
+	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12*\n" +
+	"\x11program_fast_path\x18@ \x01(\bR\x0fprogramFastPath\x12?\n" +
+	"\x17program_trust_threshold\x18A \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x15programTrustThreshold\x12U\n" +
+	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDurationB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
-	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13R\x06brokerR\vbroker_argsB\x88\x02\n" +
+	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\x06brokerR\vbroker_argsR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -605,19 +714,24 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_goTypes = []any{
 	(*durationpb.Duration)(nil), // 1: google.protobuf.Duration
 }
 var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
-	1, // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
-	1, // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
-	1, // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	1, // 3: sdodev.contracts.v1alpha1.ControllerConfig.follow_up_cooldown:type_name -> google.protobuf.Duration
-	1, // 4: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	1, // 5: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	1, // 6: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	1, // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	8, // [8:8] is the sub-list for method output_type
-	8, // [8:8] is the sub-list for method input_type
-	8, // [8:8] is the sub-list for extension type_name
-	8, // [8:8] is the sub-list for extension extendee
-	0, // [0:8] is the sub-list for field type_name
+	1,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
+	1,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
+	1,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
+	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.follow_up_cooldown:type_name -> google.protobuf.Duration
+	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
+	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
+	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
+	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
+	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_settle_delay:type_name -> google.protobuf.Duration
+	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.drift_sweep_interval:type_name -> google.protobuf.Duration
+	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	1,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.program_min_duration:type_name -> google.protobuf.Duration
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

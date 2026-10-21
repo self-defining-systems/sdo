@@ -9,12 +9,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 from agentshim.providers.codex import CodexSandboxConfig, parse_sandbox
+from agentshim.testing import scripted_resume_failure
 from google.protobuf import json_format
 
 from sdo.agents.responder.reflection import (
     ClaudeSessionBackend,
     CodexSessionBackend,
     ReflectionTurn,
+    ResponderSessionUnavailable,
     SessionReflector,
     reflection_output_schema,
 )
@@ -25,10 +27,11 @@ from sdo.contracts import (
     MemoryDiagnostic,
     OperationalMemorySnapshot,
     OutcomeRecord,
+    StateChanges,
     datetime_timestamp,
 )
-from tests.proto_messages import evolve
-from tests.structured_turns import ScriptedAgent, reply
+from tests.proto_messages import evolve, from_dict
+from tests.structured_turns import ScriptedAgent, failure, reply
 
 if TYPE_CHECKING:
     from agentshim import CommandRequest
@@ -180,10 +183,12 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "until it exits zero" in prompt
     assert "sdo-operator memory check" in prompt
     assert "draft-test" not in prompt
+    assert "sdo-detector-authoring" in prompt
+    assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
     assert "Edit the final files directly" in prompt
     assert "sdo.operational_memory" not in prompt
-    assert json.dumps({"incident_id": "inc-1"}) not in prompt  # full outcome context is richer
+    assert json.dumps({"incident_id": "inc-1"}) not in prompt
 
 
 def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path) -> None:
@@ -247,3 +252,181 @@ def test_broker_diagnostic_correction_starts_a_fresh_file_edit_session(tmp_path:
     assert "document.parse" in str(call["prompt"])
     assert "Author corrected final files" in str(call["prompt"])
     assert "artifact_proposal" not in str(call["prompt"])
+
+
+def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", raising=False)
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    for required in (
+        "for each confirmed fault",
+        "diagnose.go",
+        "mitigate.go",
+        "open and return NoMatch at fixed and healthy",
+        "recordings",
+        "labels",
+        "root_cause_program_ids",
+        "peer_bindings",
+        "open_sha256",
+        "ReconcileFromSource or Rollback",
+        "container status reasons",
+        "sdo.dev/operator/sdk/program",
+        "diagnostics-module library helpers",
+        "diagnostics module path",
+        "Params",
+        "derive names, ports and images from bindings and the ReadView",
+        "every name, port and image renamed",
+        "allowed imports",
+        "/opt/sdo/examples/playbook-programs/playbooks/service-targetport-mismatch/diagnose.go",
+        "/opt/sdo/examples/playbook-programs/corpus/targetport-mismatch/",
+        "sdk_gap",
+        "Record each reused program ID",
+        "NoMatch",
+        "no shell commands",
+        "rerun",
+    ):
+        assert required in prompt
+
+
+def test_reflection_prompt_uses_configured_example_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", "/custom/examples")
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    assert "/custom/examples/playbooks/service-targetport-mismatch/diagnose.go" in str(backend.calls[0]["prompt"])
+
+
+def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_brief import incident_brief
+
+    closure = _fresh_closure(tmp_path)
+    observed = datetime(2026, 7, 9, 18, 0, tzinfo=timezone.utc)
+    closure.request.state_changes.CopyFrom(
+        from_dict(
+            StateChanges,
+            {
+                "baseline_at": observed,
+                "observed_at": observed,
+                "changes": [
+                    {
+                        "kind": "Service",
+                        "name": "api",
+                        "change": "modified",
+                        "fields": [{"field": "targetPort", "after": "9999"}],
+                    }
+                ],
+            },
+        )
+    )
+    closure.final_state_changes.CopyFrom(
+        from_dict(StateChanges, {"baseline_at": observed, "observed_at": observed, "changes": []})
+    )
+    brief = incident_brief(closure, worktree=tmp_path)
+    assert "State changes at dispatch" in brief
+    assert "targetPort" in brief
+    assert "State changes at verification" in brief
+
+
+def test_fresh_reflection_brief_summarizes_program_diagnosis_and_application(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_brief import incident_brief
+
+    closure = _fresh_closure(tmp_path)
+    assert closure.result is not None
+    payload = json_format.MessageToDict(closure.result, preserving_proto_field_name=True)
+    payload["program_runs"] = [
+        {"program_id": "targetport", "verdict": {"result": "RESULT_MATCH"}, "duration": "0.1s"},
+        {"program_id": "other", "verdict": {"result": "RESULT_NO_MATCH"}, "duration": "0.1s"},
+    ]
+    payload["plan_applications"] = [
+        {
+            "application_id": "application-1",
+            "program_ids": ["targetport"],
+            "plan": {"actions": []},
+            "applied": True,
+            "verification": {"result": "RESULT_NO_MATCH"},
+        }
+    ]
+    closure.result.CopyFrom(from_dict(IncidentResult, payload))
+    brief = incident_brief(closure, worktree=tmp_path)
+    assert "targetport: Match" in brief
+    assert "other: NoMatch" in brief
+    assert "application-1" in brief
+    assert "verification NoMatch" in brief
+
+
+def test_missing_provider_session_restarts_reflection_fresh(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    class MissingSession(_CapturingBackend):
+        def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            raise ResponderSessionUnavailable("session not found")
+
+    backend = MissingSession()
+    turn = SessionReflector(backend).resume(
+        session_id="missing",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    assert turn.learning_decision == "no_change"
+    assert backend.calls[0]["mode"] == "fresh"
+    assert "session not found" in capsys.readouterr().err
+
+
+def test_generic_resume_failure_propagates_without_fresh_retry(tmp_path: Path) -> None:
+    error = RuntimeError("model unavailable")
+
+    class FailingBackend(_CapturingBackend):
+        def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            self.calls.append({"mode": "resume"})
+            raise error
+
+    backend = FailingBackend()
+    with pytest.raises(RuntimeError) as caught:
+        SessionReflector(backend).resume(
+            session_id="session-1",
+            incident_id="inc-1",
+            worktree=tmp_path,
+            outcome=_outcome(),
+            history=[],
+            outcome_commit="outcome-sha",
+            closure=_fresh_closure(tmp_path),
+        )
+    assert caught.value is error
+    assert backend.calls == [{"mode": "resume"}]
+
+
+def test_claude_model_failure_is_not_classified_as_missing_session(tmp_path: Path) -> None:
+    backend = ClaudeSessionBackend(
+        executor=ScriptedAgent(lambda _request: failure(stderr="model unavailable")).executor
+    )
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        backend.resume(session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="key")
+
+
+@pytest.mark.parametrize(
+    ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
+)
+def test_provider_missing_session_raises_typed_error(provider: str, backend_type: type, tmp_path: Path) -> None:
+    backend = backend_type(executor=ScriptedAgent(lambda _request: scripted_resume_failure(provider)).executor)
+    with pytest.raises(ResponderSessionUnavailable):
+        backend.resume(session_id="missing", worktree=tmp_path, prompt="reflect", idempotency_key="key")
