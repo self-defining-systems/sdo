@@ -30,7 +30,35 @@ uv run pytest tests/ --cov=sdo
 (cd sdo/operator/sdk && go test ./...)
 (cd sdo/operator/core && go test ./...)
 (cd sdo/operator/runtime && go test ./...)
+(cd sdo/operator/contracts && go test ./...)
 ```
+
+The operator Go suite includes `TestHermeticResponderProgramReuseThroughRealToolTransport`,
+`TestHermeticControllerClosureReachesNativeOutcomeBroker`, and
+`TestScriptedReflectionScaffoldProposeAndWorkerResult`. Together they exercise
+the fake Kubernetes API, source repairs, native controller and broker closure,
+real responder tool transport, captured corpus phases, program draft validation
+and compilation, and bounded worker result encoding without a cluster or LLM.
+The responder test injects compiled registry programs after reflection; the
+operator CLI test compiles the proposed source separately. The recorded result
+fixtures under `sdo/operator/runtime/testdata/recorded_results/` replay real
+redacted worker envelopes through contract decoding and the native broker.
+
+Historical plumbing regressions have focused checks in the same suites:
+
+| Regression | Contract check |
+| --- | --- |
+| Pre-image persistence | `TestHermeticResponderProgramReuseThroughRealToolTransport` saves and reloads plan applications through a ConfigMap; `TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence` covers JSON round trips. |
+| Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestRecordedWorkerResultsReplayThroughContracts` rejects them in fixtures. |
+| Plan apply RBAC | `sdo/operator/install` tests check Service and Deployment get/patch grants. |
+| Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |
+| Capture size and timing | `sdo/operator/operatorcli` draft tests reject oversized captures; the responder loop checks detect, settle, and pre-apply snapshots. |
+| Pre-existing seed formatting | `TestScriptedReflectionScaffoldProposeAndWorkerResult` proposes over an unformatted accepted health source. |
+| ConfigMap and reflection transport size | `TestHermeticFakeConfigMapEnforcesProductionLimit` rejects a state over 1 MiB; `TestScriptedReflectionScaffoldProposeAndWorkerResult` checks a corpus reference stays below 700 KiB, and `TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit` rejects an oversized envelope. |
+
+The no-LLM kind path is documented in
+`benchmarks/sregym/experiments/fastloop/README.md`. It is intentionally run by
+the experiment lead because it builds images and changes a kind cluster.
 
 Use `scripts/run_tests.sh` for the repository-wide suite.
 

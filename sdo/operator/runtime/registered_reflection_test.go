@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,22 @@ func TestRegisteredReflectionWorkerExportsTurnUsage(t *testing.T) {
 	}
 	if decision.Usage == nil || decision.Usage.InputTokens != 42 || decision.Usage.OutputTokens != 7 || decision.Usage.GetModelRequests() != 2 {
 		t.Fatalf("reflection usage lost: %+v", decision.Usage)
+	}
+}
+
+func TestRegisteredReflectionWorkerRejectsOversizedResultBeforeCommit(t *testing.T) {
+	worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute, SessionMode: "fresh"}
+	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: strings.Repeat("x", 700<<10)})
+		if err != nil {
+			return nil, err
+		}
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	})
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: "/proposal", BaseCommit: "base"}
+	_, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", "outcome")
+	if err == nil || !strings.Contains(err.Error(), "transport limit") {
+		t.Fatalf("oversized worker result passed reflection validation: %v", err)
 	}
 }
 
