@@ -433,6 +433,7 @@ message IncidentResult {
   repeated string program_failure_signals = 21;
   string resolution_path = 22 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
   repeated string fast_path_programs = 23;
+  string fast_path_skipped_reason = 24;
 }
 
 // A responder claim that it read controller-published findings during its turn.

@@ -172,6 +172,7 @@ type IncidentResult struct {
 	ResponseLoopExhausted bool                      `json:"response_loop_exhausted,omitempty"`
 	ResolutionPath        string                    `json:"resolution_path,omitempty"`
 	FastPathPrograms      []string                  `json:"fast_path_programs,omitempty"`
+	FastPathSkippedReason FastPathSkipReason        `json:"fast_path_skipped_reason,omitempty"`
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

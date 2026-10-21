@@ -124,7 +124,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		ProgramToolCalls:      cloneMessages(result.GetProgramToolCalls()), ProgramRuns: cloneMessages(result.GetProgramRuns()),
 		PlanApplications: cloneMessages(result.GetPlanApplications()), ProgramFailureSignals: append([]string(nil), result.GetProgramFailureSignals()...),
 		ResponseLoopsUsed: result.GetResponseLoopsUsed(), ResponseLoopExhausted: result.GetResponseLoopExhausted(),
-		ResolutionPath: result.GetResolutionPath(), FastPathPrograms: append([]string(nil), result.GetFastPathPrograms()...),
+		ResolutionPath: result.GetResolutionPath(), FastPathPrograms: append([]string(nil), result.GetFastPathPrograms()...), FastPathSkippedReason: result.GetFastPathSkippedReason(),
 	}
 	reflect := false
 	if classification == "success" {

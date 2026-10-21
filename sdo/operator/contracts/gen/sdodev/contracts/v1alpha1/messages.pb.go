@@ -2964,6 +2964,7 @@ type IncidentResult struct {
 	ProgramFailureSignals []string                `protobuf:"bytes,21,rep,name=program_failure_signals,json=programFailureSignals,proto3" json:"program_failure_signals,omitempty"`
 	ResolutionPath        string                  `protobuf:"bytes,22,opt,name=resolution_path,json=resolutionPath,proto3" json:"resolution_path,omitempty"`
 	FastPathPrograms      []string                `protobuf:"bytes,23,rep,name=fast_path_programs,json=fastPathPrograms,proto3" json:"fast_path_programs,omitempty"`
+	FastPathSkippedReason string                  `protobuf:"bytes,24,opt,name=fast_path_skipped_reason,json=fastPathSkippedReason,proto3" json:"fast_path_skipped_reason,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -3157,6 +3158,13 @@ func (x *IncidentResult) GetFastPathPrograms() []string {
 		return x.FastPathPrograms
 	}
 	return nil
+}
+
+func (x *IncidentResult) GetFastPathSkippedReason() string {
+	if x != nil {
+		return x.FastPathSkippedReason
+	}
+	return ""
 }
 
 // A responder claim that it read controller-published findings during its turn.
@@ -3958,7 +3966,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
 	"reversible:n\xbaHk\x1ai\n" +
-	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x92\x0e\n" +
+	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xcb\x0e\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12(\n" +
@@ -3985,7 +3993,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x17response_loop_exhausted\x18\x14 \x01(\bR\x15responseLoopExhausted\x126\n" +
 	"\x17program_failure_signals\x18\x15 \x03(\tR\x15programFailureSignals\x12F\n" +
 	"\x0fresolution_path\x18\x16 \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\tfast_pathR\tresponderR\x0eresolutionPath\x12,\n" +
-	"\x12fast_path_programs\x18\x17 \x03(\tR\x10fastPathPrograms:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
+	"\x12fast_path_programs\x18\x17 \x03(\tR\x10fastPathPrograms\x127\n" +
+	"\x18fast_path_skipped_reason\x18\x18 \x01(\tR\x15fastPathSkippedReason:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
 	"\x15_responder_session_idB\b\n" +
 	"\x06_error\"\xbd\x01\n" +

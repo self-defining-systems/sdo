@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -41,6 +42,10 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 			}
 			return result, "", true, nil
 		case "failed":
+			loop.fastPathSkippedReason = FastPathSkipReason(marker.Data["skip_reason"])
+			if loop.fastPathSkippedReason != "" {
+				log.Printf("incident %s trusted program fast path skipped: %s", request.IncidentID, loop.fastPathSkippedReason)
+			}
 			return IncidentResult{}, marker.Data["summary"], false, nil
 		default:
 			summary := "previous trusted program fast path was interrupted before application"
@@ -100,6 +105,9 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		return err
 	}
 	attempt := loop.TryTrustedFastPath(ctx, minimum)
+	if !attempt.Attempted {
+		log.Printf("incident %s trusted program fast path skipped: %s", request.IncidentID, attempt.SkippedReason)
+	}
 	if attempt.Resolved {
 		result := fastPathResult(request, loop, attempt, started)
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
@@ -122,14 +130,11 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 	}
 	summary := attempt.Summary
 	if summary == "" {
-		summary = "trusted program fast path was ineligible after settled diagnosis"
+		summary = "trusted program fast path skipped: " + string(attempt.SkippedReason)
 	}
-	marker.Data = map[string]string{"state": "failed", "summary": summary}
+	marker.Data = map[string]string{"state": "failed", "summary": summary, "skip_reason": string(attempt.SkippedReason)}
 	if _, err := maps.Update(ctx, marker, metav1.UpdateOptions{}); err != nil {
 		return IncidentResult{}, "", false, fmt.Errorf("record fast-path handoff: %w", err)
-	}
-	if !attempt.Attempted {
-		return IncidentResult{}, "", false, nil
 	}
 	return IncidentResult{}, summary, false, nil
 }

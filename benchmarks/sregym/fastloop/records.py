@@ -128,10 +128,12 @@ class IncidentRecord(_PersistedModel):
     reflection_tokens: TokenCounts = Field(default_factory=TokenCounts)
     warm_path: bool | None = None
     match_reasons: list[str] = Field(default_factory=list)
+    binding_sources: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
     resolution_path: str | None = None
     fast_path_programs: list[str] = Field(default_factory=list)
+    fast_path_skipped_reason: str | None = None
     closure_phase_seconds: dict[str, float] = Field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = Field(default_factory=dict)
     fault_gate_timings_seconds: dict[str, float] = Field(default_factory=dict)

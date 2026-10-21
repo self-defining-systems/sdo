@@ -257,6 +257,7 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	}
 	closure := nativeClosure(workspace)
 	closure.Request.RepairPolicy = "recorded-actions"
+	closure.Result.FastPathSkippedReason = FastPathSkipUnexplainedFinding
 	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +267,9 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	ledger, err := native.readLedger("timed")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if ledger.FastPathSkippedReason != FastPathSkipUnexplainedFinding {
+		t.Fatalf("fast-path skip reason missing from native ledger: %+v", ledger)
 	}
 	var previous time.Time
 	for _, phase := range []string{"closure_start", "outcome_write", "broker_commit", "reflection_dispatch", "worker_result_picked_up"} {

@@ -24,6 +24,74 @@ def test_program_metrics_exports_fast_path_resolution() -> None:
     assert fields["fast_path_programs"] == ("targetport",)
 
 
+def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+
+    fields = _program_metrics(
+        {
+            "fast_path_skipped_reason": "unexplained_finding",
+            "program_runs": [
+                {
+                    "program_id": "targetport",
+                    "binding_source": "hint",
+                    "verdict": {"result": "RESULT_MATCH", "evidence": [{"fact": "wrong target port"}]},
+                },
+                {
+                    "program_id": "targetport",
+                    "binding_source": "finding",
+                    "verdict": {"result": "RESULT_MATCH", "evidence": [{"fact": "wrong target port"}]},
+                },
+            ],
+        }
+    )
+    assert fields["match_reasons"] == ("wrong target port",)
+    assert fields["binding_sources"] == ("hint", "finding")
+    assert fields["fast_path_skipped_reason"] == "unexplained_finding"
+
+
+def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.loop import _outcome_fields
+    from benchmarks.sregym.fastloop.records import IncidentRecord, append_record
+
+    receipt = _receipt("incident-1", warm=False)
+    receipt["native_ledger"] = {
+        "outcome_document": {
+            "resolution_path": "responder",
+            "fast_path_skipped_reason": "unexplained_finding",
+            "program_runs": [
+                {
+                    "program_id": "targetport",
+                    "binding_source": "hint",
+                    "verdict": {"result": "RESULT_MATCH", "evidence": [{"fact": "wrong target port"}]},
+                },
+                {
+                    "program_id": "targetport",
+                    "binding_source": "finding",
+                    "verdict": {"result": "RESULT_MATCH", "evidence": [{"fact": "wrong target port"}]},
+                },
+            ],
+        }
+    }
+    agent = _agent(tmp_path, FakeOps(receipt_override=receipt), [])
+    learned = agent.learn(agent.resolve(0, "p", _inject))
+    record = IncidentRecord(
+        run_id="test",
+        index=0,
+        agent="sdo",
+        problem_id="p",
+        model="test",
+        injection_started_at=INJECTED,
+        injection_finished_at=INJECTED,
+        **_outcome_fields(learned),
+    )
+    path = tmp_path / "incidents.jsonl"
+    append_record(path, record)
+    row = load_records(path)[0]
+    assert row.match_reasons == ["wrong target port"]
+    assert row.binding_sources == ["hint", "finding"]
+    assert row.fast_path_skipped_reason == "unexplained_finding"
+
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

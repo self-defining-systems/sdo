@@ -572,6 +572,7 @@ class IncidentResult(ContractModel):
     program_failure_signals: list[str] = Field(default_factory=list)
     resolution_path: Literal["", "fast_path", "responder"] = ""
     fast_path_programs: list[str] = Field(default_factory=list)
+    fast_path_skipped_reason: str = ""
 
     @model_validator(mode="after")
     def validate_repair_action_ids(self) -> IncidentResult:

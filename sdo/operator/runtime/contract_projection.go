@@ -195,7 +195,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents),
-		FastPathSummary: request.FastPathSummary,
+		FastPathSummary:  request.FastPathSummary,
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -247,7 +247,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		Timing:               &contracts.TimingMetrics{StartedAt: contractTimestamp(result.Timing.StartedAt), CompletedAt: contractTimestamp(result.Timing.CompletedAt)},
 		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
-		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...),
+		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...), FastPathSkippedReason: string(result.FastPathSkippedReason),
 	}
 	for _, call := range result.ProgramToolCalls {
 		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
@@ -342,7 +342,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
-		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...),
+		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...), FastPathSkippedReason: FastPathSkipReason(message.GetFastPathSkippedReason()),
 	}
 	for _, call := range message.GetProgramToolCalls() {
 		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))

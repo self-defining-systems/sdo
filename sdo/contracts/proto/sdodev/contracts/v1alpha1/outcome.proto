@@ -43,6 +43,7 @@ message OutcomeRecord {
   repeated DriftEvent drift_events = 29;
   string resolution_path = 30 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
   repeated string fast_path_programs = 31;
+  string fast_path_skipped_reason = 32;
 }
 
 message OutcomeTimestamps {

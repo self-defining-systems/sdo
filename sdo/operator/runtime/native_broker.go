@@ -112,6 +112,7 @@ type nativeLedger struct {
 	OutcomeDocument         json.RawMessage               `json:"outcome_document,omitempty"`
 	RequiresReflection      bool                          `json:"requires_reflection,omitempty"`
 	ReflectionSkippedReason string                        `json:"reflection_skipped_reason,omitempty"`
+	FastPathSkippedReason   FastPathSkipReason            `json:"fast_path_skipped_reason,omitempty"`
 	OutcomeCommit           string                        `json:"outcome_commit,omitempty"`
 	ReflectionProcessed     bool                          `json:"reflection_processed,omitempty"`
 	ReflectionStarted       bool                          `json:"reflection_started,omitempty"`
@@ -211,6 +212,9 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		}
 		if len(ledger.Closure) == 0 {
 			ledger.Closure = encoded
+			if closure.Result != nil {
+				ledger.FastPathSkippedReason = closure.Result.FastPathSkippedReason
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}

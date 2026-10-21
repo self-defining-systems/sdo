@@ -67,10 +67,12 @@ class AgentOutcome:
     reflection_tokens: TokenCounts = field(default_factory=TokenCounts)
     warm_path: bool | None = None
     match_reasons: tuple[str, ...] = ()
+    binding_sources: tuple[str, ...] = ()
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
     resolution_path: str | None = None
     fast_path_programs: tuple[str, ...] = ()
+    fast_path_skipped_reason: str | None = None
     closure_phase_seconds: dict[str, float] = field(default_factory=dict)
     driver_phase_timings_seconds: dict[str, float] = field(default_factory=dict)
     fault_gate_timings_seconds: dict[str, float] = field(default_factory=dict)
@@ -387,10 +389,12 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "reflection_tokens": outcome.reflection_tokens,
         "warm_path": outcome.warm_path,
         "match_reasons": list(outcome.match_reasons),
+        "binding_sources": list(outcome.binding_sources),
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
         "resolution_path": outcome.resolution_path,
         "fast_path_programs": list(outcome.fast_path_programs),
+        "fast_path_skipped_reason": outcome.fast_path_skipped_reason,
         "closure_phase_seconds": dict(outcome.closure_phase_seconds),
         "driver_phase_timings_seconds": dict(outcome.driver_phase_timings_seconds),
         "fault_gate_timings_seconds": dict(outcome.fault_gate_timings_seconds),

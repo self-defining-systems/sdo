@@ -146,11 +146,13 @@ def _summaries(items: object, *, successful_only: bool = False) -> str:
     )
 
 
-def _program_metrics(result: dict[str, Any]) -> dict[str, Any]:
+def _program_metrics(result: dict[str, Any], memory_reasons: tuple[str, ...] = ()) -> dict[str, Any]:
     runs = result.get("program_runs")
     calls = result.get("program_tool_calls")
     verdicts: dict[str, int] = {}
     commands: dict[str, int] = {}
+    match_reasons = list(memory_reasons)
+    binding_sources: list[str] = []
     if isinstance(runs, list):
         for run in runs:
             if isinstance(run, dict):
@@ -158,6 +160,23 @@ def _program_metrics(result: dict[str, Any]) -> dict[str, Any]:
                 name = verdict.get("result") if isinstance(verdict, dict) else None
                 if isinstance(name, str):
                     verdicts[name] = verdicts.get(name, 0) + 1
+                if name == "RESULT_MATCH":
+                    source = run.get("binding_source")
+                    if isinstance(source, str) and source:
+                        binding_sources.append(source)
+                    evidence = verdict.get("evidence") if isinstance(verdict, dict) else None
+                    facts = (
+                        [
+                            item["fact"]
+                            for item in evidence
+                            if isinstance(item, dict) and isinstance(item.get("fact"), str) and item["fact"]
+                        ]
+                        if isinstance(evidence, list)
+                        else []
+                    )
+                    match_reasons.extend(facts)
+                    if not facts and isinstance(run.get("program_id"), str):
+                        match_reasons.append(f"program:{run['program_id']}")
     if isinstance(calls, list):
         for call in calls:
             if isinstance(call, dict) and isinstance(call.get("command"), str):
@@ -170,6 +189,9 @@ def _program_metrics(result: dict[str, Any]) -> dict[str, Any]:
         if result.get("resolution_path") in ("fast_path", "responder")
         else None,
         "fast_path_programs": tuple(str(item) for item in result.get("fast_path_programs", []) or []),
+        "fast_path_skipped_reason": result.get("fast_path_skipped_reason") or None,
+        "match_reasons": tuple(dict.fromkeys(match_reasons)),
+        "binding_sources": tuple(dict.fromkeys(binding_sources)),
         "program_verdicts": verdicts,
         "program_tool_calls": len(calls) if isinstance(calls, list) else None,
         "tool_commands": commands,
@@ -361,12 +383,13 @@ class SdoPersistentAgent:
             else outcome.responder_tokens,
             reflection_tokens=TokenCounts.from_usage(receipt.get("reflection_usage")),
             warm_path=bool(memory["warm_path"]) if "warm_path" in memory else None,
-            match_reasons=tuple(str(reason) for reason in memory.get("match_reasons", []) or []),
             reflection_attempts=attempts if isinstance(attempts, int) else None,
             reflection_skipped_reason=skipped,
             closure_phase_seconds=closure_phases,
             sdo_resolution=resolution if isinstance(resolution, str) else None,
-            **_program_metrics(outcome_document),
+            **_program_metrics(
+                outcome_document, tuple(str(reason) for reason in memory.get("match_reasons", []) or [])
+            ),
             error=error,
         )
 

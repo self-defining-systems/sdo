@@ -599,6 +599,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
         loops = 0
         warm = False
         reasons: list[str] = []
+        binding_sources: list[str] = []
+        fast_path_skip_reasons: list[str] = []
         receipts_seen = 0
         rebuild_verified = None
         closure_phases: dict[str, float] = {}
@@ -633,6 +635,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
             if metrics["resolution_path"] is not None:
                 paths.append(metrics["resolution_path"])
             fast_programs.extend(metrics["fast_path_programs"])
+            reasons.extend(metrics["match_reasons"])
+            binding_sources.extend(metrics["binding_sources"])
+            if metrics["fast_path_skipped_reason"]:
+                fast_path_skip_reasons.append(metrics["fast_path_skipped_reason"])
             diagnoses += metrics["program_diagnoses"] or 0
             calls += metrics["program_tool_calls"] or 0
             loops += metrics["response_loops_used"] or 0
@@ -657,6 +663,8 @@ class CompositeSdoAgent(SdoPersistentAgent):
             reflection_tokens=reflection,
             warm_path=warm,
             match_reasons=tuple(dict.fromkeys(reasons)),
+            binding_sources=tuple(dict.fromkeys(binding_sources)),
+            fast_path_skipped_reason="; ".join(dict.fromkeys(fast_path_skip_reasons)) or None,
             reflection_attempts=attempts,
             reflection_skipped_reason="; ".join(dict.fromkeys(skipped_reasons)) or None,
             closure_phase_seconds=closure_phases,
