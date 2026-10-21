@@ -55,7 +55,7 @@ func TestApplyTakesOverFieldsOwnedByAnotherManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The benchmark (or an operator) may have deployed the workload with kubectl first; SDO adopts it.
-	if !strings.Contains(string(args), "--server-side") || !strings.Contains(string(args), "--force-conflicts") {
+	if !strings.Contains(string(args), "--server-side") || !strings.Contains(string(args), "--force-conflicts") || !strings.Contains(string(args), "--field-manager=sdo-deployer") {
 		t.Fatalf("apply must take over fields owned by other managers: %s", args)
 	}
 }
