@@ -84,6 +84,28 @@ func TestDeriveAttributesVerifiedRepair(t *testing.T) {
 	}
 }
 
+func TestDeriveAttributesLatentRepairAfterEarlierHealthClear(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Request.Findings[0].DetectorId = "drift/investigator"
+	closure.Request.Findings[0].PrimaryResource = &contractsv1alpha1.ObjectRef{Kind: "Deployment", Name: "app"}
+	closure.Request.DetectorHistory = []*contractsv1alpha1.DetectorEvaluation{{DetectorId: "drift/investigator", Status: "firing", EvaluatedAt: closure.DetectedAt}}
+	closure.Result.ConfirmedRootCauses[0].ExplainedDetectors = []string{"drift/investigator"}
+	closure.Result.ConfirmedRootCauses[0].Evidence[0].Source = "drift/investigator"
+	closure.FinalDetectorStates = []*contractsv1alpha1.DetectorEvaluation{{DetectorId: "health", Status: "clear", EvaluatedAt: closure.VerifiedAt}}
+	closure.IncidentDetectorStates = []*contractsv1alpha1.DetectorEvaluation{{DetectorId: "drift/investigator", Status: "clear", EvaluatedAt: closure.VerifiedAt}}
+	closure.HealthClearedAt = timestamppb.New(closure.DetectedAt.AsTime().Add(-time.Minute))
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Record.GetClassification() != "success" || !result.Record.GetDiagnosisVerification()[0].GetRepair().GetAttributed() || !result.RequiresReflection {
+		t.Fatalf("latent repair lost attribution: %+v", result.Record)
+	}
+	if result.Record.GetTimestamps().GetMitigatedAt().AsTime().Before(closure.DispatchedAt.AsTime()) {
+		t.Fatalf("latent incident was mitigated before dispatch: %+v", result.Record.GetTimestamps())
+	}
+}
+
 func TestDeriveCarriesClassifiedDriftEvidence(t *testing.T) {
 	closure := fixtureClosure()
 	closure.Request.DriftEvents = []*contractsv1alpha1.DriftEvent{{Ref: &contractsv1alpha1.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"},

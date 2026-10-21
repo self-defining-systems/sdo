@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -86,6 +87,30 @@ func TestDriftWorkerRunsWithoutBlockingControllerStep(t *testing.T) {
 		controller.handleDriftCompletion(completion, start.Add(2*time.Second))
 	case <-time.After(time.Second):
 		t.Fatal("drift worker did not complete")
+	}
+}
+
+func TestDriftTaskBuildFailureBacksOff(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	controller, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	errors := 0
+	controller.OnError = func(error) { errors++ }
+	controller.ConfigureDrift(DriftControllerConfig{Investigation: DriftInvestigationConfig{Worker: &recordingDriftInvestigator{}, Async: true, BatchWindow: time.Second, BuildTask: func(context.Context, string, []sdk.DriftEvent) (*contracts.DriftInvestigationTask, error) {
+		attempts++
+		return nil, fmt.Errorf("stale commit")
+	}}})
+	controller.driftInvestigation.Add(sdk.DriftEvent{Ref: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fields: []sdk.DriftField{{Path: "spec.port"}}, ObservedAt: start})
+	for _, at := range []time.Time{start.Add(time.Second), start.Add(1500 * time.Millisecond), start.Add(3 * time.Second)} {
+		if err := controller.StepEvents(context.Background(), at, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if attempts != 2 || errors != 2 {
+		t.Fatalf("task builder called %d times and logged %d errors across two retry intervals", attempts, errors)
 	}
 }
 

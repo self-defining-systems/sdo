@@ -172,6 +172,41 @@ def test_seeded_workspace_publishes_scripted_worker_registrations(
     assert applied[0]["data"] == {"responder.json": '{"agent_id":"scripted"}'}
 
 
+def test_published_scripted_registration_uses_loaded_responder_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    registrations = tmp_path / "registrations"
+    registrations.mkdir()
+    (registrations / "responder.json").write_text(
+        '{"agent_id":"scripted","kubernetes_job":{"image":"${RESPONDER_IMAGE}"}}',
+        encoding="utf-8",
+    )
+    applied: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        driver, "kubectl", lambda _args, **kwargs: applied.append(json.loads(str(kwargs["input_text"])))
+    )
+    driver._publish_agent_registrations(
+        registrations, "demo-sdo", tmp_path / "kubeconfig", "responder:loaded", {"responder:loaded"}
+    )
+    published = json.loads(applied[0]["data"]["responder.json"])
+    assert published["kubernetes_job"]["image"] == "responder:loaded"
+
+
+def test_registration_rejects_unloaded_worker_image_before_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    registrations = tmp_path / "registrations"
+    registrations.mkdir()
+    (registrations / "responder.json").write_text(
+        '{"agent_id":"scripted","kubernetes_job":{"image":"missing:v1"}}', encoding="utf-8"
+    )
+    monkeypatch.setattr(driver, "kubectl", lambda *_args, **_kwargs: pytest.fail("published invalid image"))
+    with pytest.raises(ValueError, match="not loaded into kind"):
+        driver._publish_agent_registrations(
+            registrations, "demo-sdo", tmp_path / "kubeconfig", "responder:loaded", {"responder:loaded"}
+        )
+
+
 def test_fastloop_native_launch_has_recorded_action_repairs_and_no_submission_transport(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

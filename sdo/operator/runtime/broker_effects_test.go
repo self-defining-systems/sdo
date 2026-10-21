@@ -208,6 +208,9 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	if state.PendingClosure == nil || state.ClosureReceipt == nil || state.ClosureState != "committed" {
 		t.Fatalf("closure receipt was not durable before acknowledgment: %#v", state)
 	}
+	if controller.CurrentAcceptedCommit() != "outcome" {
+		t.Fatalf("controller retained stale accepted commit: %s", controller.CurrentAcceptedCommit())
+	}
 
 	restored, err := NewController(
 		testControllerConfig(),

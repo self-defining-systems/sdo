@@ -191,6 +191,25 @@ func TestControllerLeavesPreexistingDifferenceForInvestigation(t *testing.T) {
 	}
 }
 
+func TestControllerDoesNotReinvestigateUnchangedAdoptedDifference(t *testing.T) {
+	controller, _, _, closeServer := adoptionController(t, 9999)
+	defer closeServer()
+	start := time.Unix(10, 0).UTC()
+	if err := controller.StepEvents(context.Background(), start, nil); err != nil {
+		t.Fatal(err)
+	}
+	event := controller.ExportState().DriftEvents[0]
+	controller.recordDriftInvestigation(event, &contracts.DriftEventInvestigation{Verdict: "unsure", Reason: "pre-existing"})
+	controller.driftInvestigation.state.Pending = nil
+	controller.adoptionNeeded = true
+	if err := controller.EvaluateAll(context.Background(), start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if controller.driftInvestigation.Pending() != 0 || len(controller.ExportState().DriftEvents) != 1 {
+		t.Fatalf("unchanged verdict was redispatched: %+v", controller.ExportState().DriftEvents)
+	}
+}
+
 func TestControllerAdoptionIsIdempotentAndNotDrift(t *testing.T) {
 	controller, api, _, closeServer := adoptionController(t, 8080)
 	defer closeServer()

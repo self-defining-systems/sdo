@@ -48,7 +48,7 @@ type fastloopDetector struct{}
 
 func (fastloopDetector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{ID: "availability", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
-		Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "apps/v1", Kind: "Deployment"}},
+		Watches:  []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "apps/v1", Kind: "Deployment"}},
 		Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1},
 		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Playbooks: []string{".sdo/playbooks/base/README.md"}, OriginatingCommit: "seed"}
 }
@@ -109,7 +109,7 @@ func (fastloopImageProgram) Mitigate(_ context.Context, _ program.ReadView, bind
 	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["deployment"], Path: "spec.template.spec.containers[0].image", Value: "good:v1", Reason: "restore image"}}}, nil
 }
 
-func fastloopClient() *fake.Clientset {
+func fastloopClient(loadedImages ...string) *fake.Clientset {
 	client := fake.NewSimpleClientset(
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}},
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}}}},
@@ -138,7 +138,51 @@ func fastloopClient() *fake.Clientset {
 	}
 	client.Fake.PrependReactor("create", "configmaps", limit)
 	client.Fake.PrependReactor("update", "configmaps", limit)
+	if len(loadedImages) > 0 {
+		loaded := map[string]bool{}
+		for _, image := range loadedImages {
+			loaded[image] = true
+		}
+		mark := func(pod *corev1.Pod) {
+			for _, container := range pod.Spec.Containers {
+				reason := "ContainerCreating"
+				if !loaded[container.Image] {
+					reason = "ImagePullBackOff"
+				}
+				pod.Status.ContainerStatuses = append(pod.Status.ContainerStatuses, corev1.ContainerStatus{Name: container.Name, Image: container.Image, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}})
+			}
+		}
+		client.Fake.PrependReactor("create", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+			mark(action.(ktesting.CreateAction).GetObject().(*corev1.Pod))
+			return false, nil, nil
+		})
+		client.Fake.PrependReactor("update", "pods", func(action ktesting.Action) (bool, kruntime.Object, error) {
+			pod := action.(ktesting.UpdateAction).GetObject().(*corev1.Pod)
+			pod.Status.ContainerStatuses = nil
+			mark(pod)
+			return false, nil, nil
+		})
+		pod, err := client.CoreV1().Pods("app").Get(context.Background(), "api-pod", metav1.GetOptions{})
+		if err != nil {
+			panic(err)
+		}
+		pod.Status.ContainerStatuses = nil
+		if _, err := client.CoreV1().Pods("app").Update(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+			panic(err)
+		}
+	}
 	return client
+}
+
+func TestHermeticFakePodReportsUnloadedImage(t *testing.T) {
+	client := fastloopClient("good:v1")
+	pod, err := client.CoreV1().Pods("app").Get(context.Background(), "api-pod", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pod.Status.ContainerStatuses[0].State.Waiting.Reason; got != "ImagePullBackOff" {
+		t.Fatalf("unloaded image state: %s", got)
+	}
 }
 
 func TestHermeticFakeConfigMapEnforcesProductionLimit(t *testing.T) {
@@ -242,7 +286,9 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		}
 		loop := NewResponderLoop(IncidentRequest{IncidentID: id, Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings}, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
 		loop.CorpusSessionRoot = root
-		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)} }
+		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+			return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+		}
 		initial := loop.InitialDiagnose(ctx)
 		if incident == 1 {
 			if len(initial) != 1 || initial[0].Verdict.Result != program.Unknown {

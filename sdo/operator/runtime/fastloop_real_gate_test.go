@@ -108,7 +108,7 @@ func fastloopProgramProposal(t *testing.T, captureDir, incidentID string) *contr
 		Id: "service-targetport-mismatch", Owner: "responder", FaultClass: "service-targetport-mismatch", OriginatingIncident: incidentID,
 		Markdown: "Check the selected pod port against the `<SERVICE>` target port.",
 		Program: &contracts.ProposedProgram{Sources: sources, CorpusCases: []*contracts.ProposedCorpusCase{{Id: "targetport-" + incidentID, Reference: &contracts.CorpusCaptureReference{
-			IncidentId: incidentID, CaptureLabel: "open@pre-apply", OpenSha256: digest("open@pre-apply.json"), FixedSha256: digest("fixed.json"), RecordingsSha256: digest("open@pre-apply-recordings.json"),
+			IncidentId: incidentID, CaptureLabel: "open@detect", OpenSha256: digest("open@detect.json"), FixedSha256: digest("fixed.json"), RecordingsSha256: digest("open@detect-recordings.json"),
 			Bindings: []*contracts.CorpusBinding{bind("api")}, PeerBindings: []*contracts.CorpusBinding{bind("peer")}, RootCauseProgramIds: []string{"service-targetport-mismatch"},
 		}}}},
 	}}}
@@ -116,12 +116,41 @@ func fastloopProgramProposal(t *testing.T, captureDir, incidentID string) *contr
 
 func fastloopGateResult(request IncidentRequest, resources []sdk.ObjectRef) IncidentResult {
 	result := completedResult(request.IncidentID)
-	result.Timing.StartedAt = request.DetectorHistory[0].EvaluatedAt.Add(100 * time.Millisecond)
+	result.Timing.StartedAt = request.DetectorHistory[len(request.DetectorHistory)-1].EvaluatedAt.Add(100 * time.Millisecond)
 	result.Timing.CompletedAt = result.Timing.StartedAt.Add(100 * time.Millisecond)
-	result.ConfirmedRootCauses = []ConfirmedRootCause{{Summary: "Service target port or deployed image drift", Resources: resources, Evidence: []RootCauseEvidence{{Kind: "live-observation", Source: "fake Kubernetes API", Observation: "source values restored"}}, ExplainedDetectors: []string{"availability"}}}
-	result.RepairActions = []RepairActionReceipt{{ActionID: "repair", Kind: "kubectl", Target: "app", Summary: "restored source values", Details: "fake Kubernetes API reports the source values", Resources: resources, StartedAt: result.Timing.StartedAt, CompletedAt: result.Timing.CompletedAt, Success: true}}
-	result.VerificationEvidence = []VerificationEvidence{{Name: "detector sweep", Passed: true, Details: "availability clears", ObservedAt: result.Timing.CompletedAt}}
+	detectorID := request.Findings[0].DetectorID
+	result.ConfirmedRootCauses = []ConfirmedRootCause{{Summary: "Service target port drift", Resources: resources, Evidence: []RootCauseEvidence{{Kind: "detector-finding", Source: detectorID, Observation: "targetPort mismatch"}}, ExplainedDetectors: []string{detectorID}}}
+	result.RepairActions = []RepairActionReceipt{{ActionID: "repair", Kind: "kubectl", Target: "app", Summary: "restored source target port", Details: "fake Kubernetes API reports the source port", Resources: resources, StartedAt: result.Timing.StartedAt, CompletedAt: result.Timing.CompletedAt, Success: true}}
+	result.VerificationEvidence = []VerificationEvidence{{Name: "detector sweep", Passed: true, Details: "drift finding clears", ObservedAt: result.Timing.CompletedAt}}
 	return result
+}
+
+type fastloopDriftWorker struct {
+	requests []*contracts.DriftInvestigationTask
+}
+
+type fastloopDriftView struct{ driftReadView }
+
+func (v fastloopDriftView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	if ref.Name == "jaeger" {
+		return program.Diff{Changed: true}, nil
+	}
+	return v.driftReadView.DiffAgainstSource(ref)
+}
+
+func (w *fastloopDriftWorker) Investigate(_ context.Context, task *contracts.DriftInvestigationTask) (*contracts.DriftInvestigationResult, error) {
+	w.requests = append(w.requests, task)
+	result := &contracts.DriftInvestigationResult{}
+	for index, event := range task.Events {
+		verdict := &contracts.DriftEventInvestigation{EventIndex: int32(index), Verdict: "unsure", Reason: "pre-existing difference"}
+		if event.GetRef().GetName() == "api" {
+			verdict.Verdict = "bug"
+			verdict.Reason = "targetPort contradicts source and no selected pod serves it"
+			verdict.Evidence = []*contracts.DriftEvidence{{Kind: "source_contradiction", Observation: "source targetPort is 8080"}, {Kind: "violated_relation", Observation: "no selected pod serves 9999"}}
+		}
+		result.Events = append(result.Events, verdict)
+	}
+	return result, nil
 }
 
 type fastloopGateDispatch struct {
@@ -178,7 +207,7 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	dispatcher := &fastloopGateDispatch{requests: make(chan IncidentRequest, 1), results: make(chan IncidentResult, 1), failFirst: retry}
 	commit := nativeGit(t, accepted, "rev-parse", "HEAD")
 	config := ControllerConfig{Application: "app", Namespace: "app", SourceCommit: commit, DeployedCommit: commit, RepositoryWorktree: accepted, CorpusSessionRoot: captureRoot, ResponseTimeout: time.Minute, VerificationTimeout: time.Minute, FiringThreshold: 1, ClearThreshold: 1, RepairPolicy: "recorded-actions"}
-	controller, err := NewController(config, []sdk.Detector{fastloopDetector{}}, fastloopObjects{client: client}, dispatcher, at)
+	controller, err := NewController(config, []sdk.Detector{fastloopClearDetector{}}, fastloopObjects{client: client}, dispatcher, at.Add(-time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,11 +218,19 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "app", stateName)); err != nil {
 		t.Fatal(err)
 	}
+	if err := controller.EvaluateAll(ctx, at.Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	for _, setup := range configure {
 		setup(controller)
 	}
 	if err := controller.Step(ctx, at, nil); err != nil {
 		t.Fatal(err)
+	}
+	if _, ok := controller.PendingWorkspaceEffect(); !ok {
+		if err := controller.Step(ctx, at.Add(time.Millisecond), nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatal(err)
@@ -247,6 +284,16 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 		t.Fatalf("expected one dispatch retry, got %d attempts", dispatcher.attempts)
 	}
 	return controller, dispatcher, request
+}
+
+type fastloopClearDetector struct{}
+
+func (fastloopClearDetector) Spec() sdk.DetectorSpec {
+	spec := fastloopDetector{}.Spec()
+	return spec
+}
+func (fastloopClearDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return nil, nil
 }
 
 func fastloopGateClose(t *testing.T, ctx context.Context, controller *Controller, dispatcher *fastloopGateDispatch, result IncidentResult, at time.Time) IncidentClosure {
@@ -313,7 +360,7 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	client := fastloopClient()
+	client := fastloopClient("good:v1")
 	accepted := nativeRepository(t)
 	nativeMemoryFixture(t, accepted)
 	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app", ".sdo")
@@ -420,26 +467,78 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	if _, err := client.CoreV1().Pods("app").Create(ctx, peerPod, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-
-	start := time.Now().UTC()
-	first, firstDispatch, firstRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-first", start, false)
-	open, err := provider.Snapshot(ctx)
+	apiDeployment, err := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := memory.CaptureIncidentSnapshot(captureRoot, firstRequest.IncidentID, "open@pre-apply", open, "app"); err != nil {
+	apiDeployment.Spec.Template.Spec.Containers[0].Image = "good:v1"
+	if _, err := client.AppsV1().Deployments("app").Update(ctx, apiDeployment, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	port := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	image := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
-	for _, patch := range []struct {
-		ref  sdk.ObjectRef
-		body string
-	}{{port, `{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`}, {image, `{"spec":{"template":{"spec":{"containers":[{"name":"api","image":"good:v1","ports":[{"containerPort":8080}]}]}}}}`}} {
-		if err := (TypedPlanClient{Client: client}).Patch(ctx, patch.ref, types.MergePatchType, []byte(patch.body)); err != nil {
-			t.Fatal(err)
-		}
+	apiPod, err := client.CoreV1().Pods("app").Get(ctx, "api-pod", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	apiPod.Spec.Containers[0].Image = "good:v1"
+	if _, err := client.CoreV1().Pods("app").Update(ctx, apiPod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now().UTC()
+	before, broken := driftService(8080), driftService(9999)
+	jaegerBefore, jaegerLive := driftService(8080), driftService(9999)
+	jaegerBefore.Name, jaegerLive.Name = "jaeger", "jaeger"
+	jaegerChange := objectChange(t, jaegerBefore, jaegerLive, "v1", "Service")
+	jaegerChange.Adoption = true
+	changes := &fixedObjectChanges{changes: []ObjectChange{jaegerChange, objectChange(t, before, broken, "v1", "Service")}}
+	driftWorker := &fastloopDriftWorker{}
+	var buildDriftTask func(context.Context, string, []sdk.DriftEvent) (*contracts.DriftInvestigationTask, error)
+	first, firstDispatch, firstRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-first", start, false, func(controller *Controller) {
+		buildDriftTask = func(ctx context.Context, batchID string, events []sdk.DriftEvent) (*contracts.DriftInvestigationTask, error) {
+			snapshot, err := memory.OpenCatalogReader(accepted).Snapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if snapshot.GetAcceptedCommit() != controller.CurrentAcceptedCommit() {
+				return nil, fmt.Errorf("drift snapshot differs from current accepted commit")
+			}
+			view, err := provider.Snapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if err := memory.CaptureIncidentSnapshot(captureRoot, batchID, "open@detect", view, "app"); err != nil {
+				return nil, err
+			}
+			return &contracts.DriftInvestigationTask{SchemaVersion: ProtocolSchemaVersion, BatchId: batchID, AcceptedCommit: controller.CurrentAcceptedCommit(), MemorySnapshot: snapshot, CaptureId: batchID, Events: driftEventsContract(events)}, nil
+		}
+		controller.ConfigureDrift(DriftControllerConfig{Events: changes, View: func(snapshot sdk.DetectionContext) program.ReadView {
+			services := snapshot.(sdktest.Snapshot).ServiceList
+			changed := false
+			for _, service := range services {
+				if service.Name == "api" && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+					changed = true
+				}
+			}
+			return fastloopDriftView{driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: changed}}}
+		}, Investigation: DriftInvestigationConfig{Worker: driftWorker, BatchWindow: time.Nanosecond, BuildTask: buildDriftTask}})
+	})
+	if len(driftWorker.requests) != 1 || len(firstRequest.Findings) != 1 || firstRequest.Findings[0].DetectorID != "drift/investigator" || len(firstRequest.DriftEvents) != 2 {
+		t.Fatalf("first incident did not follow investigator verdict: %+v", firstRequest)
+	}
+	if firstRequest.DetectorHistory[0].Status != DetectorEvaluationClear || !firstRequest.DetectorHistory[0].EvaluatedAt.Before(start) {
+		t.Fatal("health was not clear before latent incident dispatch")
+	}
+	if capture, err := memory.IncidentCorpusDir(captureRoot, firstRequest.IncidentID); err != nil {
+		t.Fatal(err)
+	} else if _, err := os.Stat(filepath.Join(capture, "open@detect.json")); err != nil {
+		t.Fatalf("reflection lost drift capture: %v", err)
+	}
+	port := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	if err := (TypedPlanClient{Client: client}).Patch(ctx, port, types.MergePatchType, []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)); err != nil {
+		t.Fatal(err)
+	}
+	changes.changes = []ObjectChange{objectChange(t, broken, before, "v1", "Service")}
+	firstResult := fastloopGateResult(firstRequest, []sdk.ObjectRef{port})
 	fixed, err := provider.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -447,13 +546,29 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 	if err := memory.CaptureIncidentSnapshot(captureRoot, firstRequest.IncidentID, "fixed", fixed, "app"); err != nil {
 		t.Fatal(err)
 	}
-	closure := fastloopGateClose(t, ctx, first, firstDispatch, fastloopGateResult(firstRequest, []sdk.ObjectRef{port, image}), start)
+	closure := fastloopGateClose(t, ctx, first, firstDispatch, firstResult, start)
 	if closure.HealthClearedAt == nil {
 		t.Fatal("controller did not verify the first repair")
+	}
+	if closure.HealthClearedAt.Before(closure.DispatchedAt) {
+		t.Fatalf("latent repair cutoff preceded dispatch: %s < %s", closure.HealthClearedAt, closure.DispatchedAt)
 	}
 	receipt := fastloopGateProcessClosure(t, ctx, first, firstRequest.IncidentID)
 	if receipt.ReflectionCommit == "" {
 		t.Fatal("real broker did not accept reflected program")
+	}
+	if first.CurrentAcceptedCommit() != receipt.ReflectionCommit {
+		t.Fatalf("controller retained stale accepted commit: %s", first.CurrentAcceptedCommit())
+	}
+	if task, err := buildDriftTask(ctx, "drift-after-commit", []sdk.DriftEvent{firstRequest.DriftEvents[0]}); err != nil || task.GetAcceptedCommit() != receipt.ReflectionCommit {
+		t.Fatalf("post-commit drift task: %+v %v", task, err)
+	}
+	changes.changes = []ObjectChange{jaegerChange}
+	if err := first.StepEvents(ctx, start.Add(1500*time.Millisecond), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(driftWorker.requests) != 1 || first.driftInvestigation.Pending() != 0 {
+		t.Fatal("unchanged pre-existing difference was redispatched")
 	}
 	if built == nil {
 		t.Fatal("program builder did not validate accepted reflection")
@@ -571,7 +686,7 @@ func TestHermeticFastloopRealGoGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondResult := fastloopGateResult(secondRequest, []sdk.ObjectRef{peer})
-	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": peer}, Verdict: program.Verdict{Result: program.Match}}}
+	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": peer}, Verdict: program.Verdict{Result: program.NoMatch}}}
 	secondResult.ProgramToolCalls = []ToolCall{{Command: "diagnose"}, {Command: "plan"}, {Command: "apply"}, {Command: "verify"}}
 	secondResult.ResponseLoopsUsed = 1
 	secondClosure := fastloopGateClose(t, ctx, second, secondDispatch, secondResult, start.Add(2*time.Second))
