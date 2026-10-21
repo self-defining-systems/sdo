@@ -2,11 +2,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -91,29 +93,68 @@ func TestTrafficWorkloadNamesListsConsumedWorkloads(t *testing.T) {
 }
 
 func TestObserverNotifiesOnlyWhileFailuresAreInTheWindow(t *testing.T) {
-	frontend := &fakeFrontend{}
-	observer := NewTrafficObserver(runProber(t, frontend), []string{"health"}, nil, 0)
-	ctx := context.Background()
-	if !observer.WaitWarm(ctx, 5*time.Second) {
-		t.Fatalf("observer never saw every scenario: %+v", observer.Windows())
-	}
-	time.Sleep(300 * time.Millisecond)
-	if observer.Poll(ctx) {
-		t.Fatalf("healthy traffic must not wake the controller")
-	}
-	frontend.broken.Store(true)
-	time.Sleep(300 * time.Millisecond)
-	if !observer.Poll(ctx) {
-		t.Fatalf("failing traffic must wake the controller")
-	}
-	window := observer.Windows()["health"]
-	if len(window.Scenarios) != 2 || window.Scenarios[0].Scenario.DependsOn[0] != "search" {
-		t.Fatalf("window must carry scenario descriptors: %+v", window)
-	}
-	frontend.broken.Store(false)
-	time.Sleep(600 * time.Millisecond)
-	if observer.Poll(ctx) {
-		t.Fatalf("recovered traffic must stop waking the controller once failures leave the window")
+	for _, scenario := range frontendCatalog() {
+		for _, outcome := range []traffic.Outcome{traffic.OutcomeError, traffic.OutcomeTimeout} {
+			t.Run(scenario.ID+"/"+string(outcome), func(t *testing.T) {
+				// Windows count completed samples, not elapsed time. Serve exact
+				// snapshots so neither probe arrival timing nor HTTP scheduling
+				// determines whether the last failure has left the SLO window.
+				window := traffic.Window{Workload: traffic.Workload{
+					Scenarios: []traffic.WorkloadScenario{
+						{ID: "search"},
+						{ID: "recommend", SLO: &traffic.SLO{Window: 3}},
+					},
+				}}
+				for _, descriptor := range frontendCatalog() {
+					window.Scenarios = append(window.Scenarios, traffic.ScenarioObservations{
+						Scenario: descriptor.Describe(), Qualified: true,
+						Samples: []traffic.Sample{{Outcome: traffic.OutcomeOK}},
+					})
+				}
+				var mu sync.Mutex
+				api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodGet || r.URL.Path != prober.PathWindows {
+						http.NotFound(w, r)
+						return
+					}
+					mu.Lock()
+					defer mu.Unlock()
+					if err := json.NewEncoder(w).Encode(prober.WindowsResponse{Windows: map[string]traffic.Window{"health": window}}); err != nil {
+						t.Errorf("encode windows: %v", err)
+					}
+				}))
+				t.Cleanup(api.Close)
+				observer := NewTrafficObserver(HTTPProberClient{BaseURL: StaticProberURL(api.URL)}, []string{"health"}, nil, 0)
+				poll := func(want bool) {
+					t.Helper()
+					if got := observer.Poll(context.Background()); got != want {
+						t.Fatalf("wake controller = %t, want %t: %+v", got, want, observer.Windows())
+					}
+					if got := observer.Windows()["health"]; len(got.Scenarios) != 2 || got.Scenarios[0].Scenario.DependsOn[0] != "search" {
+						t.Fatalf("window must carry scenario descriptors: %+v", got)
+					}
+				}
+				appendSample := func(outcome traffic.Outcome) {
+					mu.Lock()
+					defer mu.Unlock()
+					for i := range window.Scenarios {
+						if window.Scenarios[i].Scenario.ID == scenario.ID {
+							window.Scenarios[i].Samples = append(window.Scenarios[i].Samples, traffic.Sample{Outcome: outcome})
+						}
+					}
+				}
+				poll(false)
+				appendSample(outcome)
+				poll(true)
+				size := window.Workload.ScenarioSLO(scenario.ID).Window
+				for successes := 1; successes < size; successes++ {
+					appendSample(traffic.OutcomeOK)
+					poll(true)
+				}
+				appendSample(traffic.OutcomeOK)
+				poll(false)
+			})
+		}
 	}
 }
 
