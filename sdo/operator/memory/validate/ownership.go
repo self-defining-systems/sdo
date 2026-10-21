@@ -46,9 +46,8 @@ func healthObjectiveOnly(kind layout.Kind, id string) bool {
 // Incident traffic: responders own the incident generator and incident-*
 // workloads, and the health judge owns all other traffic. This is the broker's
 // long-standing behavior and docs/architecture.md's ownership matrix. The
-// typed OperationalArtifactProposal path in memory/artifact_proposal.go
-// rejects responder traffic outright; it is retired by the move to
-// file-based memory edits and does not define ownership.
+// judge-only bootstrap writer does not accept responder artifacts. Reflection
+// edits final files and uses this shared ownership policy.
 var grants = []grant{
 	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{kindSource}},
 	{actor: Deployer, phase: InitialPhase, kinds: []layout.Kind{kindSource}},

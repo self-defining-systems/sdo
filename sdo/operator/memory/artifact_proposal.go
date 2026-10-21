@@ -21,13 +21,12 @@ type ArtifactRole string
 
 const (
 	HealthJudgeArtifacts ArtifactRole = "health_judge"
-	ResponderArtifacts   ArtifactRole = "responder"
 )
 
-// MaterializeArtifacts is the only edge that maps worker-owned logical artifacts
-// to the current repository layout. Broker validation still decides acceptance.
+// MaterializeArtifacts serves only the existing health-judge bootstrap contract.
+// Reflection edits its checkout directly and cannot use this writer.
 func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactProposal, role ArtifactRole) error {
-	if root == "" || proposal == nil || (role != HealthJudgeArtifacts && role != ResponderArtifacts) {
+	if root == "" || proposal == nil || role != HealthJudgeArtifacts {
 		return errors.New("checkout, typed artifacts, and known role are required")
 	}
 	if err := validateArtifactProposal(proposal, role); err != nil {
@@ -65,10 +64,7 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 		}
 		delete(byID, id)
 	}
-	class := layout.ClassIncident
-	if role == HealthJudgeArtifacts {
-		class = layout.ClassHealth
-	}
+	class := layout.ClassHealth
 	for _, item := range proposal.GetDetectors() {
 		manifest := layout.DetectorManifest{
 			APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion,
@@ -90,10 +86,8 @@ func MaterializeArtifacts(root string, proposal *contracts.OperationalArtifactPr
 		}
 		byID[item.GetId()] = entry
 	}
-	if role == HealthJudgeArtifacts {
-		if err := installGenericHealth(root, byID, proposal.GetTrafficWorkloads()); err != nil {
-			return err
-		}
+	if err := installGenericHealth(root, byID, proposal.GetTrafficWorkloads()); err != nil {
+		return err
 	}
 	playbookRoot := filepath.Join(root, layout.PlaybooksDir)
 	for _, id := range proposal.GetDeletePlaybookIds() {
@@ -185,11 +179,8 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 		if role == HealthJudgeArtifacts && (item.GetId() == "service-endpoints" || strings.HasPrefix(item.GetId(), "traffic-")) {
 			return fmt.Errorf("detector %q is operator-owned", item.GetId())
 		}
-		class := "incident"
-		if role == HealthJudgeArtifacts {
-			class = "health"
-		}
-		if item.GetOwner() != string(role) || item.GetDetectorClass() != class || item.GetConstructor() == "" || len(item.GetSources()) == 0 || item.GetOriginatingCommit() == "" || (role == ResponderArtifacts && (item.GetOriginatingIncident() == "" || item.GetFiring() != 1)) {
+		class := "health"
+		if item.GetOwner() != string(role) || item.GetDetectorClass() != class || item.GetConstructor() == "" || len(item.GetSources()) == 0 || item.GetOriginatingCommit() == "" {
 			return fmt.Errorf("detector %q violates %s ownership or registration", item.GetId(), role)
 		}
 		foundSource := false
@@ -243,16 +234,6 @@ func validateArtifactProposal(proposal *contracts.OperationalArtifactProposal, r
 	}
 	if role == HealthJudgeArtifacts && len(proposal.GetDeletePlaybookIds()) != 0 {
 		return errors.New("health judge cannot delete playbooks")
-	}
-	if role == ResponderArtifacts {
-		for _, id := range proposal.GetDeletePlaybookIds() {
-			if id == "health-objective" {
-				return errors.New("health objective playbook is protected")
-			}
-		}
-	}
-	if role == ResponderArtifacts && (len(proposal.GetTrafficGenerators()) != 0 || len(proposal.GetTrafficWorkloads()) != 0) {
-		return errors.New("responder cannot author traffic")
 	}
 	for _, item := range proposal.GetTrafficGenerators() {
 		if item == nil || item.GetId() != "application" || role != HealthJudgeArtifacts {

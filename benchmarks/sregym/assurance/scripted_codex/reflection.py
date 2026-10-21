@@ -1,4 +1,4 @@
-"""Scripted reflection returns logical artifacts for the Go memory edge to validate."""
+"""Scripted reflection edits final memory files for the Go broker to validate."""
 
 from __future__ import annotations
 
@@ -50,13 +50,11 @@ def _no_change(reason: str) -> dict[str, Any]:
         "summary": reason,
         "learning_decision": "no_change",
         "no_change_reason": reason,
-        "proposed_changes": [],
-        "artifact_proposal": None,
+        "playbook_ids": [],
     }
 
 
 def reflect(turn: Turn, binding: Binding, prompt: str, worktree: Path, store: Store) -> dict[str, Any]:
-    del worktree
     directive = binding.directive
     incident_id, outcome_commit = idempotency(prompt)
     retry = RETRY_MARKER in prompt
@@ -77,15 +75,34 @@ def reflect(turn: Turn, binding: Binding, prompt: str, worktree: Path, store: St
     )
     if {proposal.detector_id, proposal.playbook_id} <= _known_artifact_ids(prompt):
         return _no_change(f"memory already encodes detector {proposal.detector_id} and playbook {proposal.playbook_id}")
-    artifacts = proposal.artifact_proposal
+    for relative, content in proposal.files.items():
+        path = worktree / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        if relative in proposal.executable_paths:
+            path.chmod(0o755)
+    index = worktree / ".sdo/playbooks/README.md"
+    index.write_text(
+        "# Operational playbooks\n\n"
+        + "".join(
+            f"- [{path.name}]({path.name}/README.md)\n" for path in sorted(index.parent.iterdir()) if path.is_dir()
+        ),
+        encoding="utf-8",
+    )
     if mode == "invalid_then_learn" and not retry and store.claim(f"{incident_id}:reflection-invalid"):
-        artifacts["detectors"][0]["firing"] = 5
-    turn.run("git status --short")
+        readme = worktree / f".sdo/playbooks/{proposal.playbook_id}/README.md"
+        readme.write_text("malformed README\n", encoding="utf-8")
+    code, output = turn.run("sdo-operator memory check")
+    if code and mode == "invalid_then_learn":
+        readme = worktree / f".sdo/playbooks/{proposal.playbook_id}/README.md"
+        readme.write_text(proposal.files[f".sdo/playbooks/{proposal.playbook_id}/README.md"], encoding="utf-8")
+        code, output = turn.run("sdo-operator memory check")
+    if code:
+        raise RuntimeError(f"scripted memory check failed ({code}): {output}")
     return {
         "summary": f"Encoded {proposal.detector_id} with playbook {proposal.playbook_id}"
         + (" (claimed cause)" if claimed else ""),
         "learning_decision": "updated",
         "no_change_reason": None,
-        "proposed_changes": [],
-        "artifact_proposal": artifacts,
+        "playbook_ids": [proposal.playbook_id],
     }

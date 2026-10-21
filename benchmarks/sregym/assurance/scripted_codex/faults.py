@@ -33,12 +33,13 @@ class Runner(Protocol):
 
 
 @dataclass(frozen=True)
-class MemoryProposal:
-    """Logical detector and playbook mutations returned by scripted reflection."""
+class MemoryFiles:
+    """Final detector and playbook files authored by scripted reflection."""
 
     detector_id: str
     playbook_id: str
-    artifact_proposal: dict[str, Any]
+    files: dict[str, str]
+    executable_paths: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -118,9 +119,9 @@ class FaultPlan(Protocol):
 
     def claimed_root_cause(self, facts: Facts, request: dict[str, Any]) -> dict[str, Any]: ...
 
-    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal: ...
+    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles: ...
 
-    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal: ...
+    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles: ...
 
     def warm_facts(self, namespace: str, target: str, request: dict[str, Any], worktree: Path) -> Facts: ...
 
@@ -247,8 +248,8 @@ class NetworkPolicyBlock:
             f"{absent} && python3 -m sdo.agents.responder.status_cli",
         )
 
-    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal:
-        return _proposal(
+    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
+        return _memory_files(
             detector_id=self.detector_id,
             package=self.package,
             playbook_dir=self.playbook_id,
@@ -265,8 +266,8 @@ class NetworkPolicyBlock:
             outcome_commit=outcome_commit,
         )
 
-    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal:
-        return _claimed_proposal(incident_id=incident_id, outcome_commit=outcome_commit)
+    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
+        return _claimed_files(incident_id=incident_id, outcome_commit=outcome_commit)
 
 
 def _isolates(policy: dict[str, Any]) -> bool:
@@ -371,8 +372,8 @@ class MissingConfigMap:
             f"kubectl -n {facts.namespace} get configmap {configmap} -o name && python3 -m sdo.agents.responder.status_cli",
         )
 
-    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal:
-        return _proposal(
+    def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
+        return _memory_files(
             detector_id=self.detector_id,
             package=self.package,
             playbook_dir=self.playbook_id,
@@ -389,8 +390,8 @@ class MissingConfigMap:
             outcome_commit=outcome_commit,
         )
 
-    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryProposal:
-        return _claimed_proposal(incident_id=incident_id, outcome_commit=outcome_commit)
+    def claimed_memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
+        return _claimed_files(incident_id=incident_id, outcome_commit=outcome_commit)
 
 
 def _configmap_source(worktree: Path, namespace: str, name: str) -> tuple[str, str]:
@@ -420,7 +421,7 @@ PLANS: dict[str, FaultPlan] = {"network_policy_block": NetworkPolicyBlock(), "mi
 # --- Operational-memory templates -------------------------------------------------------------------------
 
 
-def _proposal(
+def _memory_files(
     *,
     detector_id: str,
     package: str,
@@ -436,7 +437,7 @@ def _proposal(
     scripts: dict[str, str],
     incident_id: str,
     outcome_commit: str,
-) -> MemoryProposal:
+) -> MemoryFiles:
     fault_class = playbook_dir.rsplit("/", 1)[-1]
     playbook = fault_class
     watch_go = ", ".join(f'{{APIVersion: "{api}", Kind: "{kind}"}}' for api, kind in watches)
@@ -460,47 +461,32 @@ def _proposal(
         body=readme_body.strip("\n").replace("{playbook_dir}", "."),
         detector_id=detector_id,
     )
-    return MemoryProposal(
-        detector_id=detector_id,
-        playbook_id=playbook,
-        artifact_proposal={
-            "detectors": [
-                {
-                    "id": detector_id,
-                    "detector_class": "incident",
-                    "owner": "responder",
-                    "constructor": "New",
-                    "watches": [{"api_version": api, "kind": kind} for api, kind in watches],
-                    "interval": "30s",
-                    "firing": 1,
-                    "clearing": 2,
-                    "severity": "critical",
-                    "debounce": "500ms",
-                    "possible_playbook_ids": [playbook],
-                    "originating_incident": incident_id,
-                    "originating_commit": outcome_commit,
-                    "sources": [
-                        {"name": "detector.go", "content": detector_go},
-                        {"name": "detector_test.go", "content": detector_test},
-                    ],
-                }
-            ],
-            "playbooks": [
-                {
-                    "id": playbook,
-                    "owner": "responder",
-                    "fault_class": fault_class,
-                    "originating_incident": incident_id,
-                    "markdown": readme,
-                    "scripts": [{"name": name, "content": text.lstrip("\n")} for name, text in scripts.items()],
-                }
-            ],
-        },
+    detector_dir = f".sdo/diagnostics/detectors/incidents/{detector_id}"
+    playbook_path = f".sdo/playbooks/{playbook}"
+    manifest = (
+        "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\n"
+        f"id: {detector_id}\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n"
+        + "".join(f"  - apiVersion: {api}\n    kind: {kind}\n" for api, kind in watches)
+        + "interval: 30s\npersistence:\n  firing: 1\n  clearing: 2\n"
+        "batching:\n  severity: critical\n  debounce: 500ms\n"
+        f"possiblePlaybooks:\n  - {playbook}\noriginatingIncident: {json.dumps(incident_id)}\n"
+        f"originatingCommit: {json.dumps(outcome_commit)}\n"
     )
+    files = {
+        f"{detector_dir}/manifest.yaml": manifest,
+        f"{detector_dir}/detector.go": detector_go,
+        f"{detector_dir}/detector_test.go": detector_test,
+        f"{playbook_path}/README.md": (
+            "---\nschema_version: 1\nowner: responder\n"
+            f"fault_class: {fault_class}\noriginating_incident: {json.dumps(incident_id)}\n---\n\n{readme}"
+        ),
+        **{f"{playbook_path}/scripts/{name}": text.lstrip("\n") for name, text in scripts.items()},
+    }
+    return MemoryFiles(detector_id, playbook, files, tuple(f"{playbook_path}/scripts/{name}" for name in scripts))
 
 
-def _claimed_proposal(*, incident_id: str, outcome_commit: str) -> MemoryProposal:
-    return _proposal(
+def _claimed_files(*, incident_id: str, outcome_commit: str) -> MemoryFiles:
+    return _memory_files(
         detector_id="wedged-workload-restart",
         package="wedged_workload_restart",
         playbook_dir="wedged-workload-restart",

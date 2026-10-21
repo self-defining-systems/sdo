@@ -72,7 +72,7 @@ Check edits to human goals, architecture, health detectors, prior outcomes, or p
 
 **Signature:** an outcome commit exists but reflection is absent when required, uses a different session, produces no validated memory commit, or generalizes beyond evidence.
 
-Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`reflection_fresh_retry_attempts`). Reflection agents return typed logical artifact proposals and may run `sdo-operator memory check` for read-only feedback on the checkout. Broker validation remains authoritative; compare the typed proposal, `memory check` output, broker rejection, and accepted diff.
+Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`reflection_fresh_retry_attempts`). Direct-edit reflection agents author final files and run `sdo-operator memory check` until green within their turn budget. The broker repeats the same check independently. Compare the authored checkout diff, local diagnostics, durable `reflection_diagnostics`/`reflection_failures`, and accepted commit. Only legacy reflection runs and the current judge bootstrap use typed artifact proposals.
 
 ## Learned detector never fired
 
