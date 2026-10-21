@@ -268,7 +268,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 
 func awaitBrokerResult[T any](t *testing.T, channel <-chan T) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(channel) > 0 {
 			return

@@ -87,6 +87,8 @@ func TestHermeticControllerClosureReachesNativeOutcomeBroker(t *testing.T) {
 		}
 	}
 	result := completedResult(request.IncidentID)
+	result.Timing.StartedAt = start.Add(100 * time.Millisecond)
+	result.Timing.CompletedAt = start.Add(200 * time.Millisecond)
 	result.ConfirmedRootCauses = []ConfirmedRootCause{{Summary: "Service port drift and image pull failure", Resources: []sdk.ObjectRef{{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, {APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}}, Evidence: []RootCauseEvidence{{Kind: "live-observation", Source: "fake Kubernetes API", Observation: "port and image returned to their source values"}}, ExplainedDetectors: []string{"availability"}}}
 	result.RepairActions = []RepairActionReceipt{{ActionID: "repair", Kind: "kubectl", Target: "app", Summary: "restored port and image", Details: "applied source values", Resources: result.ConfirmedRootCauses[0].Resources, StartedAt: result.Timing.StartedAt, CompletedAt: result.Timing.CompletedAt, Success: true}}
 	result.VerificationEvidence = []VerificationEvidence{{Name: "scripted verification", Passed: true, Details: "detectors clear", ObservedAt: result.Timing.CompletedAt}}
