@@ -64,13 +64,21 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 			flips = append(flips, &contractsv1alpha1.OutcomeDetectorFlip{DetectorId: detectorID, FiredAtDispatch: fired[detectorID], ClearedAfterFix: clear, Flipped: fired[detectorID] && clear != nil && *clear})
 		}
 		repair := repairs.attribute(cause)
+		programCheck := programFlipCheck(closure, cause)
+		fieldCheck := restoredFieldCheck(closure, cause, repair)
+		if programCheck != nil {
+			checks = append(checks, programCheck)
+		}
+		if fieldCheck != nil {
+			checks = append(checks, fieldCheck)
+		}
 		verdict := "unverified"
 		switch {
 		case len(cause.GetEvidence()) == 0:
 			verdict = "no-evidence"
 		case anyContradicted(checks):
 			verdict = "contradicted"
-		case len(flips) > 0 && allFlipped(flips):
+		case len(flips) > 0 && allFlipped(flips) || programCheck != nil || fieldCheck != nil:
 			if repair.Attributed {
 				verdict = "confirmed"
 			} else {
@@ -80,6 +88,126 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 		verifications = append(verifications, &contractsv1alpha1.DiagnosisVerification{Summary: cause.GetSummary(), Verdict: verdict, Evidence: checks, Detectors: flips, Repair: repair})
 	}
 	return verifications
+}
+
+func programFlipCheck(closure *contractsv1alpha1.IncidentClosure, cause *contractsv1alpha1.ConfirmedRootCause) *contractsv1alpha1.OutcomeEvidenceCheck {
+	if closure.GetVerifiedAt() == nil || !allFinalDetectorsClear(closure) {
+		return nil
+	}
+	for _, before := range closure.GetRequest().GetInitialProgramRuns() {
+		if before.GetVerdict().GetResult() != contractsv1alpha1.Verdict_RESULT_MATCH || !bindingsTouchCause(before.GetBindings(), cause) {
+			continue
+		}
+		for _, after := range closure.GetResult().GetProgramRuns() {
+			if after.GetProgramId() != before.GetProgramId() || after.GetVerdict().GetResult() != contractsv1alpha1.Verdict_RESULT_NO_MATCH ||
+				before.GetProgramRevision() != after.GetProgramRevision() || !sameBindings(before.GetBindings(), after.GetBindings()) {
+				continue
+			}
+			return &contractsv1alpha1.OutcomeEvidenceCheck{
+				Kind: "program-verdict", Source: before.GetProgramId(), Verified: boolPointer(true),
+				Reason: stringPointer("the same program and binding diagnosed Match before repair and NoMatch after repair; the controller verified the fixed state"),
+			}
+		}
+	}
+	return nil
+}
+
+func sameBindings(left, right []*contractsv1alpha1.Binding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	byName := make(map[string]objectKey, len(left))
+	for _, binding := range left {
+		byName[binding.GetName()] = keyOf(binding.GetObject())
+	}
+	if len(byName) != len(left) {
+		return false
+	}
+	for _, binding := range right {
+		if byName[binding.GetName()] != keyOf(binding.GetObject()) {
+			return false
+		}
+	}
+	return true
+}
+
+func bindingsTouchCause(bindings []*contractsv1alpha1.Binding, cause *contractsv1alpha1.ConfirmedRootCause) bool {
+	for _, binding := range bindings {
+		for _, resource := range cause.GetResources() {
+			if keyOf(binding.GetObject()).matches(keyOf(resource)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func allFinalDetectorsClear(closure *contractsv1alpha1.IncidentClosure) bool {
+	if len(closure.GetFinalDetectorStates()) == 0 || closure.GetDetectorReviewRequiredAt() != nil {
+		return false
+	}
+	for _, evaluation := range closure.GetFinalDetectorStates() {
+		if evaluation.GetStatus() != "clear" {
+			return false
+		}
+	}
+	return true
+}
+
+func restoredFieldCheck(closure *contractsv1alpha1.IncidentClosure, cause *contractsv1alpha1.ConfirmedRootCause, repair *contractsv1alpha1.OutcomeRepairAttribution) *contractsv1alpha1.OutcomeEvidenceCheck {
+	if !repair.GetAttributed() || !allFinalDetectorsClear(closure) || closure.GetVerifiedAt() == nil ||
+		closure.GetRequest().GetStateChanges() == nil || closure.GetFinalStateChanges() == nil || closure.GetFinalStateChanges().GetObservedAt() == nil {
+		return nil
+	}
+	if closure.GetFinalStateChanges().GetObservedAt().AsTime().After(closure.GetVerifiedAt().AsTime()) {
+		return nil
+	}
+	for _, before := range closure.GetRequest().GetStateChanges().GetChanges() {
+		if before.GetChange() != "modified" || len(before.GetFields()) == 0 {
+			continue
+		}
+		changedField := false
+		for _, field := range before.GetFields() {
+			if field.Before != nil && field.After != nil && field.GetBefore() != field.GetAfter() {
+				changedField = true
+				break
+			}
+		}
+		if !changedField {
+			continue
+		}
+		key := objectKey{kind: canonicalKind(before.GetKind()), name: before.GetName()}
+		cited := false
+		for _, evidence := range cause.GetEvidence() {
+			if evidence.GetKind() == "state-change" {
+				if source, ok := parseKey(evidence.GetSource()); ok && source.matches(key) {
+					cited = true
+				}
+			}
+		}
+		if !cited {
+			continue
+		}
+		for _, after := range closure.GetFinalStateChanges().GetChanges() {
+			if canonicalKind(after.GetKind()) == key.kind && after.GetName() == key.name {
+				return nil
+			}
+		}
+		for _, action := range closure.GetResult().GetRepairActions() {
+			if !action.GetSuccess() || action.GetCompletedAt() == nil || action.GetCompletedAt().AsTime().After(closure.GetFinalStateChanges().GetObservedAt().AsTime()) {
+				continue
+			}
+			for _, touched := range actionKeys(action) {
+				if touched.matches(key) {
+					return &contractsv1alpha1.OutcomeEvidenceCheck{
+						Kind: "baseline-restoration", Source: before.GetKind() + "/" + before.GetName(), Verified: boolPointer(true),
+						Reason: stringPointer("the controller recorded changed fields before repair and observed the repaired object back at its healthy baseline after the successful action"),
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func boolPointer(value bool) *bool       { return &value }
