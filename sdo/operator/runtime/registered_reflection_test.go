@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -99,4 +101,49 @@ func reflectionTaskType(t testing.TB) string {
 		t.Fatal(err)
 	}
 	return registrytest.TaskType(t, agent, &contracts.ReflectionRequest{})
+}
+
+func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
+	for _, tc := range []struct {
+		name, decision, reason  string
+		edit, legacy, wantError bool
+	}{
+		{name: "update", decision: "updated", edit: true},
+		{name: "no change", decision: "no_change", reason: "already covered"},
+		{name: "SDK gap", decision: "sdk_gap", reason: "SDK lacks the observation"},
+		{name: "hidden edit", decision: "no_change", reason: "already covered", edit: true, wantError: true},
+		{name: "empty update", decision: "updated", wantError: true},
+		{name: "legacy proposal", decision: "updated", edit: true, legacy: true, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := nativeRepository(t)
+			nativeMemoryFixture(t, root)
+			base := nativeGit(t, root, "rev-parse", "HEAD")
+			worker := RegisteredReflectionWorker{AgentID: "reflector", Outcomes: memory.NewJSONStore(t.TempDir()), Timeout: time.Minute}
+			worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+				if task.TaskType != "outcome-reflection-direct-v1" {
+					t.Fatalf("legacy capability: %s", task.TaskType)
+				}
+				if tc.edit {
+					if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/base/README.md"), []byte("updated"), 0o644); err != nil {
+						return nil, err
+					}
+				}
+				response := &contracts.ReflectionResult{LearningDecision: tc.decision, NoChangeReason: tc.reason}
+				if tc.edit {
+					response.ProposedArtifactIds = []string{"base"}
+				}
+				if tc.legacy {
+					response.ArtifactProposal = &contracts.OperationalArtifactProposal{}
+				}
+				packed, err := anypb.New(response)
+				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: packed}, err
+			})
+			workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}
+			_, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current"}, "repair", base)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error = %v, wantError %v", err, tc.wantError)
+			}
+		})
+	}
 }

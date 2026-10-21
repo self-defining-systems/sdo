@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -16,6 +17,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -125,7 +127,9 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("physical operational memory path in prior outcome evidence")
 			}
 		}
-		requestWire, err := wire.Marshal(request)
+		logicalRequest := proto.Clone(request).(*contracts.ReflectionRequest)
+		logicalRequest.PreviousDiagnostics = nil
+		requestWire, err := wire.Marshal(logicalRequest)
 		if err != nil {
 			return ReflectionDecision{}, err
 		}
@@ -172,26 +176,61 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if err := wire.Validate(response); err != nil {
 		return ReflectionDecision{}, err
 	}
-	if w.Catalog != nil {
-		if err := memory.RequireCleanProposalCheckout(ctx, workspace.Worktree); err != nil {
-			return ReflectionDecision{}, err
+	// The direct-edit capability never accepts the retired content payload.
+	if response.GetArtifactProposal() != nil {
+		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
+	}
+	paths, err := validate.ChangedPaths(ctx, workspace.Worktree, workspace.BaseCommit)
+	if err != nil {
+		return ReflectionDecision{}, err
+	}
+	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...)}
+	if err := decision.Validate(paths); err != nil {
+		return ReflectionDecision{}, err
+	}
+	return decision, nil
+}
+
+// Validate binds the worker decision to the actual checkout diff. Content and
+// ownership rules remain in validate.Check, shared by the CLI and broker.
+func (d ReflectionDecision) Validate(paths []string) error {
+	switch d.LearningDecision {
+	case "updated":
+		if len(paths) == 0 {
+			return errors.New("updated reflection requires a nonempty diff")
 		}
-		if response.GetLearningDecision() == "updated" {
-			if response.GetArtifactProposal() == nil {
-				return ReflectionDecision{}, errors.New("updated reflection omitted typed operational artifacts")
+	case "no_change", "sdk_gap":
+		if strings.TrimSpace(d.NoChangeReason) == "" {
+			return errors.New("no-change or SDK-gap reflection requires a concrete reason")
+		}
+		if len(paths) != 0 || len(d.PlaybookIDs) != 0 {
+			return errors.New("no-change or SDK-gap reflection cannot change files or claim playbook IDs")
+		}
+	default:
+		return errors.New("reflection result requires an explicit learning decision")
+	}
+	seen := map[string]bool{}
+	for _, id := range d.PlaybookIDs {
+		if !layout.ValidPlaybookID(id) || seen[id] {
+			return fmt.Errorf("invalid or repeated logical playbook ID %q", id)
+		}
+		seen[id] = true
+		changed := false
+		for _, path := range paths {
+			_, changedID, ok := layout.Classify(path)
+			if ok && changedID == id && strings.HasPrefix(path, layout.PlaybooksDir+"/") {
+				changed = true
 			}
-			proposal := proto.Clone(response.GetArtifactProposal()).(*contracts.OperationalArtifactProposal)
-			for _, detector := range proposal.GetDetectors() {
-				if detector.GetOriginatingCommit() == "" {
-					detector.OriginatingCommit = outcomeCommit
-				}
-			}
-			if err := memory.MaterializeArtifacts(workspace.Worktree, proposal, memory.ResponderArtifacts); err != nil {
-				return ReflectionDecision{}, fmt.Errorf("materialize reflection artifacts: %w", err)
-			}
-		} else if response.GetArtifactProposal() != nil {
-			return ReflectionDecision{}, errors.New("no-change reflection cannot propose artifacts")
+		}
+		if !changed {
+			return fmt.Errorf("reported playbook %q is absent from the diff", id)
 		}
 	}
-	return ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason()}, nil
+	for _, path := range paths {
+		kind, id, ok := layout.Classify(path)
+		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript) && !seen[id] {
+			return fmt.Errorf("changed playbook %q is missing from the result", id)
+		}
+	}
+	return nil
 }

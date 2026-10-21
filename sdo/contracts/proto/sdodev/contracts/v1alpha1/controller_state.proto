@@ -122,8 +122,9 @@ message ControllerState {
 // ReflectionDecision is the learning decision the broker recorded for an
 // incident.
 message ReflectionDecision {
-  string learning_decision = 1 [(buf.validate.field).string = {in: ["updated", "no_change"]}];
+  string learning_decision = 1 [(buf.validate.field).string = {in: ["updated", "no_change", "sdk_gap"]}];
   string no_change_reason = 2;
+  repeated string playbook_ids = 3;
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the

@@ -106,12 +106,13 @@ message ReflectionRequest {
 message ReflectionResult {
   option (buf.validate.message).cel = {
     id: "reflection.no_change_has_reason"
-    message: "a no_change reflection requires a concrete reason"
-    expression: "this.learning_decision != 'no_change' || this.no_change_reason != ''"
+    message: "a no_change or sdk_gap reflection requires a concrete reason"
+    expression: "this.learning_decision == 'updated' || this.no_change_reason != ''"
   };
   string summary = 1;
-  string learning_decision = 2 [(buf.validate.field).string = {in: ["updated", "no_change"]}];
+  string learning_decision = 2 [(buf.validate.field).string = {in: ["updated", "no_change", "sdk_gap"]}];
   string no_change_reason = 3;
+  // Logical playbook IDs affected by the checkout diff; never physical paths.
   repeated string proposed_artifact_ids = 4;
-  OperationalArtifactProposal artifact_proposal = 5;
+  OperationalArtifactProposal artifact_proposal = 5 [deprecated = true];
 }

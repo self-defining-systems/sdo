@@ -55,6 +55,7 @@ type ReflectionFeedback struct {
 type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
+	PlaybookIDs []string
 }
 
 type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error)
@@ -289,7 +290,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 			if err != nil {
 				return nil, fmt.Errorf("reflection worker: %w", err)
 			}
-			ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason}
+			ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, PlaybookIds: decision.PlaybookIDs}
 			if err := n.saveLedger(ledger); err != nil {
 				return nil, err
 			}
@@ -305,7 +306,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 			return nil, errors.New("reflection changes lack a durable worker decision; proposal reset")
 		}
 		if len(paths) == 0 {
-			if ledger.ReflectionDecision.GetLearningDecision() != "no_change" || strings.TrimSpace(ledger.ReflectionDecision.GetNoChangeReason()) == "" {
+			if (ledger.ReflectionDecision.GetLearningDecision() != "no_change" && ledger.ReflectionDecision.GetLearningDecision() != "sdk_gap") || strings.TrimSpace(ledger.ReflectionDecision.GetNoChangeReason()) == "" {
 				return nil, errors.New("no-op reflection requires no_change decision and concrete reason")
 			}
 			return nil, nil
