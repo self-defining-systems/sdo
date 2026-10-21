@@ -32,6 +32,8 @@ from sdo.agents.responder.reflection import (
     reflection_output_schema,
 )
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
+from sdo.agents.responder.reflection_worker import run_reflection_task
+from sdo.agents.responder.worker import run_worker_task
 
 __all__ = [
     "CAUSE_ADMISSIBILITY_ENV",
@@ -62,5 +64,7 @@ __all__ = [
     "reflection_output_schema",
     "review_confirmed_causes",
     "run_incident_status_cli",
+    "run_reflection_task",
+    "run_worker_task",
     "write_application_kubeconfig",
 ]

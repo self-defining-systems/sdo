@@ -1,0 +1,25 @@
+{
+  "proposal_id": "reflection-c8eb9a39890dc8c15ec3eac2b405d97be6f8cff47c14dda89fa81cbb215ed90d",
+  "response": {
+    "@type": "type.googleapis.com/sdodev.contracts.v1alpha1.ReflectionResult",
+    "learning_decision": "sdk_gap",
+    "sdk_gaps": [
+      {
+        "fault_class": "deployment-image-pull-failure",
+        "primitive": "Controller-captured diagnostic observations available during corpus replay",
+        "reason": "The confirmed ImagePullBackOff occurred after the open capture. That capture records ContainerCreating, which cannot safely distinguish the confirmed fault from normal startup. A precise program needs the later structured container waiting reason captured and replayed. No existing executable program covers this fault.",
+        "scratch_script": "import json,sys\nsnapshot=json.load(open(sys.argv[1]))\nnamespace,deployment=sys.argv[2:4]\nfor p in snapshot['pods']:\n if p['metadata']['namespace']==namespace and p['metadata'].get('labels',{}).get('io.kompose.service')==deployment:\n  print(p['metadata']['name'],[s.get('state') for s in p.get('status',{}).get('containerStatuses',[])])\n"
+      },
+      {
+        "fault_class": "service-targetport-mismatch",
+        "primitive": "Corpus references or draft validation supporting controller-owned captures larger than 1 MiB",
+        "reason": "Scaffolded a bound program and attempted the required propose command with geo and healthy peer profile. Repeated validation failed: 'typed draft must be a regular JSON file of at most 1 MiB'. Open, fixed, and healthy=fixed snapshots alone require 1,234,847 compact JSON bytes, before source or JSON-string escaping. The captures cannot be edited under this task's constraints, so no validated proposal can be returned. No existing executable program covers this fault.",
+        "scratch_script": "import json,pathlib,sys\nroot=pathlib.Path(sys.argv[1])\nopened=json.loads((root/'open.json').read_text())\nfixed=json.loads((root/'fixed.json').read_text())\nprint(len(json.dumps([opened,fixed,fixed],separators=(',',':')).encode()))\n# Observed: 1234847 bytes; required propose command rejected the draft at its 1 MiB limit.\n"
+      }
+    ],
+    "summary": "Both confirmed faults received SDK-gap decisions. Image-pull diagnosis lacks replayable failure-time evidence; port-mismatch proposal validation rejects the captured corpus size. No programs reused. Operational memory and application source remain unchanged."
+  },
+  "schema_version": "sdo.dev/v1alpha1",
+  "status": "completed",
+  "task_id": "reflection-c8eb9a39890dc8c15ec3eac2b405d97be6f8cff47c14dda89fa81cbb215ed90d"
+}

@@ -1,0 +1,342 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
+
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
+)
+
+type fastloopObjects struct{ client *fake.Clientset }
+
+func (f fastloopObjects) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	services, err := f.client.CoreV1().Services("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	pods, err := f.client.CoreV1().Pods("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	deployments, err := f.client.AppsV1().Deployments("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return sdktest.Snapshot{NamespaceName: "app", ServiceList: services.Items, PodList: pods.Items, DeploymentList: deployments.Items}, nil
+}
+
+type fastloopDetector struct{}
+
+func (fastloopDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "availability", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
+		Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "apps/v1", Kind: "Deployment"}},
+		Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1},
+		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Playbooks: []string{".sdo/playbooks/base/README.md"}, OriginatingCommit: "seed"}
+}
+func (fastloopDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	findings := []sdk.Finding{}
+	for _, service := range view.Services() {
+		if service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			findings = append(findings, sdk.Finding{DetectorID: "availability", RuleID: "wrong-port", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRefFrom("Service", "v1", &service), Summary: "no ready endpoint", Evidence: "Service targetPort is wrong", Playbooks: []string{".sdo/playbooks/base/README.md"}})
+		}
+	}
+	for _, deployment := range view.Deployments() {
+		if deployment.Spec.Template.Spec.Containers[0].Image == "missing:v1" {
+			findings = append(findings, sdk.Finding{DetectorID: "availability", RuleID: "image-pull", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "image pull fails", Evidence: "pod waits for image"})
+		}
+	}
+	return findings, nil
+}
+
+type fastloopPortProgram struct{}
+
+func (fastloopPortProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "service-targetport-mismatch", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
+}
+func (fastloopPortProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	for _, service := range view.Services() {
+		if service.Name == bindings["service"].Name && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			return program.Verdict{Result: program.Match}, nil
+		}
+	}
+	return program.Verdict{Result: program.NoMatch}, nil
+}
+func (fastloopPortProgram) Mitigate(_ context.Context, _ program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["service"], Path: "spec.ports[0].targetPort", Value: 8080, Reason: "restore declared port"}}}, nil
+}
+
+type fastloopImageProgram struct{}
+
+func (fastloopImageProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "image-pull-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
+}
+func (fastloopImageProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
+	for _, deployment := range view.Deployments() {
+		if deployment.Name == bindings["deployment"].Name && deployment.Spec.Template.Spec.Containers[0].Image == "missing:v1" {
+			for _, pod := range view.Pods() {
+				if pod.Labels["app"] != deployment.Name || len(pod.Status.ContainerStatuses) == 0 {
+					continue
+				}
+				if waiting := pod.Status.ContainerStatuses[0].State.Waiting; waiting != nil && waiting.Reason == "ImagePullBackOff" {
+					return program.Verdict{Result: program.Match}, nil
+				}
+			}
+			return program.Verdict{Result: program.Unknown}, nil
+		}
+	}
+	return program.Verdict{Result: program.NoMatch}, nil
+}
+func (fastloopImageProgram) Mitigate(_ context.Context, _ program.ReadView, bindings program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["deployment"], Path: "spec.template.spec.containers[0].image", Value: "good:v1", Reason: "restore image"}}}, nil
+}
+
+func fastloopClient() *fake.Clientset {
+	client := fake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "missing:v1", Ports: []corev1.ContainerPort{{ContainerPort: 8080}}}}}, Status: corev1.PodStatus{Phase: corev1.PodPending, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}}}},
+	)
+	limit := func(action ktesting.Action) (bool, kruntime.Object, error) {
+		var object kruntime.Object
+		switch typed := action.(type) {
+		case ktesting.CreateAction:
+			object = typed.GetObject()
+		case ktesting.UpdateAction:
+			object = typed.GetObject()
+		}
+		configMap, ok := object.(*corev1.ConfigMap)
+		if !ok {
+			return false, nil, nil
+		}
+		size := 0
+		for _, value := range configMap.Data {
+			size += len(value)
+		}
+		if size > 1<<20 {
+			return true, nil, fmt.Errorf("ConfigMap exceeds 1 MiB")
+		}
+		return false, nil, nil
+	}
+	client.Fake.PrependReactor("create", "configmaps", limit)
+	client.Fake.PrependReactor("update", "configmaps", limit)
+	return client
+}
+
+func TestHermeticFakeConfigMapEnforcesProductionLimit(t *testing.T) {
+	state := RuntimeState{Version: RuntimeStateVersion, DispatchError: strings.Repeat("x", 1<<20)}
+	_, err := NewConfigMapStateStore(fastloopClient(), "app", "oversized-state").Save(context.Background(), state, "")
+	if err == nil || !strings.Contains(err.Error(), "1 MiB") {
+		t.Fatalf("oversized controller state passed the fake API: %v", err)
+	}
+}
+
+func fastloopPodWaiting(t *testing.T, ctx context.Context, client *fake.Clientset, name, reason string) {
+	t.Helper()
+	pod, err := client.CoreV1().Pods("app").Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.ContainerStatuses[0].State.Waiting.Reason = reason
+	if _, err := client.CoreV1().Pods("app").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "uv", append([]string{"run", "python", "-m", "sdo.agents.responder.tools_cli"}, args...)...)
+	command.Dir = filepath.Join("..", "..", "..")
+	command.Env = append(os.Environ(), "SDO_TOOLS_DIR="+directory)
+	command.WaitDelay = time.Second
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sdo %v: %v: %s", args, err, output)
+	}
+	var response ToolResponse
+	if err := json.Unmarshal([]byte(strings.SplitN(string(output), "\n", 2)[0]), &response); err != nil {
+		t.Fatalf("decode sdo %v: %s: %v", args, output, err)
+	}
+	return response
+}
+
+func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := fastloopClient()
+	provider := fastloopObjects{client: client}
+	root := t.TempDir()
+	port := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	image := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	for incident := 1; incident <= 2; incident++ {
+		id := "incident-1"
+		if incident == 2 {
+			id = "incident-2"
+		}
+		if incident == 2 {
+			// A new object pair has the same fault classes as the first pair.
+			service, _ := client.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
+			service.Name = "peer"
+			service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+			_, _ = client.CoreV1().Services("app").Create(ctx, service, metav1.CreateOptions{})
+			deployment, _ := client.AppsV1().Deployments("app").Get(ctx, "api", metav1.GetOptions{})
+			deployment.Name = "peer"
+			deployment.Spec.Template.Spec.Containers[0].Image = "missing:v1"
+			_, _ = client.AppsV1().Deployments("app").Create(ctx, deployment, metav1.CreateOptions{})
+			pod, _ := client.CoreV1().Pods("app").Get(ctx, "api-pod", metav1.GetOptions{})
+			pod.Name = "peer-pod"
+			pod.Labels = map[string]string{"app": "peer"}
+			pod.Status.ContainerStatuses[0].State.Waiting.Reason = "ImagePullBackOff"
+			_, _ = client.CoreV1().Pods("app").Create(ctx, pod, metav1.CreateOptions{})
+			port.Name, image.Name = "peer", "peer"
+		}
+		view, err := provider.Snapshot(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		findings, err := (fastloopDetector{}).Detect(ctx, view)
+		if err != nil || len(findings) < 2 {
+			t.Fatalf("incident %d findings: %+v %v", incident, findings, err)
+		}
+		var registry program.ProgramRegistry
+		if incident == 1 {
+			registry, err = program.NewRegistry([]program.Diagnoser{fastloopImageProgram{}}, []program.Mitigator{fastloopImageProgram{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			registry, err = program.NewRegistry([]program.Diagnoser{fastloopPortProgram{}, fastloopImageProgram{}}, []program.Mitigator{fastloopPortProgram{}, fastloopImageProgram{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		loop := NewResponderLoop(IncidentRequest{IncidentID: id, Namespace: "app", RepairPolicy: "recorded-actions", Findings: findings}, registry, provider, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}, 5)
+		loop.CorpusSessionRoot = root
+		loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)} }
+		initial := loop.InitialDiagnose(ctx)
+		if incident == 1 {
+			if len(initial) != 1 || initial[0].Verdict.Result != program.Unknown {
+				t.Fatalf("container-creating diagnosis: %+v", initial)
+			}
+			fastloopPodWaiting(t, ctx, client, "api-pod", "ErrImagePull")
+			fastloopPodWaiting(t, ctx, client, "api-pod", "ImagePullBackOff")
+			loop.DiagnosisSettleDelay = time.Millisecond
+			loop.RetryInitialDiagnose(ctx)
+			if got := loop.ProgramRuns(); len(got) != 2 || got[1].Verdict.Result != program.Match {
+				t.Fatalf("settled diagnosis: %+v", got)
+			}
+		}
+		tools := filepath.Join(t.TempDir(), "tools")
+		server := SessionToolServer{Directory: tools, Handle: loop.Handle, PollInterval: time.Millisecond}
+		if err := server.Prepare(); err != nil {
+			t.Fatal(err)
+		}
+		serverCtx, stop := context.WithCancel(ctx)
+		serverErr := make(chan error, 1)
+		go func() {
+			err := server.Serve(serverCtx)
+			if err != nil {
+				t.Logf("tool server exited: %v", err)
+			}
+			serverErr <- err
+		}()
+		fastloopTool(t, tools, "diagnose")
+		if incident == 1 {
+			for _, ref := range []sdk.ObjectRef{port, image} {
+				patch := []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)
+				if ref.Kind == "Deployment" {
+					patch = []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"api","image":"good:v1","ports":[{"containerPort":8080}]}]}}}}`)
+				}
+				if err := (TypedPlanClient{Client: client}).Patch(ctx, ref, types.MergePatchType, patch); err != nil {
+					t.Fatal(err)
+				}
+			}
+		} else {
+			before := loop.ProgramRuns()
+			if len(before) == 0 || before[0].Verdict.Result != program.Match {
+				t.Fatalf("reused program did not match: %+v", before)
+			}
+			first := fastloopTool(t, tools, "plan", "service-targetport-mismatch", "--bind", "service=Service/app/peer")
+			second := fastloopTool(t, tools, "plan", "image-pull-failure", "--bind", "deployment=Deployment/app/peer")
+			applied := fastloopTool(t, tools, "apply", first.PlanID, second.PlanID)
+			if applied.ApplicationID == "" || len(loop.PlanApplications()) != 1 {
+				t.Fatalf("plans were not applied: %+v", applied)
+			}
+			state := RuntimeState{Version: RuntimeStateVersion, IncidentResult: &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: id, PlanApplications: loop.PlanApplications()}}
+			store := NewConfigMapStateStore(client, "app", "controller-state")
+			if _, err := store.Save(ctx, state, ""); err != nil {
+				t.Fatalf("persist plan pre-images: %v", err)
+			}
+			reloaded, _, err := NewConfigMapStateStore(client, "app", "controller-state").Load(ctx)
+			if err != nil || len(reloaded.IncidentResult.PlanApplications[0].Result.PreImages) != 2 {
+				t.Fatalf("reload plan pre-images: %+v %v", reloaded.IncidentResult, err)
+			}
+		}
+		verified := fastloopTool(t, tools, "verify")
+		if !verified.Healthy || len(verified.Findings) != 0 {
+			t.Fatalf("incident %d did not verify: %+v", incident, verified)
+		}
+		stop()
+		if err := <-serverErr; err != nil {
+			t.Fatalf("tool server: %v", err)
+		}
+		for _, path := range []string{tools, filepath.Join(tools, "requests"), filepath.Join(tools, "responses")} {
+			if err := os.Chmod(path, 02770); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := server.Prepare(); err != nil {
+			t.Fatalf("tool session failed to reprepare after worker restart: %v", err)
+		}
+		for _, call := range loop.ToolCalls() {
+			if strings.Contains(call.ResponseJSON, ".sdo/") || len(call.ResponseJSON) > maxRecordedToolResponse {
+				t.Fatalf("unbounded or physical tool evidence: %+v", call)
+			}
+		}
+		fixed, _ := provider.Snapshot(ctx)
+		if err := memory.CaptureIncidentSnapshot(root, id, "fixed", fixed, "app"); err != nil {
+			t.Fatal(err)
+		}
+		captureDir, err := memory.IncidentCorpusDir(root, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := []string{"open@detect.json", "open@pre-apply.json", "fixed.json"}
+		if incident == 1 {
+			names = append(names, "open@settle.json")
+		}
+		for _, name := range names {
+			if _, err := os.Stat(filepath.Join(captureDir, name)); err != nil {
+				t.Fatalf("missing %s: %v", name, err)
+			}
+		}
+		if incident == 1 {
+			for name, want := range map[string]string{"open@detect.json": "ContainerCreating", "open@settle.json": "ImagePullBackOff", "open@pre-apply.json": "ImagePullBackOff"} {
+				wire, err := os.ReadFile(filepath.Join(captureDir, name))
+				if err != nil || !strings.Contains(string(wire), want) {
+					t.Fatalf("%s was captured at the wrong phase: %v", name, err)
+				}
+			}
+		}
+	}
+}

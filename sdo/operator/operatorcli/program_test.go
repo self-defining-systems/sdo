@@ -2,17 +2,22 @@ package operatorcli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/broker"
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/worker_registry"
 )
 
 func TestProgramScaffoldWritesProgramLayout(t *testing.T) {
@@ -212,5 +217,173 @@ func TestProgramProposeEmitsValidatedFixture(t *testing.T) {
 	}
 	if proposal.GetPlaybooks()[0].GetOriginatingIncident() != "inc-42" {
 		t.Fatalf("wrong provenance: %s", output.String())
+	}
+}
+
+func TestScriptedReflectionScaffoldProposeAndWorkerResult(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOSUMDB", "off")
+	t.Setenv("GOFLAGS", "-mod=mod -p=2")
+	app := draftFixtureAppFrom(t, "playbook_program_app")
+	seedUnformattedHealthSource(t, app)
+	incident := "scripted-incident"
+	captureRoot := t.TempDir()
+	fixture := filepath.Join(app, ".sdo", "corpus", "targetport-mismatch")
+	for _, phase := range []string{"open@pre-apply", "fixed"} {
+		name := "open.json"
+		if phase == "fixed" {
+			name = "fixed.json"
+		}
+		wire, err := os.ReadFile(filepath.Join(fixture, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var snapshot sdktest.Snapshot
+		if err := json.Unmarshal(wire, &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if phase == "fixed" {
+			healthy, err := os.ReadFile(filepath.Join(fixture, "healthy.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var peer sdktest.Snapshot
+			if err := json.Unmarshal(healthy, &peer); err != nil {
+				t.Fatal(err)
+			}
+			snapshot.ServiceList = append(snapshot.ServiceList, peer.ServiceList...)
+			snapshot.PodList = append(snapshot.PodList, peer.PodList...)
+		}
+		if err := memory.CaptureIncidentSnapshot(captureRoot, incident, phase, snapshot, "demo"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	captureDir, err := memory.IncidentCorpusDir(captureRoot, incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordings, err := os.ReadFile(filepath.Join(fixture, "recordings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []sdktest.PrimitiveCall
+	if err := json.Unmarshal(recordings, &calls); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if err := memory.AppendCapturedRecording(captureRoot, incident, "open@pre-apply", call); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := filepath.Join(t.TempDir(), "service-targetport-mismatch")
+	if err := RunProgramScaffold(ProgramScaffoldConfig{FaultClass: "service-targetport-mismatch", Params: []ProgramParam{{Name: "service", Kind: "Service"}}, Mitigate: true, Out: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "diagnose_test.go")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"README.md", "diagnose.go", "mitigate.go"} {
+		source := filepath.Join("..", "..", "..", "benchmarks", "sregym", "fastloop", "scripted_program", name)
+		wire, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), wire, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := ProgramProposeConfig{Dir: dir, Incident: incident, App: app, OperatorRoot: "..", CorpusFromIncident: incident,
+		OpenAt: "pre-apply", Bindings: []string{"service=Service/demo/front"}, PeerBindings: []string{"service=Service/demo/peer"}, CaptureDir: captureDir}
+	var output strings.Builder
+	if err := RunProgramPropose(context.Background(), config, &output); err != nil {
+		t.Fatal(err)
+	}
+	proposal := &contracts.OperationalArtifactProposal{}
+	if err := protojson.Unmarshal([]byte(output.String()), proposal); err != nil {
+		t.Fatal(err)
+	}
+	cases := proposal.GetPlaybooks()[0].GetProgram().GetCorpusCases()
+	if len(cases) != 1 || cases[0].GetReference().GetCaptureLabel() != "open@pre-apply" {
+		t.Fatalf("proposal did not use bounded capture reference: %+v", cases)
+	}
+	response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ArtifactProposal: proposal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := &contracts.AgentResult{SchemaVersion: worker_registry.SchemaVersion, TaskId: "reflection", Status: "completed", ProposalId: "reflection", Response: response}
+	wire, err := protojson.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) > 700<<10 {
+		t.Fatalf("reflection result exceeds worker transport: %d bytes", len(wire))
+	}
+	registry, err := worker_registry.LoadDirectory(filepath.Join("..", "..", "agents", "registrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := anypb.New(&contracts.ReflectionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &contracts.AgentTask{SchemaVersion: worker_registry.SchemaVersion, TaskId: "reflection", AgentId: "sdo-reflector", TaskType: "outcome-reflection", Request: request, Workspace: &contracts.ProposalWorkspace{ProposalId: "reflection"}}
+	if err := registry.ValidateResult(task, result); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := broker.New(app, filepath.Join(t.TempDir(), "proposals"), func(ctx context.Context, candidate string, changed []string) error {
+		if err := memory.ValidateCapturedCorpusTree(captureRoot, candidate, incident, changed); err != nil {
+			return err
+		}
+		workspace, err := builder.BuildWorkspace(ctx, builder.Config{ApplicationRoot: candidate, DiagnosticsRoot: filepath.Join(candidate, ".sdo", "diagnostics"), OperatorRoot: ".."})
+		if err != nil {
+			return err
+		}
+		defer workspace.Close()
+		_, err = workspace.ValidateAndBuild(ctx)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repair, err := repository.CreateProposal(context.Background(), incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repair.Path, "scripted-repair.txt"), []byte("repaired\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Publish(context.Background(), incident, broker.Responder, broker.ProposalPhase); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.RecordOutcome(context.Background(), incident, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: incident, Classification: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	reflection, err := repository.CreateProposalForPhase(context.Background(), incident, broker.ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.MaterializeArtifacts(reflection.Path, proposal, memory.ResponderArtifacts, captureDir); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := repository.Publish(context.Background(), incident, broker.Responder, broker.ReflectionPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Commit == "" {
+		t.Fatal("broker did not accept the compiled reflection program")
+	}
+	if _, err := os.Stat(filepath.Join(app, ".sdo", "playbooks", "service-targetport-mismatch", "mitigate.go")); err != nil {
+		t.Fatalf("accepted program is missing: %v", err)
+	}
+	rebuilt, err := builder.BuildWorkspace(context.Background(), builder.Config{ApplicationRoot: app, DiagnosticsRoot: filepath.Join(app, ".sdo", "diagnostics"), OperatorRoot: ".."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rebuilt.Close()
+	if _, err := rebuilt.ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("accepted program did not rebuild: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rebuilt.Directory, "generated", "programs.go")); err != nil {
+		t.Fatalf("rebuilt registry omitted accepted program: %v", err)
 	}
 }

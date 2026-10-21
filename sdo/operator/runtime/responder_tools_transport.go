@@ -70,7 +70,7 @@ func (s SessionToolServer) process(ctx context.Context, requests, responses stri
 		return err
 	}
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json") {
+		if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		name := entry.Name()
