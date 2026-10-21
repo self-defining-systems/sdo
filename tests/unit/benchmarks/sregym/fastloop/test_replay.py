@@ -224,6 +224,7 @@ def test_capture_includes_redacted_session_snapshots_for_fake_api(tmp_path: Path
     corpus.mkdir(parents=True)
     (corpus / "open@pre-apply.json").write_text('{"services":[]}', encoding="utf-8")
     (corpus / "fixed.json").write_text('{"services":[]}', encoding="utf-8")
+    (corpus / "unrelated.json").write_text('{"services":[]}', encoding="utf-8")
     maps = [
         {"data": {"agent-task.json": request}},
         {"data": {"agent-result.json": result}},

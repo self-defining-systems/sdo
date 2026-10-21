@@ -285,8 +285,12 @@ def _referenced_captures(receipt_dir: Path, incident_id: str, result: str | None
         if total > MAX_CAPTURE_BUNDLE_BYTES:
             raise CheckpointError("corpus capture bundle exceeds its size limit")
         digest = hashlib.sha256(data).hexdigest()
-        digests.discard(digest)
-        found[path.name] = data
+        if (
+            path.name in {"open@pre-apply.json", "open@settle.json", "open@detect.json", "fixed.json"}
+            or digest in digests
+        ):
+            digests.discard(digest)
+            found[path.name] = data
     if digests:
         raise CheckpointError(f"missing corpus captures referenced by digest: {', '.join(sorted(digests))}")
     return found
