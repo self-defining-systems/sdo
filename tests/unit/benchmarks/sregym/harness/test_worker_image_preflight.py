@@ -21,6 +21,14 @@ def _worker_infra() -> Any:
     return cast("Any", module)
 
 
+def test_kind_cluster_prefix_is_read_when_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _worker_infra()
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_PREFIX", "trial-w")
+    assert module.kind_cluster_prefix() == "trial-w"
+    monkeypatch.delenv("SREGYM_KIND_CLUSTER_PREFIX")
+    assert module.kind_cluster_prefix() == "sregym-w"
+
+
 def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _worker_infra()
     calls: list[list[str]] = []
