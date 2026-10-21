@@ -104,6 +104,24 @@ func TestDeriveVerifiesQualifiedDetectorFinding(t *testing.T) {
 	}
 }
 
+func TestDeriveConfirmsVerifiedFindingWithSupplementalLiveObservation(t *testing.T) {
+	closure := fixtureClosure()
+	closure.Result.ConfirmedRootCauses[0].ExplainedDetectors = append(closure.Result.ConfirmedRootCauses[0].ExplainedDetectors, "deployment-image-pull-backoff")
+	closure.Result.ConfirmedRootCauses[0].Evidence = append(closure.Result.ConfirmedRootCauses[0].Evidence,
+		&contractsv1alpha1.RootCauseEvidence{Kind: "live-observation", Source: "kubectl get service"})
+	result, err := Derive(context.Background(), closure, "repair-commit", "codex", "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification := result.Record.GetDiagnosisVerification()[0]
+	if verification.GetVerdict() != "confirmed" || result.Record.GetClassification() != "success" || !result.RequiresReflection {
+		t.Fatalf("verified detector finding and flip were downgraded: %+v", result.Record)
+	}
+	if len(verification.GetEvidence()) != 2 || verification.GetEvidence()[1].Verified != nil {
+		t.Fatalf("supplemental observation was not retained as unverified: %+v", verification.GetEvidence())
+	}
+}
+
 func TestDeriveVerifiesDetectorHistoryFingerprint(t *testing.T) {
 	closure := fixtureClosure()
 	closure.Request.DetectorHistory[0].Fingerprints = []string{"health/unhealthy/hotel-reservation/Deployment/app"}

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
-from benchmarks.sregym.protocol.native_receipt import native_production_receipt
+from benchmarks.sregym.protocol.native_receipt import CLASSIFICATION_POLICY, native_production_receipt
 from benchmarks.sregym.protocol.receipt import ProductionReceiptValidationError, validate_production_receipt
 
 SHA_A = "a" * 40
@@ -73,6 +75,29 @@ def test_native_receipt_verifies_correlated_go_ledger_and_health() -> None:
     assert receipt["schema_version"] == "sdo.production-receipt/v2"
     assert receipt["resolution"] == "sdo_mitigated"
     assert receipt["outcome_commit"] == SHA_B
+
+
+def test_classification_policy_covers_proto_and_receipt_closures() -> None:
+    proto = (
+        Path(__file__).resolve().parents[5] / "sdo/contracts/proto/sdodev/contracts/v1alpha1/outcome.proto"
+    ).read_text()
+    validation = re.search(r"string classification = 14.*?\{in: \[([^]]+)\]", proto)
+    assert validation is not None
+    assert set(re.findall(r'"([a-z_]+)"', validation.group(1))) == set(CLASSIFICATION_POLICY)
+    assert {name for name, rule in CLASSIFICATION_POLICY.items() if rule["receipt_accepted"]} == {
+        "success",
+        "cleared_without_action",
+        "external_recovery",
+        "false_positive",
+    }
+    assert {name for name, rule in CLASSIFICATION_POLICY.items() if rule["learnable"]} == {"success"}
+
+
+def test_native_receipt_rejects_partial_as_incomplete_closure() -> None:
+    ledger = _ledger()
+    ledger["outcome_document"]["classification"] = "partial"
+    with pytest.raises(ProductionReceiptValidationError, match="verified closure classification"):
+        _receipt(ledger)
 
 
 def test_native_receipt_rejects_success_with_contradicted_diagnosis() -> None:

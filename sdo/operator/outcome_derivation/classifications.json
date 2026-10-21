@@ -1,0 +1,10 @@
+{
+  "success": {"receipt_accepted": true, "learnable": true},
+  "partial": {"receipt_accepted": false, "learnable": false},
+  "external_recovery": {"receipt_accepted": true, "learnable": false},
+  "cleared_without_action": {"receipt_accepted": true, "learnable": false},
+  "false_positive": {"receipt_accepted": true, "learnable": false},
+  "false_negative": {"receipt_accepted": false, "learnable": false},
+  "failed": {"receipt_accepted": false, "learnable": false},
+  "cancelled": {"receipt_accepted": false, "learnable": false}
+}

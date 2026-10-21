@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, cast
 
 from benchmarks.sregym.protocol.receipt import (
@@ -14,7 +16,12 @@ from benchmarks.sregym.protocol.receipt import (
 )
 
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
-_ALLOWED_CLASSIFICATIONS = {"success", "cleared_without_action", "external_recovery", "false_positive"}
+CLASSIFICATION_POLICY: dict[str, dict[str, bool]] = json.loads(
+    (Path(__file__).resolve().parents[3] / "sdo/operator/outcome_derivation/classifications.json").read_text(
+        encoding="utf-8"
+    )
+)
+_ALLOWED_CLASSIFICATIONS = {name for name, rule in CLASSIFICATION_POLICY.items() if rule["receipt_accepted"]}
 
 
 def _object(value: object, name: str) -> dict[str, Any]:

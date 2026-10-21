@@ -102,7 +102,7 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 			verdict = "no-evidence"
 		case anyContradicted(checks):
 			verdict = "contradicted"
-		case len(flips) > 0 && allFlipped(flips) || programCheck != nil || fieldCheck != nil:
+		case anyFlipped(flips) || programCheck != nil || fieldCheck != nil:
 			if repair.Attributed {
 				verdict = "confirmed"
 			} else {
@@ -244,13 +244,13 @@ func anyContradicted(items []*contractsv1alpha1.OutcomeEvidenceCheck) bool {
 	}
 	return false
 }
-func allFlipped(items []*contractsv1alpha1.OutcomeDetectorFlip) bool {
+func anyFlipped(items []*contractsv1alpha1.OutcomeDetectorFlip) bool {
 	for _, item := range items {
-		if !item.Flipped {
-			return false
+		if item.Flipped {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 type objectKey struct{ kind, name, namespace, label string }

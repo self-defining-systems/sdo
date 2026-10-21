@@ -127,7 +127,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		ResolutionPath: result.GetResolutionPath(), FastPathPrograms: append([]string(nil), result.GetFastPathPrograms()...), FastPathSkippedReason: result.GetFastPathSkippedReason(), FastPathRelationCoveredFindings: cloneMessages(result.GetFastPathRelationCoveredFindings()),
 	}
 	reflect := false
-	if classification == "success" {
+	if classificationPolicy[classification].Learnable {
 		for _, verification := range verifications {
 			if verification.Verdict == "confirmed" {
 				reflect = true
