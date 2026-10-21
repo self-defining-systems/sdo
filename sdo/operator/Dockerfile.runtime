@@ -117,3 +117,10 @@ COPY benchmarks/sregym/__init__.py /opt/sdo/benchmarks/sregym/__init__.py
 COPY benchmarks/sregym/adapter/__init__.py benchmarks/sregym/adapter/submission.py benchmarks/sregym/adapter/submission_relay.py /opt/sdo/benchmarks/sregym/adapter/
 COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py /opt/sdo/benchmarks/sregym/protocol/
 RUN chmod -R a+rX /opt/sdo/benchmarks
+
+FROM sregym-responder AS scripted-worker
+RUN npm uninstall --global @openai/codex @anthropic-ai/claude-code >/dev/null 2>&1; \
+    rm -f /usr/local/bin/codex /usr/local/bin/claude
+COPY benchmarks/sregym/adapter/scripted_worker.py /opt/sdo/benchmarks/sregym/adapter/
+COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo-scripted/targetport
+RUN chmod -R a+rX /opt/sdo/benchmarks/sregym/adapter /opt/sdo-scripted

@@ -14,6 +14,16 @@ use fault-only recovery and mark `cleanup_skipped_reason` in each incident row.
 
 # Scripted SDO loop (kind, no LLM)
 
+Level 1 exercises both scripted worker entry points with a fake Kubernetes API:
+
+```bash
+uv run pytest -q -p no:tach tests/unit/benchmarks/sregym/fastloop/test_scripted_worker.py tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py
+```
+
+The test copies the accepted hotel seed when it is available at the experiment
+path, or its checked-in manifest and Helm template fixture elsewhere. The
+scripted source repair reads the seed's raw `kubernetes/` manifest set.
+
 Run from this repository root with an accepted lifecycle seed. The seed must
 contain `.sdo/diagnostics/manifest.yaml` and `.sdo/lifecycle-provenance.yaml`;
 the scripted registrations replace only the responder and reflector. The
@@ -23,10 +33,7 @@ Choose a new run directory for each build:
 ```bash
 export SDO_SCRIPTED_SEED=/absolute/path/to/accepted-lifecycle-seed
 export SDO_SCRIPTED_RUN=/absolute/path/to/new-fastloop-run
-SDO_IMAGE_TAG=scripted-fastloop bash scripts/build_sdo_images.sh
-docker build --file benchmarks/sregym/experiments/fastloop/Dockerfile.scripted-worker \
-  --build-arg BASE=sdo-sregym-responder:scripted-fastloop \
-  --tag sdo-sregym-responder:scripted-fastloop .
+SDO_IMAGE_TAG=scripted-fastloop SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_images.sh
 uv run python -m benchmarks.sregym.fastloop up \
   --run-dir "$SDO_SCRIPTED_RUN" --seed "$SDO_SCRIPTED_SEED" \
   --controller-image sdo-controller:scripted-fastloop \
