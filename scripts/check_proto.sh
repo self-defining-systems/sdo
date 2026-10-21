@@ -23,13 +23,13 @@ if ! command -v buf >/dev/null 2>&1; then
 fi
 
 echo "==> buf lint"
-buf lint
+timeout 30 buf lint
 
 # Breaking-change detection against the default branch. Skipped when the branch
 # point is unavailable (e.g. a shallow checkout without origin/main).
 BREAKING_BASE="${BUF_BREAKING_AGAINST:-.git#branch=main}"
 echo "==> buf breaking (against ${BREAKING_BASE})"
-if ! buf breaking --against "${BREAKING_BASE}" 2>/tmp/buf_breaking.err; then
+if ! timeout 60 buf breaking --against "${BREAKING_BASE}" 2>/tmp/buf_breaking.err; then
     if grep -qiE "could not|no such|unknown revision|does not exist|no .proto files|had no" /tmp/buf_breaking.err; then
         echo "   skipped: breaking-change base ${BREAKING_BASE} unavailable" >&2
         cat /tmp/buf_breaking.err >&2

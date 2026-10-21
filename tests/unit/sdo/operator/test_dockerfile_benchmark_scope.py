@@ -23,16 +23,30 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 RUNTIME_DOCKERFILE = REPO_ROOT / "sdo" / "operator" / "Dockerfile.runtime"
+BENCHMARK_DOCKERFILE = REPO_ROOT / "benchmarks" / "sregym" / "Dockerfile.worker"
 SCRIPTED_DOCKERFILE = REPO_ROOT / "benchmarks" / "sregym" / "assurance" / "Dockerfile.scripted"
 
 #: Directories the answer key lives under; no runtime image's copied tree may contain them.
 FORBIDDEN_PREFIXES = (
     "benchmarks/sregym/experiments",
     "benchmarks/sregym/assurance",
-    "benchmarks/sregym/fastloop",
     "docs/",
     "tests/",
 )
+
+ALLOWED_FASTLOOP_FILES = {
+    "benchmarks/sregym/fastloop/__init__.py",
+    "benchmarks/sregym/fastloop/model_recording.py",
+    "benchmarks/sregym/fastloop/file_edits.py",
+    "benchmarks/sregym/fastloop/recording_worker.py",
+}
+SCRIPTED_PROGRAM_FILES = {
+    "benchmarks/sregym/fastloop/scripted_program/README.md",
+    "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
+    "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+    "benchmarks/sregym/fastloop/scripted_networkpolicy_program/README.md",
+    "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
+}
 
 #: The scripted-Codex test wrapper is allowed to add exactly this, and nothing else that
 #: FORBIDDEN_PREFIXES would otherwise catch.
@@ -51,6 +65,11 @@ def _local_copy_sources(dockerfile: Path) -> list[str]:
         tokens = match.group(1).split()
         sources.extend(tokens)
     return sources
+
+
+def _stage_copy_sources(dockerfile: Path, stage: str) -> list[str]:
+    text = dockerfile.read_text(encoding="utf-8").split(f" AS {stage}\n", 1)[1].split("\nFROM ", 1)[0]
+    return [token for match in _COPY_LOCAL.finditer(text) for token in match.group(1).split()]
 
 
 def _expand(paths: list[str]) -> set[str]:
@@ -78,7 +97,9 @@ def test_controller_and_plain_responder_stages_copy_no_benchmarks_code() -> None
     benchmarks_before = [src for src in early_sources if src.startswith("benchmarks")]
     assert benchmarks_before == [], f"controller/responder stages must not copy benchmarks/: {benchmarks_before}"
 
-    all_sources = _local_copy_sources(RUNTIME_DOCKERFILE)
+    assert "sregym-responder" not in text
+    assert "scripted-worker" not in text
+    all_sources = _local_copy_sources(BENCHMARK_DOCKERFILE)
     assert any(src.startswith("benchmarks") for src in all_sources), "sregym-responder stage copies no benchmarks/"
 
 
@@ -98,12 +119,19 @@ def test_runtime_dockerfile_never_copies_the_whole_benchmarks_tree() -> None:
 
 
 def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
-    sources = [src for src in _local_copy_sources(RUNTIME_DOCKERFILE) if src.startswith("benchmarks")]
+    sources = [
+        src for src in _stage_copy_sources(BENCHMARK_DOCKERFILE, "sregym-responder") if src.startswith("benchmarks")
+    ]
     copied = _expand(sources)
 
     leaked = {path for path in copied if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)}
 
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
+    assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
+    scripted = (
+        _expand([src for src in _local_copy_sources(BENCHMARK_DOCKERFILE) if src.startswith("benchmarks")]) - copied
+    )
+    assert scripted == {"benchmarks/sregym/adapter/scripted_worker.py", *SCRIPTED_PROGRAM_FILES}
 
 
 def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_experiments() -> None:
@@ -163,9 +191,27 @@ def test_sregym_responder_copy_matches_exactly_what_its_entry_points_import() ->
     """
 
     needed = _entry_point_module_closure(
-        ("benchmarks.sregym.adapter.submission", "benchmarks.sregym.adapter.submission_relay")
+        (
+            "benchmarks.sregym.adapter.submission",
+            "benchmarks.sregym.adapter.submission_relay",
+            "benchmarks.sregym.fastloop.recording_worker",
+        )
     )
-    copied = _expand([src for src in _local_copy_sources(RUNTIME_DOCKERFILE) if src.startswith("benchmarks")])
+    copied = _expand(
+        [src for src in _stage_copy_sources(BENCHMARK_DOCKERFILE, "sregym-responder") if src.startswith("benchmarks")]
+    )
 
     assert needed - copied == set(), f"the image is missing modules its entry points import: {needed - copied}"
     assert copied - needed == set(), f"the image copies files its entry points never import: {copied - needed}"
+
+
+def test_scripted_worker_stage_contains_only_its_entry_point_and_program() -> None:
+    copied = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
+    assert copied == {
+        "benchmarks/sregym/adapter/scripted_worker.py",
+        "benchmarks/sregym/fastloop/scripted_program/README.md",
+        "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
+        "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+        "benchmarks/sregym/fastloop/scripted_networkpolicy_program/README.md",
+        "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
+    }

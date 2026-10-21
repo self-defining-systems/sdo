@@ -21,6 +21,7 @@ import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/traffic.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
@@ -30,7 +31,7 @@ message Finding {
   string detector_id = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[a-z0-9][a-z0-9_.-]*$"}];
   string rule_id = 2 [(buf.validate.field).string.min_len = 1];
   string status = 3 [(buf.validate.field).string = {in: ["active", "resolved"]}];
-  string severity = 4 [(buf.validate.field).string = {in: ["info", "warn", "critical"]}];
+  string severity = 4 [(buf.validate.field).string = {in: ["info", "warn", "critical", "latent"]}];
   string summary = 5 [(buf.validate.field).string.min_len = 1];
   string evidence = 6 [(buf.validate.field).string.min_len = 1];
   ObjectRef primary_resource = 7 [(buf.validate.field).required = true];
@@ -39,6 +40,35 @@ message Finding {
   map<string, ObjectRef> parameter_bindings = 10;
   string fingerprint = 11;
   google.protobuf.Struct metadata = 12;
+}
+
+message DriftField {
+  string path = 1;
+  string old = 2;
+  string new = 3;
+  string source = 4;
+}
+
+message DriftEvent {
+  ObjectRef ref = 1;
+  repeated DriftField fields = 2;
+  string source = 3;
+  string manager = 4;
+  string operation = 5;
+  google.protobuf.Timestamp observed_at = 6;
+  string classification = 7 [(buf.validate.field).string = {in: ["fault", "unexplained"]}];
+  string program_id = 8;
+  google.protobuf.Timestamp manager_at = 9;
+  string investigation_status = 10;
+  string investigation_verdict = 11;
+  string investigation_reason = 12;
+  repeated DriftEvidence investigation_evidence = 13;
+  string investigation_capture_id = 14;
+}
+
+message DriftEvidence {
+  string kind = 1 [(buf.validate.field).string = {in: ["source_contradiction", "violated_relation", "observed_impact"]}];
+  string observation = 2;
 }
 
 // DetectorEvaluation is one detector's status at a point in time.
@@ -217,6 +247,11 @@ message IncidentRequest {
   StateChanges state_changes = 18;
   FollowUpContext follow_up = 19;
   OperationalMemorySnapshot memory_snapshot = 20;
+  repeated ProgramRun initial_program_runs = 21;
+  int32 max_response_loops = 22;
+  repeated DriftEvent drift_events = 23;
+  string fast_path_summary = 24;
+  string prepared_agent_task = 25;
 }
 
 message RootCauseEvidence {
@@ -356,6 +391,17 @@ message IncidentResult {
   optional string responder_session_id = 13;
   optional string error = 14;
   LateFindingsPull late_findings_pull = 15;
+  repeated ProgramToolCall program_tool_calls = 16;
+  repeated ProgramRun program_runs = 17;
+  repeated PlanApplication plan_applications = 18;
+  int32 response_loops_used = 19;
+  bool response_loop_exhausted = 20;
+  repeated string program_failure_signals = 21;
+  string resolution_path = 22 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
+  repeated string fast_path_programs = 23;
+  string fast_path_skipped_reason = 24;
+  repeated RelationCoveredFinding fast_path_relation_covered_findings = 25;
+  repeated DriftEvent drift_events = 26;
 }
 
 // A responder claim that it read controller-published findings during its turn.
@@ -377,6 +423,7 @@ message IncidentView {
   repeated Finding blocking_findings = 4;
   repeated Finding clearing_findings = 5;
   StateChanges state_changes = 6;
+  repeated DriftEvent drift_events = 7;
 }
 
 // DetectorTimelineEntry summarizes one finding's firing history within an

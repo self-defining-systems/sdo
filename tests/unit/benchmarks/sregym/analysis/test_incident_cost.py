@@ -12,6 +12,7 @@ from benchmarks.sregym.analysis.incident_cost import (
     WARM_PROMPT_MARKER,
     IncidentCostError,
     TokenUsage,
+    _reflection_usage,
     build_report,
     first_mutation_at,
     last_mutation_done_at,
@@ -20,6 +21,13 @@ from benchmarks.sregym.analysis.incident_cost import (
     main,
     read_verdict,
 )
+
+
+def test_native_reflection_usage_is_read_from_ledger_without_rollouts() -> None:
+    usage = _reflection_usage({"native_ledger": {"reflection_decision": {"usage": _usage(42, 7)}}}, [])
+    assert usage.input_tokens == 42
+    assert usage.output_tokens == 7
+
 
 PROBLEM_A = "missing_configmap_hotel_reservation"
 PROBLEM_B = "missing_configmap_mongodb_rate_hotel_reservation"
@@ -952,3 +960,16 @@ def test_a_stage_stopped_before_its_drain_keeps_responder_tokens_from_its_stage_
 
     assert only.responder == replace(TokenUsage.from_mapping(responder), requests=1)
     assert only.incident_resolution_seconds == 42.0
+
+
+def test_native_receipt_responder_usage_comes_from_the_ledger_closure_result() -> None:
+    from benchmarks.sregym.analysis.incident_cost import receipt_responder_usage
+
+    receipt = {
+        "native_ledger": {
+            "closure": {"result": {"usage": {"input_tokens": 1000, "cached_input_tokens": 800, "output_tokens": 50}}}
+        }
+    }
+    usage = receipt_responder_usage(receipt)
+    assert (usage.input_tokens, usage.cached_input_tokens, usage.output_tokens) == (1000, 800, 50)
+    assert receipt_responder_usage({}).input_tokens == 0

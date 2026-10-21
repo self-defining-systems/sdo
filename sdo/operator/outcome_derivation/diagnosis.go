@@ -16,18 +16,61 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 	}
 	request := closure.GetRequest()
 	fired := map[string]bool{}
+	findings := map[string]bool{}
 	scenarios := map[string]bool{}
 	for _, finding := range request.GetFindings() {
-		if finding.GetStatus() == "active" {
-			fired[finding.GetDetectorId()] = true
+		if finding.GetDetectorId() != "" {
+			fired[finding.GetDetectorId()] = fired[finding.GetDetectorId()] || finding.GetStatus() == "active"
+		}
+		if finding.GetFingerprint() != "" {
+			findings[finding.GetFingerprint()] = findings[finding.GetFingerprint()] || finding.GetStatus() == "active"
+		}
+		if ref := finding.GetPrimaryResource(); ref.GetName() != "" {
+			qualified := strings.Join([]string{finding.GetDetectorId(), finding.GetRuleId(), ref.GetNamespace(), ref.GetName()}, "/")
+			findings[qualified] = findings[qualified] || finding.GetStatus() == "active"
 		}
 		if strings.HasPrefix(finding.GetRuleId(), "scenario-slo.") {
-			scenarios[strings.TrimPrefix(finding.GetRuleId(), "scenario-slo.")] = true
+			name := strings.TrimPrefix(finding.GetRuleId(), "scenario-slo.")
+			scenarios[name] = scenarios[name] || finding.GetStatus() == "active"
 		}
 	}
 	for _, evaluation := range request.GetDetectorHistory() {
+		for _, fingerprint := range evaluation.GetFingerprints() {
+			findings[fingerprint] = findings[fingerprint] || evaluation.GetStatus() == "firing"
+		}
 		if evaluation.GetStatus() == "firing" {
 			fired[evaluation.GetDetectorId()] = true
+		} else if evaluation.GetDetectorId() != "" {
+			if _, ok := fired[evaluation.GetDetectorId()]; !ok {
+				fired[evaluation.GetDetectorId()] = false
+			}
+		}
+	}
+	// A detector that activates while the responder is still receiving its
+	// settled diagnosis observed the incident before any repair could begin.
+	if closure.GetDispatchedAt() != nil {
+		cutoff := closure.GetDispatchedAt().AsTime().Add(15 * time.Second)
+		for _, call := range result.GetProgramToolCalls() {
+			if call.GetAt() != nil && call.GetAt().AsTime().After(cutoff) {
+				cutoff = call.GetAt().AsTime()
+			}
+			break
+		}
+		for _, action := range result.GetRepairActions() {
+			if action.GetStartedAt() != nil && action.GetStartedAt().AsTime().Before(cutoff) {
+				cutoff = action.GetStartedAt().AsTime()
+			}
+		}
+		for _, entry := range closure.GetDetectorTimeline() {
+			if entry.GetFirstActivatedAt() == nil || entry.GetFirstActivatedAt().AsTime().After(cutoff) {
+				continue
+			}
+			if entry.GetDetectorId() != "" {
+				fired[entry.GetDetectorId()] = true
+			}
+			if entry.GetFingerprint() != "" {
+				findings[entry.GetFingerprint()] = true
+			}
 		}
 	}
 	latest := map[string]*contractsv1alpha1.DetectorEvaluation{}
@@ -47,9 +90,17 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 			check := &contractsv1alpha1.OutcomeEvidenceCheck{Kind: evidence.GetKind(), Source: evidence.GetSource()}
 			switch evidence.GetKind() {
 			case "detector-finding":
-				check.Verified = boolPointer(fired[evidence.GetSource()])
+				if fired[evidence.GetSource()] || findings[evidence.GetSource()] {
+					check.Verified = boolPointer(true)
+				} else if _, ok := fired[evidence.GetSource()]; ok {
+					check.Verified = boolPointer(false)
+				} else if _, ok := findings[evidence.GetSource()]; ok {
+					check.Verified = boolPointer(false)
+				}
 			case "synthetic-traffic":
-				check.Verified = boolPointer(scenarios[strings.TrimPrefix(evidence.GetSource(), "scenario-slo.")])
+				if observed, ok := scenarios[strings.TrimPrefix(evidence.GetSource(), "scenario-slo.")]; ok {
+					check.Verified = boolPointer(observed)
+				}
 			case "state-change":
 				check.Verified, check.Reason = changes.check(evidence.GetSource())
 			}
@@ -64,13 +115,21 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 			flips = append(flips, &contractsv1alpha1.OutcomeDetectorFlip{DetectorId: detectorID, FiredAtDispatch: fired[detectorID], ClearedAfterFix: clear, Flipped: fired[detectorID] && clear != nil && *clear})
 		}
 		repair := repairs.attribute(cause)
+		programCheck := programFlipCheck(closure, cause)
+		fieldCheck := restoredFieldCheck(closure, cause, repair)
+		if programCheck != nil {
+			checks = append(checks, programCheck)
+		}
+		if fieldCheck != nil {
+			checks = append(checks, fieldCheck)
+		}
 		verdict := "unverified"
 		switch {
 		case len(cause.GetEvidence()) == 0:
 			verdict = "no-evidence"
 		case anyContradicted(checks):
 			verdict = "contradicted"
-		case len(flips) > 0 && allFlipped(flips):
+		case anyFlipped(flips) || programCheck != nil || fieldCheck != nil:
 			if repair.Attributed {
 				verdict = "confirmed"
 			} else {
@@ -80,6 +139,126 @@ func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1a
 		verifications = append(verifications, &contractsv1alpha1.DiagnosisVerification{Summary: cause.GetSummary(), Verdict: verdict, Evidence: checks, Detectors: flips, Repair: repair})
 	}
 	return verifications
+}
+
+func programFlipCheck(closure *contractsv1alpha1.IncidentClosure, cause *contractsv1alpha1.ConfirmedRootCause) *contractsv1alpha1.OutcomeEvidenceCheck {
+	if closure.GetVerifiedAt() == nil || !allFinalDetectorsClear(closure) {
+		return nil
+	}
+	for _, before := range closure.GetRequest().GetInitialProgramRuns() {
+		if before.GetVerdict().GetResult() != contractsv1alpha1.Verdict_RESULT_MATCH || !bindingsTouchCause(before.GetBindings(), cause) {
+			continue
+		}
+		for _, after := range closure.GetResult().GetProgramRuns() {
+			if after.GetProgramId() != before.GetProgramId() || after.GetVerdict().GetResult() != contractsv1alpha1.Verdict_RESULT_NO_MATCH ||
+				before.GetProgramRevision() != after.GetProgramRevision() || !sameBindings(before.GetBindings(), after.GetBindings()) {
+				continue
+			}
+			return &contractsv1alpha1.OutcomeEvidenceCheck{
+				Kind: "program-verdict", Source: before.GetProgramId(), Verified: boolPointer(true),
+				Reason: stringPointer("the same program and binding diagnosed Match before repair and NoMatch after repair; the controller verified the fixed state"),
+			}
+		}
+	}
+	return nil
+}
+
+func sameBindings(left, right []*contractsv1alpha1.Binding) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	byName := make(map[string]objectKey, len(left))
+	for _, binding := range left {
+		byName[binding.GetName()] = keyOf(binding.GetObject())
+	}
+	if len(byName) != len(left) {
+		return false
+	}
+	for _, binding := range right {
+		if byName[binding.GetName()] != keyOf(binding.GetObject()) {
+			return false
+		}
+	}
+	return true
+}
+
+func bindingsTouchCause(bindings []*contractsv1alpha1.Binding, cause *contractsv1alpha1.ConfirmedRootCause) bool {
+	for _, binding := range bindings {
+		for _, resource := range cause.GetResources() {
+			if keyOf(binding.GetObject()).matches(keyOf(resource)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func allFinalDetectorsClear(closure *contractsv1alpha1.IncidentClosure) bool {
+	if len(closure.GetFinalDetectorStates()) == 0 || closure.GetDetectorReviewRequiredAt() != nil {
+		return false
+	}
+	for _, evaluation := range closure.GetFinalDetectorStates() {
+		if evaluation.GetStatus() != "clear" {
+			return false
+		}
+	}
+	return true
+}
+
+func restoredFieldCheck(closure *contractsv1alpha1.IncidentClosure, cause *contractsv1alpha1.ConfirmedRootCause, repair *contractsv1alpha1.OutcomeRepairAttribution) *contractsv1alpha1.OutcomeEvidenceCheck {
+	if !repair.GetAttributed() || !allFinalDetectorsClear(closure) || closure.GetVerifiedAt() == nil ||
+		closure.GetRequest().GetStateChanges() == nil || closure.GetFinalStateChanges() == nil || closure.GetFinalStateChanges().GetObservedAt() == nil {
+		return nil
+	}
+	if closure.GetFinalStateChanges().GetObservedAt().AsTime().After(closure.GetVerifiedAt().AsTime()) {
+		return nil
+	}
+	for _, before := range closure.GetRequest().GetStateChanges().GetChanges() {
+		if before.GetChange() != "modified" || len(before.GetFields()) == 0 {
+			continue
+		}
+		changedField := false
+		for _, field := range before.GetFields() {
+			if field.Before != nil && field.After != nil && field.GetBefore() != field.GetAfter() {
+				changedField = true
+				break
+			}
+		}
+		if !changedField {
+			continue
+		}
+		key := objectKey{kind: canonicalKind(before.GetKind()), name: before.GetName()}
+		cited := false
+		for _, evidence := range cause.GetEvidence() {
+			if evidence.GetKind() == "state-change" {
+				if source, ok := parseKey(evidence.GetSource()); ok && source.matches(key) {
+					cited = true
+				}
+			}
+		}
+		if !cited {
+			continue
+		}
+		for _, after := range closure.GetFinalStateChanges().GetChanges() {
+			if canonicalKind(after.GetKind()) == key.kind && after.GetName() == key.name {
+				return nil
+			}
+		}
+		for _, action := range closure.GetResult().GetRepairActions() {
+			if !action.GetSuccess() || action.GetCompletedAt() == nil || action.GetCompletedAt().AsTime().After(closure.GetFinalStateChanges().GetObservedAt().AsTime()) {
+				continue
+			}
+			for _, touched := range actionKeys(action) {
+				if touched.matches(key) {
+					return &contractsv1alpha1.OutcomeEvidenceCheck{
+						Kind: "baseline-restoration", Source: before.GetKind() + "/" + before.GetName(), Verified: boolPointer(true),
+						Reason: stringPointer("the controller recorded changed fields before repair and observed the repaired object back at its healthy baseline after the successful action"),
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func boolPointer(value bool) *bool       { return &value }
@@ -92,13 +271,13 @@ func anyContradicted(items []*contractsv1alpha1.OutcomeEvidenceCheck) bool {
 	}
 	return false
 }
-func allFlipped(items []*contractsv1alpha1.OutcomeDetectorFlip) bool {
+func anyFlipped(items []*contractsv1alpha1.OutcomeDetectorFlip) bool {
 	for _, item := range items {
-		if !item.Flipped {
-			return false
+		if item.Flipped {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 type objectKey struct{ kind, name, namespace, label string }
@@ -292,12 +471,41 @@ type repairs struct {
 	healthClearedAt *time.Time
 }
 
-func newRepairs(closure *contractsv1alpha1.IncidentClosure) repairs {
+func repairClearAt(closure *contractsv1alpha1.IncidentClosure) *time.Time {
 	var cleared *time.Time
 	if closure.GetHealthClearedAt() != nil {
 		value := closure.GetHealthClearedAt().AsTime()
 		cleared = &value
 	}
+	earlierHealthClear := cleared != nil && closure.GetDispatchedAt() != nil && cleared.Before(closure.GetDispatchedAt().AsTime())
+	if earlierHealthClear {
+		cleared = nil
+	}
+	// A latent fault can outlast symptom health even when health clears during
+	// response. Its own independently observed clear bounds repair attribution.
+	for _, state := range closure.GetIncidentDetectorStates() {
+		if earlierHealthClear || strings.HasPrefix(state.GetDetectorId(), "drift.") {
+			if state.GetStatus() != "clear" || state.GetEvaluatedAt() == nil {
+				continue
+			}
+			at := state.GetEvaluatedAt().AsTime()
+			if closure.GetDispatchedAt() != nil && at.Before(closure.GetDispatchedAt().AsTime()) {
+				continue
+			}
+			if cleared == nil || at.After(*cleared) {
+				cleared = &at
+			}
+		}
+	}
+	if cleared == nil && closure.GetVerifiedAt() != nil {
+		at := closure.GetVerifiedAt().AsTime()
+		cleared = &at
+	}
+	return cleared
+}
+
+func newRepairs(closure *contractsv1alpha1.IncidentClosure) repairs {
+	cleared := repairClearAt(closure)
 	actions := []actionWithKeys{}
 	for _, receipt := range closure.GetResult().GetRepairActions() {
 		if receipt.GetSuccess() && (cleared == nil || !receipt.GetStartedAt().AsTime().After(*cleared)) {

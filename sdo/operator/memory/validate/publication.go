@@ -205,7 +205,7 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 		for _, p := range paths {
 			kind, changedID, ok := layout.Classify(p)
 			bookID, _, _ := strings.Cut(changedID, "/")
-			if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript) && bookID == id {
+			if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript || kind == layout.KindPlaybookProgram) && bookID == id {
 				changed = true
 			}
 		}
@@ -216,7 +216,7 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 	for _, p := range paths {
 		kind, id, ok := layout.Classify(p)
 		id, _, _ = strings.Cut(id, "/")
-		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript) && !seen[id] {
+		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript || kind == layout.KindPlaybookProgram) && !seen[id] {
 			return fail(fmt.Sprintf("changed playbook %q is missing from the result", id))
 		}
 	}

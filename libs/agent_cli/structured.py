@@ -465,12 +465,15 @@ def _provider_for(
     if access == "danger-full-access":
         return ClaudeProvider(), (), {}
     root = str(workspace)
+    # The Skill tool loads SKILL.md itself, but a skill's references are read
+    # with the native Read tool, which the confinement would otherwise deny.
+    readable = [root, str(_claude_skills_dir())]
     if access == "read-only":
-        claude = ClaudeProvider(sandbox=SandboxConfig(deny_write=[root], confine_native_reads_to=[root]))
+        claude = ClaudeProvider(sandbox=SandboxConfig(deny_write=[root], confine_native_reads_to=readable))
         return claude, ("--disallowedTools", "Edit,Write,NotebookEdit"), claude.sandbox_env
     claude = ClaudeProvider(
         sandbox=SandboxConfig(
-            confine_native_reads_to=[root],
+            confine_native_reads_to=readable,
             excluded_commands=[DETECTOR_GATEWAY_COMMAND, MEMORY_CHECK_COMMAND],
         ),
         hooks=[
@@ -492,7 +495,7 @@ def _codex_turn_home(sandbox: CodexSandboxConfig) -> Iterator[Path]:
     must lie outside everything the sandbox lets commands write, or a command
     could exempt itself; agentshim refuses the turn otherwise. It must also
     avoid the system temp dir, where Codex will not start its sandbox helper.
-    Only ``auth.json`` is copied in: the user's ``config.toml`` and rules
+    Only ``auth.json`` and the SDO skills are copied in: the user's ``config.toml`` and rules
     could widen the sandbox or trust the workspace's own rules.
     """
     auth = _codex_auth_file()
@@ -507,6 +510,7 @@ def _codex_turn_home(sandbox: CodexSandboxConfig) -> Iterator[Path]:
     try:
         if auth is not None:
             _copy_private(auth, home / "auth.json")
+        _copy_sdo_skills(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser(), home)
         install_rules(home, sandbox)
     except OSError as exc:
         shutil.rmtree(home, ignore_errors=True)
@@ -517,6 +521,25 @@ def _codex_turn_home(sandbox: CodexSandboxConfig) -> Iterator[Path]:
         if auth is not None:
             _keep_refreshed_login(home / "auth.json", auth)
         shutil.rmtree(home, ignore_errors=True)
+
+
+def _claude_skills_dir() -> Path:
+    """Where Claude Code discovers user skills."""
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser() / "skills"
+
+
+def _copy_sdo_skills(source_home: Path, home: Path) -> None:
+    """Copy the SDO skills (``sdo-*``) from the launching Codex home into a per-turn home.
+
+    Codex discovers user skills under ``$CODEX_HOME/skills``. Other skills in the
+    user's home are not copied: the turn home is deliberately minimal.
+    """
+    source = source_home / "skills"
+    if not source.is_dir():
+        return
+    for skill in sorted(source.glob("sdo-*")):
+        if skill.is_dir():
+            shutil.copytree(skill, home / "skills" / skill.name)
 
 
 def _codex_home_root() -> Path:

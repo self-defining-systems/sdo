@@ -55,6 +55,22 @@ func TestKubernetesValidatorFailureIncludesBoundedPodLogs(t *testing.T) {
 	}
 }
 
+func TestKubernetesValidatorReportsCompletedJobPhases(t *testing.T) {
+	finished := metav1.Now()
+	client := fake.NewSimpleClientset(&batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "sdo-validator-complete", Namespace: "sdo"}, Status: batchv1.JobStatus{Succeeded: 1, CompletionTime: &finished}})
+	var phases []string
+	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", PollInterval: time.Millisecond, OnPhase: func(_ context.Context, phase string) error {
+		phases = append(phases, phase)
+		return nil
+	}}
+	if err := launcher.waitJob(context.Background(), "sdo-validator-complete"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(phases, ",") != "validator_job_started,program_build_compile,corpus_replay_validation,validator_job_finished" {
+		t.Fatalf("validator completion phases: %v", phases)
+	}
+}
+
 func TestKubernetesValidatorTreeCheckUsesScratchWithReadOnlyCandidate(t *testing.T) {
 	repository := t.TempDir()
 	scratch := t.TempDir()
@@ -140,6 +156,24 @@ func TestKubernetesValidatorProjectsHealthyBaselineOnlyForIncidentGate(t *testin
 	job = launcher.validationJob("sdo-validator-test", "worktrees/candidate", strings.Repeat("a", 40), false)
 	if len(job.Spec.Template.Spec.Containers[0].VolumeMounts) != 2 {
 		t.Fatal("bootstrap validation mounted a baseline before capture")
+	}
+}
+
+func TestKubernetesValidatorCompilesProgramsOffline(t *testing.T) {
+	launcher := KubernetesValidationJobClient{RepositoryPVC: "repository"}
+	job := launcher.validationJob("sdo-validator-test", "worktrees/candidate", strings.Repeat("a", 40), false)
+	env := map[string]string{}
+	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
+		env[entry.Name] = entry.Value
+	}
+	for name, want := range map[string]string{
+		"GOMODCACHE": "/go/pkg/mod",
+		"GOPROXY":    "off",
+		"GOFLAGS":    "-mod=mod -p=2",
+	} {
+		if env[name] != want {
+			t.Errorf("%s = %q, want %q", name, env[name], want)
+		}
 	}
 }
 

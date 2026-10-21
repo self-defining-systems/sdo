@@ -13,12 +13,22 @@ import yaml
 
 def _worker_infra() -> Any:
     path = Path(__file__).resolve().parents[5] / "third_party" / "sregym" / "sregym" / "worker_infra.py"
+    if not path.is_file():
+        pytest.skip("requires the optional external SREGym worker fixture")
     spec = importlib.util.spec_from_file_location("test_worker_infra_module", path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return cast("Any", module)
+
+
+def test_kind_cluster_prefix_is_read_when_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _worker_infra()
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_PREFIX", "trial-w")
+    assert module.kind_cluster_prefix() == "trial-w"
+    monkeypatch.delenv("SREGYM_KIND_CLUSTER_PREFIX")
+    assert module.kind_cluster_prefix() == "sregym-w"
 
 
 def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -36,7 +46,7 @@ def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.
         if command[:3] == ["kind", "get", "nodes"]:
             return subprocess.CompletedProcess(command, 0, "node-a\nnode-b\n", "")
         if command[:3] == ["docker", "exec", "node-a"] or command[:3] == ["docker", "exec", "node-b"]:
-            image = command[-1].removeprefix("docker.io/library/")
+            image = command[-1].removeprefix("name==").removeprefix("docker.io/library/")
             return subprocess.CompletedProcess(command, 0, f"image @{'@' if False else ''}{digests[image]}\n", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -49,7 +59,7 @@ def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.
         "node-b": digests,
     }
     assert ["kind", "load", "docker-image", "--name", "sregym-w0", *digests] in calls
-    assert sum(command[:2] == ["docker", "exec"] for command in calls) == 4
+    assert sum(command[:2] == ["docker", "exec"] for command in calls) == 8  # crictl and ctr per node and image
 
 
 def test_kind_image_preflight_rejects_stale_node_digest(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,6 +88,7 @@ def test_reused_cluster_runs_required_image_preflight_before_return(
 ) -> None:
     module = _worker_infra()
     monkeypatch.setenv("SREGYM_REUSE_CLUSTER", "1")
+    monkeypatch.delenv("SREGYM_KIND_CLUSTER_PREFIX", raising=False)
     monkeypatch.setenv("SREGYM_KIND_REQUIRED_IMAGES", json.dumps(["controller:run"]))
     monkeypatch.setattr(module, "stable_kubeconfig_path", lambda _worker: str(tmp_path / "stable"))
     monkeypatch.setattr(module, "existing_cluster_is_reusable", lambda *_args: (True, ""))

@@ -30,3 +30,28 @@ def evolve(message: M, **updates: Any) -> M:
         else:
             setattr(clone, name, value)
     return clone
+
+
+def from_dict(message_type: type[M], value: Any) -> M:
+    """Build a generated message from JSON-shaped test evidence."""
+    from datetime import datetime, timedelta
+    from enum import Enum
+
+    from google.protobuf import json_format
+
+    def normalize(item: Any) -> Any:
+        if isinstance(item, Message):
+            return json_format.MessageToDict(item, preserving_proto_field_name=True)
+        if isinstance(item, datetime):
+            return item.isoformat()
+        if isinstance(item, timedelta):
+            return f"{item.total_seconds():g}s"
+        if isinstance(item, Enum):
+            return item.value
+        if isinstance(item, dict):
+            return {key: normalize(child) for key, child in item.items() if child is not None}
+        if isinstance(item, (list, tuple)):
+            return [normalize(child) for child in item]
+        return item
+
+    return json_format.ParseDict(normalize(value), message_type())

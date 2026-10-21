@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -40,18 +41,35 @@ func AcceptedDiagnostics(ctx context.Context, repository string) (DiagnosticsPro
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
-	status, err := git("status", "--porcelain", "--", layout.DiagnosticsDir)
+	status, err := git("status", "--porcelain", "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir, layout.CorpusDir)
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
 	if status != "" {
-		return DiagnosticsProjection{}, errors.New("diagnostics must match the accepted commit before controller launch")
+		return DiagnosticsProjection{}, errors.New("diagnostics and program memory must match the accepted commit before controller launch")
 	}
-	fingerprint, err := git("rev-parse", "HEAD:"+layout.DiagnosticsDir)
+	fingerprint, err := ControllerFingerprint(ctx, root, revision)
 	if err != nil {
 		return DiagnosticsProjection{}, err
 	}
 	return DiagnosticsProjection{Directory: directory, Fingerprint: fingerprint, AcceptedRevision: revision}, nil
+}
+
+// ControllerFingerprint identifies the accepted detector and program source
+// trees compiled into one controller binary.
+func ControllerFingerprint(ctx context.Context, repository, revision string) (string, error) {
+	if revision == "" {
+		return "", errors.New("controller revision is required")
+	}
+	command := exec.CommandContext(ctx, "git", "-C", repository, "ls-tree", "-z", revision, "--", layout.DiagnosticsDir, layout.PlaybooksDir, layout.LibrariesDir)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("read accepted controller source trees: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if len(output) == 0 {
+		return "", errors.New("accepted controller source trees are missing")
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(output)), nil
 }
 
 // CandidateDiagnostics resolves the physical detector bundle for a broker

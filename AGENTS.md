@@ -35,9 +35,13 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 - `sdo/operator/runtime` remains transport-neutral. SREGym submission relays and receipts stay behind the benchmark adapter.
 - Agent implementations register capabilities through versioned protobuf task/result contracts. The native design assigns operational decisions and accepted repository state to Go; only the storage edge knows the physical outcome layout.
 - Native incident/reflection tasks carry accepted-commit-bound logical memory snapshots; responders return logical playbook/script IDs. Reflection directly edits `.sdo/` in its isolated checkout and runs the same `validate.Check` used by the broker through `sdo-operator memory check`. The health judge also edits final health, traffic and health-objective playbook files directly and returns metadata and logical detector IDs; Go explicitly prepares generic policy detectors in the shared check. Source repairs remain isolated checkout edits.
+- Playbook memory includes responder-owned Go programs under `.sdo/playbooks/`, shared `.sdo/lib/` helpers, and immutable captured `.sdo/corpus/` cases. These remain part of the playbook artifact class. The shared validator enforces provenance, replay, imports, and changed-source formatting before publication.
+- Program trust is bound to the accepted source revision and independently verified outcomes. Deterministic controller plans, drift assessment, and live reads remain production APIs; benchmark scripted workers, grading, and recording stay under `benchmarks/`.
 - The active Go broker stores one versioned outcome document per incident at `.sdo/outcomes/<sha256(incident_id)>.json`. The memory edge can import the retired JSONL stream for existing repositories; no Python broker remains on the production path.
 
 When changing operational-memory formats or experiment result structures, update `.agents/skills/analyze-experiment/references/`. When moving production or benchmark boundaries, update `docs/architecture.md` (including its component map, artifact ownership matrix, and repository scope table).
+
+Experiment run outputs must stay outside this repository. Do not commit learned programs, generated detectors, cluster captures, corpora, worker results, or model-authored run files. Tests use minimal clearly synthetic fixtures or construct them at test time. Source app inputs are allowed.
 
 ## Validation after code edits
 

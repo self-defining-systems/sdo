@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -41,6 +42,7 @@ type IncidentView struct {
 	// StateChanges is the current configuration diff against the healthy
 	// baseline, including changes made after the request was taken.
 	StateChanges *StateChanges
+	DriftEvents  []sdk.DriftEvent
 }
 
 // refreshIncidentView recomputes the view after an evaluation, or when the
@@ -58,6 +60,7 @@ func (c *Controller) refreshIncidentView(now time.Time, evaluated bool) {
 		return
 	}
 	active := c.blockingFindingsLocked()
+	driftEvents := driftEventsForFindings(c.driftEvents, c.currentIncidentRequest.Findings)
 	c.mu.Unlock()
 
 	findings := make([]sdk.Finding, 0, len(active))
@@ -86,6 +89,7 @@ func (c *Controller) refreshIncidentView(now time.Time, evaluated bool) {
 		IncidentID: incidentID, ObservedAt: now.UTC(),
 		BlockingDetectors: blocking, BlockingFindings: findings, ClearingFindings: clearing,
 		StateChanges: changes,
+		DriftEvents:  driftEvents,
 	}
 	c.mu.Lock()
 	c.incidentView = view
@@ -114,7 +118,7 @@ func (c *Controller) blockingFindingsLocked() []sdk.Finding {
 		}
 		_, isHealth := health[state.DetectorID]
 		_, isIncident := incident[key]
-		if (len(health) > 0 && isHealth) || (len(health) == 0 && isIncident) {
+		if (len(health) > 0 && isHealth) || (len(health) == 0 && isIncident) || (isIncident && strings.HasPrefix(state.DetectorID, "drift.")) {
 			findings = append(findings, state.Finding)
 		}
 	}
@@ -133,6 +137,7 @@ func cloneIncidentView(view *IncidentView) *IncidentView {
 	copy.BlockingDetectors = append(make([]string, 0, len(view.BlockingDetectors)), view.BlockingDetectors...)
 	copy.BlockingFindings = append(make([]sdk.Finding, 0, len(view.BlockingFindings)), view.BlockingFindings...)
 	copy.StateChanges = cloneStateChanges(view.StateChanges)
+	copy.DriftEvents = append([]sdk.DriftEvent(nil), view.DriftEvents...)
 	copy.ClearingFindings = append(make([]sdk.Finding, 0, len(view.ClearingFindings)), view.ClearingFindings...)
 	return &copy
 }

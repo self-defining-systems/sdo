@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
+	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/validate"
 )
 
@@ -41,6 +42,7 @@ type KubernetesValidationJobClient struct {
 	HealthyBaseline      bool
 	PollInterval         time.Duration
 	Timeout              time.Duration
+	OnPhase              func(context.Context, string) error
 }
 
 func (k KubernetesValidationJobClient) Validate(ctx context.Context, request ValidationJobRequest) (ValidationJobReceipt, error) {
@@ -106,8 +108,18 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 		}
 	}
 	job := k.validationJob(name, subPath, request.CandidateTree, useBaseline)
+	if k.OnPhase != nil {
+		if err := k.OnPhase(validationCtx, "gofmt"); err != nil {
+			return ValidationJobReceipt{}, err
+		}
+	}
 	if err := k.createJob(validationCtx, job); err != nil {
 		return ValidationJobReceipt{}, err
+	}
+	if k.OnPhase != nil {
+		if err := k.OnPhase(validationCtx, "validator_job_created"); err != nil {
+			return ValidationJobReceipt{}, err
+		}
 	}
 	if err := k.waitJob(validationCtx, name); err != nil {
 		return ValidationJobReceipt{}, fmt.Errorf("validator build and source checks: %w", err)
@@ -169,12 +181,27 @@ func (k KubernetesValidationJobClient) createJob(ctx context.Context, job *batch
 func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string) error {
 	ticker := time.NewTicker(k.PollInterval)
 	defer ticker.Stop()
+	track := k.OnPhase != nil && !strings.HasSuffix(name, "-allow") && !strings.HasSuffix(name, "-deny")
+	started := false
 	for {
 		job, err := k.Client.BatchV1().Jobs(k.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("inspect Job %s: %w", name, err)
 		}
+		if track && !started && (job.Status.Active > 0 || job.Status.StartTime != nil || job.Status.Succeeded > 0) {
+			if err := k.OnPhase(ctx, "validator_job_started"); err != nil {
+				return err
+			}
+			started = true
+		}
 		if job.Status.Succeeded > 0 && job.Status.CompletionTime != nil {
+			if track {
+				for _, phase := range []string{"program_build_compile", "corpus_replay_validation", "validator_job_finished"} {
+					if err := k.OnPhase(ctx, phase); err != nil {
+						return err
+					}
+				}
+			}
 			return nil
 		}
 		if job.Status.Failed > 0 {
@@ -284,9 +311,9 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 		Name: "validator", Image: k.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/bin/sh", "-eu", "-c", command}, WorkingDir: "/workspace", TerminationMessagePath: "/dev/termination-log", TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 		Env: []corev1.EnvVar{
 			{Name: "SDO_CANDIDATE_TREE", Value: tree}, {Name: "SDO_SCHEMA_IDENTITY", Value: k.SchemaIdentity},
-			{Name: "HOME", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "SDO_GO_CACHE_SEED", Value: "/opt/sdo/go-build-cache"},
+			{Name: "HOME", Value: "/tmp"}, {Name: "GOCACHE", Value: "/tmp/go-cache"}, {Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "GOMODCACHE", Value: "/go/pkg/mod"}, {Name: "GOPROXY", Value: "off"}, {Name: "GOSUMDB", Value: "off"},
-			{Name: "GOMAXPROCS", Value: "2"}, {Name: "GOFLAGS", Value: "-p=2"}, {Name: "PYTHONDONTWRITEBYTECODE", Value: "1"},
+			{Name: "GOMAXPROCS", Value: "2"}, {Name: "GOFLAGS", Value: "-mod=mod -p=2"}, {Name: "PYTHONDONTWRITEBYTECODE", Value: "1"},
 		},
 		VolumeMounts:    []corev1.VolumeMount{{Name: "application", MountPath: "/workspace", SubPath: subPath, ReadOnly: true}, {Name: "scratch", MountPath: "/tmp"}},
 		SecurityContext: restrictedContainer(),
@@ -295,6 +322,9 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 	if useBaseline {
 		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, ".sdo-baseline/healthy")), ReadOnly: true})
+	}
+	if devmount.Enabled() {
+		devmount.Apply(&job.Spec.Template.Spec)
 	}
 	return job
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/devmount"
 )
 
 const PreparedCommitAnnotation = "sdo.dev/prepared-commit"
@@ -117,8 +119,23 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		"--reflection-session", reflectionSession(cfg),
 		"--reflection-guidance", reflectionGuidance(cfg),
 	}
+	if cfg.ForceReflection {
+		args = append(args, "--force-reflection")
+	}
 	if cfg.MaxFollowUps > 0 {
 		args = append(args, "--max-follow-ups", fmt.Sprint(cfg.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(cfg)))
+	}
+	if cfg.MaxResponseLoops > 0 {
+		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
+	}
+	if cfg.ProgramFastPath {
+		args = append(args, "--program-fast-path")
+	}
+	if cfg.ProgramTrustThreshold > 0 {
+		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
+	}
+	if cfg.DriftTokensPerHour > 0 {
+		args = append(args, "--drift-tokens-per-hour", fmt.Sprint(cfg.DriftTokensPerHour))
 	}
 	if cfg.RegistryHost != "" {
 		args = append(args, "--registry-host", cfg.RegistryHost)
@@ -159,6 +176,13 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
 	pod.Containers = []corev1.Container{container}
+	if devmount.Enabled() {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		devmount.Apply(pod)
+	}
+	if scale := os.Getenv("SDO_TIME_SCALE"); scale != "" {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
+	}
 	return job, nil
 }
 func provider(c Config) string {
@@ -177,7 +201,7 @@ func reflectionSession(c Config) string {
 	if c.ReflectionSession != "" {
 		return c.ReflectionSession
 	}
-	return "fresh"
+	return "resume"
 }
 func reflectionGuidance(c Config) string {
 	if c.ReflectionGuidance != "" {

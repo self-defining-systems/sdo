@@ -152,8 +152,12 @@ func (registry *Registry) ApplyAndVerify(ctx context.Context, checkout string, p
 			return lifecycle.DeploymentReceipt{}, errors.New("deployment resource identity is empty")
 		}
 	}
-	return lifecycle.DeploymentReceipt{
+	receipt := lifecycle.DeploymentReceipt{
 		ProposalTreeDigest: tree, ObservedRevision: observed.Revision, StrategyID: entry.ID,
 		Images: observed.Images, ResourceIDs: observed.ResourceIDs, Ready: true,
-	}, nil
+	}
+	if raw, ok := config.(*contracts.RawManifestStrategy); ok {
+		receipt.ManifestPaths = append([]string(nil), raw.GetManifestPaths()...)
+	}
+	return receipt, nil
 }

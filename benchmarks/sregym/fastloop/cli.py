@@ -24,21 +24,35 @@ import os
 import socket
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.fastloop.baseline_recovery import (
+    KubectlApplicationCluster,
+    application_namespaces,
+    capture_application_baseline,
+    load_application_baseline,
+    save_application_baseline,
+)
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
+from benchmarks.sregym.fastloop.stream import load_stream_config
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 
 if TYPE_CHECKING:
-    from benchmarks.sregym.adapter import ClusterOps
+    from collections.abc import Callable
+
+    from benchmarks.sregym.adapter import Clock, ClusterOps
     from benchmarks.sregym.fastloop.composite import CompositeSettings
-    from benchmarks.sregym.fastloop.loop import IncidentAgent
+    from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
+    from benchmarks.sregym.fastloop.loop import DiagnosisGrader, IncidentAgent
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +64,26 @@ DEPLOY_OP_TIMEOUT_SECONDS = 2400.0
 
 
 def _worker(environment: FastloopEnvironment) -> SregymWorker:
+    if environment.app == "toy":
+        from benchmarks.sregym.fastloop.toy import ToyWorker
+
+        return ToyWorker(environment)  # type: ignore[return-value]
     return SregymWorker(
         worker_argv(environment.sregym_dir, private_tmp=environment.private_tmp),
-        env=environment.worker_process_env(),
+        env={**environment.worker_process_env(), "PYTHONPATH": str(REPO_ROOT)},
         log_path=environment.run_dir / "worker.log",
+    )
+
+
+def _reset_failed_incident(environment: FastloopEnvironment, worker: SregymWorker) -> None:
+    from benchmarks.sregym.adapter import control_namespace_for
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+
+    reset_environment(
+        environment,
+        KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace)),
+        worker,
+        preserve_repository=True,
     )
 
 
@@ -61,6 +91,39 @@ def _ensure_builder(name: str) -> None:
     inspected = subprocess.run(["docker", "buildx", "inspect", name], capture_output=True, text=True, check=False)
     if inspected.returncode != 0:
         subprocess.run(["docker", "buildx", "create", "--name", name, "--driver", "docker-container"], check=True)
+
+
+def node_images_match(cluster: str, images: Images) -> bool:
+    """Reuse completed kind preflight only while every node has the same image content."""
+
+    nodes = subprocess.run(["kind", "get", "nodes", "--name", cluster], capture_output=True, text=True, check=False)
+    if nodes.returncode != 0 or not nodes.stdout.strip():
+        return False
+    for image in (images.controller, images.responder, images.validator):
+        local = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if local.returncode != 0 or not local.stdout.strip():
+            return False
+        for node in nodes.stdout.splitlines():
+            installed = subprocess.run(
+                ["docker", "exec", node, "crictl", "inspecti", image],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if installed.returncode != 0:
+                return False
+            try:
+                digest = json.loads(installed.stdout)["status"]["id"]
+            except (ValueError, KeyError, TypeError):
+                return False
+            if digest != local.stdout.strip():
+                return False
+    return True
 
 
 def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[str, str]:
@@ -85,12 +148,22 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
     }
     if args.builder:
         worker_env["SREGYM_DOCKER_BUILDER"] = args.builder
+    if args.dev_mount is not None:
+        worker_env["FASTLOOP_KIND_CONFIG"] = str(args.run_dir.resolve() / "kind-dev.yaml")
     return worker_env
 
 
 def _up(args: argparse.Namespace) -> int:
+    if args.app == "toy":
+        from benchmarks.sregym.fastloop.toy import up
+
+        return up(args)
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
+    if args.dev_mount is not None:
+        args.dev_mount = args.dev_mount.resolve()
+        if args.cluster_prefix == "fastloop-w":
+            args.cluster_prefix = "fastloop-dev-w"
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     workspace = run_dir / "application_workspace"
@@ -101,10 +174,47 @@ def _up(args: argparse.Namespace) -> int:
     private_tmp = None if args.no_sandbox else run_dir / "tmp"
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
+    images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
+    if args.dev_mount is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+
+        prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
+    prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
+    if prior is not None and prior.dev_mount != args.dev_mount:
+        raise ValueError("up --dev-mount must match the worktree used to create this environment")
+    seed_commit = prior.seed_commit if prior is not None else None
+    if seed_commit is None and (workspace / ".git").exists():
+        seed_commit = subprocess.run(
+            ["git", "-C", str(workspace), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    worker_env = up_worker_environment(args, workspace=workspace)
+    if args.dev_mount is not None and not (run_dir / "fastloop.json").exists():
+        clusters = subprocess.run(
+            ["kind", "get", "clusters"], capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+        if worker_env["SREGYM_KIND_CLUSTER_NAME"] in clusters:
+            raise ValueError("dev mount needs a new kind cluster name; choose --cluster-prefix")
+    if not args.redeploy and (run_dir / "fastloop.json").is_file():
+        previous = FastloopEnvironment.load(run_dir)
+        if (
+            previous.cluster == worker_env["SREGYM_KIND_CLUSTER_NAME"]
+            and previous.dev_mount == args.dev_mount
+            and previous.images == images
+            and previous.worker_env == worker_env
+            and previous.deploy_problem == args.problem
+            and previous.kubeconfig.is_file()
+            and node_images_match(previous.cluster, images)
+        ):
+            with _worker(previous) as cached_worker:
+                health = cached_worker.request("health", namespace=previous.namespace, timeout=60)
+            if health.get("healthy"):
+                print(f"fastloop environment ready: reused verified node image digests -> {previous.path}")
+                return 0
     if args.builder:
         _ensure_builder(args.builder)
-    images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
-    worker_env = up_worker_environment(args, workspace=workspace)
     placeholder = FastloopEnvironment(
         run_dir=run_dir,
         cluster=worker_env["SREGYM_KIND_CLUSTER_NAME"],
@@ -115,12 +225,14 @@ def _up(args: argparse.Namespace) -> int:
         sregym_dir=args.sregym_dir.resolve(),
         private_tmp=private_tmp,
         deploy_problem=args.problem,
+        seed_commit=seed_commit,
+        dev_mount=args.dev_mount,
         images=images,
         worker_env=worker_env,
     )
     worker = SregymWorker(
         worker_argv(placeholder.sregym_dir, private_tmp=private_tmp),
-        env={**worker_env, "PYTHONUNBUFFERED": "1"},
+        env={**worker_env, "PYTHONPATH": str(REPO_ROOT), "PYTHONUNBUFFERED": "1"},
         log_path=run_dir / "worker.log",
     )
     with worker:
@@ -135,13 +247,20 @@ def _up(args: argparse.Namespace) -> int:
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
         app = worker.request("app_info", problem_id=args.problem)
-    environment = placeholder.model_copy(
-        update={
+    environment = FastloopEnvironment.model_validate(
+        {
+            **placeholder.model_dump(),
             "kubeconfig": Path(str(cluster["kubeconfig"])),
             "namespace": str(app["namespace"]),
             "application": str(app["app_name"]),
             "description": str(app["descriptions"]),
         }
+    )
+    cluster = KubectlApplicationCluster(environment.kubeconfig)
+    namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+    save_application_baseline(
+        environment.baseline_path,
+        tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
     )
     environment.save()
     print(
@@ -161,8 +280,10 @@ def _composite_settings(args: argparse.Namespace) -> CompositeSettings:
     from benchmarks.sregym.fastloop.composite import CompositeSettings
 
     return CompositeSettings(
-        deadline_seconds=args.composite_deadline,
-        idle_seconds=args.composite_idle,
+        deadline_seconds=args.composite_deadline * args.time_scale,
+        idle_seconds=args.composite_idle * args.time_scale,
+        stable_seconds=20.0 * args.time_scale,
+        poll_seconds=min(1.0, 2.0 * args.time_scale),
         stop_on_detector_review=not args.no_stop_on_review,
     )
 
@@ -176,23 +297,34 @@ def _is_composite(problems: tuple[str, ...]) -> bool:
     return flags == {True}
 
 
-def _cluster_ops(args: argparse.Namespace, namespace: str) -> ClusterOps:
+def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | None = None) -> ClusterOps:
     """Cluster operations for the SDO agent, with the opt-in harness wrappers applied."""
 
     from benchmarks.sregym.adapter import KubectlClusterOps, kubectl_capture_ops
 
-    ops: ClusterOps = KubectlClusterOps()
+    selected: ClusterOps = ops or KubectlClusterOps()
     if args.inject_before_resume:
         from benchmarks.sregym.fastloop.simultaneous import InjectBeforeResumeOps
 
-        ops = InjectBeforeResumeOps(ops)  # type: ignore[assignment]
+        selected = InjectBeforeResumeOps(selected)  # type: ignore[assignment]
     if args.healthy_baseline:
-        ops = kubectl_capture_ops(ops, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
-    return ops
+        selected = kubectl_capture_ops(selected, namespace=namespace, kubectl_runner=kubectl)  # type: ignore[assignment]
+    return selected
+
+
+def _scaled_clock(scale: float) -> Clock:
+    from benchmarks.sregym.adapter import Clock
+
+    return Clock(sleep=lambda seconds: time.sleep(seconds * scale))
 
 
 def _sdo_agent(
-    args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path, *, composite: bool = False
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    *,
+    composite: bool = False,
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
 ) -> IncidentAgent:
     from benchmarks.sregym.adapter import (
         RuntimeConfig,
@@ -202,6 +334,14 @@ def _sdo_agent(
     )
     from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 
+    registrations = args.agent_registrations.resolve() if args.agent_registrations else None
+    if registrations is None and environment.app == "toy":
+        registrations = REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations"
+    if registrations is None and args.provider == "codex":
+        from benchmarks.sregym.fastloop.recording_worker import recording_registrations
+
+        registrations = recording_registrations(results_dir, environment.images.responder)
+
     runtime_config = RuntimeConfig(
         repository=environment.workspace,
         namespace=environment.namespace,
@@ -209,11 +349,15 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
+        deployed_manifest_paths=("kubernetes",),
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
         model=args.model,
         timeout_seconds=args.timeout,
-        repair_policy="recorded-actions",
+        repair_policy=args.repair_policy,
+        program_fast_path=args.program_fast_path,
+        program_trust_threshold=args.program_trust_threshold,
+        drift_tokens_per_hour=args.drift_tokens_per_hour,
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
@@ -222,6 +366,9 @@ def _sdo_agent(
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         healthy_baseline=args.healthy_baseline,
         controller_namespace=control_namespace_for(environment.namespace),
+        kind_cluster_name=environment.cluster,
+        persistent=True,
+        agent_registrations=registrations,
     )
     settings = SdoAgentSettings(
         repository=environment.workspace,
@@ -231,18 +378,33 @@ def _sdo_agent(
         state_path=environment.state_path,
         results_dir=results_dir,
         kubeconfig=str(environment.kubeconfig),
-        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
+        verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300)
+        * args.time_scale,
+        reflection_wait_seconds=3600.0 * args.time_scale,
+        detection_timeout_seconds=args.detection_timeout,
+        checkpoint_enabled=not args.no_checkpoints,
     )
-    ops = _cluster_ops(args, environment.namespace)
+    if environment.app == "toy":
+        from benchmarks.sregym.fastloop.toy_ops import ToyClusterOps
+
+        ops = _cluster_ops(args, environment.namespace, ops=ToyClusterOps(environment.kubeconfig))
+    else:
+        ops = _cluster_ops(args, environment.namespace)
 
     def start_native(context: object) -> bool:
-        launch_native_lifecycle(runtime_config, context.health_objective, runtime_config.submission_api_base or "")  # type: ignore[attr-defined]
+        if environment.app == "toy":
+            from benchmarks.sregym.fastloop.toy import install_controller
+
+            install_controller(environment, runtime_config)
+        else:
+            launch_native_lifecycle(runtime_config, context.health_objective, "")  # type: ignore[attr-defined]
         return False
 
     agent_arguments = {
         "ops": ops,
         "lifecycle_inputs": lambda: deployed_lifecycle(environment.namespace),
         "run_lifecycle": start_native,
+        "clock": _scaled_clock(args.time_scale),
     }
     if composite:
         from benchmarks.sregym.fastloop.composite import CompositeSdoAgent, reader_for
@@ -253,36 +415,176 @@ def _sdo_agent(
             reader=reader_for(environment.namespace, environment.kubeconfig),
             report_dir=results_dir,
             composite=_composite_settings(args),
+            stream_faults=stream_faults,
         )
     return SdoPersistentAgent(settings, **agent_arguments)
 
 
 def _run(args: argparse.Namespace) -> int:
+    run_started = time.monotonic()
+    if args.sweep_service and (args.stream is None or args.agent != "sdo"):
+        raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if args.time_scale <= 0:
+        raise SystemExit("--time-scale must be positive")
+    if args.agent == "sdo":
+        from benchmarks.sregym.adapter import control_namespace_for
+
+        secret = "sdo-agent-credentials"
+        checked = kubectl(
+            ["get", "secret", secret],
+            namespace=control_namespace_for(environment.namespace),
+            kubeconfig=environment.kubeconfig,
+            check=False,
+        )
+        if checked.returncode != 0:
+            raise SystemExit(
+                f"agent credentials Secret {secret!r} is missing or inaccessible in "
+                f"{control_namespace_for(environment.namespace)!r}: {checked.stderr.strip()}"
+            )
+    os.environ["SDO_TIME_SCALE"] = str(args.time_scale)
+    if environment.dev_mount is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+
+        prepare_dev_mount(
+            environment.dev_mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir
+        )
+        os.environ["SDO_DEV_MOUNT"] = "1"
+        os.environ["SDO_OPERATOR_BIN"] = str(environment.dev_mount / ".fastloop/sdo-operator")
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     results_dir = environment.run_dir / "results" / run_id
-    problems = tuple(args.problem or [environment.deploy_problem])
+    stream_config = load_stream_config(args.stream) if args.stream else None
+    stream: tuple[tuple[str, ...], ...] = stream_config.incidents if stream_config else ()
+    grading_mode = args.diagnosis_grading or (stream_config.diagnosis_grading if stream_config else "off")
+    judge_model_id = args.judge_model_id or (stream_config.judge_model_id if stream_config else "codex-gpt-6-luna")
+    from benchmarks.sregym.fastloop.grading import SregymDiagnosisGrader
+
+    grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
+    problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
+    from benchmarks.sregym.fastloop.fault_tracker import composite_faults, describe_sregym_faults, stream_faults
+
+    if stream:
+        tracked = [ids for ids in stream if len(ids) > 1 or (ids and ids[0].startswith("mf__"))]
+        described_incidents = stream if args.sweep_service else tracked
+        tracked_ids = tuple(dict.fromkeys(problem_id for ids in described_incidents for problem_id in ids))
+    else:
+        tracked = []
+        tracked_ids = ()
     config = LoopConfig(
-        run_id=run_id, problems=problems, incidents=args.incidents, results_path=results_dir / INCIDENTS_FILENAME
+        run_id=run_id,
+        problems=problems,
+        incidents=len(stream) if stream else args.incidents,
+        results_path=results_dir / INCIDENTS_FILENAME,
+        stream=stream,
+        continue_on_error=args.continue_on_error,
     )
-    with _worker(environment) as worker:
+    with ThreadPoolExecutor(max_workers=1) as pool, _worker(environment) as worker:
+        worker_ready = time.monotonic()
+
+        def describe() -> tuple[dict[str, tuple[FaultSpec, ...]], float]:
+            started = time.monotonic()
+            catalog = describe_sregym_faults(
+                tracked_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace
+            )
+            return catalog, time.monotonic() - started
+
+        descriptions = pool.submit(describe) if stream and tracked_ids else None
         worker.request(
             "deploy",
             problem_id=environment.deploy_problem,
             baseline_path=str(environment.baseline_path),
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
-        driver = SregymFaultDriver(worker, namespace=environment.namespace, health_timeout_seconds=args.health_timeout)
-        if args.agent == "sdo":
-            records = run_incidents(
-                _sdo_agent(args, environment, results_dir, composite=_is_composite(problems)), driver, config
+        deployed = time.monotonic()
+        catalog: dict[str, tuple[FaultSpec, ...]] = {}
+        if stream:
+            catalog, description_seconds = descriptions.result() if descriptions is not None else ({}, 0.0)
+            faults_by_incident = {"+".join(ids): stream_faults(ids, catalog=catalog) for ids in tracked}
+            registered_composites = bool(faults_by_incident) or any(
+                composite_faults(ids[0]) for ids in stream if len(ids) == 1
             )
         else:
-            records = _run_codex(args, environment, results_dir, worker, driver, config)
+            faults_by_incident = {}
+            registered_composites = _is_composite(problems)
+            description_seconds = 0.0
+        described = time.monotonic()
+        baseline = load_application_baseline(environment.baseline_path, environment.namespace)
+        if baseline is None:
+            logger.warning(
+                "application baseline absent in %s; recovery will use the older fault-only path",
+                environment.baseline_path,
+            )
+        before_inject = None
+        if args.sweep_service:
+            from benchmarks.sregym.fastloop.hotel_latent import sweep_preparer
+
+            before_inject = sweep_preparer(
+                tuple(args.sweep_service), catalog, namespace=environment.namespace, kubeconfig=environment.kubeconfig
+            )
+        driver = SregymFaultDriver(
+            worker,
+            namespace=environment.namespace,
+            baseline=baseline,
+            cluster=KubectlApplicationCluster(environment.kubeconfig) if baseline is not None else None,
+            health_timeout_seconds=args.health_timeout * args.time_scale,
+            health_poll_seconds=min(1.0, args.time_scale),
+            before_inject=before_inject,
+        )
+        config = replace(
+            config,
+            run_prelude_phase_seconds={
+                "worker_start": worker_ready - run_started,
+                "worker_deploy": deployed - worker_ready,
+                "fault_description": description_seconds,
+                "baseline_and_driver_setup": time.monotonic() - described,
+                "total_before_first_incident": time.monotonic() - run_started,
+            },
+        )
+
+        def reset_failed() -> None:
+            _reset_failed_incident(environment, worker)
+
+        if args.agent == "sdo":
+            records = run_incidents(
+                _sdo_agent(
+                    args,
+                    environment,
+                    results_dir,
+                    composite=registered_composites,
+                    stream_faults=faults_by_incident,
+                ),
+                driver,
+                config,
+                grader=grader,
+                diagnosis_grading=grading_mode,
+                on_failed_incident=reset_failed if args.continue_on_error else None,
+            )
+        else:
+            records = _run_codex(
+                args,
+                environment,
+                results_dir,
+                worker,
+                driver,
+                config,
+                grader,
+                grading_mode,
+                faults_by_incident,
+                reset_failed if args.continue_on_error else None,
+            )
     _print_summary(records)
     print(f"results: {config.results_path}")
-    return 0 if records and all(record.error is None for record in records) else 1
+    return (
+        0
+        if records
+        and all(
+            record.error is None
+            and (grading_mode == "off" or (record.diagnosis_grade is not None and record.diagnosis_grade.error is None))
+            for record in records
+        )
+        else 1
+    )
 
 
 def _run_codex(
@@ -292,6 +594,10 @@ def _run_codex(
     worker: SregymWorker,
     driver: SregymFaultDriver,
     config: LoopConfig,
+    grader: DiagnosisGrader | None = None,
+    grading_mode: str = "off",
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    on_failed_incident: Callable[[], None] | None = None,
 ) -> list[IncidentRecord]:
     from benchmarks.sregym.fastloop.codex_agent import CodexBaselineAgent, CodexSettings, SubmissionStub
 
@@ -324,10 +630,16 @@ def _run_codex(
             settings,
             stub=stub,
             prompt_for=lambda problem_id, api_base: str(
-                worker.request("codex_prompt", problem_id=problem_id, api_base=api_base)["prompt"]
+                worker.request("codex_prompt", problem_id=problem_id.split("+", 1)[0], api_base=api_base)["prompt"]
             ),
         )
-        if _is_composite(config.problems):
+        if config.stream:
+            from benchmarks.sregym.fastloop.fault_tracker import composite_faults
+
+            registered = bool(stream_faults) or any(composite_faults(ids[0]) for ids in config.stream if len(ids) == 1)
+        else:
+            registered = _is_composite(config.problems)
+        if registered:
             from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
 
             agent = TrackedAgent(  # type: ignore[assignment]
@@ -335,8 +647,11 @@ def _run_codex(
                 reader=reader_for(environment.namespace, environment.kubeconfig),
                 report_dir=results_dir,
                 settings=_composite_settings(args),
+                stream_faults=stream_faults,
             )
-        return run_incidents(agent, driver, config)
+        return run_incidents(
+            agent, driver, config, grader=grader, diagnosis_grading=grading_mode, on_failed_incident=on_failed_incident
+        )
 
 
 def _collect(paths: list[Path]) -> list[IncidentRecord]:
@@ -478,6 +793,50 @@ def _down(args: argparse.Namespace) -> int:
     return 1 if errors else 0
 
 
+def _reset(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.adapter import control_namespace_for
+    from benchmarks.sregym.fastloop.reset import KubectlResetCluster, reset_environment
+
+    environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.seed_commit is None:
+        raise ValueError("reset requires a seed commit captured by fastloop up")
+    if args.dev_mount is not None and environment.dev_mount != args.dev_mount.resolve():
+        raise ValueError("reset --dev-mount must match the worktree mounted by up")
+    if environment.dev_mount is not None:
+        from benchmarks.sregym.fastloop.dev import prepare_dev_mount
+
+        prepare_dev_mount(
+            environment.dev_mount, None if environment.app == "toy" else environment.sregym_dir, environment.run_dir
+        )
+    saved_toy = None
+    if environment.app == "toy":
+        from benchmarks.sregym.fastloop.toy_reset import ToyControllerTemplate
+
+        saved_toy = ToyControllerTemplate.capture(environment)
+    cluster = KubectlResetCluster(environment.kubeconfig, control_namespace_for(environment.namespace))
+    with _worker(environment) as worker:
+        reset_environment(environment, cluster, worker)
+    _restore_seed(environment)
+    if environment.app == "toy":
+        if saved_toy is not None:
+            saved_toy.restart(environment)
+        else:
+            from benchmarks.sregym.fastloop.toy import install_controller, record_controller
+            from benchmarks.sregym.fastloop.toy_reset import clear_runtime_state
+
+            clear_runtime_state(environment, control_namespace_for(environment.namespace))
+            record_controller(environment, install_controller(environment))
+    print(f"fastloop environment reset: {environment.path}")
+    return 0
+
+
+def _restore_seed(environment: FastloopEnvironment) -> None:
+    if environment.seed_commit is None:
+        raise ValueError("reset requires a seed commit captured by fastloop up")
+    subprocess.run(["git", "-C", str(environment.workspace), "reset", "--hard", environment.seed_commit], check=True)
+    subprocess.run(["git", "-C", str(environment.workspace), "clean", "-fd"], check=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fastloop", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
@@ -486,6 +845,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")
     up.add_argument("--run-dir", type=Path, required=True)
+    up.add_argument("--app", choices=("sregym", "toy"), default="sregym")
+    up.add_argument("--toy-node-image", default="kindest/node:v1.34.0")
     up.add_argument("--seed", type=Path, help="git repository cloned as the application workspace (first time only)")
     up.add_argument("--problem", default=DEFAULT_PROBLEM, help="problem whose application is deployed")
     up.add_argument("--cluster-prefix", default="fastloop-w")
@@ -502,6 +863,9 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--responder-image", default=Images().responder)
     up.add_argument("--validator-image", default=Images().validator)
     up.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
+    up.add_argument(
+        "--dev-mount", type=Path, help="mount this worktree into kind and build its Go operator on the host"
+    )
     up.add_argument("--redeploy", action="store_true", help="redeploy even if the application is healthy")
     up.add_argument(
         "--no-sandbox",
@@ -510,14 +874,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     up.set_defaults(handler=_up)
 
+    reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
+    reset.add_argument("--run-dir", type=Path, required=True)
+    reset.add_argument("--dev-mount", type=Path, help="worktree mounted when this environment was created")
+    reset.set_defaults(handler=_reset)
+
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
+    run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
+    run.add_argument("--agent-registrations", type=Path, help="SDO worker registration directory")
     run.add_argument("--problem", action="append", help="problem id; repeat to cycle through several")
+    run.add_argument("--stream", type=Path, help="JSON array or object with incidents and grading settings")
+    run.add_argument(
+        "--sweep-service",
+        action="append",
+        default=[],
+        metavar="SERVICE",
+        help="clear ownership immediately before this standalone targetPort target to test periodic sweeps",
+    )
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="fresh")
+    run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
+    run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
+    run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
+    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
     run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
     run.add_argument("--late-findings", choices=("off", "pull"), default="off")
     run.add_argument(
@@ -534,9 +916,36 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--follow-up-cooldown-seconds", type=int, default=30)
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
+    run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
+    run.add_argument(
+        "--program-fast-path", action="store_true", help="allow trusted playbook programs to resolve incidents"
+    )
+    run.add_argument(
+        "--program-trust-threshold",
+        type=int,
+        default=3,
+        metavar="K",
+        help="verified successes required for a trusted program (default 3)",
+    )
+    run.add_argument(
+        "--drift-tokens-per-hour",
+        type=int,
+        default=1_000_000,
+        help="hourly responder token budget for repeat drift keys (default 1000000)",
+    )
+    run.add_argument(
+        "--detection-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="SDO: fail an incident if no detector opens it within this many seconds (default: disabled)",
+    )
     run.add_argument("--health-timeout", type=float, default=300.0, help="seconds to wait for health after recovery")
     run.add_argument("--proxy-port", type=int, default=0, help="Codex baseline API proxy port (default: free port)")
     run.add_argument("--run-id", default=None)
+    run.add_argument(
+        "--continue-on-error", action="store_true", help="record a failed incident and continue after baseline recovery"
+    )
     run.add_argument(
         "--composite-deadline",
         type=float,
@@ -556,6 +965,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(handler=_run)
 
+    replay = commands.add_parser("replay", help="re-execute one checkpointed stage without a cluster")
+    replay.add_argument("--run-dir", type=Path, required=True, help="one fastloop results run directory")
+    replay.add_argument("--incident", type=int, required=True)
+    replay.add_argument("--stage", choices=("reflection", "responder", "broker"), required=True)
+    replay.add_argument(
+        "--agent",
+        choices=("scripted", "live"),
+        help="default: recorded model turns for reflection, scripted worker for responder",
+    )
+    replay.add_argument("--live-on-cache-miss", action="store_true")
+    replay.set_defaults(handler=_replay)
+
     summary = commands.add_parser("summary", help="summarize incidents.jsonl files or run directories")
     summary.add_argument("paths", type=Path, nargs="+")
     summary.add_argument("--json", action="store_true")
@@ -566,6 +987,41 @@ def build_parser() -> argparse.ArgumentParser:
     down.add_argument("--delete-cluster", action="store_true")
     down.set_defaults(handler=_down)
     return parser
+
+
+def _replay(args: argparse.Namespace) -> int:
+    from benchmarks.sregym.fastloop.replay import CheckpointStore, replay_broker
+
+    run_dir = args.run_dir.resolve()
+    store = CheckpointStore(run_dir)
+    environment = next(
+        (parent / "fastloop.json" for parent in (run_dir, *run_dir.parents) if (parent / "fastloop.json").is_file()),
+        None,
+    )
+    source = Path(json.loads(environment.read_text(encoding="utf-8"))["workspace"]) if environment else run_dir
+    agent = args.agent or ("live" if args.stage == "reflection" else "scripted")
+    if args.stage == "broker":
+        result = replay_broker(store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator")
+    elif args.stage == "responder" and agent == "scripted":
+        from benchmarks.sregym.fastloop.replay_worker import replay_scripted_responder
+
+        result = replay_scripted_responder(store, args.incident, source=source)
+    elif args.stage == "reflection" and agent == "scripted":
+        from benchmarks.sregym.fastloop.replay_worker import replay_scripted_reflection
+
+        result = replay_scripted_reflection(
+            store, args.incident, source=source, operator_root=REPO_ROOT / "sdo" / "operator"
+        )
+    elif args.stage in {"responder", "reflection"} and agent == "live":
+        from benchmarks.sregym.fastloop.replay_worker import replay_live_worker
+
+        result = replay_live_worker(
+            store, args.incident, args.stage, source=source, live_on_cache_miss=args.live_on_cache_miss
+        )
+    else:
+        raise RuntimeError(f"{args.stage} replay requires a worker execution harness")
+    print(json.dumps({"incident": args.incident, "stage": args.stage, **result}, sort_keys=True))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

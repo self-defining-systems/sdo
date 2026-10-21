@@ -72,7 +72,11 @@ Check edits to human goals, architecture, health detectors, prior outcomes, or p
 
 **Signature:** an outcome commit exists but reflection is absent when required, uses a different session, produces no validated memory commit, or generalizes beyond evidence.
 
-Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller-update rollout. A different session is expected when `reflection_session_mode=fresh` (the default) or for a validation retry (`ReflectionRequest.validation_attempt > 1`). Direct-edit reflection agents author final files and run `sdo-operator memory check` until green within their turn budget. The broker repeats the same check independently. Compare the authored checkout diff, local diagnostics, durable `reflection_rejections` and terminal `reflection_rejected`, and accepted commit. Typed artifact proposals occur only in retired worker contracts; direct-edit reflection and judge capabilities reject them.
+Correlate classification, health verification, responder session ID, outcome commit, reflection commit, accepted detector paths, and controller rollout. Reflection starts fresh by default; explicit resume may fall back when its provider session is unavailable. Direct-edit reflection workers author final checkout files, run `memory check`, and return decisions and logical IDs per dispatch. Go records `reflection_rejections` and re-dispatches with typed memory diagnostics at most twice; `reflection_rejected` marks exhaustion. A gap-only decision has `learning_decision=sdk_gap` and typed `sdk_gaps`, with no reflection commit. Fastloop retains mitigation evidence even when learning fails. The CLI and broker use the same `memory/validate.Check`, including program/corpus policy and replay; compare recorded file edits, named diagnostics and the exact accepted diff. Proposal-only archived recordings cannot replay on the direct-edit path.
+
+A verified ordinary drift repair still learns through direct edits: its closure carries the checked responder drift verdict and its corpus uses the original `open@detect` capture, even if a later pre-apply capture is already healthy. Verify that the local `memory check` and broker both use the private incident capture directory.
+
+For a newly learned program, a matching corpus case without `labels.json` capture provenance is a circular test: the agent may have reconstructed both evidence and expectation. Compare the labeled open and fixed digests with the private session captures and verify the healthy peer binding points to a same-kind object in the fixed snapshot. `synthetic_no_match_reason` permits a recorded tightening near miss only; it does not establish a real incident match. Older runs with unlabeled reconstructed snapshots should be identified as pre-capture evidence.
 
 ## Learned detector never fired
 
@@ -109,3 +113,7 @@ include those prepared files. A green authoring check does not establish health:
 correlate the separate independent verifier and installation evidence. Judge
 refinements can change health diagnostics after bootstrap but cannot change
 source, human goal, controller outcomes, incident detectors or other playbooks.
+
+Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains controller-owned rollback pre-images, concrete applied actions, patches and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
+
+For latent drift or toy lane failures, read [drift and toy failure patterns](drift-failures.md).

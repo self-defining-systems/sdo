@@ -60,6 +60,8 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 			observed <- fmt.Errorf("no durable controller state at Job creation: %w", err)
 		case !state.IncidentOpen || state.DispatchState != "pending" || state.IncidentRequest == nil:
 			observed <- fmt.Errorf("durable state lacks the pending dispatch at Job creation: %#v", state)
+		case state.IncidentRequest.PreparedAgentTask == "":
+			observed <- fmt.Errorf("durable state lacks the exact dispatched agent task")
 		default:
 			observed <- nil
 		}
@@ -99,6 +101,17 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("responder Job was never created")
+	}
+	state, err := durableState(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestMap, err := client.CoreV1().ConfigMaps("demo").Get(ctx, IncidentJobName(state.IncidentRequest.IncidentID)+"-request", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestMap.Data[jobRequestDataKey] != state.IncidentRequest.PreparedAgentTask {
+		t.Fatal("agent request differs from durable task")
 	}
 }
 
@@ -142,8 +155,12 @@ func TestFailedStateWriteBlocksDispatch(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	controller := durabilityController(t, client, testControllerConfig(), dispatcher)
+	failWrite := true
 	client.PrependReactor("create", "configmaps", func(k8stesting.Action) (bool, k8sruntime.Object, error) {
-		return true, nil, errors.New("API server unavailable")
+		if failWrite {
+			return true, nil, errors.New("API server unavailable")
+		}
+		return false, nil, nil
 	})
 	if err := controller.Step(ctx, time.Unix(0, 0), nil); err != nil {
 		t.Fatalf("open incident: %v", err)
@@ -159,6 +176,18 @@ func TestFailedStateWriteBlocksDispatch(t *testing.T) {
 		t.Fatalf("dispatch after failed write: got %v, want ErrEffectNotDurable", err)
 	}
 	assertNoRequest(t, dispatcher.requests)
+	if err := executePendingEffects(ctx, controller); err != nil {
+		t.Fatalf("failed persistence stopped controller effects loop: %v", err)
+	}
+	assertNoRequest(t, dispatcher.requests)
+	failWrite = false
+	if err := controller.PersistState(ctx); err != nil {
+		t.Fatalf("retry state write: %v", err)
+	}
+	if err := executePendingEffects(ctx, controller); err != nil {
+		t.Fatalf("dispatch after successful retry: %v", err)
+	}
+	awaitRequest(t, dispatcher.requests)
 }
 
 func TestUnchangedPersistMakesNoAPICallsAndKeepsDispatchDurable(t *testing.T) {
@@ -334,6 +363,9 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 	if err := controller.ExecuteClosureEffect(ctx, closure); !errors.Is(err, ErrEffectNotDurable) {
 		t.Fatalf("closure committed before incident close was durable: got %v", err)
 	}
+	if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
+		t.Fatalf("paused controller stopped or committed undurable closure: %v", err)
+	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist incident close: %v", err)
 	}
@@ -350,6 +382,9 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 	}
 	if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, ack); !errors.Is(err, ErrEffectNotDurable) {
 		t.Fatalf("closure acknowledged before its receipt was durable: got %v", err)
+	}
+	if err := executePausedEffects(ctx, controller); err != nil || len(broker.observed) != 0 {
+		t.Fatalf("paused controller stopped or acknowledged undurable receipt: %v", err)
 	}
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist closure receipt: %v", err)

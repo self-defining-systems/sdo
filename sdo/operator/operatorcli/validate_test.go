@@ -3,6 +3,7 @@ package operatorcli
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,26 @@ func TestParseValidateLaunchRequiresBoundSchema(t *testing.T) {
 	_, err = ParseValidateLaunch([]string{"validate", "--app", "/workspace", "--operator-root", root, "--expect-schema", "stale"})
 	if err == nil || !strings.Contains(err.Error(), "stale validator image") {
 		t.Fatalf("stale schema was accepted: %v", err)
+	}
+}
+
+func TestIsolatedValidatorChecksProgramCorpus(t *testing.T) {
+	app := t.TempDir()
+	fixture := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "playbook_program_app")
+	copy := exec.Command("cp", "-a", fixture+"/.", app)
+	if output, err := copy.CombinedOutput(); err != nil {
+		t.Fatalf("copy fixture: %v: %s", err, output)
+	}
+	path := filepath.Join(app, ".sdo", "corpus", "targetport-mismatch", "fixed.json")
+	data, err := os.ReadFile(filepath.Join(app, ".sdo", "corpus", "targetport-mismatch", "open.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunValidate(context.Background(), builder.Config{ApplicationRoot: app, OperatorRoot: ".."}); err == nil || !strings.Contains(err.Error(), "fixed") {
+		t.Fatalf("invalid corpus accepted: %v", err)
 	}
 }
 

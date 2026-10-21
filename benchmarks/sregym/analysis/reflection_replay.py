@@ -125,7 +125,7 @@ def replay(workspace: Path, suffix: str, guidance: str, out: Path, *, model: str
         "learning_decision": turn.learning_decision,
         "summary": turn.summary,
         "no_change_reason": turn.no_change_reason,
-        "proposed_changes": turn.proposed_changes,
+        "playbook_ids": turn.playbook_ids,
         "usage": turn.usage,
         "delta": memory_delta(clone),
     }

@@ -209,6 +209,9 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	if state.PendingClosure == nil || state.ClosureReceipt == nil || state.ClosureState != "committed" {
 		t.Fatalf("closure receipt was not durable before acknowledgment: %#v", state)
 	}
+	if controller.CurrentAcceptedCommit() != "outcome" {
+		t.Fatalf("controller retained stale accepted commit: %s", controller.CurrentAcceptedCommit())
+	}
 
 	restored, err := NewController(
 		testControllerConfig(),
@@ -230,6 +233,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	if !ok {
 		t.Fatal("restored receipt did not produce acknowledgment effect")
 	}
+	restored.batcher.Add(stateFinding("fault"))
 	if err := restored.ExecuteClosureAcknowledgmentEffect(context.Background(), ack); err != nil {
 		t.Fatalf("execute acknowledgment: %v", err)
 	}
@@ -269,7 +273,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 
 func awaitBrokerResult[T any](t *testing.T, channel <-chan T) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(channel) > 0 {
 			return

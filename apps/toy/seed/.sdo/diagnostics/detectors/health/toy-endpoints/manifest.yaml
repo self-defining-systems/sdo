@@ -1,0 +1,26 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: toy-endpoints
+constructor: New
+class: health
+owner: health_judge
+watches:
+  - apiVersion: v1
+    kind: Service
+  - apiVersion: v1
+    kind: Endpoints
+  - apiVersion: v1
+    kind: Pod
+  - apiVersion: apps/v1
+    kind: Deployment
+interval: 2s
+persistence:
+  firing: 1
+  clearing: 1
+batching:
+  severity: critical
+  debounce: 100ms
+possiblePlaybooks:
+  - health-objective
+originatingCommit: toy-bootstrap

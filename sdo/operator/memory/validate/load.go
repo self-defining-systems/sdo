@@ -57,6 +57,7 @@ type playbook struct {
 	// hasReadme is true when the file exists, parsed or not.
 	hasReadme bool
 	scripts   []textFile
+	programs  []textFile
 }
 
 type detector struct {
@@ -274,7 +275,7 @@ func (s *run) visit(rel, abs string) error {
 	if err != nil {
 		return err
 	}
-	if info.Size() > layout.MaxArtifactBytes {
+	if info.Size() > layout.MaxArtifactBytes && (kind != layout.KindCorpus || info.Size() > 8<<20) {
 		s.add(Structural, Diagnostic{Rule: RuleTooLarge, Path: rel, Message: fmt.Sprintf("file is %d bytes; the limit is %d KiB", info.Size(), layout.MaxArtifactBytes/1024), Hint: "split or shorten the file"})
 		s.markUnread(kind, id, rel)
 		return nil
@@ -308,6 +309,16 @@ func (s *run) visit(rel, abs string) error {
 		book := s.playbook(id)
 		book.hasReadme = true
 		book.readme = s.parseDocument(file)
+	case layout.KindPlaybookProgram:
+		book := s.playbook(id)
+		book.programs = append(book.programs, file)
+		s.checkGo(rel, abs, data)
+	case layout.KindLibrary:
+		if strings.HasSuffix(rel, ".go") {
+			s.checkGo(rel, abs, data)
+		} else {
+			s.checkYAML(file)
+		}
 	case layout.KindPlaybookScript:
 		playbookID, _, _ := strings.Cut(id, "/")
 		book := s.playbook(playbookID)

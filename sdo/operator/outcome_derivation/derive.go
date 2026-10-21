@@ -86,6 +86,23 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	var mitigatedAt *timestamppb.Timestamp
 	if result != nil {
 		mitigatedAt = closure.GetResponderCompletedAt()
+		if healthVerified {
+			clearedAt := repairClearAt(closure)
+			cutoff := timestamppb.New(*clearedAt)
+			for _, action := range result.GetRepairActions() {
+				completed := action.GetCompletedAt()
+				if !action.GetSuccess() || completed == nil || !completed.IsValid() ||
+					completed.AsTime().After(cutoff.AsTime()) {
+					continue
+				}
+				if mitigatedAt == closure.GetResponderCompletedAt() || completed.AsTime().After(mitigatedAt.AsTime()) {
+					mitigatedAt = completed
+				}
+			}
+			if mitigatedAt == closure.GetResponderCompletedAt() && clearedAt != nil {
+				mitigatedAt = cutoff
+			}
+		}
 	}
 	var commit *string
 	if repairCommit != "" {
@@ -94,6 +111,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 	record := &contractsv1alpha1.OutcomeRecord{
 		SchemaVersion: 1, IncidentId: request.GetIncidentId(), SourceCommit: request.GetSourceCommit(), DeployedCommit: request.GetDeployedCommit(),
 		DetectorHistory: cloneMessages(request.GetDetectorHistory()), Findings: cloneMessages(request.GetFindings()),
+		DriftEvents:       cloneMessages(request.GetDriftEvents()),
 		SurfacedPlaybooks: surfaced, InspectedPlaybooks: append([]string(nil), surfaced...), ConfirmedPlaybooks: append([]string(nil), applied...),
 		RejectedPlaybooks: rejected, AppliedPlaybooks: applied,
 		ConfirmedRootCauses: cloneMessages(result.GetConfirmedRootCauses()), FinalHealthDetectorState: cloneMessages(closure.GetFinalDetectorStates()),
@@ -104,6 +122,17 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			MitigatedAt: cloneTimestamp(mitigatedAt), VerifiedAt: cloneTimestamp(verifiedAt), CompletedAt: cloneTimestamp(completedAt),
 		},
 		DiagnosisVerification: verifications,
+		ProgramToolCalls:      cloneMessages(result.GetProgramToolCalls()), ProgramRuns: cloneMessages(result.GetProgramRuns()),
+		PlanApplications: cloneMessages(result.GetPlanApplications()), ProgramFailureSignals: append([]string(nil), result.GetProgramFailureSignals()...),
+		ResponseLoopsUsed: result.GetResponseLoopsUsed(), ResponseLoopExhausted: result.GetResponseLoopExhausted(),
+		ResolutionPath: result.GetResolutionPath(), FastPathPrograms: append([]string(nil), result.GetFastPathPrograms()...), FastPathSkippedReason: result.GetFastPathSkippedReason(), FastPathRelationCoveredFindings: cloneMessages(result.GetFastPathRelationCoveredFindings()),
+	}
+	for _, label := range CheckedDriftAssessments(request.GetDriftEvents(), result.GetDriftEvents()) {
+		for i, event := range record.DriftEvents {
+			if sameDriftObservation(event, label) {
+				record.DriftEvents[i] = label
+			}
+		}
 	}
 	reflect := false
 	if classification == outcomeclass.Success {
@@ -183,14 +212,21 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 	}
 	if len(verifications) > 0 {
 		attributed := false
+		confirmed := false
 		for _, verification := range verifications {
+			if verification.GetVerdict() == "contradicted" {
+				return "partial"
+			}
+			confirmed = confirmed || verification.GetVerdict() == "confirmed"
 			if verification.Repair.Attributed {
 				attributed = true
-				break
 			}
 		}
 		if !attributed {
 			return outcomeclass.ExternalRecovery
+		}
+		if !confirmed {
+			return "partial"
 		}
 	}
 	return outcomeclass.Success

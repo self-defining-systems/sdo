@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol
+import sys
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
+from agentshim import SessionResumeError
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
@@ -11,7 +14,6 @@ from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_st
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
-from sdo.agents.sdk_reference import DETECTOR_SDK_REFERENCE
 from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -46,6 +48,7 @@ class ReflectionTurn(BaseModel):
     learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
     playbook_ids: list[str] = Field(default_factory=list)
+    sdk_gaps: list[SdkGap] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
     _usage: dict[str, int | float] = PrivateAttr(default_factory=dict)
 
@@ -62,11 +65,24 @@ class ReflectionTurn(BaseModel):
             raise ValueError("reflection requires logical playbook IDs")
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
+        if self.learning_decision == "no_change" and self.sdk_gaps:
+            raise ValueError("no_change reflection cannot report SDK gaps")
         if self.learning_decision in {"no_change", "sdk_gap"}:
             if self.playbook_ids:
                 raise ValueError("no_change or sdk_gap reflection cannot claim playbook IDs")
             if not self.no_change_reason or not self.no_change_reason.strip():
                 raise ValueError("no_change or sdk_gap reflection requires no_change_reason")
+        if self.learning_decision == "sdk_gap" and not self.sdk_gaps:
+            raise ValueError("sdk_gap reflection requires typed gaps")
+
+
+class SdkGap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fault_class: str = Field(min_length=1)
+    primitive: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    scratch_script: str = Field(min_length=1)
 
 
 def reflection_output_schema() -> dict[str, object]:
@@ -116,6 +132,10 @@ class StatefulResponderBackend(Protocol):
     ) -> ReflectionTurn: ...
 
 
+class ResponderSessionUnavailable(RuntimeError):
+    """The provider cannot continue the responder's incident session."""
+
+
 #: Reasoning effort of the incident agents (responder and reflection). A
 #: benchmark comparing SDO against a stock agent declares the same effort.
 INCIDENT_REASONING_EFFORT = "medium"
@@ -156,12 +176,13 @@ def _logical_learning_request(
 ) -> str:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
+    example_dir = os.environ.get("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR") or "/opt/sdo/examples/playbook-programs"
     snapshot = closure.request.memory_snapshot
     classification = outcome.classification
     return (
         "The controller verified this incident and committed its outcome. "
-        "Read the supplied logical memory snapshot, source code, and detector SDK reference. "
-        "Edit the final files directly "
+        "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
+        "sdo-detector-authoring and sdo-playbook-authoring skills. Edit the final files directly "
         "in the operational memory directory `.sdo/` of this isolated checkout. "
         "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
         "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
@@ -172,11 +193,36 @@ def _logical_learning_request(
         "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
         "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
         "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content.\n\n"
+        "for each confirmed fault, compile or refine a program, reuse an accepted program and explain why, "
+        "or report a typed sdk_gap with the missing primitive, reason, and scratch script that proved the check. "
+        "Record each reused program ID in summary. A program directory contains diagnose.go, optional mitigate.go, "
+        "Go tests, and a README with responder owner, fault_class and originating_incident front matter. "
+        "Use `sdo-operator program scaffold --fault-class <class> --param name=Kind [--mitigate] "
+        "--out .sdo/playbooks/<class>` for direct file creation, then fill in the final files. "
+        "Use sdo.dev/operator/sdk/program and diagnostics-module library helpers imported through the "
+        "diagnostics module path. Declare Params and derive names, ports and images from bindings and the ReadView. "
+        "The allowed imports are SDK, Kubernetes read types, standard read-only packages and shared helpers. "
+        "Validation replays with every name, port and image renamed. Diagnose must Match at open and return "
+        "NoMatch at fixed and healthy; Mitigate plans actions only at open. Prefer structured container status "
+        "reasons. For desired values from source or rollout history, return ReconcileFromSource or Rollback. "
+        "Keep README prose to judgement and context, with no shell commands and no persisted scratch scripts. "
+        "Author a corpus directory under .sdo/corpus/<case-id> with open.json, fixed.json, healthy.json, "
+        "recordings.json and labels.json. Copy controller captures byte-for-byte from the read-only "
+        "/sdo/session/corpus directory: use open@detect.json for a verified drift fault; otherwise "
+        "select open@pre-apply.json, open@settle.json or open@detect.json before mitigation. Copy the corresponding "
+        "open@<phase>-recordings.json, and fixed.json; healthy.json must equal fixed.json. "
+        "The labels contain root_cause_program_ids, bindings, peer_bindings and provenance with incident_id, "
+        "open_at (detect, settle or pre-apply), open_sha256 and fixed_sha256. Bind a same-kind healthy peer in "
+        "the fixed snapshot. Never reconstruct the snapshots or recordings. Synthetic tightening NoMatch cases "
+        "need synthetic_no_match_reason and no_match_program_ids. Update the playbook index README. "
+        f"See {example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
+        f"{example_dir}/corpus/targetport-mismatch/ for a complete example. "
+        "Run memory check, read every failure, fix the files and rerun until it passes.\n\n"
         f"{_logical_guidance(guidance)}"
         f"For this {classification} outcome, "
         f"{_classification_directive(classification, guidance)}\n\n"
-        "Before returning an update, the complete final files must be in the checkout and memory check must pass.\n\n"
-        f"{DETECTOR_SDK_REFERENCE}\n"
+        "Before returning an update, the complete final files must be in the checkout and memory check must pass. "
+        "The trusted detector SDK reference is references/sdk.md of the sdo-detector-authoring skill.\n"
         f"Outcome commit: {outcome_commit}\n"
         f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
         f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
@@ -200,11 +246,11 @@ class SessionReflector:
     is always a short fresh session that carries the typed diagnostics.
     """
 
-    def __init__(self, backend: StatefulResponderBackend, *, guidance: ReflectionGuidance = "baseline") -> None:
+    def __init__(self, backend: StatefulResponderBackend, *, guidance: str = "baseline") -> None:
         if guidance not in REFLECTION_GUIDANCE_MODES:
             raise ValueError(f"unsupported reflection guidance: {guidance!r}")
         self.backend = backend
-        self.guidance: ReflectionGuidance = guidance
+        self.guidance: ReflectionGuidance = cast("ReflectionGuidance", guidance)
 
     def resume(
         self,
@@ -236,7 +282,8 @@ class SessionReflector:
             # Re-sending the responder transcript on every model request is the
             # dominant retry cost; the typed diagnostics are all a retry needs.
             prompt = (
-                "You are correcting an operational-memory proposal that SDO's broker rejected. The controller has "
+                "Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. "
+                "The controller has "
                 "independently verified incident closure and committed its authoritative outcome; the responder's "
                 "session transcript is intentionally not available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
@@ -269,12 +316,25 @@ class SessionReflector:
             "Reflect using the same incident context.\n"
             f"{request}"
         )
-        return self.backend.resume(
-            session_id=session_id,
-            worktree=worktree,
-            prompt=prompt,
-            idempotency_key=idempotency_key,
-        )
+        try:
+            return self.backend.resume(
+                session_id=session_id,
+                worktree=worktree,
+                prompt=prompt,
+                idempotency_key=idempotency_key,
+            )
+        except ResponderSessionUnavailable as exc:
+            print(f"reflection: cannot resume responder session ({exc}); starting fresh", file=sys.stderr)
+            return self.resume(
+                session_id=session_id,
+                incident_id=incident_id,
+                worktree=worktree,
+                outcome=outcome,
+                history=history,
+                outcome_commit=outcome_commit,
+                session_mode="fresh",
+                closure=closure,
+            )
 
 
 class CodexSessionBackend:
@@ -342,6 +402,20 @@ class CodexSessionBackend:
                 executor=self.executor,
             )
         except StructuredTurnError as exc:
+            if session_id is not None and (
+                str(exc) == f"{self.provider} cannot resume session {session_id!r}"
+                or (
+                    isinstance(exc.__cause__, SessionResumeError)
+                    and (
+                        self.provider == "codex"
+                        or "no conversation found" in exc.__cause__.stderr.lower()
+                        or "session not found" in exc.__cause__.stderr.lower()
+                    )
+                )
+            ):
+                raise ResponderSessionUnavailable(
+                    f"{self.provider} cannot resume session {session_id!r}: {exc}"
+                ) from exc
             raise RuntimeError(f"{self.provider} reflection failed: {exc}") from exc
         return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
 

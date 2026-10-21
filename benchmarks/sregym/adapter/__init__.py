@@ -18,14 +18,18 @@ if TYPE_CHECKING:
         DeployedLifecycleContext,
         deployed_lifecycle,
         launch_native_lifecycle,
+        publish_agent_registrations,
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
-    from benchmarks.sregym.adapter.native_operator import execute_operator, inspect_existing
+    from benchmarks.sregym.adapter.native_operator import execute_operator, inspect_existing, install_existing
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
         Clock,
+        ClosureFailedError,
         ClusterOps,
+        ControllerRecord,
+        DetectionMissError,
         DetectorReviewRequiredError,
         KubectlClusterOps,
         PersistentControllerError,
@@ -37,6 +41,8 @@ if TYPE_CHECKING:
         drain_pending_incident,
         pause_controller,
         run_persistent_stage,
+        runtime_config_from_payload,
+        runtime_config_payload,
         teardown,
         wait_for_maintenance_ack,
     )
@@ -47,6 +53,11 @@ if TYPE_CHECKING:
     )
 
 _EXPORTS: dict[str, str] = {
+    "runtime_config_payload": "persistent",
+    "runtime_config_from_payload": "persistent",
+    "ControllerRecord": "persistent",
+    "install_existing": "native_operator",
+    "publish_agent_registrations": "driver",
     "DeployedLifecycle": "driver",
     "DeployedLifecycleContext": "driver",
     "deployed_lifecycle": "driver",
@@ -61,6 +72,8 @@ _EXPORTS: dict[str, str] = {
     "STRICT_RECEIPT_FILENAME": "persistent",
     "Clock": "persistent",
     "ClusterOps": "persistent",
+    "ClosureFailedError": "persistent",
+    "DetectionMissError": "persistent",
     "DetectorReviewRequiredError": "persistent",
     "PersistentControllerError": "persistent",
     "wait_for_maintenance_ack": "persistent",
@@ -79,10 +92,17 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "runtime_config_payload",
+    "runtime_config_from_payload",
+    "ControllerRecord",
+    "install_existing",
+    "publish_agent_registrations",
     "REJECTED_RECEIPT_FILENAME",
     "STRICT_RECEIPT_FILENAME",
     "Clock",
     "ClusterOps",
+    "ClosureFailedError",
+    "DetectionMissError",
     "DeployedLifecycle",
     "DeployedLifecycleContext",
     "DetectorReviewRequiredError",

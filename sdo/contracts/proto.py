@@ -25,7 +25,7 @@ import sys
 from types import SimpleNamespace
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 _GEN_ROOT = Path(__file__).resolve().parent / "_gen"
 if str(_GEN_ROOT) not in sys.path:
@@ -45,6 +45,7 @@ from sdodev.contracts.v1alpha1 import (
     memory_pb2,
     messages_pb2,
     outcome_pb2,
+    program_pb2,
     telemetry_pb2,
     traffic_pb2,
     worker_pb2,
@@ -53,7 +54,23 @@ from sdodev.contracts.v1alpha1 import (
 if TYPE_CHECKING:
     from google.protobuf.message import Message
 
+_MessageT = TypeVar("_MessageT", bound="Message")
+
 ObjectRef = common_pb2.ObjectRef
+
+ProgramSpec = program_pb2.ProgramSpec
+ParamSpec = program_pb2.ParamSpec
+Binding = program_pb2.Binding
+Verdict = program_pb2.Verdict
+Evidence = program_pb2.Evidence
+Plan = program_pb2.Plan
+Action = program_pb2.Action
+ReconcileFromSource = program_pb2.ReconcileFromSource
+Rollback = program_pb2.Rollback
+SetField = program_pb2.SetField
+RestartRollout = program_pb2.RestartRollout
+ProgramRun = program_pb2.ProgramRun
+PlanApplication = program_pb2.PlanApplication
 
 ControllerConfig = controller_config_pb2.ControllerConfig
 
@@ -127,6 +144,9 @@ AgentTask = worker_pb2.AgentTask
 AgentResult = worker_pb2.AgentResult
 ReflectionRequest = worker_pb2.ReflectionRequest
 ReflectionResult = worker_pb2.ReflectionResult
+DriftEvent = messages_pb2.DriftEvent
+DriftEvidence = messages_pb2.DriftEvidence
+SdkGap = worker_pb2.SdkGap
 SourceDeploymentRequest = lifecycle_pb2.SourceDeploymentRequest
 SourceDeploymentResult = lifecycle_pb2.SourceDeploymentResult
 DeploymentPlan = lifecycle_pb2.DeploymentPlan
@@ -139,15 +159,18 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "Action",
     "AgentCapability",
     "AgentRegistration",
     "AgentResult",
     "AgentTask",
     "AppliedPlaybook",
+    "Binding",
     "ConfirmedRootCause",
     "ControllerConfig",
     "DetectorEvaluation",
     "DetectorTimelineEntry",
+    "Evidence",
     "Finding",
     "FiringRecord",
     "LateFinding",
@@ -187,6 +210,11 @@ __all__ = [
     "KubernetesJobLaunch",
     "LocalProcessLaunch",
     "ObjectRef",
+    "ParamSpec",
+    "Plan",
+    "PlanApplication",
+    "ProgramRun",
+    "ProgramSpec",
     "MemoryArtifact",
     "MemoryCheckReport",
     "MemoryDiagnostic",
@@ -200,6 +228,9 @@ __all__ = [
     "ProposalWorkspace",
     "ReflectionRequest",
     "ReflectionResult",
+    "DriftEvent",
+    "DriftEvidence",
+    "SdkGap",
     "SourceDeploymentRequest",
     "SourceDeploymentResult",
     "DeploymentPlan",
@@ -211,10 +242,14 @@ __all__ = [
     "HealthJudgeResult",
     "SourceResource",
     "RepairActionReceipt",
+    "ReconcileFromSource",
+    "RestartRollout",
+    "Rollback",
     "RootCauseEvidence",
     "StateChange",
     "StateChanges",
     "StateFieldChange",
+    "SetField",
     "SurfacedPlaybook",
     "TimingMetrics",
     "TrafficLink",
@@ -222,6 +257,7 @@ __all__ = [
     "TrafficWorkload",
     "TrafficWorkloadScenario",
     "UsageMetrics",
+    "Verdict",
     "VerificationEvidence",
     "parse_json",
     "to_canonical_json",
@@ -234,9 +270,10 @@ def to_canonical_json(message: Message) -> str:
     return json.dumps(json.loads(wire), indent=2, sort_keys=True) + "\n"
 
 
-def parse_json(text: str, message: Message) -> Message:
+def parse_json(text: str, message: _MessageT) -> _MessageT:
     """Parse protojson ``text`` into ``message`` (populated in place and returned)."""
-    return json_format.Parse(text, message)
+    json_format.Parse(text, message)
+    return message
 
 
 def timestamp_datetime(value: Timestamp) -> datetime:

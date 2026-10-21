@@ -123,18 +123,35 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
         if not _items(result.get("confirmed_root_causes"), "confirmed root causes"):
             raise ProductionReceiptValidationError("native successful outcome lacks confirmed cause")
         verifications = _items(outcome.get("diagnosis_verification"), "diagnosis verification")
+        if any(item.get("verdict") == "contradicted" for item in verifications):
+            raise ProductionReceiptValidationError("native successful outcome has contradicted diagnosis")
         if not any(item.get("verdict") == "confirmed" for item in verifications):
             raise ProductionReceiptValidationError("native successful outcome lacks independently confirmed diagnosis")
         if proposal is None and not any(
             item.get("success") is True for item in _items(result.get("repair_actions"), "repair actions")
         ):
             raise ProductionReceiptValidationError("native successful outcome lacks accepted repair evidence")
+    raw_decision = ledger.get("reflection_decision")
+    decision = _object(raw_decision, "reflection decision") if raw_decision is not None else None
+    skipped = ledger.get("reflection_skipped_reason")
+    if skipped is not None and (
+        not isinstance(skipped, str)
+        or not skipped.strip()
+        or ledger.get("requires_reflection") is True
+        or decision is not None
+    ):
+        raise ProductionReceiptValidationError("native reflection skip conflicts with broker decision")
     if ledger.get("requires_reflection") is True and (
         ledger.get("reflection_processed") is not True
-        or reflection is None
-        or not isinstance(ledger.get("reflection_decision"), dict)
+        or decision is None
+        # A no_change decision commits nothing; only an updating reflection is bound to a commit.
+        or (decision.get("learning_decision") == "updated" and reflection is None)
     ):
         raise ProductionReceiptValidationError("native required reflection is incomplete")
+    if decision is not None and decision.get("learning_decision") == "failed":
+        _nonempty(decision.get("error"), "reflection failure error")
+        if reflection is not None:
+            raise ProductionReceiptValidationError("native failed reflection cannot have a reflection commit")
     expectation = ledger.get("rollout_expectation")
     if expectation is not None:
         expected = _object(expectation, "rollout expectation")
@@ -157,10 +174,32 @@ def validate_native_production_receipt(receipt: dict[str, Any]) -> None:
             _nonempty(verified[0].get(name), f"rollout {name}")
         _timestamp(verified[0].get("verified_at"), "rollout verified_at")
     jobs = _items(receipt.get("responder_job_evidence"), "responder Job evidence")
-    if len(jobs) != 1 or jobs[0].get("incident_id") != incident_id or jobs[0].get("succeeded") is not True:
-        raise ProductionReceiptValidationError("native receipt requires one correlated successful responder Job")
-    _nonempty(jobs[0].get("job_uid"), "responder Job UID")
-    _nonempty(jobs[0].get("job_name"), "responder Job name")
+    if outcome.get("resolution_path") == "fast_path":
+        programs = outcome.get("fast_path_programs")
+        applications = _items(outcome.get("plan_applications"), "fast path plan applications")
+        if (
+            jobs
+            or request.get("repair_policy") != "recorded-actions"
+            or result.get("resolution_path") != "fast_path"
+            or result.get("fast_path_programs") != programs
+            or not isinstance(programs, list)
+            or not programs
+            or ledger.get("reflection_skipped_reason") != "trusted program fast path"
+            or result.get("program_failure_signals")
+            or not applications
+            or any(
+                item.get("applied") is not True
+                or item.get("rolled_back") is True
+                or item.get("verification", {}).get("result") != "RESULT_NO_MATCH"
+                for item in applications
+            )
+        ):
+            raise ProductionReceiptValidationError("native fast path lacks verified program and reflection evidence")
+    else:
+        if len(jobs) != 1 or jobs[0].get("incident_id") != incident_id or jobs[0].get("succeeded") is not True:
+            raise ProductionReceiptValidationError("native receipt requires one correlated successful responder Job")
+        _nonempty(jobs[0].get("job_uid"), "responder Job UID")
+        _nonempty(jobs[0].get("job_name"), "responder Job name")
     if (
         receipt.get("outcome_commit") != outcome_commit
         or receipt.get("reflection_commit") != reflection
@@ -217,6 +256,8 @@ def native_production_receipt(
         "proposal_commit": ledger.get("proposal_commit") or None,
         "outcome_commit": ledger.get("outcome_commit"),
         "reflection_commit": ledger.get("reflection_commit") or None,
+        "reflection_usage": _object(ledger.get("reflection_decision") or {}, "reflection decision").get("usage"),
+        "reflection_skipped_reason": ledger.get("reflection_skipped_reason"),
         "outcome_classification": classification,
         "resolution": resolution,
     }

@@ -4,8 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sdo.dev/operator/contracts/wire"
+	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/types/known/anypb"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/latefindings"
@@ -34,7 +41,92 @@ type KubernetesJobDispatcher struct {
 	DispatchEnvironment   func(context.Context) map[string]string
 	PollInterval          time.Duration
 	Catalog               memory.CatalogReader
+	Outcomes              memory.Reader
 	RequireMemorySnapshot bool
+	LoopFactory           func(IncidentRequest) *ResponderLoop
+	ProgramFastPath       bool
+	ProgramTrustThreshold int
+}
+
+// PrepareDispatch freezes the worker task before the controller records its
+// pending dispatch. Retries use this task even if observations later change.
+func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
+	if err := validateIncidentRequest(request); err != nil {
+		return IncidentRequest{}, fmt.Errorf("validate incident request: %w", err)
+	}
+	if request.PreparedAgentTask != "" {
+		return request, nil
+	}
+	if d.AgentID == "" {
+		if d.Registry == nil {
+			return IncidentRequest{}, errors.New("incident dispatcher requires an agent registry")
+		}
+		var err error
+		d.AgentID, err = d.Registry.AgentFor(&contracts.IncidentRequest{})
+		if err != nil {
+			return IncidentRequest{}, err
+		}
+	}
+	if d.Client != nil {
+		name := worker_registry.JobName(request.IncidentID) + "-request"
+		existing, err := d.Client.CoreV1().ConfigMaps(d.Namespace).Get(ctx, name, metav1.GetOptions{})
+		if err == nil {
+			payload := existing.Data[jobRequestDataKey]
+			task := new(contracts.AgentTask)
+			if payload == "" || protojson.Unmarshal([]byte(payload), task) != nil ||
+				task.GetTaskId() != request.IncidentID || task.GetAgentId() != d.AgentID ||
+				task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||
+				task.GetWorkspace().GetBaseCommit() != request.RepositoryBaseCommit {
+				return IncidentRequest{}, fmt.Errorf("existing agent request ConfigMap %q differs from pending incident", name)
+			}
+			typed := new(contracts.IncidentRequest)
+			if err := task.GetRequest().UnmarshalTo(typed); err != nil {
+				return IncidentRequest{}, fmt.Errorf("decode existing incident request: %w", err)
+			}
+			if typed.GetIncidentId() != request.IncidentID || typed.GetRepositoryBaseCommit() != request.RepositoryBaseCommit {
+				return IncidentRequest{}, fmt.Errorf("existing agent request ConfigMap %q differs from pending incident", name)
+			}
+			request.InitialProgramRuns = nil
+			for _, run := range typed.GetInitialProgramRuns() {
+				request.InitialProgramRuns = append(request.InitialProgramRuns, programRunState(run))
+			}
+			request.MaxResponseLoops = int(typed.GetMaxResponseLoops())
+			request.PreparedAgentTask = payload
+			return request, nil
+		}
+		if !apierrors.IsNotFound(err) {
+			return IncidentRequest{}, fmt.Errorf("get existing agent request ConfigMap: %w", err)
+		}
+	}
+	if d.LoopFactory != nil {
+		if loop := d.LoopFactory(request); loop != nil {
+			trust, err := d.programTrust(ctx, request)
+			if err != nil {
+				return IncidentRequest{}, err
+			}
+			loop.Trust = trust
+			request.InitialProgramRuns = loop.InitialDiagnose(ctx)
+			fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+			request.MaxResponseLoops = loop.MaxBatches
+		}
+	}
+	var snapshots []*contracts.OperationalMemorySnapshot
+	if d.RequireMemorySnapshot && d.Catalog == nil {
+		return IncidentRequest{}, errors.New("native responder requires logical operational memory")
+	}
+	if d.Catalog != nil {
+		snapshot, err := d.Catalog.Snapshot(ctx)
+		if err != nil {
+			return IncidentRequest{}, fmt.Errorf("read logical operational memory: %w", err)
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	_, payload, err := encodeIncidentAgentTask(request, d.Registry, d.AgentID, snapshots...)
+	if err != nil {
+		return IncidentRequest{}, err
+	}
+	request.PreparedAgentTask = string(payload)
+	return request, nil
 }
 
 func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
@@ -44,23 +136,88 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err := validateIncidentRequest(request); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate incident request: %w", err)
 	}
-	var snapshotArgs []*contracts.OperationalMemorySnapshot
-	if d.RequireMemorySnapshot && d.Catalog == nil {
-		return IncidentResult{}, errors.New("native responder requires logical operational memory")
-	}
-	if d.Catalog != nil {
-		snapshot, err := d.Catalog.Snapshot(ctx)
-		if err != nil {
-			return IncidentResult{}, fmt.Errorf("read logical operational memory: %w", err)
+	if d.AgentID == "" {
+		if d.Registry == nil {
+			return IncidentResult{}, errors.New("incident dispatcher requires an agent registry")
 		}
-		snapshotArgs = append(snapshotArgs, snapshot)
+		var err error
+		d.AgentID, err = d.Registry.AgentFor(&contracts.IncidentRequest{})
+		if err != nil {
+			return IncidentResult{}, err
+		}
 	}
-	task, _, err := encodeIncidentAgentTask(request, d.Registry, d.AgentID, snapshotArgs...)
-	if err != nil {
-		return IncidentResult{}, err
+	if request.PreparedAgentTask == "" {
+		var err error
+		request, err = d.PrepareDispatch(ctx, request)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+	}
+	task := new(contracts.AgentTask)
+	var err error
+	if err := protojson.Unmarshal([]byte(request.PreparedAgentTask), task); err != nil {
+		return IncidentResult{}, fmt.Errorf("decode prepared agent task: %w", err)
+	}
+	if task.GetTaskId() != request.IncidentID || task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||
+		task.GetWorkspace().GetBaseCommit() != request.RepositoryBaseCommit {
+		return IncidentResult{}, errors.New("prepared agent task differs from pending incident")
+	}
+	var loop *ResponderLoop
+	if d.LoopFactory != nil {
+		loop = d.LoopFactory(request)
+		if loop != nil {
+			trust, err := d.programTrust(ctx, request)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+			loop.Trust = trust
+			if request.MaxResponseLoops > 0 {
+				loop.MaxBatches = request.MaxResponseLoops
+			}
+			loop.runs = append([]ProgramRun(nil), request.InitialProgramRuns...)
+			if err := d.restoreToolState(ctx, request, loop); err != nil {
+				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
+			}
+			if err := loop.RestoreInitialMatches(ctx); err != nil {
+				return IncidentResult{}, fmt.Errorf("restore dispatch program view: %w", err)
+			}
+		}
 	}
 	if err := d.Registry.ValidateTask(task); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate agent task: %w", err)
+	}
+	if d.ProgramFastPath && loop != nil {
+		fastResult, summary, resolved, err := d.tryFastPath(ctx, request, loop)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		if resolved {
+			return fastResult, nil
+		}
+		if summary != "" {
+			request.FastPathSummary = summary
+			prepared := new(contracts.IncidentRequest)
+			if err := task.GetRequest().UnmarshalTo(prepared); err != nil {
+				return IncidentResult{}, fmt.Errorf("decode prepared incident for fast-path handoff: %w", err)
+			}
+			prepared.FastPathSummary = summary
+			task.Request, err = anypb.New(prepared)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+			payload, err := wire.Canonical(task)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+			request.PreparedAgentTask = string(payload)
+			task = new(contracts.AgentTask)
+			if err := protojson.Unmarshal(payload, task); err != nil {
+				return IncidentResult{}, fmt.Errorf("decode fast-path handoff task: %w", err)
+			}
+			if err := d.Registry.ValidateTask(task); err != nil {
+				return IncidentResult{}, fmt.Errorf("validate fast-path handoff task: %w", err)
+			}
+		}
 	}
 	environment := make(map[string]string, len(d.Environment))
 	for name, value := range d.Environment {
@@ -80,6 +237,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		environment["CODEX_HOME"] = "/sdo/session/codex"
 		environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		environment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
 		environment[latefindings.ReceiptsPathEnv] = latefindings.DefaultReceiptsPath
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
 		if err := store.Ensure(ctx, request.IncidentID); err != nil {
@@ -87,12 +245,34 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		lateConfigMap = latefindings.ConfigMapName(request.IncidentID)
 	}
+	if loop != nil && sessionSubPath != "" {
+		base := d.RepositoryPVCSubPath
+		if base == "" {
+			base = "."
+		}
+		relative, pathErr := filepath.Rel(base, sessionSubPath)
+		if pathErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return IncidentResult{}, fmt.Errorf("incident tool session is outside repository mount")
+		}
+		directory := filepath.Join(d.RepositoryMountPath, relative, "tools")
+		toolCtx, stopTools := context.WithCancel(ctx)
+		defer stopTools()
+		server := SessionToolServer{Directory: directory, Handle: loop.Handle}
+		if err := server.Prepare(); err != nil {
+			return IncidentResult{}, fmt.Errorf("prepare responder tools: %w", err)
+		}
+		go func() { _ = server.Serve(toolCtx) }()
+		go loop.RetryInitialDiagnose(toolCtx)
+		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+	}
 	executor := worker_registry.KubernetesExecutor{
 		Client: d.Client, Namespace: d.Namespace, Registry: d.Registry,
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
 		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
 		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
-		LateFindingsConfigMap: lateConfigMap,
+		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
+		LateFindingsConfigMap:  lateConfigMap,
+		TaskPayload:            request.PreparedAgentTask,
 	}
 	agentResult, err := executor.Execute(ctx, task)
 	if err != nil {
@@ -106,6 +286,28 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	if err != nil {
 		return IncidentResult{}, err
 	}
+	if loop != nil {
+		result.ProgramToolCalls = loop.ToolCalls()
+		result.ProgramRuns = loop.ProgramRuns()
+		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
+		result.PlanApplications = loop.PlanApplications()
+		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
+		if result.Status == IncidentCompleted {
+			loop.CreditEquivalentRepairs(ctx, result.RepairActions)
+			result.PlanApplications = loop.PlanApplications()
+		}
+		result.ProgramFailureSignals = loop.FailureSignals()
+		result.ResponseLoopsUsed = loop.LoopsUsed()
+		result.ResolutionPath = "responder"
+		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
+		result.FastPathSkippedReason = loop.fastPathSkippedReason
+		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
+		result.ResponseLoopExhausted = loop.Exhausted()
+		if result.ResponseLoopExhausted {
+			result.Status = IncidentFailed
+			result.Error = "response loop budget exhausted with unresolved findings"
+		}
+	}
 	if d.RequireMemorySnapshot && result.LateFindingsPull != nil {
 		pull := result.LateFindingsPull
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
@@ -117,6 +319,56 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		return IncidentResult{}, fmt.Errorf("validate incident result: %w", err)
 	}
 	return result, nil
+}
+
+func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request IncidentRequest) (map[string]ProgramTrust, error) {
+	if d.Outcomes == nil {
+		return nil, nil
+	}
+	stored, err := d.Outcomes.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read program trust outcomes: %w", err)
+	}
+	records := make([]*contracts.OutcomeRecord, 0, len(stored))
+	for _, outcome := range stored {
+		if outcome.Record != nil {
+			records = append(records, outcome.Record)
+		}
+	}
+	evidence, err := memory.ReadProgramLearningEvidence(ctx, request.RepositoryWorktree, request.SourceCommit)
+	if err != nil {
+		return nil, err
+	}
+	for _, learned := range evidence {
+		originRevision, err := programDependencyRevision(ctx, request.RepositoryWorktree, learned.AcceptedCommit, learned.ProgramID)
+		if err != nil {
+			continue
+		}
+		currentRevision, err := programDependencyRevision(ctx, request.RepositoryWorktree, request.SourceCommit, learned.ProgramID)
+		if err != nil || currentRevision != originRevision {
+			continue
+		}
+		for index, record := range records {
+			if record.GetIncidentId() != learned.IncidentID || record.GetClassification() != "success" {
+				continue
+			}
+			alreadyRecorded := false
+			for _, run := range record.GetProgramRuns() {
+				alreadyRecorded = alreadyRecorded || run.GetProgramId() == learned.ProgramID
+			}
+			if alreadyRecorded {
+				continue
+			}
+			credited, err := d.learningReplayCredit(ctx, request, learned, originRevision, record)
+			if err != nil {
+				return nil, fmt.Errorf("read validated learning replay: %w", err)
+			}
+			if credited != nil {
+				records[index] = credited
+			}
+		}
+	}
+	return ProgramTrustStats(records, d.ProgramTrustThreshold), nil
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.

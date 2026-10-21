@@ -188,6 +188,7 @@
     "incident_id": "incident-wire",
     "observed_at": "2026-01-02T03:04:05.000000006Z"
   },
+  "ownership_adoption": {},
   "pending_batch": {
     "deadline": "2026-01-02T03:04:05.000000006Z",
     "deadlines": {

@@ -1,0 +1,96 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	meta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+
+	"sdo.dev/operator/sdk"
+)
+
+// KubernetesPlanClient applies plan patches through the Kubernetes dynamic client.
+type KubernetesPlanClient struct {
+	Client dynamic.Interface
+	Mapper meta.RESTMapper
+}
+
+func (c KubernetesPlanClient) resource(ref sdk.ObjectRef) (dynamic.ResourceInterface, error) {
+	if c.Client == nil || c.Mapper == nil {
+		return nil, errors.New("Kubernetes plan client and REST mapper are required")
+	}
+	gvk := schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind)
+	mapping, err := c.Mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, fmt.Errorf("map %s/%s: %w", ref.Kind, ref.Name, err)
+	}
+	if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
+		return nil, fmt.Errorf("plan object %s/%s is not namespaced", ref.Kind, ref.Name)
+	}
+	return c.Client.Resource(mapping.Resource).Namespace(ref.Namespace), nil
+}
+
+func (c KubernetesPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	resource, err := c.resource(ref)
+	if err != nil {
+		return nil, err
+	}
+	return resource.Get(ctx, ref.Name, metav1.GetOptions{})
+}
+
+func (c KubernetesPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	resource, err := c.resource(ref)
+	if err != nil {
+		return err
+	}
+	_, err = resource.Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+	return err
+}
+
+// KubernetesPlanRollouts waits for touched Deployments to finish rolling out.
+type KubernetesPlanRollouts struct {
+	Client kubernetes.Interface
+}
+
+func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
+	if w.Client == nil {
+		return errors.New("Kubernetes rollout client is required")
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		settled := true
+		for _, ref := range refs {
+			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
+				continue
+			}
+			deployment, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+			}
+			replicas := int32(1)
+			if deployment.Spec.Replicas != nil {
+				replicas = *deployment.Spec.Replicas
+			}
+			if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.UpdatedReplicas < replicas || deployment.Status.AvailableReplicas < replicas || deployment.Status.Replicas > replicas {
+				settled = false
+			}
+		}
+		if settled {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}

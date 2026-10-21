@@ -57,6 +57,7 @@ type IncidentRequest struct {
 	Namespace            string
 	IncidentID           string
 	Findings             []sdk.Finding
+	DriftEvents          []sdk.DriftEvent
 	DetectorHistory      []DetectorEvaluation
 	SurfacedPlaybooks    []SurfacedPlaybook
 	RelevantOutcomes     []PriorOutcomeEvidence
@@ -72,7 +73,12 @@ type IncidentRequest struct {
 	StateChanges *StateChanges
 	// FollowUp is set only on a follow-up incident dispatched for findings that
 	// stayed active after an earlier responder completed.
-	FollowUp *FollowUpContext
+	FollowUp           *FollowUpContext
+	InitialProgramRuns []ProgramRun
+	FastPathSummary    string
+	MaxResponseLoops   int
+	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
+	PreparedAgentTask string
 }
 
 // FollowUpContext links a follow-up responder request to the incident it
@@ -144,21 +150,32 @@ type RepairActionReceipt struct {
 }
 
 type IncidentResult struct {
-	SchemaVersion        string
-	IncidentID           string
-	Status               IncidentStatus
-	ConfirmedRootCauses  []ConfirmedRootCause
-	AppliedPlaybooks     []AppliedPlaybook
-	RepairChanges        []string
-	RepairActions        []RepairActionReceipt
-	FinalDetectorStates  []DetectorEvaluation
-	ProposedArtifactIDs  []string
-	VerificationEvidence []VerificationEvidence
-	Usage                UsageMetrics
-	Timing               TimingMetrics
-	ResponderSessionID   string
-	LateFindingsPull     *LateFindingsPull
-	Error                string
+	DriftEvents                     []sdk.DriftEvent
+	SchemaVersion                   string
+	IncidentID                      string
+	Status                          IncidentStatus
+	ConfirmedRootCauses             []ConfirmedRootCause
+	AppliedPlaybooks                []AppliedPlaybook
+	RepairChanges                   []string
+	RepairActions                   []RepairActionReceipt
+	FinalDetectorStates             []DetectorEvaluation
+	ProposedArtifactIDs             []string
+	VerificationEvidence            []VerificationEvidence
+	Usage                           UsageMetrics
+	Timing                          TimingMetrics
+	ResponderSessionID              string
+	LateFindingsPull                *LateFindingsPull
+	Error                           string
+	ProgramToolCalls                []ToolCall
+	ProgramRuns                     []ProgramRun
+	PlanApplications                []RecordedPlanApplication
+	ProgramFailureSignals           []string
+	ResponseLoopsUsed               int
+	ResponseLoopExhausted           bool
+	ResolutionPath                  string
+	FastPathPrograms                []string
+	FastPathSkippedReason           FastPathSkipReason
+	FastPathRelationCoveredFindings []RelationCoveredFinding
 }
 
 // LateFindingsPull is a worker's claim that it consumed a controller-authored

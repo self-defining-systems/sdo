@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,11 +101,21 @@ func Supervise(ctx context.Context, config RunConfig) error {
 	}
 	config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
 	config.Controller.RestartAfterClosure = true
-	for {
-		if err := RunOnce(ctx, config); err != nil {
+	return supervise(ctx, config, RunOnce, os.Stdout)
+}
+
+// supervise announces every relaunch on out as a JSON record, which the
+// benchmark adapter reads from the controller log to know that learned
+// detectors are live again.
+func supervise(ctx context.Context, config RunConfig, run func(context.Context, RunConfig) error, out io.Writer) error {
+	for launches := 1; ; launches++ {
+		if err := run(ctx, config); err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(out, "{\"controller_supervisor\":\"relaunch\",\"launches\":%d}\n", launches); err != nil {
 			return err
 		}
 	}

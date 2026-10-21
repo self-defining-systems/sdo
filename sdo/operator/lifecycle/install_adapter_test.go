@@ -42,6 +42,17 @@ func TestNativeInstallAdapterUsesPreparedCheckoutInsideOperate(t *testing.T) {
 	}
 }
 
+func TestNativeInstallAdapterPassesAcceptedManifestPaths(t *testing.T) {
+	strategy := &capturePreparedInstall{}
+	adapter := NativeInstallAdapter{Strategy: strategy, Prepared: true, AcceptedRepository: "/workspace/application", Config: install.Config{Namespace: "demo", Application: "demo"}}
+	if err := adapter.InstallDeployment(context.Background(), strings.Repeat("a", 40), "production", DeploymentReceipt{ManifestPaths: []string{"kubernetes", "deploy/extra.yaml"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(strategy.config.ExtraControllerArgs) != 2 || strategy.config.ExtraControllerArgs[0] != "--deployed-manifest-path=kubernetes" || strategy.config.ExtraControllerArgs[1] != "--deployed-manifest-path=deploy/extra.yaml" {
+		t.Fatalf("selected manifests lost at install: %+v", strategy.config.ExtraControllerArgs)
+	}
+}
+
 func (c *captureInstall) Install(_ context.Context, config install.Config, seeder install.RepositorySeeder) (install.Result, error) {
 	c.called = true
 	c.config = config

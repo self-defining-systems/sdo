@@ -1,0 +1,21 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: restart-loop
+constructor: New
+class: incident
+owner: responder
+watches:
+    - apiVersion: v1
+      kind: Pod
+interval: 30s
+persistence:
+    firing: 1
+    clearing: 2
+batching:
+    severity: critical
+    debounce: "0"
+possiblePlaybooks:
+    - restart-loop
+originatingIncident: example-incident
+originatingCommit: example

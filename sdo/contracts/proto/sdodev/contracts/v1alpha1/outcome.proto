@@ -5,6 +5,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -33,6 +34,17 @@ message OutcomeRecord {
   UsageMetrics usage = 20;
   OutcomeTimestamps timestamps = 21;
   repeated DiagnosisVerification diagnosis_verification = 22;
+  repeated ProgramToolCall program_tool_calls = 23;
+  repeated ProgramRun program_runs = 24;
+  repeated PlanApplication plan_applications = 25;
+  repeated string program_failure_signals = 26;
+  int32 response_loops_used = 27;
+  bool response_loop_exhausted = 28;
+  repeated DriftEvent drift_events = 29;
+  string resolution_path = 30 [(buf.validate.field).string = {in: ["", "fast_path", "responder"]}];
+  repeated string fast_path_programs = 31;
+  string fast_path_skipped_reason = 32;
+  repeated RelationCoveredFinding fast_path_relation_covered_findings = 33;
 }
 
 message OutcomeTimestamps {

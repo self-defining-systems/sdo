@@ -36,13 +36,14 @@ ENV HOME=/tmp \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS=-p=2
+    GOFLAGS="-mod=mod -p=2"
+RUN cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 RUN find /opt/sdo/sdo/operator -name '*.py' -type f -delete \
     && chmod -R a+rX /opt/sdo/sdo/operator
 CMD ["/usr/local/bin/sdo-operator", "controller", "--help"]
 
 FROM node:22.17.0-bookworm-slim@sha256:b04ce4ae4e95b522112c2e5c52f781471a5cbc3b594527bcddedee9bc48c03a0 AS worker-runtime
-ARG CODEX_VERSION=0.157.1
+ARG CODEX_VERSION=0.163.0
 ARG CLAUDE_CODE_VERSION=2.1.258
 LABEL org.opencontainers.image.title="SDO production runtime" \
       org.opencontainers.image.version="0.1.0"
@@ -73,44 +74,30 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     GOPROXY=off \
     GOSUMDB=off \
     GOMAXPROCS=2 \
-    GOFLAGS=-p=2
+    GOFLAGS="-mod=mod -p=2" \
+    CGO_ENABLED=0 \
+    SDO_GO_CACHE_SEED=/opt/sdo/go-build-cache \
+    SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs
 COPY --from=go-runtime /usr/local/go /usr/local/go
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 COPY --from=go-runtime /go/pkg/mod /go/pkg/mod
+COPY --from=go-runtime /go/build-cache /opt/sdo/go-build-cache
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+COPY examples/playbook-programs /opt/sdo/examples/playbook-programs
 COPY sdo /opt/sdo/sdo
 COPY libs/__init__.py /opt/sdo/libs/__init__.py
 COPY libs/agent_cli /opt/sdo/libs/agent_cli
-RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs
+RUN chmod -R a+rX /opt/sdo/sdo/operator /opt/sdo/sdo /opt/sdo/libs /opt/sdo/examples \
+    && test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
+    && command -v go && command -v sdo-operator \
+    && cd /opt/sdo/sdo/operator/sdk && GOCACHE=/go/build-cache go list ./program >/dev/null
 WORKDIR /opt/sdo
 
 FROM worker-runtime AS responder
+RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > /usr/local/bin/sdo \
+    && chmod 755 /usr/local/bin/sdo
 RUN /usr/local/bin/sdo-operator memory help | grep -q 'memory check'
 CMD ["python3", "-m", "sdo.agents.responder.worker"]
-
-FROM responder AS sregym-responder
-# Benchmark transport clients; production images stay free of them.
-RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
-      anyio==4.12.1 \
-      certifi==2026.1.4 \
-      charset-normalizer==3.4.4 \
-      h11==0.16.0 \
-      httpcore==1.0.9 \
-      httpx==0.28.1 \
-      idna==3.11 \
-      requests==2.32.5 \
-      urllib3==2.6.3
-# Only the modules the responder's entry points actually import at runtime:
-# `adapter.submission` (the submission smoke test in scripts/build_sdo_images.sh) and
-# `adapter.submission_relay` (the in-cluster submission bridge Deployment,
-# benchmarks.sregym.adapter.runtime._submission_bridge_resources). Nothing under
-# experiments/, assurance/, fastloop/, analysis/, runner/, agents/, docs/ or tests/ is
-# copied: those hold the SREGym answer key (composites.toml, the assurance plan,
-# assurance/scripted_codex/faults.py), which this image's `codex exec
-# --danger-full-access` responder must never be able to read.
-COPY benchmarks/__init__.py /opt/sdo/benchmarks/__init__.py
-COPY benchmarks/sregym/__init__.py /opt/sdo/benchmarks/sregym/__init__.py
-COPY benchmarks/sregym/adapter/__init__.py benchmarks/sregym/adapter/submission.py benchmarks/sregym/adapter/submission_relay.py /opt/sdo/benchmarks/sregym/adapter/
-COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py /opt/sdo/benchmarks/sregym/protocol/
-RUN chmod -R a+rX /opt/sdo/benchmarks

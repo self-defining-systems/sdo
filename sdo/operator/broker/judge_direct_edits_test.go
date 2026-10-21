@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"go/format"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,11 @@ import (
 
 func writeJudgeFile(t *testing.T, root, path, content string) {
 	t.Helper()
+	if strings.HasSuffix(path, ".go") {
+		if formatted, err := format.Source([]byte(content)); err == nil {
+			content = string(formatted)
+		}
+	}
 	target := filepath.Join(root, path)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)

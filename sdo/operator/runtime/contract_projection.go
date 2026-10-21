@@ -3,11 +3,13 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -45,6 +47,23 @@ func objectRefsContract(refs []sdk.ObjectRef) []*contracts.ObjectRef {
 	result := make([]*contracts.ObjectRef, 0, len(refs))
 	for _, ref := range refs {
 		result = append(result, objectRefContract(ref))
+	}
+	return result
+}
+
+func driftEventsContract(events []sdk.DriftEvent) []*contracts.DriftEvent {
+	result := make([]*contracts.DriftEvent, 0, len(events))
+	for _, event := range events {
+		item := &contracts.DriftEvent{Ref: objectRefContract(event.Ref), Source: event.Source, Manager: event.Manager,
+			Operation: event.Operation, ManagerAt: optionalContractTimestamp(event.ManagerAt), ObservedAt: contractTimestamp(event.ObservedAt), Classification: string(event.Classification), ProgramId: event.ProgramID,
+			InvestigationStatus: event.InvestigationStatus, InvestigationVerdict: event.InvestigationVerdict, InvestigationReason: event.InvestigationReason, InvestigationCaptureId: event.InvestigationCaptureID}
+		for _, field := range event.Fields {
+			item.Fields = append(item.Fields, &contracts.DriftField{Path: field.Path, Old: field.Old, New: field.New, Source: field.Source})
+		}
+		for _, evidence := range event.InvestigationEvidence {
+			item.InvestigationEvidence = append(item.InvestigationEvidence, &contracts.DriftEvidence{Kind: evidence.Kind, Observation: evidence.Observation})
+		}
+		result = append(result, item)
 	}
 	return result
 }
@@ -172,6 +191,12 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		RepositoryWorktree: request.RepositoryWorktree, RepositoryBaseCommit: request.RepositoryBaseCommit,
 		ResponseDeadline: optionalTimestamp(request.ResponseDeadline), CancellationToken: request.CancellationToken,
 		RepairPolicy: request.RepairPolicy, StateChanges: stateChangesContract(request.StateChanges),
+		MaxResponseLoops: int32(request.MaxResponseLoops),
+		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
+		FastPathSummary: request.FastPathSummary,
+	}
+	for _, run := range request.InitialProgramRuns {
+		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
 	}
 	for _, finding := range request.Findings {
 		item, err := findingContract(finding)
@@ -208,12 +233,35 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	message := &contracts.IncidentResult{
 		SchemaVersion: result.SchemaVersion, IncidentId: result.IncidentID, Status: string(result.Status),
 		ConfirmedRootCauses: make([]*contracts.ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)),
+		DriftEvents:         driftEventsContract(result.DriftEvents),
 		AppliedPlaybooks:    make([]*contracts.AppliedPlaybook, 0, len(result.AppliedPlaybooks)),
 		RepairChanges:       append([]string(nil), result.RepairChanges...), RepairActions: make([]*contracts.RepairActionReceipt, 0, len(result.RepairActions)),
 		FinalDetectorStates:  evaluationsContract(result.FinalDetectorStates),
 		VerificationEvidence: make([]*contracts.VerificationEvidence, 0, len(result.VerificationEvidence)),
 		Usage:                proto.Clone(&result.Usage).(*contracts.UsageMetrics),
 		Timing:               &contracts.TimingMetrics{StartedAt: optionalTimestamp(result.Timing.StartedAt), CompletedAt: optionalTimestamp(result.Timing.CompletedAt)},
+		ResponseLoopsUsed:    int32(result.ResponseLoopsUsed), ResponseLoopExhausted: result.ResponseLoopExhausted,
+		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
+		ResolutionPath:        result.ResolutionPath, FastPathPrograms: append([]string(nil), result.FastPathPrograms...), FastPathSkippedReason: string(result.FastPathSkippedReason),
+	}
+	for _, covered := range result.FastPathRelationCoveredFindings {
+		message.FastPathRelationCoveredFindings = append(message.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
+	}
+	for _, call := range result.ProgramToolCalls {
+		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
+	}
+	for _, run := range result.ProgramRuns {
+		message.ProgramRuns = append(message.ProgramRuns, programRunContract(run))
+	}
+	for _, application := range result.PlanApplications {
+		encoded, err := application.Result.Proto()
+		if err != nil {
+			return nil, err
+		}
+		encoded.ApplicationId, encoded.ProgramIds, encoded.Duration, encoded.Error = application.ID, append([]string(nil), application.ProgramIDs...), durationpb.New(application.Result.Duration), application.Error
+		encoded.RolledBack, encoded.RollbackError = application.RolledBack, application.RollbackError
+		encoded.StartedAt, encoded.CompletedAt = optionalTimestamp(application.StartedAt), optionalTimestamp(application.CompletedAt)
+		message.PlanApplications = append(message.PlanApplications, encoded)
 	}
 	for _, cause := range result.ConfirmedRootCauses {
 		item := &contracts.ConfirmedRootCause{
@@ -283,6 +331,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
 		SchemaVersion: message.GetSchemaVersion(), IncidentID: message.GetIncidentId(), Status: IncidentStatus(message.GetStatus()),
 		ConfirmedRootCauses:  make([]ConfirmedRootCause, 0, len(message.GetConfirmedRootCauses())),
+		DriftEvents:          driftEventsState(message.GetDriftEvents()),
 		AppliedPlaybooks:     make([]AppliedPlaybook, 0, len(message.GetAppliedPlaybooks())),
 		RepairChanges:        append([]string(nil), message.GetRepairChanges()...),
 		RepairActions:        make([]RepairActionReceipt, 0, len(message.GetRepairActions())),
@@ -291,6 +340,21 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		VerificationEvidence: make([]VerificationEvidence, 0, len(message.GetVerificationEvidence())),
 		Timing:               TimingMetrics{StartedAt: controllerTime(message.GetTiming().GetStartedAt()), CompletedAt: controllerTime(message.GetTiming().GetCompletedAt())},
 		ResponderSessionID:   message.GetResponderSessionId(), Error: message.GetError(),
+		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
+		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
+		ResolutionPath:        message.GetResolutionPath(), FastPathPrograms: append([]string(nil), message.GetFastPathPrograms()...), FastPathSkippedReason: FastPathSkipReason(message.GetFastPathSkippedReason()),
+	}
+	for _, covered := range message.GetFastPathRelationCoveredFindings() {
+		result.FastPathRelationCoveredFindings = append(result.FastPathRelationCoveredFindings, relationCoveredFindingState(covered))
+	}
+	for _, call := range message.GetProgramToolCalls() {
+		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))
+	}
+	for _, run := range message.GetProgramRuns() {
+		result.ProgramRuns = append(result.ProgramRuns, programRunState(run))
+	}
+	for _, application := range message.GetPlanApplications() {
+		result.PlanApplications = append(result.PlanApplications, planApplicationState(application))
 	}
 	if message.GetUsage() != nil {
 		result.Usage = *proto.Clone(message.GetUsage()).(*contracts.UsageMetrics)
@@ -450,6 +514,10 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		RepositoryWorktree: message.GetRepositoryWorktree(), RepositoryBaseCommit: message.GetRepositoryBaseCommit(),
 		ResponseDeadline: controllerTime(message.GetResponseDeadline()), CancellationToken: message.GetCancellationToken(),
 		RepairPolicy: message.GetRepairPolicy(), StateChanges: stateChangesState(message.GetStateChanges()),
+		DriftEvents: driftEventsState(message.GetDriftEvents()), FastPathSummary: message.GetFastPathSummary(), MaxResponseLoops: int(message.GetMaxResponseLoops()), PreparedAgentTask: message.GetPreparedAgentTask(),
+	}
+	for _, run := range message.GetInitialProgramRuns() {
+		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunState(run))
 	}
 	for _, surfaced := range message.GetSurfacedPlaybooks() {
 		result.SurfacedPlaybooks = append(result.SurfacedPlaybooks, SurfacedPlaybook{
@@ -641,6 +709,7 @@ func findingStatesContract(states map[string]FindingState) (map[string]*contract
 			DetectorId: state.DetectorID, Finding: finding, FiringCount: int32(state.FiringCount), ClearCount: int32(state.ClearCount),
 			Active: state.Active, FirstSeenAt: optionalTimestamp(state.FirstSeenAt), Activations: int32(state.Activations),
 			Clears: int32(state.Clears), NotPersisted: int32(state.NotPersisted),
+			FirstClearAt: optionalTimestamp(state.FirstClearAt), LastObservedAt: optionalTimestamp(state.LastObservedAt),
 		}
 	}
 	return result, nil
@@ -653,6 +722,7 @@ func findingStatesState(states map[string]*contracts.FindingState) map[string]Fi
 			DetectorID: state.GetDetectorId(), Finding: findingState(state.GetFinding()), FiringCount: int(state.GetFiringCount()),
 			ClearCount: int(state.GetClearCount()), Active: state.GetActive(), FirstSeenAt: controllerTime(state.GetFirstSeenAt()),
 			Activations: int(state.GetActivations()), Clears: int(state.GetClears()), NotPersisted: int(state.GetNotPersisted()),
+			FirstClearAt: controllerTime(state.GetFirstClearAt()), LastObservedAt: controllerTime(state.GetLastObservedAt()),
 		}
 	}
 	return result
@@ -689,6 +759,7 @@ func controllerStateContract(state RuntimeState) (*contracts.ControllerState, er
 		ClosureReceipt: closureReceiptContract(state.ClosureReceipt), ClosureFailure: closureFailureContract(state.ClosureFailure),
 		LastAcknowledgedIncidentId: state.LastAcknowledgedIncidentID, PendingReleases: append([]string(nil), state.PendingReleases...),
 		EvaluationIteration: int32(state.EvaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		DriftEvents: driftEventsContract(state.DriftEvents), OwnershipAdoption: adoptionContract(state.OwnershipAdoption), DriftAdmission: cloneDriftAdmission(state.DriftAdmission), ProgramSweepCursors: maps.Clone(state.ProgramSweepCursors),
 	}
 	if state.IncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*state.IncidentRequest)
@@ -732,6 +803,7 @@ func controllerStateState(message *contracts.ControllerState) RuntimeState {
 		ClosureReceipt: closureReceiptState(message.GetClosureReceipt()), ClosureFailure: closureFailureState(message.GetClosureFailure()),
 		LastAcknowledgedIncidentID: message.GetLastAcknowledgedIncidentId(), PendingReleases: append([]string(nil), message.GetPendingReleases()...),
 		EvaluationIteration: int(message.GetEvaluationIteration()), DetectorTimeline: detectorTimelineState(message.GetDetectorTimeline()),
+		DriftEvents: driftEventsState(message.GetDriftEvents()), OwnershipAdoption: adoptionState(message.GetOwnershipAdoption()), DriftAdmission: cloneDriftAdmission(message.GetDriftAdmission()), ProgramSweepCursors: maps.Clone(message.GetProgramSweepCursors()),
 	}
 	if message.GetIncidentResult() != nil {
 		result := incidentResultState(message.GetIncidentResult())

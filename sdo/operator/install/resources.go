@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/devmount"
 )
 
 const (
@@ -33,29 +35,33 @@ const (
 )
 
 type Config struct {
-	Namespace, ControlNamespace, Application        string
-	ControllerImage, ResponderImage, ValidatorImage string
-	RepositoryPVC, CredentialsSecret, Model         string
-	AcceptedCommit                                  string
-	RepairPolicy, AgentProvider                     string
-	ReflectionSession, ReflectionGuidance           string
-	LateFindings                                    string
-	MaxFollowUps, FollowUpCooldownSeconds           int
-	HealthyBaseline                                 bool
-	TimeoutSeconds, VerificationTimeoutSeconds      int
-	ControllerDurationSeconds                       int
-	ExitAfterClosure                                bool
-	NativeCommand, NativeArgs                       []string
-	ExtraControllerArgs                             []string
-	ResponderEnv                                    []string
-	Credentials                                     map[string][]byte
-	RegistrationConfigMap, RegistrationDirectory    string
-	RegistrationData                                map[string]string
-	BuildKitImage, RegistryPushSecret               string
-	RegistryHost                                    string
-	RegistryInsecure                                bool
-	RegistryPushDockerConfig                        []byte
-	ReuseExisting, WaitForCompletion                bool
+	Namespace, ControlNamespace, Application                string
+	ControllerImage, ResponderImage, ValidatorImage         string
+	RepositoryPVC, CredentialsSecret, Model                 string
+	AcceptedCommit                                          string
+	RepairPolicy, AgentProvider                             string
+	ReflectionSession, ReflectionGuidance                   string
+	ForceReflection                                         bool
+	ProgramFastPath                                         bool
+	ProgramTrustThreshold                                   int
+	DriftTokensPerHour                                      int64
+	LateFindings                                            string
+	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
+	HealthyBaseline                                         bool
+	TimeoutSeconds, VerificationTimeoutSeconds              int
+	ControllerDurationSeconds                               int
+	ExitAfterClosure                                        bool
+	NativeCommand, NativeArgs                               []string
+	ExtraControllerArgs                                     []string
+	ResponderEnv                                            []string
+	Credentials                                             map[string][]byte
+	RegistrationConfigMap, RegistrationDirectory            string
+	RegistrationData                                        map[string]string
+	BuildKitImage, RegistryPushSecret                       string
+	RegistryHost                                            string
+	RegistryInsecure                                        bool
+	RegistryPushDockerConfig                                []byte
+	ReuseExisting, WaitForCompletion                        bool
 }
 
 type Plan struct {
@@ -164,8 +170,17 @@ func (c Config) validate() error {
 	if c.LateFindings != "" && c.LateFindings != "off" && c.LateFindings != "pull" {
 		return errors.New("invalid late findings mode")
 	}
-	if c.MaxFollowUps < 0 || c.FollowUpCooldownSeconds < 0 {
+	if c.MaxFollowUps < 0 || c.FollowUpCooldownSeconds < 0 || c.MaxResponseLoops < 0 {
 		return errors.New("follow-up limits cannot be negative")
+	}
+	if c.ProgramTrustThreshold < 0 {
+		return errors.New("program trust threshold cannot be negative")
+	}
+	if c.DriftTokensPerHour < 0 {
+		return errors.New("drift responder token budget cannot be negative")
+	}
+	if c.ProgramFastPath && c.RepairPolicy != "recorded-actions" {
+		return errors.New("program fast path requires recorded-actions repair policy")
 	}
 	for _, arg := range c.ExtraControllerArgs {
 		if strings.Contains(arg, "broker-mode") || strings.Contains(arg, "worker-mount-mode") || strings.HasPrefix(arg, "--broker-arg") {
@@ -211,6 +226,8 @@ func Resources(c Config) (Plan, error) {
 		rule("", []string{"pods/log"}, "get"),
 		rule("", []string{"pods", "services"}, "create", "delete"),
 		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
+		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list"),
+		rule("policy", []string{"poddisruptionbudgets"}, "get", "list"),
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
 		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "list", "watch", "create", "update", "delete"),
 		rule("rbac.authorization.k8s.io", []string{"roles", "rolebindings"}, "get", "list", "watch"),
@@ -222,6 +239,8 @@ func Resources(c Config) (Plan, error) {
 		rule("", []string{"pods/log", "events", "endpoints"}, "get", "list", "watch"),
 		rule("", []string{"pods/exec", "pods/attach", "pods/portforward"}, "get", "create"),
 		rule("apps", []string{"deployments", "statefulsets", "daemonsets", "replicasets"}, "get", "list", "watch", "create", "update", "patch", "delete"),
+		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "list"),
+		rule("policy", []string{"poddisruptionbudgets"}, "get", "list"),
 		rule("networking.k8s.io", []string{"networkpolicies", "ingresses"}, "get", "list", "watch", "create", "update", "patch", "delete"),
 		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "list", "watch"),
 		rule("batch", []string{"jobs"}, "get", "list", "watch", "create", "update", "patch", "delete"),
@@ -235,6 +254,8 @@ func Resources(c Config) (Plan, error) {
 			}
 			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
 		}
+		readRules = append(readRules, programApplyRules()...)
+		readRules = append(readRules, adoptionRules()...)
 		plan.AppRoles = append(plan.AppRoles, role(c.Namespace, "sdo-controller", readRules), role(c.Namespace, "sdo-operate", responderRules), role(c.Namespace, "sdo-responder", responderRules), role(c.Namespace, "sdo-controller-helper-cleanup", []rbacv1.PolicyRule{rule("", []string{"pods"}, "list", "delete"), rule("batch", []string{"jobs"}, "list", "delete")}))
 		for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder", "sdo-controller-helper-cleanup"} {
 			subject := name
@@ -244,7 +265,9 @@ func Resources(c Config) (Plan, error) {
 			plan.AppBindings = append(plan.AppBindings, binding(c.Namespace, name, subject, control))
 		}
 	} else {
-		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerRules), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
+		controllerWrites := append(append([]rbacv1.PolicyRule{}, controllerRules...), programApplyRules()...)
+		controllerWrites = append(controllerWrites, adoptionRules()...)
+		plan.ControlRoles = append(plan.ControlRoles, role(control, "sdo-controller", controllerWrites), role(control, "sdo-operate", append(append([]rbacv1.PolicyRule{}, controllerRules...), responderRules...)), role(control, "sdo-responder", responderRules))
 	}
 	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
 		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
@@ -263,6 +286,23 @@ func Resources(c Config) (Plan, error) {
 	hash := sha256.Sum256(encoded)
 	plan.Job.Annotations = map[string]string{InstallFingerprintAnnotation: hex.EncodeToString(hash[:16]), WorkerMountPolicyAnnotation: "proposal-only"}
 	return plan, nil
+}
+
+func programApplyRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		rule("", []string{"services"}, "get", "patch"),
+		rule("apps", []string{"deployments", "statefulsets", "daemonsets"}, "get", "patch"),
+		rule("apps", []string{"replicasets", "controllerrevisions"}, "get", "list"),
+	}
+}
+
+func adoptionRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		rule("", []string{"configmaps", "pods", "endpoints"}, "get", "patch"),
+		rule("apps", []string{"replicasets"}, "get", "patch"),
+		rule("discovery.k8s.io", []string{"endpointslices"}, "get", "patch"),
+		rule("networking.k8s.io", []string{"networkpolicies"}, "get", "patch"),
+	}
 }
 
 func rule(group string, resources []string, verbs ...string) rbacv1.PolicyRule {
@@ -318,8 +358,23 @@ func controllerJob(c Config) *batchv1.Job {
 	args = append(args, "--broker-mode=native", "--worker-mount-mode=proposal-only", "--validator-image", c.ValidatorImage, "--model", c.Model, "--responder-backend", provider)
 	args = append(args, "--reflection-session", reflectionSession(c))
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
+	if c.ForceReflection {
+		args = append(args, "--force-reflection")
+	}
 	if c.MaxFollowUps > 0 {
 		args = append(args, "--max-follow-ups", fmt.Sprint(c.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(c)))
+	}
+	if c.MaxResponseLoops > 0 {
+		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
+	}
+	if c.ProgramFastPath {
+		args = append(args, "--program-fast-path")
+	}
+	if c.ProgramTrustThreshold > 0 {
+		args = append(args, "--program-trust-threshold", fmt.Sprint(c.ProgramTrustThreshold))
+	}
+	if c.DriftTokensPerHour > 0 {
+		args = append(args, "--drift-tokens-per-hour", fmt.Sprint(c.DriftTokensPerHour))
 	}
 	if c.RepairPolicy != "" {
 		args = append(args, "--repair-policy", c.RepairPolicy)
@@ -389,7 +444,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
 			{Name: "GOTMPDIR", Value: "/workspace/.sdo-runtime/build/go-tmp"},
 			{Name: "GOCACHE", Value: "/workspace/.sdo-runtime/build/go-cache"},
-			{Name: "SDO_GO_CACHE_SEED", Value: "/opt/sdo/go-build-cache"},
+			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},
 			{Name: "SDO_CONTROLLER_JOB", Value: ControllerJobName},
 			{Name: "SDO_CONTROLLER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
@@ -408,6 +463,13 @@ func controllerJob(c Config) *batchv1.Job {
 	}}
 	if c.RegistrationConfigMap != "" {
 		pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: c.registrationDirectory(), ReadOnly: true})
+	}
+	if devmount.Enabled() {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		devmount.Apply(pod)
+	}
+	if scale := os.Getenv("SDO_TIME_SCALE"); scale != "" {
+		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_TIME_SCALE", Value: scale})
 	}
 	return job
 }

@@ -42,9 +42,14 @@ class NativeInstallConfig:
     agent_provider: str = "codex"
     repair_policy: str = "commit"
     late_findings: str = "off"
-    reflection_session: str = "fresh"
+    reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
+    force_reflection: bool = False
+    program_fast_path: bool = False
+    program_trust_threshold: int = 3
+    drift_tokens_per_hour: int = 1_000_000
     max_follow_ups: int = 0
+    max_response_loops: int = 5
     follow_up_cooldown_seconds: int = 30
     response_timeout_seconds: int = 1800
     verification_timeout_seconds: int = 120
@@ -53,6 +58,7 @@ class NativeInstallConfig:
     healthy_baseline: bool = False
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
+    deployed_manifest_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.repository.is_absolute():
@@ -76,13 +82,19 @@ class NativeInstallConfig:
             raise ValueError("agent_provider must be codex or claude")
         if self.repair_policy not in ("commit", "recorded-actions"):
             raise ValueError("repair_policy must be commit or recorded-actions")
+        if self.program_trust_threshold <= 0:
+            raise ValueError("program_trust_threshold must be positive")
+        if self.drift_tokens_per_hour <= 0:
+            raise ValueError("drift_tokens_per_hour must be positive")
+        if self.program_fast_path and self.repair_policy != "recorded-actions":
+            raise ValueError("program fast path requires recorded-actions repair policy")
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
         if self.reflection_session not in ("fresh", "resume"):
             raise ValueError("reflection_session must be fresh or resume")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0:
+        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
             raise ValueError("follow-up count must be nonnegative and cooldown positive")
         if self.response_timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
             raise ValueError("controller timeouts must be positive")
@@ -249,7 +261,9 @@ def set_maintenance(
         raise NativeOperatorError("Go maintenance returned unexpected stdout")
 
 
-def read_incident_evidence(config: NativeInstallConfig, incident_id: str) -> dict[str, Any]:
+def read_incident_evidence(
+    config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
+) -> dict[str, Any]:
     if not incident_id.strip():
         raise ValueError("incident ID must be non-empty")
     args = [
@@ -264,6 +278,8 @@ def read_incident_evidence(config: NativeInstallConfig, incident_id: str) -> dic
     ]
     if config.kubeconfig is not None:
         args.extend(("--kubeconfig", str(config.kubeconfig)))
+    if sync_repository:
+        args.extend(("--repository", str(config.repository)))
     value = _run("incident-evidence", args, timeout=120)
     ledger = value.get("ledger")
     if (
@@ -296,17 +312,27 @@ def _kubectl_json(config: NativeInstallConfig, *args: str) -> dict[str, Any]:
     return document
 
 
-def collect_native_receipt(config: NativeInstallConfig, incident_id: str) -> dict[str, Any]:
-    evidence = read_incident_evidence(config, incident_id)
+def collect_native_receipt(
+    config: NativeInstallConfig, incident_id: str, *, sync_repository: bool = False
+) -> dict[str, Any]:
+    evidence = read_incident_evidence(config, incident_id, sync_repository=sync_repository)
     job_name = evidence["responder_job_name"]
-    job = _kubectl_json(config, "get", f"job/{job_name}")
-    job_metadata = job.get("metadata")
-    job_status = job.get("status")
-    if not isinstance(job_metadata, dict) or not isinstance(job_status, dict):
-        raise NativeOperatorError("responder Job has no metadata or status")
-    job_uid = job_metadata.get("uid")
-    if not isinstance(job_uid, str) or not job_uid or job_status.get("succeeded") != 1:
-        raise NativeOperatorError("responder Job is not durably successful")
+    ledger = evidence["ledger"]
+    outcome = ledger.get("outcome_document")
+    fast_path = isinstance(outcome, dict) and outcome.get("resolution_path") == "fast_path"
+    responder_job_evidence: list[dict[str, Any]] = []
+    if not fast_path:
+        job = _kubectl_json(config, "get", f"job/{job_name}")
+        job_metadata = job.get("metadata")
+        job_status = job.get("status")
+        if not isinstance(job_metadata, dict) or not isinstance(job_status, dict):
+            raise NativeOperatorError("responder Job has no metadata or status")
+        job_uid = job_metadata.get("uid")
+        if not isinstance(job_uid, str) or not job_uid or job_status.get("succeeded") != 1:
+            raise NativeOperatorError("responder Job is not durably successful")
+        responder_job_evidence = [
+            {"incident_id": incident_id, "job_name": job_name, "job_uid": job_uid, "succeeded": True}
+        ]
     controller_job = _kubectl_json(config, "get", "job/sdo-controller-run")
     controller_metadata = controller_job.get("metadata")
     controller_job_uid = controller_metadata.get("uid") if isinstance(controller_metadata, dict) else None
@@ -340,9 +366,7 @@ def collect_native_receipt(config: NativeInstallConfig, incident_id: str) -> dic
         responder_image=config.responder_image,
         validator_image=config.validator_image,
         controller_pod_uid=controller_uid,
-        responder_job_evidence=[
-            {"incident_id": incident_id, "job_name": job_name, "job_uid": job_uid, "succeeded": True}
-        ],
+        responder_job_evidence=responder_job_evidence,
     )
 
 
@@ -374,7 +398,16 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     args.extend(("--late-findings", config.late_findings))
     args.extend(("--reflection-session", config.reflection_session))
     args.extend(("--reflection-guidance", config.reflection_guidance))
+    if config.force_reflection:
+        args.append("--force-reflection")
+    for path in config.deployed_manifest_paths:
+        args.extend(("--deployed-manifest-path", path))
+    if config.program_fast_path:
+        args.append("--program-fast-path")
+    args.extend(("--program-trust-threshold", str(config.program_trust_threshold)))
+    args.extend(("--drift-tokens-per-hour", str(config.drift_tokens_per_hour)))
     args.extend(("--max-follow-ups", str(config.max_follow_ups)))
+    args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.verification_timeout_seconds}s"))
@@ -427,7 +460,14 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--late-findings", config.install.late_findings))
     args.extend(("--reflection-session", config.install.reflection_session))
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
+    if config.install.force_reflection:
+        args.append("--force-reflection")
+    if config.install.program_fast_path:
+        args.append("--program-fast-path")
+    args.extend(("--program-trust-threshold", str(config.install.program_trust_threshold)))
+    args.extend(("--drift-tokens-per-hour", str(config.install.drift_tokens_per_hour)))
     args.extend(("--max-follow-ups", str(config.install.max_follow_ups)))
+    args.extend(("--max-response-loops", str(config.install.max_response_loops)))
     args.extend(("--follow-up-cooldown", f"{config.install.follow_up_cooldown_seconds}s"))
     args.extend(("--repair-policy", config.install.repair_policy))
     args.extend(("--response-timeout", f"{config.install.response_timeout_seconds}s"))

@@ -39,7 +39,7 @@ def sregym_dir(tmp_path: Path) -> Path:
     directory = tmp_path / "third_party" / "sregym"
     (directory / "logs").mkdir(parents=True)
     (directory / "main.py").write_text("# fake", encoding="utf-8")
-    (directory / "agents.yaml").write_text("agents:\n  - name: codex\n    agent_version: '0.157.1'\n", encoding="utf-8")
+    (directory / "agents.yaml").write_text("agents:\n  - name: codex\n    agent_version: '0.163.0'\n", encoding="utf-8")
     return directory
 
 
@@ -77,7 +77,7 @@ def test_manifest_records_provenance_versions_models_topology_config_and_host(
     assert manifest["git"]["sha"] == "a" * 40
     assert manifest["git"]["dirty"] is True
     assert manifest["git"]["submodule"]["recorded_sha"] == "c" * 40
-    assert manifest["versions"]["codex_cli"]["pin"] == "0.157.1"
+    assert manifest["versions"]["codex_cli"]["pin"] == "0.163.0"
     assert manifest["versions"]["agentshim"]["host"] == "0.7.0"
     responder = manifest["images"]["responder_image:sdo-sregym-responder:v0.1.0"]
     assert responder["id"].startswith("sha256:")

@@ -63,11 +63,17 @@ func KubectlTarSeederWithKubeconfig(repositoryPath, acceptedCommit, kubeconfig s
 
 // KubectlTarSynchronizerWithKubeconfig keeps sync-back on the requested cluster.
 func KubectlTarSynchronizerWithKubeconfig(repositoryPath, kubeconfig string) RepositorySynchronizer {
+	return KubectlTarSynchronizerFromPodWithKubeconfig(repositoryPath, kubeconfig, RepositorySyncPodName)
+}
+
+// KubectlTarSynchronizerFromPodWithKubeconfig copies accepted commits from an
+// already running Pod with the repository volume mounted.
+func KubectlTarSynchronizerFromPodWithKubeconfig(repositoryPath, kubeconfig, podName string) RepositorySynchronizer {
 	return func(ctx context.Context, cfg Config) error {
 		if repositoryPath == "" {
 			return fmt.Errorf("repository path is required")
 		}
-		producer := kubectlCommand(ctx, kubeconfig, "--namespace", cfg.controlNamespace(), "exec", RepositorySyncPodName, "--", "tar", "-C", "/workspace/application", "-cf", "-", ".")
+		producer := kubectlCommand(ctx, kubeconfig, "--namespace", cfg.controlNamespace(), "exec", podName, "--", "tar", "-C", "/workspace/application", "-cf", "-", ".")
 		pipe, err := producer.StdoutPipe()
 		if err != nil {
 			return err
@@ -88,8 +94,17 @@ func KubectlTarSynchronizerWithKubeconfig(repositoryPath, kubeconfig string) Rep
 		if producerErr != nil || consumerErr != nil {
 			return fmt.Errorf("synchronize accepted runtime commits: kubectl=%v tar=%v", producerErr, consumerErr)
 		}
-		return nil
+		return removeStaleUntracked(ctx, repositoryPath)
 	}
+}
+
+// removeStaleUntracked deletes what the archive overlay cannot: files that an accepted commit removed but the
+// host checkout still has on disk, which would read as uncommitted changes.
+func removeStaleUntracked(ctx context.Context, repositoryPath string) error {
+	if output, err := exec.CommandContext(ctx, "git", "-C", repositoryPath, "clean", "-fdq").CombinedOutput(); err != nil {
+		return fmt.Errorf("remove files the accepted tree deleted: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // KubectlAcceptedHeadWithKubeconfig reads HEAD from an already-ready sync Pod.

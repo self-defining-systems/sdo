@@ -84,6 +84,7 @@ const (
 	SeverityInfo     FindingSeverity = "info"
 	SeverityWarning  FindingSeverity = "warn"
 	SeverityCritical FindingSeverity = "critical"
+	SeverityLatent   FindingSeverity = "latent"
 )
 
 type ObjectRef struct {

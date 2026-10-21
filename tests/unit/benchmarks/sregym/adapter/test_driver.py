@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def test_application_name_is_a_kubernetes_dns_label(tmp_path: Path) -> None:
+    repository = tmp_path / "Fallback_Repo"
+    assert driver._application_label({"app_name": "Hotel Reservation"}, repository) == "hotel-reservation"
+    assert driver._application_label({"app_name": "social_network"}, repository) == "social-network"
+    assert driver._application_label({}, repository) == "fallback-repo"
+    with pytest.raises(ValueError, match="DNS label"):
+        driver._application_label({"app_name": "!!!"}, tmp_path / "???")
+
+
 def test_local_conductor_uses_in_cluster_relay() -> None:
     assert driver._in_cluster_api_base("http://localhost:8123/") == "http://sdo-sregym-bridge:8000"
     assert driver._relay_target_api_base("http://localhost:8123/") == "http://localhost:8123"
@@ -111,6 +120,12 @@ def test_agent_settings_keep_native_reflection_and_followup_options(monkeypatch:
     assert args.late_findings == "pull"
     assert args.max_follow_ups == 2
     assert args.follow_up_cooldown_seconds == 12
+
+
+def test_reflection_defaults_to_resume_and_fresh_remains_selectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
+    assert driver._parse_args([]).reflection_session == "resume"
+    assert driver._parse_args(["--reflection-session", "fresh"]).reflection_session == "fresh"
 
 
 def test_receipt_is_persisted_atomically(tmp_path: Path) -> None:

@@ -219,7 +219,7 @@
   "responder_image": "sdo-sregym-responder:p1",
   "responder_job_evidence": "live-job-and-durable-configmaps",
   "responder_jobs": [
-   "sdo-hotel-reservation-1790639529480295187-43101980ed"
+   "sdo-synthetic-incident-43101980ed"
   ],
   "responder_session_id": "01a0ea6e-e873-7ce2-9ba6-f08c0039844e",
   "same_session_reflection": false,

@@ -120,7 +120,11 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	}
 	var rendered bytes.Buffer
 	workloads := map[string][]string{}
-	for _, path := range plan.ManifestPaths {
+	manifestPaths, err := candidateManifestPaths(checkout, plan.ManifestPaths)
+	if err != nil {
+		return Observation{}, err
+	}
+	for _, path := range manifestPaths {
 		resolved, err := safeCandidatePath(checkout, path)
 		if err != nil {
 			return Observation{}, err
@@ -143,10 +147,21 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			if len(document) == 0 {
 				continue
 			}
-			id, images, err := strategy.prepareDocument(document, tree, imageRefs)
+			id, images, err := RenderManifest(document, strategy.Namespace, tree, func(_ string, _ string, _ string, _ bool, image string) string {
+				if built := imageRefs[image]; built != "" {
+					return built
+				}
+				return image
+			})
 			if err != nil {
 				_ = file.Close()
 				return Observation{}, fmt.Errorf("manifest %s: %w", path, err)
+			}
+			for _, image := range images {
+				if !digestReference.MatchString(image) {
+					_ = file.Close()
+					return Observation{}, fmt.Errorf("manifest %s: workload image is not immutable: %q", path, image)
+				}
 			}
 			if id != "" {
 				if _, exists := workloads[id]; exists {
@@ -208,7 +223,9 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	return Observation{Revision: tree, Images: allImages, ResourceIDs: ids, Ready: true}, nil
 }
 
-func (strategy RawStrategy) prepareDocument(document map[string]any, tree string, imageRefs map[string]string) (string, []string, error) {
+// RenderManifest applies the namespace, source revision, and deployed image
+// substitutions used by the raw deployment strategy.
+func RenderManifest(document map[string]any, defaultNamespace, tree string, imageFor func(kind, name, container string, init bool, sourceImage string) string) (string, []string, error) {
 	kind, _ := document["kind"].(string)
 	metadata, ok := document["metadata"].(map[string]any)
 	if !ok || kind == "" {
@@ -220,11 +237,13 @@ func (strategy RawStrategy) prepareDocument(document map[string]any, tree string
 	}
 	namespace, _ := metadata["namespace"].(string)
 	if namespace == "" {
-		namespace = strategy.Namespace
+		namespace = defaultNamespace
 		metadata["namespace"] = namespace
 	}
 	annotations := nestedMap(metadata, "annotations")
-	annotations["sdo.dev/source-tree"] = tree
+	if tree != "" {
+		annotations["sdo.dev/source-tree"] = tree
+	}
 	if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" && kind != "Job" {
 		return "", nil, nil
 	}
@@ -236,7 +255,9 @@ func (strategy RawStrategy) prepareDocument(document map[string]any, tree string
 	if !ok {
 		return "", nil, errors.New("workload needs pod template")
 	}
-	nestedMap(nestedMap(template, "metadata"), "annotations")["sdo.dev/source-tree"] = tree
+	if tree != "" {
+		nestedMap(nestedMap(template, "metadata"), "annotations")["sdo.dev/source-tree"] = tree
+	}
 	podSpec, ok := template["spec"].(map[string]any)
 	if !ok {
 		return "", nil, errors.New("workload needs pod spec")
@@ -250,12 +271,10 @@ func (strategy RawStrategy) prepareDocument(document map[string]any, tree string
 				return "", nil, errors.New("workload has invalid container")
 			}
 			image, _ := container["image"].(string)
-			if immutable, built := imageRefs[image]; built {
-				image = immutable
+			if imageFor != nil {
+				containerName, _ := container["name"].(string)
+				image = imageFor(kind, name, containerName, field == "initContainers", image)
 				container["image"] = image
-			}
-			if !digestReference.MatchString(image) {
-				return "", nil, fmt.Errorf("workload image is not immutable: %q", image)
 			}
 			images = append(images, image)
 		}

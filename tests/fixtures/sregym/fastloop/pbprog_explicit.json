@@ -1,0 +1,14 @@
+{
+ "diagnosis_grading": "deferred",
+ "judge_model_id": "codex-gpt-6-luna",
+ "incidents": [
+  [
+   "k8s_target_port_misconfig_hotel_reservation__v_reservation_9999",
+   "incorrect_image__v_hotel_reservation_rate_nonexistent_tag"
+  ],
+  [
+   "k8s_target_port_misconfig_hotel_reservation__v_geo_9999",
+   "incorrect_image__v_hotel_reservation_search_nonexistent_tag"
+  ]
+ ]
+}

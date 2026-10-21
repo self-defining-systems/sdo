@@ -9,8 +9,9 @@ import (
 func TestSchemaIdentityUsesNativeGoBuilderSources(t *testing.T) {
 	root := t.TempDir()
 	for path, content := range map[string]string{
-		"sdk/detector.go":   "package sdk\n",
-		"builder/native.go": "package builder\n",
+		"memory/validate/validate.go": "package validate\n",
+		"sdk/detector.go":             "package sdk\n",
+		"builder/native.go":           "package builder\n",
 	} {
 		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -41,7 +42,7 @@ func TestSchemaIdentityMatchesCommittedSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expected = "sdo.dev/v1alpha1+sdk.ef364da8a01df514"
+	const expected = "sdo.dev/v1alpha1+sdk.48458dc65fa032ec"
 	if identity != expected {
 		t.Fatalf("SDK schema identity drifted: got %s, expected %s", identity, expected)
 	}

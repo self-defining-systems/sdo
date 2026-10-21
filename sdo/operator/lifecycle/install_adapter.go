@@ -73,3 +73,10 @@ func (a NativeInstallAdapter) Install(ctx context.Context, acceptedCommit, names
 	}
 	return nil
 }
+
+func (a NativeInstallAdapter) InstallDeployment(ctx context.Context, acceptedCommit, namespace string, receipt DeploymentReceipt) error {
+	for _, path := range receipt.ManifestPaths {
+		a.Config.ExtraControllerArgs = append(a.Config.ExtraControllerArgs, "--deployed-manifest-path="+path)
+	}
+	return a.Install(ctx, acceptedCommit, namespace)
+}

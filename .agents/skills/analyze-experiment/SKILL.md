@@ -20,7 +20,7 @@ Resolved `experiment_config.toml`, `tasklist.yml`, `pipeline_config.toml`, and `
 For SDO adapter runs, prioritize:
 
 1. `agent/sdo_production_receipt_strict.json`;
-2. the application workspace's `.sdo/outcomes.jsonl` and `.sdo/lifecycle-provenance.yaml`;
+2. the application workspace's `.sdo/outcomes/` documents and `.sdo/lifecycle-provenance.yaml`;
 3. broker incident ledgers in the Git common directory when preserved;
 4. controller/responder Kubernetes logs or copied logs;
 5. benchmark result CSVs and harness logs.
@@ -49,4 +49,11 @@ When multiple runs are in scope and subagents are available, assign one run or o
 6. **Comparison** — normalized metrics and behavior differences when multiple runs are requested.
 7. **Recommendations** — concrete changes or follow-up experiments.
 
-Read [references/trajectory-schema.md](references/trajectory-schema.md) for the evidence schemas and useful queries. Read [references/failure-patterns.md](references/failure-patterns.md) when classifying behavior.
+At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md).
+Before judging mitigation or learning, read [outcomes and program evidence](references/outcome-records.md).
+For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
+Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
+For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md).
+Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
+When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
+also read [drift and toy failures](references/drift-failures.md).

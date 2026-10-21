@@ -183,6 +183,34 @@ class TestCodexGatewayHome:
         self._run_capturing(tmp_path, reply("codex", {"answer": "ok"}, session_id="s-1"))
         assert codex_login.auth.stat().st_mtime_ns == before
 
+    def test_the_private_home_carries_the_sdo_skills_and_no_others(
+        self, tmp_path: Path, codex_login: FakeCodexLogin
+    ) -> None:
+        for name in ("sdo-memory", "personal-skill"):
+            skill = codex_login.auth.parent / "skills" / name
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(f"---\nname: {name}\ndescription: d\n---\n", encoding="utf-8")
+
+        def snapshot(request: CommandRequest) -> list[str]:
+            return sorted(path.name for path in (Path(request.env["CODEX_HOME"]) / "skills").iterdir())
+
+        listed: list[list[str]] = []
+
+        def respond(request: CommandRequest) -> Any:
+            listed.append(snapshot(request))
+            return reply("codex", {"answer": "ok"}, session_id="s-1")
+
+        run_structured_turn(
+            "codex",
+            "prompt",
+            output_schema=_SCHEMA,
+            cwd=tmp_path,
+            access="workspace-write",
+            executor=ScriptedAgent(respond).executor,
+        )
+
+        assert listed == [["sdo-memory"]]
+
     def test_the_private_home_is_outside_the_workspace_and_tmp(
         self, tmp_path: Path, codex_login: FakeCodexLogin
     ) -> None:
@@ -260,7 +288,8 @@ class TestClaudeAccess:
         assert _settings(argv) is None
         assert "--disallowedTools" not in argv
 
-    def test_read_only_denies_writes_and_the_edit_tools(self, tmp_path: Path) -> None:
+    def test_read_only_denies_writes_and_the_edit_tools(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
         _, agent = _run("claude", tmp_path, access="read-only")
         (request,) = agent.requests
         argv = list(request.argv)
@@ -269,8 +298,28 @@ class TestClaudeAccess:
         root = str(tmp_path.resolve())
         assert settings["sandbox"]["filesystem"]["denyWrite"] == [root]
         assert argv[argv.index("--disallowedTools") + 1] == "Edit,Write,NotebookEdit"
-        assert shlex.split(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])[-1] == root
+        assert shlex.split(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])[-2:] == [
+            root,
+            str(tmp_path / "claude-home" / "skills"),
+        ]
         assert request.env["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] == "1"
+
+    @pytest.mark.parametrize("access", ["read-only", "workspace-write"])
+    def test_confined_reads_still_reach_the_provisioned_skills(
+        self, access: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
+        (tmp_path / "work").mkdir()
+        _, agent = _run("claude", tmp_path / "work", access=access)
+        (request,) = agent.requests
+        settings = _settings(list(request.argv))
+        assert settings is not None
+        confined = [
+            shlex.split(entry["hooks"][0]["command"])[-2:]
+            for entry in settings["hooks"]["PreToolUse"]
+            if entry.get("matcher") != "Bash"
+        ]
+        assert confined == [[str((tmp_path / "work").resolve()), str(tmp_path / "claude-home" / "skills")]]
 
     def test_workspace_write_routes_compilation_through_the_detector_gateway(self, tmp_path: Path) -> None:
         _, agent = _run("claude", tmp_path, access="workspace-write")

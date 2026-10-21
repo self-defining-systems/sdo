@@ -1,7 +1,9 @@
 package builder
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -33,5 +35,27 @@ func TestSuperviseRejectsBoundedControllerModes(t *testing.T) {
 		if err := Supervise(context.Background(), RunConfig{Controller: config}); err == nil {
 			t.Fatal("bounded controller mode was accepted for supervision")
 		}
+	}
+}
+
+func TestSuperviseAnnouncesEachRelaunch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs := 0
+	run := func(context.Context, RunConfig) error {
+		runs++
+		if runs == 3 {
+			cancel()
+		}
+		return nil
+	}
+	var out bytes.Buffer
+	err := supervise(ctx, RunConfig{Controller: &contractsv1alpha1.ControllerConfig{}}, run, &out)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("supervise error = %v, want context cancellation", err)
+	}
+	want := "{\"controller_supervisor\":\"relaunch\",\"launches\":1}\n{\"controller_supervisor\":\"relaunch\",\"launches\":2}\n"
+	if out.String() != want {
+		t.Fatalf("supervisor output = %q, want %q", out.String(), want)
 	}
 }

@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	outcomeclass "sdo.dev/operator/contracts/outcome"
@@ -14,10 +16,12 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -56,6 +60,9 @@ type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
 	PlaybookIDs      []string
+	Error            string
+	SDKGaps          []*contracts.SdkGap
+	Usage            *UsageMetrics
 }
 
 type ReflectionWorkerFunc func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error)
@@ -76,6 +83,9 @@ type NativeIncidentBroker struct {
 	ResponderModel       string
 	SessionRoot          string
 	SessionRetention     time.Duration
+	PhaseLog             io.Writer
+	PriorOutcomes        memory.Reader
+	ForceReflection      bool
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
 	}
@@ -104,6 +114,34 @@ type ControllerRolloutReceipt struct {
 type ControllerRolloutHandoff struct {
 	Expectation ControllerRolloutExpectation
 	Receipt     ClosureReceipt
+}
+
+type closurePhaseContextKey struct{}
+
+func recordClosurePhase(ctx context.Context, phase string) error {
+	observe, _ := ctx.Value(closurePhaseContextKey{}).(func(string) error)
+	if observe != nil {
+		return observe(phase)
+	}
+	return nil
+}
+
+func (n NativeIncidentBroker) recordPhase(ledger *contracts.BrokerLedger, phase string) error {
+	if ledger.ClosurePhaseTimestamps == nil {
+		ledger.ClosurePhaseTimestamps = make(map[string]*timestamppb.Timestamp)
+	}
+	if _, recorded := ledger.ClosurePhaseTimestamps[phase]; recorded {
+		return nil
+	}
+	at := time.Now().UTC()
+	ledger.ClosurePhaseTimestamps[phase] = contractTimestamp(at)
+	if err := n.saveLedger(ledger); err != nil {
+		return err
+	}
+	if n.PhaseLog != nil {
+		_ = json.NewEncoder(n.PhaseLog).Encode(map[string]any{"incident_id": ledger.IncidentId, "closure_phase": phase, "at": at})
+	}
+	return nil
 }
 
 func (n NativeIncidentBroker) PrepareIncident(ctx context.Context, incidentID string) (IncidentWorkspace, error) {
@@ -144,6 +182,10 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		if err != nil {
 			return err
 		}
+		if err := n.recordPhase(ledger, "closure_start"); err != nil {
+			return err
+		}
+		ctx = context.WithValue(ctx, closurePhaseContextKey{}, func(phase string) error { return n.recordPhase(ledger, phase) })
 		projected, err := incidentClosureContract(closure)
 		if err != nil {
 			return fmt.Errorf("project closure: %w", err)
@@ -160,6 +202,12 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 		}
 		if ledger.Closure == nil {
 			ledger.Closure = projected
+			if closure.Result != nil {
+				ledger.FastPathSkippedReason = string(closure.Result.FastPathSkippedReason)
+				for _, covered := range closure.Result.FastPathRelationCoveredFindings {
+					ledger.FastPathRelationCoveredFindings = append(ledger.FastPathRelationCoveredFindings, relationCoveredFindingContract(covered))
+				}
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
@@ -208,6 +256,20 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.RequiresReflection = derived.RequiresReflection
+			if derived.Record.GetResolutionPath() == "fast_path" {
+				ledger.RequiresReflection = false
+				ledger.ReflectionSkippedReason = "trusted program fast path"
+			}
+			if ledger.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
+				prior, err := n.PriorOutcomes.List(ctx)
+				if err != nil {
+					return fmt.Errorf("read accepted repair outcomes: %w", err)
+				}
+				ledger.ReflectionSkippedReason = reflectionSkipReason(derived.Record, prior)
+				if ledger.ReflectionSkippedReason != "" {
+					ledger.RequiresReflection = false
+				}
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
@@ -218,6 +280,12 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				return err
 			}
 			ledger.OutcomeCommit = accepted.Commit
+			if err := n.recordPhase(ledger, "outcome_write"); err != nil {
+				return err
+			}
+			if err := n.recordPhase(ledger, "broker_commit"); err != nil {
+				return err
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
 			}
@@ -256,6 +324,76 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 	return receipt, err
 }
 
+func reflectionSkipReason(current *contracts.OutcomeRecord, prior []memory.Outcome) string {
+	if current == nil || current.GetClassification() != "success" || len(current.GetRepairActions()) == 0 || len(current.GetConfirmedRootCauses()) == 0 || len(current.GetProgramFailureSignals()) != 0 {
+		return ""
+	}
+	records := make([]*contracts.OutcomeRecord, 0, len(prior))
+	for _, stored := range prior {
+		if stored.Record != nil && stored.IncidentID != current.GetIncidentId() && stored.Record.GetClassification() == "success" {
+			records = append(records, stored.Record)
+		}
+	}
+	if allTrustedProgramRepairs(current, records) {
+		return "trusted accepted programs resolved every repair"
+	}
+	for _, record := range records {
+		if current.GetSourceCommit() == "" || record.GetSourceCommit() != current.GetSourceCommit() || len(record.GetRepairActions()) != len(current.GetRepairActions()) || len(record.GetConfirmedRootCauses()) != len(current.GetConfirmedRootCauses()) {
+			continue
+		}
+		match := true
+		for index, cause := range current.GetConfirmedRootCauses() {
+			if !proto.Equal(cause, record.GetConfirmedRootCauses()[index]) {
+				match = false
+			}
+		}
+		for index, action := range current.GetRepairActions() {
+			previous := record.GetRepairActions()[index]
+			if !action.GetSuccess() || !previous.GetSuccess() || action.GetKind() != previous.GetKind() || action.GetTarget() != previous.GetTarget() || action.GetSummary() != previous.GetSummary() || action.GetDetails() != previous.GetDetails() || len(action.GetResources()) != len(previous.GetResources()) {
+				match = false
+				break
+			}
+			for resource := range action.GetResources() {
+				if !proto.Equal(action.GetResources()[resource], previous.GetResources()[resource]) {
+					match = false
+				}
+			}
+		}
+		if match {
+			return "exact replay of accepted repairs"
+		}
+	}
+	return ""
+}
+
+func allTrustedProgramRepairs(current *contracts.OutcomeRecord, prior []*contracts.OutcomeRecord) bool {
+	if len(current.GetPlanApplications()) == 0 || len(prior) == 0 {
+		return false
+	}
+	for _, action := range current.GetRepairActions() {
+		if !action.GetSuccess() || action.GetKind() != "program-plan" {
+			return false
+		}
+	}
+	trust := ProgramTrustStats(prior)
+	revisions := make(map[string]string)
+	for _, run := range current.GetProgramRuns() {
+		revisions[run.GetProgramId()] = run.GetProgramRevision()
+	}
+	for _, application := range current.GetPlanApplications() {
+		if !application.GetApplied() || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(application.GetProgramIds()) == 0 {
+			return false
+		}
+		for _, id := range application.GetProgramIds() {
+			state := trust[id]
+			if !state.Trusted || revisions[id] == "" || revisions[id] != state.LastChange {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // processReflection runs the reflection worker until the broker accepts its
 // proposal, the worker declares no change, or the validation retry bound is
 // spent. Every broker rejection is saved to the ledger (with its typed
@@ -286,11 +424,20 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 		if len(paths) == 0 {
 			workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
 			record := proto.Clone(ledger.OutcomeDocument).(*contracts.OutcomeRecord)
+			if err := n.recordPhase(ledger, "reflection_dispatch"); err != nil {
+				return nil, err
+			}
 			decision, err := n.Reflector.Reflect(ctx, closure, workspace, record, ledger.ProposalCommit, ledger.OutcomeCommit, reflectionFeedback(ledger))
 			if err != nil {
 				return nil, fmt.Errorf("reflection worker: %w", err)
 			}
-			ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, PlaybookIds: decision.PlaybookIDs}
+			if err := n.recordPhase(ledger, "worker_result_picked_up"); err != nil {
+				return nil, err
+			}
+			ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+			if decision.Usage != nil {
+				ledger.ReflectionDecision.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
+			}
 			if err := n.saveLedger(ledger); err != nil {
 				return nil, err
 			}
@@ -305,6 +452,12 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 			}
 			return nil, errors.New("reflection changes lack a durable worker decision; proposal reset")
 		}
+		if ledger.ReflectionDecision.GetLearningDecision() == "failed" && ledger.ReflectionDecision.GetError() != "" {
+			if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
 		decision := ReflectionDecision{LearningDecision: ledger.ReflectionDecision.GetLearningDecision(), NoChangeReason: ledger.ReflectionDecision.GetNoChangeReason(), PlaybookIDs: ledger.ReflectionDecision.GetPlaybookIds()}
 		err = decision.Validate(paths)
 		if err == nil && len(paths) == 0 {
@@ -312,20 +465,28 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 		}
 		var accepted broker.Receipt
 		if err == nil {
-			accepted, err = n.Repository.PublishReflection(ctx, id, ledger.ReflectionDecision)
+			publishCtx := ctx
+			if n.SessionRoot != "" {
+				captureDir, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
+				if captureErr != nil {
+					return nil, captureErr
+				}
+				publishCtx = validate.WithCaptureSource(ctx, captureDir, id)
+			}
+			accepted, err = n.Repository.PublishReflection(publishCtx, id, ledger.ReflectionDecision)
 		}
 		if err == nil {
 			ledger.ReflectionCommit = accepted.Commit
 			return accepted.ChangedPaths, nil
 		}
-		diagnostics, typed := broker.RejectionDiagnostics(err)
+		rejectionDiagnostics, typed := broker.RejectionDiagnostics(err)
 		if !typed {
 			if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
 				return nil, fmt.Errorf("reflection rejected: %v; reset proposal: %w", err, resetErr)
 			}
 			return nil, err
 		}
-		ledger.ReflectionRejections = append(ledger.ReflectionRejections, broker.NewProposalRejection(uint32(len(ledger.ReflectionRejections)+1), diagnostics))
+		ledger.ReflectionRejections = append(ledger.ReflectionRejections, broker.NewProposalRejection(uint32(len(ledger.ReflectionRejections)+1), rejectionDiagnostics))
 		ledger.ReflectionRejected = broker.RetriesExhausted(ledger.ReflectionRejections)
 		ledger.ReflectionDecision = nil
 		if err := n.saveLedger(ledger); err != nil {
@@ -562,6 +723,14 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			}
 		}
 		ledger.RolloutReceipts = append(ledger.RolloutReceipts, rolloutReceiptContract(receipt))
+		if receipt.Success {
+			if err := n.recordPhase(ledger, "controller_restart_relaunch"); err != nil {
+				return err
+			}
+			if err := n.recordPhase(ledger, "program_registry_rebuild"); err != nil {
+				return err
+			}
+		}
 		return n.saveLedger(ledger)
 	})
 }

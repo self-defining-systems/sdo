@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -23,8 +24,11 @@ def _sdo_codex_version() -> str:
     return match.group(1)
 
 
-def test_stock_codex_agent_installs_the_sdo_image_codex_cli_version() -> None:
-    registry = yaml.safe_load((ROOT / "third_party" / "sregym" / "agents.yaml").read_text(encoding="utf-8"))
+def test_stock_codex_agent_installs_the_sdo_image_codex_cli_version(committed_sregym_registry: str) -> None:
+    path = ROOT / "third_party" / "sregym" / "agents.yaml"
+    if not path.is_file():
+        pytest.skip("requires the optional external SREGym registry fixture")
+    registry = yaml.safe_load(committed_sregym_registry)
     codex = next(agent for agent in registry["agents"] if agent["name"] == "codex")
 
     assert codex["install_script"] == "install-codex.sh"

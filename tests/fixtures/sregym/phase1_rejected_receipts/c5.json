@@ -126,7 +126,7 @@
   "responder_image": "sdo-sregym-responder:p1",
   "responder_job_evidence": "live-job-and-durable-configmaps",
   "responder_jobs": [
-   "sdo-hotel-reservation-1790641097912066323-f77e85711a"
+   "sdo-synthetic-incident-f77e85711a"
   ],
   "responder_session_id": "01a0ea86-d728-7e12-9a21-3d980dec6c58",
   "same_session_reflection": false,

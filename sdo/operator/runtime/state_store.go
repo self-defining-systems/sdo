@@ -30,11 +30,16 @@ const (
 var ErrStateConflict = errors.New("controller state conflict")
 
 type RuntimeState struct {
+	ResponderToolStateJSON   []byte
 	Version                  string
 	SchedulerDeadlines       map[string]time.Time
 	FindingStates            map[string]FindingState
 	PendingBatch             BatcherState
 	History                  []DetectorEvaluation
+	DriftEvents              []sdk.DriftEvent
+	DriftAdmission           *contracts.DriftAdmissionState
+	ProgramSweepCursors      map[string]string
+	OwnershipAdoption        OwnershipAdoptionStatus
 	IncidentOpen             bool
 	ResponderDone            bool
 	IncidentRequest          *IncidentRequest
@@ -84,6 +89,7 @@ func encodeControllerState(state RuntimeState) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("project controller state: %w", err)
 	}
+	document.ResponderToolStateJson = append([]byte(nil), state.ResponderToolStateJSON...)
 	payload, err := wire.Canonical(document)
 	if err != nil {
 		return nil, fmt.Errorf("encode controller state: %w", err)
@@ -96,7 +102,9 @@ func decodeControllerState(payload []byte) (RuntimeState, error) {
 	if err := wire.Unmarshal(payload, document); err != nil {
 		return RuntimeState{}, fmt.Errorf("decode controller state: %w", err)
 	}
-	return controllerStateState(document), nil
+	state := controllerStateState(document)
+	state.ResponderToolStateJSON = append([]byte(nil), document.GetResponderToolStateJson()...)
+	return state, nil
 }
 
 type StateStore interface {
@@ -265,6 +273,7 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	// Lists stay lists when empty: the responder's and the broker's schemas
 	// reject null (a cold incident surfaces no playbook and no outcome).
 	copy.Findings = append(make([]sdk.Finding, 0, len(request.Findings)), request.Findings...)
+	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
 	copy.DetectorHistory = cloneEvaluations(request.DetectorHistory)
 	copy.SurfacedPlaybooks = append(make([]SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)), request.SurfacedPlaybooks...)
 	copy.RelevantOutcomes = append(make([]PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)), request.RelevantOutcomes...)
@@ -292,6 +301,7 @@ func cloneIncidentResult(result *IncidentResult) *IncidentResult {
 		return nil
 	}
 	copy := *result
+	copy.DriftEvents = driftEventsState(driftEventsContract(result.DriftEvents))
 	copy.ConfirmedRootCauses = append(make([]ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)), result.ConfirmedRootCauses...)
 	for index := range copy.ConfirmedRootCauses {
 		copy.ConfirmedRootCauses[index].Resources = append(

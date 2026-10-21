@@ -158,6 +158,7 @@ def inject_fault_after_resumed_baseline(
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     timeout_seconds: float = BASELINE_TIMEOUT_SECONDS,
+    poll_seconds: float = BASELINE_POLL_SECONDS,
 ) -> dict[str, float]:
     """Inject once the persistent controller reports all-clear after resuming ``generation``."""
 
@@ -184,5 +185,5 @@ def inject_fault_after_resumed_baseline(
             }
         if completed.returncode != 0:
             last_error = (completed.stderr or completed.stdout or "").strip() or last_error
-        sleep(BASELINE_POLL_SECONDS)
+        sleep(poll_seconds)
     raise FaultGateError(f"controller did not report an all-clear baseline within {timeout_seconds:.0f}s: {last_error}")

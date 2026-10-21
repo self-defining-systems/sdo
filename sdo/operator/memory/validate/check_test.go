@@ -83,3 +83,22 @@ func TestCompileCandidateRequiresToolchainSourcesAndConfiguredBaseline(t *testin
 		t.Fatal("missing Go toolchain accepted")
 	}
 }
+
+func TestCheckUsesProvisionedCaptureContext(t *testing.T) {
+	root := goodTree(t)
+	commit(t, root, "base")
+	write(t, root, "app.txt", "repair\n")
+	ctx := WithCaptureSource(context.Background(), "trusted-capture", "trusted-incident")
+	called := false
+	diagnostics, err := Check(ctx, Request{Root: root, Base: "HEAD", Actor: Responder, Phase: ProposalPhase,
+		CaptureRoot: "caller-root", CaptureDirectory: "caller-capture", IncidentID: ""}, func(_ context.Context, request Request) ([]Diagnostic, error) {
+		called = true
+		if request.CaptureRoot != "" || request.CaptureDirectory != "trusted-capture" || request.IncidentID != "trusted-incident" {
+			t.Fatalf("caller capture context survived provisioning: %+v", request)
+		}
+		return nil, nil
+	})
+	if err != nil || len(diagnostics) != 0 || !called {
+		t.Fatalf("check: %v %v; runner called=%v", diagnostics, err, called)
+	}
+}

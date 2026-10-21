@@ -17,6 +17,10 @@ type FindingState struct {
 	// cleared. It anchors a policy's MinDuration: the finding may not
 	// activate until now Sub FirstSeenAt is at least that long.
 	FirstSeenAt time.Time
+	// FirstClearAt and LastObservedAt support timed, binding-scoped program
+	// confirmations, including after a controller restart.
+	FirstClearAt   time.Time
+	LastObservedAt time.Time
 	// Activations, Clears, and NotPersisted count this finding's completed
 	// transitions. They make a telemetry event id a pure function of durable
 	// state, so a replay after a crash reproduces the ids it already emitted.
@@ -75,6 +79,20 @@ func (t *FindingStateTracker) policy(detectorID string) sdk.PersistencePolicy {
 }
 
 func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings []sdk.Finding) FindingChanges {
+	return t.observe(now, detectorID, findings, "")
+}
+
+// ObserveBinding evaluates only this binding, preserving other bindings' streaks.
+// Program bindings use MinDuration for both firing and clearing confirmation.
+func (t *FindingStateTracker) ObserveBinding(now time.Time, finding sdk.Finding, matched bool) FindingChanges {
+	var findings []sdk.Finding
+	if matched {
+		findings = []sdk.Finding{finding}
+	}
+	return t.observe(now, finding.DetectorID, findings, FindingFingerprint(finding))
+}
+
+func (t *FindingStateTracker) observe(now time.Time, detectorID string, findings []sdk.Finding, binding string) FindingChanges {
 	policy := t.policy(detectorID)
 	seen := make(map[string]sdk.Finding)
 	for _, finding := range findings {
@@ -100,6 +118,10 @@ func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings
 		}
 		state.Finding = finding
 		state.ClearCount = 0
+		state.FirstClearAt = time.Time{}
+		if binding != "" {
+			state.LastObservedAt = now
+		}
 		state.FiringCount++
 		if !state.Active && state.FiringCount >= policy.Firing && persistedLongEnough(policy, state.FirstSeenAt, now) {
 			state.Active = true
@@ -117,11 +139,17 @@ func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings
 		if state.DetectorID != detectorID {
 			continue
 		}
+		if binding != "" && FindingFingerprint(state.Finding) != binding {
+			continue
+		}
 		if _, ok := seen[FindingFingerprint(state.Finding)]; ok {
 			continue
 		}
 		droppedFiring := state.FiringCount
 		state.FiringCount = 0
+		if binding != "" {
+			state.LastObservedAt = now
+		}
 		if !state.Active {
 			if droppedFiring > 0 {
 				state.NotPersisted++
@@ -132,8 +160,12 @@ func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings
 			}
 			continue
 		}
+		if state.ClearCount == 0 || state.FirstClearAt.IsZero() {
+			state.FirstClearAt = now
+		}
 		state.ClearCount++
-		if state.ClearCount >= policy.Clearing {
+		confirmedClear := binding == "" || persistedLongEnough(policy, state.FirstClearAt, now)
+		if state.ClearCount >= policy.Clearing && confirmedClear {
 			state.Clears++
 			cleared = append(cleared, FindingTransition{
 				Event: FiringCleared, DetectorID: detectorID, Finding: state.Finding,
@@ -141,6 +173,7 @@ func (t *FindingStateTracker) Observe(now time.Time, detectorID string, findings
 			})
 			state.Active = false
 			state.ClearCount = 0
+			state.FirstClearAt = time.Time{}
 			changes.Cleared = append(changes.Cleared, key)
 		}
 	}

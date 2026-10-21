@@ -31,6 +31,43 @@ func TestBuildWorkspaceCompilesApplicationDetectors(t *testing.T) {
 	}
 }
 
+func TestValidateAndBuildSeedsGoCacheBeforeProgramCompilation(t *testing.T) {
+	seed := t.TempDir()
+	cache := filepath.Join(t.TempDir(), "go-cache")
+	if err := os.WriteFile(filepath.Join(seed, "compiled-sdk"), []byte("cached"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	goCommand := filepath.Join(bin, "go")
+	if err := os.WriteFile(goCommand, []byte("#!/bin/sh\ntest -f \"$GOCACHE/compiled-sdk\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SDO_GO_CACHE_SEED", seed)
+	t.Setenv("GOCACHE", cache)
+	workspace := &Workspace{Directory: t.TempDir()}
+
+	if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("program build did not use the seeded SDK cache: %v", err)
+	}
+}
+
+func TestValidateAndBuildUsesColdCacheWhenImageHasNoSeed(t *testing.T) {
+	cache := filepath.Join(t.TempDir(), "go-cache")
+	bin := t.TempDir()
+	goCommand := filepath.Join(bin, "go")
+	if err := os.WriteFile(goCommand, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SDO_GO_CACHE_SEED", filepath.Join(t.TempDir(), "absent"))
+	t.Setenv("GOCACHE", cache)
+
+	if _, err := (&Workspace{Directory: t.TempDir()}).ValidateAndBuild(context.Background()); err != nil {
+		t.Fatalf("a pre-cache image cannot run a cold program build: %v", err)
+	}
+}
+
 func TestBuildWorkspaceAcceptsOpaqueDiagnosticsProjection(t *testing.T) {
 	app := t.TempDir()
 	source := filepath.Join("..", "..", "..", "tests", "fixtures", "sdo", "missing_configmap_app", ".sdo", "diagnostics")
@@ -127,7 +164,7 @@ func TestBuildWorkspaceRejectsDetectorRegistrationDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := strings.Replace(string(data), `ID:          "missing-configmap"`, `ID:          "wrong-id"`, 1)
+	changed := strings.Replace(string(data), `ID:                  "missing-configmap"`, `ID:                  "wrong-id"`, 1)
 	if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
 		t.Fatal(err)
 	}

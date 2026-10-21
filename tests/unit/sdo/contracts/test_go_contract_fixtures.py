@@ -26,6 +26,7 @@ from sdo.contracts import (
     parse_json,
     timestamp_datetime,
 )
+from tests.proto_messages import from_dict
 
 GO_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts" / "go"
 VIEWS = ("incident_view_empty.json", "incident_view_open.json", "incident_view_populated.json")
@@ -53,7 +54,15 @@ def _nulls(value: Any, path: str = "$") -> list[str]:
 def test_every_go_fixture_is_present_and_null_free() -> None:
     names = sorted(path.name for path in GO_FIXTURES.glob("*.json"))
 
-    assert names == sorted([*VIEWS, *CLOSURES, "incident_request.json", "controller_state.json", "broker_ledger.json"])
+    assert names == sorted(
+        [
+            *VIEWS,
+            *CLOSURES,
+            "incident_request.json",
+            "controller_state.json",
+            "broker_ledger.json",
+        ]
+    )
     for name in names:
         assert _nulls(_raw(name)) == [], name
 
@@ -136,3 +145,25 @@ def test_the_brokers_ledger_is_protojson_the_receipt_reads() -> None:
     assert ledger.closure.request.incident_id == ledger.incident_id
     # The strict native receipt reads the same raw document without legacy keys.
     assert raw["closure"]["request"]["incident_id"] == raw["incident_id"]
+
+
+def test_a_latent_incident_carries_classified_drift() -> None:
+    raw = _raw("incident_request.json")
+    raw["findings"][0]["severity"] = "latent"
+    raw["drift_events"] = [
+        {
+            "ref": {"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "frontend"},
+            "fields": [{"path": "spec.ports[0].targetPort", "old": "8080", "new": "9999"}],
+            "source": "differs from accepted manifest",
+            "manager": "unknown-editor",
+            "operation": "Update",
+            "observed_at": "1970-01-01T00:00:01Z",
+            "classification": "fault",
+            "program_id": "targetport",
+        }
+    ]
+
+    request = from_dict(IncidentRequest, raw)
+
+    assert request.findings[0].severity == "latent"
+    assert request.drift_events[0].program_id == "targetport"
