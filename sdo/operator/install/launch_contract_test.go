@@ -21,7 +21,7 @@ func optionalLaunchConfig() install.Config {
 		ReflectionSession: "fresh", ReflectionGuidance: "generalize-spec", ForceReflection: true,
 		MaxFollowUps: 2, FollowUpCooldownSeconds: 25, MaxResponseLoops: 7,
 		ProgramFastPath: true, ProgramTrustThreshold: 4, DriftTokensPerHour: 250000,
-		HealthyBaseline: true, LateFindings: "off", ControllerDurationSeconds: 90, ExitAfterClosure: true, WaitForCompletion: true,
+		HealthyBaseline: true, LateFindings: "pull", ControllerDurationSeconds: 90, ExitAfterClosure: true, WaitForCompletion: true,
 		ResponderEnv:          []string{"EXAMPLE_MODE=contract", "EXAMPLE_URL=http://example:8000"},
 		RegistrationConfigMap: "sdo-agents", RegistrationDirectory: "/sdo/custom-registrations",
 		BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("b", 64), RegistryPushSecret: "registry-push",
@@ -74,7 +74,6 @@ func TestInstallerOperateOptionalArgumentsRoundTripToController(t *testing.T) {
 
 func TestInstallerControllerOptionalArgumentsRoundTrip(t *testing.T) {
 	cfg := optionalLaunchConfig()
-	cfg.LateFindings = "pull"
 	cfg.NativeArgs = []string{"--repository-pvc-subpath", "accepted", "--source-commit", cfg.AcceptedCommit}
 	cfg.ExtraControllerArgs = []string{"--deployed-manifest-path", "kubernetes", "--deployed-manifest-path", "services", "--deployed-commit", strings.Repeat("c", 40)}
 	plan, err := install.Resources(cfg)
@@ -88,9 +87,7 @@ func TestInstallerControllerOptionalArgumentsRoundTrip(t *testing.T) {
 	if supervise {
 		t.Fatal("bounded controller must not supervise")
 	}
-	want := cfg
-	want.ResponderEnv = append(append([]string{}, cfg.ResponderEnv...), "SDO_LATE_FINDINGS=pull")
-	assertControllerLaunchRoundTrip(t, want, launch.Controller)
+	assertControllerLaunchRoundTrip(t, cfg, launch.Controller)
 	if launch.Controller.GetRepositoryPvcSubpath() != "accepted" || launch.Controller.GetSourceCommit() != cfg.AcceptedCommit || launch.Controller.GetDeployedCommit() != strings.Repeat("c", 40) || !reflect.DeepEqual(launch.Controller.GetDeployedManifestPaths(), []string{"kubernetes", "services"}) {
 		t.Fatalf("controller extension arguments did not round-trip: %+v", launch.Controller)
 	}
@@ -98,6 +95,11 @@ func TestInstallerControllerOptionalArgumentsRoundTrip(t *testing.T) {
 
 func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *contracts.ControllerConfig) {
 	t.Helper()
+	// Late findings reach the responder only as this worker setting.
+	wantResponderEnv := append([]string{}, cfg.ResponderEnv...)
+	if cfg.LateFindings == "pull" {
+		wantResponderEnv = append(wantResponderEnv, "SDO_LATE_FINDINGS=pull")
+	}
 	for name, pair := range map[string][2]any{
 		"namespace":               {launch.GetNamespace(), cfg.Namespace},
 		"control namespace":       {launch.GetControlNamespace(), cfg.ControlNamespace},
@@ -127,7 +129,7 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		"exit after closure":      {launch.GetExitAfterClosure(), cfg.ExitAfterClosure},
 		"response timeout":        {launch.GetResponseTimeout().AsDuration(), time.Duration(cfg.TimeoutSeconds) * time.Second},
 		"verification timeout":    {launch.GetVerificationTimeout().AsDuration(), time.Duration(cfg.VerificationTimeoutSeconds) * time.Second},
-		"responder environment":   {launch.GetResponderEnv(), cfg.ResponderEnv},
+		"responder environment":   {launch.GetResponderEnv(), wantResponderEnv},
 		"registration directory":  {launch.GetAgentRegistrationDirectory(), cfg.RegistrationDirectory},
 		"broker mode":             {launch.GetBrokerMode(), "native"},
 		"worker mount mode":       {launch.GetWorkerMountMode(), "proposal-only"},
@@ -135,6 +137,32 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		if !reflect.DeepEqual(pair[0], pair[1]) {
 			t.Errorf("%s: got %v, want %v", name, pair[0], pair[1])
 		}
+	}
+}
+
+func TestInstallerOperateLateFindingsOffAddsNoResponderSetting(t *testing.T) {
+	for _, mode := range []string{"", "off"} {
+		cfg := optionalLaunchConfig()
+		cfg.LateFindings = mode
+		job, err := install.OperateJob(cfg, "requests succeed", "operation-late-off", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		launch, err := operatorcli.ParseOperateLaunch(job.Spec.Template.Spec.Containers[0].Args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		launch.Install.AcceptedCommit = cfg.AcceptedCommit
+		plan, err := install.Resources(launch.Install)
+		if err != nil {
+			t.Fatal(err)
+		}
+		controller, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.LateFindings = "off"
+		assertControllerLaunchRoundTrip(t, cfg, controller.Controller)
 	}
 }
 
