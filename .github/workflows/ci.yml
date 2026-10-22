@@ -205,6 +205,11 @@ jobs:
         run: timeout 120s go test -run '^$' -fuzz '^FuzzSubmissionPhaseBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .
         working-directory: ${{ matrix.directory }}
 
+      - name: Fuzz controller observation boundary (bounded)
+        if: matrix.module == 'operator'
+        run: timeout 120s go test -run '^$' -fuzz '^FuzzControllerObservationBoundary$' -fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
+        working-directory: ${{ matrix.directory }}
+
   # Proto contracts are the single source of truth for the cross-seam types.
   # This job lints the .proto source and asserts the committed Go/Python
   # codegen matches `buf generate` — so schema drift is a build failure here.

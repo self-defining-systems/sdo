@@ -62,6 +62,7 @@ class FakeOps:
     maintenance: list[str] = field(default_factory=list)
     receipts: list[str] = field(default_factory=list)
     receipt_configs: list[RuntimeConfig] = field(default_factory=list)
+    seen_closures: set[tuple[str, str]] = field(default_factory=set)
     #: Worktree directory names under the shared /workspace/worktrees root. Empty by
     #: default, so there is nothing for the quiescent-drain reap to remove.
     worktrees: set[str] = field(default_factory=set)
@@ -80,6 +81,7 @@ class FakeOps:
         assert control is not None
         self.pods[control] = ControllerPod(name="pod", uid="uid")
         self.states[control] = {}
+        self.seen_closures = {key for key in self.seen_closures if key[0] != control}
         self.logs[control] = []
         return False
 
@@ -99,7 +101,7 @@ class FakeOps:
         closure = state.get("pending_closure")
         if isinstance(closure, dict):
             incident_id = closure["request"]["incident_id"]
-            if closure.get("seen"):
+            if (control_namespace, incident_id) in self.seen_closures:
                 state.pop("pending_closure")
                 state["last_acknowledged_incident_id"] = incident_id
                 self.logs[control_namespace].extend(
@@ -114,7 +116,7 @@ class FakeOps:
                 if incident_id == "incident-2":
                     self.fixed.add("network_policy:recommendation")
             else:
-                closure["seen"] = True
+                self.seen_closures.add((control_namespace, incident_id))
         return state
 
     def controller_logs(self, control_namespace: str) -> str:
@@ -490,7 +492,7 @@ def test_failed_closure_keeps_pending_outcome_evidence_and_stops(tmp_path: Path)
 
     def failed_state(control: str) -> dict[str, Any]:
         state = ops.states[control]
-        return state if state.get("closure_state") == "failed" else runtime_state(control)
+        return state if state.get("closure_state") == "CLOSURE_STATE_FAILED" else runtime_state(control)
 
     ops.runtime_state = failed_state  # type: ignore[method-assign]
 
@@ -505,7 +507,7 @@ def test_failed_closure_keeps_pending_outcome_evidence_and_stops(tmp_path: Path)
                 "response_loops_used": 1,
             }
         )
-        state["closure_state"] = "failed"
+        state["closure_state"] = "CLOSURE_STATE_FAILED"
         raise ClosureFailedError("reflection rejected the outcome")
 
     agent._drain_last = fail_drain  # type: ignore[method-assign]

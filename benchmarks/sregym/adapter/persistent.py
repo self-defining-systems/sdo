@@ -40,6 +40,7 @@ from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.fault_gate import RESUMED_BASELINE_TIMEOUT_SECONDS, inject_fault_after_resumed_baseline
 from benchmarks.sregym.adapter.native_operator import (
     NativeOperatorError,
+    observe_controller_state,
 )
 from benchmarks.sregym.adapter.native_operator import (
     export_runtime_artifacts as go_export_runtime_artifacts,
@@ -60,7 +61,13 @@ from benchmarks.sregym.adapter.runtime import (
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
 from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
-from sdo.contracts import ReceiptDrainResult, ReceiptFailure, RejectedProductionReceipt
+from sdo.contracts import (
+    ControllerObservation,
+    ControllerObservationFailure,
+    ReceiptDrainResult,
+    ReceiptFailure,
+    RejectedProductionReceipt,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1109,18 +1116,34 @@ def _resolution_timings(closure: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _observe_state(
+    state: dict[str, Any],
+    *,
+    known: set[str] | None = None,
+    incident_id: str = "",
+    stop_on_review: bool = False,
+    timeout: float = 30.0,
+) -> ControllerObservation:
+    try:
+        observed = observe_controller_state(
+            state, known=known, incident_id=incident_id, stop_on_review=stop_on_review, timeout=timeout
+        )
+    except NativeOperatorError as exc:
+        raise PersistentControllerError(str(exc)) from exc
+    if observed.failure.code == ControllerObservationFailure.CODE_INVALID_SNAPSHOT:
+        raise PersistentControllerError(observed.failure.message)
+    return observed
+
+
+def _raise_observation_failure(observed: ControllerObservation, state: dict[str, Any]) -> None:
+    if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
+        raise ClosureFailedError(observed.failure.message)
+    if observed.failure.code == ControllerObservationFailure.CODE_DETECTOR_REVIEW_REQUIRED:
+        raise DetectorReviewRequiredError(observed.failure.incident_id, observed.failure.message, state)
+
+
 def _known_incident_ids(state: dict[str, Any]) -> set[str]:
-    known: set[str] = set()
-    acknowledged = state.get("last_acknowledged_incident_id")
-    if isinstance(acknowledged, str) and acknowledged:
-        known.add(acknowledged)
-    for key in ("pending_closure", "incident_request"):
-        document = state.get(key)
-        if key == "pending_closure" and isinstance(document, dict):
-            document = document.get("request")
-        if isinstance(document, dict) and isinstance(document.get("incident_id"), str):
-            known.add(document["incident_id"])
-    return known
+    return set(_observe_state(state).known_incident_ids)
 
 
 def _wait_for_controller_pod(ops: ClusterOps, control: str, clock: Clock, timeout: float = 300.0) -> ControllerPod:
@@ -1154,88 +1177,35 @@ def _wait_for_verified_incident(
     deadline = started + timeout
     detected = False
     state: dict[str, Any] = {}
+    summary = ""
     while clock.monotonic() < deadline:
         state = ops.runtime_state(control)
-        _raise_if_closure_failed(state)
-        detected = detected or _new_incident_opened(state, known)
+        observed = _observe_state(
+            state,
+            known=known,
+            stop_on_review=stop_on_review,
+            timeout=min(30.0, max(0.001, deadline - clock.monotonic())),
+        )
+        summary = observed.open_incident_summary
+        if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
+            _raise_observation_failure(observed, state)
+        detected = detected or observed.new_incident_opened
         if detection_timeout is not None and not detected and clock.monotonic() - started >= detection_timeout:
             raise DetectionMissError(
                 f"controller in {control!r}: no incident opened within {detection_timeout:.0f}s of fault injection"
             )
-        closure = state.get("pending_closure")
-        if isinstance(closure, dict):
-            raw_request = closure.get("request")
-            request: dict[str, Any] = raw_request if isinstance(raw_request, dict) else {}
-            incident_id = request.get("incident_id")
-            if isinstance(incident_id, str) and incident_id not in known and _timestamp(closure.get("verified_at")):
-                return VerifiedIncident(
-                    incident_id=incident_id,
-                    closure=closure,
-                )
-        acknowledged = state.get("last_acknowledged_incident_id")
-        if isinstance(acknowledged, str) and acknowledged and acknowledged not in known:
-            # Reflection finished between polls; the ledger holds the closure.
-            return VerifiedIncident(
-                incident_id=acknowledged,
-                closure=None,
+        if observed.verified_incident_id:
+            closure = (
+                json_format.MessageToDict(observed.verified_closure, preserving_proto_field_name=True)
+                if observed.HasField("verified_closure")
+                else None
             )
-        if stop_on_review and state.get("detector_review_required"):
-            incident_request = state.get("incident_request")
-            incident_id = incident_request.get("incident_id") if isinstance(incident_request, dict) else None
-            raise DetectorReviewRequiredError(
-                str(incident_id or "unknown"), str(state.get("detector_review_reason") or ""), state
-            )
+            return VerifiedIncident(incident_id=observed.verified_incident_id, closure=closure)
+        _raise_observation_failure(observed, state)
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(
-        f"controller in {control!r} verified no new incident within {timeout:.0f}s{_open_incident_summary(state)}"
+        f"controller in {control!r} verified no new incident within {timeout:.0f}s{summary}"
     )
-
-
-def _new_incident_opened(state: dict[str, Any], known: set[str]) -> bool:
-    """Whether the controller has opened (or already closed) an incident this stage did not start with."""
-
-    if state.get("incident_open"):
-        return True
-    for key in ("incident_request", "pending_closure"):
-        value = state.get(key)
-        if isinstance(value, dict):
-            request = value.get("request") if key == "pending_closure" else value
-            incident_id = request.get("incident_id") if isinstance(request, dict) else None
-            if isinstance(incident_id, str) and incident_id not in known:
-                return True
-    acknowledged = state.get("last_acknowledged_incident_id")
-    return isinstance(acknowledged, str) and bool(acknowledged) and acknowledged not in known
-
-
-def _open_incident_summary(state: dict[str, Any]) -> str:
-    """Why the controller's open incident has not closed, from its last runtime state."""
-
-    if not state.get("incident_open"):
-        summary = f"; no incident open (dispatch state {state.get('dispatch_state') or 'unknown'!r})"
-        failure = state.get("closure_failure")
-        if isinstance(failure, dict) and failure.get("permanent"):
-            # A permanently failed closure blocks every later incident.
-            summary += (
-                f"; closure of {failure.get('incident_id')!r} failed permanently: "
-                f"{str(failure.get('last_error') or '').strip()[:500]}"
-            )
-        return summary
-    raw_request = state.get("incident_request")
-    request: dict[str, Any] = raw_request if isinstance(raw_request, dict) else {}
-    parts = [f"; incident {request.get('incident_id') or 'unknown'!r} is open"]
-    result = state.get("incident_result")
-    if isinstance(result, dict):
-        parts.append(f"responder status {result.get('status')!r}")
-        notes = [str(note) for note in result.get("repair_changes") or []]
-        if notes:
-            parts.append(f"responder notes: {'; '.join(notes)[:500]}")
-    elif state.get("dispatch_error"):
-        parts.append(f"dispatch error: {state['dispatch_error']}")
-    else:
-        parts.append(f"responder not done (dispatch state {state.get('dispatch_state')!r})")
-    if state.get("detector_review_required"):
-        parts.append(f"detector review required: {state.get('detector_review_reason') or 'no reason recorded'}")
-    return ", ".join(parts)
 
 
 def _log_records(logs: str) -> list[dict[str, Any]]:
@@ -1272,26 +1242,14 @@ def _wait_for_reflection_drain(
     deadline = clock.monotonic() + timeout
     while clock.monotonic() < deadline:
         state = ops.runtime_state(control)
-        _raise_if_closure_failed(state, incident_id)
-        if state.get("last_acknowledged_incident_id") == incident_id:
+        observed = _observe_state(
+            state, incident_id=incident_id, timeout=min(30.0, max(0.001, deadline - clock.monotonic()))
+        )
+        _raise_observation_failure(observed, state)
+        if observed.acknowledged:
             return state
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(f"incident {incident_id!r} was not reflected and rolled out within {timeout:.0f}s")
-
-
-def _raise_if_closure_failed(state: dict[str, Any], incident_id: str | None = None) -> None:
-    """Stop waiting once the controller has given up the incident's closure; it never retries it again."""
-
-    failure = state.get("closure_failure")
-    if state.get("closure_state") != "failed" or not isinstance(failure, dict):
-        return
-    if not failure.get("permanent") or (incident_id is not None and failure.get("incident_id") != incident_id):
-        return
-    incident_id = str(failure.get("incident_id") or incident_id or "unknown")
-    raise ClosureFailedError(
-        f"incident {incident_id!r} closure permanently failed after {failure.get('attempts')} broker attempts: "
-        f"{failure.get('last_error')}; {failure.get('action')}"
-    )
 
 
 def _relaunched_after(records: list[dict[str, Any]], incident_id: str) -> bool:

@@ -6,16 +6,22 @@ implements a commit broker or writes operational memory itself.
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from google.protobuf import json_format
+
 from benchmarks.sregym.protocol.native_receipt import native_production_receipt
+from sdo.contracts import ControllerObservation, ControllerObservationRequest, validate
 
 _OPERATOR_MODULE = Path(__file__).resolve().parents[3] / "sdo" / "operator"
 _IMAGE_DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
@@ -185,6 +191,27 @@ class NativeExistingReceipt:
     accepted_commit: str
 
 
+@lru_cache(maxsize=1)
+def _source_operator(module: Path) -> str:
+    directory = Path(tempfile.mkdtemp(prefix="sdo-operator-"))
+    atexit.register(shutil.rmtree, directory, ignore_errors=True)
+    binary = directory / "sdo-operator"
+    try:
+        built = subprocess.run(
+            ["go", "build", "-mod=mod", "-o", str(binary), "./cmd/sdo-operator"],
+            cwd=module,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NativeOperatorError(f"Go operator could not build: {exc}") from exc
+    if built.returncode:
+        raise NativeOperatorError(f"Go operator build failed: {built.stderr[-4096:]}")
+    return str(binary)
+
+
 def operator_command() -> tuple[list[str], Path | None]:
     specified = os.environ.get("SDO_OPERATOR_BIN", "").strip()
     if specified:
@@ -197,20 +224,45 @@ def operator_command() -> tuple[list[str], Path | None]:
         return [installed], None
     if not _OPERATOR_MODULE.is_dir():
         raise NativeOperatorError("Go operator source is unavailable; set SDO_OPERATOR_BIN")
-    return ["go", "run", "-mod=mod", "./cmd/sdo-operator"], _OPERATOR_MODULE
+    return [_source_operator(_OPERATOR_MODULE)], _OPERATOR_MODULE
 
 
-def execute_operator(command: str, args: list[str], *, timeout: int) -> str:
+def execute_operator(command: str, args: list[str], *, timeout: float, input_text: str | None = None) -> str:
     prefix, cwd = operator_command()
     argv = [*prefix, command, *args]
     try:
-        result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+        result = subprocess.run(
+            argv, cwd=cwd, input=input_text, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         raise NativeOperatorError(f"Go operator {command} could not run: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()[-4096:]
         raise NativeOperatorError(f"Go operator {command} failed ({result.returncode}): {detail}")
     return result.stdout
+
+
+def observe_controller_state(
+    state: dict[str, Any],
+    *,
+    known: set[str] | None = None,
+    incident_id: str = "",
+    stop_on_review: bool = False,
+    timeout: float = 30.0,
+) -> ControllerObservation:
+    request = ControllerObservationRequest(
+        known_incident_ids=sorted(known or ()), incident_id=incident_id, stop_on_review=stop_on_review
+    )
+    payload = json_format.MessageToDict(request, preserving_proto_field_name=True)
+    payload["state"] = state
+    stdout = execute_operator("observe-controller", [], timeout=timeout, input_text=json.dumps(payload))
+    try:
+        result = json_format.Parse(stdout, ControllerObservation())
+        if result.HasField("failure"):
+            validate(result.failure)
+    except (json_format.ParseError, ValueError) as exc:
+        raise NativeOperatorError(f"Go controller observation returned invalid ProtoJSON: {exc}") from exc
+    return result
 
 
 def _run(command: str, args: list[str], *, timeout: int) -> dict[str, Any]:

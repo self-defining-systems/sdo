@@ -25,7 +25,8 @@ A generated envelope does not make a string inside it a typed reference.
 | Program specs, bindings, verdicts, evidence, plans/applications, preimages, tool-call records | `program.proto`; worker ↔ Go / durable outcome | runtime SDK ↔ proto projections; `protocol/native_receipt.py` checks fast-path plan verification via nested dicts and enum text | H |
 | Usage and timing metrics | `messages.proto:UsageMetrics`, `TimingMetrics`; worker → Go → benchmark | `sdo/contracts/proto.py` normalizes cache-read alias; adapter `persistent.py:_timestamp`, `_resolution_timings`; `driver.py` copies timing summaries | H |
 | Closure, acknowledgment receipt, failure, reflection decision, rollout expectation/receipt | `messages.proto:IncidentClosure`; `controller_state.proto`: `ClosureReceipt`, `ClosureFailure`, `ReflectionDecision`, `ControllerRolloutExpectation`, `ControllerRolloutReceipt`, `BrokerLedger` | `protocol/native_receipt.py` hand-validates all nested shapes, identity, clear states, reflection and rollout; `persistent.py:_closeout_settled`, `_raise_if_closure_failed`, `_collect_settled_receipt` repeat decisions | H |
-| Controller-state fields read by adapter | `controller_state.proto:ControllerState`; Go → adapter | `persistent.py` reads `last_acknowledged_incident_id`, `pending_closure`, `incident_request`, `closure_state`, `closure_failure`, detector review fields; `driver.py`, `healthy_baseline.py`, `fault_gate.py` read raw ConfigMap JSON | H |
+| Controller-state fields read by adapter | `controller_state.proto:ControllerState`; Go → adapter | `persistent.py` reads `last_acknowledged_incident_id`, `pending_closure`, `incident_request`, `closure_state`, `closure_failure`, detector review fields; `driver.py` reads raw ConfigMap JSON; baseline/fault-gate resource and log parsing is a separate row | H |
+| Controller evaluation and maintenance log facts | No shared message for legacy iteration/maintenance log envelopes; Go → adapter | `fault_gate.py:controller_active_findings` interprets `controller_iteration`, `findings`, `rule_id`, `status`; `persistent.py:_log_records`, `wait_for_maintenance_ack`, `_relaunched_after` interpret log dictionaries | N |
 | Detector timeline, firing records, lifecycle events, late-findings reports/receipts | `messages.proto:DetectorTimelineEntry`; `telemetry.proto`; `late_findings.proto`; Go → worker/adapter | adapter `persistent.py:_log_records`, `_relaunched_after` parse legacy log dictionaries; `driver.py` copies timeline fields into receipt summaries | H |
 | Strict production receipt v2 and per-incident receipt rejection | `protocol/native_receipt.py:native_production_receipt`; `persistent.py:ReceiptRejectedError`; adapter ↔ runner | receipt dict literal and `_object`, `_items`, `_nonempty`, `_timestamp`, `_commit`; `driver.py:persist_production_receipt`, `protocol/receipt.py:receipt_resolution` and validator dispatch | N |
 | Retired production receipt v1 | `protocol/receipt.py:validate_production_receipt`; saved evidence → analysis/runner | dict traversal plus `_ControllerRolloutRecord`, `_RepairActionReceipt`; duplicated classification/attribution rules | N |
@@ -66,7 +67,7 @@ The adapter drain returns a generated failure rather than raising
 `ReceiptRejectedError`; persistent and fastloop callers consume that result.
 The narrow fastloop caller edits follow the changed adapter API and contain no
 new lifecycle decisions. Validity analysis decodes typed rejection artifacts to
-keep checker unavailability separate from rejected agent evidence. Submission phase guards (next slice), closure/drain interpretation,
+keep checker unavailability separate from rejected agent evidence. Closure/drain interpretation,
 controller-state dictionary readers and the other **N** rows remain follow-ups.
 
 ## Implemented submission seam (R2 slice 4)
@@ -78,3 +79,15 @@ forwards external facts to `protocol/submission_go` and consumes generated
 deleted. The ready/terminal constants in `protocol/schema.py` come from generated
 descriptors. These decision rows are **G**. Upstream reply metadata remains opaque
 transport data, and the upstream status-read/POST pair is not atomic.
+
+## Implemented controller observation seam (R2 follow-up)
+
+Persistent-adapter incident/drain interpretation now uses the generated
+`ControllerObservationRequest`/`ControllerObservation` CLI contract. Go owns
+known/new incident correlation, verified health, acknowledgments, review ordering,
+permanent closure failure and the open-incident summary. It consumes R1's current
+generated enums, fixing the adapter's retired `"failed"` string comparison.
+Undefined enums/unknown fields are typed snapshot failures; publication validation
+and lifecycle transitions stay with R1. No controller-state/runtime files change.
+The remaining driver snapshot reader is **H**; baseline/fault-gate log and
+resource parsing and timing annotations remain separate seams; legacy receipt v1 and other opaque external data remain.
