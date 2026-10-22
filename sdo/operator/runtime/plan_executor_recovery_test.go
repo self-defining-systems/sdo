@@ -63,7 +63,11 @@ func (c *concurrentPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kin
 	}
 	if metadata, ok := document["metadata"].(map[string]any); ok {
 		current := c.objects[ref]
-		if metadata["uid"] != string(current.GetUID()) || metadata["resourceVersion"] != current.GetResourceVersion() {
+		// A present precondition must match; an absent one is not checked, as on the API server.
+		if uid, ok := metadata["uid"]; ok && uid != string(current.GetUID()) {
+			return errors.New("optimistic concurrency conflict")
+		}
+		if version, ok := metadata["resourceVersion"]; ok && version != current.GetResourceVersion() {
 			return errors.New("optimistic concurrency conflict")
 		}
 	}
@@ -142,4 +146,54 @@ func TestPlanExecutorRetainsInProcessRollbackProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireRecoveredReplicas(t, client, ref)
+}
+
+type statusBumpingClient struct {
+	*concurrentPlanClient
+}
+
+// Patch stands in for the object's own controller updating status after every spec write.
+func (c statusBumpingClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	if err := c.concurrentPlanClient.Patch(ctx, ref, kind, patch); err != nil {
+		return err
+	}
+	object := c.objects[ref]
+	object.SetResourceVersion(object.GetResourceVersion() + "1")
+	return nil
+}
+
+func TestPlanExecutorAppliesRepeatedWritesToOneObjectDespiteInterveningVersionBumps(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	object := planObject(ref, map[string]any{"replicas": float64(1)})
+	object.SetUID("original")
+	object.SetResourceVersion("1")
+	client := statusBumpingClient{&concurrentPlanClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(2)}, program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(3)}}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
+	if err != nil || !result.Applied || len(result.ActionsApplied) != 2 {
+		t.Fatalf("second write to the same object failed: %+v %v", result, err)
+	}
+}
+
+func TestPlanExecutorRollbackRestoresAddedObjectsThatTheServerDefaulted(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	const probe = "spec.template.spec.containers.0.readinessProbe"
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "api", "image": "v1"}}}}})}}
+	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe", Value: map[string]any{"httpGet": map[string]any{"path": "/"}}}}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The API server fills in a field of the object the plan added.
+	if err := program.ApplySetField(client.objects[ref].Object, "spec.template.spec.containers[0].readinessProbe.httpGet.scheme", "HTTP"); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Rollback(context.Background(), result); err != nil {
+		t.Fatalf("rollback of a server-defaulted object: %v", err)
+	}
+	if value, ok := testField(client.objects[ref], probe); ok {
+		t.Fatalf("added object remains: %v", value)
+	}
 }

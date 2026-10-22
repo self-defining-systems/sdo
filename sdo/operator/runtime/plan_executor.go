@@ -184,32 +184,32 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if dryRun {
 		return result, nil
 	}
-	// versions holds each object as last observed after one of our writes; objects
-	// not yet written are still at their pre-image.
-	versions := originals
+	// The first write to an object is conditional on its pre-image; later writes to the same
+	// object are conditional only on its identity, because the object's own controllers bump
+	// resourceVersion between our writes.
+	written := make(map[sdk.ObjectRef]bool)
 	for index, patch := range result.Patches {
-		if previous := versions[patch.Ref]; previous != nil {
+		if written[patch.Ref] {
 			var patchErr error
-			patch.Patch, patchErr = conditionalPlanPatch(patch.Patch, previous)
+			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
 			if patchErr != nil {
 				return result, patchErr
 			}
-			result.Patches[index].Patch = patch.Patch
 		}
 		pending := index
 		result.PendingAction = &pending
 		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, result.Patches[index].Patch); err != nil {
 			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
+		written[patch.Ref] = true
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
 		result.PendingAction = nil
-		observed, getErr := e.Client.Get(ctx, patch.Ref)
-		if getErr != nil {
-			return result, fmt.Errorf("read applied version: %w", getErr)
+		// Rollback compares against the version our write produced; if the read fails the
+		// after-image keeps its predicted version and rollback retries on a conflict.
+		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
+			result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		}
-		result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
-		versions[patch.Ref] = observed
 	}
 	writesLanded = true
 	result.Applied = true
@@ -329,6 +329,19 @@ func conditionalPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]
 	return json.Marshal(fields)
 }
 
+func uidOnlyPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]byte, error) {
+	var fields map[string]any
+	if err := json.Unmarshal(patch, &fields); err != nil {
+		return nil, err
+	}
+	if observed.GetUID() == "" {
+		delete(fields, "metadata")
+	} else {
+		fields["metadata"] = map[string]any{"uid": string(observed.GetUID())}
+	}
+	return json.Marshal(fields)
+}
+
 // Descend into equal-length arrays so a probe repair cannot roll back an image update.
 // Array shape changes and changed named-item identities conservatively conflict.
 func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok bool) (any, bool, error) {
@@ -388,10 +401,40 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 		}
 		return result, true, nil
 	}
-	if aok != lok || !planValuesEqual(after, live) {
+	if aok != lok || !planValueContains(live, after) {
 		return nil, false, errors.New("field no longer holds application value")
 	}
 	return before, bok, nil
+}
+
+// planValueContains reports whether live equals applied, ignoring keys the API server added to
+// applied objects (defaults such as a probe's scheme or a port's protocol).
+func planValueContains(live, applied any) bool {
+	switch a := applied.(type) {
+	case map[string]any:
+		l, ok := live.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range a {
+			if lv, exists := l[key]; !exists || !planValueContains(lv, value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		l, ok := live.([]any)
+		if !ok || len(l) != len(a) {
+			return false
+		}
+		for i := range a {
+			if !planValueContains(l[i], a[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return planValuesEqual(applied, live)
 }
 
 func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (*unstructured.Unstructured, error) {

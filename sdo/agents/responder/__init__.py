@@ -25,7 +25,6 @@ _EXPORTS = {
     "current_outcome_view": "reflection_outcomes",
     "execute_incident": "codex",
     "history_view": "reflection_outcomes",
-    "incident_status": "incident_status",
     "live_incident_status": "incident_status",
     "prepare_claude_home": "credentials",
     "prepare_codex_home": "credentials",
@@ -63,9 +62,6 @@ if TYPE_CHECKING:
     )
     from sdo.agents.responder.incident_status import (
         VerifyScenarioVerdict as VerifyScenarioVerdict,
-    )
-    from sdo.agents.responder.incident_status import (
-        incident_status as incident_status,
     )
     from sdo.agents.responder.incident_status import (
         live_incident_status as live_incident_status,
