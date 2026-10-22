@@ -173,6 +173,17 @@ jobs:
       - run: go test -race -skip '^TestReplay|^TestChaos' ./...
         working-directory: ${{ matrix.directory }}
 
+      - name: Fuzz object reference boundary (bounded)
+        if: matrix.module == 'sdk'
+        run: |
+          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefParseFormat$' -fuzztime=30s -parallel=2 -timeout=2m .
+          timeout 120s go test -run '^$' -fuzz '^FuzzObjectRefTypedRoundTrip$' -fuzztime=30s -parallel=2 -timeout=2m .
+        working-directory: ${{ matrix.directory }}
+      - name: Fuzz observed evidence labels (bounded)
+        if: matrix.module == 'operator'
+        run: timeout 120s go test -run '^$' -fuzz '^FuzzStateChangeRefMatchesObservedLabel$' -fuzztime=30s -parallel=2 -timeout=2m ./outcome_derivation
+        working-directory: ${{ matrix.directory }}
+
   # Proto contracts are the single source of truth for the cross-seam types.
   # This job lints the .proto source and asserts the committed Go/Python
   # codegen matches `buf generate` — so schema drift is a build failure here.

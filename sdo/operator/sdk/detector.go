@@ -87,6 +87,9 @@ const (
 	SeverityLatent   FindingSeverity = "latent"
 )
 
+// ObjectRef is the comparable in-process projection of common.proto:ObjectRef.
+// Cross-process contracts use the generated protobuf message; raw tool refs
+// are parsed only by ParseObjectRef.
 type ObjectRef struct {
 	APIVersion string `json:"api_version,omitempty"`
 	Kind       string `json:"kind"`

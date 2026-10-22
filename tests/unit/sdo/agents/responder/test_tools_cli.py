@@ -38,7 +38,7 @@ def test_sdo_cli_exchanges_typed_request_with_fake_controller(tmp_path, monkeypa
         {
             "command": "diagnose",
             "program_id": "targetport",
-            "bindings": {"service": {"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"}},
+            "bindings": {"service": "Service/app/api"},
         }
     ]
     output = capsys.readouterr().out
@@ -59,7 +59,7 @@ def test_sdo_source_cli_sends_a_namespaced_resource(monkeypatch, capsys):
     assert seen == [
         {
             "command": "source",
-            "ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "rate"},
+            "ref": "Deployment/app/rate",
         }
     ]
     assert '"source": {"kind": "Deployment"}' in capsys.readouterr().out
@@ -86,12 +86,12 @@ def test_documented_cli_examples_send_valid_requests(monkeypatch):
 
     assert seen[0] == {
         "command": "source",
-        "ref": {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},
+        "ref": "Deployment/app/api",
     }
     assert seen[-1] == {
         "command": "plan",
         "program_id": "targetport",
-        "bindings": {"service": {"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"}},
+        "bindings": {"service": "Service/app/api"},
     }
 
 
@@ -114,3 +114,13 @@ def test_sdo_cli_preserves_program_capability_metadata(monkeypatch, capsys, can_
 
     output = json.loads(capsys.readouterr().out.splitlines()[0])
     assert output["program_runs"][0]["can_mitigate"] is can_mitigate
+
+
+@pytest.mark.parametrize("raw", ["deploy/api", "StatefulSet/app/db", "Service/a; Service/b", "not a ref"])
+def test_cli_passes_agent_ref_text_to_go_without_parsing(raw, monkeypatch):
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    assert tools_cli.main(["source", raw]) == 0
+    assert seen == [{"command": "source", "ref": raw}]
+    assert tools_cli.main(["plan", "toy", "--bind", "resource=" + raw]) == 0
+    assert seen[-1]["bindings"] == {"resource": raw}

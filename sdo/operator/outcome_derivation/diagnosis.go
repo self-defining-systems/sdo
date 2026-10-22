@@ -7,6 +7,7 @@ import (
 	"time"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 )
 
 func verifyDiagnosis(closure *contractsv1alpha1.IncidentClosure) []*contractsv1alpha1.DiagnosisVerification {
@@ -282,58 +283,18 @@ func anyFlipped(items []*contractsv1alpha1.OutcomeDetectorFlip) bool {
 
 type objectKey struct{ kind, name, namespace, label string }
 
-var aliases = map[string]string{
-	"cm": "configmap", "configmaps": "configmap", "cronjobs": "cronjob", "cj": "cronjob", "daemonsets": "daemonset", "deploy": "deployment", "deployments": "deployment", "ds": "daemonset", "hpa": "horizontalpodautoscaler", "horizontalpodautoscalers": "horizontalpodautoscaler", "ing": "ingress", "ingresses": "ingress", "jobs": "job", "netpol": "networkpolicy", "networkpolicies": "networkpolicy", "persistentvolumeclaims": "persistentvolumeclaim", "po": "pod", "pods": "pod", "pvc": "persistentvolumeclaim", "replicasets": "replicaset", "rolebindings": "rolebinding", "roles": "role", "rs": "replicaset", "sa": "serviceaccount", "secrets": "secret", "serviceaccounts": "serviceaccount", "services": "service", "statefulsets": "statefulset", "sts": "statefulset", "svc": "service",
-}
-var knownKinds = map[string]bool{"service": true, "secret": true, "role": true, "rolebinding": true}
 var podOwners = map[string]bool{"deployment": true, "statefulset": true, "daemonset": true, "replicaset": true, "job": true}
 
-func canonicalKind(raw string) string {
-	kind := strings.SplitN(strings.ToLower(strings.TrimSpace(raw)), ".", 2)[0]
-	if alias, ok := aliases[kind]; ok {
-		return alias
-	}
-	return kind
-}
-func knownKind(raw string) bool {
-	kind := canonicalKind(raw)
-	if knownKinds[kind] {
-		return true
-	}
-	for _, v := range aliases {
-		if v == kind {
-			return true
-		}
-	}
-	return false
-}
+func canonicalKind(raw string) string { return strings.ToLower(sdk.CanonicalObjectKind(raw)) }
 func keyOf(ref *contractsv1alpha1.ObjectRef) objectKey {
 	return objectKey{canonicalKind(ref.GetKind()), ref.GetName(), ref.GetNamespace(), ref.GetKind() + "/" + ref.GetName()}
 }
 func parseKey(source string) (objectKey, bool) {
-	// A compound citation such as "Service/a; Service/b" names several objects,
-	// so it is no object reference rather than a namespace containing punctuation.
-	if strings.ContainsAny(source, ";,") || len(strings.Fields(source)) > 1 {
+	ref, err := sdk.ParseObjectRef(source)
+	if err != nil {
 		return objectKey{}, false
 	}
-	parts := []string{}
-	for _, part := range strings.Split(strings.TrimSpace(source), "/") {
-		if part != "" {
-			parts = append(parts, part)
-		}
-	}
-	if len(parts) == 2 {
-		return objectKey{canonicalKind(parts[0]), parts[1], "", parts[0] + "/" + parts[1]}, true
-	}
-	if len(parts) == 3 {
-		if knownKind(parts[0]) {
-			return objectKey{canonicalKind(parts[0]), parts[2], parts[1], parts[0] + "/" + parts[2]}, true
-		}
-		if knownKind(parts[1]) {
-			return objectKey{canonicalKind(parts[1]), parts[2], parts[0], parts[1] + "/" + parts[2]}, true
-		}
-	}
-	return objectKey{}, false
+	return objectKey{canonicalKind(ref.Kind), ref.Name, ref.Namespace, ref.Kind + "/" + ref.Name}, true
 }
 
 // evidenceKey resolves namespace-local evidence against the controller's
