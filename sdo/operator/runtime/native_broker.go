@@ -781,7 +781,7 @@ func (n NativeIncidentBroker) withLock(fn func() error) error {
 // recovery step; there is deliberately no legacy decoder.
 func parseLedger(path string, data []byte) (*contracts.BrokerLedger, error) {
 	ledger := &contracts.BrokerLedger{}
-	if err := wire.Unmarshal(data, ledger); err != nil {
+	if err := wire.UnmarshalDurable(data, ledger); err != nil {
 		if isPreCutoverFormat(err) {
 			return nil, fmt.Errorf("broker ledger %s predates the ProtoJSON cutover and cannot be read (%v); archive or remove the ledger file, then restart the controller", path, err)
 		}

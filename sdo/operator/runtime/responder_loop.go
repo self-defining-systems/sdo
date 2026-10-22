@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/memory/layout"
@@ -93,13 +95,14 @@ type ResponderLoop struct {
 	MaxBatches                      int
 	Trust                           map[string]ProgramTrust
 	CorpusReplayPassed              bool
-	BeforeFastPathApply             func(context.Context, []string, []PlanPreImage) error
+	BeforeFastPathApply             func(context.Context, []ProgramRun) error
 	CorpusSessionRoot               string
 	capturePhase                    string
 	preApplyCaptured                bool
 	saveToolState                   func(context.Context, []byte) error
 	operationMu                     sync.Mutex
 	mu                              sync.Mutex
+	sessionID                       string
 	plans                           map[string]selectedPlan
 	applications                    map[string]PlanApplicationResult
 	applicationsLog                 []RecordedPlanApplication
@@ -121,7 +124,11 @@ func NewResponderLoop(request IncidentRequest, programs program.ProgramRegistry,
 	if maxBatches <= 0 {
 		maxBatches = DefaultMaxResponseLoops
 	}
-	return &ResponderLoop{Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
+	session := make([]byte, 16)
+	if _, err := rand.Read(session); err != nil {
+		panic(err)
+	}
+	return &ResponderLoop{sessionID: fmt.Sprintf("%x", session), Request: request, Programs: programs, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}
 }
 
 func (l *ResponderLoop) ToolCalls() []ToolCall {
@@ -153,52 +160,6 @@ func (l *ResponderLoop) InitialDiagnose(ctx context.Context) []ProgramRun {
 	l.capturePhase = "open@detect"
 	defer func() { l.capturePhase = "" }()
 	return l.diagnose(ctx, l.findings)
-}
-
-// RestoreInitialMatches prepares plans from the dispatch capture when the
-// responder loop is recreated after the initial diagnosis was persisted.
-func (l *ResponderLoop) RestoreInitialMatches(ctx context.Context) error {
-	l.operationMu.Lock()
-	defer l.operationMu.Unlock()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.CorpusSessionRoot == "" || l.Programs == nil {
-		return nil
-	}
-	matched := make([]ProgramRun, 0)
-	for _, run := range l.Request.InitialProgramRuns {
-		if run.Verdict.Result == program.Match {
-			matched = append(matched, run)
-		}
-	}
-	if len(matched) == 0 {
-		return nil
-	}
-	dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
-	if err != nil {
-		return fmt.Errorf("read dispatch snapshot: %w", err)
-	}
-	var snapshot sdktest.Snapshot
-	if err := json.Unmarshal(data, &snapshot); err != nil {
-		return fmt.Errorf("decode dispatch snapshot: %w", err)
-	}
-	data, err = os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
-	if err != nil {
-		return fmt.Errorf("read dispatch recordings: %w", err)
-	}
-	var calls []sdktest.PrimitiveCall
-	if err := json.Unmarshal(data, &calls); err != nil {
-		return fmt.Errorf("decode dispatch recordings: %w", err)
-	}
-	for _, run := range matched {
-		view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
-		l.rememberMatchedViews(ctx, []ProgramRun{run}, view)
-	}
-	return nil
 }
 
 // RetryInitialDiagnose refreshes inconclusive initial verdicts after the cluster settles.
@@ -373,15 +334,27 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
 			break
 		}
-		executor := l.applicationExecutor(request.ApplicationID)
+		executor := l.Executor
 		reconciled, err := executor.Reconcile(ctx, application)
 		if err != nil {
 			response.Error = err.Error()
 			break
 		}
 		application = reconciled
-		if err := executor.Rollback(ctx, application); err != nil {
-			response.Error = err.Error()
+		rollbackErr := executor.rollback(ctx, &application)
+		if rollbackErr != nil {
+			application.RollbackError = rollbackErr.Error()
+		}
+		l.applications[request.ApplicationID] = application
+		for i := range l.applicationsLog {
+			if l.applicationsLog[i].ID == request.ApplicationID {
+				l.applicationsLog[i].Result = application
+				l.applicationsLog[i].RolledBack = application.RolledBack
+				l.applicationsLog[i].RollbackError = application.RollbackError
+			}
+		}
+		if rollbackErr != nil {
+			response.Error = rollbackErr.Error()
 			break
 		}
 		l.verify(ctx, nil, &response)
@@ -598,7 +571,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		response.Error = err.Error()
 		return
 	}
-	id := fmt.Sprintf("plan-%d", len(l.plans)+1)
+	id := fmt.Sprintf("plan-%s-%d", l.sessionID, len(l.plans)+1)
 	l.plans[id] = selectedPlan{id: id, programID: request.ProgramID, bindings: cloneProgramBindings(request.Bindings), plan: plan}
 	response.PlanID, response.Patches = id, preview.Patches
 	response.Summary = fmt.Sprintf("%s: %d dry-run patches", id, len(preview.Patches))
@@ -639,7 +612,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	l.batches++
 	started := time.Now().UTC()
-	id := fmt.Sprintf("application-%d", len(l.applicationsLog)+1)
+	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)
 	programIDs := make([]string, 0, len(selected))
 	for _, plan := range selected {
 		programIDs = append(programIDs, plan.programID)
@@ -650,28 +623,50 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		response.Error = err.Error()
 		return
 	}
-	executor := l.applicationExecutor(id)
+	executor := l.Executor
 	result, err := executor.Apply(ctx, l.Request, batch, false)
 	completed := time.Now().UTC()
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
 		response.ApplicationID = id
 	}
+	if err != nil {
+		response.Error = err.Error()
+	}
+	l.verify(ctx, selected, response)
+	if result.Applied && (err != nil || !result.VerificationPassed || !response.Healthy || !boundPlansNoMatch(selected, response.ProgramRuns)) {
+		result.VerificationPassed = false
+		if response.Error == "" {
+			response.Error = "plan verification failed"
+		}
+		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		rollbackErr := executor.rollback(recoveryCtx, &result)
+		cancel()
+		if rollbackErr != nil {
+			result.RollbackError = rollbackErr.Error()
+			response.Error += ": rollback failed: " + rollbackErr.Error()
+			for _, id := range programIDs {
+				l.addFailureSignal("rollback_failure:" + id)
+			}
+		}
+	}
+	if response.Error != "" {
+		response.Healthy = false
+	}
 	entry.Result = result
 	entry.CompletedAt = completed
 	entry.Pending = result.PendingAction != nil || result.RollingBack
 	entry.RolledBack = result.RolledBack
 	entry.RollbackError = result.RollbackError
-	if err != nil {
-		entry.Error = err.Error()
-		response.Error = err.Error()
+	entry.Error = response.Error
+	if result.Applied || result.PendingAction != nil {
+		l.applications[id] = result
 	}
 	for i := range l.applicationsLog {
 		if l.applicationsLog[i].ID == id {
 			l.applicationsLog[i] = entry
 		}
 	}
-	l.verify(ctx, selected, response)
 	if response.Error == "" {
 		response.Summary = fmt.Sprintf("%s applied; %d open findings", id, len(response.Findings))
 	}
@@ -779,4 +774,24 @@ func (l *ResponderLoop) addFailureSignal(signal string) {
 		}
 	}
 	l.failureSignals = append(l.failureSignals, signal)
+}
+
+// Every selected binding needs a conclusive post-apply diagnosis.
+func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
+	for _, plan := range selected {
+		clear := false
+		for _, run := range runs {
+			if run.ProgramID != plan.programID || !maps.Equal(run.Bindings, plan.bindings) {
+				continue
+			}
+			if run.Verdict.Result != program.NoMatch {
+				return false
+			}
+			clear = true
+		}
+		if !clear {
+			return false
+		}
+	}
+	return true
 }

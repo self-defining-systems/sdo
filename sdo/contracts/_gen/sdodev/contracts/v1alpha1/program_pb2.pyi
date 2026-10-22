@@ -159,7 +159,7 @@ class ProgramRun(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "pre_images", "actions_applied", "patches", "started_at", "completed_at", "verification_completed", "verification_passed")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -170,9 +170,7 @@ class PlanApplication(_message.Message):
     DURATION_FIELD_NUMBER: _ClassVar[int]
     ROLLED_BACK_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_ERROR_FIELD_NUMBER: _ClassVar[int]
-    PRE_IMAGES_FIELD_NUMBER: _ClassVar[int]
     ACTIONS_APPLIED_FIELD_NUMBER: _ClassVar[int]
-    PATCHES_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     VERIFICATION_COMPLETED_FIELD_NUMBER: _ClassVar[int]
@@ -187,14 +185,12 @@ class PlanApplication(_message.Message):
     duration: _duration_pb2.Duration
     rolled_back: bool
     rollback_error: str
-    pre_images: _containers.RepeatedCompositeFieldContainer[PlanPreImage]
     actions_applied: _containers.RepeatedCompositeFieldContainer[Action]
-    patches: _containers.RepeatedCompositeFieldContainer[PlanPatch]
     started_at: _timestamp_pb2.Timestamp
     completed_at: _timestamp_pb2.Timestamp
     verification_completed: bool
     verification_passed: bool
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., pre_images: _Optional[_Iterable[_Union[PlanPreImage, _Mapping]]] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., patches: _Optional[_Iterable[_Union[PlanPatch, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ...) -> None: ...
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")
@@ -213,17 +209,9 @@ class ProgramToolCall(_message.Message):
     def __init__(self, command: _Optional[str] = ..., at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., request_json: _Optional[str] = ..., response_json: _Optional[str] = ..., error: _Optional[str] = ..., summary: _Optional[str] = ...) -> None: ...
 
 class PlanPreImage(_message.Message):
-    __slots__ = ("ref", "object")
-    REF_FIELD_NUMBER: _ClassVar[int]
-    OBJECT_FIELD_NUMBER: _ClassVar[int]
-    ref: _common_pb2.ObjectRef
-    object: _struct_pb2.Struct
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., object: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    __slots__ = ()
+    def __init__(self) -> None: ...
 
 class PlanPatch(_message.Message):
-    __slots__ = ("ref", "patch_json")
-    REF_FIELD_NUMBER: _ClassVar[int]
-    PATCH_JSON_FIELD_NUMBER: _ClassVar[int]
-    ref: _common_pb2.ObjectRef
-    patch_json: str
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., patch_json: _Optional[str] = ...) -> None: ...
+    __slots__ = ()
+    def __init__(self) -> None: ...

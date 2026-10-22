@@ -918,21 +918,18 @@ func (x *ProgramRun) GetBindingSource() string {
 }
 
 type PlanApplication struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Plan          *Plan                  `protobuf:"bytes,1,opt,name=plan,proto3" json:"plan,omitempty"`
-	Applied       bool                   `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
-	DryRun        bool                   `protobuf:"varint,3,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
-	Verification  *Verdict               `protobuf:"bytes,4,opt,name=verification,proto3" json:"verification,omitempty"`
-	ApplicationId string                 `protobuf:"bytes,5,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
-	ProgramIds    []string               `protobuf:"bytes,6,rep,name=program_ids,json=programIds,proto3" json:"program_ids,omitempty"`
-	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
-	Duration      *durationpb.Duration   `protobuf:"bytes,8,opt,name=duration,proto3" json:"duration,omitempty"`
-	RolledBack    bool                   `protobuf:"varint,9,opt,name=rolled_back,json=rolledBack,proto3" json:"rolled_back,omitempty"`
-	RollbackError string                 `protobuf:"bytes,10,opt,name=rollback_error,json=rollbackError,proto3" json:"rollback_error,omitempty"`
-	// Controller-owned recovery evidence, retained across restarts.
-	PreImages             []*PlanPreImage        `protobuf:"bytes,11,rep,name=pre_images,json=preImages,proto3" json:"pre_images,omitempty"`
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Plan                  *Plan                  `protobuf:"bytes,1,opt,name=plan,proto3" json:"plan,omitempty"`
+	Applied               bool                   `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
+	DryRun                bool                   `protobuf:"varint,3,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
+	Verification          *Verdict               `protobuf:"bytes,4,opt,name=verification,proto3" json:"verification,omitempty"`
+	ApplicationId         string                 `protobuf:"bytes,5,opt,name=application_id,json=applicationId,proto3" json:"application_id,omitempty"`
+	ProgramIds            []string               `protobuf:"bytes,6,rep,name=program_ids,json=programIds,proto3" json:"program_ids,omitempty"`
+	Error                 string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	Duration              *durationpb.Duration   `protobuf:"bytes,8,opt,name=duration,proto3" json:"duration,omitempty"`
+	RolledBack            bool                   `protobuf:"varint,9,opt,name=rolled_back,json=rolledBack,proto3" json:"rolled_back,omitempty"`
+	RollbackError         string                 `protobuf:"bytes,10,opt,name=rollback_error,json=rollbackError,proto3" json:"rollback_error,omitempty"`
 	ActionsApplied        []*Action              `protobuf:"bytes,12,rep,name=actions_applied,json=actionsApplied,proto3" json:"actions_applied,omitempty"`
-	Patches               []*PlanPatch           `protobuf:"bytes,13,rep,name=patches,proto3" json:"patches,omitempty"`
 	StartedAt             *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	CompletedAt           *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
 	VerificationCompleted bool                   `protobuf:"varint,16,opt,name=verification_completed,json=verificationCompleted,proto3" json:"verification_completed,omitempty"`
@@ -1041,23 +1038,9 @@ func (x *PlanApplication) GetRollbackError() string {
 	return ""
 }
 
-func (x *PlanApplication) GetPreImages() []*PlanPreImage {
-	if x != nil {
-		return x.PreImages
-	}
-	return nil
-}
-
 func (x *PlanApplication) GetActionsApplied() []*Action {
 	if x != nil {
 		return x.ActionsApplied
-	}
-	return nil
-}
-
-func (x *PlanApplication) GetPatches() []*PlanPatch {
-	if x != nil {
-		return x.Patches
 	}
 	return nil
 }
@@ -1176,8 +1159,6 @@ func (x *ProgramToolCall) GetSummary() string {
 
 type PlanPreImage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Object        *structpb.Struct       `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1212,24 +1193,8 @@ func (*PlanPreImage) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{15}
 }
 
-func (x *PlanPreImage) GetRef() *ObjectRef {
-	if x != nil {
-		return x.Ref
-	}
-	return nil
-}
-
-func (x *PlanPreImage) GetObject() *structpb.Struct {
-	if x != nil {
-		return x.Object
-	}
-	return nil
-}
-
 type PlanPatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	PatchJson     string                 `protobuf:"bytes,2,opt,name=patch_json,json=patchJson,proto3" json:"patch_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1262,20 +1227,6 @@ func (x *PlanPatch) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PlanPatch.ProtoReflect.Descriptor instead.
 func (*PlanPatch) Descriptor() ([]byte, []int) {
 	return file_sdodev_contracts_v1alpha1_program_proto_rawDescGZIP(), []int{16}
-}
-
-func (x *PlanPatch) GetRef() *ObjectRef {
-	if x != nil {
-		return x.Ref
-	}
-	return nil
-}
-
-func (x *PlanPatch) GetPatchJson() string {
-	if x != nil {
-		return x.PatchJson
-	}
-	return ""
 }
 
 var File_sdodev_contracts_v1alpha1_program_proto protoreflect.FileDescriptor
@@ -1348,7 +1299,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12/\n" +
 	"\x13finding_fingerprint\x18\x06 \x01(\tR\x12findingFingerprint\x12)\n" +
 	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12D\n" +
-	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\"\xdc\x06\n" +
+	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\"\xf5\x05\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -1362,30 +1313,24 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\vrolled_back\x18\t \x01(\bR\n" +
 	"rolledBack\x12%\n" +
 	"\x0erollback_error\x18\n" +
-	" \x01(\tR\rrollbackError\x12F\n" +
-	"\n" +
-	"pre_images\x18\v \x03(\v2'.sdodev.contracts.v1alpha1.PlanPreImageR\tpreImages\x12J\n" +
-	"\x0factions_applied\x18\f \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\x0eactionsApplied\x12>\n" +
-	"\apatches\x18\r \x03(\v2$.sdodev.contracts.v1alpha1.PlanPatchR\apatches\x129\n" +
+	" \x01(\tR\rrollbackError\x12J\n" +
+	"\x0factions_applied\x18\f \x03(\v2!.sdodev.contracts.v1alpha1.ActionR\x0eactionsApplied\x129\n" +
 	"\n" +
 	"started_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12=\n" +
 	"\fcompleted_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x125\n" +
 	"\x16verification_completed\x18\x10 \x01(\bR\x15verificationCompleted\x12/\n" +
-	"\x13verification_passed\x18\x11 \x01(\bR\x12verificationPassed\"\xcf\x01\n" +
+	"\x13verification_passed\x18\x11 \x01(\bR\x12verificationPassedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
+	"pre_imagesR\apatches\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12!\n" +
 	"\frequest_json\x18\x03 \x01(\tR\vrequestJson\x12#\n" +
 	"\rresponse_json\x18\x04 \x01(\tR\fresponseJson\x12\x14\n" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12\x18\n" +
-	"\asummary\x18\x06 \x01(\tR\asummary\"w\n" +
-	"\fPlanPreImage\x126\n" +
-	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12/\n" +
-	"\x06object\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06object\"b\n" +
-	"\tPlanPatch\x126\n" +
-	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x1d\n" +
-	"\n" +
-	"patch_json\x18\x02 \x01(\tR\tpatchJsonB\xff\x01\n" +
+	"\asummary\x18\x06 \x01(\tR\asummary\"'\n" +
+	"\fPlanPreImageJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x03refR\x06object\"(\n" +
+	"\tPlanPatchJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x03refR\n" +
+	"patch_jsonB\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fProgramProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -1425,7 +1370,6 @@ var file_sdodev_contracts_v1alpha1_program_proto_goTypes = []any{
 	(*structpb.Value)(nil),         // 19: google.protobuf.Value
 	(*durationpb.Duration)(nil),    // 20: google.protobuf.Duration
 	(*timestamppb.Timestamp)(nil),  // 21: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),        // 22: google.protobuf.Struct
 }
 var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
 	2,  // 0: sdodev.contracts.v1alpha1.ProgramSpec.params:type_name -> sdodev.contracts.v1alpha1.ParamSpec
@@ -1450,20 +1394,15 @@ var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
 	7,  // 19: sdodev.contracts.v1alpha1.PlanApplication.plan:type_name -> sdodev.contracts.v1alpha1.Plan
 	5,  // 20: sdodev.contracts.v1alpha1.PlanApplication.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
 	20, // 21: sdodev.contracts.v1alpha1.PlanApplication.duration:type_name -> google.protobuf.Duration
-	16, // 22: sdodev.contracts.v1alpha1.PlanApplication.pre_images:type_name -> sdodev.contracts.v1alpha1.PlanPreImage
-	8,  // 23: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
-	17, // 24: sdodev.contracts.v1alpha1.PlanApplication.patches:type_name -> sdodev.contracts.v1alpha1.PlanPatch
-	21, // 25: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
-	21, // 26: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
-	21, // 27: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
-	18, // 28: sdodev.contracts.v1alpha1.PlanPreImage.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	22, // 29: sdodev.contracts.v1alpha1.PlanPreImage.object:type_name -> google.protobuf.Struct
-	18, // 30: sdodev.contracts.v1alpha1.PlanPatch.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	31, // [31:31] is the sub-list for method output_type
-	31, // [31:31] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	8,  // 22: sdodev.contracts.v1alpha1.PlanApplication.actions_applied:type_name -> sdodev.contracts.v1alpha1.Action
+	21, // 23: sdodev.contracts.v1alpha1.PlanApplication.started_at:type_name -> google.protobuf.Timestamp
+	21, // 24: sdodev.contracts.v1alpha1.PlanApplication.completed_at:type_name -> google.protobuf.Timestamp
+	21, // 25: sdodev.contracts.v1alpha1.ProgramToolCall.at:type_name -> google.protobuf.Timestamp
+	26, // [26:26] is the sub-list for method output_type
+	26, // [26:26] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_program_proto_init() }

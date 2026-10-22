@@ -48,7 +48,7 @@ func TestCloneIncidentResultPreservesEmptyCollectionsForBrokerProtocol(t *testin
 	}
 }
 
-func TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence(t *testing.T) {
+func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState(t *testing.T) {
 	ctx := context.Background()
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "api"}
 	before := planObject(ref, map[string]any{"replicas": float64(1)})
@@ -87,18 +87,19 @@ func TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence(t *testing.T
 		t.Fatalf("trust stats after reload: %+v, %v", restoredResponse.Trust, err)
 	}
 	got := result.PlanApplications[0].Result
-	if len(got.PreImages) != 1 || len(got.ActionsApplied) != 1 {
-		t.Fatalf("applied plan lost rollback data: %+v", got)
+	if len(got.PreImages) != 0 || len(got.Patches) != 0 || len(got.ActionsApplied) != 1 {
+		t.Fatalf("outcome lost action evidence or retained rollback state: %+v", got)
 	}
 	if _, ok := got.ActionsApplied[0].(program.SetField); !ok {
 		t.Fatalf("applied action type = %T", got.ActionsApplied[0])
 	}
-	if err := executor.Rollback(ctx, got); err != nil {
-		t.Fatalf("rollback after reload: %v", err)
+	if err := executor.Rollback(ctx, got); err == nil {
+		t.Fatal("durable outcome authorized rollback")
 	}
-	if !reflect.DeepEqual(client.objects[ref].Object, before.Object) {
-		t.Fatalf("rollback restored %+v, want %+v", client.objects[ref].Object, before.Object)
+	if value, _ := testField(client.objects[ref], "spec.replicas"); value != float64(2) {
+		t.Fatal("durable outcome undid fix")
 	}
+
 }
 
 // A clean closing view has no changes. The broker's schema requires a list,
@@ -498,5 +499,39 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 	request := awaitRequest(t, restoredDispatcher.requests)
 	if len(request.Findings) != 1 || request.Findings[0].Fingerprint != "secondary-fault" {
 		t.Fatalf("deferred finding was not delivered once: %#v", request.Findings)
+	}
+}
+
+func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	action := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080, Reason: "restore port"}
+	result := completedResult("legacy-state")
+	result.PlanApplications = []RecordedPlanApplication{{ID: "old-application", ProgramIDs: []string{"targetport"}, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}}}}
+	result.ProgramFailureSignals = []string{"fast_path_failure:targetport@original-revision"}
+	payload, err := encodeControllerState(RuntimeState{Version: RuntimeStateVersion, IncidentResult: &result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(payload, &document); err != nil {
+		t.Fatal(err)
+	}
+	application := document["incident_result"].(map[string]any)["plan_applications"].([]any)[0].(map[string]any)
+	application["pre_images"] = []any{map[string]any{"ref": map[string]any{"name": "retired"}, "object": map[string]any{"spec": map[string]any{"replicas": 9}}}}
+	application["patches"] = []any{map[string]any{"patch_json": "retired mutation"}}
+	payload, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := decodeControllerState(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loaded.IncidentResult.PlanApplications[0].Result
+	if len(got.PreImages) != 0 || len(got.Patches) != 0 || len(got.ActionsApplied) != 1 || !got.Applied {
+		t.Fatalf("retired fields corrupted outcome facts: %+v", got)
+	}
+	if !reflect.DeepEqual(loaded.IncidentResult.ProgramFailureSignals, result.ProgramFailureSignals) {
+		t.Fatal("lost revision-bound failure")
 	}
 }

@@ -7,7 +7,8 @@ import (
 
 // restoreToolState uses the same CAS ConfigMap state edge as the controller.
 // A separate incident-scoped state document avoids racing observation-state
-// saves while a responder Job uses tools. It is restored before serving tools.
+// saves while a responder Job uses tools. Only budgets and failure outcomes
+// are restored before serving tools.
 func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
 	if d.Client == nil {
 		return nil
@@ -25,15 +26,10 @@ func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request I
 	loop.saveToolState = func(ctx context.Context, payload []byte) error {
 		next, err := store.Save(ctx, RuntimeState{Version: RuntimeStateVersion, ResponderToolStateJSON: payload}, revision)
 		if err != nil {
-			return fmt.Errorf("save incident tool journal: %w", err)
+			return fmt.Errorf("save incident attempt facts: %w", err)
 		}
 		revision = next
 		return nil
 	}
-	// A resolved marker can carry finalization missing from an older journal.
-	// Consult it before interpreting Pending as authority to undo a mutation.
-	if err := d.restoreFastPathResolution(ctx, request, loop); err != nil {
-		return err
-	}
-	return loop.reconcileApplications(ctx)
+	return nil
 }

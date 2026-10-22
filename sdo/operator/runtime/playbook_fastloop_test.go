@@ -347,11 +347,11 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			state := RuntimeState{Version: RuntimeStateVersion, IncidentResult: &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: id, Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}, PlanApplications: loop.PlanApplications()}}
 			store := NewConfigMapStateStore(client, "app", "controller-state")
 			if _, err := store.Save(ctx, state, ""); err != nil {
-				t.Fatalf("persist plan pre-images: %v", err)
+				t.Fatalf("persist plan outcome: %v", err)
 			}
 			reloaded, _, err := NewConfigMapStateStore(client, "app", "controller-state").Load(ctx)
-			if err != nil || len(reloaded.IncidentResult.PlanApplications[0].Result.PreImages) != 2 {
-				t.Fatalf("reload plan pre-images: %+v %v", reloaded.IncidentResult, err)
+			if err != nil || len(reloaded.IncidentResult.PlanApplications[0].Result.ActionsApplied) != 2 || len(reloaded.IncidentResult.PlanApplications[0].Result.PreImages) != 0 {
+				t.Fatalf("reload plan outcome: %+v %v", reloaded.IncidentResult, err)
 			}
 		}
 		verified := fastloopTool(t, tools, "verify")

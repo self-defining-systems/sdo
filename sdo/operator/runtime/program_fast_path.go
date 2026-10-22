@@ -235,9 +235,9 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		attempt.Summary = err.Error()
 		return attempt
 	}
-	preview, prepareErr := l.Executor.Apply(ctx, l.Request, batch, true)
+	_, prepareErr := l.Executor.Apply(ctx, l.Request, batch, true)
 	if prepareErr == nil && l.BeforeFastPathApply != nil {
-		prepareErr = l.BeforeFastPathApply(ctx, attempt.Programs, preview.PreImages)
+		prepareErr = l.BeforeFastPathApply(ctx, selected)
 	}
 	if prepareErr != nil {
 		attempt.Summary = fmt.Sprintf("trusted programs %s attempted; plan preparation failed: %v", strings.Join(attempt.Programs, ", "), prepareErr)
@@ -247,7 +247,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
 		return attempt
 	}
-	executor := l.applicationExecutor("fast-path-1")
+	executor := l.Executor
 	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
 	response := ToolResponse{}
 	if result.Applied {
@@ -257,18 +257,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	attempt.Verification = response
 	attempt.Resolved = applyErr == nil && result.VerificationPassed && response.Healthy
 	if attempt.Resolved {
-		verified := map[string]bool{}
-		for _, state := range response.DetectorStates {
-			if state.Status == DetectorEvaluationClear {
-				verified[state.DetectorID] = true
-			}
-		}
-		for _, finding := range attempt.Findings {
-			if !strings.HasPrefix(finding.DetectorID, "drift.") && !verified[finding.DetectorID] {
-				attempt.Resolved = false
-				break
-			}
-		}
+		attempt.Resolved = boundPlansNoMatch(selectedPlans, response.ProgramRuns) && fastPathFindingsVerified(attempt.Findings, response.DetectorStates)
 	}
 	if attempt.Resolved {
 		for _, run := range response.ProgramRuns {
@@ -286,7 +275,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 			l.addFailureSignal("fast_path_failure:" + id)
 		}
 		if len(result.ActionsApplied) > 0 {
-			if rollbackErr := executor.Rollback(ctx, result); rollbackErr != nil {
+			if rollbackErr := executor.rollback(ctx, &result); rollbackErr != nil {
 				attempt.RollbackErr = rollbackErr.Error()
 			} else {
 				attempt.RolledBack = true
@@ -337,4 +326,19 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	l.calls = append(l.calls, ToolCall{Command: "apply", At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: attempt.Summary})
 	l.calls = append(l.calls, ToolCall{Command: "fast-path", At: time.Now().UTC(), Summary: boundedToolText(attempt.Summary)})
 	return attempt
+}
+
+func fastPathFindingsVerified(findings []sdk.Finding, states []DetectorEvaluation) bool {
+	verified := map[string]bool{}
+	for _, state := range states {
+		if state.Status == DetectorEvaluationClear {
+			verified[state.DetectorID] = true
+		}
+	}
+	for _, finding := range findings {
+		if !strings.HasPrefix(finding.DetectorID, "drift.") && !verified[finding.DetectorID] {
+			return false
+		}
+	}
+	return true
 }

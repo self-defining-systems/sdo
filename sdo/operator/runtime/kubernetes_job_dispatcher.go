@@ -178,9 +178,6 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			if err := d.restoreToolState(ctx, request, loop); err != nil {
 				return IncidentResult{}, fmt.Errorf("restore responder tool state: %w", err)
 			}
-			if err := loop.RestoreInitialMatches(ctx); err != nil {
-				return IncidentResult{}, fmt.Errorf("restore dispatch program view: %w", err)
-			}
 		}
 	}
 	if err := d.Registry.ValidateTask(task); err != nil {

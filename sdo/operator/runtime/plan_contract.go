@@ -1,9 +1,7 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -12,7 +10,7 @@ import (
 )
 
 // Proto projects an application onto the current PlanApplication contract.
-// Recovery pre-images, applied actions and patches are controller-authored evidence.
+// Only completed action and verification evidence crosses the durable boundary.
 func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	if err := r.Plan.Validate(); err != nil {
 		return nil, err
@@ -26,25 +24,12 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		plan.Actions = append(plan.Actions, converted)
 	}
 	application := &contracts.PlanApplication{Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed}
-	for _, image := range r.PreImages {
-		if image.Object == nil {
-			continue
-		}
-		object, err := structpb.NewStruct(image.Object.Object)
-		if err != nil {
-			return nil, err
-		}
-		application.PreImages = append(application.PreImages, &contracts.PlanPreImage{Ref: objectRefContract(image.Ref), Object: object})
-	}
 	for _, action := range r.ActionsApplied {
 		converted, err := planActionProto(action)
 		if err != nil {
 			return nil, err
 		}
 		application.ActionsApplied = append(application.ActionsApplied, converted)
-	}
-	for _, patch := range r.Patches {
-		application.Patches = append(application.Patches, &contracts.PlanPatch{Ref: objectRefContract(patch.Ref), PatchJson: string(patch.Patch)})
 	}
 	if r.Applied {
 		verdict := contracts.Verdict_RESULT_UNKNOWN
@@ -73,14 +58,6 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 		if decoded := planActionState(action); decoded != nil {
 			result.ActionsApplied = append(result.ActionsApplied, decoded)
 		}
-	}
-	for _, image := range application.GetPreImages() {
-		if image.GetObject() != nil {
-			result.PreImages = append(result.PreImages, PlanPreImage{Ref: objectRefState(image.GetRef()), Object: &unstructured.Unstructured{Object: image.GetObject().AsMap()}})
-		}
-	}
-	for _, patch := range application.GetPatches() {
-		result.Patches = append(result.Patches, PlanPatch{Ref: objectRefState(patch.GetRef()), Patch: json.RawMessage(patch.GetPatchJson())})
 	}
 	result.VerificationCompleted = application.GetVerificationCompleted() || application.GetVerification() != nil
 	result.VerificationPassed = application.GetVerificationPassed() || application.GetVerification().GetResult() == contracts.Verdict_RESULT_NO_MATCH

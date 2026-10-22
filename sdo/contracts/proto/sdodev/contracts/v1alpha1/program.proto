@@ -119,10 +119,10 @@ message PlanApplication {
   google.protobuf.Duration duration = 8;
   bool rolled_back = 9;
   string rollback_error = 10;
-  // Controller-owned recovery evidence, retained across restarts.
-  repeated PlanPreImage pre_images = 11;
+  // Applied actions are outcome evidence, never a restart mutation journal.
+  reserved 11, 13;
+  reserved "pre_images", "patches";
   repeated Action actions_applied = 12;
-  repeated PlanPatch patches = 13;
   google.protobuf.Timestamp started_at = 14;
   google.protobuf.Timestamp completed_at = 15;
   bool verification_completed = 16;
@@ -139,10 +139,10 @@ message ProgramToolCall {
 }
 
 message PlanPreImage {
-  ObjectRef ref = 1;
-  google.protobuf.Struct object = 2;
+  reserved 1, 2;
+  reserved "ref", "object";
 }
 message PlanPatch {
-  ObjectRef ref = 1;
-  string patch_json = 2;
+  reserved 1, 2;
+  reserved "ref", "patch_json";
 }

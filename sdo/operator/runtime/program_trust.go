@@ -207,7 +207,7 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 
 // fastPathTrustFailureSignals is the durable trust input for a fast-path
 // marker. Persist its JSON string array under "trust_failure_signals" before
-// application, retain it through failed recovery, and restore it on handoff.
+// application, retain it through failed verification, and restore it on handoff.
 // The revision comes from the accepted trust snapshot, not the source commit
 // of a later responder outcome.
 func (l *ResponderLoop) fastPathTrustFailureSignals(ids []string) []string {
@@ -227,7 +227,7 @@ func (l *ResponderLoop) fastPathTrustFailureSignals(ids []string) []string {
 }
 
 // restoreFastPathTrustFailureSignals restores only trust evidence. The marker
-// owner remains responsible for restoring applications and rollback state.
+// owner rechecks live state without restoring applications or rollback state.
 func (l *ResponderLoop) restoreFastPathTrustFailureSignals(encoded string) error {
 	if encoded == "" {
 		return nil

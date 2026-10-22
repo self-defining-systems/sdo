@@ -69,12 +69,11 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
-	Client     PlanObjectClient
-	Source     PlanSource
-	Rollouts   PlanRollouts
-	Verifier   PlanVerifier
-	Now        func() time.Time
-	Checkpoint func(context.Context, PlanApplicationResult) error
+	Client   PlanObjectClient
+	Source   PlanSource
+	Rollouts PlanRollouts
+	Verifier PlanVerifier
+	Now      func() time.Time
 }
 
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
@@ -101,13 +100,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
 			} else {
 				result.RolledBack = true
-			}
-		}
-		if !dryRun && e.Checkpoint != nil {
-			durableCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-			defer cancel()
-			if checkpointErr := e.Checkpoint(durableCtx, result); checkpointErr != nil {
-				err = errors.Join(err, checkpointErr)
 			}
 		}
 	}()
@@ -187,11 +179,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if dryRun {
 		return result, nil
 	}
-	if e.Checkpoint != nil {
-		if err := e.Checkpoint(ctx, result); err != nil {
-			return result, err
-		}
-	}
 	versions := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	for index, patch := range result.Patches {
 		if previous := versions[patch.Ref]; previous != nil {
@@ -204,22 +191,12 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		}
 		pending := index
 		result.PendingAction = &pending
-		if e.Checkpoint != nil {
-			if err := e.Checkpoint(ctx, result); err != nil {
-				return result, err
-			}
-		}
 		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
 			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
 		result.PendingAction = nil
-		if e.Checkpoint != nil {
-			if err := e.Checkpoint(ctx, result); err != nil {
-				return result, err
-			}
-		}
 		observed, getErr := e.Client.Get(ctx, patch.Ref)
 		if getErr != nil {
 			return result, fmt.Errorf("read applied version: %w", getErr)
@@ -261,20 +238,10 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 	if e.Client == nil {
 		return errors.New("plan object client is required")
 	}
-	hydrated, err := hydratePlanPatches(*application)
-	if err != nil {
-		return err
-	}
-	*application = hydrated
 	application.RollingBack = true
-	if e.Checkpoint != nil {
-		if err := e.Checkpoint(ctx, *application); err != nil {
-			return err
-		}
-	}
 	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
 		if index >= len(application.Patches) {
-			return errors.New("rollback requires journaled field writes")
+			return errors.New("rollback requires in-process field writes")
 		}
 		patch := application.Patches[index]
 		if patch.Before == nil || patch.After == nil {
@@ -310,11 +277,6 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		}
 		if string(delta) == "{}" {
 			application.RollbackCompleted++
-			if e.Checkpoint != nil {
-				if err := e.Checkpoint(ctx, *application); err != nil {
-					return err
-				}
-			}
 			continue
 		}
 		delta, err = conditionalPlanPatch(delta, current)
@@ -325,18 +287,10 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 			return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
 		}
 		application.RollbackCompleted++
-		if e.Checkpoint != nil {
-			if err := e.Checkpoint(ctx, *application); err != nil {
-				return err
-			}
-		}
 	}
 	application.RollingBack = false
 	application.RolledBack = true
 	application.RollbackError = ""
-	if e.Checkpoint != nil {
-		return e.Checkpoint(ctx, *application)
-	}
 	return nil
 }
 
