@@ -116,7 +116,8 @@ func nativeClosure(workspace IncidentWorkspace) IncidentClosure {
 			SchemaVersion: ProtocolSchemaVersion, IncidentID: workspace.IncidentID, Status: IncidentCompleted,
 			Timing: TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
 		},
-		DetectedAt: now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
+		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
+		DetectedAt:          now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
 	}
 }
 
@@ -522,29 +523,6 @@ func TestNativeBrokerCompletesAfterDeterministicReflectionRejectionAndRunsNextIn
 	}
 }
 
-func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
-	t.Parallel()
-	target := nativeRepository(t)
-	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	native := NativeIncidentBroker{Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger")}
-	w, err := native.PrepareIncident(context.Background(), "inc-superseded")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := native.ReleaseIncident(context.Background(), "inc-superseded"); err != nil {
-		t.Fatal(err)
-	}
-	if err := native.ReleaseIncident(context.Background(), "inc-superseded"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(w.Worktree); !os.IsNotExist(err) {
-		t.Fatalf("superseded checkout remains: %v", err)
-	}
-}
-
 func TestNativeBrokerRecordedActionsDoNotCreateEmptyProposalCommit(t *testing.T) {
 	t.Parallel()
 	target := nativeRepository(t)
@@ -573,6 +551,38 @@ func TestNativeBrokerRecordedActionsDoNotCreateEmptyProposalCommit(t *testing.T)
 	}
 	if nativeGit(t, target, "rev-list", "--count", "HEAD") != "2" {
 		t.Fatal("recorded action path created an extra empty commit")
+	}
+}
+
+func TestNativeBrokerNeverPublishesRepairOfTimedOutClosure(t *testing.T) {
+	t.Parallel()
+	target := nativeRepository(t)
+	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{
+		Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ResponderBackend: "test", ResponderModel: "test",
+		Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+			return testDerivedOutcome(c.Request.IncidentID, "failed", false), nil
+		}),
+	}
+	w, err := native.PrepareIncident(context.Background(), "inc-timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.Worktree, "unverified.txt"), []byte("repair\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closure := nativeClosure(w)
+	closure.Request.RepairPolicy = "commit"
+	closure.FinalDetectorStates = nil
+	receipt, err := native.ProcessClosure(context.Background(), closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ProposalCommit != "" || receipt.OutcomeCommit == "" {
+		t.Fatalf("timed-out closure published its repair: %+v", receipt)
 	}
 }
 

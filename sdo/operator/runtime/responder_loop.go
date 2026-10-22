@@ -514,7 +514,7 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 			}
 		}
 	}
-	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil)
+	drift, _, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline())
 	findings = append(findings, drift...)
 	l.runs = append(l.runs, driftRuns...)
 	l.findings = findings
@@ -774,7 +774,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 		}
 		states = append(states, state)
 	}
-	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline(), nil)
+	drift, driftStates, driftRuns := checkRetainedDrift(ctx, l.Request.Findings, view, l.Programs, l.deadline())
 	findings = append(findings, drift...)
 	states = append(states, driftStates...)
 	response.ProgramRuns = append(response.ProgramRuns, driftRuns...)

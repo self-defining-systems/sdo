@@ -63,57 +63,6 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 	return nil
 }
 
-type ReleaseEffect struct {
-	IncidentID string
-}
-
-// PendingReleaseEffect reports the next stranded worktree to reap. Releases are
-// serialized through releaseInFlight so the pump drives one at a time, matching
-// the single-in-flight shape of the other broker effects.
-func (c *Controller) PendingReleaseEffect() (ReleaseEffect, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.broker == nil || c.releaseInFlight != "" || len(c.pendingReleases) == 0 {
-		return ReleaseEffect{}, false
-	}
-	return ReleaseEffect{IncidentID: c.pendingReleases[0]}, true
-}
-
-func (c *Controller) ExecuteReleaseEffect(ctx context.Context, effect ReleaseEffect) error {
-	actionCtx, cancel, err := c.actionContext(ctx)
-	if err != nil {
-		return err
-	}
-	c.mu.Lock()
-	if c.broker == nil || c.releaseInFlight != "" || len(c.pendingReleases) == 0 ||
-		c.pendingReleases[0] != effect.IncidentID {
-		c.mu.Unlock()
-		cancel()
-		return fmt.Errorf("release effect is not pending")
-	}
-	if err := c.requireDurableLocked("incident worktree release", func(state *contracts.ControllerState) bool {
-		for _, id := range state.PendingReleases {
-			if id == effect.IncidentID {
-				return true
-			}
-		}
-		return false
-	}); err != nil {
-		c.mu.Unlock()
-		cancel()
-		return err
-	}
-	broker := c.broker
-	c.releaseInFlight = effect.IncidentID
-	c.mu.Unlock()
-	go func() {
-		defer cancel()
-		releaseErr := broker.ReleaseIncident(actionCtx, effect.IncidentID)
-		c.releaseResults <- releaseCompletion{incidentID: effect.IncidentID, err: releaseErr}
-	}()
-	return nil
-}
-
 func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -265,43 +214,9 @@ acknowledgments:
 		case completion := <-c.acknowledgmentResults:
 			c.handleAcknowledgmentCompletion(completion)
 		default:
-			goto releases
-		}
-	}
-
-releases:
-	for {
-		select {
-		case completion := <-c.releaseResults:
-			c.handleReleaseCompletion(completion)
-		default:
 			return
 		}
 	}
-}
-
-func (c *Controller) handleReleaseCompletion(completion releaseCompletion) {
-	c.mu.Lock()
-	c.releaseInFlight = ""
-	if completion.err != nil {
-		// Leave the incident queued so a later pass retries it; release is
-		// idempotent so a retry cannot double-reap a live worktree.
-		c.mu.Unlock()
-		c.reportBrokerError("release incident worktree", completion.err)
-		return
-	}
-	kept := c.pendingReleases[:0]
-	for _, id := range c.pendingReleases {
-		if id != completion.incidentID {
-			kept = append(kept, id)
-		}
-	}
-	c.pendingReleases = kept
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseWorktreeReleased, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.incidentID,
-		Reason: "superseded",
-	})
-	c.mu.Unlock()
 }
 
 func (c *Controller) handleWorkspaceCompletion(completion workspaceCompletion) {

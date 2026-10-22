@@ -124,18 +124,6 @@ message ObservedStateChange {
   google.protobuf.Timestamp first_observed_at = 3 [(buf.validate.field).required = true];
 }
 
-message FollowUpContext {
-  string original_incident_id = 1 [(buf.validate.field).string.min_len = 1];
-  string parent_incident_id = 2 [(buf.validate.field).string.min_len = 1];
-  int32 attempt = 3 [(buf.validate.field).int32.gte = 1];
-  int32 max_follow_ups = 4 [(buf.validate.field).int32.gte = 1];
-  string prior_responder_summary = 5;
-  // True when health is quiet and the request's only blockers are unexplained
-  // drift events the earlier responder left without a structured label. The
-  // follow-up asks for those labels and nothing else.
-  bool drift_labels_only = 6;
-}
-
 // Read-only logical memory supplied by the Go storage edge. Agent workers do
 // not parse the accepted repository's physical .sdo layout to find context.
 message MemoryWatch {
@@ -249,7 +237,8 @@ message IncidentRequest {
   string cancellation_token = 16 [(buf.validate.field).string.min_len = 1];
   string repair_policy = 17 [(buf.validate.field).string = {in: ["commit", "recorded-actions"]}];
   StateChanges state_changes = 18;
-  FollowUpContext follow_up = 19;
+  reserved 19;
+  reserved "follow_up";
   OperationalMemorySnapshot memory_snapshot = 20;
   repeated ProgramRun initial_program_runs = 21;
   int32 max_response_loops = 22;
@@ -483,7 +472,7 @@ message IncidentClosure {
   google.protobuf.Timestamp verified_at = 14 [(buf.validate.field).required = true];
   optional google.protobuf.Timestamp health_cleared_at = 15;
   repeated ObservedStateChange observed_state_changes = 16;
-  optional google.protobuf.Timestamp detector_review_required_at = 17;
-  optional string detector_review_reason = 18;
+  reserved 17, 18;
+  reserved "detector_review_required_at", "detector_review_reason";
   repeated string cleaned_helpers = 19;
 }

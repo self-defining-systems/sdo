@@ -65,11 +65,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
@@ -112,9 +110,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	}
 	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
 		return OperateConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
-	}
-	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown < time.Second || *followUpCooldown%time.Second != 0 {
-		return OperateConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive whole seconds")
 	}
 	if !strings.Contains(*buildkitImage, "@sha256:") || *registryPushSecret == *credentialsSecret {
 		return OperateConfig{}, errors.New("operate requires a digest-pinned BuildKit image and separate registry push Secret")
@@ -162,8 +157,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
-			MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
-			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+			MaxResponseLoops: *maxResponseLoops,
+			ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,

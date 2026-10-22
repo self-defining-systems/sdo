@@ -172,23 +172,6 @@ class TestUsageMetrics:
             validate(usage)
 
 
-def test_incident_request_carries_optional_follow_up_context() -> None:
-    payload = _fixture("incident_request.json")
-    assert not json_format.ParseDict(payload, IncidentRequest()).HasField("follow_up")
-    payload["follow_up"] = {
-        "original_incident_id": "inc-1",
-        "parent_incident_id": "inc-2",
-        "attempt": 2,
-        "max_follow_ups": 3,
-        "prior_responder_summary": "fixed geo",
-    }
-
-    request = json_format.ParseDict(payload, IncidentRequest())
-
-    assert request.follow_up.attempt == 2
-    assert parse_json(to_canonical_json(request), IncidentRequest()) == request
-
-
 def test_state_change_source_must_name_exactly_one_object() -> None:
     reply = _model_reply()
     reply["confirmed_root_causes"][0]["evidence"] = [

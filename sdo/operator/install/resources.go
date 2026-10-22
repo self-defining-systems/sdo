@@ -35,32 +35,32 @@ const (
 )
 
 type Config struct {
-	Namespace, ControlNamespace, Application                string
-	ControllerImage, ResponderImage, ValidatorImage         string
-	RepositoryPVC, CredentialsSecret, Model                 string
-	AcceptedCommit                                          string
-	RepairPolicy, AgentProvider                             string
-	ReflectionSession, ReflectionGuidance                   string
-	ForceReflection                                         bool
-	ProgramFastPath                                         bool
-	ProgramTrustThreshold                                   int
-	LateFindings                                            string
-	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
-	HealthyBaseline                                         bool
-	TimeoutSeconds, VerificationTimeoutSeconds              int
-	ControllerDurationSeconds                               int
-	ExitAfterClosure                                        bool
-	NativeCommand, NativeArgs                               []string
-	ExtraControllerArgs                                     []string
-	ResponderEnv                                            []string
-	Credentials                                             map[string][]byte
-	RegistrationConfigMap, RegistrationDirectory            string
-	RegistrationData                                        map[string]string
-	BuildKitImage, RegistryPushSecret                       string
-	RegistryHost                                            string
-	RegistryInsecure                                        bool
-	RegistryPushDockerConfig                                []byte
-	ReuseExisting, WaitForCompletion                        bool
+	Namespace, ControlNamespace, Application        string
+	ControllerImage, ResponderImage, ValidatorImage string
+	RepositoryPVC, CredentialsSecret, Model         string
+	AcceptedCommit                                  string
+	RepairPolicy, AgentProvider                     string
+	ReflectionSession, ReflectionGuidance           string
+	ForceReflection                                 bool
+	ProgramFastPath                                 bool
+	ProgramTrustThreshold                           int
+	LateFindings                                    string
+	MaxResponseLoops                                int
+	HealthyBaseline                                 bool
+	TimeoutSeconds, VerificationTimeoutSeconds      int
+	ControllerDurationSeconds                       int
+	ExitAfterClosure                                bool
+	NativeCommand, NativeArgs                       []string
+	ExtraControllerArgs                             []string
+	ResponderEnv                                    []string
+	Credentials                                     map[string][]byte
+	RegistrationConfigMap, RegistrationDirectory    string
+	RegistrationData                                map[string]string
+	BuildKitImage, RegistryPushSecret               string
+	RegistryHost                                    string
+	RegistryInsecure                                bool
+	RegistryPushDockerConfig                        []byte
+	ReuseExisting, WaitForCompletion                bool
 }
 
 type Plan struct {
@@ -169,8 +169,8 @@ func (c Config) validate() error {
 	if c.LateFindings != "" && c.LateFindings != "off" && c.LateFindings != "pull" {
 		return errors.New("invalid late findings mode")
 	}
-	if c.MaxFollowUps < 0 || c.FollowUpCooldownSeconds < 0 || c.MaxResponseLoops < 0 {
-		return errors.New("follow-up limits cannot be negative")
+	if c.MaxResponseLoops < 0 {
+		return errors.New("max response loops cannot be negative")
 	}
 	if c.ProgramTrustThreshold < 0 {
 		return errors.New("program trust threshold cannot be negative")
@@ -356,9 +356,6 @@ func controllerJob(c Config) *batchv1.Job {
 	args = append(args, "--reflection-guidance", reflectionGuidance(c))
 	if c.ForceReflection {
 		args = append(args, "--force-reflection")
-	}
-	if c.MaxFollowUps > 0 {
-		args = append(args, "--max-follow-ups", fmt.Sprint(c.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(c)))
 	}
 	if c.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))

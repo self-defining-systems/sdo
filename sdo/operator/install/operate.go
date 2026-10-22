@@ -122,9 +122,6 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.ForceReflection {
 		args = append(args, "--force-reflection")
 	}
-	if cfg.MaxFollowUps > 0 {
-		args = append(args, "--max-follow-ups", fmt.Sprint(cfg.MaxFollowUps), "--follow-up-cooldown", fmt.Sprintf("%ds", followUpCooldown(cfg)))
-	}
 	if cfg.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
 	}
@@ -208,12 +205,6 @@ func reflectionGuidance(c Config) string {
 		return c.ReflectionGuidance
 	}
 	return "baseline"
-}
-func followUpCooldown(c Config) int {
-	if c.FollowUpCooldownSeconds > 0 {
-		return c.FollowUpCooldownSeconds
-	}
-	return 30
 }
 
 type OperateResult struct {

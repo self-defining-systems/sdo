@@ -42,10 +42,6 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	copy.SurfacedPlaybooks = append(make([]SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)), request.SurfacedPlaybooks...)
 	copy.RelevantOutcomes = append(make([]PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)), request.RelevantOutcomes...)
 	copy.StateChanges = cloneStateChanges(request.StateChanges)
-	if request.FollowUp != nil {
-		followUp := *request.FollowUp
-		copy.FollowUp = &followUp
-	}
 	return &copy
 }
 
@@ -116,10 +112,6 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 	if closure.HealthClearedAt != nil {
 		clearedAt := *closure.HealthClearedAt
 		copy.HealthClearedAt = &clearedAt
-	}
-	if closure.DetectorReviewRequiredAt != nil {
-		reviewAt := *closure.DetectorReviewRequiredAt
-		copy.DetectorReviewRequiredAt = &reviewAt
 	}
 	return &copy
 }

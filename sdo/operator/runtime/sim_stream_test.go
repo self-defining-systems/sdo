@@ -181,7 +181,6 @@ func (b *simBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (
 }
 
 func (b *simBroker) AcknowledgeClosure(context.Context, ClosureReceipt) error { return nil }
-func (b *simBroker) ReleaseIncident(context.Context, string) error            { return nil }
 
 var simEpoch = newSimClock().now
 
@@ -212,8 +211,7 @@ func newSimWorld(t *testing.T, seed uint64) *simWorld {
 	}}
 	w.broker = &simBroker{world: w, reject: func() bool { return rng.Float64() < rejectP }, failed: map[string]bool{}}
 	w.config = ControllerConfig{Application: "app", Namespace: "app", SourceCommit: "c", DeployedCommit: "c", RepositoryWorktree: "/tmp/app",
-		ResponseTimeout: time.Minute, VerificationTimeout: 3 * time.Minute, FiringThreshold: 1, ClearThreshold: 1, RepairPolicy: "recorded-actions",
-		MaxFollowUps: 2, FollowUpCooldown: 25 * time.Second}
+		ResponseTimeout: time.Minute, VerificationTimeout: 3 * time.Minute, FiringThreshold: 1, ClearThreshold: 1, RepairPolicy: "recorded-actions"}
 	w.client = fake.NewSimpleClientset()
 	w.injectStoreFaults(0.15 * rng.Float64())
 	w.startController()
@@ -294,7 +292,7 @@ func (w *simWorld) onClosed(closure IncidentClosure) {
 	w.mu.Lock()
 	w.closed = append(w.closed, closure)
 	w.mu.Unlock()
-	if faulty := w.faulty(); len(faulty) > 0 {
+	if faulty := w.faulty(); len(faulty) > 0 && len(closure.FinalDetectorStates) > 0 {
 		w.violate("incident %s closed verified while %v still faulty", closure.Request.IncidentID, faulty)
 	}
 }
@@ -382,12 +380,6 @@ func (w *simWorld) drain() {
 			}
 			w.await(func() bool { return len(w.controller.acknowledgmentResults) > 0 })
 			progressed = true
-		} else if effect, ok := w.controller.PendingReleaseEffect(); ok {
-			if err := w.controller.ExecuteReleaseEffect(ctx, effect); err != nil {
-				return
-			}
-			w.await(func() bool { return len(w.controller.releaseResults) > 0 })
-			progressed = true
 		}
 		if !progressed {
 			return
@@ -395,6 +387,18 @@ func (w *simWorld) drain() {
 		w.step()
 	}
 	w.violate("effect pump did not settle in 100 rounds")
+}
+
+// endedUnverified reports a fault that outlived its incident: the verification
+// timeout closed the last incident as failed and nothing is pending.
+func (w *simWorld) endedUnverified() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.controller.IncidentOpen() || len(w.closed) == 0 {
+		return false
+	}
+	_, closing := w.controller.PendingIncidentClosure()
+	return !closing && len(w.closed[len(w.closed)-1].FinalDetectorStates) == 0
 }
 
 func (w *simWorld) idle() bool {
@@ -431,20 +435,13 @@ func TestSimIncidentStream(t *testing.T) {
 			}
 			w.drain()
 			if tick > 650 {
-				if review, _ := w.controller.DetectorReviewStatus(); review || w.idle() {
+				if w.idle() || w.endedUnverified() {
 					break
 				}
 			}
 		}
-		// A responder that never repairs exhausts the follow-ups and leaves the incident in
-		// detector review, which by design waits for health to clear (docs/architecture.md).
-		// Any other non-idle end is a stall.
-		review, reason := w.controller.DetectorReviewStatus()
-		if !w.idle() && !review {
+		if !w.idle() && !w.endedUnverified() {
 			w.violate("stalled: incident open=%t faulty=%v after %d ticks", w.controller.IncidentOpen(), w.faulty(), simStreamMaxTicks)
-		}
-		if review {
-			t.Logf("ended in detector review: %s", reason)
 		}
 		t.Logf("injections=%d closures=%d dispatches=%d restarts=%d storeFaults=%d", injections, len(w.closed), w.responder.calls, w.restarts, w.storeFails)
 		if len(w.violations) > 0 {

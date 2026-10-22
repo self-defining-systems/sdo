@@ -84,13 +84,6 @@ func (b *recordingIncidentBroker) AcknowledgeClosure(_ context.Context, receipt 
 	return nil
 }
 
-func (b *recordingIncidentBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.operations = append(b.operations, "release:"+incidentID)
-	return nil
-}
-
 func (b *recordingIncidentBroker) calls() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

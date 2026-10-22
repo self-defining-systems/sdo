@@ -162,12 +162,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	verificationTimeout := flags.Duration(
 		"verification-timeout",
 		2*time.Minute,
-		"maximum wait for independent health detectors to clear after a response",
-	)
-	maxFollowUps := flags.Int(
-		"max-follow-ups",
-		0,
-		"maximum follow-up responders for health findings that stay active after a response; zero disables follow-ups",
+		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
@@ -177,11 +172,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	programMinDuration := flags.Duration("program-min-duration", DefaultProgramMinDuration, "minimum sustained duration for learned-program firing and clearing")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "settle delay before a trusted-program fast-path attempt")
-	followUpCooldown := flags.Duration(
-		"follow-up-cooldown",
-		30*time.Second,
-		"wait after a response completes before its still-active health findings get a follow-up responder",
-	)
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy: commit or recorded-actions")
 	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
@@ -230,7 +220,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	detectors = scaleDetectors(detectors, timeScale)
 	*diagnosisSettleDelay = scaledDuration(*diagnosisSettleDelay, timeScale)
 	*verificationTimeout = scaledDuration(*verificationTimeout, timeScale)
-	*followUpCooldown = scaledDuration(*followUpCooldown, timeScale)
 	if options.NativeBroker != nil && *forceReflection {
 		options.NativeBroker.ForceReflection = true
 	}
@@ -485,9 +474,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		RepositoryWorktree: resolvedRoot, ResponseTimeout: *responseTimeout,
 		CorpusSessionRoot:   corpusSessionRoot,
 		VerificationTimeout: *verificationTimeout,
-		MaxFollowUps:        *maxFollowUps, FollowUpCooldown: *followUpCooldown,
-		RepairPolicy:    *repairPolicy,
-		FiringThreshold: 2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
+		RepairPolicy:        *repairPolicy,
+		FiringThreshold:     2, ClearThreshold: 2, BatchDebounce: scaledDuration(500*time.Millisecond, timeScale),
 		ConfirmationInterval: scaledDuration(time.Second, timeScale),
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
@@ -540,7 +528,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	iteration := 0
-	reviewGate := &detectorReviewGate{exit: *exitAfterClosure || *duration > 0, log: stderr}
 	encoder := json.NewEncoder(stdout)
 	controller.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	controller.OnClosureFailed = func(failure ClosureFailure) {
@@ -715,9 +702,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	if err := reviewGate.check(controller); err != nil {
-		return err
-	}
 	if err := executePendingEffects(runCtx, controller); err != nil {
 		if runCtx.Err() != nil {
 			return nil
@@ -766,9 +750,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err := completeNativeRolloutHandoffs(ctx, *options.NativeBroker, launchConfig, resolvedRoot); err != nil {
 				return err
 			}
-		}
-		if err := reviewGate.check(controller); err != nil {
-			return err
 		}
 		if err := executePendingEffects(runCtx, controller); err != nil {
 			if runCtx.Err() != nil {
@@ -841,9 +822,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -856,9 +834,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleDispatchCompletion(completion, time.Now().UTC())
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -871,9 +846,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			controller.handleWorkspaceCompletion(completion)
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -947,9 +919,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return err
 			}
 			persistControllerState()
-			if err := reviewGate.check(controller); err != nil {
-				return err
-			}
 			if err := executePendingEffects(runCtx, controller); err != nil {
 				if runCtx.Err() != nil {
 					return nil
@@ -1003,33 +972,6 @@ func attachLifecycleTelemetry(controller *Controller, path string, defaultEnable
 		}
 	}
 	controller.SetLifecycleSink(sink)
-	return nil
-}
-
-// detectorReviewGate ends a one-shot run when health did not clear after the
-// responder. A persistent controller keeps observing instead and reports the
-// review once: its Job restarts it on exit, so exiting crash-looped it past
-// the backoff limit and stopped detection for every later incident. The
-// incident still closes, marked late-verified, if health clears.
-type detectorReviewGate struct {
-	exit     bool
-	log      io.Writer
-	reported string
-}
-
-func (gate *detectorReviewGate) check(controller *Controller) error {
-	required, reason := controller.DetectorReviewStatus()
-	if !required {
-		gate.reported = ""
-		return nil
-	}
-	if gate.exit {
-		return fmt.Errorf("detector review required: %s", reason)
-	}
-	if gate.reported != reason {
-		gate.reported = reason
-		fmt.Fprintf(gate.log, "detector review required (controller keeps observing): %s\n", reason)
-	}
 	return nil
 }
 
@@ -1230,11 +1172,6 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 		}
 		return nil
 	}
-	if release, ok := controller.PendingReleaseEffect(); ok {
-		if err := controller.ExecuteReleaseEffect(ctx, release); err != nil {
-			return fmt.Errorf("execute persisted release effect: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -1269,11 +1206,6 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 			return fmt.Errorf("execute persisted closure acknowledgment effect: %w", err)
 		}
 		return nil
-	}
-	if release, ok := controller.PendingReleaseEffect(); ok {
-		if err := controller.ExecuteReleaseEffect(ctx, release); err != nil {
-			return fmt.Errorf("execute persisted release effect: %w", err)
-		}
 	}
 	return nil
 }

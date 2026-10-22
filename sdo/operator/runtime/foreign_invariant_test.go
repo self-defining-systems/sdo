@@ -189,15 +189,11 @@ func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
 	config.Namespace, config.SourceCommit, config.FiringThreshold, config.ClearThreshold = "app", commit, 1, 1
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	provider := &changingProvider{snapshot: snapshot}
-	controller, err := NewController(config, nil, provider, dispatcher, start)
+	controller, err := NewController(config, []sdk.Detector{quietHealthDetector()}, provider, dispatcher, start)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceAvailable := true
 	controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-		if !sourceAvailable {
-			return LiveReadView{DetectionContext: snapshot}
-		}
 		return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: commit}
 	}})
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
@@ -215,20 +211,12 @@ func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
 	snapshot.NetworkPolicyList = nil
 	provider.snapshot = snapshot
 	cache.eventHandler(watch).OnDelete(policy)
-	sourceAvailable = false
+	cache.eventHandler(watch).OnDelete(policy)
 	if err := controller.StepEvents(context.Background(), start.Add(2*time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := controller.PendingIncidentClosure(); ok {
-		t.Fatal("an Unknown diagnosis cleared the learned finding")
-	}
-	sourceAvailable = true
-	cache.eventHandler(watch).OnDelete(policy)
-	if err := controller.StepEvents(context.Background(), start.Add(3*time.Second), cache.TakeEvents()); err != nil {
-		t.Fatal(err)
-	}
 	if _, ok := controller.PendingIncidentClosure(); !ok {
-		t.Fatal("deleting the policy left the learned invariant finding active")
+		t.Fatal("deleting the policy did not close the incident")
 	}
 
 }

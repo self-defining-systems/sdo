@@ -248,23 +248,18 @@ type LifecycleEvent struct {
 	Application         string                 `protobuf:"bytes,6,opt,name=application,proto3" json:"application,omitempty"`
 	Namespace           string                 `protobuf:"bytes,7,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	IncidentId          string                 `protobuf:"bytes,8,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
-	// Follow-up chain: parent on incident_opened, child on incident_superseded.
-	ParentIncidentId       string                 `protobuf:"bytes,9,opt,name=parent_incident_id,json=parentIncidentId,proto3" json:"parent_incident_id,omitempty"`
-	FollowUpAttempt        int32                  `protobuf:"varint,10,opt,name=follow_up_attempt,json=followUpAttempt,proto3" json:"follow_up_attempt,omitempty"`
-	SupersededBy           string                 `protobuf:"bytes,11,opt,name=superseded_by,json=supersededBy,proto3" json:"superseded_by,omitempty"`
-	Reason                 string                 `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
-	FindingKeys            []string               `protobuf:"bytes,13,rep,name=finding_keys,json=findingKeys,proto3" json:"finding_keys,omitempty"`
-	SurfacedPlaybooks      []string               `protobuf:"bytes,14,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
-	Worktree               string                 `protobuf:"bytes,15,opt,name=worktree,proto3" json:"worktree,omitempty"`
-	BaseCommit             string                 `protobuf:"bytes,16,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
-	ProposalCommit         string                 `protobuf:"bytes,17,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
-	OutcomeCommit          string                 `protobuf:"bytes,18,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
-	ReflectionCommit       string                 `protobuf:"bytes,19,opt,name=reflection_commit,json=reflectionCommit,proto3" json:"reflection_commit,omitempty"`
-	HealthClearedAt        *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=health_cleared_at,json=healthClearedAt,proto3" json:"health_cleared_at,omitempty"`
-	DetectorReviewRequired bool                   `protobuf:"varint,21,opt,name=detector_review_required,json=detectorReviewRequired,proto3" json:"detector_review_required,omitempty"`
-	DispatchError          bool                   `protobuf:"varint,22,opt,name=dispatch_error,json=dispatchError,proto3" json:"dispatch_error,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	Reason              string                 `protobuf:"bytes,12,opt,name=reason,proto3" json:"reason,omitempty"`
+	FindingKeys         []string               `protobuf:"bytes,13,rep,name=finding_keys,json=findingKeys,proto3" json:"finding_keys,omitempty"`
+	SurfacedPlaybooks   []string               `protobuf:"bytes,14,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
+	Worktree            string                 `protobuf:"bytes,15,opt,name=worktree,proto3" json:"worktree,omitempty"`
+	BaseCommit          string                 `protobuf:"bytes,16,opt,name=base_commit,json=baseCommit,proto3" json:"base_commit,omitempty"`
+	ProposalCommit      string                 `protobuf:"bytes,17,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
+	OutcomeCommit       string                 `protobuf:"bytes,18,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
+	ReflectionCommit    string                 `protobuf:"bytes,19,opt,name=reflection_commit,json=reflectionCommit,proto3" json:"reflection_commit,omitempty"`
+	HealthClearedAt     *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=health_cleared_at,json=healthClearedAt,proto3" json:"health_cleared_at,omitempty"`
+	DispatchError       bool                   `protobuf:"varint,22,opt,name=dispatch_error,json=dispatchError,proto3" json:"dispatch_error,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *LifecycleEvent) Reset() {
@@ -353,27 +348,6 @@ func (x *LifecycleEvent) GetIncidentId() string {
 	return ""
 }
 
-func (x *LifecycleEvent) GetParentIncidentId() string {
-	if x != nil {
-		return x.ParentIncidentId
-	}
-	return ""
-}
-
-func (x *LifecycleEvent) GetFollowUpAttempt() int32 {
-	if x != nil {
-		return x.FollowUpAttempt
-	}
-	return 0
-}
-
-func (x *LifecycleEvent) GetSupersededBy() string {
-	if x != nil {
-		return x.SupersededBy
-	}
-	return ""
-}
-
 func (x *LifecycleEvent) GetReason() string {
 	if x != nil {
 		return x.Reason
@@ -437,13 +411,6 @@ func (x *LifecycleEvent) GetHealthClearedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-func (x *LifecycleEvent) GetDetectorReviewRequired() bool {
-	if x != nil {
-		return x.DetectorReviewRequired
-	}
-	return false
-}
-
 func (x *LifecycleEvent) GetDispatchError() bool {
 	if x != nil {
 		return x.DispatchError
@@ -486,24 +453,19 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11dispatch_relation\x18\x15 \x01(\tB3\xbaH0r.R\x0fbefore_dispatchR\x0eafter_dispatchR\vno_incidentR\x10dispatchRelation\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\x81\n" +
-	"\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\xe5\b\n" +
 	"\x0eLifecycleEvent\x12D\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\n" +
 	"\x16sdo.lifecycle-event/v1R\rschemaVersion\x12\"\n" +
-	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\xeb\x01\n" +
-	"\x05event\x18\x03 \x01(\tB\xd4\x01\xbaH\xd0\x01r\xcd\x01R\x0fincident_openedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x13incident_supersededR\x11worktree_releasedR\x18detector_review_requiredR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
+	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\xa9\x01\n" +
+	"\x05event\x18\x03 \x01(\tB\x92\x01\xbaH\x8e\x01r\x8b\x01R\x0fincident_openedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
 	"\vrecorded_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"recordedAt\x12:\n" +
 	"\x14evaluation_iteration\x18\x05 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x13evaluationIteration\x12 \n" +
 	"\vapplication\x18\x06 \x01(\tR\vapplication\x12\x1c\n" +
 	"\tnamespace\x18\a \x01(\tR\tnamespace\x12\x1f\n" +
 	"\vincident_id\x18\b \x01(\tR\n" +
-	"incidentId\x12,\n" +
-	"\x12parent_incident_id\x18\t \x01(\tR\x10parentIncidentId\x123\n" +
-	"\x11follow_up_attempt\x18\n" +
-	" \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x0ffollowUpAttempt\x12#\n" +
-	"\rsuperseded_by\x18\v \x01(\tR\fsupersededBy\x12\x16\n" +
+	"incidentId\x12\x16\n" +
 	"\x06reason\x18\f \x01(\tR\x06reason\x12!\n" +
 	"\ffinding_keys\x18\r \x03(\tR\vfindingKeys\x12M\n" +
 	"\x12surfaced_playbooks\x18\x0e \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11surfacedPlaybooks\x12\x1a\n" +
@@ -513,9 +475,10 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x0fproposal_commit\x18\x11 \x01(\tR\x0eproposalCommit\x12%\n" +
 	"\x0eoutcome_commit\x18\x12 \x01(\tR\routcomeCommit\x12+\n" +
 	"\x11reflection_commit\x18\x13 \x01(\tR\x10reflectionCommit\x12F\n" +
-	"\x11health_cleared_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\x0fhealthClearedAt\x128\n" +
-	"\x18detector_review_required\x18\x15 \x01(\bR\x16detectorReviewRequired\x12%\n" +
-	"\x0edispatch_error\x18\x16 \x01(\bR\rdispatchErrorJ\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1aR\rload_pressureR\x0eload_thresholdR\x0frelease_backlogB\x81\x02\n" +
+	"\x11health_cleared_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\x0fhealthClearedAt\x12%\n" +
+	"\x0edispatch_error\x18\x16 \x01(\bR\rdispatchErrorJ\x04\b\t\x10\n" +
+	"J\x04\b\n" +
+	"\x10\vJ\x04\b\v\x10\fJ\x04\b\x15\x10\x16J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1aR\x12parent_incident_idR\x11follow_up_attemptR\rsuperseded_byR\x18detector_review_requiredR\rload_pressureR\x0eload_thresholdR\x0frelease_backlogB\x81\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0eTelemetryProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

@@ -103,7 +103,6 @@ StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
 ObservedStateChange = messages_pb2.ObservedStateChange
-FollowUpContext = messages_pb2.FollowUpContext
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
@@ -226,7 +225,6 @@ __all__ = [
     "ROOT_CAUSE_EVIDENCE_KINDS",
     "SCHEMA_VERSION",
     "validate",
-    "FollowUpContext",
     "IncidentClosure",
     "IncidentRequest",
     "IncidentResult",

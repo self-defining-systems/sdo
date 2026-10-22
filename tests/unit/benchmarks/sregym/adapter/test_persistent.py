@@ -16,11 +16,11 @@ from benchmarks.sregym.adapter.persistent import (
     ControllerPod,
     ControllerRecord,
     DetectionMissError,
-    DetectorReviewRequiredError,
     PendingIncident,
     PersistentControllerError,
     PersistentState,
     StageInputs,
+    _resolution_timings,
     _wait_for_reflection_drain,
     collect_followup_incident,
     control_namespace_for,
@@ -188,6 +188,7 @@ class FakeOps:
             "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
             "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
             "verified_at": verified.isoformat(),
+            "final_detector_states": [{"detector_id": "health", "status": "clear"}],
         }
         return {"controller_baseline_wait": 3.0, "fault_injection_request": 0.5}
 
@@ -335,10 +336,8 @@ def _inputs(
     receipt_dir: Path | None = None,
     verification_timeout_seconds: float = 30,
     detection_timeout_seconds: float | None = None,
-    stop_on_detector_review: bool = True,
 ) -> StageInputs:
     return StageInputs(
-        stop_on_detector_review=stop_on_detector_review,
         detection_timeout_seconds=detection_timeout_seconds,
         stage_label=stage,
         application=application,
@@ -400,9 +399,7 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
         reflection_session="fresh",
         reflection_guidance="generalize",
         late_findings="pull",
-        max_follow_ups=2,
         max_response_loops=6,
-        follow_up_cooldown_seconds=31,
         healthy_baseline=True,
         controller_namespace="hotel-sdo",
         reuse_existing=True,
@@ -1058,7 +1055,7 @@ def test_a_drained_receipt_is_published_as_soon_as_the_next_stage_drains_it(tmp_
 
 @dataclass
 class _StuckOps(FakeOps):
-    """The responder reported failure, so the controller keeps the incident open for detector review."""
+    """The responder reported failure, so the incident stays unverified until the stage times out."""
 
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
@@ -1074,8 +1071,6 @@ class _StuckOps(FakeOps):
                     "status": "failed",
                     "repair_changes": ["scripted plan stopped: no manifest defines ConfigMap x"],
                 },
-                "detector_review_required": True,
-                "detector_review_reason": "health detectors did not clear within 5m0s after responder completion",
             }
         )
         return {}
@@ -1139,7 +1134,6 @@ def test_an_incident_that_opened_keeps_the_full_verification_budget(tmp_path: Pa
                 "s0",
                 verification_timeout_seconds=60,
                 detection_timeout_seconds=10,
-                stop_on_detector_review=False,
             ),
             ops=ops,
             run_lifecycle=lambda: True,
@@ -1161,14 +1155,13 @@ def test_a_timeout_behind_a_permanently_failed_closure_says_so(tmp_path: Path) -
 
 def test_an_unverified_incident_timeout_names_the_open_incident_and_why_it_is_stuck(tmp_path: Path) -> None:
     with pytest.raises(PersistentControllerError) as raised:
-        _run(tmp_path, _StuckOps(), "s0", [], stop_on_detector_review=False)
+        _run(tmp_path, _StuckOps(), "s0", [])
 
     message = str(raised.value)
     assert "verified no new incident within 30s" in message
     assert "incident-stuck" in message
     assert "responder status 'failed'" in message
     assert "no manifest defines ConfigMap x" in message
-    assert "health detectors did not clear" in message
 
 
 def _stage_keep_running(tmp_path: Path, ops: FakeOps, stage: str = "s0") -> dict[str, Any]:
@@ -1193,6 +1186,7 @@ def _second_closure(ops: FakeOps, incident_id: str = "incident-2") -> None:
         "dispatched_at": (DETECTED + timedelta(seconds=301)).isoformat(),
         "responder_completed_at": (DETECTED + timedelta(seconds=330)).isoformat(),
         "verified_at": (DETECTED + timedelta(seconds=350)).isoformat(),
+        "final_detector_states": [{"detector_id": "health", "status": "clear"}],
     }
 
 
@@ -1267,55 +1261,6 @@ def test_followup_refuses_to_start_while_an_incident_is_undrained(tmp_path: Path
             timeout_seconds=5,
             clock=_clock(ops),
         )
-
-
-def test_stage_fails_fast_when_the_controller_stops_for_detector_review(tmp_path: Path) -> None:
-    ops = FakeOps()
-
-    def inject_then_wedge(control: str, generation: str, inject: Callable[[], None]) -> dict[str, float]:
-        inject()
-        ops.states[control].update(
-            {
-                "incident_open": True,
-                "responder_done": True,
-                "incident_request": {"incident_id": "incident-9"},
-                "detector_review_required": True,
-                "detector_review_reason": "health detectors did not clear within 2m0s after responder completion",
-            }
-        )
-        return {}
-
-    ops.inject_after_resume = inject_then_wedge  # type: ignore[method-assign]
-
-    with pytest.raises(DetectorReviewRequiredError, match="incident-9") as raised:
-        _run(tmp_path, ops, "s0", [])
-
-    assert raised.value.incident_id == "incident-9"
-    assert "did not clear" in raised.value.reason
-
-
-def test_stage_can_wait_out_a_detector_review_stop_when_asked_to(tmp_path: Path) -> None:
-    from dataclasses import replace
-
-    ops = FakeOps()
-
-    def inject_then_wedge(control: str, generation: str, inject: Callable[[], None]) -> dict[str, float]:
-        inject()
-        ops.states[control].update({"incident_open": True, "detector_review_required": True})
-        return {}
-
-    ops.inject_after_resume = inject_then_wedge  # type: ignore[method-assign]
-
-    with pytest.raises(PersistentControllerError, match="verified no new incident") as raised:
-        run_persistent_stage(
-            replace(_inputs(tmp_path, "s0"), stop_on_detector_review=False, verification_timeout_seconds=5),
-            ops=ops,
-            run_lifecycle=lambda: True,
-            inject=lambda: None,
-            clock=_clock(ops),
-        )
-
-    assert not isinstance(raised.value, DetectorReviewRequiredError)
 
 
 def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaunch() -> None:
@@ -1423,3 +1368,16 @@ def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_
     assert rejection["failure"]["incident_id"] == "incident-1"
     _run(tmp_path, ops, "s1", [])
     assert ("fault", "s1") in ops.events
+
+
+def test_a_closure_cut_by_the_verification_timeout_reports_no_verified_timings() -> None:
+    closure = {
+        "detected_at": DETECTED.isoformat(),
+        "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
+        "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
+        "verified_at": (DETECTED + timedelta(seconds=155)).isoformat(),
+    }
+
+    assert _resolution_timings(closure) == {}
+    closure["final_detector_states"] = [{"detector_id": "health", "status": "clear"}]
+    assert _resolution_timings(closure)["incident_resolution_seconds"] == 155.0

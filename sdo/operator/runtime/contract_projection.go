@@ -218,13 +218,6 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 			SourceCommit: prior.SourceCommit, ExactSourceMatch: prior.ExactSourceMatch,
 		})
 	}
-	if request.FollowUp != nil {
-		result.FollowUp = &contracts.FollowUpContext{
-			OriginalIncidentId: request.FollowUp.OriginalIncidentID, ParentIncidentId: request.FollowUp.ParentIncidentID,
-			Attempt: int32(request.FollowUp.Attempt), MaxFollowUps: int32(request.FollowUp.MaxFollowUps),
-			PriorResponderSummary: request.FollowUp.PriorSummary, DriftLabelsOnly: request.FollowUp.DriftLabelsOnly,
-		}
-	}
 	return result, nil
 }
 
@@ -413,9 +406,8 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		FinalStateChanges:                   stateChangesContract(closure.FinalStateChanges),
 		DetectedAt:                          contractTimestamp(closure.DetectedAt), DispatchedAt: contractTimestamp(closure.DispatchedAt),
 		ResponderCompletedAt: contractTimestamp(closure.ResponderCompletedAt), VerifiedAt: contractTimestamp(closure.VerifiedAt),
-		HealthClearedAt:          optionalContractTimestamp(closure.HealthClearedAt),
-		DetectorReviewRequiredAt: optionalContractTimestamp(closure.DetectorReviewRequiredAt),
-		CleanedHelpers:           append([]string(nil), closure.CleanedHelpers...),
+		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt),
+		CleanedHelpers:  append([]string(nil), closure.CleanedHelpers...),
 	}
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
@@ -425,9 +417,6 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	}
 	if closure.DispatchError != "" {
 		message.DispatchError = &closure.DispatchError
-	}
-	if closure.DetectorReviewReason != "" {
-		message.DetectorReviewReason = &closure.DetectorReviewReason
 	}
 	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)
 	message.ObservedStateChanges = observedStateChangesContract(closure.ObservedStateChanges)
@@ -535,13 +524,6 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 			SourceCommit:          prior.GetSourceCommit(), ExactSourceMatch: prior.GetExactSourceMatch(),
 		})
 	}
-	if followUp := message.GetFollowUp(); followUp != nil {
-		result.FollowUp = &FollowUpContext{
-			OriginalIncidentID: followUp.GetOriginalIncidentId(), ParentIncidentID: followUp.GetParentIncidentId(),
-			Attempt: int(followUp.GetAttempt()), MaxFollowUps: int(followUp.GetMaxFollowUps()),
-			PriorSummary: followUp.GetPriorResponderSummary(), DriftLabelsOnly: followUp.GetDriftLabelsOnly(),
-		}
-	}
 	return result
 }
 
@@ -617,11 +599,9 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		FinalStateChanges:                   stateChangesState(message.GetFinalStateChanges()),
 		DetectedAt:                          controllerTime(message.GetDetectedAt()), DispatchedAt: controllerTime(message.GetDispatchedAt()),
 		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), VerifiedAt: controllerTime(message.GetVerifiedAt()),
-		HealthClearedAt:          optionalTimeState(message.HealthClearedAt),
-		ObservedStateChanges:     observedStateChangesState(message.GetObservedStateChanges()),
-		DetectorReviewRequiredAt: optionalTimeState(message.DetectorReviewRequiredAt),
-		DetectorReviewReason:     message.GetDetectorReviewReason(),
-		CleanedHelpers:           append([]string(nil), message.GetCleanedHelpers()...),
+		HealthClearedAt:      optionalTimeState(message.HealthClearedAt),
+		ObservedStateChanges: observedStateChangesState(message.GetObservedStateChanges()),
+		CleanedHelpers:       append([]string(nil), message.GetCleanedHelpers()...),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request

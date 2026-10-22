@@ -14,7 +14,7 @@ func TestDerivedClassificationsHaveSharedReceiptAndLearningRules(t *testing.T) {
 		repairCommit         string
 	}{
 		{"success", "success", func(*contractsv1alpha1.IncidentClosure) {}, "repair"},
-		{"partial", "partial", func(c *contractsv1alpha1.IncidentClosure) { c.FinalDetectorStates[0].Status = "firing" }, "repair"},
+		{"verification_timeout", "failed", func(c *contractsv1alpha1.IncidentClosure) { c.FinalDetectorStates = nil }, "repair"},
 		{"external_recovery", "external_recovery", func(c *contractsv1alpha1.IncidentClosure) {
 			c.Result.RepairActions[0].Resources[0].Name = "other"
 		}, "repair"},

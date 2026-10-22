@@ -33,7 +33,6 @@ third_party/sregym/logs/<run-or-pipeline>/
         │   ├── sdo_production_receipt_strict.json
         │   ├── sdo_incident_resolution.json   # persistent-controller runs
         │   ├── sdo_rejected_production_receipt.json  # persistent runs whose drained receipt failed validation
-        │   ├── sdo_detector_review.json    # persistent runs whose controller stopped for detector review (no strict receipt)
         │   ├── detector_firings.jsonl      # controller firing telemetry (rotated file first), cumulative over a persistent pipeline
         │   ├── sdo_turn_usage.jsonl        # host-side lifecycle turns
         │   └── sdo_runtime/                # exported from the workspace PVC
@@ -83,10 +82,6 @@ Result CSVs may flatten stage results into fields such as `Diagnosis.success` an
 For multi-stage SDO pipelines compared against stock Codex, `uv run python -m benchmarks.sregym.analysis.incident_cost <sdo-pipeline-dir> --codex <codex-dir>...` prints per stage `ttd_s` and the headline judge-free `ttm_s`; the supplementary `raw_incl_judge_s`, `no_judge_s` (raw minus the grading wait, which is zero for `diagnosis_grading_deferred = true` rows), `first_mut_s` and `last_mut_s` (first state-changing command issued, and last one completed, both from rollouts); cumulative `ttm_s`; `incident_resolution_seconds`; oracle verdicts, responder and reflection tokens (reflection kept out of resolution time), a token-breakdown table (uncached input, cache reads, cache writes and their one-hour part, output, reasoning, raw total, cost-weighted total, USD, model requests) for every SDO stage and baseline problem with the pricing table version and date it used (see "Token metrics" in `benchmarks/sregym/AGENTS.md`), receipt `memory_reuse.warm_path` beside whether the responder rollout's user prompt carried the warm-path instructions, `.sdo/` detector and playbook counts, and token break-even against the per-problem Codex mean with and without the one-time lifecycle (`sdo_turn_usage.jsonl`, or `--lifecycle-usage` for a seeded lifecycle).
 
 ## Typed receipt rejection
-
-`sdo_detector_review.json` stands in for the strict receipt when the controller never verified
-the incident healthy: `status` (`detector_review_required`), `incident_id`, `reason`,
-`blocking_detectors`, and the responder `usage` (also copied to `sdo_incident_resolution.json`).
 
 Native receipt v2 is defined by `benchmark_receipt.proto`; its acceptance,
 classification summary and evidence checks run in the benchmark-only Go receipt

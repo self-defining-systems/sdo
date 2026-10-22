@@ -212,10 +212,6 @@ def validate_production_receipt(receipt: dict[str, Any], *, allow_test_lifecycle
         state.get("status") != "clear" or state.get("fingerprints") != [] for state in detector_clear
     ):
         raise ProductionReceiptValidationError("production receipt requires detector_clear with empty fingerprints")
-    if receipt.get("detector_review_required_at"):
-        raise ProductionReceiptValidationError(
-            "production receipt health cleared only after detector review; the responder did not restore it"
-        )
     verification = _string_keyed_objects(receipt.get("independent_verification"))
     if not verification or any(evidence.get("passed") is not True for evidence in verification):
         raise ProductionReceiptValidationError("production receipt requires passing independent_verification")

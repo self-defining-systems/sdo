@@ -113,13 +113,6 @@ message ControllerState {
     expression: "!this.incident_open || has(this.incident_request)"
   };
   option (buf.validate.message).cel = {
-    id: "state.detector_review_complete"
-    message: "detector review requires an open incident whose responder finished, plus a time and a reason"
-    expression:
-      "!this.detector_review_required || (this.incident_open && this.responder_done && "
-      "has(this.detector_review_required_at) && this.detector_review_reason != '')"
-  };
-  option (buf.validate.message).cel = {
     id: "state.failed_closure_has_permanent_failure"
     message: "a failed closure requires its permanent failure record"
     expression: "this.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)"
@@ -155,9 +148,8 @@ message ControllerState {
   google.protobuf.Timestamp incident_detected_at = 11;
   google.protobuf.Timestamp incident_dispatched_at = 12;
   google.protobuf.Timestamp responder_completed_at = 13;
-  bool detector_review_required = 14;
-  google.protobuf.Timestamp detector_review_required_at = 15;
-  string detector_review_reason = 16;
+  reserved 14, 15, 16;
+  reserved "detector_review_required", "detector_review_required_at", "detector_review_reason";
   // Start of each detector's current clear streak.
   map<string, google.protobuf.Timestamp> detector_clear_since = 17;
   repeated ObservedStateChange incident_observed_changes = 18;
@@ -168,7 +160,8 @@ message ControllerState {
   ClosureReceipt closure_receipt = 23;
   ClosureFailure closure_failure = 24;
   string last_acknowledged_incident_id = 25;
-  repeated string pending_releases = 26;
+  reserved 26;
+  reserved "pending_releases";
   int32 evaluation_iteration = 27;
   repeated DetectorTimelineEntry detector_timeline = 28 [(buf.validate.field).repeated.max_items = 64];
   IncidentView incident_view = 29;

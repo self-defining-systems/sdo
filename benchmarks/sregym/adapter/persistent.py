@@ -59,7 +59,6 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
-from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import (
     ControllerObservation,
@@ -91,7 +90,7 @@ DRAIN_TIMEOUT_SECONDS = 3600.0
 # still be settling the two volatile signals the strict receipt samples: the
 # durable responder result reaching a terminal ``completed`` status, and the
 # shared worktree directory draining. The relaunch-after-closure predicate can
-# fire on an intermediate relaunch on composite incidents (follow-ups and closure
+# fire on an intermediate relaunch on composite incidents (closure
 # retries), so the gate must wait for these to settle before it samples, or a
 # solved incident is rejected. Bounded so a genuinely unsettled receipt still
 # rejects promptly.
@@ -102,22 +101,6 @@ _ZERO_TIME = "0001-01-01T00:00:00Z"
 
 class PersistentControllerError(RuntimeError):
     """Raised when a persistent controller cannot be installed, reused, or drained."""
-
-
-class DetectorReviewRequiredError(PersistentControllerError):
-    """Raised when the controller stopped an incident that its health detectors never cleared.
-
-    The controller gives up verification ``detector review required`` after the responder
-    completed but findings are still active (for example, a fault that surfaced after dispatch
-    and was not part of the responder's task). It never closes the incident, so waiting longer
-    cannot succeed.
-    """
-
-    def __init__(self, incident_id: str, reason: str, state: dict[str, Any]) -> None:
-        super().__init__(f"incident {incident_id!r} needs detector review: {reason}")
-        self.incident_id = incident_id
-        self.reason = reason
-        self.state = state
 
 
 class ClosureFailedError(PersistentControllerError):
@@ -398,8 +381,6 @@ class StageInputs:
     #: End the stage as a detection miss if no incident has opened this long
     #: after injection. None waits the whole verification budget.
     detection_timeout_seconds: float | None = None
-    #: Raise as soon as the controller stops the incident for detector review (it never closes it).
-    stop_on_detector_review: bool = True
     lifecycle_installs_controller: bool = False
 
     def __post_init__(self) -> None:
@@ -552,19 +533,14 @@ def run_persistent_stage(
     ops.set_maintenance(control, paused=False, generation=generation)
     gate_timings = ops.inject_after_resume(control, generation, inject)
     injected = clock.monotonic()
-    try:
-        verified = _wait_for_verified_incident(
-            ops,
-            control,
-            known,
-            inputs.verification_timeout_seconds,
-            clock,
-            inputs.detection_timeout_seconds,
-            stop_on_review=inputs.stop_on_detector_review,
-        )
-    except DetectorReviewRequiredError as review:
-        _publish_detector_review(review, inputs=inputs, config=config, ops=ops, control=control, state=state)
-        raise
+    verified = _wait_for_verified_incident(
+        ops,
+        control,
+        known,
+        inputs.verification_timeout_seconds,
+        clock,
+        inputs.detection_timeout_seconds,
+    )
     verified_ready = clock.monotonic()
     if pause_after_verified:
         paused_generation = f"{generation}-paused"
@@ -659,60 +635,6 @@ def run_persistent_stage(
     return resolution
 
 
-def _publish_detector_review(
-    review: DetectorReviewRequiredError,
-    *,
-    inputs: StageInputs,
-    config: RuntimeConfig,
-    ops: ClusterOps,
-    control: str,
-    state: PersistentState,
-) -> None:
-    """Keep a detector-review stop's evidence: controller log, runtime artifacts, usage and the reason.
-
-    There is no strict receipt to drain (the incident never verified, so reflection never ran),
-    so a typed record stands in for it. Failing to write it must not hide the review stop itself.
-    """
-
-    try:
-        raw_result = review.state.get("incident_result")
-        result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
-        raw_view = review.state.get("incident_view")
-        view: dict[str, Any] = raw_view if isinstance(raw_view, dict) else {}
-        usage = result.get("usage")
-        record = DetectorReviewRecord(
-            incident_id=review.incident_id,
-            reason=review.reason,
-            blocking_detectors=[str(detector) for detector in view.get("blocking_detectors") or []],
-            usage=usage if isinstance(usage, dict) else None,
-        )
-        ops.export_controller_logs(control, inputs.receipt_dir)
-        stage_evidence: dict[str, Any] = dict(ops.export_runtime_artifacts(config, inputs.receipt_dir))
-        stage_evidence["scope"] = STAGE_END_EVIDENCE_SCOPE
-        _write_json(record.model_dump(mode="json"), inputs.receipt_dir / DETECTOR_REVIEW_FILENAME)
-        persist_resolution(
-            {
-                "schema_version": "sdo.sregym-incident-resolution/v1",
-                "incident_id": record.incident_id,
-                "namespace": inputs.namespace,
-                "confirmed_root_causes": result.get("confirmed_root_causes", []),
-                "repair_actions": result.get("repair_actions", []),
-                "usage": record.usage,
-                "detector_review": record.model_dump(mode="json", exclude={"usage"}),
-                "stage_end_runtime_artifacts": stage_evidence,
-            },
-            inputs.receipt_dir,
-        )
-        state.deferred_receipts.append(
-            DeferredReceipt(
-                incident_id=record.incident_id, stage_label=inputs.stage_label, staging_dir=inputs.receipt_dir
-            )
-        )
-        state.save(inputs.state_path)
-    except Exception:
-        logger.exception("could not publish the evidence of the detector review stop for %s", review.incident_id)
-
-
 def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock | None = None) -> None:
     """Pause the controller and wait for its acknowledgement (used when a composition ends)."""
 
@@ -748,11 +670,7 @@ def collect_followup_incident(
         )
     control = record.control_namespace
     try:
-        verified = _wait_for_verified_incident(
-            ops, control, known, timeout_seconds, clock, stop_on_review=inputs.stop_on_detector_review
-        )
-    except DetectorReviewRequiredError:
-        raise
+        verified = _wait_for_verified_incident(ops, control, known, timeout_seconds, clock)
     except ClosureFailedError:
         raise
     except PersistentControllerError:
@@ -1048,7 +966,6 @@ def publish_deferred_receipts(state_path: Path, results_root: Path) -> list[Path
         sources = [
             entry.staging_dir / STRICT_RECEIPT_FILENAME,
             entry.staging_dir / REJECTED_RECEIPT_FILENAME,
-            entry.staging_dir / DETECTOR_REVIEW_FILENAME,
         ]
         logs_dir = entry.staging_dir / CONTROLLER_LOGS_SUBDIR
         if logs_dir.is_dir():
@@ -1116,7 +1033,8 @@ def _resolution_timings(closure: dict[str, Any]) -> dict[str, Any]:
     dispatched = _timestamp(closure.get("dispatched_at"))
     responder_completed = _timestamp(closure.get("responder_completed_at"))
     verified = _timestamp(closure.get("verified_at"))
-    if detected is None or verified is None:
+    # A closure cut by the verification timeout carries no final detector states: health never cleared.
+    if detected is None or verified is None or not closure.get("final_detector_states"):
         return {}
     timings: dict[str, float] = {"operational_recovery": (verified - detected).total_seconds()}
     if dispatched is not None:
@@ -1141,13 +1059,10 @@ def _observe_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    stop_on_review: bool = False,
     timeout: float = 30.0,
 ) -> ControllerObservation:
     try:
-        observed = observe_controller_state(
-            state, known=known, incident_id=incident_id, stop_on_review=stop_on_review, timeout=timeout
-        )
+        observed = observe_controller_state(state, known=known, incident_id=incident_id, timeout=timeout)
     except NativeOperatorError as exc:
         raise PersistentControllerError(str(exc)) from exc
     if observed.failure.code == ControllerObservationFailure.CODE_INVALID_SNAPSHOT:
@@ -1158,8 +1073,6 @@ def _observe_state(
 def _raise_observation_failure(observed: ControllerObservation, state: dict[str, Any]) -> None:
     if observed.failure.code == ControllerObservationFailure.CODE_CLOSURE_FAILED:
         raise ClosureFailedError(observed.failure.message)
-    if observed.failure.code == ControllerObservationFailure.CODE_DETECTOR_REVIEW_REQUIRED:
-        raise DetectorReviewRequiredError(observed.failure.incident_id, observed.failure.message, state)
 
 
 def _known_incident_ids(state: dict[str, Any]) -> set[str]:
@@ -1183,8 +1096,6 @@ def _wait_for_verified_incident(
     timeout: float,
     clock: Clock,
     detection_timeout: float | None = None,
-    *,
-    stop_on_review: bool = True,
 ) -> VerifiedIncident:
     """Return the first new incident the controller verified healthy, before reflection finishes.
 
@@ -1203,7 +1114,6 @@ def _wait_for_verified_incident(
         observed = _observe_state(
             state,
             known=known,
-            stop_on_review=stop_on_review,
             timeout=min(30.0, max(0.001, deadline - clock.monotonic())),
         )
         summary = observed.open_incident_summary

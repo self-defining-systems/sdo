@@ -582,31 +582,6 @@ def late_findings_guidance(request: IncidentRequest, *, mode: str | None = None)
     )
 
 
-def follow_up_guidance(request: IncidentRequest) -> str:
-    """Scope paragraph for a follow-up request; empty for an ordinary incident."""
-
-    follow_up = request.follow_up
-    if not request.HasField("follow_up"):
-        return ""
-    if follow_up.drift_labels_only:
-        return (
-            f"This is follow-up {follow_up.attempt} of at most {follow_up.max_follow_ups} for incident "
-            f"{follow_up.original_incident_id}. Health is quiet; the only open blockers are the unexplained drift "
-            "events in drift_events, which the earlier responder left without a structured label. Do not repair or "
-            "redo anything. Re-check each event against accepted source and live state, then return one drift_events "
-            "entry per event with investigation_verdict (benign, bug or unsure), a concrete reason and observation "
-            "evidence. Prose in the summary does not count as a label. What the earlier responders reported "
-            f"(context to verify, not fact):\n{follow_up.prior_responder_summary}\n\n"
-        )
-    return (
-        f"This is follow-up {follow_up.attempt} of at most {follow_up.max_follow_ups} for incident "
-        f"{follow_up.original_incident_id}. An earlier responder already ran, and the findings below stayed active "
-        "afterwards. Treat only these residual findings as your scope and do not redo already-repaired work. "
-        "Re-check live state first, because other findings may since have cleared. What the earlier responders "
-        f"reported (treat it as context to verify, not as fact):\n{follow_up.prior_responder_summary}\n\n"
-    )
-
-
 def _prompt_request(request: IncidentRequest) -> dict[str, object]:
     """The request as the prompt shows it; the bulky sections are rendered separately."""
 
@@ -701,7 +676,6 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "mode, a successful live-only repair needs at least one successful `sdo act`; repository changes are "
         "still committed when present.\n\n"
         f"{late_findings_guidance(request)}"
-        f"{follow_up_guidance(request)}"
         f"{additional_context}\n"
         f"{_inlined_architecture_summary(request)}"
         f"{_inlined_health_objective(request)}"

@@ -50,12 +50,10 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		Duration:                   durationpb.New(0),
 		ResponseTimeout:            durationpb.New(1800000000000), // 30m
 		VerificationTimeout:        durationpb.New(120000000000),  // 2m
-		MaxFollowUps:               3,
 		MaxResponseLoops:           4,
 		ProgramFastPath:            true,
 		ProgramTrustThreshold:      3,
 		ProgramMinDuration:         durationpb.New(3000000000),
-		FollowUpCooldown:           durationpb.New(30000000000), // 30s
 		RepairPolicy:               "recorded-actions",
 		LeaseName:                  "sdo-controller",
 		LeaseDuration:              durationpb.New(60000000000), // 60s
@@ -100,7 +98,6 @@ func TestLoadControllerConfigRejectsInvalid(t *testing.T) {
 		"empty app_root":      func(c *contractsv1alpha1.ControllerConfig) { c.AppRoot = "" },
 		"bad dispatcher_mode": func(c *contractsv1alpha1.ControllerConfig) { c.DispatcherMode = "cluster" },
 		"bad repair_policy":   func(c *contractsv1alpha1.ControllerConfig) { c.RepairPolicy = "yolo" },
-		"negative follow_ups": func(c *contractsv1alpha1.ControllerConfig) { c.MaxFollowUps = -1 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -174,7 +171,6 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		"--app-root":                "/workspace/app",
 		"--dispatcher-mode":         "job",
 		"--repair-policy":           "recorded-actions",
-		"--max-follow-ups":          "3",
 		"--max-response-loops":      "4",
 		"--program-trust-threshold": "3",
 		"--program-min-duration":    "3s",

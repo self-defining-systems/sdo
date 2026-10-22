@@ -54,15 +54,6 @@ type ControllerConfig struct {
 	// GateConfirmation is the responder gate's clear hysteresis, published in
 	// the incident view. Zero makes the gate follow closure's clear count.
 	GateConfirmation GateConfirmationPolicy
-	// MaxFollowUps enables bounded follow-up responders: when health findings
-	// stay active after a responder completes, up to this many further
-	// responders are dispatched for the residual findings before the incident
-	// is handed to detector review. Zero (the default) disables follow-ups.
-	MaxFollowUps int
-	// FollowUpCooldown is the wait after a responder completes before its
-	// residual findings are treated as unresolved. It is capped by
-	// VerificationTimeout.
-	FollowUpCooldown time.Duration
 }
 
 type dispatchCompletion struct {
@@ -86,11 +77,11 @@ type Controller struct {
 	programSweepCursors map[string]string
 	// routingSweeps tracks background open@detect routing sweeps so tests can
 	// join them before removing the capture directory.
-	routingSweeps sync.WaitGroup
-	ownershipAdoption   OwnershipAdoptionStatus
-	adoptionNeeded      bool
-	nextDriftSweep      time.Time
-	results             chan dispatchCompletion
+	routingSweeps     sync.WaitGroup
+	ownershipAdoption OwnershipAdoptionStatus
+	adoptionNeeded    bool
+	nextDriftSweep    time.Time
+	results           chan dispatchCompletion
 	// gateClears and gateProbes hold the submit gate's confirmation of active
 	// findings (GateConfirmationPolicy); they are never persisted, so a
 	// restarted controller confirms again from fresh evaluations.
@@ -105,23 +96,20 @@ type Controller struct {
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
-	durable                  *contracts.ControllerState
-	incidentOpen             bool
-	responderDone            bool
-	currentIncidentRequest   *IncidentRequest
-	dispatchState            contracts.DispatchState
-	incidentFindingKeys      []string
-	cleanedHelpers           []string
-	healthDetectorIDs        []string
-	detectorSpecs            map[string]sdk.DetectorSpec
-	currentIncidentResult    *IncidentResult
-	dispatchError            string
-	incidentDetectedAt       time.Time
-	incidentDispatchedAt     time.Time
-	responderCompletedAt     time.Time
-	detectorReviewRequired   bool
-	detectorReviewRequiredAt time.Time
-	detectorReviewReason     string
+	durable                *contracts.ControllerState
+	incidentOpen           bool
+	responderDone          bool
+	currentIncidentRequest *IncidentRequest
+	dispatchState          contracts.DispatchState
+	incidentFindingKeys    []string
+	cleanedHelpers         []string
+	healthDetectorIDs      []string
+	detectorSpecs          map[string]sdk.DetectorSpec
+	currentIncidentResult  *IncidentResult
+	dispatchError          string
+	incidentDetectedAt     time.Time
+	incidentDispatchedAt   time.Time
+	responderCompletedAt   time.Time
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
@@ -142,14 +130,6 @@ type Controller struct {
 	workspaceResults           chan workspaceCompletion
 	closureResults             chan closureCompletion
 	acknowledgmentResults      chan acknowledgmentCompletion
-	releaseResults             chan releaseCompletion
-	// pendingReleases holds incident IDs whose prepared worktree was stranded
-	// when a follow-up superseded them in place; it is durable so a restart
-	// still reaps them. releaseInFlight is the one currently being released and
-	// is transient: a restart re-emits it from pendingReleases (release is
-	// idempotent).
-	pendingReleases []string
-	releaseInFlight string
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -214,12 +194,6 @@ func NewController(
 	if err := config.GateConfirmation.validate(); err != nil {
 		return nil, err
 	}
-	if config.MaxFollowUps < 0 {
-		return nil, fmt.Errorf("max follow-ups must not be negative")
-	}
-	if config.FollowUpCooldown < 0 {
-		return nil, fmt.Errorf("follow-up cooldown must not be negative")
-	}
 	if config.VerificationTimeout == 0 {
 		config.VerificationTimeout = config.ResponseTimeout
 	}
@@ -267,7 +241,6 @@ func NewController(
 		detectorSpecs:    detectorSpecs,
 		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
-		releaseResults:        make(chan releaseCompletion, 1),
 		dispatchJitter:        rand.Float64,
 	}, nil
 }
@@ -405,7 +378,6 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 
-	c.refreshRetainedDrift(ctx, now, snapshot)
 	c.maybeCloseIncident(ctx, now, snapshot)
 	err = c.dispatchReady(ctx, now, snapshot)
 	c.refreshIncidentView(now, true)
@@ -547,9 +519,6 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.incidentDetectedAt = now.UTC()
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
-	c.detectorReviewRequired = false
-	c.detectorReviewRequiredAt = time.Time{}
-	c.detectorReviewReason = ""
 	c.resetDispatchRetryLocked()
 	c.incidentObservedChanges = make(map[string]ObservedStateChange)
 	c.observeStateChangesLocked(request.StateChanges, now)
@@ -651,12 +620,7 @@ func (c *Controller) NextWake() time.Time {
 	}
 	c.mu.Lock()
 	verificationDeadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
-	verificationPending := c.incidentOpen && c.responderDone && !c.detectorReviewRequired
-	if verificationPending && c.followUpsRemainLocked() {
-		if due := c.followUpDueAtLocked(); due.Before(verificationDeadline) {
-			verificationDeadline = due
-		}
-	}
+	verificationPending := c.incidentOpen && c.responderDone
 	c.mu.Unlock()
 	if verificationPending && (next.IsZero() || verificationDeadline.Before(next)) {
 		next = verificationDeadline
@@ -922,14 +886,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		}
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = ""
-		completion.result.DriftEvents = checkedDriftAssessments(*c.currentIncidentRequest, completion.result.DriftEvents)
-		for _, label := range completion.result.DriftEvents {
-			for i, event := range c.currentIncidentRequest.DriftEvents {
-				if driftEventKey(label) == driftEventKey(event) && sameDriftObservation(label, event) {
-					c.currentIncidentRequest.DriftEvents[i] = label
-				}
-			}
-		}
 		c.currentIncidentResult = cloneIncidentResult(&completion.result)
 		c.resetDispatchRetryLocked()
 	}
@@ -973,25 +929,17 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	finalStates, verified := c.finalVerificationStates()
 	if !verified {
-		if c.detectorReviewRequired {
+		// One timeout bounds how long a stuck incident can block the stream. It
+		// closes as a normal failed incident: with no final detector states
+		// the outcome is never health-verified.
+		if now.Before(c.responderCompletedAt.Add(c.config.VerificationTimeout)) {
 			c.mu.Unlock()
 			return
 		}
-		if c.startFollowUpLocked(now) || c.startDriftLabelFollowUpLocked(now) || c.requireDriftLabelReviewLocked(now) {
-			c.mu.Unlock()
-			return
-		}
-		deadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
-		if !now.Before(deadline) {
-			c.requireDetectorReviewLocked(now, fmt.Sprintf(
-				"health detectors did not clear within %s after responder completion",
-				c.config.VerificationTimeout,
-			))
-		}
-		c.mu.Unlock()
-		return
+		logVerificationTimeout(c.currentIncidentRequest.IncidentID, c.config.VerificationTimeout, c.activeHealthDetectors())
+		finalStates = nil
 	}
-	if c.config.CorpusSessionRoot != "" {
+	if verified && c.config.CorpusSessionRoot != "" {
 		if snapshot == nil {
 			var err error
 			snapshot, err = c.provider.Snapshot(ctx)
@@ -1032,8 +980,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	finalChanges := c.finalStateChangesLocked(now)
 	c.observeStateChangesLocked(finalChanges, now)
-	healthClearedAt := c.healthClearedAtLocked(finalStates)
-	logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
+	var healthClearedAt *time.Time
+	if verified {
+		healthClearedAt = c.healthClearedAtLocked(finalStates)
+		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
+	}
 	closure := IncidentClosure{
 		Request: *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
@@ -1043,12 +994,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		HealthClearedAt:        healthClearedAt,
 		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
-		CleanedHelpers:       append([]string(nil), c.cleanedHelpers...),
-		DetectorReviewReason: c.detectorReviewReason,
-	}
-	if !c.detectorReviewRequiredAt.IsZero() {
-		reviewAt := c.detectorReviewRequiredAt
-		closure.DetectorReviewRequiredAt = &reviewAt
+		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
 	}
 	closure.DetectorTimeline = cloneTimeline(c.timeline)
 	sortTimeline(closure.DetectorTimeline)
@@ -1056,8 +1002,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		closure.NoIncidentDetectorFired = timelineSummary(closure.DetectorTimeline)
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
-		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt), DetectorReviewRequired: closure.DetectorReviewRequiredAt != nil,
-		DispatchError: closure.DispatchError != "",
+		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt),
+		DispatchError:   closure.DispatchError != "",
 	})
 	c.timeline = nil
 	projected, err := incidentClosureContract(closure)
@@ -1077,9 +1023,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	c.incidentDetectedAt = time.Time{}
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
-	c.detectorReviewRequired = false
-	c.detectorReviewRequiredAt = time.Time{}
-	c.detectorReviewReason = ""
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil
@@ -1088,6 +1031,22 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)
 	}
+}
+
+func (c *Controller) activeHealthDetectors() []string {
+	active := []string{}
+	for _, detectorID := range c.healthDetectorIDs {
+		if c.tracker.HasActiveDetector(detectorID) {
+			active = append(active, detectorID)
+		}
+	}
+	return active
+}
+
+// logVerificationTimeout records that the verification window ended with
+// health detectors still active, so the incident closes as failed.
+func logVerificationTimeout(incidentID string, timeout time.Duration, active []string) {
+	slog.Warn("incident_verification_timeout", "incident_id", incidentID, "verification_timeout", timeout.String(), "active_health_detectors", active)
 }
 
 // logIncidentVerified records the verification wait: how long after the
@@ -1101,250 +1060,9 @@ func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responde
 	slog.Info("incident_verified", attrs...)
 }
 
-// followUpAttemptLocked returns how many follow-ups the open incident chain has
-// already used. The count lives in the persisted request, so a restarted
-// controller resumes with the same bound.
-func (c *Controller) followUpAttemptLocked() int {
-	if c.currentIncidentRequest == nil || c.currentIncidentRequest.FollowUp == nil {
-		return 0
-	}
-	return c.currentIncidentRequest.FollowUp.Attempt
-}
-
-func (c *Controller) followUpsRemainLocked() bool {
-	return c.config.MaxFollowUps > 0 && c.followUpAttemptLocked() < c.config.MaxFollowUps
-}
-
-func (c *Controller) followUpDueAtLocked() time.Time {
-	cooldown := c.config.FollowUpCooldown
-	if cooldown > c.config.VerificationTimeout {
-		cooldown = c.config.VerificationTimeout
-	}
-	return c.responderCompletedAt.Add(cooldown)
-}
-
-// startFollowUpLocked replaces a completed incident whose health findings are
-// still active with a follow-up request for the residual findings. It keeps
-// the incident open, so exactly one responder is in flight and one closure is
-// cut when verification finally succeeds. It reports whether it started one.
-func (c *Controller) startFollowUpLocked(now time.Time) bool {
-	if !c.followUpsRemainLocked() || now.Before(c.followUpDueAtLocked()) {
-		return false
-	}
-	// Health detectors own verification; without any, the incident's own
-	// findings are what verification waits on.
-	var residualKeys []string
-	if len(c.healthDetectorIDs) == 0 {
-		residualKeys = c.incidentFindingKeys
-	}
-	residual := c.tracker.ActiveFindings(c.healthDetectorIDs, residualKeys)
-	if len(residual) == 0 {
-		return false
-	}
-	c.dispatchFollowUpLocked(now, residual, false)
-	return true
-}
-
-// startDriftLabelFollowUpLocked asks the responder for the structured labels it
-// left out. Quiet health leaves unlabeled unexplained drift as the only
-// verification blocker, and a label can arrive only in a responder result, so
-// the controller requests it once instead of waiting for VerificationTimeout.
-// It is bounded separately from MaxFollowUps, which benchmarks leave at zero.
-func (c *Controller) startDriftLabelFollowUpLocked(now time.Time) bool {
-	unlabeled := c.unlabeledDriftBlockersLocked()
-	if len(unlabeled) == 0 || c.currentIncidentRequest.FollowUp != nil && c.currentIncidentRequest.FollowUp.DriftLabelsOnly {
-		return false
-	}
-	c.dispatchFollowUpLocked(now, unlabeled, true)
-	return true
-}
-
-// requireDriftLabelReviewLocked records detector review as soon as a labels-only
-// follow-up came back and the drift is still unlabeled, naming the events.
-func (c *Controller) requireDriftLabelReviewLocked(now time.Time) bool {
-	request := c.currentIncidentRequest
-	unlabeled := c.unlabeledDriftBlockersLocked()
-	if len(unlabeled) == 0 || request.FollowUp == nil || !request.FollowUp.DriftLabelsOnly {
-		return false
-	}
-	events := make([]string, 0, len(unlabeled))
-	for _, finding := range unlabeled {
-		events = append(events, fmt.Sprintf("%s/%s", finding.PrimaryResource.Kind, finding.PrimaryResource.Name))
-	}
-	c.requireDetectorReviewLocked(now, fmt.Sprintf(
-		"health is quiet but the responder returned no structured drift_events label for unexplained drift on %s",
-		strings.Join(events, ", ")))
-	return true
-}
-
-// unlabeledDriftBlockersLocked returns the active unexplained drift findings
-// that are the only thing keeping a completed responder's incident from
-// verifying: health is clear, no other drift detector is firing, and the result
-// carries no completed label for them. Prose never counts as a label.
-func (c *Controller) unlabeledDriftBlockersLocked() []sdk.Finding {
-	if c.currentIncidentRequest == nil || c.currentIncidentResult == nil || c.dispatchError != "" {
-		return nil
-	}
-	if len(c.healthDetectorIDs) > 0 {
-		for _, id := range c.healthDetectorIDs {
-			if c.tracker.HasActiveDetector(id) {
-				return nil
-			}
-		}
-		if _, clear := c.latestEvaluations(c.healthDetectorIDs, c.responderCompletedAt, true); !clear {
-			return nil
-		}
-	}
-	driftIDs := []string{}
-	for _, finding := range c.currentIncidentRequest.Findings {
-		if strings.HasPrefix(finding.DetectorID, "drift.") {
-			driftIDs = append(driftIDs, finding.DetectorID)
-		}
-	}
-	active := c.tracker.ActiveFindings(driftIDs, nil)
-	labeled := checkedDriftAssessments(*c.currentIncidentRequest, c.currentIncidentResult.DriftEvents)
-	unlabeled := []sdk.Finding{}
-	for _, finding := range active {
-		if finding.DetectorID != "drift.unexplained" {
-			return nil
-		}
-		events := driftEventsForFindings(nil, []sdk.Finding{finding})
-		if len(events) != 1 {
-			return nil
-		}
-		for _, label := range labeled {
-			if driftEventKey(label) == driftEventKey(events[0]) && sameDriftObservation(label, events[0]) {
-				events = nil
-				break
-			}
-		}
-		if events != nil {
-			unlabeled = append(unlabeled, finding)
-		}
-	}
-	return unlabeled
-}
-
-func (c *Controller) requireDetectorReviewLocked(now time.Time, reason string) {
-	c.detectorReviewRequired = true
-	c.detectorReviewRequiredAt = now.UTC()
-	c.detectorReviewReason = reason
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseDetectorReviewRequired, RecordedAt: contractTimestamp(c.detectorReviewRequiredAt),
-		IncidentId: c.currentIncidentRequest.IncidentID, Reason: c.detectorReviewReason,
-		DetectorReviewRequired: true,
-	})
-}
-
-func (c *Controller) dispatchFollowUpLocked(now time.Time, residual []sdk.Finding, driftLabelsOnly bool) {
-	parent := c.currentIncidentRequest
-	request := c.incidentRequest(now, residual)
-	if request.IncidentID == parent.IncidentID {
-		request.IncidentID = fmt.Sprintf("%s-f%d", request.IncidentID, c.followUpAttemptLocked()+1)
-		request.CancellationToken = "cancel-" + request.IncidentID
-	}
-	original := parent.IncidentID
-	priorSummary := ""
-	if parent.FollowUp != nil {
-		original = parent.FollowUp.OriginalIncidentID
-		priorSummary = parent.FollowUp.PriorSummary
-	}
-	attempt := c.followUpAttemptLocked() + 1
-	request.FollowUp = &FollowUpContext{
-		OriginalIncidentID: original, ParentIncidentID: parent.IncidentID,
-		Attempt: attempt, MaxFollowUps: max(c.config.MaxFollowUps, attempt),
-		PriorSummary:    boundedFollowUpSummary(priorSummary, followUpSummary(parent, c.currentIncidentResult, c.dispatchError)),
-		DriftLabelsOnly: driftLabelsOnly,
-	}
-	request.RepositoryWorktree = parent.RepositoryWorktree
-	request.RepositoryBaseCommit = parent.RepositoryBaseCommit
-	c.batcher.RemoveKeys(findingKeys(residual))
-	// With a broker the follow-up re-prepares a distinct worktree (keyed on its
-	// own incident id), so the parent's prepared worktree is abandoned without a
-	// closure and must be released at the source. Without a broker the follow-up
-	// reuses the parent's worktree in place (set above), so there is nothing to
-	// release.
-	if c.broker != nil && parent.IncidentID != "" && parent.IncidentID != request.IncidentID {
-		c.enqueueReleaseLocked(parent.IncidentID)
-	}
-	supersededAt := now.UTC()
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		EventId: lifecycleEventID(parent.IncidentID, string(PhaseSuperseded), request.IncidentID),
-		Event:   PhaseSuperseded, RecordedAt: contractTimestamp(supersededAt), IncidentId: parent.IncidentID,
-		SupersededBy: request.IncidentID, Reason: "follow_up",
-	})
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseOpened, RecordedAt: contractTimestamp(supersededAt), IncidentId: request.IncidentID,
-		ParentIncidentId: parent.IncidentID, FollowUpAttempt: int32(request.FollowUp.Attempt),
-		FindingKeys: findingKeys(residual), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
-	})
-	c.currentIncidentRequest = cloneIncidentRequest(&request)
-	c.currentIncidentResult = nil
-	c.dispatchError = ""
-	c.responderDone = false
-	c.responderCompletedAt = time.Time{}
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
-	if c.broker != nil {
-		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
-	}
-	c.incidentFindingKeys = findingKeys(residual)
-}
-
-// enqueueReleaseLocked records an incident whose prepared worktree was stranded
-// by a supersede so the run loop reaps it through the broker. Idempotent;
-// callers hold c.mu.
-func (c *Controller) enqueueReleaseLocked(incidentID string) {
-	for _, id := range c.pendingReleases {
-		if id == incidentID {
-			return
-		}
-	}
-	c.pendingReleases = append(c.pendingReleases, incidentID)
-}
-
-const followUpSummaryLimit = 3000
-
-func followUpSummary(request *IncidentRequest, result *IncidentResult, dispatchError string) string {
-	var out strings.Builder
-	fmt.Fprintf(&out, "Responder for incident %s was dispatched for:", request.IncidentID)
-	for _, finding := range request.Findings {
-		fmt.Fprintf(&out, " [%s/%s %s]", finding.DetectorID, finding.RuleID, finding.Summary)
-	}
-	out.WriteString(". ")
-	switch {
-	case result == nil && dispatchError != "":
-		fmt.Fprintf(&out, "It failed: %s.", dispatchError)
-	case result == nil:
-		out.WriteString("It reported no result.")
-	default:
-		fmt.Fprintf(&out, "It finished with status %s.", result.Status)
-		for _, cause := range result.ConfirmedRootCauses {
-			fmt.Fprintf(&out, " Root cause: %s.", cause.Summary)
-		}
-		for _, change := range result.RepairChanges {
-			fmt.Fprintf(&out, " Repair: %s.", change)
-		}
-		for _, action := range result.RepairActions {
-			fmt.Fprintf(&out, " Action: %s.", action.Summary)
-		}
-		if result.Error != "" {
-			fmt.Fprintf(&out, " Error: %s.", result.Error)
-		}
-	}
-	return out.String()
-}
-
-func boundedFollowUpSummary(previous string, current string) string {
-	combined := current
-	if previous != "" {
-		combined = previous + "\n" + current
-	}
-	if len(combined) > followUpSummaryLimit {
-		combined = combined[len(combined)-followUpSummaryLimit:]
-	}
-	return combined
-}
-
+// finalVerificationStates reports whether the incident is verified: the health
+// detectors (or, without any, the incident's own findings) have cleared and
+// evaluated clear since the responder completed. Drift detectors never gate it.
 func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 	if len(c.healthDetectorIDs) == 0 {
 		if c.tracker.HasActiveKeys(c.incidentFindingKeys) {
@@ -1352,20 +1070,13 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 		}
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})
-		requireDriftClear := false
 		for _, finding := range c.currentIncidentRequest.Findings {
-			if strings.HasPrefix(finding.DetectorID, "drift.") {
-				requireDriftClear = true
-			}
 			if _, ok := seen[finding.DetectorID]; !ok {
 				seen[finding.DetectorID] = struct{}{}
 				ids = append(ids, finding.DetectorID)
 			}
 		}
 		sort.Strings(ids)
-		if requireDriftClear {
-			return c.latestEvaluations(ids, c.responderCompletedAt, true)
-		}
 		return c.latestEvaluations(ids, time.Time{}, false)
 	}
 	for _, detectorID := range c.healthDetectorIDs {
@@ -1373,22 +1084,7 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 			return nil, false
 		}
 	}
-	ids := append([]string(nil), c.healthDetectorIDs...)
-	for _, finding := range c.currentIncidentRequest.Findings {
-		if strings.HasPrefix(finding.DetectorID, "drift.") {
-			if c.tracker.HasActiveDetector(finding.DetectorID) {
-				return nil, false
-			}
-			found := false
-			for _, id := range ids {
-				found = found || id == finding.DetectorID
-			}
-			if !found {
-				ids = append(ids, finding.DetectorID)
-			}
-		}
-	}
-	return c.latestEvaluations(ids, c.responderCompletedAt, true)
+	return c.latestEvaluations(c.healthDetectorIDs, c.responderCompletedAt, true)
 }
 
 // incidentDetectorStates reports the latest evaluation since responder
@@ -1532,13 +1228,12 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		DetectorReviewRequired: c.detectorReviewRequired, DetectorReviewRequiredAt: optionalTimestamp(c.detectorReviewRequiredAt),
-		DetectorReviewReason: c.detectorReviewReason, DetectorClearSince: timestampsContract(c.detectorClearSince),
+		DetectorClearSince:      timestampsContract(c.detectorClearSince),
 		IncidentObservedChanges: observedStateChangesContract(c.observedStateChangesLocked()), DispatchState: dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
-		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, PendingReleases: append([]string(nil), c.pendingReleases...),
-		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID,
+		EvaluationIteration:        int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption), ProgramSweepCursors: maps.Clone(c.programSweepCursors),
 	}
 	if c.currentIncidentRequest != nil {
@@ -1596,9 +1291,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
-	c.detectorReviewRequired = state.DetectorReviewRequired
-	c.detectorReviewRequiredAt = controllerTime(state.GetDetectorReviewRequiredAt())
-	c.detectorReviewReason = state.DetectorReviewReason
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
 	c.incidentObservedChanges = nil
 	if state.IncidentOpen {
@@ -1622,8 +1314,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		return err
 	}
 	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
-	c.pendingReleases = append([]string(nil), state.PendingReleases...)
-	c.releaseInFlight = ""
 	c.evaluationIteration = int(state.GetEvaluationIteration())
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))
 	return nil
@@ -1633,18 +1323,6 @@ func (c *Controller) LastAcknowledgedIncidentID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.lastAcknowledgedIncidentID
-}
-
-func (c *Controller) DetectorReviewRequired() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.detectorReviewRequired
-}
-
-func (c *Controller) DetectorReviewStatus() (bool, string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.detectorReviewRequired, c.detectorReviewReason
 }
 
 func (c *Controller) PendingIncidentClosure() (IncidentClosure, bool) {

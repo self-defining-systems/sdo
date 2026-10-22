@@ -284,7 +284,6 @@ def _composite_settings(args: argparse.Namespace) -> CompositeSettings:
         idle_seconds=args.composite_idle * args.time_scale,
         stable_seconds=20.0 * args.time_scale,
         poll_seconds=min(1.0, 2.0 * args.time_scale),
-        stop_on_detector_review=not args.no_stop_on_review,
     )
 
 
@@ -361,8 +360,6 @@ def _sdo_agent(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         late_findings=args.late_findings,
-        max_follow_ups=args.max_follow_ups,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         healthy_baseline=args.healthy_baseline,
         controller_namespace=control_namespace_for(environment.namespace),
         kind_cluster_name=environment.cluster,
@@ -911,8 +908,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="composite SDO runs: inject every fault while the controller is paused, then resume it (simultaneous)",
     )
-    run.add_argument("--max-follow-ups", type=int, default=0, help="follow-up responders for residual health findings")
-    run.add_argument("--follow-up-cooldown-seconds", type=int, default=30)
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
     run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
@@ -944,11 +939,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=2400.0,
         help="composite problems: seconds after injection before SDO stops waiting for further incidents",
-    )
-    run.add_argument(
-        "--no-stop-on-review",
-        action="store_true",
-        help="composite problems: keep waiting (until the deadline) after the controller stops for detector review",
     )
     run.add_argument(
         "--composite-idle",

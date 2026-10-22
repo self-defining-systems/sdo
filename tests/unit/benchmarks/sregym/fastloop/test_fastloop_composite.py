@@ -46,6 +46,7 @@ def _closure(incident_id: str, offset: int) -> dict[str, Any]:
         "dispatched_at": at.isoformat(),
         "responder_completed_at": (at + timedelta(seconds=20)).isoformat(),
         "verified_at": (at + timedelta(seconds=30)).isoformat(),
+        "final_detector_states": [{"detector_id": "health", "status": "clear"}],
     }
 
 
@@ -133,8 +134,6 @@ class FakeOps:
                     "incident_open": True,
                     "responder_done": True,
                     "incident_request": {"incident_id": "incident-1"},
-                    "detector_review_required": True,
-                    "detector_review_reason": "health detectors did not clear",
                     "incident_detected_at": INJECTED.isoformat(),
                     "incident_result": {
                         "confirmed_root_causes": [{"summary": "geo and mongodb-rate"}],
@@ -595,7 +594,7 @@ def test_tracked_agent_uses_resolved_stream_faults(tmp_path: Path) -> None:
     assert report["faults"] == ["target_port:geo", "incorrect_image:rate"]
 
 
-def test_a_controller_that_stops_for_detector_review_is_reported_not_waited_on(tmp_path: Path) -> None:
+def test_a_controller_that_never_closes_the_incident_is_reported_not_waited_on(tmp_path: Path) -> None:
     ops = FakeOps(wedge=True)
     agent = _agent(tmp_path, ops)
 
@@ -603,12 +602,12 @@ def test_a_controller_that_stops_for_detector_review_is_reported_not_waited_on(t
     outcome = agent.learn(outcome)
 
     report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text(encoding="utf-8"))
-    assert report["stop_reason"] == "detector_review_required"
+    assert report["stop_reason"] == "no_closure_within_deadline"
     assert report["faults_resolved"] == 2
     assert report["resolved_s"]["network_policy:recommendation"] is None
     assert outcome.resolved_at is None
     assert "geo and mongodb-rate" in outcome.diagnosis
     assert outcome.responder_tokens == TokenCounts(input_tokens=500, cached_input_tokens=400, output_tokens=50)
     assert outcome.error is not None
-    assert "detector review" in outcome.error
+    assert "without a verified closure" in outcome.error
     assert ops.maintenance[-1] == "paused"

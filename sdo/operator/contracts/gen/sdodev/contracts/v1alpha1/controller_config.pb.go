@@ -67,8 +67,6 @@ type ControllerConfig struct {
 	Duration            *durationpb.Duration `protobuf:"bytes,20,opt,name=duration,proto3" json:"duration,omitempty"`
 	ResponseTimeout     *durationpb.Duration `protobuf:"bytes,21,opt,name=response_timeout,json=responseTimeout,proto3" json:"response_timeout,omitempty"`
 	VerificationTimeout *durationpb.Duration `protobuf:"bytes,22,opt,name=verification_timeout,json=verificationTimeout,proto3" json:"verification_timeout,omitempty"`
-	MaxFollowUps        int32                `protobuf:"varint,23,opt,name=max_follow_ups,json=maxFollowUps,proto3" json:"max_follow_ups,omitempty"`
-	FollowUpCooldown    *durationpb.Duration `protobuf:"bytes,24,opt,name=follow_up_cooldown,json=followUpCooldown,proto3" json:"follow_up_cooldown,omitempty"`
 	RepairPolicy        string               `protobuf:"bytes,25,opt,name=repair_policy,json=repairPolicy,proto3" json:"repair_policy,omitempty"`
 	// Leader election.
 	LeaseName     string               `protobuf:"bytes,26,opt,name=lease_name,json=leaseName,proto3" json:"lease_name,omitempty"`
@@ -299,20 +297,6 @@ func (x *ControllerConfig) GetResponseTimeout() *durationpb.Duration {
 func (x *ControllerConfig) GetVerificationTimeout() *durationpb.Duration {
 	if x != nil {
 		return x.VerificationTimeout
-	}
-	return nil
-}
-
-func (x *ControllerConfig) GetMaxFollowUps() int32 {
-	if x != nil {
-		return x.MaxFollowUps
-	}
-	return 0
-}
-
-func (x *ControllerConfig) GetFollowUpCooldown() *durationpb.Duration {
-	if x != nil {
-		return x.FollowUpCooldown
 	}
 	return nil
 }
@@ -601,7 +585,7 @@ var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDesc
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xac\x1c\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe4\x1b\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -626,9 +610,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x15firing_telemetry_path\x18\x13 \x01(\tR\x13firingTelemetryPath\x125\n" +
 	"\bduration\x18\x14 \x01(\v2\x19.google.protobuf.DurationR\bduration\x12D\n" +
 	"\x10response_timeout\x18\x15 \x01(\v2\x19.google.protobuf.DurationR\x0fresponseTimeout\x12L\n" +
-	"\x14verification_timeout\x18\x16 \x01(\v2\x19.google.protobuf.DurationR\x13verificationTimeout\x12-\n" +
-	"\x0emax_follow_ups\x18\x17 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\fmaxFollowUps\x12G\n" +
-	"\x12follow_up_cooldown\x18\x18 \x01(\v2\x19.google.protobuf.DurationR\x10followUpCooldown\x12D\n" +
+	"\x14verification_timeout\x18\x16 \x01(\v2\x19.google.protobuf.DurationR\x13verificationTimeout\x12D\n" +
 	"\rrepair_policy\x18\x19 \x01(\tB\x1f\xbaH\x1cr\x1aR\x06commitR\x10recorded-actionsR\frepairPolicy\x12\x1d\n" +
 	"\n" +
 	"lease_name\x18\x1a \x01(\tR\tleaseName\x12@\n" +
@@ -675,7 +657,7 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDurationB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
-	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10ER\x06brokerR\vbroker_argsR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourB\x88\x02\n" +
+	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10ER\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourB\x88\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x15ControllerConfigProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -699,21 +681,20 @@ var file_sdodev_contracts_v1alpha1_controller_config_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.ControllerConfig.duration:type_name -> google.protobuf.Duration
 	1,  // 1: sdodev.contracts.v1alpha1.ControllerConfig.response_timeout:type_name -> google.protobuf.Duration
 	1,  // 2: sdodev.contracts.v1alpha1.ControllerConfig.verification_timeout:type_name -> google.protobuf.Duration
-	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.follow_up_cooldown:type_name -> google.protobuf.Duration
-	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
-	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
-	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
-	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
-	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
-	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_settle_delay:type_name -> google.protobuf.Duration
-	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.drift_sweep_interval:type_name -> google.protobuf.Duration
-	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
-	1,  // 12: sdodev.contracts.v1alpha1.ControllerConfig.program_min_duration:type_name -> google.protobuf.Duration
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	1,  // 3: sdodev.contracts.v1alpha1.ControllerConfig.lease_duration:type_name -> google.protobuf.Duration
+	1,  // 4: sdodev.contracts.v1alpha1.ControllerConfig.maintenance_poll_interval:type_name -> google.protobuf.Duration
+	1,  // 5: sdodev.contracts.v1alpha1.ControllerConfig.resume_sync_timeout:type_name -> google.protobuf.Duration
+	1,  // 6: sdodev.contracts.v1alpha1.ControllerConfig.synthetic_traffic_warmup:type_name -> google.protobuf.Duration
+	1,  // 7: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_deadline:type_name -> google.protobuf.Duration
+	1,  // 8: sdodev.contracts.v1alpha1.ControllerConfig.diagnosis_settle_delay:type_name -> google.protobuf.Duration
+	1,  // 9: sdodev.contracts.v1alpha1.ControllerConfig.drift_sweep_interval:type_name -> google.protobuf.Duration
+	1,  // 10: sdodev.contracts.v1alpha1.ControllerConfig.drift_batch_window:type_name -> google.protobuf.Duration
+	1,  // 11: sdodev.contracts.v1alpha1.ControllerConfig.program_min_duration:type_name -> google.protobuf.Duration
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_controller_config_proto_init() }

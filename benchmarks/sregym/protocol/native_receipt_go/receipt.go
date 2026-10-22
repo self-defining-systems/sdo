@@ -157,9 +157,6 @@ func validate(r *c.NativeProductionReceipt) error {
 			return errors.New("native closure lacks independently clear health detectors")
 		}
 	}
-	if closure.GetDetectorReviewRequiredAt() != nil {
-		return errors.New("native closure entered detector review")
-	}
 	if closure.GetVerifiedAt() == nil || closure.GetVerifiedAt().CheckValid() != nil {
 		return errors.New("native verified_at must be an ISO timestamp")
 	}

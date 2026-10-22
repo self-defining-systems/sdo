@@ -13,8 +13,7 @@ import (
 // observable. The detector firing stream records whether and when detectors
 // fired; this stream records the controller's own incident lifecycle
 // transitions -- when an incident opened, when its worktree was prepared, when
-// the responder was dispatched and completed, when a follow-up superseded it,
-// when a stranded worktree was released, and when the incident closed, its
+// the responder was dispatched and completed, and when the incident closed, its
 // outcome committed, and the closure was acknowledged. Joined by incident id
 // (and, for firings, the same id field), the two streams plus the outcome commit
 // each closure_committed event names let an operator reconstruct one incident's
@@ -41,7 +40,7 @@ const (
 // pair occurs at most once per incident, so an event id built from them is
 // stable and a replay after a crash re-derives the identical id.
 const (
-	// PhaseOpened: a batch of findings opened a new incident (or follow-up).
+	// PhaseOpened: a batch of findings opened a new incident.
 	PhaseOpened = "incident_opened"
 	// PhaseWorkspacePrepared: the broker prepared the incident's isolated worktree.
 	PhaseWorkspacePrepared = "workspace_prepared"
@@ -49,13 +48,7 @@ const (
 	PhaseDispatched = "responder_dispatched"
 	// PhaseResponderCompleted: the responder finished (successfully or as a terminal Job failure).
 	PhaseResponderCompleted = "responder_completed"
-	// PhaseSuperseded: a follow-up incident replaced this one before it closed.
-	PhaseSuperseded = "incident_superseded"
-	// PhaseWorktreeReleased: a stranded, superseded worktree was reaped by the broker.
-	PhaseWorktreeReleased = "worktree_released"
-	// PhaseDetectorReviewRequired: health did not clear within the verification window.
-	PhaseDetectorReviewRequired = "detector_review_required"
-	// PhaseClosed: the controller cut the incident closure after verifying health.
+	// PhaseClosed: the controller cut the incident closure after verifying health or timing out.
 	PhaseClosed = "incident_closed"
 	// PhaseClosureCommitted: the broker committed the authoritative outcome for the closure.
 	PhaseClosureCommitted = "closure_committed"
@@ -75,20 +68,14 @@ func phaseRank(p string) int {
 		return 4
 	case PhaseResponderCompleted:
 		return 5
-	case PhaseSuperseded:
-		return 6
-	case PhaseWorktreeReleased:
-		return 7
-	case PhaseDetectorReviewRequired:
-		return 8
 	case PhaseClosed:
-		return 9
+		return 6
 	case PhaseClosureCommitted:
-		return 10
+		return 7
 	case PhaseAcknowledged:
-		return 11
+		return 8
 	default:
-		return 12
+		return 9
 	}
 }
 
@@ -178,8 +165,6 @@ type TimelineEntry struct {
 // incident id into a single, deterministically ordered timeline. This is the
 // offline reconstruction an operator runs against the durable artifacts: no
 // cluster, no clock, no RNG -- the same inputs always yield the same timeline.
-// Follow-up children are distinct incident ids; a caller walks the chain by
-// following ParentIncidentID / SupersededBy on the reconstructed events.
 func ReconstructIncidentTimeline(
 	incidentID string, lifecycle []*contracts.LifecycleEvent, firings []*contracts.FiringRecord,
 ) []TimelineEntry {

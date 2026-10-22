@@ -231,13 +231,15 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 				if err != nil {
 					return err
 				}
-				if len(changed) > 0 {
+				// An unverified (timed-out) closure never publishes its repair.
+				verified := len(closure.FinalDetectorStates) > 0
+				if len(changed) > 0 && verified {
 					accepted, err := n.Repository.Publish(ctx, id, broker.Responder, broker.ProposalPhase)
 					if err != nil {
 						return err
 					}
 					ledger.ProposalCommit = accepted.Commit
-				} else if closure.Request.RepairPolicy == "commit" {
+				} else if verified && closure.Request.RepairPolicy == "commit" {
 					return errors.New("commit repair policy requires a nonempty validated proposal")
 				}
 			}
@@ -680,19 +682,6 @@ func successfulRollout(receipts []ControllerRolloutReceipt) bool {
 		}
 	}
 	return false
-}
-
-func (n NativeIncidentBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	return n.withLock(func() error {
-		ledger, err := n.readLedger(incidentID)
-		if err != nil {
-			return err
-		}
-		if ledger.Closure != nil {
-			return nil
-		}
-		return n.Repository.ReleaseProposal(incidentID, broker.ProposalPhase)
-	})
 }
 
 func (n NativeIncidentBroker) withLock(fn func() error) error {
