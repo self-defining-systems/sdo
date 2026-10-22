@@ -13,6 +13,19 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "evidence" || os.Args[1] == "api-proxy") {
+		var err error
+		if os.Args[1] == "evidence" {
+			err = operatorcli.RunEvidence(os.Args[2:], os.Getenv, os.Stdout)
+		} else {
+			err = operatorcli.RunAPIProxy(context.Background(), os.Args[2:])
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "observe-controller" {
 		if err := operatorcli.RunControllerObservation(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)

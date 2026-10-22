@@ -1,0 +1,94 @@
+package operatorcli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"k8s.io/client-go/rest"
+	"sdo.dev/operator/apihistory"
+	"sdo.dev/operator/kubeproxy"
+)
+
+const APIProxyAddress = "127.0.0.1:18080"
+
+// RunAPIProxy uses only the Job Pod's in-cluster service-account identity.
+// Provider credentials and incoming Authorization are never inspected or stored.
+func RunAPIProxy(ctx context.Context, args []string) error {
+	if len(args) == 1 && args[0] == "ready" {
+		c, err := net.DialTimeout("tcp", APIProxyAddress, time.Second)
+		if err == nil {
+			c.Close()
+		}
+		return err
+	}
+	flags := flag.NewFlagSet("api-proxy", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	incident := flags.String("incident", "", "controller-assigned incident")
+	directory := flags.String("directory", "", "runtime history directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *incident == "" || *directory == "" || flags.NArg() != 0 {
+		return errors.New("api-proxy requires --incident and --directory")
+	}
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return err
+	}
+	tlsConfig, err := rest.TLSConfigFor(config)
+	if err != nil {
+		return err
+	}
+	base := &http.Transport{TLSClientConfig: tlsConfig, DisableCompression: true, MaxIdleConnsPerHost: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
+	reads, err := rest.HTTPWrappersForConfig(config, base)
+	if err != nil {
+		return err
+	}
+	writeBase := base.Clone()
+	writeBase.DisableKeepAlives = true
+	writes, err := rest.HTTPWrappersForConfig(config, writeBase)
+	if err != nil {
+		return err
+	}
+	upstream, err := url.Parse(config.Host)
+	if err != nil {
+		return err
+	}
+	var recorder kubeproxy.Recorder
+	store, storeErr := apihistory.Open(*directory, *incident, apihistory.Limits{})
+	if storeErr == nil {
+		recorder = store
+		defer store.Close()
+	}
+	// Missing/unreadable manifest is itself Unknown. Recording initialization
+	// failure must not prevent the localhost forwarding endpoint from starting.
+	server := &http.Server{Addr: APIProxyAddress, Handler: kubeproxy.New(upstream, reads, writes, recorder), ReadHeaderTimeout: 10 * time.Second}
+	listener, err := net.Listen("tcp", APIProxyAddress)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			server.Close()
+		case <-done:
+		}
+	}()
+	err = server.Serve(listener)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
