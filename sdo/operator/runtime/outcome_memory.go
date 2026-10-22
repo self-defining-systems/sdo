@@ -14,11 +14,6 @@ import (
 
 const maxRelevantOutcomes = 3
 
-// discreditedVerdicts mark a root cause SDO found false (contradicted) or not
-// backed by the responder's own repair (unattributed). Such a cause is
-// never surfaced to a later responder as a known root cause.
-var discreditedVerdicts = map[string]struct{}{"contradicted": {}, "unattributed": {}}
-
 // relevantOutcomeEvidence returns up to maxRelevantOutcomes prior successes
 // related to findings, newest first. origins maps a learned incident
 // detector to the incident it was learned from.
@@ -56,13 +51,7 @@ func relevantOutcomeEvidence(
 			continue
 		}
 		rootCauses := make([]string, 0, len(record.GetConfirmedRootCauses()))
-		aligned := len(record.GetDiagnosisVerification()) == len(record.GetConfirmedRootCauses())
-		for index, cause := range record.GetConfirmedRootCauses() {
-			if aligned {
-				if _, discredited := discreditedVerdicts[record.GetDiagnosisVerification()[index].GetVerdict()]; discredited {
-					continue
-				}
-			}
+		for _, cause := range record.GetConfirmedRootCauses() {
 			rootCauses = append(rootCauses, cause.GetSummary())
 		}
 		actions := make([]string, 0, len(record.GetRepairActions()))

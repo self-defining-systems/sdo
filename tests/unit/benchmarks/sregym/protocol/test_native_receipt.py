@@ -34,7 +34,6 @@ def _ledger() -> dict[str, object]:
             "incident_id": "incident-1",
             "classification": "success",
             "repair_commit": SHA_A,
-            "diagnosis_verification": [{"verdict": "confirmed"}],
         },
         "requires_reflection": True,
         "outcome_commit": SHA_B,
@@ -84,11 +83,10 @@ def test_native_receipt_rejects_partial_as_incomplete_closure() -> None:
     assert rejected.value.receipt["outcome_classification"] == "partial"
 
 
-def test_native_receipt_rejects_success_with_contradicted_diagnosis() -> None:
+def test_native_receipt_accepts_success_without_diagnosis_evidence() -> None:
     ledger = _ledger()
-    ledger["outcome_document"]["diagnosis_verification"].append({"verdict": "contradicted"})
-    with pytest.raises(ProductionReceiptValidationError, match="contradicted"):
-        _receipt(ledger)
+    ledger["closure"]["result"]["confirmed_root_causes"] = []
+    validate_production_receipt(_receipt(ledger))
 
 
 def test_native_receipt_accepts_verified_fast_path_without_responder_job() -> None:

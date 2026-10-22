@@ -66,7 +66,6 @@ def test_outcome_round_trips_through_canonical_contract() -> None:
         ("incident_view_open.json", IncidentView),
         ("incident_view_populated.json", IncidentView),
         ("closure_repaired.json", IncidentClosure),
-        ("closure_own_edit.json", IncidentClosure),
         ("controller_state.json", ControllerState),
         ("broker_ledger.json", BrokerLedger),
     ],

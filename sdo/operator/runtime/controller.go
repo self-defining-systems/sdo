@@ -113,10 +113,7 @@ type Controller struct {
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
-	detectorClearSince map[string]time.Time
-	// incidentObservedChanges maps Kind/name to the first time the open
-	// incident's diff showed that object changed. Guarded by mu.
-	incidentObservedChanges    map[string]ObservedStateChange
+	detectorClearSince         map[string]time.Time
 	pendingClosure             *IncidentClosure
 	closureState               contracts.ClosureState
 	closureReceipt             *ClosureReceipt
@@ -520,8 +517,6 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
 	c.resetDispatchRetryLocked()
-	c.incidentObservedChanges = make(map[string]ObservedStateChange)
-	c.observeStateChangesLocked(request.StateChanges, now)
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
@@ -979,7 +974,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		verifiedAt = c.responderCompletedAt
 	}
 	finalChanges := c.finalStateChangesLocked(now)
-	c.observeStateChangesLocked(finalChanges, now)
 	var healthClearedAt *time.Time
 	if verified {
 		healthClearedAt = c.healthClearedAtLocked(finalStates)
@@ -990,7 +984,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
 		IncidentDetectorStates: c.incidentDetectorStates(),
 		FinalStateChanges:      finalChanges,
-		ObservedStateChanges:   c.observedStateChangesLocked(),
 		HealthClearedAt:        healthClearedAt,
 		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
@@ -1026,7 +1019,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil
-	c.incidentObservedChanges = nil
 	c.mu.Unlock()
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)
@@ -1111,49 +1103,6 @@ func (c *Controller) incidentDetectorStates() []DetectorEvaluation {
 	return states
 }
 
-// observeStateChangesLocked records the first time the open incident's diff
-// showed each object changed. Called with c.mu held.
-func (c *Controller) observeStateChangesLocked(changes *StateChanges, now time.Time) {
-	if changes == nil || !c.incidentOpen {
-		return
-	}
-	if c.incidentObservedChanges == nil {
-		c.incidentObservedChanges = make(map[string]ObservedStateChange)
-	}
-	for _, change := range changes.Changes {
-		key := change.Kind + "/" + change.Name
-		if _, seen := c.incidentObservedChanges[key]; seen {
-			continue
-		}
-		c.incidentObservedChanges[key] = ObservedStateChange{
-			Kind: change.Kind, Name: change.Name, FirstObservedAt: now.UTC(),
-		}
-	}
-}
-
-// observedStateChangesLocked lists the open incident's observed changes by
-// first observation; nil without a baseline, when nothing can be checked.
-// Called with c.mu held.
-func (c *Controller) observedStateChangesLocked() []ObservedStateChange {
-	if c.Baseline == nil || c.incidentObservedChanges == nil {
-		return nil
-	}
-	observed := make([]ObservedStateChange, 0, len(c.incidentObservedChanges))
-	for _, entry := range c.incidentObservedChanges {
-		observed = append(observed, entry)
-	}
-	sort.Slice(observed, func(left int, right int) bool {
-		if !observed[left].FirstObservedAt.Equal(observed[right].FirstObservedAt) {
-			return observed[left].FirstObservedAt.Before(observed[right].FirstObservedAt)
-		}
-		if observed[left].Kind != observed[right].Kind {
-			return observed[left].Kind < observed[right].Kind
-		}
-		return observed[left].Name < observed[right].Name
-	})
-	return observed
-}
-
 // finalStateChangesLocked is the configuration diff against the healthy
 // baseline at verification time: a composite's later fault can land a
 // few seconds after dispatch, so the dispatch-time request diff can miss it
@@ -1228,8 +1177,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		DetectorClearSince:      timestampsContract(c.detectorClearSince),
-		IncidentObservedChanges: observedStateChangesContract(c.observedStateChangesLocked()), DispatchState: dispatchState,
+		DetectorClearSince:  timestampsContract(c.detectorClearSince),
+		DispatchState:       dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID,
@@ -1292,13 +1241,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
-	c.incidentObservedChanges = nil
-	if state.IncidentOpen {
-		c.incidentObservedChanges = make(map[string]ObservedStateChange, len(observedStateChangesState(state.GetIncidentObservedChanges())))
-		for _, entry := range observedStateChangesState(state.GetIncidentObservedChanges()) {
-			c.incidentObservedChanges[entry.Kind+"/"+entry.Name] = entry
-		}
-	}
 	c.dispatchState = state.DispatchState
 	c.incidentFindingKeys = append([]string(nil), state.IncidentFindingKeys...)
 	c.pendingClosure = nil
