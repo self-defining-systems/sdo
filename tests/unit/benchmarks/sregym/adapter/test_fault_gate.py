@@ -201,3 +201,48 @@ def test_persistent_gate_poll_can_follow_fastloop_time_scale() -> None:
     )
 
     assert timings["controller_baseline_wait"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("logs", ["", _maintenance("active", "previous-stage") + "\n" + _evaluation()])
+def test_persistent_gate_has_a_short_bounded_readiness_wait(logs: str, caplog: pytest.LogCaptureFixture) -> None:
+    clock = _Clock()
+
+    def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, stdout=logs, stderr="")
+
+    with caplog.at_level("INFO"), pytest.raises(FaultGateError, match="hotel-sdo.*stage-1.*300s"):
+        inject_fault_after_resumed_baseline(
+            "hotel-sdo",
+            "stage-1",
+            inject=lambda: pytest.fail("fault injected before readiness"),
+            kubectl_runner=kubectl,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+        )
+
+    assert clock.now == 300
+    assert "waiting for controller baseline" in caplog.text
+
+
+def test_persistent_gate_reports_forbidden_observation_as_readiness_failure() -> None:
+    clock = _Clock()
+    denied = (
+        'services is forbidden: User "system:serviceaccount:hotel-sdo:sdo-controller" '
+        'cannot list resource "services" in the namespace "hotel"'
+    )
+
+    def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, stdout=denied, stderr="")
+
+    with pytest.raises(FaultGateError, match="namespace-scoped.*RoleBinding.*services is forbidden"):
+        inject_fault_after_resumed_baseline(
+            "hotel-sdo",
+            "stage-1",
+            inject=lambda: pytest.fail("fault injected without namespace access"),
+            kubectl_runner=kubectl,
+            monotonic=clock.monotonic,
+            sleep=clock.sleep,
+            timeout_seconds=3,
+        )
+
+    assert clock.now == 3

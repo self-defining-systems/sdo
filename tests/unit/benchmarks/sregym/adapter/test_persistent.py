@@ -447,7 +447,66 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
     assert runtime_config_from_payload(loaded.controllers[config.namespace].runtime_config) == config
 
 
-def test_one_controller_serves_both_stages_and_the_second_skips_install_and_lifecycle(tmp_path: Path) -> None:
+def test_recreated_namespace_regains_controller_access_before_resume_and_injection(tmp_path: Path) -> None:
+    elapsed = [0.0]
+
+    class NamespaceOps(FakeOps):
+        grants_present = False
+
+        def install(self, config: RuntimeConfig) -> bool:
+            reused = super().install(config)
+            # The real Go installer/inspector reapplies Role/RoleBinding pairs
+            # in the app namespace, including on an unchanged controller.
+            self.grants_present = True
+            elapsed[0] += 2
+            return reused
+
+        def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+            if not paused:
+                assert self.grants_present, "recreated app namespace has no controller RBAC"
+            super().set_maintenance(control_namespace, paused=paused, generation=generation)
+
+    ops = NamespaceOps()
+    lifecycle_calls: list[str] = []
+    first = _run(tmp_path, ops, "s0", lifecycle_calls)
+    # SREGym deletes/recreates only the app namespace; the Pod and its PVC survive.
+    ops.grants_present = False
+    ops.reflectable.add("incident-1")
+    second = run_persistent_stage(
+        _inputs(tmp_path, "s1"),
+        ops=ops,
+        run_lifecycle=lambda: pytest.fail("reused controller must preserve learned memory"),
+        inject=lambda: None,
+        clock=Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)),
+    )
+
+    assert ops.grants_present
+    assert ops.installs == 1
+    assert lifecycle_calls == ["s0"]
+    assert first["persistent_controller"]["controller_pod_uid"] == second["persistent_controller"]["controller_pod_uid"]
+    assert ("inject", "hotel-sdo", "incident-2") in ops.events
+    assert second["driver_phase_timings_seconds"]["controller_install_inspection"] == 2
+
+
+def test_reuse_access_restoration_failure_blocks_resume_and_injection(tmp_path: Path) -> None:
+    class FailedAccessOps(FakeOps):
+        def install(self, config: RuntimeConfig) -> bool:
+            if config.reuse_existing:
+                raise PersistentControllerError("ensure RoleBinding hotel/sdo-controller: forbidden")
+            return super().install(config)
+
+    ops = FailedAccessOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.reflectable.add("incident-1")
+    ops.events.clear()
+
+    with pytest.raises(PersistentControllerError, match="ensure RoleBinding hotel/sdo-controller"):
+        _run(tmp_path, ops, "s1", [])
+
+    assert not any(event[0] in {"active", "fault", "inject"} for event in ops.events)
+
+
+def test_one_controller_serves_both_stages_and_the_second_skips_reinstall_and_lifecycle(tmp_path: Path) -> None:
     ops = FakeOps()
     lifecycle_calls: list[str] = []
 
@@ -464,11 +523,11 @@ def test_one_controller_serves_both_stages_and_the_second_skips_install_and_life
     assert "controller_inventory" in first["driver_phase_timings_seconds"]
     assert "lifecycle" in first["driver_phase_timings_seconds"]
     assert "controller_install_inspection" in first["driver_phase_timings_seconds"]
-    assert second["driver_phase_timings_seconds"]["controller_install_inspection"] == 0
+    assert second["driver_phase_timings_seconds"]["controller_install_inspection"] >= 0
     kinds = [
         event[0] for event in ops.events if event[0] in {"install", "reuse", "active", "paused", "fault", "delete"}
     ]
-    assert kinds == ["install", "active", "fault", "paused", "active", "fault", "paused"]
+    assert kinds == ["install", "active", "fault", "paused", "reuse", "active", "fault", "paused"]
     # Each stage correlates its own incident.
     assert (first["incident_id"], second["incident_id"]) == ("incident-1", "incident-2")
 
