@@ -25,3 +25,28 @@ Fastloop resolution rows keep the controller's `resolution_path`, `fast_path_pro
 Native worker task/result payloads use logical `playbook_id`, `script_names`, and `proposed_artifact_ids`; direct-edit reflection results reject the deprecated `artifact_proposal` and carry logical playbook IDs in `proposed_artifact_ids`. Older runs may include typed proposals; both the judge and reflection reject them on the current path. Resolve those IDs through the accepted-commit memory catalog and broker commit when investigating learning. Old Python-run receipts may still contain `.sdo/` paths in `playbooks`, `scripts`, or `proposed_memory_changes`; treat these as legacy transport values rather than extra artifacts. The worker's IDs and local check success are claims until the broker independently checks and accepts the actual checkout diff. The native broker ledger stores `reflection_rejections` (attempt, typed `MemoryDiagnostic` findings, and timestamp) before releasing rejected files, and marks `reflection_rejected` after the retry bound; two corrections are allowed, three dispatches total. A terminal rejection completes closure without a reflection commit and remains terminal after restart. Compare diagnostic rule/path/message and accepted Git changes; infrastructure errors do not consume the learning correction budget.
 
 Fastloop stage checkpoints live under `results/<run-id>/checkpoints/<incident-number>/<stage>/`. `request.json` and `result.json` are the exact worker ProtoJSON; `checkpoint.json` holds capture digests, a digest of the direct file-edit bundle, and the settled native broker ledger. `file_edits.json` is recorded beside each exported worker request/result before publication and stored content-addressed by the checkpoint. Its version-1 edits carry repository-relative paths, base64 file bytes (null for deletion), and executable modes, bounded to 48 MiB encoded. Replay applies them to a fresh checkout and runs the real Go broker. Old proposal-only recordings fail with an explicit error; no proposal shim is kept. Corpus files live under `checkpoints/blobs/<sha256>` and are joined by digest, not by their original session path. A checkpoint is replay evidence, not an accepted commit or a benchmark oracle verdict. Default Codex fastloop registrations record provider CLI turns under the exported incident session's `model_io/<request-digest>/<prompt-digest>.json`; those are model I/O for deterministic plumbing replay, not additional agent decisions. Compare replay's broker acceptance with the recorded ledger and accepted commit before attributing a learning change.
+
+## Responder Kubernetes API history (stage 1)
+
+Per-incident session `api-history/` contains version-1 `manifest.json`, append-only
+`events.jsonl`, and SHA-256-addressed projected response `blobs/`. This runtime
+store is outside `.sdo/`; it is neither accepted memory nor replay evidence.
+Envelopes identify epoch, request, start/end time, verb, GVR, namespace, name,
+subresource, status, opaque resourceVersion and optional body hash. Hashes cover
+projected bytes. Known object projections reuse controller corpus capture;
+Secrets retain data/stringData key names with empty values. Unknown response
+representations carry metadata only. Request bodies and headers are never stored.
+
+Default incident limits are 64 MiB and 10,000 envelopes, with a two-entry queue
+and 4 MiB response limit. Deduplicated bodies count once toward the byte limit;
+envelopes count per occurrence. `complete=false`, nonzero `dropped`, an open
+writer, missing files, or a new epoch after restart prevent continuity claims.
+Disk/queue/cap failures do not block forwarding. A missing manifest is Unknown,
+including when the store itself could not initialize. The controller durably rotates
+a sibling `api-history.generation` before each forwarding Job; manifests must match
+that token. The sidecar also rotates it before recorder initialization. Missing,
+unreadable, malformed or mismatched tokens remain incomplete after writer exit.
+A failed controller generation write prevents launching the attempt. Runtime storage is removed
+with the existing incident session lifecycle; there is no multi-session retention
+policy. History cannot prove unobserved state or replace controller captures,
+pre-apply checkpoints, action receipts, or independent recovery verification.
