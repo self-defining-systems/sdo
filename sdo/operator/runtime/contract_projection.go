@@ -222,7 +222,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		result.FollowUp = &contracts.FollowUpContext{
 			OriginalIncidentId: request.FollowUp.OriginalIncidentID, ParentIncidentId: request.FollowUp.ParentIncidentID,
 			Attempt: int32(request.FollowUp.Attempt), MaxFollowUps: int32(request.FollowUp.MaxFollowUps),
-			PriorResponderSummary: request.FollowUp.PriorSummary,
+			PriorResponderSummary: request.FollowUp.PriorSummary, DriftLabelsOnly: request.FollowUp.DriftLabelsOnly,
 		}
 	}
 	return result, nil
@@ -536,7 +536,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		result.FollowUp = &FollowUpContext{
 			OriginalIncidentID: followUp.GetOriginalIncidentId(), ParentIncidentID: followUp.GetParentIncidentId(),
 			Attempt: int(followUp.GetAttempt()), MaxFollowUps: int(followUp.GetMaxFollowUps()),
-			PriorSummary: followUp.GetPriorResponderSummary(),
+			PriorSummary: followUp.GetPriorResponderSummary(), DriftLabelsOnly: followUp.GetDriftLabelsOnly(),
 		}
 	}
 	return result

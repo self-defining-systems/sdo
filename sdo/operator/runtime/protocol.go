@@ -91,6 +91,9 @@ type FollowUpContext struct {
 	Attempt      int
 	MaxFollowUps int
 	PriorSummary string
+	// DriftLabelsOnly marks a follow-up whose only job is to return the
+	// structured labels for the unexplained drift in the request.
+	DriftLabelsOnly bool
 }
 
 // RootCauseEvidence is one live observation supporting a root cause: a

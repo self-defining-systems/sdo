@@ -39,3 +39,21 @@ def test_follow_up_prompt_states_residual_scope_and_prior_summary() -> None:
     assert "follow-up 1 of at most 3" in prompt
     assert "Earlier responder repaired the first fault." in prompt
     assert "already-repaired" in prompt
+
+
+def test_drift_label_follow_up_asks_only_for_labels() -> None:
+    follow_up = FollowUpContext(
+        original_incident_id="inc-1",
+        parent_incident_id="inc-2",
+        attempt=1,
+        max_follow_ups=1,
+        prior_responder_summary="ConfigMap differs only by comments.",
+        drift_labels_only=True,
+    )
+
+    prompt = _responder_prompt(_request(follow_up=follow_up))
+
+    assert "only open blockers are the unexplained drift" in prompt
+    assert "one drift_events entry per event" in prompt
+    assert "do not repair" in prompt.lower()
+    assert "already-repaired" not in prompt

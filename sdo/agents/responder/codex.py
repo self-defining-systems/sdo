@@ -699,6 +699,16 @@ def follow_up_guidance(request: IncidentRequest) -> str:
     follow_up = request.follow_up
     if not request.HasField("follow_up"):
         return ""
+    if follow_up.drift_labels_only:
+        return (
+            f"This is follow-up {follow_up.attempt} of at most {follow_up.max_follow_ups} for incident "
+            f"{follow_up.original_incident_id}. Health is quiet; the only open blockers are the unexplained drift "
+            "events in drift_events, which the earlier responder left without a structured label. Do not repair or "
+            "redo anything. Re-check each event against accepted source and live state, then return one drift_events "
+            "entry per event with investigation_verdict (benign, bug or unsure), a concrete reason and observation "
+            "evidence. Prose in the summary does not count as a label. What the earlier responders reported "
+            f"(context to verify, not fact):\n{follow_up.prior_responder_summary}\n\n"
+        )
     return (
         f"This is follow-up {follow_up.attempt} of at most {follow_up.max_follow_ups} for incident "
         f"{follow_up.original_incident_id}. An earlier responder already ran, and the findings below stayed active "

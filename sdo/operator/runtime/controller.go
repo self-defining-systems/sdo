@@ -1081,23 +1081,16 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			c.mu.Unlock()
 			return
 		}
-		if c.startFollowUpLocked(now) {
+		if c.startFollowUpLocked(now) || c.startDriftLabelFollowUpLocked(now) || c.requireDriftLabelReviewLocked(now) {
 			c.mu.Unlock()
 			return
 		}
 		deadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
 		if !now.Before(deadline) {
-			c.detectorReviewRequired = true
-			c.detectorReviewRequiredAt = now.UTC()
-			c.detectorReviewReason = fmt.Sprintf(
+			c.requireDetectorReviewLocked(now, fmt.Sprintf(
 				"health detectors did not clear within %s after responder completion",
 				c.config.VerificationTimeout,
-			)
-			c.emitLifecycleLocked(&contracts.LifecycleEvent{
-				Event: PhaseDetectorReviewRequired, RecordedAt: contractTimestamp(c.detectorReviewRequiredAt),
-				IncidentId: c.currentIncidentRequest.IncidentID, Reason: c.detectorReviewReason,
-				DetectorReviewRequired: true,
-			})
+			))
 		}
 		c.mu.Unlock()
 		return
@@ -1233,6 +1226,102 @@ func (c *Controller) startFollowUpLocked(now time.Time) bool {
 	if len(residual) == 0 {
 		return false
 	}
+	c.dispatchFollowUpLocked(now, residual, false)
+	return true
+}
+
+// startDriftLabelFollowUpLocked asks the responder for the structured labels it
+// left out. Quiet health leaves unlabeled unexplained drift as the only
+// verification blocker, and a label can arrive only in a responder result, so
+// the controller requests it once instead of waiting for VerificationTimeout.
+// It is bounded separately from MaxFollowUps, which benchmarks leave at zero.
+func (c *Controller) startDriftLabelFollowUpLocked(now time.Time) bool {
+	unlabeled := c.unlabeledDriftBlockersLocked()
+	if len(unlabeled) == 0 || c.currentIncidentRequest.FollowUp != nil && c.currentIncidentRequest.FollowUp.DriftLabelsOnly {
+		return false
+	}
+	c.dispatchFollowUpLocked(now, unlabeled, true)
+	return true
+}
+
+// requireDriftLabelReviewLocked records detector review as soon as a labels-only
+// follow-up came back and the drift is still unlabeled, naming the events.
+func (c *Controller) requireDriftLabelReviewLocked(now time.Time) bool {
+	request := c.currentIncidentRequest
+	unlabeled := c.unlabeledDriftBlockersLocked()
+	if len(unlabeled) == 0 || request.FollowUp == nil || !request.FollowUp.DriftLabelsOnly {
+		return false
+	}
+	events := make([]string, 0, len(unlabeled))
+	for _, finding := range unlabeled {
+		events = append(events, fmt.Sprintf("%s/%s", finding.PrimaryResource.Kind, finding.PrimaryResource.Name))
+	}
+	c.requireDetectorReviewLocked(now, fmt.Sprintf(
+		"health is quiet but the responder returned no structured drift_events label for unexplained drift on %s",
+		strings.Join(events, ", ")))
+	return true
+}
+
+// unlabeledDriftBlockersLocked returns the active unexplained drift findings
+// that are the only thing keeping a completed responder's incident from
+// verifying: health is clear, no other drift detector is firing, and the result
+// carries no completed label for them. Prose never counts as a label.
+func (c *Controller) unlabeledDriftBlockersLocked() []sdk.Finding {
+	if c.currentIncidentRequest == nil || c.currentIncidentResult == nil || c.dispatchError != "" {
+		return nil
+	}
+	if len(c.healthDetectorIDs) > 0 {
+		for _, id := range c.healthDetectorIDs {
+			if c.tracker.HasActiveDetector(id) {
+				return nil
+			}
+		}
+		if _, clear := c.latestEvaluations(c.healthDetectorIDs, c.responderCompletedAt, true); !clear {
+			return nil
+		}
+	}
+	driftIDs := []string{}
+	for _, finding := range c.currentIncidentRequest.Findings {
+		if strings.HasPrefix(finding.DetectorID, "drift.") {
+			driftIDs = append(driftIDs, finding.DetectorID)
+		}
+	}
+	active := c.tracker.ActiveFindings(driftIDs, nil)
+	labeled := checkedDriftAssessments(*c.currentIncidentRequest, c.currentIncidentResult.DriftEvents)
+	unlabeled := []sdk.Finding{}
+	for _, finding := range active {
+		if finding.DetectorID != "drift.unexplained" {
+			return nil
+		}
+		events := driftEventsForFindings(nil, []sdk.Finding{finding})
+		if len(events) != 1 {
+			return nil
+		}
+		for _, label := range labeled {
+			if driftEventKey(label) == driftEventKey(events[0]) && sameDriftObservation(label, events[0]) {
+				events = nil
+				break
+			}
+		}
+		if events != nil {
+			unlabeled = append(unlabeled, finding)
+		}
+	}
+	return unlabeled
+}
+
+func (c *Controller) requireDetectorReviewLocked(now time.Time, reason string) {
+	c.detectorReviewRequired = true
+	c.detectorReviewRequiredAt = now.UTC()
+	c.detectorReviewReason = reason
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{
+		Event: PhaseDetectorReviewRequired, RecordedAt: contractTimestamp(c.detectorReviewRequiredAt),
+		IncidentId: c.currentIncidentRequest.IncidentID, Reason: c.detectorReviewReason,
+		DetectorReviewRequired: true,
+	})
+}
+
+func (c *Controller) dispatchFollowUpLocked(now time.Time, residual []sdk.Finding, driftLabelsOnly bool) {
 	parent := c.currentIncidentRequest
 	request := c.incidentRequest(now, residual)
 	if request.IncidentID == parent.IncidentID {
@@ -1245,10 +1334,12 @@ func (c *Controller) startFollowUpLocked(now time.Time) bool {
 		original = parent.FollowUp.OriginalIncidentID
 		priorSummary = parent.FollowUp.PriorSummary
 	}
+	attempt := c.followUpAttemptLocked() + 1
 	request.FollowUp = &FollowUpContext{
 		OriginalIncidentID: original, ParentIncidentID: parent.IncidentID,
-		Attempt: c.followUpAttemptLocked() + 1, MaxFollowUps: c.config.MaxFollowUps,
-		PriorSummary: boundedFollowUpSummary(priorSummary, followUpSummary(parent, c.currentIncidentResult, c.dispatchError)),
+		Attempt: attempt, MaxFollowUps: max(c.config.MaxFollowUps, attempt),
+		PriorSummary:    boundedFollowUpSummary(priorSummary, followUpSummary(parent, c.currentIncidentResult, c.dispatchError)),
+		DriftLabelsOnly: driftLabelsOnly,
 	}
 	request.RepositoryWorktree = parent.RepositoryWorktree
 	request.RepositoryBaseCommit = parent.RepositoryBaseCommit
@@ -1282,7 +1373,6 @@ func (c *Controller) startFollowUpLocked(now time.Time) bool {
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	c.incidentFindingKeys = findingKeys(residual)
-	return true
 }
 
 // enqueueReleaseLocked records an incident whose prepared worktree was stranded
