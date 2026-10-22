@@ -608,6 +608,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if len(batch) == 0 {
 		return nil
 	}
+	// Drift is already confirmed when queued; its window only coalesces
+	// drift-only incidents. A health incident must not leave it behind.
+	if hasNonDriftFinding(batch) {
+		batch = append(batch, c.batcher.DrainDetectorPrefix("drift.")...)
+		sortFindings(batch)
+	}
 	priorAdmission := cloneDriftAdmission(c.driftAdmission)
 	batch = c.admitDriftBatch(now, batch)
 	if len(batch) == 0 {
@@ -685,6 +691,15 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	}
 	c.mu.Unlock()
 	return nil
+}
+
+func hasNonDriftFinding(findings []sdk.Finding) bool {
+	for _, finding := range findings {
+		if !strings.HasPrefix(finding.DetectorID, "drift.") {
+			return true
+		}
+	}
+	return false
 }
 
 // playbookIDs flattens surfaced playbooks to logical IDs for telemetry.
