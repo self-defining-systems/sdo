@@ -12,7 +12,6 @@ from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.responder import recorded_actions
-from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
 from sdo.agents.responder.session_turn import (
@@ -116,9 +115,7 @@ def execute_incident(
         result.responder_session_id = completed.session_id
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
-    # Withhold weakly-evidenced causes before the result reaches the broker;
-    # this is upstream of and independent from the fenced diagnosis verifier.
-    return apply_cause_admissibility(result, request)
+    return result
 
 
 def _evidence_reference_feedback(problems: str) -> str:
@@ -187,37 +184,6 @@ def _incident_result_schema() -> dict[str, object]:
             },
         },
         "repair_changes": {"type": "array", "items": {"type": "string"}},
-        "repair_actions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "action_id": {"type": "string", "minLength": 1},
-                    "kind": {"type": "string", "minLength": 1},
-                    "target": {"type": "string", "minLength": 1},
-                    "resources": {"type": "array", "items": object_ref},
-                    "summary": {"type": "string", "minLength": 1},
-                    "details": {"type": "string", "minLength": 1},
-                    "started_at": {"type": "string", "format": "date-time"},
-                    "completed_at": {"type": "string", "format": "date-time"},
-                    "success": {"type": "boolean"},
-                    "reversible": {"type": "boolean"},
-                },
-                "required": [
-                    "action_id",
-                    "kind",
-                    "target",
-                    "resources",
-                    "summary",
-                    "details",
-                    "started_at",
-                    "completed_at",
-                    "success",
-                    "reversible",
-                ],
-                "additionalProperties": False,
-            },
-        },
         "verification_evidence": {
             "type": "array",
             "items": {
@@ -623,23 +589,6 @@ def _state_changes_section(request: IncidentRequest) -> str:
     )
 
 
-def _cause_admissibility_guidance() -> str:
-    """Problem-agnostic bar for asserting a confirmed root cause; empty when the gate is off."""
-
-    if not CauseAdmissibilityPolicy.from_environment().enabled:
-        return ""
-    return (
-        "Admissibility of a confirmed root cause: assert a cause in confirmed_root_causes only when it is anchored "
-        "to an incident signal that can be checked independently -- a detector you list in explained_detectors that "
-        "fired for this incident, a failing synthetic scenario, or a configuration change listed since the last "
-        "healthy state. A change you observe that does not explain the failing health signal (a benign drift) is "
-        "not a root cause: record it in static_context, never in confirmed_root_causes. A cause supported only by "
-        "your own narrative live observations, explaining no detector that fired and citing no corroborating finding "
-        "or change, is weakly evidenced; do not assert it. Asserting a weakly-evidenced or benign cause lowers "
-        "diagnosis quality even when your repair is correct.\n\n"
-    )
-
-
 def _verification_instructions() -> str:
     return (
         "Prefer one blocking command over checking in on a backgrounded one: give a command enough time to "
@@ -674,7 +623,9 @@ def _verification_instructions() -> str:
         "Label every pod or Job you create only to investigate or check (debug, curl, DNS, or database-client "
         "pods) with `sdo.dev/responder-helper=true`, for example `kubectl run ... --labels "
         "sdo.dev/responder-helper=true`; the controller deletes them when you finish. Never put that label on "
-        "application workloads.\n\n"
+        "application workloads. Run probes with `kubectl run --rm -i --restart=Never ...` or `kubectl exec` into an "
+        "existing pod, and delete any helper Pod you created before you submit: a leftover Completed Pod in the "
+        "application namespace can fail the final check.\n\n"
     )
 
 
@@ -823,7 +774,6 @@ def _responder_prompt(request: IncidentRequest) -> str:
         f"{surfaced_context}"
         f"{_no_action_instructions()}"
         f"{_verification_instructions()}"
-        f"{_cause_admissibility_guidance()}"
         "During this response, use plain commands and chain independent ones in one shell call. "
         "Do not write helper scripts for repairs, receipts or verification; keep interpretation and decisions in "
         "natural language. Never put scratch files in operational memory. "

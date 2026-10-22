@@ -6,6 +6,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
@@ -54,4 +55,15 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 	default:
 		return fmt.Errorf("plan object kind %s/%s is unsupported", ref.APIVersion, ref.Kind)
 	}
+}
+
+func planUnstructured(object any, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		return nil, err
+	}
+	result := &unstructured.Unstructured{Object: fields}
+	result.SetAPIVersion(ref.APIVersion)
+	result.SetKind(ref.Kind)
+	return result, nil
 }

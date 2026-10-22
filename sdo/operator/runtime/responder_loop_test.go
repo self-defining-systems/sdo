@@ -239,7 +239,7 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 		t.Fatalf("plan: %+v", plan)
 	}
 	applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{plan.PlanID}})
-	if applied.Error == "" || applied.ApplicationID == "" || len(applied.ProgramRuns) == 0 {
+	if applied.Error != "" || applied.ApplicationID == "" || len(applied.ProgramRuns) == 0 || applied.Healthy {
 		t.Fatalf("apply: %+v", applied)
 	}
 	if len(applied.Findings) != 1 || applied.Findings[0].Playbooks[0] != "health-objective" || strings.Contains(loop.ToolCalls()[2].ResponseJSON, ".sdo/") {

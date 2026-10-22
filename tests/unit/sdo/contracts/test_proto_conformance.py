@@ -104,6 +104,7 @@ def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> No
         "error",
         "late_findings_pull",
         "program_tool_calls",
+        "repair_actions",
         "program_runs",
         "plan_applications",
         "program_failure_signals",

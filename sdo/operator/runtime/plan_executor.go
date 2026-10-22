@@ -75,13 +75,15 @@ type PlanExecutor struct {
 	Rollouts PlanRollouts
 	Verifier PlanVerifier
 	Now      func() time.Time
-	// Sleep waits between version-conflict retries; nil waits on the real clock.
-	Sleep func(context.Context, time.Duration) error
 }
 
+// Apply writes the plan once and reports. A write that fails part-way through a
+// multi-action plan is compensated; once every write has landed, a failed
+// rollout wait or health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	started := time.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
+	writesLanded := false
 	defer func() {
 		result.Duration = time.Since(started)
 		if err != nil && result.PendingAction != nil {
@@ -94,7 +96,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				return
 			}
 		}
-		if err != nil && result.Applied {
+		if err != nil && result.Applied && !writesLanded {
 			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if rollbackErr := e.rollback(recoveryCtx, &result); rollbackErr != nil {
@@ -149,8 +151,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
 	}
-	prepared := make([]*unstructured.Unstructured, 0, len(plan.Actions))
-	cumulative := make([][]byte, 0, len(plan.Actions))
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
 		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
@@ -173,23 +173,13 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if patchErr != nil {
 			return result, patchErr
 		}
-		// The server dry-run starts from the live object, which has none of the
-		// earlier actions, so it needs the change from the pre-image to this action.
-		original, marshalErr := json.Marshal(originals[ref].Object)
-		if marshalErr != nil {
-			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
-		}
-		total, patchErr := jsonpatch.CreateMergePatch(original, after)
-		if patchErr != nil {
-			return result, fmt.Errorf("patch %s/%s: %w", ref.Kind, ref.Name, patchErr)
-		}
-		prepared = append(prepared, next.DeepCopy())
-		cumulative = append(cumulative, total)
 		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
 		current[ref] = next
 	}
-	if err := e.normalizeAfterImages(ctx, result.Patches, cumulative); err != nil {
-		return result, err
+	// Rollback and write reconciliation compare after-images with live values, so
+	// the plan's values take the form the API server stores.
+	for i := range result.Patches {
+		canonicalizePlanObject(result.Patches[i].After)
 	}
 	if dryRun {
 		return result, nil
@@ -208,8 +198,8 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		}
 		pending := index
 		result.PendingAction = &pending
-		if err := e.patchWithRetry(ctx, index, &result.Patches[index], versions[patch.Ref]); err != nil {
-			return result, err
+		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, result.Patches[index].Patch); err != nil {
+			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
@@ -218,18 +208,10 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if getErr != nil {
 			return result, fmt.Errorf("read applied version: %w", getErr)
 		}
-		if observed.GetUID() != patch.Before.GetUID() {
-			return result, errors.New("applied object was recreated")
-		}
-		for _, field := range []string{"spec", "data", "binaryData"} {
-			written := projectPlanOwned(patch.After.Object[field], prepared[index].Object[field])
-			if mismatch, found := findPlanOwnedFieldMismatch(field, observed.Object[field], written); found {
-				return result, fmt.Errorf("concurrent change after action %d: %s", index, mismatch)
-			}
-		}
 		result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		versions[patch.Ref] = observed
 	}
+	writesLanded = true
 	result.Applied = true
 	if err := e.Rollouts.Wait(ctx, refs); err != nil {
 		return result, fmt.Errorf("wait for plan rollouts: %w", err)

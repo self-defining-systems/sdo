@@ -669,36 +669,27 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		response.Error = err.Error()
 	}
 	l.verify(ctx, selected, response)
-	if result.Applied && (err != nil || !result.VerificationPassed || !response.Healthy || !boundPlansNoMatch(selected, response.ProgramRuns)) {
-		result.VerificationPassed = false
-		if response.Error == "" {
-			response.Error = "plan verification failed"
-		}
-		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		// Preserve the failed revision independently of the in-process application
-		// log, including when rollback succeeds or the process stops during it.
-		failedRuns := make([]ProgramRun, 0, len(programIDs))
-		for _, programID := range programIDs {
-			failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
-		}
-		fillProgramRevisions(recoveryCtx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
-		for _, run := range failedRuns {
-			signal := "application_verification_failure:" + run.ProgramID
-			if run.ProgramRevision != "" {
-				signal += "@" + run.ProgramRevision
+	// The application is recorded as observed and left in place; whether to roll
+	// it back, apply again or edit is the responder's decision.
+	if result.Applied {
+		result.VerificationPassed = err == nil && result.VerificationPassed && response.Healthy && boundPlansNoMatch(selected, response.ProgramRuns)
+		if !result.VerificationPassed {
+			// Program trust counts an unverified application against the program's
+			// current revision, durably, even if the responder is restarted.
+			failedRuns := make([]ProgramRun, 0, len(programIDs))
+			for _, programID := range programIDs {
+				failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
 			}
-			l.addFailureSignal(signal)
-		}
-		if persistErr := l.persistToolState(recoveryCtx); persistErr != nil {
-			response.Error += ": " + persistErr.Error()
-		}
-		rollbackErr := executor.rollback(recoveryCtx, &result)
-		cancel()
-		if rollbackErr != nil {
-			result.RollbackError = rollbackErr.Error()
-			response.Error += ": rollback failed: " + rollbackErr.Error()
-			for _, id := range programIDs {
-				l.addFailureSignal("rollback_failure:" + id)
+			fillProgramRevisions(ctx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
+			for _, run := range failedRuns {
+				signal := "application_verification_failure:" + run.ProgramID
+				if run.ProgramRevision != "" {
+					signal += "@" + run.ProgramRevision
+				}
+				l.addFailureSignal(signal)
+			}
+			if persistErr := l.persistToolState(ctx); persistErr != nil {
+				response.Error = persistErr.Error()
 			}
 		}
 	}

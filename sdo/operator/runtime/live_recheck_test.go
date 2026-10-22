@@ -276,7 +276,7 @@ func TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles(t *testing.T) {
 	}
 }
 
-func TestResponderFailedVerificationRollsBackWithinRun(t *testing.T) {
+func TestResponderFailedVerificationIsRecordedAndLeftInPlace(t *testing.T) {
 	for _, diagnosisFails := range []bool{false, true} {
 		t.Run(fmt.Sprint(diagnosisFails), func(t *testing.T) {
 			loop, kube := trustedPortLoop(t, false, true, diagnosisFails)
@@ -294,15 +294,15 @@ func TestResponderFailedVerificationRollsBackWithinRun(t *testing.T) {
 				t.Fatal(planned.Error)
 			}
 			applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
-			if applied.Error == "" || applied.Healthy {
-				t.Fatalf("failed verification accepted: %+v", applied)
+			if applied.Error != "" {
+				t.Fatalf("apply must report, not fail: %+v", applied)
 			}
 			service, _ := kube.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-			if service.Spec.Ports[0].TargetPort.IntVal != 9999 {
-				t.Fatal("failed plan was not rolled back within process")
+			if service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+				t.Fatal("the responder, not apply, decides to roll back")
 			}
-			if apps := loop.PlanApplications(); len(apps) != 1 || !apps[0].RolledBack {
-				t.Fatalf("missing rollback outcome: %+v", apps)
+			if apps := loop.PlanApplications(); len(apps) != 1 || apps[0].RolledBack || apps[0].Result.VerificationPassed {
+				t.Fatalf("an unverified application must be recorded as such and kept: %+v", apps)
 			}
 		})
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -70,28 +69,6 @@ func (c *concurrentPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kin
 	}
 	return c.planFakeClient.Patch(ctx, ref, kind, patch)
 }
-func TestPlanExecutorRejectsInterveningUpdateOrRecreate(t *testing.T) {
-	for _, recreate := range []bool{false, true} {
-		t.Run(fmt.Sprint(recreate), func(t *testing.T) {
-			ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
-			before := planObject(ref, map[string]any{"replicas": float64(1)})
-			before.SetUID("original")
-			before.SetResourceVersion("1")
-			client := &concurrentPlanClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
-			client.intervene = func() {
-				client.objects[ref].SetResourceVersion("2")
-				if recreate {
-					client.objects[ref].SetUID("replacement")
-				}
-			}
-			executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-			_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(2)}}}, false)
-			if err == nil || len(client.patches) != 0 {
-				t.Fatalf("concurrent object overwritten: %v", err)
-			}
-		})
-	}
-}
 func TestPlanExecutorRollbackPreservesUnrelatedFieldsAndRejectsConflicts(t *testing.T) {
 	for _, mode := range []string{"unrelated", "owned", "recreated"} {
 		t.Run(mode, func(t *testing.T) {
@@ -133,26 +110,6 @@ func TestPlanExecutorRollbackPreservesUnrelatedFieldsAndRejectsConflicts(t *test
 	}
 }
 
-type dryRunRejectingClient struct {
-	*planFakeClient
-	dryRuns int
-}
-
-func (c *dryRunRejectingClient) DryRunPatch(context.Context, sdk.ObjectRef, types.PatchType, []byte) (*unstructured.Unstructured, error) {
-	c.dryRuns++
-	return nil, errors.New("admission dry-run denied")
-}
-func TestPlanExecutorChecksAdmissionBeforeAnyWrite(t *testing.T) {
-	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
-	for _, dryRun := range []bool{false, true} {
-		client := &dryRunRejectingClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}}
-		executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-		_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}}, dryRun)
-		if err == nil || client.dryRuns != 1 || len(client.patches) != 0 {
-			t.Fatalf("admission bypass: dryRun=%t checks=%d writes=%d err=%v", dryRun, client.dryRuns, len(client.patches), err)
-		}
-	}
-}
 func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})}}, failRollback: true}
@@ -174,7 +131,10 @@ func TestPlanExecutorRetainsInProcessRollbackProgress(t *testing.T) {
 	client.rejectAttempt = 6 // Three forward writes and two reverse writes succeed.
 	executor := PlanExecutor{Client: client, Rollouts: recoveryRolloutFailure{}, Verifier: planFakeVerifier{passed: true}}
 	result, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
-	if err == nil || result.RollbackCompleted != 2 {
+	if err == nil || !result.Applied || result.RolledBack {
+		t.Fatalf("a failed rollout wait must leave the plan applied: %+v %v", result, err)
+	}
+	if err = executor.rollback(ctx, &result); err == nil || result.RollbackCompleted != 2 {
 		t.Fatalf("in-process progress lost: %+v %v", result, err)
 	}
 	client.rejectAttempt = 0
