@@ -195,18 +195,20 @@ class ObservedStateChange(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., first_observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class FollowUpContext(_message.Message):
-    __slots__ = ("original_incident_id", "parent_incident_id", "attempt", "max_follow_ups", "prior_responder_summary")
+    __slots__ = ("original_incident_id", "parent_incident_id", "attempt", "max_follow_ups", "prior_responder_summary", "drift_labels_only")
     ORIGINAL_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     PARENT_INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     MAX_FOLLOW_UPS_FIELD_NUMBER: _ClassVar[int]
     PRIOR_RESPONDER_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    DRIFT_LABELS_ONLY_FIELD_NUMBER: _ClassVar[int]
     original_incident_id: str
     parent_incident_id: str
     attempt: int
     max_follow_ups: int
     prior_responder_summary: str
-    def __init__(self, original_incident_id: _Optional[str] = ..., parent_incident_id: _Optional[str] = ..., attempt: _Optional[int] = ..., max_follow_ups: _Optional[int] = ..., prior_responder_summary: _Optional[str] = ...) -> None: ...
+    drift_labels_only: bool
+    def __init__(self, original_incident_id: _Optional[str] = ..., parent_incident_id: _Optional[str] = ..., attempt: _Optional[int] = ..., max_follow_ups: _Optional[int] = ..., prior_responder_summary: _Optional[str] = ..., drift_labels_only: _Optional[bool] = ...) -> None: ...
 
 class MemoryWatch(_message.Message):
     __slots__ = ("api_version", "kind")

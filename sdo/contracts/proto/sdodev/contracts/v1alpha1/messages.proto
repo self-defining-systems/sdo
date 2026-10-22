@@ -130,6 +130,10 @@ message FollowUpContext {
   int32 attempt = 3 [(buf.validate.field).int32.gte = 1];
   int32 max_follow_ups = 4 [(buf.validate.field).int32.gte = 1];
   string prior_responder_summary = 5;
+  // True when health is quiet and the request's only blockers are unexplained
+  // drift events the earlier responder left without a structured label. The
+  // follow-up asks for those labels and nothing else.
+  bool drift_labels_only = 6;
 }
 
 // Read-only logical memory supplied by the Go storage edge. Agent workers do

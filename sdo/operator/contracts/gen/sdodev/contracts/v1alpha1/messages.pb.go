@@ -933,8 +933,12 @@ type FollowUpContext struct {
 	Attempt               int32                  `protobuf:"varint,3,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	MaxFollowUps          int32                  `protobuf:"varint,4,opt,name=max_follow_ups,json=maxFollowUps,proto3" json:"max_follow_ups,omitempty"`
 	PriorResponderSummary string                 `protobuf:"bytes,5,opt,name=prior_responder_summary,json=priorResponderSummary,proto3" json:"prior_responder_summary,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// True when health is quiet and the request's only blockers are unexplained
+	// drift events the earlier responder left without a structured label. The
+	// follow-up asks for those labels and nothing else.
+	DriftLabelsOnly bool `protobuf:"varint,6,opt,name=drift_labels_only,json=driftLabelsOnly,proto3" json:"drift_labels_only,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *FollowUpContext) Reset() {
@@ -1000,6 +1004,13 @@ func (x *FollowUpContext) GetPriorResponderSummary() string {
 		return x.PriorResponderSummary
 	}
 	return ""
+}
+
+func (x *FollowUpContext) GetDriftLabelsOnly() bool {
+	if x != nil {
+		return x.DriftLabelsOnly
+	}
+	return false
 }
 
 // Read-only logical memory supplied by the Go storage edge. Agent workers do
@@ -3420,13 +3431,14 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x13ObservedStateChange\x12\x1b\n" +
 	"\x04kind\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1b\n" +
 	"\x04name\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x12N\n" +
-	"\x11first_observed_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\x0ffirstObservedAt\"\x8d\x02\n" +
+	"\x11first_observed_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\x0ffirstObservedAt\"\xb9\x02\n" +
 	"\x0fFollowUpContext\x129\n" +
 	"\x14original_incident_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x12originalIncidentId\x125\n" +
 	"\x12parent_incident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x10parentIncidentId\x12!\n" +
 	"\aattempt\x18\x03 \x01(\x05B\a\xbaH\x04\x1a\x02(\x01R\aattempt\x12-\n" +
 	"\x0emax_follow_ups\x18\x04 \x01(\x05B\a\xbaH\x04\x1a\x02(\x01R\fmaxFollowUps\x126\n" +
-	"\x17prior_responder_summary\x18\x05 \x01(\tR\x15priorResponderSummary\"B\n" +
+	"\x17prior_responder_summary\x18\x05 \x01(\tR\x15priorResponderSummary\x12*\n" +
+	"\x11drift_labels_only\x18\x06 \x01(\bR\x0fdriftLabelsOnly\"B\n" +
 	"\vMemoryWatch\x12\x1f\n" +
 	"\vapi_version\x18\x01 \x01(\tR\n" +
 	"apiVersion\x12\x12\n" +
