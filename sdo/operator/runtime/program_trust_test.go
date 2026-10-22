@@ -308,16 +308,23 @@ func oversizedTrustOutcome(t *testing.T, runs int) *contracts.OutcomeRecord {
 	apply.ProgramRuns = nil
 	for index := 0; index < runs; index++ {
 		other := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("other-%d", index)}}
-		apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: other, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
+		apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: fmt.Sprintf("other-program-%d", index), ProgramRevision: "revision-a", Bindings: other, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
 	}
 	apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
+	applied := []selectedPlan{{programID: "targetport", bindings: bindings}}
 	for index, response := range []ToolResponse{plan, apply} {
 		full, _ := json.Marshal(response)
 		if len(full) <= maxRecordedToolResponse {
 			t.Fatalf("fixture response %d is %d bytes, not over the cap", index, len(full))
 		}
-		recorded := recordedToolResponseJSON(response)
-		if len(recorded) > maxRecordedToolResponse {
+		var recorded []byte
+		if index == 1 {
+			recorded = recordedToolResponseJSON(response, applied)
+			t.Logf("apply response with %d programs: %d bytes full, %d bytes recorded", runs+1, len(full), len(recorded))
+		} else {
+			recorded = recordedToolResponseJSON(response, nil)
+		}
+		if len(recorded) > maxRecordedApplyResponse {
 			t.Fatalf("recorded response %d is %d bytes, over the cap", index, len(recorded))
 		}
 		outcome.ProgramToolCalls[index].ResponseJson = string(recorded)
@@ -332,16 +339,45 @@ func TestProgramTrustSurvivesOversizedPlanAndApplyRecords(t *testing.T) {
 	}
 }
 
-func TestProgramTrustFailsClosedWhenRecordedRunsOverflow(t *testing.T) {
+func TestProgramTrustCountsRepairWhenApplyResponseListsManyPrograms(t *testing.T) {
 	outcome := oversizedTrustOutcome(t, 40)
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
-		t.Fatalf("overflowed run list earned trust: %+v", got)
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
+		t.Fatalf("unrelated programs' runs cost the applied program its trust: %+v", got)
 	}
 	var recorded struct {
-		Omitted int `json:"program_runs_omitted"`
+		Omitted          int `json:"program_runs_omitted"`
+		UnrelatedOmitted int `json:"program_runs_unrelated_omitted"`
 	}
-	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[1].ResponseJson), &recorded); err != nil || recorded.Omitted == 0 {
-		t.Fatalf("overflow is not marked: %v %+v", err, recorded)
+	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[1].ResponseJson), &recorded); err != nil || recorded.Omitted != 0 || recorded.UnrelatedOmitted != 40 {
+		t.Fatalf("unrelated drops are not counted separately: %v %+v", err, recorded)
+	}
+}
+
+func TestProgramTrustFailsClosedWhenRelevantRunsOverflow(t *testing.T) {
+	outcome := oversizedTrustOutcome(t, 0)
+	var apply ToolResponse
+	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[1].ResponseJson), &apply); err != nil {
+		t.Fatal(err)
+	}
+	var applied []selectedPlan
+	apply.ProgramRuns = nil
+	for index := 0; index < 200; index++ {
+		bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("api-%d", index)}}
+		applied = append(applied, selectedPlan{programID: "targetport", bindings: bindings})
+		apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.NoMatch}})
+	}
+	apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "unrelated", Verdict: program.Verdict{Result: program.NoMatch}})
+	recorded := recordedToolResponseJSON(apply, applied)
+	if len(recorded) > maxRecordedApplyResponse {
+		t.Fatalf("recorded apply is %d bytes, over the hard cap", len(recorded))
+	}
+	var parsed ToolResponse
+	if err := json.Unmarshal(recorded, &parsed); err != nil || parsed.ProgramRunsOmitted == 0 || parsed.ProgramRunsUnrelatedOmitted != 1 {
+		t.Fatalf("dropped relevant runs are not marked: %v %+v", err, parsed)
+	}
+	outcome.ProgramToolCalls[1].ResponseJson = string(recorded)
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+		t.Fatalf("a dropped relevant run earned trust: %+v", got)
 	}
 }
 
@@ -353,7 +389,7 @@ func TestTruncatedRecordKeepsDiagnosisError(t *testing.T) {
 	}
 	apply.ProgramRuns[0].Verdict.Evidence = append(apply.ProgramRuns[0].Verdict.Evidence, program.Evidence{Observed: "diagnosis crashed"})
 	apply.Summary = strings.Repeat("x", 3000)
-	outcome.ProgramToolCalls[1].ResponseJson = string(recordedToolResponseJSON(apply))
+	outcome.ProgramToolCalls[1].ResponseJson = string(recordedToolResponseJSON(apply, []selectedPlan{{programID: "targetport", bindings: apply.ProgramRuns[0].Bindings}}))
 	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("diagnosis error was dropped by truncation: %+v", got)
 	}
