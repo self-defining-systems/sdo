@@ -120,6 +120,12 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		if mount.MountPath == "/workspace" || mount.SubPath == "tenant/application" {
 			t.Fatalf("worker can access accepted repository: %#v", mount)
 		}
+		if mount.MountPath == "/sdo/session/api-history" || mount.MountPath == "/sdo/session/api-history.generation" {
+			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/"+strings.TrimPrefix(mount.MountPath, "/sdo/session/") {
+				t.Fatalf("history mount: %+v", mount)
+			}
+			continue
+		}
 		if mount.MountPath == "/sdo/healthy-baseline" {
 			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-baseline/healthy" {
 				t.Fatalf("baseline must be narrow and read-only: %+v", mount)

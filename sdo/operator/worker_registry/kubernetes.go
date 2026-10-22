@@ -71,6 +71,7 @@ func (err *RequestStagingError) Unwrap() error { return err.Err }
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
+	APIProxyImage          string
 	TaskPayload            string
 	CapturedCorpusReadOnly bool
 	RepositoryReadOnly     bool
@@ -389,7 +390,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	if reflection {
 		env = append(env, corev1.EnvVar{Name: "SDO_HEALTHY_BASELINE", Value: baseline})
 	}
-	reserved := map[string]bool{"SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection}
+	reserved := map[string]bool{"SDO_CODEX_HOME_ROOT": true, "SDO_REQUEST_CONFIGMAP": true, "SDO_RESULT_CONFIGMAP": true, "SDO_NAMESPACE": true, "SDO_SESSION_DIR": e.SessionPVCSubPath != "", "SDO_ACTOR": memoryAuthor, "SDO_PHASE": memoryAuthor, "SDO_BASE_COMMIT": memoryAuthor, "SDO_HEALTHY_BASELINE": reflection, "SDO_API_PROXY_URL": true, "SDO_API_HISTORY_DIR": true}
 	names := make([]string, 0, len(e.Environment))
 	for name := range e.Environment {
 		if !reserved[name] {
@@ -421,6 +422,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 			},
 		},
 	}
+	e.addAPIHistory(job, task)
 	if devmount.Enabled() {
 		devmount.Apply(&job.Spec.Template.Spec)
 	}

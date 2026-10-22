@@ -56,6 +56,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if workspace.IncidentID != closure.Request.IncidentID || workspace.Worktree == "" || workspace.BaseCommit == "" || outcomeCommit == "" {
 		return ReflectionDecision{}, errors.New("reflection workspace and outcome commit are required")
 	}
+	if w.CorpusSessionRoot != "" && outcome != nil && (outcome.GetClassification() == "success" || outcome.GetClassification() == "cleared_without_action") && !closure.VerifiedAt.IsZero() {
+		if err := memory.MarkIncidentAPIRecovery(w.CorpusSessionRoot, workspace.IncidentID, closure.VerifiedAt); err != nil {
+			log.Printf("API history recovery marker unavailable for incident %s: %v", workspace.IncidentID, err)
+		}
+	}
 	attempt := max(uint32(1), feedback.Attempt)
 	proposalID := lifecyclecore.ReflectionTaskID(workspace.IncidentID, outcomeCommit, attempt)
 	var task *contracts.AgentTask

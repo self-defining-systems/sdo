@@ -28,6 +28,7 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
+	APIProxyImage         string
 	Client                kubernetes.Interface
 	Namespace             string
 	Registry              *worker_registry.Registry
@@ -228,7 +229,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	lateConfigMap := ""
 	sessionSubPath := ""
 	if d.RequireMemorySnapshot {
-		sessionSubPath, err = memory.PrepareIncidentSession(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		sessionSubPath, err = memory.PrepareIncidentAPIAttempt(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
 		if err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare isolated responder session: %w", err)
 		}
@@ -262,7 +263,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 	}
 	executor := worker_registry.KubernetesExecutor{
-		Client: d.Client, Namespace: d.Namespace, Registry: d.Registry,
+		Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, APIProxyImage: d.APIProxyImage,
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
 		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
 		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,

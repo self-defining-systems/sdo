@@ -84,6 +84,12 @@ def write_application_kubeconfig(namespace: str) -> Path | None:
         ],
         "current-context": "application",
     }
+    proxy_url = os.environ.get("SDO_API_PROXY_URL", "")
+    if proxy_url:
+        if proxy_url != "http://127.0.0.1:18080":
+            raise ValueError("SDO_API_PROXY_URL must be the responder localhost proxy")
+        config["clusters"][0]["cluster"] = {"server": proxy_url}
+        config["users"][0]["user"] = {}
     path = Path(tempfile.gettempdir()) / "sdo-responder-kubeconfig.json"
     path.write_text(json.dumps(config), encoding="utf-8")
     path.chmod(0o600)

@@ -43,18 +43,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	tlsConfig, err := rest.TLSConfigFor(config)
-	if err != nil {
-		return err
-	}
-	base := &http.Transport{TLSClientConfig: tlsConfig, DisableCompression: true, MaxIdleConnsPerHost: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
-	reads, err := rest.HTTPWrappersForConfig(config, base)
-	if err != nil {
-		return err
-	}
-	writeBase := base.Clone()
-	writeBase.DisableKeepAlives = true
-	writes, err := rest.HTTPWrappersForConfig(config, writeBase)
+	reads, writes, err := apiProxyTransports(config)
 	if err != nil {
 		return err
 	}
@@ -97,4 +86,25 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 		return nil
 	}
 	return err
+}
+
+// apiProxyTransports keeps authentication at the Kubernetes edge and makes
+// automatic retries of writes impossible by never reusing their connections.
+func apiProxyTransports(config *rest.Config) (http.RoundTripper, http.RoundTripper, error) {
+	tlsConfig, err := rest.TLSConfigFor(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	base := &http.Transport{TLSClientConfig: tlsConfig, DisableCompression: true, MaxIdleConnsPerHost: 32, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second}
+	reads, err := rest.HTTPWrappersForConfig(config, base)
+	if err != nil {
+		return nil, nil, err
+	}
+	writeBase := base.Clone()
+	writeBase.DisableKeepAlives = true
+	writes, err := rest.HTTPWrappersForConfig(config, writeBase)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reads, writes, nil
 }
