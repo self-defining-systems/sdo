@@ -55,7 +55,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "repeat drift responder token budget per hour")
+	driftTokensPerHour := registerDriftTokenBudget(flags)
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
