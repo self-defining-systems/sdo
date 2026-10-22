@@ -243,33 +243,17 @@ func (e KubernetesExecutor) stageRequest(task *contracts.AgentTask, jobName stri
 	if len(payload) > MaxStagedRequestBytes {
 		return "", &RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: len(payload), Limit: MaxStagedRequestBytes, Components: requestComponents(task)}
 	}
-	directory := filepath.Join(e.RepositoryMountPath, filepath.FromSlash(stagedRequestsDir), jobName)
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return "", &RequestStagingError{TaskID: task.GetTaskId(), Err: err}
-	}
-	temporary, err := os.CreateTemp(directory, ".agent-task-*")
-	if err != nil {
-		return "", &RequestStagingError{TaskID: task.GetTaskId(), Err: err}
-	}
-	defer os.Remove(temporary.Name())
-	_, err = temporary.Write(payload)
-	if err == nil {
-		err = temporary.Chmod(0o644)
-	}
-	if closeErr := temporary.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return "", &RequestStagingError{TaskID: task.GetTaskId(), Err: err}
-	}
-	if err := os.Rename(temporary.Name(), filepath.Join(directory, TaskDataKey)); err != nil {
+	if err := writeStaged(e.RepositoryMountPath, jobName, TaskDataKey, payload); err != nil {
 		return "", &RequestStagingError{TaskID: task.GetTaskId(), Err: err}
 	}
 	return path.Join(e.RepositoryPVCSubPath, stagedRequestsDir, jobName), nil
 }
 
+// unstageRequest removes the Job's request copy but not a prepared task the controller state still references.
 func (e KubernetesExecutor) unstageRequest(jobName string) {
-	_ = os.RemoveAll(filepath.Join(e.RepositoryMountPath, filepath.FromSlash(stagedRequestsDir), jobName))
+	directory := filepath.Join(e.RepositoryMountPath, filepath.FromSlash(stagedRequestsDir), jobName)
+	_ = os.Remove(filepath.Join(directory, TaskDataKey))
+	_ = os.Remove(directory)
 }
 
 // requestComponents lists the request's largest populated top-level fields with their encoded sizes.

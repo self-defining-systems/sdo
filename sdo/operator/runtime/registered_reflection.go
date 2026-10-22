@@ -128,9 +128,14 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 		history := make([]*contracts.OutcomeRecord, 0, len(prior))
 		for _, record := range prior {
 			if record.IncidentID != workspace.IncidentID {
-				history = append(history, proto.Clone(record.Record).(*contracts.OutcomeRecord))
+				earlier := proto.Clone(record.Record).(*contracts.OutcomeRecord)
+				// Reflection summarizes an earlier incident without its raw program evaluations, which dominate
+				// the record and grow with every installed program.
+				earlier.ProgramRuns = nil
+				history = append(history, earlier)
 			}
 		}
+		trimReflectionClosure(closed)
 		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics}
 		if w.Catalog != nil {
 			snapshot, err := w.Catalog.Snapshot(ctx)
@@ -266,4 +271,16 @@ func (w RegisteredReflectionWorker) withUsage(decision ReflectionDecision, incid
 		}
 	}
 	return decision, nil
+}
+
+// trimReflectionClosure drops closure fields the request already carries elsewhere: the result's program runs
+// are the outcome's, and the frozen dispatch task and initial runs only restate the incident request.
+func trimReflectionClosure(closure *contracts.IncidentClosure) {
+	if closure.GetResult() != nil {
+		closure.Result.ProgramRuns = nil
+	}
+	if closure.GetRequest() != nil {
+		closure.Request.PreparedAgentTask = ""
+		closure.Request.InitialProgramRuns = nil
+	}
 }
