@@ -6,13 +6,13 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import pytest
+
 from benchmarks.sregym.adapter import persistent
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_replacing_controller_preserves_externally_provisioned_credentials(
@@ -189,3 +189,21 @@ def test_reset_stage_syncs_accepted_pvc_before_recreating_controller(
     monkeypatch.setattr(native_operator, "install_existing", install)
 
     assert persistent.KubectlClusterOps().install(config) is False
+
+
+def test_controller_inventory_failure_is_not_controller_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    def kubectl(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=1, stdout="", stderr="connection refused")
+
+    monkeypatch.setattr(persistent, "kubectl", kubectl)
+    with pytest.raises(persistent.PersistentControllerError, match="connection refused"):
+        persistent.KubectlClusterOps().controller_pod("demo-sdo")
+
+
+@pytest.mark.parametrize("output", ["", '{"items": []}'])
+def test_controller_inventory_confirms_absence(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
+    def kubectl(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(persistent, "kubectl", kubectl)
+    assert persistent.KubectlClusterOps().controller_pod("demo-sdo") is None

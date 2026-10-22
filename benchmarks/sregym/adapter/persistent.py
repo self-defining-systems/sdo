@@ -268,15 +268,26 @@ class KubectlClusterOps:
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         completed = kubectl(
-            ["get", "pods", "--selector", f"job-name={CONTROLLER_JOB_NAME}", "-o", "json"],
+            [
+                "get",
+                "pods",
+                "--ignore-not-found",
+                "--request-timeout=5s",
+                "--selector",
+                f"job-name={CONTROLLER_JOB_NAME}",
+                "-o",
+                "json",
+            ],
             namespace=control_namespace,
             check=False,
         )
         if completed.returncode != 0:
-            return None
+            raise PersistentControllerError(
+                f"cannot inspect controller pods in {control_namespace!r}: {completed.stderr.strip()}"
+            )
         running = [
             item
-            for item in json.loads(completed.stdout).get("items", [])
+            for item in json.loads(completed.stdout or "{}").get("items", [])
             if isinstance(item, dict) and item.get("status", {}).get("phase") == "Running"
         ]
         if len(running) != 1:
@@ -450,18 +461,23 @@ def run_persistent_stage(
     pod = ops.controller_pod(control) if record is not None else None
     inventory_ready = clock.monotonic()
     drain_seconds = 0.0
-    if record is not None and pod is not None and pod.uid == record.controller_pod_uid and record.pending is not None:
+    if record is not None and record.pending is not None:
         # The previous problem's learning must reach memory (and any learned
         # detector the controller) before this problem's fault is injected.
         drain_started = clock.monotonic()
-        try:
-            drained = drain_pending_incident(
-                record, ops=ops, repository=config.repository, drained_by=inputs.stage_label, clock=clock
-            )
-        except ClosureFailedError as exc:
-            # The controller continues with later incidents after a permanent closure failure,
-            # so this stage's fault must not wait on it. The failure stays on the previous stage's record.
-            drained = _record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
+        if pod is not None and pod.uid == record.controller_pod_uid:
+            try:
+                drained = drain_pending_incident(
+                    record, ops=ops, repository=config.repository, drained_by=inputs.stage_label, clock=clock
+                )
+            except ClosureFailedError as exc:
+                # The controller continues with later incidents after a permanent closure failure,
+                # so this stage's fault must not wait on it. The failure stays on the previous stage's record.
+                drained = _record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
+        else:
+            # The recorded controller is unavailable. Reject its undrained evidence explicitly
+            # before replacing it, so the loss cannot block all subsequent problems.
+            drained = _record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
         drain_seconds = drained.waited_seconds
         if drained.HasField("failure"):
             logger.warning("previous incident %s: %s", drained.incident_id, drained.failure.message)
@@ -876,6 +892,16 @@ def _record_failed_closure(pending: PendingIncident, message: str, waited_second
     return ReceiptDrainResult(incident_id=pending.incident_id, waited_seconds=waited_seconds, failure=failure)
 
 
+def _lost_controller_message(record: ControllerRecord, pod: ControllerPod | None) -> str:
+    assert record.pending is not None
+    now = "is absent" if pod is None else f"is now {pod.name!r} (uid {pod.uid!r})"
+    return (
+        f"controller pod {record.controller_pod_name!r} (uid {record.controller_pod_uid!r}) of "
+        f"{record.control_namespace!r} was lost before incident {record.pending.incident_id!r} was drained "
+        f"into operational memory; the controller {now}, so the adapter cannot collect its strict receipt"
+    )
+
+
 def drain_pending_incident(
     record: ControllerRecord,
     *,
@@ -990,16 +1016,22 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
     for namespace, record in list(state.controllers.items()):
         try:
             pod = ops.controller_pod(record.control_namespace)
+        except (PersistentControllerError, ControllerInstallError, OSError, ValueError) as exc:
+            # A failed inventory cannot authorize deleting a possibly healthy controller.
+            errors.append(f"{namespace}: {exc}")
+            continue
+        try:
             if record.pending is not None:
                 if pod is None or pod.uid != record.controller_pod_uid:
-                    raise PersistentControllerError("controller pod is gone before its last incident was drained")
-                drained = drain_pending_incident(
-                    record,
-                    ops=ops,
-                    repository=record.pending.repository,
-                    drained_by="pipeline-teardown",
-                    clock=clock,
-                )
+                    drained = _record_failed_closure(record.pending, _lost_controller_message(record, pod), 0.0)
+                else:
+                    drained = drain_pending_incident(
+                        record,
+                        ops=ops,
+                        repository=record.pending.repository,
+                        drained_by="pipeline-teardown",
+                        clock=clock,
+                    )
                 if drained.HasField("failure"):
                     logger.warning("incident %s: %s", drained.incident_id, drained.failure.message)
                 record.pending = None
