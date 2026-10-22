@@ -105,3 +105,35 @@ func TestStateStoreStillFencesAForeignWriterAfterALostReply(t *testing.T) {
 		t.Fatalf("foreign writer was adopted: %v", err)
 	}
 }
+
+// Seed 81's no-restart schedule found an accepted write followed by many
+// writes that fail before landing. Recovery must retain the accepted revision.
+func TestStateStoreAdoptsLostReplyAcrossRepeatedRefusedWrites(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
+	revision, err := store.Save(ctx, stateAt(1), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loseNextReply(client)
+	if _, err := store.Save(ctx, stateAt(2), revision); err == nil {
+		t.Fatal("lost reply not reported")
+	}
+	remaining := 32
+	client.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, k8sruntime.Object, error) {
+		if remaining > 0 {
+			remaining--
+			return true, nil, errors.New("simulated: connection refused")
+		}
+		return false, nil, nil
+	})
+	for i := int32(3); i < 35; i++ {
+		if _, err := store.Save(ctx, stateAt(i), revision); err == nil {
+			t.Fatal("refused write not reported")
+		}
+	}
+	if _, err := store.Save(ctx, stateAt(35), revision); err != nil {
+		t.Fatalf("seed 81: recovery after repeated refused writes: %v", err)
+	}
+}
