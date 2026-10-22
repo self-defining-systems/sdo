@@ -72,7 +72,7 @@ def _parser() -> argparse.ArgumentParser:
         type=_resource,
         required=True,
         metavar="Kind/namespace/name",
-        help="object the command mutates; repeat for each one",
+        help="object the command mutates (Kind/name when cluster-scoped); repeat for each one",
     )
     act.add_argument("--summary", help="one line describing the repair")
     act.add_argument("--irreversible", action="store_true", help="the mutation cannot be undone")

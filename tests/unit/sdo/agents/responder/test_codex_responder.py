@@ -193,8 +193,7 @@ def test_recorded_actions_policy_is_explicit_in_responder_prompt() -> None:
     prompt = _responder_prompt(request)
 
     assert "recorded-actions" in prompt
-    assert "records the repair receipt" in prompt
-    assert "successful `sdo act`" in prompt
+    assert "sdo act" in prompt
 
 
 def test_prompt_tells_the_responder_to_cancel_an_already_healed_finding() -> None:
@@ -616,12 +615,10 @@ def test_program_prompt_includes_failed_fast_path_handoff() -> None:
     assert raw["fast_path_summary"] in prompt
 
 
-def test_responder_prompt_uses_plain_commands_and_no_helper_scripts() -> None:
+def test_responder_prompt_no_longer_asks_for_scratch_scripts() -> None:
     prompt = _responder_prompt(from_dict(IncidentRequest, json.loads(_fixture("incident_request.json"))))
     assert "parameterized script" not in prompt
-    assert "Do not write helper scripts for repairs, receipts or verification" in prompt
-    assert "chain independent ones in one shell call" in prompt
-    assert "Never put scratch files in operational memory" in prompt
+    assert "scratch directory" not in prompt
 
 
 def _program_sweep_request() -> IncidentRequest:

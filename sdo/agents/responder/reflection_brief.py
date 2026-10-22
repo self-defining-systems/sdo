@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+from sdo.agents.responder import recorded_actions
 from sdo.contracts import Verdict, timestamp_datetime, to_canonical_json
 
 if TYPE_CHECKING:
@@ -260,7 +261,7 @@ def responder_shell_commands(log: Path | None, session_id: str | None) -> list[s
                 found = True
                 lines = record.get("shell_command_lines")
                 if isinstance(lines, list):
-                    commands.extend(str(command) for command in lines)
+                    commands.extend(recorded_actions.scrub_shell_command(str(command)) for command in lines)
     except OSError:
         return None
     return commands if found else None

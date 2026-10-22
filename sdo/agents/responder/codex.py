@@ -91,7 +91,10 @@ def execute_incident(
             prompt = _evidence_reference_feedback(str(exc))
         except (OSError, ValueError) as exc:
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-    recorded_actions.merge_into(result)
+    try:
+        recorded_actions.merge_into(result)
+    except recorded_actions.RecordedActionsError as exc:
+        raise ResponderExecutionError(f"invalid recorded repair actions: {exc}") from exc
     if not result.HasField("responder_session_id"):
         result.responder_session_id = completed.session_id
     if result.incident_id != request.incident_id:
@@ -810,7 +813,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
         f"{memory_guard}Return only the IncidentResult JSON "
         "required by the output schema.\n\n"
         f"Repair evidence mode: {request.repair_policy}. Run every live mutation as one `sdo act` call, for example "
-        f"`{ACT_EXAMPLE}`; it runs the command and records the repair receipt. Return no repair_actions. SDO "
+        f"`{ACT_EXAMPLE}`; it runs the command and records the repair receipt. "
+        "Do not return receipts for `sdo act` calls. SDO "
         "confirms a root cause only when a successful action that started before health cleared mutated that "
         "cause's resources, so pass a `--resource` for every object the command changes. In recorded-actions "
         "mode, a successful live-only repair needs at least one successful `sdo act`; repository changes are "
