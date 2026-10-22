@@ -623,3 +623,123 @@ def test_responder_prompt_keeps_reusable_checks_in_session_scratch() -> None:
     assert "no hard-coded resource names" in prompt
     assert "one-off lookups" in prompt
     assert "Never put scratch scripts in operational memory" in prompt
+
+
+def _program_sweep_request() -> IncidentRequest:
+    raw = json.loads(_fixture("incident_request.json"))
+    raw["max_response_loops"] = 5
+    raw["initial_program_runs"] = [
+        {
+            "program_id": "unrelated-program",
+            "bindings": [
+                {
+                    "name": "service",
+                    "object": {
+                        "api_version": "v1",
+                        "kind": "Service",
+                        "namespace": "app",
+                        "name": f"quiet-{index:02d}",
+                    },
+                }
+            ],
+            "verdict": {
+                "result": "RESULT_NO_MATCH",
+                "evidence": [
+                    {
+                        "resource": {
+                            "api_version": "v1",
+                            "kind": "Service",
+                            "namespace": "app",
+                            "name": f"quiet-{index:02d}",
+                        },
+                        "fact": "targetPort",
+                        "observed": "8080",
+                        "expected": "8080",
+                    }
+                ],
+            },
+            "duration": "0.02s",
+            "binding_source": "sweep",
+            "program_revision": "a" * 40,
+        }
+        for index in range(19)
+    ] + [
+        {
+            "program_id": "targetport",
+            "bindings": [
+                {
+                    "name": "service",
+                    "object": {"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"},
+                }
+            ],
+            "verdict": {
+                "result": "RESULT_MATCH",
+                "evidence": [
+                    {
+                        "resource": {"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"},
+                        "fact": "targetPort",
+                        "observed": "9999",
+                        "expected": "8080",
+                    }
+                ],
+            },
+            "duration": "0.02s",
+        }
+    ]
+    return from_dict(IncidentRequest, raw)
+
+
+def test_prompt_omits_no_match_sweep_but_preserves_match_evidence() -> None:
+    request = _program_sweep_request()
+    original = request.SerializeToString()
+
+    prompt = _responder_prompt(request)
+    view = json.loads(prompt.split("Incident request:\n", 1)[1])
+
+    assert len(view["initial_program_runs"]) == 1
+    assert view["initial_program_runs"][0]["program_id"] == "targetport"
+    assert view["initial_program_runs"][0]["verdict"]["evidence"][0]["observed"] == "9999"
+    assert view["omitted_no_match_program_runs"] == 19
+    assert "unrelated-program" not in prompt
+    assert "quiet-" not in prompt
+    assert len(prompt) < 14_000
+    assert request.SerializeToString() == original
+
+
+@pytest.mark.parametrize("result", ["RESULT_UNKNOWN", "RESULT_NEEDS_JUDGEMENT"])
+def test_prompt_keeps_inconclusive_program_evidence_and_questions(result: str) -> None:
+    request = _program_sweep_request()
+    run = request.initial_program_runs[-1]
+    run.verdict.result = run.verdict.DESCRIPTOR.fields_by_name["result"].enum_type.values_by_name[result].number
+    if result == "RESULT_NEEDS_JUDGEMENT":
+        run.verdict.question = "Is the source port correct for this service?"
+    run.error = "live source unavailable"
+
+    prompt = _responder_prompt(request)
+
+    assert result in prompt
+    assert "live source unavailable" in prompt
+    assert "9999" in prompt
+    if run.verdict.question:
+        assert run.verdict.question in prompt
+
+
+@pytest.mark.parametrize("can_mitigate", [True, False, None])
+def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> None:
+    request = _program_sweep_request()
+    if can_mitigate is not None:
+        json_format.ParseDict({"can_mitigate": can_mitigate}, request.initial_program_runs[-1])
+
+    prompt = _responder_prompt(request)
+    view = json.loads(prompt.split("Incident request:\n", 1)[1])["initial_program_runs"][0]
+
+    if can_mitigate is False:
+        assert view["capability"] == "diagnosis-only"
+    elif can_mitigate is True:
+        assert view["capability"] == "diagnosis-and-mitigation"
+    else:
+        assert view["capability"] == "unknown"
+    assert "For a Match with can_mitigate=true" in prompt
+    assert "sdo source Deployment/app/api" in prompt
+    assert "sdo plan targetport --bind service=Service/app/api" in prompt
+    assert "Do not print the tool-description catalog" in prompt

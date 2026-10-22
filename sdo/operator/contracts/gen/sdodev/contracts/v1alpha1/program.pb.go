@@ -827,8 +827,10 @@ type ProgramRun struct {
 	FindingFingerprint string                 `protobuf:"bytes,6,opt,name=finding_fingerprint,json=findingFingerprint,proto3" json:"finding_fingerprint,omitempty"`
 	ProgramRevision    string                 `protobuf:"bytes,7,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
 	BindingSource      string                 `protobuf:"bytes,8,opt,name=binding_source,json=bindingSource,proto3" json:"binding_source,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Registry capability, not plan validity or trust. Absent on older runs.
+	CanMitigate   *bool `protobuf:"varint,9,opt,name=can_mitigate,json=canMitigate,proto3,oneof" json:"can_mitigate,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProgramRun) Reset() {
@@ -915,6 +917,13 @@ func (x *ProgramRun) GetBindingSource() string {
 		return x.BindingSource
 	}
 	return ""
+}
+
+func (x *ProgramRun) GetCanMitigate() bool {
+	if x != nil && x.CanMitigate != nil {
+		return *x.CanMitigate
+	}
+	return false
 }
 
 type PlanApplication struct {
@@ -1288,7 +1297,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x06reason\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"q\n" +
 	"\x0eRestartRollout\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
-	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xb1\x03\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xea\x03\n" +
 	"\n" +
 	"ProgramRun\x12&\n" +
 	"\n" +
@@ -1299,7 +1308,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12/\n" +
 	"\x13finding_fingerprint\x18\x06 \x01(\tR\x12findingFingerprint\x12)\n" +
 	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12D\n" +
-	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\"\xf5\x05\n" +
+	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\x12&\n" +
+	"\fcan_mitigate\x18\t \x01(\bH\x00R\vcanMitigate\x88\x01\x01B\x0f\n" +
+	"\r_can_mitigate\"\xf5\x05\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -1417,6 +1428,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 		(*Action_SetField)(nil),
 		(*Action_RestartRollout)(nil),
 	}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

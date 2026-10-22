@@ -28,6 +28,7 @@ type CandidateOptions struct {
 
 // ProgramRun is one diagnosis for a concrete finding, hint, or sweep binding.
 type ProgramRun struct {
+	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
 	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
 	BindingSource      string           `json:"binding_source,omitempty"`
 	ProgramID          string           `json:"program_id"`
@@ -210,6 +211,8 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	}
 	results := make(chan ProgramRun, len(candidates))
 	appendAssociations := func(runs []ProgramRun, run ProgramRun) []ProgramRun {
+		_, canMitigate := registry.Mitigator(run.ProgramID)
+		run.CanMitigate = &canMitigate
 		runs = append(runs, run)
 		for _, alias := range aliases[run.ProgramID+"\x00"+bindingKey(run.Bindings)] {
 			associated := run

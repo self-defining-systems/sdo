@@ -14,6 +14,7 @@ from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import parse_incident_result
+from sdo.agents.responder.tools_cli import CLI_EXAMPLES
 from sdo.contracts import (
     ROOT_CAUSE_EVIDENCE_KINDS,
     DetectorEvaluation,
@@ -690,6 +691,21 @@ def _prompt_request(request: IncidentRequest) -> dict[str, object]:
     document = json_format.MessageToDict(request, preserving_proto_field_name=True)
     for omitted in ("detector_history", "state_changes", "memory_snapshot"):
         document.pop(omitted, None)
+    runs = document.get("initial_program_runs", [])
+    relevant = []
+    omitted = 0
+    for run in runs:
+        if run.get("verdict", {}).get("result") == "RESULT_NO_MATCH":
+            omitted += 1
+            continue
+        capability = run.get("can_mitigate")
+        run["capability"] = (
+            "unknown" if capability is None else "diagnosis-and-mitigation" if capability else "diagnosis-only"
+        )
+        relevant.append(run)
+    if runs:
+        document["initial_program_runs"] = relevant
+        document["omitted_no_match_program_runs"] = omitted
     return document
 
 
@@ -710,9 +726,16 @@ def _responder_prompt(request: IncidentRequest) -> str:
     )
     program_guidance = (
         "Start with the ranked program verdicts and evidence in initial_program_runs. "
-        "For a Match, prefer sdo plan then sdo apply. "
+        "For a Match with can_mitigate=true, prefer sdo plan then sdo apply using the returned plan_id. "
+        "Diagnosis-only programs have no mitigator: use their evidence, then repair from accepted source. "
+        "An unknown capability is not evidence of a mitigator; check sdo diagnose for current metadata. "
         "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
         "Use a session-only bash fix when no program fits. Always finish with sdo verify. "
+        "Concrete CLI examples (replace the program, namespace, resource and binding name with those in the verdict): "
+        + "; ".join(f"`{example}`" for example in CLI_EXAMPLES)
+        + ". Repeat --bind for each named parameter. "
+        "Run these through the session shell tool; discover its name only if needed. "
+        "Do not print the tool-description catalog. "
         "When verify reports healthy and source changes are committed, "
         "return the structured incident result immediately. "
         if request.max_response_loops > 0

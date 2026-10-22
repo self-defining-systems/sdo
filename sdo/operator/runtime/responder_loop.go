@@ -267,7 +267,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			}
 			started := time.Now()
 			verdict := program.RunDiagnose(ctx, p, view, request.Bindings, l.deadline())
-			run := ProgramRun{ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
+			_, canMitigate := l.Programs.Mitigator(request.ProgramID)
+			run := ProgramRun{CanMitigate: &canMitigate, ProgramID: request.ProgramID, Bindings: request.Bindings, Verdict: verdict, Duration: time.Since(started)}
 			response.ProgramRuns = []ProgramRun{run}
 			l.runs = append(l.runs, run)
 		}
