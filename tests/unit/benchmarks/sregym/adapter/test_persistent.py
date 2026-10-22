@@ -980,6 +980,30 @@ def test_a_permanently_failed_closure_ends_the_drain_with_the_broker_error(tmp_p
     assert ("delete", "hotel-sdo") in ops.events
 
 
+def test_a_permanently_failed_closure_does_not_stall_the_next_incident(tmp_path: Path) -> None:
+    ops = FakeOps()
+    _run(tmp_path, ops, "s0", [])
+    state = ops.states["hotel-sdo"]
+    # The controller keeps the failed closure's state until the next incident begins its own closure.
+    state["closure_state"] = "CLOSURE_STATE_FAILED"
+    state["closure_failure"] = {
+        "incident_id": "incident-1",
+        "attempts": 8,
+        "max_attempts": 8,
+        "permanent": True,
+        "last_error": "request ConfigMap is too long",
+        "action": "inspect the broker ledger; later incidents continue",
+    }
+
+    second = _run(tmp_path, ops, "s1", [])
+
+    assert ("inject", "hotel-sdo", "incident-2") in ops.events
+    assert second["incident_resolution_seconds"] == 40.0
+    rejected = json.loads((tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert rejected["failure"]["incident_id"] == "incident-1"
+    assert "request ConfigMap is too long" in rejected["failure"]["message"]
+
+
 def test_each_stage_exports_its_runtime_evidence_when_it_ends(tmp_path: Path) -> None:
     ops = FakeOps()
 

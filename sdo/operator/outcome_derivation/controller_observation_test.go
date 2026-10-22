@@ -43,6 +43,21 @@ func TestControllerObservationUsesGeneratedClosureState(t *testing.T) {
 	}
 }
 
+func TestControllerObservationIgnoresAnEarlierIncidentsPermanentFailureWhenWaitingForANewIncident(t *testing.T) {
+	req := observationRequest()
+	req.IncidentId = ""
+	req.KnownIncidentIds = []string{"one", "two"}
+	req.State.ClosureState = c.ClosureState_CLOSURE_STATE_FAILED
+	req.State.ClosureFailure = &c.ClosureFailure{IncidentId: "two", Permanent: true, Attempts: 8, LastError: "request too large", Action: "inspect broker ledger"}
+	if got := ObserveController(observationJSON(t, req)); got.GetFailure() != nil {
+		t.Fatal("a failure of an already-known incident stalled the wait for the next one", got)
+	}
+	req.KnownIncidentIds = []string{"one"}
+	if got := ObserveController(observationJSON(t, req)); got.GetFailure().GetCode() != c.ControllerObservationFailure_CODE_CLOSURE_FAILED {
+		t.Fatal("an unknown incident's permanent failure must still be reported", got)
+	}
+}
+
 func TestControllerObservationCorrelatesVerifiedAndAcknowledgedIncidents(t *testing.T) {
 	req := observationRequest()
 	before := proto.Clone(req)
