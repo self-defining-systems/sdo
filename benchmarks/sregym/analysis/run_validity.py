@@ -13,6 +13,8 @@ reads each run's own evidence and decides:
   - a passed stage without judge-free TTD/TTM (time to diagnosis or
     mitigation), or a TTM earlier than the TTD, which means judge time was
     subtracted wrongly;
+  - an SDO worker resolved a different provider or model than the run's manifest
+    configures (it would spend the wrong provider's quota under the configured label);
   - the lane isolation guard reported a mismatch or never ran, agent tool
     output showing another lane's kind nodes, or (legacy runs without the
     guard) a run that overlapped another run in time;
@@ -369,6 +371,49 @@ def _check_sdo_tokens(results: Path, receipt: dict[str, Any] | None) -> Check:
     return _reconcile("tokens", sources)
 
 
+#: Workers that run with an incident session mounted, and so record their resolution there.
+_WORKER_ROLES = {"responder": "responder", "reflection": "reflection"}
+
+
+def _check_agent_provider(results: Path, manifest: dict[str, Any] | None) -> Check:
+    """The provider and model every SDO worker logged must be what the run was configured to use.
+
+    Workers that default to another provider silently spend that provider's quota while the
+    outcome records carry the configured label.
+    """
+
+    expected: dict[str, set[tuple[str | None, str | None]]] = {}
+    for arm in cast("list[dict[str, Any]]", (manifest or {}).get("models") or []):
+        for worker_role, manifest_role in _WORKER_ROLES.items():
+            entry = arm.get(manifest_role)
+            if isinstance(entry, dict):
+                expected.setdefault(worker_role, set()).add((entry.get("provider"), entry.get("model")))
+    records: list[dict[str, Any]] = []
+    for path in sorted(results.rglob("sdo_runtime/sessions/*/agent-resolved.jsonl")):
+        for line in _text(path).splitlines():
+            try:
+                record: object = json.loads(line) if line.strip() else None
+            except json.JSONDecodeError:
+                return Check("agent-provider", "fail", f"unparseable worker resolution record in {path}")
+            if isinstance(record, dict):
+                records.append(cast("dict[str, Any]", record))
+    if not records or not expected:
+        return Check("agent-provider", "not_recorded", "no worker provider/model resolution recorded or configured")
+    for record in sorted(records, key=lambda item: str(item.get("recorded_at") or "")):
+        wanted = expected.get(str(record.get("role")))
+        if wanted is None:
+            continue
+        got = (record.get("provider"), record.get("model"))
+        if got not in wanted:
+            names = ", ".join(sorted(f"{provider}/{model}" for provider, model in wanted))
+            return Check(
+                "agent-provider",
+                "fail",
+                f"{record.get('role')} worker resolved {got[0]}/{got[1]} but the run is configured for {names}",
+            )
+    return Check("agent-provider", "pass", f"{len(records)} worker resolutions match the configuration")
+
+
 def _check_timing(verdict: Verdict, row: dict[str, str | None]) -> list[Check]:
     checks: list[Check] = []
     missing = [key for key in ("fault_injected_at", "diagnosis_submitted_at") if not (row.get(key) or "").strip()]
@@ -625,6 +670,7 @@ def classify_problem_run(
             rollouts = responder_rollouts(results, receipt or {})
             checks.append(_check_sdo_tokens(results, receipt))
             checks.append(_check_helpers(results, receipt))
+            checks.append(_check_agent_provider(results, manifest))
         else:
             checks.append(_check_install(results))
             checks.append(_check_quota(results))
