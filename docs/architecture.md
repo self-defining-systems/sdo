@@ -46,11 +46,20 @@ The controller captures the application namespace's detection view at detection,
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority, logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, and controller-derived typed outcomes |
-| `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK, deterministic execution, drift admission to responders, revision-bound trusted plans, controller state and its typed projection, builder/supervisor, and Kubernetes installation |
+| `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift admission to responders, revision-bound trusted plans, controller state and its typed projection, builder/supervisor, and Kubernetes installation |
 | `benchmarks/sregym/` | First-party benchmark adapter, protocol, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
 
 Production packages do not import SREGym code. Benchmark-only image stages live in `benchmarks/sregym/Dockerfile.worker`, extending the built production responder; development mounts expose only production sources, examples and the operator binary. Benchmark adapters may call production APIs; strict receipts and submission relays remain in the benchmark boundary. The native path passed an end-to-end kind smoke with real goal/source/architecture/judge artifacts, concrete deployment and health evidence, provider credentials, and controller installation. Detector SDK staleness/dependency interface changes are outside this refactor.
+
+Object-reference identity on the wire is `common.proto:ObjectRef`. The SDK
+keeps a comparable value projection for detector maps and plans. Its
+`ParseObjectRef`/`FormatObjectRef` pair owns agent text parsing and canonical
+formatting (including kubectl aliases and explicit namespaces). The Python
+responder CLI forwards reference text verbatim; Go decodes it before handling
+tools. Outcome verification uses the same parser and still rejects a foreign
+namespace or a compound state-change citation before granting repair credit.
+Schema validation of evidence remains generated from `messages.proto`.
 
 ## Controller
 
@@ -219,7 +228,7 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 | `.sdo/diagnostics/detectors/incidents/` | Responder | Responder | Incident provenance, compile, matching, and near-miss tests are required. |
 | `.sdo/diagnostics/traffic/generators/`, `traffic/workloads/` | Health judge | Health judge lifecycle | Workloads and generators obey engine limits and isolated validation. |
 | `.sdo/diagnostics/traffic/generators/incident/`, `traffic/workloads/incident-*.yaml` | Responder | Responder | Incident-scoped traffic only; health acceptance remains judge-owned. |
-| Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | `OutcomeRecord` is the logical schema; versioned per-incident documents include controller-recorded tool calls, program runs, applications, loop counts, failure signals, and bounded drift events with responder verdict, reason and evidence using the legacy `investigation_*` field spelling; checked benign labels suppress only identical manager and current/source field observations, plus resolution path, fast-path programs, verification, and rollback. The immutable document is joined to closure phase telemetry in the broker ledger by incident ID and outcome commit. The storage edge imports retired JSONL streams; no agent has writer capability. |
+| Outcomes: `.sdo/outcomes/<sha256(incident_id)>.json` | Controller through broker | Controller through broker | `OutcomeRecord` is the logical schema; state-change evidence uses the SDK ref parser and namespace check; versioned per-incident documents include controller-recorded tool calls, program runs, applications, loop counts, failure signals, and bounded drift events with responder verdict, reason and evidence using the legacy `investigation_*` field spelling; checked benign labels suppress only identical manager and current/source field observations, plus resolution path, fast-path programs, verification, and rollback. The immutable document is joined to closure phase telemetry in the broker ledger by incident ID and outcome commit. The storage edge imports retired JSONL streams; no agent has writer capability. |
 | `.sdo/diagnostics/detectors/<class>/<id>/manifest.yaml` | Owner of the detector class | Owner of the detector class | One manifest per detector; its class, ID, and package must match its location. |
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema versions 1 and 2 to 3: it rewrites detector manifests, moves packages, and rewrites playbook paths in detector source to logical IDs, and the broker rejects any other detector change in the same commit. |
 
@@ -234,7 +243,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `sdo/contracts/proto/`, `sdo/contracts/_gen/` | Canonical language-neutral task/result and outcome schemas, with generated Python messages. |
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority, physical storage and explicit generic-health preparation, the single operational-memory validator, outcome derivation, and installer. |
-| `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK, deterministic controller, typed plan execution and rollback, accepted-revision trust, and generated contracts. |
+| `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller, typed plan execution and rollback, accepted-revision trust, and generated contracts. |
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
 | `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. `apps/toy/` owns the reusable tiny Kubernetes app, seed and cluster-state fault injectors/oracles; it has no SREGym dependency. |

@@ -17,18 +17,12 @@ CLI_EXAMPLES = (
 )
 
 
-def _binding(value: str) -> tuple[str, dict[str, str]]:
+def _binding(value: str) -> tuple[str, str]:
     name, separator, target = value.partition("=")
-    parts = target.split("/")
-    if not separator or not name or len(parts) != 3 or not all(parts):
+    if not separator or not name or not target:
         raise argparse.ArgumentTypeError("binding must be name=Kind/namespace/name")
-    kind, namespace, resource = parts
-    api_version = "apps/v1" if kind in ("Deployment", "ReplicaSet") else "v1"
-    return name, {"api_version": api_version, "kind": kind, "namespace": namespace, "name": resource}
-
-
-def _resource(value: str) -> dict[str, str]:
-    return _binding("resource=" + value)[1]
+    # Go owns object-reference parsing and API-version resolution.
+    return name, target
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,7 +46,7 @@ def _parser() -> argparse.ArgumentParser:
         )
     commands.add_parser("apply").add_argument("plan_ids", nargs="+")
     commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
-        "ref", type=_resource, metavar="Kind/namespace/name"
+        "ref", metavar="Kind/namespace/name"
     )
     commands.add_parser("verify")
     commands.add_parser("rollback").add_argument("application_id")

@@ -10,6 +10,15 @@ package sdk // import "sdo.dev/operator/sdk"
 
 FUNCTIONS
 
+func CanonicalObjectKind(raw string) string
+    CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
+    Unknown kinds remain usable without inventing an API version.
+
+func FormatObjectRef(ref ObjectRef) (string, error)
+    FormatObjectRef returns canonical text. Non-default API versions are
+    retained explicitly, so parsing the formatted value preserves every
+    ObjectRef field.
+
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -158,9 +167,38 @@ type ObjectRef struct {
 	Namespace  string `json:"namespace,omitempty"`
 	Name       string `json:"name"`
 }
+    ObjectRef is the comparable in-process projection of common.proto:ObjectRef.
+    Cross-process contracts use the generated protobuf message; raw tool refs
+    are parsed only by ParseObjectRef.
 
 func ObjectRefFrom(kind string, apiVersion string, object metav1.Object) ObjectRef
 
+func ParseObjectRef(raw string) (ObjectRef, error)
+    ParseObjectRef is the single grammar for agent object citations. Bare
+    and namespaced refs, kubectl aliases and legacy namespace/Kind/name are
+    accepted; compound refs produce a typed rejection. An optional apiVersion@
+    prefix preserves explicit versions when formatting a typed ref.
+
+func (ref *ObjectRef) UnmarshalJSON(data []byte) error
+    UnmarshalJSON keeps the SDK's comparable value projection of the protobuf
+    ObjectRef. Tool transports may pass raw agent text; Python need not parse
+    it.
+
+type ObjectRefError struct {
+	Code  ObjectRefErrorCode
+	Input string
+}
+    ObjectRefError is a rejected agent citation, not an operational failure.
+    Compound citations must be supplied as separate evidence entries.
+
+func (e *ObjectRefError) Error() string
+
+type ObjectRefErrorCode string
+
+const (
+	ObjectRefMalformed ObjectRefErrorCode = "malformed_object_ref"
+	ObjectRefCompound  ObjectRefErrorCode = "compound_object_ref"
+)
 type PersistencePolicy struct {
 	Firing   int
 	Clearing int

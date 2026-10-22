@@ -2,12 +2,15 @@ package outcome_derivation
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 )
 
 func TestParseKeyRejectsCompoundReferences(t *testing.T) {
@@ -63,7 +66,7 @@ func TestDeriveVerifiesEachSeparateStateChangeEntry(t *testing.T) {
 // These fixtures model the controller's namespace-local state diffs, not run output.
 func TestDeriveResolvesStateChangeReferencesWithinIncidentNamespace(t *testing.T) {
 	for _, observation := range []string{"dispatch", "observed", "final"} {
-		for _, source := range []string{"Deployment/app", "Deployment/hotel/app", "deploy/hotel/app", "Deployment/foreign/app", "Deployment/app; Deployment/other"} {
+		for _, source := range []string{"Deployment/app", "Deployment/hotel/app", "deploy/hotel/app", "hotel/deployments.apps/app", "Deployment/foreign/app", "Deployment/app; Deployment/other"} {
 			t.Run(observation+"/"+source, func(t *testing.T) {
 				closure := fixtureClosure()
 				closure.Request.Namespace = "hotel"
@@ -128,5 +131,56 @@ func TestDeriveNamespacedCitationCannotClaimRespondersOwnEdit(t *testing.T) {
 				t.Fatalf("own edit did not remain contradicted: %+v", result.Record)
 			}
 		})
+	}
+}
+
+// Every accepted citation spelling must match the same independently observed
+// label; parsing must not create learning credit for a foreign namespace.
+func FuzzStateChangeRefMatchesObservedLabel(f *testing.F) {
+	for _, seed := range []string{"Deployment/app", "Deployment/hotel/app", "hotel/deployments.apps/app", "deploy/hotel/app", "Service/a; Service/b", "Deployment/foreign/app"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		ref, err := sdk.ParseObjectRef(raw)
+		if err != nil {
+			return
+		}
+		canonical, err := sdk.FormatObjectRef(ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, citation := range []string{raw, canonical} {
+			closure := fixtureClosure()
+			closure.Request.Namespace = "hotel"
+			closure.Result.ConfirmedRootCauses[0].Evidence = []*contractsv1alpha1.RootCauseEvidence{{Kind: "state-change", Source: citation}}
+			closure.ObservedStateChanges = []*contractsv1alpha1.ObservedStateChange{{Kind: ref.Kind, Name: ref.Name, FirstObservedAt: closure.DetectedAt}}
+			result, err := Derive(context.Background(), closure, "repair-commit", "scripted", "none")
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := result.Record.GetDiagnosisVerification()[0].GetEvidence()[0]
+			want := ref.Namespace == "" || ref.Namespace == "hotel"
+			if check.Verified == nil || check.GetVerified() != want {
+				t.Fatalf("accepted ref %q (canonical %q) failed observed label %s/%s: %+v", raw, canonical, ref.Kind, ref.Name, check)
+			}
+		}
+	})
+}
+
+func TestCanonicalObjectRefUsesGeneratedWireContract(t *testing.T) {
+	ref, err := sdk.ParseObjectRef("shop/deployments.apps/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireRef := &contractsv1alpha1.ObjectRef{}
+	if err := protojson.Unmarshal(data, wireRef); err != nil {
+		t.Fatal(err)
+	}
+	if wireRef.GetApiVersion() != "apps/v1" || wireRef.GetKind() != "Deployment" || wireRef.GetNamespace() != "shop" || wireRef.GetName() != "api" {
+		t.Fatalf("canonical SDK value drifted from ObjectRef proto: %s", data)
 	}
 }
