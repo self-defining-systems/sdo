@@ -23,6 +23,14 @@ _ALLOWED_CLASSIFICATIONS = {
 }
 
 
+class NativeReceiptValidationError(ProductionReceiptValidationError):
+    """Native receipt construction failed; retain the raw evidence for rejection publication."""
+
+    def __init__(self, message: str, receipt: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.receipt = receipt
+
+
 def _object(value: object, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProductionReceiptValidationError(f"native {name} must be a JSON object")
@@ -229,15 +237,6 @@ def native_production_receipt(
     controller_pod_uid: str,
     responder_job_evidence: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    outcome = _object(ledger.get("outcome_document"), "outcome document")
-    classification = outcome.get("classification")
-    resolution = (
-        SDO_MITIGATED
-        if classification == OutcomeClassification.SUCCESS
-        else CLEARED_WITHOUT_SDO_ACTION
-        if classification == OutcomeClassification.CLEARED_WITHOUT_ACTION
-        else EXTERNAL_RECOVERY
-    )
     receipt: dict[str, Any] = {
         "schema_version": "sdo.production-receipt/v2",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -253,13 +252,31 @@ def native_production_receipt(
         "controller_pod_uid": controller_pod_uid,
         "native_ledger": ledger,
         "responder_job_evidence": responder_job_evidence,
-        "proposal_commit": ledger.get("proposal_commit") or None,
-        "outcome_commit": ledger.get("outcome_commit"),
-        "reflection_commit": ledger.get("reflection_commit") or None,
-        "reflection_usage": _object(ledger.get("reflection_decision") or {}, "reflection decision").get("usage"),
-        "reflection_skipped_reason": ledger.get("reflection_skipped_reason"),
-        "outcome_classification": classification,
-        "resolution": resolution,
     }
-    validate_native_production_receipt(receipt)
+    try:
+        outcome = _object(ledger.get("outcome_document"), "outcome document")
+        classification = outcome.get("classification")
+        resolution = (
+            SDO_MITIGATED
+            if classification == OutcomeClassification.SUCCESS
+            else CLEARED_WITHOUT_SDO_ACTION
+            if classification == OutcomeClassification.CLEARED_WITHOUT_ACTION
+            else EXTERNAL_RECOVERY
+        )
+        receipt.update(
+            {
+                "proposal_commit": ledger.get("proposal_commit") or None,
+                "outcome_commit": ledger.get("outcome_commit"),
+                "reflection_commit": ledger.get("reflection_commit") or None,
+                "reflection_usage": _object(ledger.get("reflection_decision") or {}, "reflection decision").get(
+                    "usage"
+                ),
+                "reflection_skipped_reason": ledger.get("reflection_skipped_reason"),
+                "outcome_classification": classification,
+                "resolution": resolution,
+            }
+        )
+        validate_native_production_receipt(receipt)
+    except ProductionReceiptValidationError as exc:
+        raise NativeReceiptValidationError(str(exc), receipt) from exc
     return receipt

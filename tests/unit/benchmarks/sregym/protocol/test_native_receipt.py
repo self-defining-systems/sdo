@@ -92,8 +92,10 @@ def test_classification_policy_covers_proto_and_receipt_closures() -> None:
 def test_native_receipt_rejects_partial_as_incomplete_closure() -> None:
     ledger = _ledger()
     ledger["outcome_document"]["classification"] = "partial"
-    with pytest.raises(ProductionReceiptValidationError, match="verified closure classification"):
+    with pytest.raises(ProductionReceiptValidationError, match="verified closure classification") as rejected:
         _receipt(ledger)
+    assert rejected.value.receipt["native_ledger"] == ledger
+    assert rejected.value.receipt["outcome_classification"] == "partial"
 
 
 def test_native_receipt_rejects_success_with_contradicted_diagnosis() -> None:
