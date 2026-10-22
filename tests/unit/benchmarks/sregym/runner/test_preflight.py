@@ -500,3 +500,28 @@ def test_flock_owner_reads_proc_locks_without_taking_the_lock(tmp_path: Path) ->
 
     assert flock_owner(lock, proc_locks=proc) == "pid 777 (lock pid 777)"
     assert flock_owner(lock, proc_locks=free) is None
+
+
+@pytest.mark.parametrize("limit", [1024, 32768])
+def test_neighbor_capacity_aborts_before_launch(limit: int, fake_host: FakeHost, sregym_dir: Path) -> None:
+    fake_host.neighbor_limit = limit
+    report = _preflight([_luna()], fake_host, sregym_dir)
+    check = _check(report, "neighbor-cache")
+    assert check.status == "fail"
+    assert str(limit) in check.detail
+    assert "65536" in check.detail
+    assert "sysctl -w" in check.remedy
+    assert not report.ok
+
+
+def test_sufficient_neighbor_capacity_passes(fake_host: FakeHost, sregym_dir: Path) -> None:
+    fake_host.neighbor_limit = 65536
+    report = _preflight([_luna()], fake_host, sregym_dir)
+    assert _check(report, "neighbor-cache").status == "pass"
+    assert report.facts["ipv4_neighbor_gc_thresh3"] == 65536
+
+
+def test_unavailable_neighbor_capacity_is_explicit(fake_host: FakeHost, sregym_dir: Path) -> None:
+    fake_host.neighbor_limit = None
+    report = _preflight([_luna()], fake_host, sregym_dir)
+    assert _check(report, "neighbor-cache").status == "unknown"

@@ -21,6 +21,7 @@ class FakeHost:
 
     home: Path
     free: dict[str, int] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
+    neighbor_limit: int | None = 65536
     default_free: int = 500 * GB
     docker_root_dir: Path | None = None
     images: dict[str, ImageInfo] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
@@ -84,3 +85,6 @@ class FakeHost:
 
     def load_average(self) -> tuple[float, float, float] | None:
         return self.load
+
+    def ipv4_neighbor_limit(self) -> int | None:
+        return self.neighbor_limit
