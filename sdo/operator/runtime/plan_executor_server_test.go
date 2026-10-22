@@ -120,7 +120,9 @@ func (c *serverPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind ty
 	if metadata, ok := document["metadata"].(map[string]any); ok {
 		current := c.objects[ref]
 		// The API server reports a failed uid precondition as a conflict too.
-		if metadata["uid"] != string(current.GetUID()) || metadata["resourceVersion"] != current.GetResourceVersion() {
+		// An absent resourceVersion is no precondition, as on the real server.
+		version, hasVersion := metadata["resourceVersion"]
+		if metadata["uid"] != string(current.GetUID()) || (hasVersion && version != current.GetResourceVersion()) {
 			return apierrors.NewConflict(schema.GroupResource{Group: "apps", Resource: "deployments"}, ref.Name, errors.New("the object has been modified"))
 		}
 	}
