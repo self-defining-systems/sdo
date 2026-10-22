@@ -29,6 +29,8 @@ def test_submission_bridge_returns_on_diagnosis_acknowledgement_without_waiting_
     def opener(request, timeout: int):
         assert timeout == 300
         requests.append(request)
+        if request.full_url.endswith("/status"):
+            return Response({"stage": "diagnosis"})
         assert request.full_url.endswith("/submit"), "diagnosis must not block on benchmark grading"
         assert json.loads(request.data) == {"solution": "payment pods are fully isolated"}
         return Response({"status": "200", "message": "Submission received"})
@@ -41,7 +43,47 @@ def test_submission_bridge_returns_on_diagnosis_acknowledgement_without_waiting_
     )
 
     assert result == {"status": "200", "message": "Submission received"}
-    assert [request.full_url for request in requests] == ["http://conductor:8123/submit"]
+    assert [request.full_url for request in requests] == [
+        "http://conductor:8123/status",
+        "http://conductor:8123/submit",
+    ]
+
+
+@pytest.mark.parametrize("stage", ["mitigation", "done", "awaiting_cleanup"])
+def test_diagnosis_after_the_diagnosis_stage_is_never_posted_as_another_phase(stage: str) -> None:
+    """The conductor's /submit is untyped, so a late diagnosis would be graded as the mitigation."""
+
+    requests = []
+
+    def opener(request, timeout: int):
+        requests.append(request.full_url.rsplit("/", 1)[-1])
+        assert request.full_url.endswith("/status"), "a wrong-phase diagnosis must not reach /submit"
+        return Response({"stage": stage})
+
+    result = submit_solution("also restore frontend", phase="diagnosis", api_base="http://c:8123", opener=opener)
+
+    assert requests == ["status"]
+    assert result["diagnosis"]["status"] == "already_submitted"
+    assert result["diagnosis"]["stage"] == stage
+    message = result["diagnosis"]["message"]
+    assert "not submitted" in message
+    assert ("mitigation" if stage == "mitigation" else "ended") in message
+
+
+def test_diagnosis_waits_for_the_conductor_to_open_the_diagnosis_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("benchmarks.sregym.adapter.submission.time.sleep", lambda _seconds: None)
+    stages = iter(["setup", "diagnosis"])
+    requests = []
+
+    def opener(request, timeout: int):
+        requests.append(request.full_url.rsplit("/", 1)[-1])
+        if request.full_url.endswith("/submit"):
+            return Response({"status": "200", "message": "Submission received"})
+        return Response({"stage": next(stages)})
+
+    submit_solution("selector typo", phase="diagnosis", api_base="http://conductor:8123", opener=opener)
+
+    assert requests == ["status", "status", "submit"]
 
 
 @pytest.mark.parametrize("terminal_stage", ["done", "awaiting_cleanup"])
@@ -97,8 +139,10 @@ def test_mitigation_waits_for_diagnosis_grading_before_submitting(monkeypatch: p
 
 
 def test_submission_bridge_rejects_unacknowledged_autonomous_diagnosis() -> None:
-    def opener(_request, timeout: int):
+    def opener(request, timeout: int):
         assert timeout == 300
+        if request.full_url.endswith("/status"):
+            return Response({"stage": "diagnosis"})
         return Response({"status": "error"})
 
     with pytest.raises(SubmissionBridgeError, match="not acknowledged"):

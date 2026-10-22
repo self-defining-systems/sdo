@@ -49,6 +49,20 @@ def _wait_for_stage(
     raise SubmissionBridgeError(f"SREGym did not reach one of {sorted(expected)}")
 
 
+#: Stages after a phase's own stage, where the harness no longer awaits that phase.
+_LATER_STAGES: dict[str, frozenset[str]] = {"diagnosis": frozenset({"mitigation"}), "mitigation": frozenset()}
+
+
+def _diagnosis_not_submitted(stage: str, reason: str) -> dict[str, Any]:
+    return {
+        "diagnosis": {
+            "status": "already_submitted",
+            "stage": stage,
+            "message": f"diagnosis not submitted: harness stage is {stage!r}; {reason}",
+        }
+    }
+
+
 def submit_solution(
     solution: str,
     *,
@@ -57,14 +71,25 @@ def submit_solution(
     opener: Opener = urllib.request.urlopen,
 ) -> dict[str, Any]:
     base = api_base.rstrip("/")
-    if phase == "mitigation":
-        # The conductor drops (while acknowledging) any submit that arrives
-        # while diagnosis is still being graded, so wait for the stage to open.
-        # A problem that already ended accepted one mitigation; a repeated call
+    # /submit is untyped: the conductor grades whatever arrives as the phase it
+    # is in. So the bridge, not the caller, must ensure the harness is awaiting
+    # this phase before posting. The conductor also drops (while acknowledging)
+    # any submit that arrives while diagnosis is still being graded, so a
+    # mitigation waits for its stage to open.
+    stage = _wait_for_stage(base, {phase, *_LATER_STAGES[phase], *TERMINAL_STAGES}, opener=opener)
+    if stage in TERMINAL_STAGES:
+        # A problem that already ended accepted its submissions; a repeated call
         # returns at once instead of waiting for a stage that never reopens.
-        stage = _wait_for_stage(base, {"mitigation", *TERMINAL_STAGES}, opener=opener)
-        if stage in TERMINAL_STAGES:
+        if phase == "mitigation":
             return {"mitigation": {"status": "already_submitted"}, "done": {"status": stage}}
+        return _diagnosis_not_submitted(stage, "the problem has already ended; nothing more can be submitted.")
+    if stage != phase:
+        return _diagnosis_not_submitted(
+            stage,
+            "the diagnosis was already submitted and the harness is awaiting mitigation. Keep repairing and "
+            "verifying; run the mitigation submission once when done. Never resubmit a diagnosis: it would be "
+            "graded as your mitigation.",
+        )
     payload = json.dumps({"solution": solution}).encode()
     phase_request = urllib.request.Request(
         f"{base}/submit",
