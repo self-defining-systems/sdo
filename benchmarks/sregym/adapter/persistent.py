@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 
+from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.cluster_resources import kubectl
@@ -58,6 +59,7 @@ from benchmarks.sregym.adapter.runtime import (
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+from sdo.contracts import ReceiptDrainResult, ReceiptFailure, RejectedProductionReceipt
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,15 +114,6 @@ class DetectorReviewRequiredError(PersistentControllerError):
 
 class ClosureFailedError(PersistentControllerError):
     """Raised when the controller gave up committing an incident closure the broker kept rejecting."""
-
-
-class ReceiptRejectedError(ControllerInstallError):
-    """Raised when a drained incident's receipt failed strict production validation.
-
-    The rejected receipt and its error are already on disk. The rejection is
-    that one incident's outcome: it must not block the next stage's injection
-    or fail a teardown, so pipeline callers record it and go on.
-    """
 
 
 class DetectionMissError(PersistentControllerError):
@@ -452,13 +445,12 @@ def run_persistent_stage(
     if record is not None and pod is not None and pod.uid == record.controller_pod_uid and record.pending is not None:
         # The previous problem's learning must reach memory (and any learned
         # detector the controller) before this problem's fault is injected.
-        try:
-            drain_seconds = drain_pending_incident(
-                record, ops=ops, repository=config.repository, drained_by=inputs.stage_label, clock=clock
-            )
-        except ReceiptRejectedError as exc:
-            # The previous incident's receipt is its own agent failure; this stage still runs.
-            logger.warning("previous incident %s: %s", record.pending.incident_id, exc)
+        drained = drain_pending_incident(
+            record, ops=ops, repository=config.repository, drained_by=inputs.stage_label, clock=clock
+        )
+        drain_seconds = drained.waited_seconds
+        if drained.HasField("failure"):
+            logger.warning("previous incident %s: %s", drained.incident_id, drained.failure.message)
         record.pending = None
         state.save(inputs.state_path)
         # Publish the drained receipt now, so a pipeline stopped during this
@@ -806,17 +798,17 @@ def drain_pending_incident(
     drained_by: str,
     clock: Clock | None = None,
     timeout_seconds: float = DRAIN_TIMEOUT_SECONDS,
-) -> float:
+) -> ReceiptDrainResult:
     """Wait for a verified incident's reflection and rollout, then write its strict receipt.
 
     ``repository`` receives the controller's operational repository, which is
-    the source of truth across problems. Returns the seconds spent waiting.
+    the source of truth across problems. Returns the elapsed wait and any typed receipt failure for this incident.
     """
 
     clock = clock or Clock()
     pending = record.pending
     if pending is None:
-        return 0.0
+        return ReceiptDrainResult()
     started = clock.monotonic()
     phases: dict[str, float] = {}
     phase_timestamps = {"drain_started": clock.now().isoformat()}
@@ -874,12 +866,34 @@ def drain_pending_incident(
         if isinstance(exc, NativeReceiptValidationError):
             receipt = exc.receipt
         ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
-        _write_json({"validation_error": str(exc), "receipt": receipt}, pending.receipt_dir / REJECTED_RECEIPT_FILENAME)
-        raise ReceiptRejectedError(str(exc)) from exc
+        failure = (
+            exc.failure
+            if isinstance(exc, NativeReceiptValidationError)
+            else ReceiptFailure(
+                incident_id=pending.incident_id,
+                code=ReceiptFailure.CODE_REJECTED_EVIDENCE,
+                message=str(exc),
+            )
+        )
+        rejection = RejectedProductionReceipt(
+            validation_error=str(exc), failure=failure, receipt_json=json.dumps(receipt)
+        )
+        try:
+            json_format.ParseDict(receipt, rejection.receipt)
+            rejected_document = json_format.MessageToDict(rejection, preserving_proto_field_name=True)
+        except (json_format.Error, ValueError):
+            rejection.ClearField("receipt")
+            rejected_document = json_format.MessageToDict(rejection, preserving_proto_field_name=True)
+        _write_json(rejected_document, pending.receipt_dir / REJECTED_RECEIPT_FILENAME)
+        return ReceiptDrainResult(
+            incident_id=pending.incident_id,
+            waited_seconds=clock.monotonic() - started,
+            failure=failure,
+        )
     # The controller log covering reflection is evidence whether or not the receipt validates.
     ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
     persist_strict_receipt(receipt, pending.receipt_dir)
-    return waited
+    return ReceiptDrainResult(incident_id=pending.incident_id, waited_seconds=waited)
 
 
 def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -> list[str]:
@@ -893,17 +907,15 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
             if record.pending is not None:
                 if pod is None or pod.uid != record.controller_pod_uid:
                     raise PersistentControllerError("controller pod is gone before its last incident was drained")
-                try:
-                    drain_pending_incident(
-                        record,
-                        ops=ops,
-                        repository=record.pending.repository,
-                        drained_by="pipeline-teardown",
-                        clock=clock,
-                    )
-                except ReceiptRejectedError as exc:
-                    # Recorded beside the incident; it is not a teardown failure.
-                    logger.warning("incident %s: %s", record.pending.incident_id, exc)
+                drained = drain_pending_incident(
+                    record,
+                    ops=ops,
+                    repository=record.pending.repository,
+                    drained_by="pipeline-teardown",
+                    clock=clock,
+                )
+                if drained.HasField("failure"):
+                    logger.warning("incident %s: %s", drained.incident_id, drained.failure.message)
                 record.pending = None
                 state.save(state_path)
         except (PersistentControllerError, ControllerInstallError, OSError, ValueError) as exc:

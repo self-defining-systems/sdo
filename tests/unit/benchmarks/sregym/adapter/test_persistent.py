@@ -20,7 +20,6 @@ from benchmarks.sregym.adapter.persistent import (
     PendingIncident,
     PersistentControllerError,
     PersistentState,
-    ReceiptRejectedError,
     StageInputs,
     _wait_for_reflection_drain,
     collect_followup_incident,
@@ -299,10 +298,11 @@ def test_closeout_settle_timeout_follows_time_scale(tmp_path: Path, monkeypatch:
     elapsed = [0.0]
     clock = Clock(monotonic=lambda: elapsed[0], sleep=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
 
-    with pytest.raises(ReceiptRejectedError):
-        drain_pending_incident(
-            record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
-        )
+    result = drain_pending_incident(
+        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=clock
+    )
+    assert result.HasField("failure")
+    assert result.failure.incident_id == record.pending.incident_id
 
     assert elapsed[0] == pytest.approx(12.0)
 
@@ -930,14 +930,21 @@ def test_a_rejected_receipt_is_still_reported_to_a_caller_that_drains_one_incide
     state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
     record = state.controllers["hotel"]
 
-    with pytest.raises(ReceiptRejectedError, match="completed=true"):
-        drain_pending_incident(
-            record,
-            ops=ops,
-            repository=tmp_path / "s0" / "application_workspace",
-            drained_by="fastloop",
-            clock=_clock(ops),
-        )
+    result = drain_pending_incident(
+        record,
+        ops=ops,
+        repository=tmp_path / "s0" / "application_workspace",
+        drained_by="fastloop",
+        clock=_clock(ops),
+    )
+    from sdo.contracts import ReceiptDrainResult, ReceiptFailure
+
+    assert isinstance(result, ReceiptDrainResult)
+    assert result.failure.code == ReceiptFailure.CODE_REJECTED_EVIDENCE
+    assert result.failure.incident_id == "incident-1"
+    assert "completed=true" in result.failure.message
+    rejected = json.loads((record.pending.receipt_dir / REJECTED_RECEIPT_FILENAME).read_text())
+    assert rejected["failure"]["code"] == "CODE_REJECTED_EVIDENCE"
 
 
 def test_a_permanently_failed_closure_ends_the_drain_with_the_broker_error(tmp_path: Path) -> None:
@@ -1355,3 +1362,36 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
     assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
     assert "--program-fast-path" in command
     assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
+
+
+def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+    from sdo.contracts import ReceiptFailure
+
+    class BadWireOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            if incident_id == "incident-1":
+                raw = {"incident_id": incident_id, "not_json": float("nan")}
+                raise NativeReceiptValidationError(
+                    "non-finite wire value",
+                    raw,
+                    ReceiptFailure(
+                        incident_id=incident_id, code=ReceiptFailure.CODE_INVALID_WIRE, message="non-finite wire value"
+                    ),
+                )
+            return super().collect_receipt(config, incident_id, artifacts_dir)
+
+    ops = BadWireOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.reflectable.add("incident-1")
+    state = PersistentState.load(tmp_path / "sdo_persistent_controller.json")
+    record = state.controllers["hotel"]
+    result = drain_pending_incident(
+        record, ops=ops, repository=tmp_path / "s0" / "application_workspace", drained_by="test", clock=_clock(ops)
+    )
+    assert result.failure.code == ReceiptFailure.CODE_INVALID_WIRE
+    rejection = json.loads((record.pending.receipt_dir / REJECTED_RECEIPT_FILENAME).read_text())
+    assert "NaN" in rejection["receipt_json"]
+    assert rejection["failure"]["incident_id"] == "incident-1"
+    _run(tmp_path, ops, "s1", [])
+    assert ("fault", "s1") in ops.events

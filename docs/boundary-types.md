@@ -50,3 +50,21 @@ validation with a typed incident failure (E), then submission phase decisions
 and drain interpretation. R1 owns `controller_state.proto` and runtime
 lifecycle code; R2 must consume its generated types rather than add a second
 controller state representation. No operational behavior changes in this slice.
+
+## Implemented receipt seam (R2 slice 3)
+
+`benchmark_receipt.proto` now defines the v2 receipt core, Job evidence,
+`NativeReceiptResult`, `ReceiptFailure`, `ReceiptDrainResult` and
+`RejectedProductionReceipt`. Receipt correlation/classification/reflection/
+rollout/fast-path decisions moved out of Python into the benchmark-only Go
+module `protocol/native_receipt_go`. These rows are now **G** at the decision
+boundary; timing/export annotations and raw diagnostic evidence remain opaque
+transport metadata. Python forwards the raw ledger to the generated Go decoder
+and decodes the generated result. Retired v1 receipt validation is unchanged.
+
+The adapter drain returns a generated failure rather than raising
+`ReceiptRejectedError`; persistent and fastloop callers consume that result.
+The narrow fastloop caller edits follow the changed adapter API and contain no
+new lifecycle decisions. Validity analysis decodes typed rejection artifacts to
+keep checker unavailability separate from rejected agent evidence. Submission phase guards, closure/drain interpretation,
+controller-state dictionary readers and the other **N** rows remain follow-ups.

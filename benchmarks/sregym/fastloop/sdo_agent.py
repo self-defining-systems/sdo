@@ -26,7 +26,6 @@ from benchmarks.sregym.adapter import (
     Clock,
     ClusterOps,
     PersistentState,
-    ReceiptRejectedError,
     StageInputs,
     drain_pending_incident,
     run_persistent_stage,
@@ -345,7 +344,7 @@ class SdoPersistentAgent:
         reflection_observed_at = self._clock.now()
         error: str | None = None
         try:
-            drain_pending_incident(
+            drained = drain_pending_incident(
                 record,
                 ops=self._ops,
                 repository=settings.repository,
@@ -353,8 +352,8 @@ class SdoPersistentAgent:
                 clock=self._clock,
                 timeout_seconds=settings.reflection_wait_seconds,
             )
-        except ReceiptRejectedError as exc:
-            error = f"strict receipt rejected: {exc}"
+            if drained.HasField("failure"):
+                error = f"strict receipt rejected: {drained.failure.message}"
         finally:
             if settings.kubeconfig:
                 receipt_dir = Path(str(outcome.artifacts_dir))

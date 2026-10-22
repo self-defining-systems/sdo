@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+// Benchmark-only evidence transport. Decision code lives under
+// benchmarks/sregym/protocol/native_receipt_go, never in the production runtime.
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/controller_state.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+message ResponderJobEvidence {
+  string incident_id = 1;
+  string job_name = 2;
+  string job_uid = 3;
+  bool succeeded = 4;
+}
+
+// The core of receipt v2. Stage timing and export annotations stay transport
+// metadata: validators ignore unknown annotations and preserve the input file.
+message NativeProductionReceipt {
+  string schema_version = 1 [(buf.validate.field).string.const = "sdo.production-receipt/v2"];
+  google.protobuf.Timestamp recorded_at = 2;
+  string broker_mode = 3;
+  string worker_mount_mode = 4;
+  string incident_id = 5;
+  string namespace = 6;
+  string control_namespace = 7;
+  string controller_workload = 8;
+  string controller_image = 9;
+  string responder_image = 10;
+  string validator_image = 11;
+  string controller_pod_uid = 12;
+  BrokerLedger native_ledger = 13;
+  repeated ResponderJobEvidence responder_job_evidence = 14;
+  optional string proposal_commit = 15;
+  string outcome_commit = 16;
+  optional string reflection_commit = 17;
+  UsageMetrics reflection_usage = 18;
+  optional string reflection_skipped_reason = 19;
+  string outcome_classification = 20;
+  string resolution = 21;
+}
+
+message ReceiptFailure {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CODE_INVALID_WIRE = 1;
+    CODE_REJECTED_EVIDENCE = 2;
+    CODE_CHECKER_UNAVAILABLE = 3;
+  }
+  string incident_id = 1;
+  Code code = 2 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  string message = 3 [(buf.validate.field).string.min_len = 1];
+}
+
+// A rejection is data belonging to one incident. The CLI exits successfully
+// for either branch, so a malformed receipt cannot abort the incident stream.
+message NativeReceiptResult {
+  NativeProductionReceipt receipt = 1;
+  ReceiptFailure failure = 2;
+}
+
+message ReceiptDrainResult {
+  string incident_id = 1;
+  double waited_seconds = 2 [(buf.validate.field).double.gte = 0];
+  ReceiptFailure failure = 3;
+}
+
+// Retains raw transport evidence, including malformed values and annotations,
+// for offline diagnosis without blessing it as a valid typed receipt.
+message RejectedProductionReceipt {
+  string validation_error = 1;
+  google.protobuf.Struct receipt = 2;
+  ReceiptFailure failure = 3;
+  // Raw JSON fallback when malformed transport values cannot inhabit Struct.
+  string receipt_json = 4;
+}

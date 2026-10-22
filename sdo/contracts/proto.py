@@ -37,6 +37,7 @@ from google.protobuf import json_format
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from sdodev.contracts.v1alpha1 import (
+    benchmark_receipt_pb2,
     common_pb2,
     controller_config_pb2,
     controller_state_pb2,
@@ -57,6 +58,12 @@ if TYPE_CHECKING:
 _MessageT = TypeVar("_MessageT", bound="Message")
 
 ObjectRef = common_pb2.ObjectRef
+ResponderJobEvidence = benchmark_receipt_pb2.ResponderJobEvidence
+NativeProductionReceipt = benchmark_receipt_pb2.NativeProductionReceipt
+ReceiptFailure = benchmark_receipt_pb2.ReceiptFailure
+NativeReceiptResult = benchmark_receipt_pb2.NativeReceiptResult
+ReceiptDrainResult = benchmark_receipt_pb2.ReceiptDrainResult
+RejectedProductionReceipt = benchmark_receipt_pb2.RejectedProductionReceipt
 
 ProgramSpec = program_pb2.ProgramSpec
 ParamSpec = program_pb2.ParamSpec
@@ -160,6 +167,13 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "NATIVE_RECEIPT_SCHEMA_VERSION",
+    "ResponderJobEvidence",
+    "NativeProductionReceipt",
+    "ReceiptFailure",
+    "NativeReceiptResult",
+    "ReceiptDrainResult",
+    "RejectedProductionReceipt",
     "Action",
     "AgentCapability",
     "AgentRegistration",
@@ -302,6 +316,7 @@ def _string_rule(message: type[Message], field: str):
 
 # Values the proto states and Python reads from it rather than restating.
 SCHEMA_VERSION: str = _string_rule(AgentTask, "schema_version").const
+NATIVE_RECEIPT_SCHEMA_VERSION: str = _string_rule(NativeProductionReceipt, "schema_version").const
 OUTCOME_CLASSIFICATIONS: tuple[str, ...] = tuple(getattr(_string_rule(OutcomeRecord, "classification"), "in"))
 ROOT_CAUSE_EVIDENCE_KINDS: tuple[str, ...] = tuple(getattr(_string_rule(RootCauseEvidence, "kind"), "in"))
 # Attribute access by upper-cased name (``OutcomeClassification.SUCCESS``); the
