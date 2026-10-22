@@ -302,3 +302,11 @@ checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
 -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the operator CI leg runs the bounded
 target. Fake controller bookkeeping stays outside the generated snapshot shape.
+
+Uncontrolled text boundaries are fuzzed where the text is hand-written or model
+written. `memory.FuzzLegacyOutcomeStream` (retired `outcomes.jsonl`) and
+`sdk.FuzzObjectRefParseFormat` run their hand-written seeds in every `go test`;
+run `go test -run '^$' -fuzz '^FuzzLegacyOutcomeStream$' -fuzztime=180s` (cap 5
+minutes) in `sdo/operator/memory` to explore further. The Go and Python object-ref
+parsers share `tests/fixtures/sdo/contracts/object_ref_grammar.json`, and Hypothesis
+covers `sdo act` receipt recording in `test_recorded_actions.py`.

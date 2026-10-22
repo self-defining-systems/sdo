@@ -3,6 +3,7 @@ package sdk
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -82,4 +83,40 @@ func FuzzObjectRefTypedRoundTrip(f *testing.F) {
 			t.Fatalf("typed round trip %+v -> %q -> %+v: %v", ref, text, got, err)
 		}
 	})
+}
+
+// TestObjectRefGrammarCorpus pins the shared corpus
+// tests/fixtures/sdo/contracts/object_ref_grammar.json. The Python copy of the
+// grammar (sdo/agents/responder/recorded_actions.py) is checked against the same
+// file, so the two parsers cannot drift.
+func TestObjectRefGrammarCorpus(t *testing.T) {
+	raw, err := os.ReadFile("../../../tests/fixtures/sdo/contracts/object_ref_grammar.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Input string `json:"input"`
+		Go    *struct {
+			APIVersion string `json:"api_version"`
+			Kind       string `json:"kind"`
+			Namespace  string `json:"namespace"`
+			Name       string `json:"name"`
+		} `json:"go"`
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		got, err := ParseObjectRef(c.Input)
+		if c.Go == nil {
+			if err == nil {
+				t.Errorf("ParseObjectRef(%q) accepted %+v", c.Input, got)
+			}
+			continue
+		}
+		want := ObjectRef{APIVersion: c.Go.APIVersion, Kind: c.Go.Kind, Namespace: c.Go.Namespace, Name: c.Go.Name}
+		if err != nil || got != want {
+			t.Errorf("ParseObjectRef(%q) = %+v, %v; want %+v", c.Input, got, err, want)
+		}
+	}
 }

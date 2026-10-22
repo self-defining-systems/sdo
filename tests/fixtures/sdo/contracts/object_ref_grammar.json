@@ -1,0 +1,412 @@
+[
+ {
+  "input": "Deployment/api",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "api"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "api"
+  }
+ },
+ {
+  "input": "deploy/api",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "api"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "",
+   "name": "api"
+  }
+ },
+ {
+  "input": "Deployment/shop/api",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  }
+ },
+ {
+  "input": "shop/Deployment/api",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  }
+ },
+ {
+  "input": "shop/deployments.apps/api",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  }
+ },
+ {
+  "input": "deployments.apps.example/shop/api",
+  "go": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  },
+  "python": {
+   "api_version": "apps/v1",
+   "kind": "Deployment",
+   "namespace": "shop",
+   "name": "api"
+  }
+ },
+ {
+  "input": "POD/x",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  }
+ },
+ {
+  "input": "Pod/Pod/x",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "Pod",
+   "name": "x"
+  },
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "Pod",
+   "name": "x"
+  }
+ },
+ {
+  "input": "pod/svc/x",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "svc",
+   "name": "x"
+  },
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "svc",
+   "name": "x"
+  }
+ },
+ {
+  "input": "svc/pod/x",
+  "go": {
+   "api_version": "v1",
+   "kind": "Service",
+   "namespace": "pod",
+   "name": "x"
+  },
+  "python": {
+   "api_version": "v1",
+   "kind": "Service",
+   "namespace": "pod",
+   "name": "x"
+  }
+ },
+ {
+  "input": "x/y/z",
+  "go": {
+   "api_version": "",
+   "kind": "x",
+   "namespace": "y",
+   "name": "z"
+  },
+  "python": {
+   "api_version": "",
+   "kind": "x",
+   "namespace": "y",
+   "name": "z"
+  }
+ },
+ {
+  "input": "Node/worker-1",
+  "go": {
+   "api_version": "",
+   "kind": "node",
+   "namespace": "",
+   "name": "worker-1"
+  },
+  "python": {
+   "api_version": "",
+   "kind": "node",
+   "namespace": "",
+   "name": "worker-1"
+  }
+ },
+ {
+  "input": "Widget/ns/a_b.c-d",
+  "go": {
+   "api_version": "",
+   "kind": "widget",
+   "namespace": "ns",
+   "name": "a_b.c-d"
+  },
+  "python": {
+   "api_version": "",
+   "kind": "widget",
+   "namespace": "ns",
+   "name": "a_b.c-d"
+  }
+ },
+ {
+  "input": "Pod/9",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "9"
+  },
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "9"
+  }
+ },
+ {
+  "input": "Pod/a.",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "a."
+  },
+  "python": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "a."
+  }
+ },
+ {
+  "input": "Job.batch/ns/j",
+  "go": {
+   "api_version": "batch/v1",
+   "kind": "Job",
+   "namespace": "ns",
+   "name": "j"
+  },
+  "python": {
+   "api_version": "batch/v1",
+   "kind": "Job",
+   "namespace": "ns",
+   "name": "j"
+  }
+ },
+ {
+  "input": "ingresses/x",
+  "go": {
+   "api_version": "networking.k8s.io/v1",
+   "kind": "Ingress",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": {
+   "api_version": "networking.k8s.io/v1",
+   "kind": "Ingress",
+   "namespace": "",
+   "name": "x"
+  }
+ },
+ {
+  "input": "",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "/x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod//x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/ns/",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/a/b/c",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/.x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/-x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/_x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/ns/.x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": ".Pod/x",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/x y",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/a;Pod/b",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/a,Pod/b",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/a\u0000",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/é",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/١",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "Pod/x@y",
+  "go": null,
+  "python": null
+ },
+ {
+  "input": "  Pod/x",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": null
+ },
+ {
+  "input": "Pod/x\n",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": null
+ },
+ {
+  "input": "v1@Pod/x",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": null
+ },
+ {
+  "input": "example.dev/v2@Widget/ns/w",
+  "go": {
+   "api_version": "example.dev/v2",
+   "kind": "widget",
+   "namespace": "ns",
+   "name": "w"
+  },
+  "python": null
+ },
+ {
+  "input": "Pod/x ",
+  "go": {
+   "api_version": "v1",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": null
+ },
+ {
+  "input": "@Pod/x",
+  "go": {
+   "api_version": "",
+   "kind": "Pod",
+   "namespace": "",
+   "name": "x"
+  },
+  "python": null
+ }
+]
