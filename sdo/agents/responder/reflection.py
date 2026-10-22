@@ -20,6 +20,7 @@ from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
+from sdo.agents.responder.reflection_evidence import memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.reflection_refine import refine_learning_request
 from sdo.agents.responder.session_turn import (
@@ -192,6 +193,7 @@ def _logical_learning_request(
         f"Start with the skill index at {SKILLS_ROOT}/sdo-memory/SKILL.md and follow its authoring links. "
         "The installed skills are the authoring guide; authoring_reference retrieves the same shipped references. "
         "Read only what is needed and keep accepted provenance. "
+        "Use evidence_inventory to locate captures and capture_fields for relevant observations on demand. "
         "Edit the final files directly in the operational memory directory of this isolated checkout. "
         "Source edits, outcomes, goal and architecture are protected. "
         "Use captured observations, parameterized programs, and matching and near-miss tests. "
@@ -207,7 +209,7 @@ def _logical_learning_request(
         f"{_classification_directive(classification, guidance)}\n\n"
         "Before returning an update, the complete final files must be in the checkout and memory check must pass. "
         f"Outcome commit: {outcome_commit}\n"
-        f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
+        f"Operational memory snapshot:\n{json.dumps(memory_view(snapshot), indent=2)}\n\n"
         "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
         "outcome_call_index and response_json_sha256 identify the full response in the committed outcome. "
         "Root causes, findings, action receipts and program transitions are retained.\n"

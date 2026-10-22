@@ -92,6 +92,24 @@ affected resources and a healthy same-kind peer. Snapshots and recordings
 are copied exactly; the broker independently verifies them.
 
 
+## evidence_inventory
+
+List capture digests, counts and a few resource names, bound to the accepted outcome.
+
+Full immutable evidence remains available through capture_fields and to
+independent validation. Read relevant fields rather than entire captures.
+
+
+## capture_fields
+
+Read captured resource fields or primitive recordings on demand.
+
+Fields are dotted paths; list indices are numeric (spec.containers.0.image).
+Null collections are empty. Results are paginated and bounded to 12000
+characters; oversized_indices identifies items needing narrower fields.
+Missing fields are null, never evidence that a primitive succeeded.
+
+
 ## check_memory
 
 Run the complete memory check and wait for final diagnostics (at most 300s).
