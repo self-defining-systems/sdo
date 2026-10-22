@@ -329,7 +329,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 }
 `, 0644)
 		}, []string{"program.mitigation-not-repaired"}, false},
-		{"program mitigation cannot replay rollout", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
+		{"program mitigation skips unreplayable effect", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			put(t, r, ".sdo/playbooks/service-targetport-mismatch/mitigate.go", `package targetport
 import ("context"; "sdo.dev/operator/sdk/program")
@@ -338,7 +338,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
  return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b["service"]}}},nil
 }
 `, 0644)
-		}, []string{"program.mitigation-unreplayable"}, false},
+		}, nil, true},
 
 		{"program README physical path", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -634,6 +634,11 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatalf("CLI output is not a MemoryCheckReport: %v\n%s", err, stdout.String())
 			}
 
+			if test.name == "program mitigation skips unreplayable effect" {
+				if len(report.GetMitigationReplayNotes()) != 1 || report.MitigationReplayNotes[0].GetStatus() != contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT {
+					t.Fatalf("CLI accepted effect without typed skip note: %+v", report)
+				}
+			}
 			var publishErr error
 			var receipt broker.Receipt
 			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
