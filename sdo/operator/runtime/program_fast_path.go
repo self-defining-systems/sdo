@@ -263,7 +263,8 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		prepareErr = l.BeforeFastPathApply(ctx, selected)
 	}
 	if prepareErr == nil {
-		prepareErr = l.capturePreApply(ctx)
+		// Capture failure is recorded separately from plan preparation failure.
+		_ = l.capturePreApply(ctx)
 	}
 	if prepareErr != nil {
 		attempt.Summary = fmt.Sprintf("trusted programs %s attempted; plan preparation failed: %v", strings.Join(attempt.Programs, ", "), prepareErr)

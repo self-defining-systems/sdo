@@ -4,21 +4,39 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"sdo.dev/operator/memory"
 )
 
+const preApplyCaptureGap = "pre_apply_capture_gap"
+
 // capturePreApply preserves the first fresh snapshot immediately before a live
 // repair. Handle serializes ad hoc acknowledgements and typed plan application.
 // The protected file is the durable marker across responder/controller restarts.
 // This boundary does no diagnosis, primitive probing, or settle waiting.
-func (l *ResponderLoop) capturePreApply(ctx context.Context) error {
+func (l *ResponderLoop) capturePreApply(ctx context.Context) (captureErr error) {
 	if l.CorpusSessionRoot == "" || l.preApplyCaptured {
 		return nil
 	}
+	// Never fill a missed first boundary with a later, possibly repaired view.
+	// FailureSignals are already incident/revision-bound and restored on restart.
+	if slices.Contains(l.failureSignals, preApplyCaptureGap) {
+		return errors.New("first-mutation snapshot unavailable after earlier capture failure")
+	}
+	defer func() {
+		if captureErr != nil {
+			l.addFailureSignal(preApplyCaptureGap)
+			slog.Warn("pre-apply evidence gap; proceeding with repair", "incident_id", l.Request.IncidentID, "error", captureErr)
+			if err := l.persistToolState(ctx); err != nil {
+				slog.Warn("persist pre-apply evidence gap", "incident_id", l.Request.IncidentID, "error", err)
+			}
+		}
+	}()
 	started := time.Now()
 	defer func() { l.timing.capture += time.Since(started) }()
 	dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)

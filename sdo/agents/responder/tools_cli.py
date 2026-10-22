@@ -139,9 +139,14 @@ def _act(args: argparse.Namespace) -> int:
     try:
         if not command:
             raise ValueError("a command is required after --")
-        response = _exchange({"command": "pre-apply"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
-        if response.get("error"):
-            raise ValueError(f"pre-apply capture: {response['error']}")
+        # Capture is evidence collection, not mutation authority. Keep repairs and
+        # their receipts available even when the controller cannot capture.
+        try:
+            response = _exchange({"command": "pre-apply"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+            if response.get("error"):
+                raise ValueError(str(response["error"]))
+        except (OSError, ValueError, TimeoutError) as exc:
+            print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
         return recorded_actions.run_and_record(
             command, args.resource, summary=args.summary, reversible=not args.irreversible
         )

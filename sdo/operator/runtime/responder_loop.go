@@ -668,10 +668,8 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
-	if err := l.capturePreApply(ctx); err != nil {
-		response.Error = err.Error()
-		return
-	}
+	// A missing capture is an evidence gap; it must not block the repair.
+	_ = l.capturePreApply(ctx)
 	l.batches++
 	started := time.Now().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)

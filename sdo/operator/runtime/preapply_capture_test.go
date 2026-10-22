@@ -108,13 +108,14 @@ func TestPreApplyCapturesLateFailureBeforeFirstMutation(t *testing.T) {
 	}
 }
 
-func TestPreApplyCaptureFailurePreventsMutation(t *testing.T) {
+func TestPreApplyCaptureFailureReportsEvidenceGap(t *testing.T) {
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "i", Namespace: "app"}, nil, nil, nil, PlanExecutor{}, 1)
 	loop.CorpusSessionRoot = t.TempDir()
 	response := loop.Handle(context.Background(), ToolRequest{Command: "pre-apply"})
 	if response.Error == "" {
 		t.Fatal("capture acknowledged without a provider")
 	}
+	assertPreApplyGap(t, loop)
 }
 
 func TestTrustedFastPathCapturesBeforeMutation(t *testing.T) {
@@ -154,18 +155,77 @@ func BenchmarkFirstMutationCapture(b *testing.B) {
 	}
 }
 
-func TestTypedApplyCaptureFailureLeavesPlanAndBudgetUnused(t *testing.T) {
+func TestTypedApplyCaptureFailureStillRepairsAndRecordsGap(t *testing.T) {
 	ctx := context.Background()
-	loop, _ := trustedPortLoop(t, false, true, true)
+	loop, client := trustedPortLoop(t, false, true, true)
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": ref}})
 	if planned.Error != "" {
 		t.Fatal(planned.Error)
 	}
 	loop.CorpusSessionRoot = t.TempDir()
+	provider := loop.Provider
+	// Fail only the capture; restore normal reads before verification.
 	loop.Provider = nil
-	response := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
-	if response.Error == "" || loop.LoopsUsed() != 0 || len(loop.PlanApplications()) != 0 {
-		t.Fatalf("failed capture consumed mutation authority: %+v", response)
+	client.PrependReactor("patch", "services", func(ktesting.Action) (bool, kruntime.Object, error) {
+		loop.Provider = provider
+		return false, nil, nil
+	})
+	var state []byte
+	loop.saveToolState = func(_ context.Context, payload []byte) error {
+		state = append([]byte(nil), payload...)
+		return nil
 	}
+	response := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if response.Error != "" || !response.Healthy || loop.LoopsUsed() != 1 {
+		t.Fatalf("capture failure blocked repair: %+v", response)
+	}
+	applications := loop.PlanApplications()
+	if len(applications) != 1 || !applications[0].Result.Applied {
+		t.Fatalf("repair lacks application evidence: %+v", applications)
+	}
+	assertPreApplyGap(t, loop)
+	restarted := NewResponderLoop(loop.Request, nil, provider, nil, PlanExecutor{}, 3)
+	restarted.CorpusSessionRoot = loop.CorpusSessionRoot
+	if err := restarted.restoreToolSnapshot(state); err != nil {
+		t.Fatal(err)
+	}
+	if response := restarted.Handle(ctx, ToolRequest{Command: "pre-apply"}); response.Error == "" {
+		t.Fatal("a repaired snapshot must not fill the missed first-mutation boundary")
+	}
+	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, loop.Request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "open@pre-apply.json")); !os.IsNotExist(err) {
+		t.Fatalf("failed first capture was replaced after repair: %v", err)
+	}
+}
+
+func TestTrustedFastPathCaptureFailureStillRepairsAndRecordsGap(t *testing.T) {
+	loop, client := trustedPortLoop(t, false, true, true)
+	loop.CorpusSessionRoot = t.TempDir()
+	provider := loop.Provider
+	loop.BeforeFastPathApply = func(context.Context, []ProgramRun) error {
+		loop.Provider = nil
+		return nil
+	}
+	client.PrependReactor("patch", "services", func(ktesting.Action) (bool, kruntime.Object, error) {
+		loop.Provider = provider
+		return false, nil, nil
+	})
+	if attempt := loop.TryTrustedFastPath(context.Background(), 3); !attempt.Resolved {
+		t.Fatalf("capture failure blocked trusted repair: %+v", attempt)
+	}
+	assertPreApplyGap(t, loop)
+}
+
+func assertPreApplyGap(t *testing.T, loop *ResponderLoop) {
+	t.Helper()
+	for _, signal := range loop.FailureSignals() {
+		if signal == "pre_apply_capture_gap" {
+			return
+		}
+	}
+	t.Fatalf("missing evidence gap: %v", loop.FailureSignals())
 }

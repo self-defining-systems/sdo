@@ -127,6 +127,32 @@ def test_act_records_a_failed_mutation_and_propagates_its_exit_code(scratch: Pat
     assert "boom" in str(receipt["details"])
 
 
+@pytest.mark.parametrize(
+    "failure", [OSError("tools unavailable"), TimeoutError("no controller"), ValueError("invalid response")]
+)
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_act_capture_transport_failure_keeps_command_exit_code_and_receipt(
+    scratch: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure: Exception,
+    exit_code: int,
+) -> None:
+    def exchange(_request: object, _directory: Path) -> dict[str, object]:
+        raise failure
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert (
+        tools_cli.main(
+            ["act", "--resource", "Service/app/api", "--", sys.executable, "-c", f"raise SystemExit({exit_code})"]
+        )
+        == exit_code
+    )
+    (receipt,) = _recorded(scratch)
+    assert receipt["success"] is (exit_code == 0)
+    assert "pre-apply evidence gap" in capsys.readouterr().err
+
+
 def test_act_rejects_a_malformed_resource_before_running_anything(scratch: Path) -> None:
     marker = scratch / "ran"
     with pytest.raises(SystemExit) as exit_info:

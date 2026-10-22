@@ -175,9 +175,5 @@ def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, 
     monkeypatch.setattr(tools_cli, "_exchange", exchange)
     monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", run)
     result = tools_cli.main(["act", "--resource", "Service/app/api", "--", "true"])
-    if response.get("error"):
-        assert result != 0
-        assert seen == ["capture"]
-    else:
-        assert result == 0
-        assert seen == ["capture", "mutation"]
+    assert result == 0
+    assert seen == ["capture", "mutation"]
