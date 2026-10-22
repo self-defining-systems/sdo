@@ -80,10 +80,23 @@ type PlanExecutor struct {
 	Now      func() time.Time
 }
 
-// Apply writes the plan once and reports. A write that fails part-way through a
-// multi-action plan is compensated; once every write has landed, a failed
-// rollout wait or health verification is reported and left to the caller.
+// Apply writes the plan and reports. A version conflict before anything was
+// written (a status or controller bump since the pre-image read) is not a
+// refusal: the plan is applied again against the fresh object, up to
+// maxRestoreAttempts times. A write that fails part-way through a multi-action
+// plan is compensated; once every write has landed, a failed rollout wait or
+// health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
+		result, err = e.applyOnce(ctx, incident, plan, dryRun)
+		if err == nil || result.Applied || !apierrors.IsConflict(err) {
+			break
+		}
+	}
+	return result, err
+}
+
+func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	started := time.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
 	writesLanded := false

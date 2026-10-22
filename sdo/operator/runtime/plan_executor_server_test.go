@@ -331,14 +331,29 @@ func TestPlanExecutorFallsBackToCanonicalizationWithoutServerDryRun(t *testing.T
 	}
 }
 
-func TestPlanExecutorReturnsWriteConflictWithoutRetry(t *testing.T) {
+func TestPlanExecutorRetriesConflictBeforeAnyWrite(t *testing.T) {
 	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
 	client.raceBeforePatch = 1
 	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
 	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if err == nil || !apierrors.IsConflict(errors.Unwrap(err)) || result.Applied {
-		t.Fatalf("a write conflict must be returned, not retried: %+v, %v", result, err)
+	if err != nil || !result.Applied || result.RolledBack || !result.VerificationPassed {
+		t.Fatalf("a bump before the first write must be retried against the fresh object: %+v, %v", result, err)
+	}
+	image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
+	if image != "registry.invalid/rate:good" {
+		t.Fatalf("image = %v", image)
+	}
+}
+
+func TestPlanExecutorReturnsTypedConflictWhenRetriesRunOut(t *testing.T) {
+	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
+	client.raceBeforePatch = 1000
+	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
+	if err == nil || !apierrors.IsConflict(err) || result.Applied {
+		t.Fatalf("persistent conflict must surface as a typed conflict with nothing written: %+v, %v", result, err)
 	}
 	image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
 	if image != "registry.invalid/rate:missing" {

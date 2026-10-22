@@ -2,11 +2,9 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/sdk"
@@ -35,17 +33,9 @@ func simPlanRun(t *testing.T, seed uint64, build func() *unstructured.Unstructur
 	beforeImage, _ := testField(before, "spec.template.spec.containers.0.image")
 
 	switch {
-	case err != nil && kube.timeouts == 0 && kube.churns == 0:
-		t.Fatalf("correct plan failed with no injected fault: %v (applied=%t rolledBack=%t)", err, result.Applied, result.RolledBack)
-	case err != nil && kube.timeouts == 0 && !result.Applied:
-		// Apply writes once: a status bump before the first, version-conditional write
-		// surfaces as a typed conflict and leaves the object untouched.
-		if !apierrors.IsConflict(errors.Unwrap(err)) && !apierrors.IsConflict(err) {
-			t.Fatalf("churn produced an untyped failure: %v", err)
-		}
-		if image != beforeImage {
-			t.Fatalf("conflicting apply changed the object: image=%v before=%v", image, beforeImage)
-		}
+	case err != nil && kube.timeouts == 0:
+		// Churn (up to simMaxChurn bumps) is retried, never surfaced as a conflict.
+		t.Fatalf("correct plan failed with no ambiguous write: %v (applied=%t rolledBack=%t)", err, result.Applied, result.RolledBack)
 	case err == nil:
 		// A correct plan on an object nobody else edits has no legitimate
 		// reason to fail, however much the server normalizes or churns.
