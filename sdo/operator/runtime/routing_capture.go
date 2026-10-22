@@ -190,13 +190,26 @@ func routingProbeTargets(snapshot sdktest.Snapshot, findings []sdk.Finding) []ro
 			}
 		}
 	}
-	if len(relevant) == 0 {
+	// Services the snapshot itself shows as unroutable are probed whether or not
+	// a dispatched finding names them: a co-injected fault can reach the capture
+	// before its own drift finding does.
+	suspects := map[string]bool{}
+	for _, service := range snapshot.Services() {
+		if service.Namespace == snapshot.NamespaceName && !relevant[service.Name] && routingSuspect(snapshot, service) {
+			suspects[service.Name] = true
+		}
+	}
+	if len(relevant) == 0 && len(suspects) == 0 {
 		return nil
 	}
+	// Findings' Services first, then suspects, then peers: the probe and time
+	// caps cut the tail, so evidence of a fault is never starved by a peer.
 	services := []corev1.Service{}
-	for _, service := range snapshot.Services() {
-		if service.Namespace == snapshot.NamespaceName && relevant[service.Name] {
-			services = append(services, service)
+	for _, tier := range []map[string]bool{relevant, suspects} {
+		for _, service := range snapshot.Services() {
+			if service.Namespace == snapshot.NamespaceName && tier[service.Name] {
+				services = append(services, service)
+			}
 		}
 	}
 	if len(services) == 0 {
@@ -205,7 +218,7 @@ func routingProbeTargets(snapshot sdktest.Snapshot, findings []sdk.Finding) []ro
 	// Mandatory healthy-peer diagnosis also needs actual listener observations.
 	peers := 0
 	for _, service := range snapshot.Services() {
-		if service.Namespace != snapshot.NamespaceName || relevant[service.Name] || peers >= 2 || service.Spec.Type == corev1.ServiceTypeExternalName {
+		if service.Namespace != snapshot.NamespaceName || relevant[service.Name] || suspects[service.Name] || peers >= 2 || service.Spec.Type == corev1.ServiceTypeExternalName {
 			continue
 		}
 		pods := snapshot.PodsForService(service.Namespace, service.Name)
@@ -283,6 +296,45 @@ func routingProbeTargets(snapshot sdktest.Snapshot, findings []sdk.Finding) []ro
 		}
 	}
 	return targets
+}
+
+// routingSuspect reports whether the snapshot alone shows a Service that
+// cannot route: its selector matches no ready Pod, or an integer targetPort
+// that none of its Pods declares as a container port.
+func routingSuspect(snapshot sdktest.Snapshot, service corev1.Service) bool {
+	if service.Spec.Type == corev1.ServiceTypeExternalName || len(service.Spec.Selector) == 0 {
+		return false
+	}
+	pods := snapshot.PodsForService(service.Namespace, service.Name)
+	declared := map[int32]bool{}
+	anyReady := false
+	for _, pod := range pods {
+		anyReady = anyReady || routingPodReady(pod)
+		for _, container := range pod.Spec.Containers {
+			for _, port := range container.Ports {
+				declared[port.ContainerPort] = true
+			}
+		}
+	}
+	if !anyReady {
+		return true
+	}
+	if len(declared) == 0 { // Pods that declare no ports give no evidence of a mismatch.
+		return false
+	}
+	for _, port := range service.Spec.Ports {
+		if port.Protocol != "" && port.Protocol != corev1.ProtocolTCP || port.TargetPort.Type != intstr.Int {
+			continue
+		}
+		target := port.TargetPort.IntVal
+		if target == 0 {
+			target = port.Port
+		}
+		if !declared[target] {
+			return true
+		}
+	}
+	return false
 }
 
 func routingPodReady(pod corev1.Pod) bool {

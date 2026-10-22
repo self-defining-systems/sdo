@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -146,6 +147,100 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 	if len(probe.calls) != prior {
 		t.Fatal("repeated detect capture probed again")
 	}
+}
+
+// incidentOneSnapshot has the shape of a co-injected fault: only Service/user
+// is named by findings, while reservation routes 8087 to a port no Pod
+// listens on. consul and frontend are alphabetically-first healthy peers.
+func incidentOneSnapshot() sdktest.Snapshot {
+	snapshot := sdktest.Snapshot{NamespaceName: "app"}
+	add := func(name string, port, targetPort, containerPort int32, ready bool) {
+		snapshot.ServiceList = append(snapshot.ServiceList, corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": name}, Ports: []corev1.ServicePort{{Port: port, TargetPort: intstr.FromInt32(targetPort)}}}})
+		status := corev1.ConditionFalse
+		if ready {
+			status = corev1.ConditionTrue
+		}
+		snapshot.PodList = append(snapshot.PodList, corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-pod", Namespace: "app", Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: name, Ports: []corev1.ContainerPort{{ContainerPort: containerPort}}}}}, Status: corev1.PodStatus{PodIP: "10.0.0." + fmt.Sprint(len(snapshot.PodList)+1), Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: status}}}})
+	}
+	add("consul", 8500, 8500, 8500, true)
+	add("frontend", 5000, 5000, 5000, true)
+	add("reservation", 8087, 9999, 8087, true)
+	add("user", 8086, 8086, 8086, false)
+	return snapshot
+}
+
+func serviceRef(name string) sdk.ObjectRef {
+	return sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: name}
+}
+
+func TestRoutingCaptureProbesSuspectServiceNamedByNoFinding(t *testing.T) {
+	snapshot := incidentOneSnapshot()
+	findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: serviceRef("user")}}
+	root := t.TempDir()
+	if err := memory.CaptureIncidentSnapshot(root, "incident-one", "open@detect", snapshot, "app"); err != nil {
+		t.Fatal(err)
+	}
+	probe := &boundedRoutingProber{}
+	if err := captureRoutingEvidence(context.Background(), root, "incident-one", "open@detect", findings, LiveReadView{DetectionContext: snapshot, Prober: probe}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := memory.IncidentCorpusDir(root, "incident-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []sdktest.PrimitiveCall
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		t.Fatal(err)
+	}
+	replay := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
+	pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "reservation-pod"}
+	for _, observed := range []struct {
+		ref  sdk.ObjectRef
+		port int32
+	}{{serviceRef("reservation"), 8087}, {serviceRef("reservation"), 9999}, {pod, 8087}, {pod, 9999}} {
+		if _, err := replay.ProbeTCP(observed.ref, observed.port); err != nil {
+			t.Errorf("no replayable %s/%s:%d observation: %v", observed.ref.Kind, observed.ref.Name, observed.port, err)
+		}
+	}
+}
+
+func TestRoutingProbeTargetsPrioritizeFindingsAndSuspectsOverPeers(t *testing.T) {
+	snapshot := incidentOneSnapshot()
+	names := func(targets []routingProbeTarget) []string {
+		out := []string{}
+		for _, target := range targets {
+			name := strings.TrimSuffix(target.ref.Name, "-pod")
+			if len(out) == 0 || out[len(out)-1] != name {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	t.Run("finding-named service then suspect then peers", func(t *testing.T) {
+		got := names(routingProbeTargets(snapshot, []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: serviceRef("user")}}))
+		want := []string{"user", "reservation", "consul", "frontend"}
+		if !slices.Equal(got, want) {
+			t.Fatalf("probe order %v, want %v", got, want)
+		}
+	})
+	t.Run("drift binding without a health finding", func(t *testing.T) {
+		got := names(routingProbeTargets(snapshot, []sdk.Finding{{Status: sdk.FindingActive, ParameterBindings: map[string]sdk.ObjectRef{"resource": serviceRef("reservation")}}}))
+		if len(got) < 2 || got[0] != "reservation" || got[1] != "user" {
+			t.Fatalf("probe order %v: drift-named reservation first, suspect user next", got)
+		}
+	})
+	t.Run("healthy namespace without findings probes nothing", func(t *testing.T) {
+		healthy := incidentOneSnapshot()
+		healthy.ServiceList[2].Spec.Ports[0].TargetPort = intstr.FromInt32(8087)
+		healthy.PodList[3].Status.Conditions[0].Status = corev1.ConditionTrue
+		if targets := routingProbeTargets(healthy, nil); len(targets) != 0 {
+			t.Fatalf("healthy snapshot probed: %+v", targets)
+		}
+	})
 }
 
 func TestRoutingCaptureHasCountAndTimeBudgets(t *testing.T) {
