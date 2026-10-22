@@ -45,3 +45,11 @@ OutcomeRecord.reflection_eligibility version 1 durably stores Go-owned typed ite
 Current reflection workers can materialize positive cases through the typed `create_corpus` tool. It copies the controller open/fixed/recording bytes and derives phase values and SHA-256 provenance; it does not grant acceptance. The broker still compares the proposed bytes independently. The typed `check_memory` input is unwrapped ReflectionResult fields; the final model reply retains the session envelope with `reflection` populated and `incident_result` null. The generated worker guide is `sdo/skills/sdo-memory/references/runtime.md`; generated program API documentation is `sdo/skills/sdo-playbook-authoring/references/program-sdk.md`.
 
 Reflection evidence browsing is a bounded projection only: inventory and field pages carry the accepted outcome commit, incident ID and capture digests. Oversized page items require narrower field selection, not a conclusion that evidence is absent. Full captures and the committed outcome remain authoritative. Prompt memory inventories excerpt accepted text and omit script bodies; accepted files remain in the proposal checkout.
+
+`reflection_evidence_gap_count` on the native ledger and first-party incident row counts distinct confirmed
+resource/phase pairs with no observation in the complete protected recordings. Historical absence is unknown,
+not zero. Recorded errors count as present calls, not as successful evidence. `decline_reason=evidence_gap`
+identifies an actual no-change decline; Go rejects it when no gap was flagged. A nonzero presence-gap count
+alone does not establish blocked learning, and already-proven covered repairs still skip the model.
+
+Evidence-gap items and the distinct resource/phase count are part of the same pre-commit `reflection_eligibility` result. The native ledger projects that saved count for receipts; it does not reclassify recordings during reflection retries. Historical outcomes without an indexed count remain unknown, rather than zero.

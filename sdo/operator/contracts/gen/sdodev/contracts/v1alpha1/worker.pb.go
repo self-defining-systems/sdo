@@ -701,6 +701,7 @@ type ReflectionResult struct {
 	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/worker.proto.
 	ArtifactProposal *OperationalArtifactProposal `protobuf:"bytes,5,opt,name=artifact_proposal,json=artifactProposal,proto3" json:"artifact_proposal,omitempty"`
 	SdkGaps          []*SdkGap                    `protobuf:"bytes,6,rep,name=sdk_gaps,json=sdkGaps,proto3" json:"sdk_gaps,omitempty"`
+	DeclineReason    string                       `protobuf:"bytes,7,opt,name=decline_reason,json=declineReason,proto3" json:"decline_reason,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -776,6 +777,13 @@ func (x *ReflectionResult) GetSdkGaps() []*SdkGap {
 		return x.SdkGaps
 	}
 	return nil
+}
+
+func (x *ReflectionResult) GetDeclineReason() string {
+	if x != nil {
+		return x.DeclineReason
+	}
+	return ""
 }
 
 type SdkGap struct {
@@ -912,14 +920,15 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
 	"cause_work\x18\x0e \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\tcauseWork\x12V\n" +
 	"\x0funassigned_work\x18\x0f \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x0eunassignedWork:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
-	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xaf\x04\n" +
+	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xed\x04\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +
 	"\x11learning_decision\x18\x02 \x01(\tB\"\xbaH\x1fr\x1dR\aupdatedR\tno_changeR\asdk_gapR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x122\n" +
 	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12g\n" +
 	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposal\x12<\n" +
-	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
+	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12<\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
 	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''\"\xaa\x01\n" +
 	"\x06SdkGap\x12(\n" +
 	"\vfault_class\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +

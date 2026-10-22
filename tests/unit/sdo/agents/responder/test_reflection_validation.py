@@ -174,7 +174,8 @@ from pathlib import Path
 assert sys.argv[1:4] == ["memory", "check", "--json"]
 result = json.loads(Path(sys.argv[5]).read_text())
 assert result == {"summary": "covered", "learning_decision": "no_change",
-                  "no_change_reason": "already covered", "proposed_artifact_ids": [], "sdk_gaps": []}
+                  "no_change_reason": "already covered", "decline_reason": "",
+                  "proposed_artifact_ids": [], "sdk_gaps": []}
 """,
         monkeypatch,
     )

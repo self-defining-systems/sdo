@@ -52,6 +52,7 @@ class ReflectionTurn(BaseModel):
     summary: str = Field(min_length=1)
     learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
+    decline_reason: Literal["", "evidence_gap"] = ""
     playbook_ids: list[str] = Field(default_factory=list)
     sdk_gaps: list[SdkGap] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
@@ -74,6 +75,7 @@ class ReflectionTurn(BaseModel):
             summary=result.summary,
             learning_decision=cast("Literal['updated', 'no_change', 'sdk_gap']", result.learning_decision),
             no_change_reason=result.no_change_reason or None,
+            decline_reason=cast("Literal['', 'evidence_gap']", result.decline_reason),
             playbook_ids=list(result.proposed_artifact_ids),
             sdk_gaps=[
                 SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
@@ -90,6 +92,12 @@ class ReflectionTurn(BaseModel):
             raise ValueError("reflection requires logical playbook IDs")
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
+        if (
+            self.decline_reason == "evidence_gap"
+            and self.learning_decision == "no_change"
+            and self.no_change_reason != "evidence gap"
+        ):
+            raise ValueError("evidence gap no_change uses the canonical evidence gap reason")
         if self.learning_decision == "no_change" and self.sdk_gaps:
             raise ValueError("no_change reflection cannot report SDK gaps")
         if self.learning_decision in {"no_change", "sdk_gap"}:
@@ -165,6 +173,7 @@ def _logical_learning_request(
             "Go has settled covered items and materialized their evidence in this checkout. "
             "Preserve Go-owned cases and address only the per-cause questions in the same incident session. "
             "A false-match fixed capture is a required NoMatch regression. "
+            "Only Go-flagged gaps permit declining for missing evidence; explain which observation is missing. "
             "Return updated whenever final files include Go or agent edits.\n"
             f"Per-cause work:\n{work_json}\n"
         )

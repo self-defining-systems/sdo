@@ -99,6 +99,7 @@ def test_reflection_schema_names_the_fields_go_loads_as_the_decision_file() -> N
         "no_change_reason",
         "proposed_artifact_ids",
         "sdk_gaps",
+        "decline_reason",
     }
     # The deprecated proposal message is never requested from the model.
     assert "artifact_proposal" in ReflectionResult.DESCRIPTOR.fields_by_name

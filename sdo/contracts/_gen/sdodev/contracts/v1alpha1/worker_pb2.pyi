@@ -132,20 +132,22 @@ class ReflectionRequest(_message.Message):
     def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., cause_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
 
 class ReflectionResult(_message.Message):
-    __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal", "sdk_gaps")
+    __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal", "sdk_gaps", "decline_reason")
     SUMMARY_FIELD_NUMBER: _ClassVar[int]
     LEARNING_DECISION_FIELD_NUMBER: _ClassVar[int]
     NO_CHANGE_REASON_FIELD_NUMBER: _ClassVar[int]
     PROPOSED_ARTIFACT_IDS_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_PROPOSAL_FIELD_NUMBER: _ClassVar[int]
     SDK_GAPS_FIELD_NUMBER: _ClassVar[int]
+    DECLINE_REASON_FIELD_NUMBER: _ClassVar[int]
     summary: str
     learning_decision: str
     no_change_reason: str
     proposed_artifact_ids: _containers.RepeatedScalarFieldContainer[str]
     artifact_proposal: _messages_pb2.OperationalArtifactProposal
     sdk_gaps: _containers.RepeatedCompositeFieldContainer[SdkGap]
-    def __init__(self, summary: _Optional[str] = ..., learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., artifact_proposal: _Optional[_Union[_messages_pb2.OperationalArtifactProposal, _Mapping]] = ..., sdk_gaps: _Optional[_Iterable[_Union[SdkGap, _Mapping]]] = ...) -> None: ...
+    decline_reason: str
+    def __init__(self, summary: _Optional[str] = ..., learning_decision: _Optional[str] = ..., no_change_reason: _Optional[str] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., artifact_proposal: _Optional[_Union[_messages_pb2.OperationalArtifactProposal, _Mapping]] = ..., sdk_gaps: _Optional[_Iterable[_Union[SdkGap, _Mapping]]] = ..., decline_reason: _Optional[str] = ...) -> None: ...
 
 class SdkGap(_message.Message):
     __slots__ = ("fault_class", "primitive", "reason", "scratch_script")
