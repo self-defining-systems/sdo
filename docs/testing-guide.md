@@ -274,6 +274,10 @@ Run `bash scripts/check_go_core.sh` to enforce the [functional-core boundary](go
 It is included in the existing static-analysis and architecture gates. It installs
 and caches golangci-lint 2.11.4, runs only depguard/forbidigo on declared core
 packages, and checks structural purity plus application-owned transitive imports.
+
+`bash scripts/check_go_mains.sh` (run by `check_errors.sh`) vets every Go program under
+`benchmarks/` against the current operator API, so a runtime change that breaks one
+fails static analysis in seconds instead of surfacing in the Python unit job.
 The package registry lives in `scripts/go_pure_packages.txt`; negative fixtures
 prove the linter rules are active.
 
