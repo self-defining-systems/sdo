@@ -109,6 +109,12 @@ The worker image includes the same hermetic runner as the validator Job.
 candidate/inputs, writable scratch and private caches, no egress, publishing
 credentials or cluster credentials. Provider access stays in the outer agent
 process. The local runner checks isolation with the same canary as the Job.
+The broker keeps one shared default-deny NetworkPolicy and reruns the allow/deny
+canaries only when no proof for the validator image is under 30 minutes old or the
+policy changed. It skips the Job when a candidate changes only goal/architecture
+prose, playbook READMEs and scripts or outcomes (`layout.RequiresValidatorJob`);
+detector, program, library, traffic, corpus and application paths keep it,
+because the Job is the only place a new corpus case is replayed.
 Image CI exercises this from both supported providers' actual confinement.
 No nested privileged Docker or permission escalation is required; an image
 without the supported isolation helper fails dispatch preflight.

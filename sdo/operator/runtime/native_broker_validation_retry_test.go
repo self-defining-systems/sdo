@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,6 +86,14 @@ func TestNativeBrokerRetriesValidationWithoutRedispatchingReflection(t *testing.
 					}
 					reflectionTask = proto.Clone(task).(*contracts.AgentTask)
 					if _, err := writeGoodPlaybook(IncidentWorkspace{Worktree: task.Workspace.CheckoutPath}); err != nil {
+						return nil, err
+					}
+					// Prose alone skips the validator Job; a library edit exercises it.
+					library := filepath.Join(task.Workspace.CheckoutPath, ".sdo", "lib", "base")
+					if err := os.MkdirAll(library, 0o755); err != nil {
+						return nil, err
+					}
+					if err := os.WriteFile(filepath.Join(library, "helper.go"), []byte("package base\n"), 0o644); err != nil {
 						return nil, err
 					}
 					response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"base"}})

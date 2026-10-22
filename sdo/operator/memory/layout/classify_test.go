@@ -115,3 +115,29 @@ func TestArtifactIDAndRollout(t *testing.T) {
 		t.Error("health detector and playbook edits do not require rollout")
 	}
 }
+
+func TestRequiresValidatorJob(t *testing.T) {
+	outcome := OutcomePath("incident-1")
+	cases := []struct {
+		name  string
+		paths []string
+		want  bool
+	}{
+		{"prose and outcome only", []string{".sdo/goal.md", ".sdo/arch.md", ".sdo/playbooks/README.md", ".sdo/playbooks/cache/README.md", ".sdo/playbooks/cache/scripts/restart.sh", outcome}, false},
+		{"program source", []string{".sdo/playbooks/cache/diagnose.go"}, true},
+		{"library", []string{".sdo/lib/shared/helper.go"}, true},
+		{"incident detector", []string{".sdo/diagnostics/detectors/incidents/cache/detector.go"}, true},
+		{"health detector", []string{".sdo/diagnostics/detectors/health/objective/manifest.yaml"}, true},
+		{"traffic generator", []string{".sdo/diagnostics/traffic/generators/main.go"}, true},
+		{"diagnostics module", []string{".sdo/diagnostics/go.mod"}, true},
+		{"new corpus case is replayed by the Job", []string{".sdo/corpus/cache/open.json"}, true},
+		{"application source", []string{"app/main.go"}, true},
+		{"prose plus one executable path", []string{".sdo/arch.md", ".sdo/playbooks/cache/mitigate.go"}, true},
+		{"no change", nil, false},
+	}
+	for _, tc := range cases {
+		if got := RequiresValidatorJob(tc.paths); got != tc.want {
+			t.Errorf("%s: RequiresValidatorJob(%v) = %v, want %v", tc.name, tc.paths, got, tc.want)
+		}
+	}
+}
