@@ -75,6 +75,8 @@ type PlanExecutor struct {
 	Rollouts PlanRollouts
 	Verifier PlanVerifier
 	Now      func() time.Time
+	// Sleep waits between version-conflict retries; nil waits on the real clock.
+	Sleep func(context.Context, time.Duration) error
 }
 
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
@@ -181,10 +183,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if patchErr != nil {
 			return result, fmt.Errorf("patch %s/%s: %w", ref.Kind, ref.Name, patchErr)
 		}
-		total, patchErr = conditionalPlanPatch(total, originals[ref])
-		if patchErr != nil {
-			return result, patchErr
-		}
 		prepared = append(prepared, next.DeepCopy())
 		cumulative = append(cumulative, total)
 		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
@@ -196,7 +194,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	if dryRun {
 		return result, nil
 	}
-	versions := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	// versions holds each object as last observed after one of our writes; objects
+	// not yet written are still at their pre-image.
+	versions := originals
 	for index, patch := range result.Patches {
 		if previous := versions[patch.Ref]; previous != nil {
 			var patchErr error
@@ -208,8 +208,8 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		}
 		pending := index
 		result.PendingAction = &pending
-		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
-			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
+		if err := e.patchWithRetry(ctx, index, &result.Patches[index], versions[patch.Ref]); err != nil {
+			return result, err
 		}
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
