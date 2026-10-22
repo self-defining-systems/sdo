@@ -85,9 +85,9 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		return err
 	}
 	defer cancel()
-	objects, err := c.drift.Source.AcceptedManifests(actionCtx, c.config.SourceCommit, c.config.Namespace)
-	if err != nil {
-		return fmt.Errorf("render accepted manifests for ownership adoption: %w", err)
+	objects, renderErr := c.drift.Source.AcceptedManifests(actionCtx, c.config.SourceCommit, c.config.Namespace)
+	if renderErr != nil && len(objects) == 0 {
+		return fmt.Errorf("render accepted manifests for ownership adoption: %w", renderErr)
 	}
 	c.mu.Lock()
 	status := c.ownershipAdoption
@@ -226,6 +226,9 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	c.mu.Lock()
 	c.ownershipAdoption = status
 	c.mu.Unlock()
+	if renderErr != nil {
+		return fmt.Errorf("render accepted manifests for ownership adoption (partial coverage): %w", renderErr)
+	}
 	c.adoptionNeeded = false
 	return nil
 }

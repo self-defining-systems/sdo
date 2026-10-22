@@ -114,6 +114,9 @@ type StateTracker struct {
 	unobserved []string
 	baseline   *stateSnapshot
 	candidate  *stateSnapshot
+	// Image evidence outlives the configuration diff baseline across maintenance.
+	// GitPlanSource independently checks its source tree before using it.
+	images *stateSnapshot
 }
 
 // NewStateTracker creates an unstarted tracker.
@@ -174,7 +177,8 @@ func (t *StateTracker) Stop() {
 }
 
 // Reset forgets the baseline, for example when a maintenance window may have
-// redeployed the application.
+// redeployed the application. Last healthy image evidence is retained separately;
+// it is usable only with matching source identity.
 func (t *StateTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -198,10 +202,12 @@ func (t *StateTracker) Observe(now time.Time, healthy bool) {
 	switch {
 	case t.baseline == nil:
 		t.baseline = t.snapshotLocked(now)
+		t.images = t.baseline
 	case t.candidate == nil:
 		t.candidate = t.snapshotLocked(now)
 	case now.Sub(t.candidate.at) >= t.config.Settle:
 		t.baseline = t.candidate
+		t.images = t.baseline
 		t.candidate = t.snapshotLocked(now)
 	}
 }
@@ -223,10 +229,10 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init bool) (string, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.baseline == nil || ref.Namespace != t.config.Namespace {
+	if t.images == nil || ref.Namespace != t.config.Namespace {
 		return "", false
 	}
-	state := t.baseline.objects[ref.Kind+"/"+ref.Name]
+	state := t.images.objects[ref.Kind+"/"+ref.Name]
 	prefix := "container"
 	if init {
 		prefix = "initContainer"
@@ -238,10 +244,10 @@ func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init b
 func (t *StateTracker) BaselineTree(ref sdk.ObjectRef) string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.baseline == nil || ref.Namespace != t.config.Namespace {
+	if t.images == nil || ref.Namespace != t.config.Namespace {
 		return ""
 	}
-	return t.baseline.objects[ref.Kind+"/"+ref.Name]["template.sourceTree"]
+	return t.images.objects[ref.Kind+"/"+ref.Name]["template.sourceTree"]
 }
 
 func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {
