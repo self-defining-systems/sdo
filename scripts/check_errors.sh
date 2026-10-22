@@ -2,6 +2,7 @@
 # Check for static errors.  Covers:
 #   ruff  — syntax, undefined names, unused imports, style
 #   tach  — architectural module boundary contracts (tach.toml)
+#   types — pyright (scripts/type_check.sh)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 
 set -e
@@ -24,6 +25,9 @@ fi
 
 echo "==> tach (module boundaries)"
 uv run tach check
+
+echo "==> types (scripts/type_check.sh)"
+"$SCRIPT_DIR/type_check.sh"
 
 # Proto contract drift (buf lint + committed-codegen diff). Enforced
 # authoritatively by the dedicated `proto` CI job; skipped here when the buf
