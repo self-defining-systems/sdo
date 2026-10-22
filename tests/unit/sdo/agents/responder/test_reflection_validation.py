@@ -81,7 +81,7 @@ async def test_validation_tool_timeout_returns_failure_and_stops_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     marker = tmp_path / "child-finished"
-    child_code = f"import time; from pathlib import Path; time.sleep(0.8); Path({str(marker)!r}).touch()"
+    child_code = f"import time; from pathlib import Path; time.sleep(1.2); Path({str(marker)!r}).touch()"
     _validator(
         tmp_path,
         f"""import subprocess, sys, time
@@ -91,11 +91,11 @@ time.sleep(20)
 """,
         monkeypatch,
     )
-    result = await _call(tmp_path, timeout=0.1)
+    result = await _call(tmp_path, timeout=0.3)
     assert result["timed_out"]
     assert result["exit_code"] != 0
     assert "checking replay" in result["stdout"]
-    await asyncio.sleep(1)
+    await asyncio.sleep(1.5)
     assert not marker.exists()
 
 
@@ -161,3 +161,32 @@ def test_worker_image_ships_reflection_validation_transport() -> None:
     pinned = {name for name, _ in _PIN.findall(image)}
     assert "mcp" in pinned
     assert _closure({"mcp"}, "3.11") <= pinned
+
+
+@pytest.mark.asyncio
+async def test_validation_tool_accepts_typed_decision_without_a_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _validator(
+        tmp_path,
+        """import json, sys
+from pathlib import Path
+assert sys.argv[1:4] == ["memory", "check", "--json"]
+result = json.loads(Path(sys.argv[5]).read_text())
+assert result == {"summary": "covered", "learning_decision": "no_change",
+                  "no_change_reason": "already covered", "proposed_artifact_ids": [], "sdk_gaps": []}
+""",
+        monkeypatch,
+    )
+    from sdo.agents.responder.reflection_validation import validation_server
+
+    server = validation_server(tmp_path)
+    result = await server.call_tool(
+        "check_memory",
+        {
+            "learning_decision": "no_change",
+            "summary": "covered",
+            "no_change_reason": "already covered",
+        },
+    )
+    assert result[1]["exit_code"] == 0

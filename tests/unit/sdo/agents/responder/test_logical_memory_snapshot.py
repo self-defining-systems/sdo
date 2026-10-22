@@ -96,5 +96,5 @@ def test_reflection_brief_uses_logical_snapshot_without_loading_memory_files(tmp
     )
     prompt = str(backend.calls[-1]["prompt"])
     assert "Edit the final files directly" in prompt
-    assert "sdo-operator memory check" in prompt
+    assert "check_memory" in prompt
     assert "draft-test" not in prompt
