@@ -37,7 +37,8 @@ type GitPlanSource struct {
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
-// the drift change feed can own.
+// the drift change feed can own. Render failures return the available objects
+// together with an explicit error; callers must not treat a partial set as complete.
 func (s GitPlanSource) AcceptedManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
 	return s.manifests(ctx, revision, namespace, true)
 }
@@ -54,12 +55,12 @@ func (s GitPlanSource) manifests(ctx context.Context, revision, namespace string
 	if err != nil {
 		return nil, err
 	}
-	treeBytes, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "rev-parse", revision+"^{tree}").Output()
+	tree, err := s.sourceTree(ctx, revision)
 	if err != nil {
-		return nil, fmt.Errorf("source tree at %s: %w", revision, err)
+		return nil, err
 	}
-	tree := strings.TrimSpace(string(treeBytes))
 	objects := make([]*unstructured.Unstructured, 0)
+	var renderErrors []error
 	seen := map[sdk.ObjectRef]bool{}
 	for _, path := range paths {
 		data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "show", revision+":"+path).Output()
@@ -97,14 +98,15 @@ func (s GitPlanSource) manifests(ctx context.Context, revision, namespace string
 				objects = append(objects, object)
 				continue
 			}
-			rendered, err := s.renderDocument(document, tree, ref, path)
+			rendered, err := s.renderDocument(ctx, document, tree, ref, path)
 			if err != nil {
-				return nil, err
+				renderErrors = append(renderErrors, err)
+				continue
 			}
 			objects = append(objects, rendered)
 		}
 	}
-	return objects, nil
+	return objects, errors.Join(renderErrors...)
 }
 
 func (s GitPlanSource) AcceptedManifest(ctx context.Context, revision string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -116,26 +118,45 @@ func (s GitPlanSource) Revision(ctx context.Context, ref sdk.ObjectRef, revision
 }
 
 func (s GitPlanSource) manifest(ctx context.Context, revision string, ref sdk.ObjectRef, render bool) (*unstructured.Unstructured, error) {
-	objects, err := s.manifests(ctx, revision, ref.Namespace, render)
+	objects, err := s.manifests(ctx, revision, ref.Namespace, false)
 	if err != nil {
 		return nil, err
 	}
 	for _, object := range objects {
 		if object.GetAPIVersion() == ref.APIVersion && object.GetKind() == ref.Kind && object.GetName() == ref.Name && object.GetNamespace() == ref.Namespace {
-			return object, nil
+			if !render {
+				return object, nil
+			}
+			tree, err := s.sourceTree(ctx, revision)
+			if err != nil {
+				return nil, err
+			}
+			return s.renderDocument(ctx, object.Object, tree, ref, ref.Kind+"/"+ref.Name)
 		}
 	}
 	return nil, fmt.Errorf("%w: %s/%s/%s at %s", ErrAcceptedManifestAbsent, ref.Kind, ref.Namespace, ref.Name, revision)
 }
 
-func (s GitPlanSource) renderDocument(document map[string]any, tree string, ref sdk.ObjectRef, path string) (*unstructured.Unstructured, error) {
+func (s GitPlanSource) renderDocument(ctx context.Context, document map[string]any, tree string, ref sdk.ObjectRef, path string) (*unstructured.Unstructured, error) {
 	renderTree := ""
-	if s.Images != nil && s.Images.BaselineTree(ref) == tree {
-		renderTree = tree
+	useImages := s.Images != nil
+	if useImages {
+		deployedTree := s.Images.BaselineTree(ref)
+		useImages = deployedTree != ""
+		if useImages {
+			same, err := s.sameImageSource(ctx, deployedTree, tree)
+			if err != nil {
+				return nil, fmt.Errorf("image source identity for %s/%s: %w", ref.Kind, ref.Name, err)
+			}
+			useImages = same
+			if same {
+				renderTree = deployedTree
+			}
+		}
 	}
 	missingImage := false
 	_, _, err := deployment.RenderManifest(document, ref.Namespace, renderTree, func(kind, name, container string, init bool, sourceImage string) string {
-		if s.Images != nil {
+		if useImages {
 			if image, ok := s.Images.BaselineImage(sdk.ObjectRef{APIVersion: ref.APIVersion, Kind: kind, Namespace: ref.Namespace, Name: name}, container, init); ok {
 				return image
 			}
@@ -160,4 +181,32 @@ func (s GitPlanSource) renderDocument(document map[string]any, tree string, ref 
 		return nil, err
 	}
 	return object, nil
+}
+
+func (s GitPlanSource) sourceTree(ctx context.Context, revision string) (string, error) {
+	data, err := exec.CommandContext(ctx, "git", "-C", s.Repository, "rev-parse", revision+"^{tree}").Output()
+	if err != nil {
+		return "", fmt.Errorf("source tree at %s: %w", revision, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// Memory publication changes the repository tree without deploying application
+// bytes. All other paths remain relevant: a build may consume more than YAML.
+func (s GitPlanSource) sameImageSource(ctx context.Context, deployedTree, acceptedTree string) (bool, error) {
+	if !gitRevision.MatchString(deployedTree) {
+		return false, fmt.Errorf("invalid deployed source tree %q", deployedTree)
+	}
+	if deployedTree == acceptedTree {
+		return true, nil
+	}
+	err := exec.CommandContext(ctx, "git", "-C", s.Repository, "diff", "--quiet", deployedTree, acceptedTree, "--", ".", ":(exclude).sdo").Run()
+	if err == nil {
+		return true, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("compare deployed source tree %s: %w", deployedTree, err)
 }

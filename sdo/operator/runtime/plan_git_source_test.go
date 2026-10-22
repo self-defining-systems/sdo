@@ -19,12 +19,12 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type fixedSourceImages struct{ image string }
+type fixedSourceImages struct{ image, tree string }
 
 func (i fixedSourceImages) BaselineImage(sdk.ObjectRef, string, bool) (string, bool) {
 	return i.image, true
 }
-func (i fixedSourceImages) BaselineTree(sdk.ObjectRef) string { return "" }
+func (i fixedSourceImages) BaselineTree(sdk.ObjectRef) string { return i.tree }
 
 func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 	repo := t.TempDir()
@@ -51,7 +51,7 @@ func TestRenderedSourceRestoresBuiltImageWithoutFalseDrift(t *testing.T) {
 	if _, err := (GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}}).AcceptedManifest(context.Background(), strings.TrimSpace(string(commit)), ref); err == nil {
 		t.Fatal("mutable raw image restored without deployed image evidence")
 	}
-	source := GitPlanSource{Repository: repo, Images: fixedSourceImages{image}, ManifestPaths: []string{"app.yaml"}}
+	source := GitPlanSource{Repository: repo, Images: fixedSourceImages{image: image, tree: nativeGit(t, repo, "rev-parse", "HEAD^{tree}")}, ManifestPaths: []string{"app.yaml"}}
 	manifests, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "app")
 	if err != nil || len(manifests) != 1 || manifests[0].GetName() != "rate" || manifests[0].Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] != image {
 		t.Fatalf("adoption source lost rendered image: %+v, %v", manifests, err)
@@ -204,7 +204,7 @@ func TestGitPlanSourceSelectsDeployedHotelSeed(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}, Images: fixedSourceImages{"example/app@sha256:" + strings.Repeat("a", 64)}}
+			source := GitPlanSource{Repository: repo, ManifestPaths: []string{"kubernetes"}, Images: fixedSourceImages{image: "example/app@sha256:" + strings.Repeat("a", 64), tree: nativeGit(t, repo, "rev-parse", "HEAD^{tree}")}}
 			objects, err := source.AcceptedManifests(context.Background(), strings.TrimSpace(string(commit)), "hotel-res")
 			if err != nil {
 				t.Fatal(err)
