@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
@@ -398,6 +399,8 @@ class CodexSessionBackend:
         return ReflectionTurn.from_model_output(payload).with_usage(turn_usage(turn))
 
     def _run(self, *, worktree: Path, prompt: str, session_id: str | None) -> StructuredTurn:
+        if os.environ.get("SDO_API_HISTORY_DIR"):
+            prompt += "\n\nRead-only Kubernetes API history is available through `sdo-operator evidence`."
         try:
             return run_structured_turn(
                 self.provider,

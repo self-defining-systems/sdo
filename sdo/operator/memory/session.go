@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sdo.dev/operator/apihistory"
 	"strings"
 )
 
@@ -25,7 +26,7 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]
 	local := filepath.Join(repositoryMount, ".sdo-runtime", "sessions", digest)
-	for _, directory := range []string{filepath.Join(repositoryMount, ".sdo-runtime"), filepath.Join(repositoryMount, ".sdo-runtime", "sessions"), local} {
+	for _, directory := range []string{filepath.Join(repositoryMount, ".sdo-runtime"), filepath.Join(repositoryMount, ".sdo-runtime", "sessions"), local, filepath.Join(local, "api-history")} {
 		if err := os.Mkdir(directory, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return "", fmt.Errorf("prepare incident session directory: %w", err)
 		}
@@ -33,6 +34,13 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("incident session directory is not a real directory: %s", directory)
 		}
+	}
+	if _, err := os.Stat(apihistory.GenerationPath(filepath.Join(local, "api-history"))); errors.Is(err, os.ErrNotExist) {
+		if err := apihistory.BeginGeneration(filepath.Join(local, "api-history")); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
 	}
 	return path.Join(pvcSubPath, ".sdo-runtime", "sessions", digest), nil
 }
