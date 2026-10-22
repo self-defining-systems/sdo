@@ -1,11 +1,15 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -206,7 +210,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	snapshot.ServiceList = append(snapshot.ServiceList, peer)
 	snapshot.PodList = append(snapshot.PodList, peerPod)
 	provider := &changingProvider{snapshot: snapshot}
-	probe := &routingTestProber{}
+	probe := noTrafficRoutingProber(t)
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	finding := sdk.Finding{DetectorID: "health", RuleID: "routing", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, PrimaryResource: ref, Summary: "routing unavailable", Evidence: "no Service connection"}
 	detector := controllerDetector("health", time.Second, finding, finding, sdk.Finding{}, sdk.Finding{})
@@ -336,4 +340,78 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		t.Fatalf("routing responder dispatched: %+v %v", jobs, err)
 	}
 	t.Log("captured TCP evidence passes fixed/healthy peer, rename and SetField repair replay; at three prior credits both targetPort faults resolve with fresh live probes and no responder Job")
+}
+
+func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {
+	unavailable := HTTPProberClient{BaseURL: func(context.Context, bool) (string, error) {
+		return "", errors.New("prober pod is not ready")
+	}}
+	for _, test := range []struct {
+		name   string
+		view   func(sdk.DetectionContext) program.ReadView
+		reason string
+	}{
+		{"missing", func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s} }, "prober_not_configured"},
+		{"non-live", func(s sdk.DetectionContext) program.ReadView {
+			return &sdktest.ReplayReadView{Snapshot: s.(sdktest.Snapshot)}
+		}, "read_view_not_live"},
+		{"unreachable", func(s sdk.DetectionContext) program.ReadView {
+			return LiveReadView{DetectionContext: s, Prober: unavailable}
+		}, "probe_failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := routingCaptureSnapshot()
+			root := t.TempDir()
+			findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
+			loop := NewResponderLoop(IncidentRequest{IncidentID: "no-prober", Namespace: "app", Findings: findings}, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
+			loop.CorpusSessionRoot, loop.ReadView = root, test.view
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+			loop.InitialDiagnose(context.Background())
+			loop.InitialDiagnose(context.Background())
+			// A later capture phase must preserve and not log the same gap again.
+			if err := memory.CaptureIncidentSnapshot(root, "no-prober", "fixed", snapshot, "app"); err != nil {
+				t.Fatal(err)
+			}
+			if err := captureRoutingEvidence(context.Background(), root, "no-prober", "fixed", findings, test.view(snapshot)); err != nil {
+				t.Fatal(err)
+			}
+			dir, err := memory.IncidentCorpusDir(root, "no-prober")
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(dir, "routing-probe-note.json"))
+			if err != nil {
+				t.Fatalf("missing typed unavailable capture note: %v", err)
+			}
+			var note routingCaptureNote
+			if err := json.Unmarshal(raw, &note); err != nil {
+				t.Fatal(err)
+			}
+			if note.Capability != "routing_probe" || note.Status != "unavailable" || note.Reason != test.reason || note.Phase != "open@detect" {
+				t.Fatalf("wrong capability note: %s", raw)
+			}
+			if test.reason == "probe_failed" && !strings.Contains(note.Detail, "prober pod is not ready") {
+				t.Fatalf("missing failure detail: %s", raw)
+			}
+			if strings.Count(logs.String(), "routing_probe=unavailable:"+test.reason) != 1 {
+				t.Fatalf("capability must be logged once per incident: %s", &logs)
+			}
+			calls, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var recordings []sdktest.PrimitiveCall
+			if err := json.Unmarshal(calls, &recordings); err != nil {
+				t.Fatal(err)
+			}
+			for _, call := range recordings {
+				if call.Method == "ProbeTCP" && call.Error == "" {
+					t.Fatalf("unavailable probe invented an observation: %+v", call)
+				}
+			}
+		})
+	}
 }

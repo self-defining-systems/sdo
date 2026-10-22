@@ -124,7 +124,11 @@ func Main(catalog traffic.Catalog, workloadDocuments map[string][]byte) {
 	clusterDomain := flags.String("cluster-domain", "cluster.local", "cluster DNS domain")
 	listen := flags.String("listen", fmt.Sprintf(":%d", DefaultPort), "address of the prober API")
 	check := flags.Bool("check", false, "validate generators and workloads, then exit")
+	syntheticTraffic := flags.Bool("synthetic-traffic", true, "run the compiled synthetic-traffic workloads")
 	_ = flags.Parse(os.Args[1:])
+	if !*syntheticTraffic {
+		catalog, workloadDocuments = nil, nil
+	}
 	if err := run(*namespace, *clusterDomain, *listen, *check, catalog, workloadDocuments); err != nil {
 		fmt.Fprintln(os.Stderr, "sdo-prober:", err)
 		os.Exit(1)
@@ -144,8 +148,10 @@ func run(namespace string, clusterDomain string, listen string, check bool, cata
 		return err
 	}
 	if check {
-		if failures := traffic.CheckCatalog(context.Background(), catalog); len(failures) > 0 {
-			return errors.Join(failures...)
+		if len(catalog) > 0 {
+			if failures := traffic.CheckCatalog(context.Background(), catalog); len(failures) > 0 {
+				return errors.Join(failures...)
+			}
 		}
 		return nil
 	}

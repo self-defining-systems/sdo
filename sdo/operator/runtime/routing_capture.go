@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,6 +29,34 @@ type routingProbeTarget struct {
 	port int32
 }
 
+// routingCaptureNote is controller-owned capability evidence, not a probe
+// observation. Reflection reads it from the incident's protected corpus mount.
+type routingCaptureNote struct {
+	Capability string `json:"capability"`
+	Status     string `json:"status"`
+	Reason     string `json:"reason"`
+	Phase      string `json:"phase"`
+	Detail     string `json:"detail,omitempty"`
+}
+
+func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string) error {
+	file := filepath.Join(dir, "routing-probe-note.json")
+	if _, err := os.Stat(file); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	data, err := json.Marshal(routingCaptureNote{Capability: "routing_probe", Status: "unavailable", Reason: reason, Phase: phase, Detail: detail})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(file, data, 0444); err != nil {
+		return err
+	}
+	slog.Warn("routing_probe=unavailable:"+reason, "incident_id", incidentID, "phase", phase, "detail", detail)
+	return nil
+}
+
 // captureRoutingEvidence samples real TCP observations even before a program
 // exists. It uses the protected phase snapshot and never probes on corpus replay.
 func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string, findings []sdk.Finding, view program.ReadView) error {
@@ -37,9 +66,6 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 			live = *pointer
 			ok = true
 		}
-	}
-	if !ok || live.Prober == nil {
-		return nil
 	}
 	routingCaptureMu.Lock()
 	defer routingCaptureMu.Unlock()
@@ -60,6 +86,14 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 	var snapshot sdktest.Snapshot
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return err
+	}
+	targets := routingProbeTargets(snapshot, findings)
+	if len(targets) > 0 && (!ok || live.Prober == nil) {
+		reason := "prober_not_configured"
+		if !ok {
+			reason = "read_view_not_live"
+		}
+		return recordRoutingProbeUnavailable(dir, incidentID, phase, reason, "")
 	}
 	live.DetectionContext = snapshot
 	destinations := []string{phase}
@@ -94,7 +128,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 	}
 	budget, cancel := context.WithTimeout(ctx, routingCaptureBudget)
 	defer cancel()
-	for index, target := range routingProbeTargets(snapshot, findings) {
+	for index, target := range targets {
 		if index >= maxRoutingCaptureProbes || budget.Err() != nil {
 			break
 		}
@@ -114,6 +148,9 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 		call := sdktest.PrimitiveCall{Phase: observationPhase, Method: "ProbeTCP", Arguments: args, Result: encoded}
 		if probeErr != nil {
 			call.Error = probeErr.Error()
+			if err := recordRoutingProbeUnavailable(dir, incidentID, phase, "probe_failed", call.Error); err != nil {
+				return err
+			}
 		}
 		for _, destination := range destinations {
 			if !recorded[destination][string(args)] {

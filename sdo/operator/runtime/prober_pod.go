@@ -50,6 +50,8 @@ type ProberPod struct {
 	// seen from the controller at RepositoryMountPath.
 	Binary       string
 	ReadyTimeout time.Duration
+	// DisableSyntheticTraffic leaves only the on-demand read-only probe API.
+	DisableSyntheticTraffic bool
 
 	mu          sync.Mutex
 	fingerprint string
@@ -72,6 +74,9 @@ func (p *ProberPod) Fingerprint() (string, error) {
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", fmt.Errorf("hash prober binary: %w", err)
+	}
+	if p.DisableSyntheticTraffic {
+		_, _ = io.WriteString(hash, "\x00synthetic-traffic=false")
 	}
 	p.fingerprint = hex.EncodeToString(hash.Sum(nil))[:16]
 	return p.fingerprint, nil
@@ -182,6 +187,9 @@ func (p *ProberPod) Manifests() (*networkingv1.NetworkPolicy, *corev1.Pod, error
 				}},
 			}},
 		},
+	}
+	if p.DisableSyntheticTraffic {
+		pod.Spec.Containers[0].Args = append(pod.Spec.Containers[0].Args, "--synthetic-traffic=false")
 	}
 	return policy, pod, nil
 }
