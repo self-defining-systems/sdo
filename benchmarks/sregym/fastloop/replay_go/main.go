@@ -20,7 +20,6 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operatorcli"
-	operatorruntime "sdo.dev/operator/runtime"
 )
 
 func main() {
@@ -94,8 +93,8 @@ func run(ctx context.Context) error {
 		return errors.New("unsupported recorded file edits")
 	}
 	if len(recorded.Edits) == 0 && response.GetLearningDecision() != "updated" {
-		decision := operatorruntime.ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: response.GetProposedArtifactIds()}
-		if err := decision.Validate(nil); err != nil {
+		decision := &contracts.ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIds: response.GetProposedArtifactIds()}
+		if err := validate.Err(validate.ReflectionDiagnostics(decision, nil)); err != nil {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": response.GetLearningDecision()})
@@ -140,8 +139,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	decision := operatorruntime.ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: response.GetProposedArtifactIds(), SDKGaps: response.GetSdkGaps()}
-	if err := decision.Validate(paths); err != nil {
+	decision := &contracts.ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIds: response.GetProposedArtifactIds(), SdkGaps: response.GetSdkGaps()}
+	if err := validate.Err(validate.ReflectionDiagnostics(decision, paths)); err != nil {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "rejected", "error": err.Error()})
 	}
 	if len(paths) == 0 {
