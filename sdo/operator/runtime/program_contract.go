@@ -10,7 +10,7 @@ import (
 )
 
 func programRunContract(run ProgramRun) *contracts.ProgramRun {
-	result := &contracts.ProgramRun{ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
+	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
 	keys := make([]string, 0, len(run.Bindings))
 	for key := range run.Bindings {
 		keys = append(keys, key)
@@ -92,7 +92,7 @@ func programRunState(run *contracts.ProgramRun) ProgramRun {
 	if run.GetError() != "" {
 		verdict.Evidence = append(verdict.Evidence, program.Evidence{Fact: "diagnosis", Observed: run.GetError()})
 	}
-	return ProgramRun{FindingFingerprint: run.GetFindingFingerprint(), BindingSource: run.GetBindingSource(), ProgramID: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: bindings, Verdict: verdict, Duration: run.GetDuration().AsDuration()}
+	return ProgramRun{CanMitigate: run.CanMitigate, FindingFingerprint: run.GetFindingFingerprint(), BindingSource: run.GetBindingSource(), ProgramID: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: bindings, Verdict: verdict, Duration: run.GetDuration().AsDuration()}
 }
 
 func toolCallContract(call ToolCall) *contracts.ProgramToolCall {

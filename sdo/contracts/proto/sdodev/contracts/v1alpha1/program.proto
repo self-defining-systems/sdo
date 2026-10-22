@@ -106,6 +106,8 @@ message ProgramRun {
   string finding_fingerprint = 6;
   string program_revision = 7;
   string binding_source = 8 [(buf.validate.field).string = {in: ["", "finding", "hint", "sweep"]}];
+  // Registry capability, not plan validity or trust. Absent on older runs.
+  optional bool can_mitigate = 9;
 }
 
 message PlanApplication {

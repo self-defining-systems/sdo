@@ -10,6 +10,12 @@ import time
 import uuid
 from pathlib import Path
 
+CLI_EXAMPLES = (
+    "sdo source Deployment/app/api",
+    "sdo diagnose targetport --bind service=Service/app/api",
+    "sdo plan targetport --bind service=Service/app/api",
+)
+
 
 def _binding(value: str) -> tuple[str, dict[str, str]]:
     name, separator, target = value.partition("=")
@@ -26,15 +32,28 @@ def _resource(value: str) -> dict[str, str]:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sdo")
+    parser = argparse.ArgumentParser(
+        prog="sdo",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status")
     for name in ("diagnose", "plan"):
-        command = commands.add_parser(name)
+        command = commands.add_parser(name, epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2])
         command.add_argument("program_id", nargs="?" if name == "diagnose" else None)
-        command.add_argument("--bind", action="append", type=_binding, default=[])
+        command.add_argument(
+            "--bind",
+            action="append",
+            type=_binding,
+            default=[],
+            metavar="NAME=Kind/namespace/name",
+            help="named program parameter; repeat for each binding",
+        )
     commands.add_parser("apply").add_argument("plan_ids", nargs="+")
-    commands.add_parser("source").add_argument("ref", type=_resource)
+    commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
+        "ref", type=_resource, metavar="Kind/namespace/name"
+    )
     commands.add_parser("verify")
     commands.add_parser("rollback").add_argument("application_id")
     return parser
