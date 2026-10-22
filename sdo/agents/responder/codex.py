@@ -69,6 +69,7 @@ def execute_incident(
         selected_provider = provider.strip().lower()
         if selected_provider not in AGENT_PROVIDERS:
             raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+        model = model or os.getenv("SDO_RESPONDER_MODEL") or None
     prompt = _responder_prompt(request)
     resume_session_id: str | None = None
     while True:

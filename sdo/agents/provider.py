@@ -57,6 +57,10 @@ def resolve_agent(role: str, model_env: str, environ: Mapping[str, str] | None =
             "provider": provider,
             "model": resolved.model,
         }
-        with (Path(session_dir) / RESOLVED_LOG_NAME).open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        try:
+            with (Path(session_dir) / RESOLVED_LOG_NAME).open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+        except OSError as exc:
+            # The stderr line above is the primary report; the record only feeds the run validity guard.
+            print(f"sdo-agent-resolved: could not record resolution: {exc}", file=sys.stderr)
     return resolved

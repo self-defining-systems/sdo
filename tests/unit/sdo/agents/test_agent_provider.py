@@ -35,3 +35,9 @@ def test_resolution_is_recorded_beside_the_session_for_the_run_validity_guard(tm
     resolve_agent("reflection", "SDO_REFLECTION_MODEL", environ)
     records = [json.loads(line) for line in (tmp_path / "agent-resolved.jsonl").read_text().splitlines()]
     assert [(r["role"], r["provider"], r["model"]) for r in records] == [("reflection", "claude", "m")]
+
+
+def test_a_failed_session_record_does_not_stop_the_worker(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    environ = {"SDO_SESSION_DIR": str(tmp_path / "missing")}
+    assert resolve_agent("responder", "SDO_RESPONDER_MODEL", environ).provider == "codex"
+    assert "could not record resolution" in capsys.readouterr().err

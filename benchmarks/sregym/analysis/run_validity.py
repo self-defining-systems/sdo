@@ -371,12 +371,8 @@ def _check_sdo_tokens(results: Path, receipt: dict[str, Any] | None) -> Check:
     return _reconcile("tokens", sources)
 
 
-_WORKER_ROLES = {
-    "responder": "responder",
-    "reflection": "reflection",
-    "health_judge": "health_judge",
-    "deployer": "lifecycle_deployer",
-}
+#: Workers that run with an incident session mounted, and so record their resolution there.
+_WORKER_ROLES = {"responder": "responder", "reflection": "reflection"}
 
 
 def _check_agent_provider(results: Path, manifest: dict[str, Any] | None) -> Check:
@@ -394,7 +390,13 @@ def _check_agent_provider(results: Path, manifest: dict[str, Any] | None) -> Che
                 expected.setdefault(worker_role, set()).add((entry.get("provider"), entry.get("model")))
     records: list[dict[str, Any]] = []
     for path in sorted(results.rglob("sdo_runtime/sessions/*/agent-resolved.jsonl")):
-        records.extend(json.loads(line) for line in _text(path).splitlines() if line.strip())
+        for line in _text(path).splitlines():
+            try:
+                record: object = json.loads(line) if line.strip() else None
+            except json.JSONDecodeError:
+                return Check("agent-provider", "fail", f"unparseable worker resolution record in {path}")
+            if isinstance(record, dict):
+                records.append(cast("dict[str, Any]", record))
     if not records or not expected:
         return Check("agent-provider", "not_recorded", "no worker provider/model resolution recorded or configured")
     for record in sorted(records, key=lambda item: str(item.get("recorded_at") or "")):

@@ -382,3 +382,14 @@ def test_typed_receipt_failure_distinguishes_checker_infrastructure(tmp_path: Pa
         encoding="utf-8",
     )
     assert _one(stage).classification == expected
+
+
+def test_a_truncated_worker_resolution_record_fails_the_check_instead_of_crashing(tmp_path: Path) -> None:
+    run = Run(agent="sdo_codex", manifest=_configured("claude", "m"), resolved_agents=[])
+    experiment = run.write(tmp_path / "exp")
+    (record,) = experiment.rglob("agent-resolved.jsonl")
+    record.write_text('{"role": "responder", "prov', encoding="utf-8")
+
+    (check,) = (c for c in _one(experiment).checks if c.name == "agent-provider")
+
+    assert check.status == "fail"
