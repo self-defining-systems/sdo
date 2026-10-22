@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -37,8 +39,28 @@ func newServerPlanClient(object *unstructured.Unstructured) (*serverPlanClient, 
 	return client, ref
 }
 
-// settle applies API-server defaulting and a controller-managed status bump.
+// canonicalizeSpec round-trips a Deployment spec through the typed API object,
+// as the API server's codec does: resource quantities become canonical ("1000m"
+// is stored as "1", "0.5Gi" as "512Mi") and empty optional lists are dropped.
+func canonicalizeSpec(object *unstructured.Unstructured) {
+	spec, ok := object.Object["spec"].(map[string]any)
+	if !ok || object.GetKind() != "Deployment" {
+		return
+	}
+	var typed appsv1.DeploymentSpec
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(spec, &typed); err != nil {
+		panic(err)
+	}
+	canonical, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&typed)
+	if err != nil {
+		panic(err)
+	}
+	object.Object["spec"] = canonical
+}
+
+// settle applies API-server normalization and defaulting and a controller-managed status bump.
 func (c *serverPlanClient) settle(object *unstructured.Unstructured) {
+	canonicalizeSpec(object)
 	spec, _ := object.Object["spec"].(map[string]any)
 	if spec != nil {
 		if _, ok := spec["progressDeadlineSeconds"]; !ok {
@@ -190,5 +212,60 @@ func TestPlanExecutorReconcilesPendingWriteDespiteServerDefaulting(t *testing.T)
 	reconciled, err := PlanExecutor{Client: client}.Reconcile(context.Background(), dry)
 	if err != nil || !reconciled.Applied || len(reconciled.ActionsApplied) != 1 {
 		t.Fatalf("pending write not recognized: %+v, %v", reconciled, err)
+	}
+}
+
+// frontendDeployment mirrors the kompose-generated hotel-reservation frontend
+// source manifest, whose CPU limit is written as "1000m".
+func frontendDeployment(image string) *unstructured.Unstructured {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "frontend"}
+	return planObject(ref, map[string]any{
+		"replicas": float64(1),
+		"strategy": map[string]any{},
+		"template": map[string]any{
+			"metadata": map[string]any{"creationTimestamp": nil},
+			"spec": map[string]any{
+				"restartPolicy": "Always",
+				"containers": []any{map[string]any{
+					"name":    "hotel-reserv-frontend",
+					"image":   image,
+					"command": []any{"frontend"},
+					"args":    []any{},
+					"ports":   []any{map[string]any{"containerPort": float64(5000)}},
+					"resources": map[string]any{
+						"requests": map[string]any{"cpu": "100m"},
+						"limits":   map[string]any{"cpu": "1000m", "memory": "0.5Gi"},
+					},
+				}},
+			},
+		},
+	})
+}
+
+func TestPlanExecutorToleratesServerNormalizedQuantities(t *testing.T) {
+	client, ref := newServerPlanClient(frontendDeployment("app-image:latest"))
+	source := planFakeSource{source: frontendDeployment("registry.invalid/frontend:good")}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
+	if err != nil || !result.Applied || result.RolledBack || !result.VerificationCompleted || !result.VerificationPassed {
+		t.Fatalf("quantity normalization reported as failure: %+v, %v", result, err)
+	}
+	limit, _ := testField(client.objects[ref], "spec.template.spec.containers.0.resources.limits.cpu")
+	if limit != "1" {
+		t.Fatalf("fake server did not canonicalize the quantity: %v", limit)
+	}
+}
+
+func TestPlanExecutorNamesTheFieldOfAThirdPartyEdit(t *testing.T) {
+	client, ref := newServerPlanClient(frontendDeployment("app-image:latest"))
+	client.afterPatch = func(object *unstructured.Unstructured) {
+		_ = program.ApplySetField(object.Object, "spec.template.spec.containers[0].resources.limits.cpu", "2")
+	}
+	source := planFakeSource{source: frontendDeployment("registry.invalid/frontend:good")}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
+	want := `concurrent change after action 0: spec.template.spec.containers[0].resources.limits.cpu wrote "1" but live is "2"`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 }

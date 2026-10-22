@@ -151,6 +151,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if actionErr != nil {
 			return result, actionErr
 		}
+		canonicalizePlanObject(next)
 		before, marshalErr := json.Marshal(current[ref].Object)
 		if marshalErr != nil {
 			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
@@ -206,8 +207,8 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			return result, errors.New("applied object was recreated")
 		}
 		for _, field := range []string{"spec", "data", "binaryData"} {
-			if !planOwnedFieldsHold(observed.Object[field], patch.After.Object[field]) {
-				return result, fmt.Errorf("concurrent change after action %d", index)
+			if mismatch, found := findPlanOwnedFieldMismatch(field, observed.Object[field], patch.After.Object[field]); found {
+				return result, fmt.Errorf("concurrent change after action %d: %s", index, mismatch)
 			}
 		}
 		result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
@@ -561,36 +562,4 @@ func planValuesEqual(left, right any) bool {
 	}
 	b, err := json.Marshal(right)
 	return err == nil && string(a) == string(b)
-}
-
-// planOwnedFieldsHold reports whether live still carries every value the plan
-// wrote. Keys the plan did not write are ignored: the API server re-defaults
-// the fields a source manifest omits, and controllers own the rest.
-func planOwnedFieldsHold(live, written any) bool {
-	switch w := written.(type) {
-	case map[string]any:
-		l, ok := live.(map[string]any)
-		if !ok {
-			return false
-		}
-		for key, value := range w {
-			if !planOwnedFieldsHold(l[key], value) {
-				return false
-			}
-		}
-		return true
-	case []any:
-		l, ok := live.([]any)
-		if !ok || len(l) != len(w) {
-			return false
-		}
-		for i := range w {
-			if !planOwnedFieldsHold(l[i], w[i]) {
-				return false
-			}
-		}
-		return true
-	default:
-		return planValuesEqual(live, written)
-	}
 }
