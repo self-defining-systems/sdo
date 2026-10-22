@@ -45,9 +45,24 @@ store is outside `.sdo/`; it is neither accepted memory nor replay evidence.
 Envelopes identify epoch, request, start/end time, verb, GVR, namespace, name,
 subresource, status, opaque resourceVersion and optional body hash. Hashes cover
 projected bytes. A proxy-specific strict projection retains reviewed object
-identity, pagination presence, and Secret/ConfigMap key names with empty values.
-All other values, specs, statuses, labels, annotations and diagnostic text are
-opaque with explicit redaction markers. Controller snapshot projection is
+identity and pagination presence plus a positive per-kind operational allowlist:
+Service ports/type; workload replicas, rollout type, template container images,
+ports, probe shapes, resource budgets and reference names; Pod conditions,
+readiness, restart/state reasons and exit codes; endpoint ready/not-ready address
+counts and ports; Event type/reason/object/count/timestamps; and reviewed HPA,
+PDB and NetworkPolicy spec structure. Label and match-label selector values become
+empty strings; selector expressions expose only keys/operators. Secret/ConfigMap
+payloads remain key names with empty values and no added labels. Service
+`spec.clusterIPPresent` and Pod `status.podIPPresent` are derived booleans, not IPs.
+Endpoints subsets and EndpointSlice objects expose `readyAddressCount` and
+`notReadyAddressCount` (unspecified EndpointSlice readiness counts as ready).
+Annotations, env values, command/args, probe exec commands/headers/hosts, mount
+paths and all messages stay opaque. Unknown fields and wrong JSON leaf shapes
+are dropped. Every projected object keeps `redacted: true`; absence of a field
+must not be read as evidence of its absence in Kubernetes. Label/selector keys
+alone cannot establish selector equality or backend membership. Older blobs may
+have only identity/key names; no store format migration is required. See
+`KP3_REPORT.md` for the complete reviewed allowlist and exclusions. Controller snapshot projection is
 independent. Unknown representations, log bodies and streaming payloads retain
 envelopes only. Request bodies and headers are never stored; upstream error
 logger text is discarded.

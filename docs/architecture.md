@@ -248,9 +248,18 @@ credential mounts or environment. It appends request start/end envelopes with
 UTC times, verb, GVR, namespace, name, subresource, status and opaque
 resourceVersion. Sanitized response bodies are SHA-256-addressed and deduplicated.
 The proxy uses its own strict projection, independent of controller snapshots.
-Only reviewed object identity fields, pagination presence, and Secret/ConfigMap
-key names survive. Values, labels, annotations, specs, statuses and diagnostic
-text are opaque, with explicit `redacted` markers. Unsupported representations,
+Its positive per-kind allowlist retains Service routing ports and type; workload
+replicas, rollout type, container images/ports/probe shapes/resource budgets and
+reference names; Pod readiness, restart/state reasons and exit codes; endpoint
+address counts and ports; Event reason/type/object/count/timestamps; and reviewed
+HPA, PDB and NetworkPolicy spec structure. Labels and selector match labels retain
+keys with empty values; selector expressions retain keys/operators, never values.
+Service clusterIP and Pod podIP become presence booleans; endpoint addresses become
+ready/not-ready counts. Secret/ConfigMap payloads remain key names only. All
+annotations, environment values, commands/arguments (including probe exec), probe
+headers/hosts, mount paths and messages stay opaque under an explicit `redacted`
+marker. Unknown fields and wrong JSON shapes cannot widen the allowlist. The
+field-by-field review and limitations are in [KP3_REPORT.md](../KP3_REPORT.md). Unsupported representations,
 all log bodies, watches and connection payloads retain envelopes only. Headers
 and request bodies are never recorded; the reverse proxy discards upstream error
 logger text, including body-copy errors.
