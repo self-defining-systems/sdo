@@ -131,10 +131,10 @@ func TestProxyCapsNeverTruncateAndStreamsMetadataOnly(t *testing.T) {
 				t.Fatalf("events: %+v", h)
 			}
 			b := h.Body(h.Events[1])
-			if query == "" && len(b) != apihistory.MaxLogBytes {
-				t.Fatalf("tail %d", len(b))
+			if h.Events[1].Omission == "" {
+				t.Fatal("missing redaction marker")
 			}
-			if query != "" && len(b) != 0 {
+			if len(b) != 0 {
 				t.Fatal("stream payload stored")
 			}
 		})
@@ -183,7 +183,7 @@ func TestProxyWarmAddedP95(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, payload) }))
 	defer upstream.Close()
 	dir := t.TempDir()
-	store, err := apihistory.Open(dir, "latency", apihistory.Limits{Queue: 256})
+	store, err := apihistory.Open(dir, "latency", apihistory.Limits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,9 +213,50 @@ func TestProxyWarmAddedP95(t *testing.T) {
 	}
 	sort.Slice(direct, func(i, j int) bool { return direct[i] < direct[j] })
 	sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
+	store.Close()
+	history, _ := apihistory.Read(dir)
+	t.Logf("history envelopes=%d dropped=%d at unpaced loopback saturation", len(history.Events), history.Manifest.Dropped)
 	p95 := added[474]
 	t.Logf("500 alternating warm GETs: direct p95=%s added p95=%s target=10ms", direct[474], p95)
 	if p95 > 10*time.Millisecond {
 		t.Fatalf("added warm p95 %s exceeds 10ms", p95)
+	}
+}
+
+func TestProxyIdentifiesNamespaceSubresourcesAndWatchForms(t *testing.T) {
+	for _, tc := range []struct{ path, resource, namespace, name, subresource, verb string }{
+		{"/api/v1/namespaces/app/status", "namespaces", "", "app", "status", "get"},
+		{"/api/v1/namespaces/app/pods?watch=TRUE", "pods", "app", "", "", "watch"},
+		{"/api/v1/watch/namespaces/app/pods", "pods", "app", "", "", "watch"},
+	} {
+		r := httptest.NewRequest("GET", tc.path, nil)
+		e := requestEvent(r)
+		if e.Resource != tc.resource || e.Namespace != tc.namespace || e.Name != tc.name || e.Subresource != tc.subresource || e.Verb != tc.verb {
+			t.Errorf("%s: %+v", tc.path, e)
+		}
+	}
+}
+
+func TestDryRunOnlyRecognizesSupportedOperations(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{"PATCH", "/api/v1/namespaces/app/pods/p?dryRun=All", true},
+		{"PATCH", "/api/v1/namespaces/app/pods/p/status?dryRun=All", true},
+		{"PATCH", "/api/v1/namespaces/app/pods/p?dryRun=invalid", false},
+		{"PATCH", "/api/v1/namespaces/app/pods/p?dryRun=All&dryRun=invalid", false},
+		{"GET", "/api/v1/namespaces/app/pods/p?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/pods/p/exec?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/pods/p/attach?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/pods/p/portforward?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/serviceaccounts/sa/token?dryRun=All", false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			event := requestEvent(httptest.NewRequest(tc.method, tc.path, nil))
+			if event.DryRun != tc.want {
+				t.Fatalf("dryRun=%v want %v", event.DryRun, tc.want)
+			}
+		})
 	}
 }
