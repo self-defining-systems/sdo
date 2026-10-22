@@ -39,7 +39,7 @@ const (
 )
 
 // simSeeds returns the seeds to sweep; SDO_SIM_SEED replays one.
-func simSeeds(t *testing.T) []uint64 {
+func simSeeds(t *testing.T, defaultRuns int) []uint64 {
 	t.Helper()
 	if raw := os.Getenv("SDO_SIM_SEED"); raw != "" {
 		seed, err := strconv.ParseUint(raw, 10, 64)
@@ -48,7 +48,7 @@ func simSeeds(t *testing.T) []uint64 {
 		}
 		return []uint64{seed}
 	}
-	runs := simDefaultRuns
+	runs := defaultRuns
 	if raw := os.Getenv("SDO_SIM_RUNS"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 {
@@ -66,9 +66,16 @@ func simSeeds(t *testing.T) []uint64 {
 // sweepSimSeeds runs body for each seed until the seeds or the wall budget run out.
 func sweepSimSeeds(t *testing.T, body func(t *testing.T, seed uint64)) {
 	t.Helper()
+	sweepSimSeedsN(t, simDefaultRuns, body)
+}
+
+// sweepSimSeedsN is sweepSimSeeds with a per-test default run count, for
+// simulations whose single run is expensive.
+func sweepSimSeedsN(t *testing.T, defaultRuns int, body func(t *testing.T, seed uint64)) {
+	t.Helper()
 	deadline := time.Now().Add(simWallBudget)
 	ran := 0
-	seeds := simSeeds(t)
+	seeds := simSeeds(t, defaultRuns)
 	for _, seed := range seeds {
 		if ran > 0 && time.Now().After(deadline) {
 			break
