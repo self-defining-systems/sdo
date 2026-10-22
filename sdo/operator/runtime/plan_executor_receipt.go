@@ -84,5 +84,9 @@ func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bo
 	if wantBefore {
 		return bok == lok && planValuesEqual(before, live)
 	}
+	if bok && !aok && lok {
+		// The write removed a field the server defaults back.
+		return planValuesEqual(before, live)
+	}
 	return aok == lok && planValuesEqual(after, live)
 }
