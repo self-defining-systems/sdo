@@ -20,6 +20,7 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 # Format and static checks
 bash scripts/format_code.sh
 bash scripts/check_errors.sh
+./scripts/check_proto.sh
 
 # Python
 uv run pytest tests/unit/
@@ -33,6 +34,11 @@ uv run pytest tests/ --cov=sdo
 (cd sdo/operator/runtime && go test ./...)
 (cd sdo/operator/contracts && go test ./...)
 ```
+
+The proto gate runs `buf lint` and checks that committed Go/Python code matches
+regenerated output. The v1alpha1 schema may evolve freely, including breaking
+changes; compatibility with main is not a gate. Reserve deleted field numbers
+and names so old stored state cannot be misread as new fields.
 
 The operator Go suite includes `TestHermeticResponderProgramReuseThroughRealToolTransport`,
 `TestHermeticControllerClosureReachesNativeOutcomeBroker`, and
@@ -49,7 +55,7 @@ Historical plumbing regressions have focused checks in the same suites:
 
 | Regression | Contract check |
 | --- | --- |
-| Pre-image persistence | `TestHermeticResponderProgramReuseThroughRealToolTransport` saves and reloads plan applications through a ConfigMap; `TestStateRoundTripRetainsAppliedPlanRollbackAndProgramEvidence` covers JSON round trips. |
+| Restart live recheck | `TestRestartFastPathRechecksLiveStateAtEveryCrashPoint` covers write, marker and receipt crash points; `TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles` preserves fixes and budgets. `TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackState` checks durable outcome evidence without rollback authority. |
 | Physical `.sdo/` tool evidence | The responder loop test rejects physical paths in recorded tool calls; `TestSyntheticWorkerResultsThroughContracts` covers typed worker envelopes; responder validation rejects physical tool evidence. |
 | Plan apply RBAC | `sdo/operator/install` tests check Service and Deployment get/patch grants. |
 | Tool session restart permissions | The responder loop reparses real directory modes; `TestSessionToolServerIgnoresAtomicRequestTemporaryFiles` protects the CLI write protocol. |

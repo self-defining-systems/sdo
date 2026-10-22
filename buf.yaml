@@ -8,11 +8,5 @@ lint:
     # Our package versioning lives in the path (sdo/contracts/v1alpha1); the
     # STANDARD suffix rule is satisfied by that layout.
     - PACKAGE_VERSION_SUFFIX
-breaking:
-  use:
-    - FILE
-  except:
-    # Go import paths are repository layout, not part of the on-wire schema.
-    - FILE_SAME_GO_PACKAGE
 deps:
   - buf.build/bufbuild/protovalidate

@@ -165,10 +165,19 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	if !matchedSources["hint"] || !matchedSources["finding"] {
 		t.Fatalf("live-shaped hint and finding runs were lost: %+v", result.ProgramRuns)
 	}
-	replayed, err := dispatcher.Dispatch(context.Background(), request)
-	if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 1 || len(replayed.RepairActions) != 1 || len(replayed.FastPathRelationCoveredFindings) != 1 {
-		t.Fatalf("fast path was not durable across dispatch replay: %+v %v", replayed, err)
+	dispatcher.LoopFactory = func(request IncidentRequest) *ResponderLoop {
+		restarted := restartPortLoop(loop)
+		restarted.Request = request
+		return restarted
 	}
+	replayed, err := dispatcher.Dispatch(context.Background(), request)
+	if err != nil || replayed.ResolutionPath != "fast_path" || len(replayed.PlanApplications) != 0 || len(replayed.RepairActions) != 0 || len(replayed.VerificationEvidence) == 0 || replayed.ResponseLoopsUsed != 1 {
+		t.Fatalf("restart did not close from fresh live verification without mutation receipts: %+v %v", replayed, err)
+	}
+	if !replayed.VerificationEvidence[0].ObservedAt.After(result.VerificationEvidence[0].ObservedAt) {
+		t.Fatal("restart reused cached verification")
+	}
+
 	jobs, err := client.BatchV1().Jobs("app").List(context.Background(), metav1.ListOptions{})
 	if err != nil || len(jobs.Items) != 0 {
 		t.Fatalf("responder Job dispatched: %+v %v", jobs, err)
@@ -389,55 +398,6 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	}
 	cancel()
 	<-finished
-}
-
-func TestInterruptedFastPathRestoresPersistedPreImages(t *testing.T) {
-	loop, client := trustedPortLoop(t, false, true, true)
-	request := loop.Request
-	request.IncidentID = "interrupted"
-	ref := request.Findings[0].PrimaryResource
-	before, err := (TypedPlanClient{Client: client}).Get(context.Background(), ref)
-	if err != nil {
-		t.Fatal(err)
-	}
-	images := []PlanPreImage{{Ref: ref, Object: before}}
-	after := before.DeepCopy()
-	if err := program.ApplySetField(after.Object, "spec.ports[0].targetPort", int64(8080)); err != nil {
-		t.Fatal(err)
-	}
-	pending := 0
-	journal, err := json.Marshal(PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}}}, PreImages: images, Patches: []PlanPatch{{Ref: ref, Before: before, After: after}}, PendingAction: &pending})
-	if err != nil {
-		t.Fatal(err)
-	}
-	preImages, err := json.Marshal(images)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.CoreV1().ConfigMaps("app").Create(context.Background(), &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: IncidentJobName(request.IncidentID) + "-fast-path"},
-		Data:       map[string]string{"state": "attempting", "application": string(journal), "preimages": string(preImages), "program_ids": `["service-targetport-mismatch"]`},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
-	if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app"}
-	_, summary, resolved, err := dispatcher.tryFastPath(context.Background(), request, loop)
-	if err != nil || resolved || !strings.Contains(summary, "rollback complete") {
-		t.Fatalf("interrupted attempt: summary=%q resolved=%t err=%v", summary, resolved, err)
-	}
-	service, err = client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
-	if err != nil || service.Spec.Ports[0].TargetPort.IntVal != 9999 {
-		t.Fatalf("interrupted mutation not restored: %+v %v", service, err)
-	}
 }
 
 func TestResponderJobStartsBeforeSettleCapture(t *testing.T) {

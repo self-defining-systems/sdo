@@ -127,8 +127,8 @@ message ControllerState {
   DriftAdmissionState drift_admission = 33;
   // Next namespace assignment per learned program, preserved across restarts.
   map<string, string> program_sweep_cursors = 34;
-  // Incident-scoped, versioned responder tool journal. Stored through the same
-  // ConfigMap CAS edge before mutations; never supplied by a worker.
+  // Incident-scoped attempt counts, limits and failure outcomes. Never stores
+  // plans, applications, rollback progress or pending mutations.
   bytes responder_tool_state_json = 35 [(buf.validate.field).bytes.max_len = 700000];
   reserved 32;
   reserved "drift_investigation";

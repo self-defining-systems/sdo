@@ -147,7 +147,7 @@ func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
 	}
 }
 
-func TestResponderPlanRestoresDispatchMatchFromCapturedView(t *testing.T) {
+func TestResponderRestartPlansFromLiveViewInsteadOfCapturedMatch(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "hotel-reservation", Name: "search"}
 	broken := sdktest.Snapshot{NamespaceName: ref.Namespace, DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "search-pod", Namespace: ref.Namespace, Labels: map[string]string{"app": "search"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}}}}}
 	root := t.TempDir()
@@ -176,12 +176,9 @@ func TestResponderPlanRestoresDispatchMatchFromCapturedView(t *testing.T) {
 	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}
-	if err := loop.RestoreInitialMatches(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
-	if planned.Error != "" || planned.PlanID == "" {
-		t.Fatalf("dispatch match lost across loop recreation: %+v", planned)
+	if planned.Error == "" || planned.PlanID != "" {
+		t.Fatalf("stale captured diagnosis authorized a restart plan: %+v", planned)
 	}
 }
 
@@ -330,7 +327,7 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 		t.Fatalf("plan: %+v", plan)
 	}
 	applied := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{plan.PlanID}})
-	if applied.Error != "" || applied.ApplicationID == "" || len(applied.ProgramRuns) == 0 {
+	if applied.Error == "" || applied.ApplicationID == "" || len(applied.ProgramRuns) == 0 {
 		t.Fatalf("apply: %+v", applied)
 	}
 	if len(applied.Findings) != 1 || applied.Findings[0].Playbooks[0] != "health-objective" || strings.Contains(loop.ToolCalls()[2].ResponseJSON, ".sdo/") {
@@ -343,7 +340,7 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 	if len(loop.ToolCalls()) != 4 || len(loop.PlanApplications()) != 1 || len(loop.ProgramRuns()) == 0 {
 		t.Fatalf("outcome evidence missing: calls=%d apps=%d runs=%d", len(loop.ToolCalls()), len(loop.PlanApplications()), len(loop.ProgramRuns()))
 	}
-	if signals := loop.FailureSignals(); len(signals) != 1 || signals[0] != "applied_diagnosis_still_match:targetport" {
+	if signals := loop.FailureSignals(); len(signals) != 2 || !contains(signals, "applied_diagnosis_still_match:targetport") || !contains(signals, "application_verification_failure:targetport") {
 		t.Fatalf("failure signal: %v", signals)
 	}
 }

@@ -99,7 +99,9 @@ func encodeControllerState(state RuntimeState) ([]byte, error) {
 
 func decodeControllerState(payload []byte) (RuntimeState, error) {
 	document := &contracts.ControllerState{}
-	if err := wire.Unmarshal(payload, document); err != nil {
+	// Prior builds persisted rollback-only PlanApplication fields. Drop retired
+	// fields at this durable read edge; current state still must validate.
+	if err := wire.UnmarshalDurable(payload, document); err != nil {
 		return RuntimeState{}, fmt.Errorf("decode controller state: %w", err)
 	}
 	state := controllerStateState(document)

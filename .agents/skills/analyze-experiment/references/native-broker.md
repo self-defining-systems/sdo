@@ -23,61 +23,59 @@ Detectors are registered by per-detector manifests at `.sdo/diagnostics/detector
 
 Program and drift integration: controller state and broker ledgers use generated ProtoJSON. State carries ownership adoption, ordinary batching, retained incident drift and `drift_admission` retry accounting. There is no active investigator worker, task/result protocol or verdict ConfigMap. Synthetic IDs are `drift.<program>` and `drift.unexplained`. Empty repeated fields may be omitted. Removed config tags 59–61 and state tag 32 are reserved; use coordinated worker/controller images after draining. Schema version 3 classifies program Go sources, shared libraries and corpus through `memory/layout`; policy/replay tests are centralized under `memory/validate`.
 
-Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains controller-owned rollback pre-images, concrete applied actions, patches and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
+Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains concrete applied actions, verification outcomes and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
 
-### In-flight plans and fast-path recovery
+### Open incidents after controller restart
 
-The dispatcher saves a separate incident ConfigMap named
-`<IncidentJobName(incident_id)>-tools-state` through the controller's CAS state
-store. Its `data["runtime-state.json"]` is canonical `ControllerState` ProtoJSON;
-`responder_tool_state_json` (proto field 35, maximum 700,000 decoded bytes) is a
-base64-encoded bytes field containing version-1 JSON. Decode the outer ProtoJSON
-bytes before reading this inner journal. Its keys use Go field names, including
-`Version`, `IncidentID`, `SourceCommit`, `Plans`, `Applications`, `ApplicationsLog`,
-`Batches`, `FailureSignals`, `Calls`, `Runs`, `Findings`, `FastPathPrograms`,
-`FastPathSkippedReason` and `FastPathRelationCoveredFindings`. This is controller
-state, not worker-authored memory or an additional outcome.
+The controller is the only application writer. Within a process it applies a
+plan, verifies independently, and conditionally rolls back on failure. A restart
+never replays or compensates a stored application, rollback or pending write.
 
-Prepared plans retain IDs, program IDs, bindings and concrete typed actions.
-Applications retain pre-images, ordered patches with before/after objects,
-`PendingAction`, `ActionsApplied`, `Applied`, `RollingBack`, `RollbackCompleted`,
-`RolledBack`, verification state and rollback errors. The log also keeps consumed
-`PlanIDs`, `Pending` and timing. Budget and application identity are saved before
-mutations; checkpoints surround writes and rollback progress, and tool state is
-saved before replies. Rejoin restores this journal before serving tools, checks
-incident/source identity, and selects log entries with `Pending` or `RollingBack`
-for reconciliation and compensation without replaying the forward mutation.
-Inspect `PendingAction` as well when a write receipt was lost. Reusing a
-consumed plan returns its existing application handle and an error. Conflicting
-recovery retains the handle and failure evidence. An attempted batch consumes
-budget even when its write fails or is rolled back.
+`<IncidentJobName(incident_id)>-tools-state` still uses the CAS state store.
+Its `runtime-state.json` is canonical `ControllerState` ProtoJSON;
+`responder_tool_state_json` (field 35) is base64-encoded version-2 JSON with
+`IncidentID`, `SourceCommit`, `Batches`, `MaxBatches` and `FailureSignals`.
+These are attempt limits and revision-bound outcomes. Prepared plans, application
+handles, patches, pre-images, rollback progress and tool histories are not saved.
+Version-1 state contributes only identity, budgets and failure signals; its old
+mutation records are ignored. A restart cannot restore an old handle or increase
+the saved response budget. The responder continues or redispatches against live
+state and prepares a fresh plan when needed.
 
-The separate `<IncidentJobName(incident_id)>-fast-path` ConfigMap records
-`state=attempting`, `failed` or `resolved`. Its data can include `tool_state`
-(plain inner JSON), `application`, `preimages`, `program_ids`,
-`trust_failure_signals` (a JSON string array), `summary`, `skip_reason`, and the
-resolved `result` (IncidentResult ProtoJSON). Before mutation it freezes the
-program IDs, pre-images and revision-bound failure signals. Those signals are
-failure-only evidence: a resolved or skipped attempt does not publish them as
-outcome failures. Failed/interrupted recovery restores the attempt and suspicion,
-merges missing fast-path evidence into any newer responder journal, and retries
-conditional rollback. Markers retain pre-images and journals through rollback
-failure. A legacy marker containing only pre-images cannot safely replace a
-current object spec; inspect its missing-field-journal diagnostic.
+Failed responder verification adds
+`application_verification_failure:<program_id>@<accepted_dependency_revision>` to
+`FailureSignals` and saves it before rollback. It survives successful or failed
+rollback and restarts without retaining executable application state. A successful
+retry does not erase the earlier revision's failure or restore its trust.
 
-Apply and rollback include observed object UID/resourceVersion preconditions.
-Rollback compares before/after field images with current values to identify
-changes and conflicts. Equal-length arrays are traversed by index; compare
-element identities and final values when auditing a reordered list. Compare a
-resolved marker's cached result with the tool journal and actual object state.
-`PlanApplication` in a completed result retains its typed pre-images, applied
-actions and merge patches; the loader reconstructs field images from these.
-The richer in-flight journal holds pending-write and rollback-progress state.
-Correlate both ConfigMaps with the completed controller result, broker ledger and
-accepted outcome before claiming successful recovery or a new trust credit.
+`<IncidentJobName(incident_id)>-fast-path` stores `state` (`attempting`, `failed`,
+`resolved`), bound `program_runs`, revision-bound `trust_failure_signals`, and a
+failure `summary`. The controller freezes the diagnoses and failure suspicion
+before writing, and consumes its one fast-path attempt durably. After restart,
+every original binding must diagnose NoMatch at the same program revision and
+pass fresh detector and independent health verification to close. A remaining
+Match, Unknown, NeedsJudgement, missing program, changed revision or read error
+hands the incident to the responder. The existing one-attempt limit prevents a
+second fast-path write; the remaining responder budget still applies.
 
-Sources: `controller_state.proto`, `runtime/kubernetes_job_dispatcher_state.go`,
-`runtime/responder_loop_state.go`, `runtime/plan_executor{,_journal}.go` and
+A resolved marker is an observation, never cached authority to close. Failed
+attempts retain their original revision-bound signals even if the cluster later
+recovers. Suspicion frozen for an interrupted attempt is restored when live
+rechecking cannot establish a verified fix. Legacy markers without bound diagnoses
+escalate; their `application`, `preimages`, `tool_state` and `result` are ignored.
+Do not infer a repair receipt or new trust credit from a restart's read-only
+closure: it has fresh diagnosis and verification, but no application receipt.
+
+Outcome `PlanApplication` fields 11 (`pre_images`) and 13 (`patches`) are reserved.
+Concrete `actions_applied`, verification and timing remain durable evidence.
+Controller-state and broker-ledger readers discard only those retired fields
+from prior builds; other unknown fields remain errors.
+Rollback UID/resourceVersion guards and the refusal of reordered named lists
+remain in process; there is no durable rollback owner or cursor.
+
+Sources: `controller_state.proto`, `program.proto`,
+`runtime/kubernetes_job_dispatcher_state.go`, `runtime/responder_loop_state.go`,
+`runtime/plan_executor{,_receipt}.go`, `runtime/program_fast_path_recheck.go` and
 `runtime/kubernetes_fast_path.go`. For accepted success/failure evidence, see
 [program trust evidence](fastloop-results.md#program-trust-evidence).
 

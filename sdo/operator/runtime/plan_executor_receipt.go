@@ -2,15 +2,11 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	jsonpatch "github.com/evanphx/json-patch"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"sdo.dev/operator/sdk"
 )
 
-// Reconcile determines whether a write interrupted before its receipt reached
-// durable storage took effect. It never replays a forward mutation.
+// Reconcile resolves an uncertain API receipt within this process. Its input
+// is never restored from durable storage.
 func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResult) (PlanApplicationResult, error) {
 	if result.PendingAction == nil {
 		return result, nil
@@ -21,7 +17,7 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 	}
 	patch := result.Patches[index]
 	if patch.Before == nil || patch.After == nil {
-		return result, fmt.Errorf("pending write has no field journal")
+		return result, fmt.Errorf("pending write has no in-process field images")
 	}
 	live, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil {
@@ -89,43 +85,4 @@ func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bo
 		return bok == lok && planValuesEqual(before, live)
 	}
 	return aok == lok && planValuesEqual(after, live)
-}
-
-// The existing PlanApplication contract persists pre-images and ordered merge
-// patches. Reconstruct field images from that journal when loading a completed
-// application through ProtoJSON, without expanding rollback ownership.
-func hydratePlanPatches(application PlanApplicationResult) (PlanApplicationResult, error) {
-	current := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	for _, image := range application.PreImages {
-		if image.Object != nil {
-			current[image.Ref] = image.Object.DeepCopy()
-		}
-	}
-	patches := append([]PlanPatch(nil), application.Patches...)
-	for i, patch := range patches {
-		if patch.Before == nil || patch.After == nil {
-			before := current[patch.Ref]
-			if before == nil {
-				return application, fmt.Errorf("missing field pre-image for %s/%s", patch.Ref.Kind, patch.Ref.Name)
-			}
-			from, err := json.Marshal(before.Object)
-			if err != nil {
-				return application, err
-			}
-			merged, err := jsonpatch.MergePatch(from, patch.Patch)
-			if err != nil {
-				return application, err
-			}
-			after := new(unstructured.Unstructured)
-			if err := json.Unmarshal(merged, &after.Object); err != nil {
-				return application, err
-			}
-			patch.Before = before.DeepCopy()
-			patch.After = after
-			patches[i] = patch
-		}
-		current[patch.Ref] = patch.After.DeepCopy()
-	}
-	application.Patches = patches
-	return application, nil
 }

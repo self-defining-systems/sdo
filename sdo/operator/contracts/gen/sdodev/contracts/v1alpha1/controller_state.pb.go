@@ -456,8 +456,8 @@ type ControllerState struct {
 	DriftAdmission             *DriftAdmissionState              `protobuf:"bytes,33,opt,name=drift_admission,json=driftAdmission,proto3" json:"drift_admission,omitempty"`
 	// Next namespace assignment per learned program, preserved across restarts.
 	ProgramSweepCursors map[string]string `protobuf:"bytes,34,rep,name=program_sweep_cursors,json=programSweepCursors,proto3" json:"program_sweep_cursors,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// Incident-scoped, versioned responder tool journal. Stored through the same
-	// ConfigMap CAS edge before mutations; never supplied by a worker.
+	// Incident-scoped attempt counts, limits and failure outcomes. Never stores
+	// plans, applications, rollback progress or pending mutations.
 	ResponderToolStateJson []byte `protobuf:"bytes,35,opt,name=responder_tool_state_json,json=responderToolStateJson,proto3" json:"responder_tool_state_json,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache

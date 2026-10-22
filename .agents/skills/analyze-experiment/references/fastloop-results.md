@@ -83,8 +83,15 @@ after unrelated source commits, edits and later reversions; later successes do
 not erase them. Legacy `fast_path_failure:<program_id>` uses the known program
 revision, falling back to the source commit only when none is available. Generic
 signals such as `adhoc_coverage_gap` are not a failure of every program. Inspect
-the marker and tool journal described in [native broker evidence](native-broker.md)
+the attempt facts and live recheck evidence described in [native broker evidence](native-broker.md)
 when an outcome has not yet been committed.
+
+Responder applications record the same revision-bound trust failure as
+`application_verification_failure:<program_id>@<accepted_dependency_revision>`.
+The tool state saves it before rollback, regardless of rollback's result. Trust
+counts the signal with the failed application once, or on its own after restart
+discards application history; a successful retry in that incident leaves zero
+successes and one failure for the affected revision.
 
 ### Learning credit
 
@@ -106,3 +113,11 @@ the trust calculation. It never rewrites the original outcome or publishes those
 receipts as live tool calls. Audit the outcome, introducing commit, corpus
 provenance and replay together; do not look for a live learned-program application
 in the original outcome. Program-scoped failures still invalidate this credit.
+
+After a controller restart, fast-path closure requires fresh bound NoMatch
+results plus independent verification. Markers never replay a cached success or
+undo a prior write. A read-only recovery closure has no new applied-plan receipt
+and earns no additional program trust credit. `PlanApplication` keeps applied
+actions and verification outcomes; rollback pre-images and patches are retired
+(reserved fields 11 and 13). The tools-state ConfigMap retains attempt counts,
+limits and revision-bound failure signals, not mutation history.

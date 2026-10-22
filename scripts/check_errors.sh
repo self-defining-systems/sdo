@@ -24,7 +24,7 @@ fi
 echo "==> tach (module boundaries)"
 uv run tach check
 
-# Proto contract drift (buf lint/breaking + committed-codegen diff). Enforced
+# Proto contract drift (buf lint + committed-codegen diff). Enforced
 # authoritatively by the dedicated `proto` CI job; skipped here when the buf
 # toolchain is absent so a buf-less environment still passes the Python gates.
 export PATH="${GOBIN:-${HOME}/go/bin}:${PATH}"

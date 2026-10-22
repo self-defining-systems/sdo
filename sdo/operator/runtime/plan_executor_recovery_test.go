@@ -167,3 +167,19 @@ func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.
 		t.Fatalf("lost recovery state: %+v", entry)
 	}
 }
+
+func TestPlanExecutorRetainsInProcessRollbackProgress(t *testing.T) {
+	ctx := context.Background()
+	ref, plan, client := repeatedReplicaPlan()
+	client.rejectAttempt = 6 // Three forward writes and two reverse writes succeed.
+	executor := PlanExecutor{Client: client, Rollouts: recoveryRolloutFailure{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
+	if err == nil || result.RollbackCompleted != 2 {
+		t.Fatalf("in-process progress lost: %+v %v", result, err)
+	}
+	client.rejectAttempt = 0
+	if err = executor.rollback(ctx, &result); err != nil {
+		t.Fatal(err)
+	}
+	requireRecoveredReplicas(t, client, ref)
+}
