@@ -31,8 +31,10 @@ from sdo.contracts import (
     IncidentClosure,
     MemoryDiagnostic,
     OutcomeRecord,
+    ReflectionCauseWork,
     ReflectionRequest,
     ReflectionResult,
+    ReflectionWorkItem,
     SdkGap,
     parse_json,
     to_canonical_json,
@@ -67,6 +69,8 @@ class Reflector(Protocol):
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
         depth: ReflectionDepth = "full",
+        cause_work: Sequence[ReflectionCauseWork] = (),
+        unassigned_work: Sequence[ReflectionWorkItem] = (),
     ) -> ReflectionTurn: ...
 
 
@@ -146,6 +150,8 @@ def run_reflection_task(
             validation_attempt=request.validation_attempt or 1,
             diagnostics=list(request.previous_diagnostics),
             depth=cast("ReflectionDepth", depth),
+            cause_work=list(request.cause_work),
+            unassigned_work=list(request.unassigned_work),
         )
     finally:
         for key, value in previous.items():

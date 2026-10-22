@@ -79,6 +79,10 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
     )
+    cause = request.cause_work.add(cause_index=0)
+    cause.items.add(
+        disposition="question", reason="binding_not_written", question="Why did this clear without a write?"
+    )
     request.memory_snapshot.accepted_commit = "outcome-commit"
     packed = Any()
     packed.Pack(request)
@@ -97,6 +101,7 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     run_reflection_task(path, "result-map", publisher, reflector=reflector)
 
     assert reflector.kwargs is not None
+    assert reflector.kwargs["cause_work"] == list(request.cause_work)
     assert reflector.kwargs["outcome_commit"] == "outcome-commit"
     assert reflector.kwargs["session_mode"] == "fresh"
     assert publisher.payload is not None

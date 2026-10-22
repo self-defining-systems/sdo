@@ -943,8 +943,10 @@ type PlanApplication struct {
 	CompletedAt           *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
 	VerificationCompleted bool                   `protobuf:"varint,16,opt,name=verification_completed,json=verificationCompleted,proto3" json:"verification_completed,omitempty"`
 	VerificationPassed    bool                   `protobuf:"varint,17,opt,name=verification_passed,json=verificationPassed,proto3" json:"verification_passed,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// Final exact plan equivalence. False means no credit, not a program failure.
+	FinalEquivalenceVerified *bool `protobuf:"varint,18,opt,name=final_equivalence_verified,json=finalEquivalenceVerified,proto3,oneof" json:"final_equivalence_verified,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *PlanApplication) Reset() {
@@ -1078,6 +1080,13 @@ func (x *PlanApplication) GetVerificationCompleted() bool {
 func (x *PlanApplication) GetVerificationPassed() bool {
 	if x != nil {
 		return x.VerificationPassed
+	}
+	return false
+}
+
+func (x *PlanApplication) GetFinalEquivalenceVerified() bool {
+	if x != nil && x.FinalEquivalenceVerified != nil {
+		return *x.FinalEquivalenceVerified
 	}
 	return false
 }
@@ -1310,7 +1319,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12D\n" +
 	"\x0ebinding_source\x18\b \x01(\tB\x1d\xbaH\x1ar\x18R\x00R\afindingR\x04hintR\x05sweepR\rbindingSource\x12&\n" +
 	"\fcan_mitigate\x18\t \x01(\bH\x00R\vcanMitigate\x88\x01\x01B\x0f\n" +
-	"\r_can_mitigate\"\xf5\x05\n" +
+	"\r_can_mitigate\"\xd7\x06\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -1330,7 +1339,9 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"started_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12=\n" +
 	"\fcompleted_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x125\n" +
 	"\x16verification_completed\x18\x10 \x01(\bR\x15verificationCompleted\x12/\n" +
-	"\x13verification_passed\x18\x11 \x01(\bR\x12verificationPassedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
+	"\x13verification_passed\x18\x11 \x01(\bR\x12verificationPassed\x12A\n" +
+	"\x1afinal_equivalence_verified\x18\x12 \x01(\bH\x00R\x18finalEquivalenceVerified\x88\x01\x01B\x1d\n" +
+	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
 	"pre_imagesR\apatches\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +
@@ -1429,6 +1440,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 		(*Action_RestartRollout)(nil),
 	}
 	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

@@ -307,6 +307,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			result.Error = "response loop budget exhausted with unresolved findings"
 		}
 	}
+	withholdUnassignedProgramCredit(&result)
 	if d.RequireMemorySnapshot && result.LateFindingsPull != nil {
 		pull := result.LateFindingsPull
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}

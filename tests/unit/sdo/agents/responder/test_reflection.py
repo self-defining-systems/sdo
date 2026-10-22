@@ -209,7 +209,7 @@ def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path
         diagnostics=[MemoryDiagnostic(rule="detector.manifest", path="m.yaml", line=4, message="bad id", hint="kebab")],
     )
     (call,) = backend.calls
-    assert call["mode"] == "fresh"
+    assert call["mode"] == "resume"
     assert "[detector.manifest] m.yaml:4: bad id (hint: kebab)" in str(call["prompt"])
 
 
@@ -237,7 +237,7 @@ def test_reflection_output_schema_is_strict_and_carries_only_decision_and_ids() 
     assert schema["required"] == list(schema["properties"])
 
 
-def test_broker_diagnostic_correction_starts_a_fresh_file_edit_session(tmp_path: Path) -> None:
+def test_broker_diagnostic_correction_keeps_the_incident_session(tmp_path: Path) -> None:
     backend = _CapturingBackend()
     SessionReflector(backend).resume(
         session_id="prior-session",
@@ -251,7 +251,7 @@ def test_broker_diagnostic_correction_starts_a_fresh_file_edit_session(tmp_path:
         diagnostics=[MemoryDiagnostic(rule="document.parse", path="README.md", line=1, message="missing front matter")],
     )
     (call,) = backend.calls
-    assert call["mode"] == "fresh"
+    assert call["mode"] == "resume"
     assert "document.parse" in str(call["prompt"])
     assert "Author corrected final files" in str(call["prompt"])
     assert "artifact_proposal" not in str(call["prompt"])
@@ -560,7 +560,7 @@ def test_refine_depth_retry_after_a_broker_rejection_carries_the_full_request(tm
         depth="refine",
     )
     (call,) = backend.calls
-    assert call["mode"] == "fresh"
+    assert call["mode"] == "resume"
     assert "[detector.manifest] m.yaml:4: bad id" in str(call["prompt"])
     assert "sdo-operator program scaffold" in str(call["prompt"])
 

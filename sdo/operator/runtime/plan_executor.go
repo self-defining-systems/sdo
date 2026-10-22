@@ -53,20 +53,21 @@ type PlanPreImage struct {
 // PlanApplicationResult contains the PlanApplication fields, generated patches,
 // and the pre-images needed to reverse an applied plan.
 type PlanApplicationResult struct {
-	Plan                  program.Plan
-	Applied               bool
-	DryRun                bool
-	PendingAction         *int
-	RollingBack           bool
-	RollbackCompleted     int
-	RolledBack            bool
-	RollbackError         string
-	VerificationPassed    bool
-	VerificationCompleted bool
-	ActionsApplied        []program.Action
-	Patches               []PlanPatch
-	Duration              time.Duration
-	PreImages             []PlanPreImage
+	Plan                     program.Plan
+	Applied                  bool
+	DryRun                   bool
+	PendingAction            *int
+	RollingBack              bool
+	RollbackCompleted        int
+	RolledBack               bool
+	RollbackError            string
+	VerificationPassed       bool
+	VerificationCompleted    bool
+	FinalEquivalenceVerified *bool
+	ActionsApplied           []program.Action
+	Patches                  []PlanPatch
+	Duration                 time.Duration
+	PreImages                []PlanPreImage
 }
 
 type PlanExecutor struct {

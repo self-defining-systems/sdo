@@ -65,6 +65,9 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
+			if application.FinalEquivalenceVerified != nil && !application.GetFinalEquivalenceVerified() {
+				continue
+			}
 			if !application.GetApplied() && !strings.HasPrefix(application.GetApplicationId(), "fast-path") {
 				continue
 			}

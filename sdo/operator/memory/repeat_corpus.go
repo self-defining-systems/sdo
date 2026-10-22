@@ -116,12 +116,7 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 			created = append(created, directory)
 		}
 		for _, file := range slices.Sorted(maps.Keys(cases[name])) {
-			if exists {
-				data, readErr := os.ReadFile(filepath.Join(directory, file))
-				if readErr != nil || string(data) != string(cases[name][file]) {
-					return nil, fmt.Errorf("existing repeat case differs: %s", name)
-				}
-			} else if err = os.WriteFile(filepath.Join(directory, file), cases[name][file], 0644); err != nil {
+			if err = os.WriteFile(filepath.Join(directory, file), cases[name][file], 0644); err != nil {
 				return nil, err
 			}
 			paths = append(paths, filepath.ToSlash(filepath.Join(relative, file)))

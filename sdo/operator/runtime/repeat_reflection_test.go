@@ -94,6 +94,7 @@ func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
 	}
 	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}
 	bound := program.Bindings{"service": objectRefState(ref)}
+	outcome.RepairActions[0].Resources = []*contracts.ObjectRef{ref}
 	outcome.ProgramRuns[0].Bindings[0].Object = ref
 	for _, run := range outcome.ProgramRuns {
 		run.ProgramRevision = revision

@@ -27,9 +27,18 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	if err != nil {
 		return
 	}
+	// Final equivalence is separate from the historical application result.
+	// A later different-field repair is a question and earns no credit.
+	for index := range l.applicationsLog {
+		app := &l.applicationsLog[index]
+		if app.Result.Applied {
+			exact := l.planFieldsMatch(ctx, app.Result)
+			app.Result.FinalEquivalenceVerified = &exact
+		}
+	}
 	seen := map[string]bool{}
 	for _, application := range l.applicationsLog {
-		if !application.Result.Applied || !application.Result.VerificationPassed {
+		if !application.Result.Applied || !application.Result.VerificationPassed || (application.Result.FinalEquivalenceVerified != nil && !*application.Result.FinalEquivalenceVerified) {
 			continue
 		}
 		for _, call := range l.calls {
@@ -67,6 +76,8 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		preview.DryRun = false
 		preview.VerificationCompleted = true
 		preview.VerificationPassed = true
+		exact := true
+		preview.FinalEquivalenceVerified = &exact
 		completed := time.Now().UTC()
 		applicationID := fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1)
 		planID := applicationID + "-plan"

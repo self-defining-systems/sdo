@@ -25,7 +25,7 @@ func verifiedRepeatBindings(outcome *contracts.OutcomeRecord) map[string][]progr
 	revisions := programRunRevisions(outcome)
 	bindings := map[string][]program.Bindings{}
 	for _, application := range outcome.GetPlanApplications() {
-		if !application.GetApplied() || application.GetDryRun() || application.GetRolledBack() ||
+		if (application.FinalEquivalenceVerified != nil && !application.GetFinalEquivalenceVerified()) || !application.GetApplied() || application.GetDryRun() || application.GetRolledBack() ||
 			application.GetError() != "" || application.GetRollbackError() != "" ||
 			!application.GetVerificationCompleted() || !application.GetVerificationPassed() ||
 			application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(application.GetProgramIds()) == 0 {

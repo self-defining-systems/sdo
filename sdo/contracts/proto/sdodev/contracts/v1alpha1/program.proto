@@ -129,6 +129,8 @@ message PlanApplication {
   google.protobuf.Timestamp completed_at = 15;
   bool verification_completed = 16;
   bool verification_passed = 17;
+  // Final exact plan equivalence. False means no credit, not a program failure.
+  optional bool final_equivalence_verified = 18;
 }
 
 message ProgramToolCall {

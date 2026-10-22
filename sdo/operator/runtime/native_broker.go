@@ -23,6 +23,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/program"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -53,9 +54,11 @@ type ReflectionWorker interface {
 // is 1-based; after a broker rejection Diagnostics are that rejection's typed
 // validator findings.
 type ReflectionFeedback struct {
-	DispatchAt  time.Time
-	Attempt     uint32
-	Diagnostics []*contracts.MemoryDiagnostic
+	DispatchAt     time.Time
+	Attempt        uint32
+	Diagnostics    []*contracts.MemoryDiagnostic
+	CauseWork      []*contracts.ReflectionCauseWork
+	UnassignedWork []*contracts.ReflectionWorkItem
 }
 
 type ReflectionDecision struct {
@@ -89,6 +92,7 @@ type NativeIncidentBroker struct {
 	PhaseLog             io.Writer
 	PriorOutcomes        memory.Reader
 	ForceReflection      bool
+	Programs             program.ProgramRegistry
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
 	}
@@ -413,26 +417,49 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
-		if effect.Attempt == 1 && !n.ForceReflection && n.SessionRoot != "" {
-			bindings := verifiedRepeatBindings(effect.Outcome)
-			current := len(bindings) > 0
-			revisions := programRunRevisions(effect.Outcome)
-			for id := range bindings {
-				revision, err := programDependencyRevision(ctx, workspace.Worktree, workspace.BaseCommit, id)
-				current = current && err == nil && revision == revisions[id]
+		work, positive, negative, unassigned := n.prepareCauseWork(ctx, effect.Outcome, workspace)
+		capture := ""
+		if n.SessionRoot != "" {
+			capture, _ = memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
+		}
+		prepared := false
+		if len(positive) > 0 {
+			if capture != "" {
+				paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive)
+				prepared = err == nil && len(paths) > 0
 			}
-			if current {
-				capture, err := memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
-				if err == nil {
-					if paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, bindings); err == nil && len(paths) > 0 {
-						return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+			if !prepared {
+				for _, cause := range work {
+					for _, item := range cause.Items {
+						if item.Disposition == "covered" {
+							item.Disposition, item.Reason, item.Question = "question", "uncertain", "The exact repair is covered, but captured peer evidence could not be recorded. Resolve the evidence gap."
+						}
 					}
 				}
 			}
 		}
-		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+		if effect.Attempt == 1 && !n.ForceReflection && prepared && !causeWorkNeedsModel(work) && len(unassigned) == 0 && len(verifiedRepeatBindings(effect.Outcome)) > 0 {
+			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+		}
+		if capture != "" && len(negative) > 0 {
+			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative); err != nil {
+				return nil, err
+			}
+		}
+		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), CauseWork: work, UnassignedWork: unassigned})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
+		}
+		if prepared {
+			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive); err != nil {
+				return nil, err
+			}
+		}
+		// Keep Go-owned negative evidence even if the agent deleted or relabeled it.
+		if capture != "" && len(negative) > 0 {
+			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative); err != nil {
+				return nil, err
+			}
 		}
 		result := &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
 		if decision.Usage != nil {

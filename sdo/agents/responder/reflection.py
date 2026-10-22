@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor
 
-    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord
+    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord, ReflectionCauseWork, ReflectionWorkItem
 
 
 def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
@@ -187,12 +187,32 @@ def _logical_learning_request(
     outcome_commit: str,
     closure: IncidentClosure,
     guidance: ReflectionGuidance,
+    cause_work: Sequence[ReflectionCauseWork] = (),
+    unassigned_work: Sequence[ReflectionWorkItem] = (),
 ) -> str:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     example_dir = os.environ.get("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR") or "/opt/sdo/examples/playbook-programs"
     snapshot = closure.request.memory_snapshot
     classification = outcome.classification
+    work_section = ""
+    if cause_work or unassigned_work:
+        work_json = json.dumps(
+            {
+                "causes": [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in cause_work],
+                "unassigned": [
+                    json_format.MessageToDict(item, preserving_proto_field_name=True) for item in unassigned_work
+                ],
+            },
+            indent=2,
+        )
+        work_section = (
+            "Go has settled covered items and materialized their evidence in this checkout. "
+            "Preserve Go-owned cases and address only the per-cause questions in the same incident session. "
+            "A false-match fixed capture is a required NoMatch regression. "
+            "Return updated whenever final files include Go or agent edits.\n"
+            f"Per-cause work:\n{work_json}\n"
+        )
     return (
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
@@ -258,6 +278,7 @@ def _logical_learning_request(
         f"{_classification_directive(classification, guidance)}\n\n"
         "Before returning an update, the complete final files must be in the checkout and memory check must pass. "
         "The trusted detector SDK reference is references/sdk.md of the sdo-detector-authoring skill.\n"
+        f"{work_section}"
         f"Outcome commit: {outcome_commit}\n"
         f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
         "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
@@ -280,8 +301,8 @@ class SessionReflector:
 
     The first attempt resumes the responder session (``session_mode="resume"``)
     or, opt-in, starts a fresh session from a compact incident brief
-    (``"fresh"``). A retry after a broker rejection (non-empty ``diagnostics``)
-    is always a short fresh session that carries the typed diagnostics.
+    (``"fresh"``). A retry after a broker rejection carries typed diagnostics in the same
+    resumed incident session.
     """
 
     def __init__(self, backend: StatefulResponderBackend, *, guidance: str = "baseline") -> None:
@@ -304,6 +325,8 @@ class SessionReflector:
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
         depth: ReflectionDepth = "full",
+        cause_work: Sequence[ReflectionCauseWork] = (),
+        unassigned_work: Sequence[ReflectionWorkItem] = (),
     ) -> ReflectionTurn:
         if session_mode not in REFLECTION_SESSION_MODES:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
@@ -317,21 +340,26 @@ class SessionReflector:
             outcome_commit=outcome_commit,
             closure=closure,
             guidance=self.guidance,
+            cause_work=cause_work,
+            unassigned_work=unassigned_work,
         )
         idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
         if diagnostics:
-            # Re-sending the responder transcript on every model request is the
-            # dominant retry cost; the typed diagnostics are all a retry needs.
+            # Keep the incident session; only rejected-edit feedback is new.
             prompt = (
                 "Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. "
                 "The controller has "
                 "independently verified incident closure and committed its authoritative outcome; the responder's "
-                "session transcript is intentionally not available.\n\n"
+                "session context remains available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
                 "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
                 "Author corrected final files here, then call check_memory until green.\n\n"
                 f"Original reflection request:\n{request}"
             )
+            if session_mode == "resume":
+                return self.backend.resume(
+                    session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
+                )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
         if depth == "refine" and session_mode == "resume":
             # Verified repeat: the programs already in memory did the work, so
@@ -384,14 +412,15 @@ class SessionReflector:
                 session_mode="fresh",
                 closure=closure,
                 depth="full",
+                cause_work=cause_work,
+                unassigned_work=unassigned_work,
             )
 
 
 class CodexSessionBackend:
     """Resume the responder's own Codex session to reflect on its outcome.
 
-    Validation retries use :meth:`fresh` instead, so they never re-send the
-    responder transcript.
+    Validation retries retain the responder session and carry typed feedback.
     """
 
     provider: ClassVar[AgentProvider] = "codex"
