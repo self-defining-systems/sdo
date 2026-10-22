@@ -124,9 +124,9 @@ def test_validator_image_contains_no_python_dependency_install() -> None:
 def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
     assert "COPY examples/playbook-programs /opt/sdo/examples/playbook-programs" in dockerfile
-    assert "COPY --from=go-runtime /usr/local/go /usr/local/go" in dockerfile
+    assert "COPY --from=go-deps /usr/local/go /usr/local/go" in dockerfile
     assert "COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator" in dockerfile
-    assert "COPY --from=go-runtime /go/pkg/mod /go/pkg/mod" in dockerfile
+    assert "COPY --from=go-deps /go/pkg/mod /go/pkg/mod" in dockerfile
     assert "COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator" in dockerfile
     assert "GOPROXY=off" in dockerfile
     assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
@@ -147,9 +147,8 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
 
 def test_validator_image_builds_programs_offline() -> None:
     dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
-    for module in ("sdk", "core", "runtime", ""):
-        module_dir = f"sdo/operator/{module}" if module else "sdo/operator"
-        assert f"cd {module_dir} && go mod download all" in dockerfile
+    assert 'cd "$dir" && go mod download all' in dockerfile
+    assert "for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do" in dockerfile
     assert "FROM go-runtime AS validator" in dockerfile
     assert "GOPROXY=off" in dockerfile
     assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile

@@ -1,25 +1,49 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS go-runtime
+FROM golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS go-modules
 WORKDIR /opt/sdo
 # Validator Jobs compile untrusted detector modules without cgo.
 ENV GOCACHE=/go/build-cache \
     CGO_ENABLED=0
+# Module downloads and the third-party build cache depend on the manifests
+# alone, so a Go source edit leaves every layer up to go-deps cached.
+COPY sdo/operator/go.mod sdo/operator/go.sum ./sdo/operator/
+COPY sdo/operator/contracts/go.mod sdo/operator/contracts/go.sum ./sdo/operator/contracts/
+COPY sdo/operator/core/go.mod sdo/operator/core/go.sum ./sdo/operator/core/
+COPY sdo/operator/runtime/go.mod sdo/operator/runtime/go.sum ./sdo/operator/runtime/
+COPY sdo/operator/sdk/go.mod sdo/operator/sdk/go.sum ./sdo/operator/sdk/
+RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+      (cd "$dir" && go mod download all); \
+    done
+
+# The package names are the only thing that leaves this stage, so go-deps stays
+# cached until an import is added or removed.
+FROM go-modules AS go-dep-list
+COPY sdo/operator ./sdo/operator
+RUN mkdir /deps \
+    && for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+      (cd "$dir" && go list -deps -test ./... | grep -vE '^sdo\.dev|[ ]|\.test$' | sort -u) > "/deps/$(echo "$dir" | tr / _).txt"; \
+    done
+
+FROM go-modules AS go-deps
+COPY --from=go-dep-list /deps /deps
+RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+      (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
+    done \
+    && (cd /go/build-cache && find . -type f | LC_ALL=C sort) > /go/build-cache.files
+
+FROM go-deps AS go-runtime
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 # The runtime and synthesized detector workspaces use local Go modules in this
 # tree, including memory, worker registration, and generated contracts.
 COPY sdo/operator ./sdo/operator
-RUN cd sdo/operator/sdk && go mod download all
-RUN cd sdo/operator/core && go mod download all
-RUN cd sdo/operator/runtime && go mod download all
-RUN cd sdo/operator && go mod download all
 RUN cd sdo/operator/sdk && go test -run '^$' ./...
 RUN cd sdo/operator/core && go test -run '^$' ./...
 RUN cd sdo/operator/runtime && go test -run '^$' ./...
 RUN cd sdo/operator && go build -buildvcs=false -o /usr/local/bin/sdo-operator ./cmd/sdo-operator
 
 FROM go-runtime AS validator
-RUN apt-get update && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
 ENV HOME=/tmp \
     GOCACHE=/tmp/go-cache \
     GOMODCACHE=/go/pkg/mod \
