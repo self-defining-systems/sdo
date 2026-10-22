@@ -54,6 +54,11 @@ func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []st
     positive that would open an incident before any fault exists. Resolved
     findings and detector errors are not violations here: other tests own them.
 
+func ProjectCapturedObject(raw []byte) ([]byte, error)
+    ProjectCapturedObject applies the controller corpus capture projection to
+    API JSON. Unsupported representations carry metadata only in the caller.
+    Secret values are never observations: only their key names survive.
+
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match
     their recorded controller capture, or an explicitly labeled NoMatch case.
