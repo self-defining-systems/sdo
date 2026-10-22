@@ -95,14 +95,12 @@ rejects a retained match, and unavailable post-plan observations remain
 plan validation with `skipped_unreplayable_effect`, without post-plan replay.
 `MemoryCheckReport.mitigation_replay_notes` carries typed `MitigationReplayNote`
 statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
-and effect types separately from rejecting diagnostics. These notes prove no
-external effect and are never trust authority.
+and effect types separately from rejecting diagnostics. Notes prove no external effect or trust.
 
 Skipped replay earns no origin credit. Default trust requires three independently
 verified live successes and zero failures for the unchanged revision. Equivalent
 ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
 unrelated repairs in the outcome do not suppress credit. Every planned resource
 needs a successful receipt, exact observed plan equivalence, and independent
-outcome success. A Match-to-NoMatch flip alone earns nothing. Summaries distinguish
-equivalence verification from program mutation. Each program earns at most one
+outcome success. Match-to-NoMatch alone earns nothing. Summaries distinguish verification and mutation. Each program earns at most one
 success per outcome; failed live fast paths roll back and block revision trust.

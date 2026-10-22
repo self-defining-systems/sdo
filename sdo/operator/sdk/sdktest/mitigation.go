@@ -124,9 +124,9 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 	if err := json.Unmarshal(raw, &repaired); err != nil {
 		return fmt.Errorf("program.mitigation-unreplayable: patched fixture: %w", err)
 	}
-	// A patched fixture has no new logs, probes or source-diff observations.
-	// Neither the faulted nor recorded fixed answers prove effects here.
-	verdict := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: repaired}, c.Bindings, 10*time.Second)
+	// No new external observations are synthesized. Only unchanged direct-Pod
+	// TCP inputs survive a Service targetPort edit; fixed answers never prove effects.
+	verdict := program.RunDiagnose(context.Background(), p, &ReplayReadView{Snapshot: repaired, Calls: unchangedPodTCPRecordings(c, plan, fixture)}, c.Bindings, 10*time.Second)
 	if verdict.Result == program.Unknown {
 		return fmt.Errorf("program.mitigation-unreplayable: post-plan diagnosis requires unavailable observations: %+v", verdict)
 	}

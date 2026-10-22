@@ -419,6 +419,11 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	}
 	view := l.ReadView(snapshot)
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
+		if err := captureRoutingEvidence(ctx, l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, l.Request.Findings, view); err != nil {
+			return nil, err
+		}
+	}
+	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
 		phase := l.capturePhase
 		return &sdktest.RecordingReadView{ReadView: view, OnRecord: func(call sdktest.PrimitiveCall) {
 			_ = memory.AppendCapturedRecording(l.CorpusSessionRoot, l.Request.IncidentID, phase, call)

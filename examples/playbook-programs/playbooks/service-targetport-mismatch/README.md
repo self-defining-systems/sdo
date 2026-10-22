@@ -5,4 +5,4 @@ fault_class: service-targetport-mismatch
 originating_incident: targetport-incident
 ---
 
-Check the `<SERVICE>` target port against selected pods.
+Confirm `<SERVICE>` routing with actual selected-Pod TCP observations: the declared port accepts connections and the numeric target port refuses them. Declarations alone establish no listener.

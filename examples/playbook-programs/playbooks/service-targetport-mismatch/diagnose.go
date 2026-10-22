@@ -1,52 +1,107 @@
-package targetport
+// Package routingport demonstrates targetPort repair from observed Pod listeners.
+package routingport
 
 import (
 	"context"
 	"fmt"
-
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-
-	"fixture-diagnostics/lib/ports"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
-// Program checks whether a Service targetPort names a port on a selected pod.
 type Program struct{}
 
 func (Program) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "service-targetport-mismatch", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
 
-func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
+// replacement is deliberately narrow: one TCP Service port and one common
+// declared TCP port on every selected ready Pod. Declarations choose probes;
+// they never establish a listener without a successful TCP observation.
+func replacement(v program.ReadView, b program.Bindings) (corev1.Service, []corev1.Pod, int32, bool) {
 	ref := b["service"]
 	for _, service := range v.Services() {
 		if service.Namespace != ref.Namespace || service.Name != ref.Name {
 			continue
 		}
+		if len(service.Spec.Ports) != 1 || service.Spec.Type == corev1.ServiceTypeExternalName {
+			return service, nil, 0, false
+		}
+		if proto := service.Spec.Ports[0].Protocol; proto != "" && proto != corev1.ProtocolTCP {
+			return service, nil, 0, false
+		}
 		pods := v.PodsForService(ref.Namespace, ref.Name)
 		if len(pods) == 0 {
-			return program.Verdict{Result: program.Unknown}, nil
+			return service, nil, 0, false
 		}
-		for _, port := range service.Spec.Ports {
-			target := port.TargetPort
-			if target == (intstr.IntOrString{}) {
-				target = intstr.FromInt32(port.Port)
+		var common int32
+		for _, pod := range pods {
+			ready := false
+			for _, condition := range pod.Status.Conditions {
+				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					ready = true
+				}
 			}
-			for _, pod := range pods {
-				found := false
-				for _, container := range pod.Spec.Containers {
-					for _, exposed := range container.Ports {
-						if ports.Matches(target, exposed) {
-							found = true
-						}
+			if !ready {
+				return service, nil, 0, false
+			}
+			ports := map[int32]bool{}
+			for _, container := range pod.Spec.Containers {
+				for _, port := range container.Ports {
+					if port.Protocol == "" || port.Protocol == corev1.ProtocolTCP {
+						ports[port.ContainerPort] = true
 					}
 				}
-				if !found {
-					return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: ref, Fact: "targetPort on selected pod", Observed: fmt.Sprint(target), Expected: "declared containerPort"}}}, nil
+			}
+			if len(ports) != 1 {
+				return service, nil, 0, false
+			}
+			for port := range ports {
+				if port < 1 || port > 65535 || common != 0 && common != port {
+					return service, nil, 0, false
 				}
+				common = port
 			}
 		}
+		return service, pods, common, true
+	}
+	return corev1.Service{}, nil, 0, false
+}
+func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
+	service, pods, port, ok := replacement(v, b)
+	if !ok {
+		return program.Verdict{Result: program.Unknown}, nil
+	}
+	target := service.Spec.Ports[0].TargetPort
+	if target.Type != intstr.Int {
+		return program.Verdict{Result: program.Unknown}, nil
+	}
+	targetPort := target.IntVal
+	if targetPort == 0 {
+		targetPort = service.Spec.Ports[0].Port
+	}
+	for _, pod := range pods {
+		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}
+		listener, err := v.ProbeTCP(ref, port)
+		if err != nil {
+			return program.Verdict{}, err
+		}
+		if !listener.Success {
+			return program.Verdict{Result: program.Unknown}, nil
+		}
+		if targetPort != port {
+			wrong, err := v.ProbeTCP(ref, targetPort)
+			if err != nil {
+				return program.Verdict{}, err
+			}
+			if wrong.Success {
+				return program.Verdict{Result: program.Unknown}, nil
+			}
+		}
+	}
+	if targetPort == port {
 		return program.Verdict{Result: program.NoMatch}, nil
 	}
-	return program.Verdict{Result: program.Unknown}, nil
+	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b["service"], Fact: "selected ready Pods accept declared port and refuse numeric targetPort", Observed: fmt.Sprint(targetPort), Expected: fmt.Sprint(port)}}}, nil
 }

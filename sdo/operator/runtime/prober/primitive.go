@@ -3,7 +3,9 @@ package prober
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,19 +16,31 @@ import (
 
 // PrimitiveRequest names one read-only probe from the isolated prober pod.
 type PrimitiveRequest struct {
-	To   sdk.ObjectRef      `json:"to"`
-	Port int32              `json:"port"`
-	HTTP *program.HTTPProbe `json:"http,omitempty"`
+	PodIP string             `json:"pod_ip,omitempty"`
+	To    sdk.ObjectRef      `json:"to"`
+	Port  int32              `json:"port"`
+	HTTP  *program.HTTPProbe `json:"http,omitempty"`
 }
 
 func (p *Prober) Primitive(ctx context.Context, request PrimitiveRequest) (program.ProbeResult, error) {
-	if request.To.Kind != "Service" || request.To.Namespace != p.config.Namespace || request.To.Name == "" || request.Port < 1 || request.Port > 65535 {
-		return program.ProbeResult{}, fmt.Errorf("primitive probe requires a Service in namespace %q and a valid port", p.config.Namespace)
+	if request.To.Kind != "Service" && request.To.Kind != "Pod" || request.To.Namespace != p.config.Namespace || request.To.Name == "" || request.Port < 1 || request.Port > 65535 {
+		return program.ProbeResult{}, fmt.Errorf("primitive probe requires a Service or Pod in namespace %q and a valid port", p.config.Namespace)
+	}
+	if request.To.Kind == "Pod" {
+		ip := net.ParseIP(request.PodIP)
+		if request.HTTP != nil || ip == nil || !ip.IsGlobalUnicast() {
+			return program.ProbeResult{}, fmt.Errorf("Pod primitive requires a captured unicast Pod IP and TCP")
+		}
+	} else if request.PodIP != "" {
+		return program.ProbeResult{}, fmt.Errorf("Service primitive cannot override its address")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if request.HTTP == nil {
 		address := p.config.LinkAddress(traffic.Link{To: request.To.Name, Port: int(request.Port)})
+		if request.To.Kind == "Pod" {
+			address = net.JoinHostPort(request.PodIP, strconv.Itoa(int(request.Port)))
+		}
 		connection, err := p.config.DialContext(ctx, "tcp", address)
 		if err != nil {
 			return program.ProbeResult{Detail: err.Error()}, nil
