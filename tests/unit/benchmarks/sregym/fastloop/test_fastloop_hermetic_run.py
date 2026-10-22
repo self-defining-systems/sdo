@@ -241,7 +241,7 @@ class Controller(FakeOps):
         incident = f"incident-{self.incidents}"
         self.capture.mkdir(exist_ok=True)
         (self.capture / "open.json").write_text(json.dumps(self.app.snapshot()))
-        (self.capture / "open@pre-apply.json").write_text(json.dumps(self.app.snapshot()))
+        (self.capture / "open@detect.json").write_text(json.dumps(self.app.snapshot()))
         self.commands.clear()
         self.program_runs_by_incident[incident] = []
         raw = json.loads((ROOT / "tests/fixtures/sdo/contracts/incident_request.json").read_text())
@@ -286,7 +286,7 @@ class Controller(FakeOps):
             assert source_image.endswith("a" * 64)
             assert image == source_image
         (self.capture / "fixed.json").write_text(json.dumps(self.app.snapshot()))
-        (self.capture / "open@pre-apply-recordings.json").write_text("[]\n")
+        (self.capture / "open@detect-recordings.json").write_text("[]\n")
         data = json_format.MessageToDict(result, preserving_proto_field_name=True)
         self.results[incident] = data
         self.commands_by_incident[incident] = list(self.commands)
@@ -317,7 +317,7 @@ class Controller(FakeOps):
             directory = self.app.workspace / ".sdo/playbooks" / scripted_worker.PROGRAM_ID
             corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
             labels = json.loads((corpus / "labels.json").read_text())
-            assert labels["provenance"]["open_at"] == "pre-apply"
+            assert labels["provenance"]["open_at"] == "detect"
             assert (
                 labels["provenance"]["open_sha256"] == hashlib.sha256((corpus / "open.json").read_bytes()).hexdigest()
             )
@@ -325,7 +325,7 @@ class Controller(FakeOps):
                 labels["provenance"]["fixed_sha256"] == hashlib.sha256((corpus / "fixed.json").read_bytes()).hexdigest()
             )
             assert (corpus / "recordings.json").read_bytes() == (
-                self.capture / "open@pre-apply-recordings.json"
+                self.capture / "open@detect-recordings.json"
             ).read_bytes()
             subprocess.run(["git", "add", ".sdo/playbooks", ".sdo/corpus"], cwd=self.app.workspace, check=True)
             subprocess.run(
@@ -355,7 +355,7 @@ class Controller(FakeOps):
             if self.incidents == 2:
                 assert (self.app.workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
                 assert self.sweep is not None
-                snapshot = self.capture / "open@pre-apply.json"
+                snapshot = self.capture / "open@detect.json"
                 completed = subprocess.run(
                     ["go", "run", "-mod=mod", ".", str(snapshot)],
                     cwd=self.sweep,

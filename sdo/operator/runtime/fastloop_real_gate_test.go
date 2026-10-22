@@ -201,6 +201,7 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(controller.routingSweeps.Wait)
 	controller.OnError = func(err error) { t.Logf("controller effect: %v", err) }
 	if err := controller.SetIncidentBroker(native); err != nil {
 		t.Fatal(err)

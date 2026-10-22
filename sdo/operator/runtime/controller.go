@@ -63,9 +63,6 @@ type ControllerConfig struct {
 	// residual findings are treated as unresolved. It is capped by
 	// VerificationTimeout.
 	FollowUpCooldown time.Duration
-	// Admission configures load-aware incident admission. The zero value
-	// (disabled) admits every ready batch immediately, as before.
-	Admission AdmissionConfig
 }
 
 type dispatchCompletion struct {
@@ -86,8 +83,10 @@ type Controller struct {
 	history             []DetectorEvaluation
 	drift               *DriftControllerConfig
 	driftEvents         []sdk.DriftEvent
-	driftAdmission      *contracts.DriftAdmissionState
 	programSweepCursors map[string]string
+	// routingSweeps tracks background open@detect routing sweeps so tests can
+	// join them before removing the capture directory.
+	routingSweeps sync.WaitGroup
 	ownershipAdoption   OwnershipAdoptionStatus
 	adoptionNeeded      bool
 	nextDriftSweep      time.Time
@@ -151,13 +150,6 @@ type Controller struct {
 	// idempotent).
 	pendingReleases []string
 	releaseInFlight string
-
-	// loadGauge, when set, reports host resource pressure to the admission gate;
-	// nil leaves the host-load term at zero. admissionRecheckAt is the next time a
-	// deferred incident re-evaluates admission; it is transient (a restart
-	// re-samples immediately).
-	loadGauge          LoadGauge
-	admissionRecheckAt time.Time
 
 	// Baseline, when set, records healthy configuration and attaches the
 	// diff against it to each new incident request.
@@ -227,9 +219,6 @@ func NewController(
 	}
 	if config.FollowUpCooldown < 0 {
 		return nil, fmt.Errorf("follow-up cooldown must not be negative")
-	}
-	if err := config.Admission.validate(); err != nil {
-		return nil, err
 	}
 	if config.VerificationTimeout == 0 {
 		config.VerificationTimeout = config.ResponseTimeout
@@ -505,94 +494,19 @@ func (c *Controller) canAttachBeforeLaunchLocked() bool {
 		return false
 	}
 	switch c.dispatchState {
-	case contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING, contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING, contracts.DispatchState_DISPATCH_STATE_PENDING, admissionDeferredState:
+	case contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING, contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING, contracts.DispatchState_DISPATCH_STATE_PENDING:
 		return true
 	default:
 		return false
 	}
 }
 
-// SetLoadGauge attaches the admission gate's host-load source. A nil gauge (the
-// default) leaves the host-load term at zero, so only the release-backlog term
-// can defer admission.
-func (c *Controller) SetLoadGauge(gauge LoadGauge) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.loadGauge = gauge
-}
-
-// sampleLoad reads the host-load gauge without holding c.mu. A nil gauge reports
-// zero pressure; a gauge error is reported and treated as zero, so a transient
-// read failure fails open (admit) rather than wedging incident handling.
-func (c *Controller) sampleLoad() LoadSample {
-	c.mu.Lock()
-	gauge := c.loadGauge
-	c.mu.Unlock()
-	if gauge == nil {
-		return LoadSample{}
-	}
-	sample, err := gauge.Sample()
-	if err != nil {
-		if c.OnError != nil {
-			c.OnError(fmt.Errorf("sample host load for admission: %w", err))
-		}
-		return LoadSample{}
-	}
-	return sample
-}
-
-// reassessDeferredAdmission re-evaluates a held incident against a fresh load
-// sample. It resumes (to the normal pending/workspace_pending dispatch state and
-// a one-time admission_resumed event) only when pressure has cleared both low
-// watermarks; otherwise it schedules the next recheck.
-func (c *Controller) reassessDeferredAdmission(now time.Time) {
-	sample := c.sampleLoad()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.dispatchState != admissionDeferredState || c.currentIncidentRequest == nil {
-		return
-	}
-	assessment := c.config.Admission.assess(true, sample, len(c.pendingReleases))
-	if assessment.Defer {
-		c.admissionRecheckAt = now.Add(c.config.Admission.RecheckInterval)
-		return
-	}
-	next := contracts.DispatchState_DISPATCH_STATE_PENDING
-	if c.broker != nil {
-		next = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
-	}
-	c.dispatchState = next
-	c.admissionRecheckAt = time.Time{}
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseAdmissionResumed, RecordedAt: contractTimestamp(now.UTC()), IncidentId: c.currentIncidentRequest.IncidentID,
-		LoadPressure: assessment.Pressure, LoadThreshold: assessment.Threshold,
-		ReleaseBacklog: int32(assessment.ReleaseBacklog), Reason: assessment.Reason,
-	})
-}
-
-// emitAdmissionDeferredLocked records that a ready batch was held under load.
-// Callers hold c.mu. Each (incident, admission_deferred) pair is emitted at most
-// once, so the event id is stable and a crash-replay drops the duplicate.
-func (c *Controller) emitAdmissionDeferredLocked(now time.Time, incidentID string, assessment admissionAssessment) {
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseAdmissionDeferred, RecordedAt: contractTimestamp(now.UTC()), IncidentId: incidentID,
-		LoadPressure: assessment.Pressure, LoadThreshold: assessment.Threshold,
-		ReleaseBacklog: int32(assessment.ReleaseBacklog), Reason: assessment.Reason,
-	})
-}
-
 func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen
-	deferred := c.dispatchState == admissionDeferredState
 	closurePending := c.closureBlocksNextLocked() && c.broker != nil
 	c.mu.Unlock()
 	if incidentOpen {
-		if deferred {
-			// A held incident re-evaluates admission against a fresh sample; it
-			// resumes only once pressure clears both low watermarks.
-			c.reassessDeferredAdmission(now)
-		}
 		c.mu.Lock()
 		attachable := c.canAttachBeforeLaunchLocked()
 		c.mu.Unlock()
@@ -617,42 +531,13 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		batch = append(batch, c.batcher.DrainDetectorPrefix("drift.")...)
 		sortFindings(batch)
 	}
-	priorAdmission := cloneDriftAdmission(c.driftAdmission)
-	batch = c.admitDriftBatch(now, batch)
-	if len(batch) == 0 {
-		return nil
-	}
 	request := c.incidentRequest(now, batch)
-	requeue := func(err error) error {
-		c.driftAdmission = priorAdmission
-		for _, finding := range batch {
-			c.batcher.AddAt(finding, now)
-		}
-		return err
-	}
 	if c.config.CorpusSessionRoot != "" {
-		if snapshot == nil {
-			var err error
-			snapshot, err = c.provider.Snapshot(ctx)
-			if err != nil {
-				return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
-			}
-		}
-		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace); err != nil {
-			return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
-		}
-		if c.drift != nil && c.drift.View != nil {
-			if err := captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, request.IncidentID, "open@detect", request.Findings, c.drift.View(snapshot)); err != nil {
-				return requeue(fmt.Errorf("capture incident routing evidence: %w", err))
-			}
-		}
-
+		c.captureOpenDetect(ctx, snapshot, request)
 	}
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
-	// Sample host load outside the lock so a gauge read never holds c.mu.
-	sample := c.sampleLoad()
 	c.mu.Lock()
 	c.incidentOpen = true
 	c.responderDone = false
@@ -668,19 +553,9 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.resetDispatchRetryLocked()
 	c.incidentObservedChanges = make(map[string]ObservedStateChange)
 	c.observeStateChangesLocked(request.StateChanges, now)
-	readyState := contracts.DispatchState_DISPATCH_STATE_PENDING
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
-		readyState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
-	}
-	// Load-aware admission: when the controller is over a pressure threshold the
-	// incident is held (admission_deferred) before any worktree is prepared or
-	// responder dispatched, rather than racing a congested drain. The incident
-	// keeps its identity and still coalesces later findings; it is never dropped.
-	assessment := c.config.Admission.assess(false, sample, len(c.pendingReleases))
-	c.dispatchState = readyState
-	if assessment.Defer {
-		c.dispatchState = admissionDeferredState
-		c.admissionRecheckAt = now.Add(c.config.Admission.RecheckInterval)
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	c.incidentFindingKeys = findingKeys(batch)
 	c.noteBatchedLocked(request.IncidentID, batch)
@@ -689,11 +564,43 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		Event: PhaseOpened, RecordedAt: contractTimestamp(c.incidentDetectedAt), IncidentId: request.IncidentID,
 		FindingKeys: append([]string(nil), c.incidentFindingKeys...), SurfacedPlaybooks: playbookIDs(request.SurfacedPlaybooks),
 	})
-	if assessment.Defer {
-		c.emitAdmissionDeferredLocked(now, request.IncidentID, assessment)
-	}
 	c.mu.Unlock()
 	return nil
+}
+
+// captureOpenDetect stores the open@detect corpus snapshot for the incident
+// being opened. It is evidence for later learning, never a gate: a failure is
+// reported and the incident opens anyway, and the routing sweep (real TCP
+// probes, up to its time budget) runs in the background so it cannot delay the
+// responder.
+func (c *Controller) captureOpenDetect(ctx context.Context, snapshot sdk.DetectionContext, request IncidentRequest) {
+	report := func(err error) {
+		if c.OnError != nil {
+			c.OnError(err)
+		}
+	}
+	if snapshot == nil {
+		var err error
+		if snapshot, err = c.provider.Snapshot(ctx); err != nil {
+			report(fmt.Errorf("capture incident open snapshot: %w", err))
+			return
+		}
+	}
+	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace); err != nil {
+		report(fmt.Errorf("capture incident open snapshot: %w", err))
+		return
+	}
+	if c.drift == nil || c.drift.View == nil {
+		return
+	}
+	view := c.drift.View(snapshot)
+	c.routingSweeps.Add(1)
+	go func() {
+		defer c.routingSweeps.Done()
+		if err := captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, request.IncidentID, "open@detect", request.Findings, view); err != nil {
+			report(fmt.Errorf("capture incident routing evidence: %w", err))
+		}
+	}()
 }
 
 func hasNonDriftFinding(findings []sdk.Finding) bool {
@@ -757,19 +664,6 @@ func (c *Controller) NextWake() time.Time {
 	if probe := c.nextGateProbe(); !probe.IsZero() && (next.IsZero() || probe.Before(next)) {
 		next = probe
 	}
-	c.mu.Lock()
-	if c.dispatchState == admissionDeferredState {
-		// A held incident re-evaluates admission on a bounded cadence. A restored
-		// controller has no recheck time yet, so it re-samples on the next tick.
-		recheck := c.admissionRecheckAt
-		if recheck.IsZero() {
-			recheck = c.evaluationAt
-		}
-		if next.IsZero() || recheck.Before(next) {
-			next = recheck
-		}
-	}
-	c.mu.Unlock()
 	return c.closureRetryWake(c.dispatchRetryWake(next))
 }
 
@@ -1017,9 +911,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentResult = nil
 		c.recordDispatchFailureLocked()
 	} else {
-		if !c.responderDone {
-			c.chargeDriftResponse(observedAt, completion.result)
-		}
 		c.responderDone = true
 		if len(completion.result.RepairActions) > 0 || len(completion.result.RepairChanges) > 0 {
 			c.adoptionNeeded = c.drift != nil && c.drift.Source != nil && c.drift.Client != nil
@@ -1648,7 +1539,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, PendingReleases: append([]string(nil), c.pendingReleases...),
 		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
-		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption), DriftAdmission: cloneDriftAdmission(c.driftAdmission), ProgramSweepCursors: maps.Clone(c.programSweepCursors),
+		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption), ProgramSweepCursors: maps.Clone(c.programSweepCursors),
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
@@ -1699,7 +1590,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		c.currentIncidentResult = &result
 	}
 	c.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(state.GetDriftEvents())...)
-	c.driftAdmission = cloneDriftAdmission(state.DriftAdmission)
 	c.programSweepCursors = maps.Clone(state.ProgramSweepCursors)
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
 	c.dispatchError = state.DispatchError

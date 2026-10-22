@@ -49,7 +49,7 @@ message LifecycleEvent {
   string event_id = 2 [(buf.validate.field).string.min_len = 1];
   string event = 3 [(buf.validate.field).string = {
     in: [
-      "incident_opened", "admission_deferred", "admission_resumed", "workspace_prepared",
+      "incident_opened", "workspace_prepared",
       "responder_dispatched", "responder_completed", "incident_superseded", "worktree_released",
       "detector_review_required", "incident_closed", "closure_committed", "incident_acknowledged"
     ]
@@ -74,7 +74,6 @@ message LifecycleEvent {
   google.protobuf.Timestamp health_cleared_at = 20;
   bool detector_review_required = 21;
   bool dispatch_error = 22;
-  double load_pressure = 23 [(buf.validate.field).double.gte = 0];
-  double load_threshold = 24 [(buf.validate.field).double.gte = 0];
-  int32 release_backlog = 25 [(buf.validate.field).int32.gte = 0];
+  reserved 23, 24, 25;
+  reserved "load_pressure", "load_threshold", "release_backlog";
 }

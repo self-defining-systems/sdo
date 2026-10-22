@@ -262,12 +262,10 @@ def test_drift_token_budget_reaches_fastloop_runtime(tmp_path: Path, monkeypatch
             str(tmp_path),
             "--agent",
             "sdo",
-            "--drift-tokens-per-hour",
-            "250000",
         ]
     )
     agent = cli._sdo_agent(args, environment, tmp_path)
-    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.drift_tokens_per_hour == 250000
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.program_trust_threshold == 3
 
 
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:

@@ -43,12 +43,6 @@ const (
 const (
 	// PhaseOpened: a batch of findings opened a new incident (or follow-up).
 	PhaseOpened = "incident_opened"
-	// PhaseAdmissionDeferred: a ready batch was held under resource pressure
-	// (load or release-backlog high watermark) before any worktree or dispatch.
-	PhaseAdmissionDeferred = "admission_deferred"
-	// PhaseAdmissionResumed: a held incident cleared the low watermarks and
-	// proceeded to dispatch.
-	PhaseAdmissionResumed = "admission_resumed"
 	// PhaseWorkspacePrepared: the broker prepared the incident's isolated worktree.
 	PhaseWorkspacePrepared = "workspace_prepared"
 	// PhaseDispatched: the responder was launched for the incident.
@@ -75,10 +69,6 @@ func phaseRank(p string) int {
 	switch p {
 	case PhaseOpened:
 		return 0
-	case PhaseAdmissionDeferred:
-		return 1
-	case PhaseAdmissionResumed:
-		return 2
 	case PhaseWorkspacePrepared:
 		return 3
 	case PhaseDispatched:

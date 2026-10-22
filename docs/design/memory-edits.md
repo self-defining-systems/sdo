@@ -94,9 +94,9 @@ conflict is an error. The context binds task/proposal ID and contains:
 - Complete accepted corpus and prior outcomes used by replay, their hashes,
   accepted mapping baseline, healthy detector baselines and source identities.
   Prompt history may be bounded; validation history is never truncated.
-- Read-only controller captures: `open@detect`, `open@settle`,
-  `open@pre-apply`, `fixed`, legacy `open` when present, and recordings per
-  phase. A drift case names its original detect capture explicitly.
+- Read-only controller captures: `open@detect`, `fixed`, legacy `open`,
+  `open@settle` and `open@pre-apply` when present in older accepted corpus
+  cases, and recordings per phase. A drift case names its original detect capture explicitly.
 - Accepted rendered source, baseline manifests, rollback revisions and
   recorded action/effect evidence needed by plan replay; no live-cluster read
   or external verdict is needed for an acceptance decision.

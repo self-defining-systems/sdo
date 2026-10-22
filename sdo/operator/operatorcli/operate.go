@@ -69,7 +69,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := registerDriftTokenBudget(flags)
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
@@ -116,9 +115,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	}
 	if *maxFollowUps < 0 || *maxFollowUps > 1000 || *followUpCooldown < time.Second || *followUpCooldown%time.Second != 0 {
 		return OperateConfig{}, errors.New("follow-up limit must be at most 1000 and cooldown positive whole seconds")
-	}
-	if err := validateDriftTokenBudget(*driftTokensPerHour); err != nil {
-		return OperateConfig{}, err
 	}
 	if !strings.Contains(*buildkitImage, "@sha256:") || *registryPushSecret == *credentialsSecret {
 		return OperateConfig{}, errors.New("operate requires a digest-pinned BuildKit image and separate registry push Secret")
@@ -168,8 +164,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 			MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-			DriftTokensPerHour: *driftTokensPerHour,
-			TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
+			TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,
 			RegistrationConfigMap: *registrationConfigMap, RegistrationDirectory: *registrations,

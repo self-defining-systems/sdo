@@ -158,11 +158,11 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     assert api.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"] == "built:source"
     capture = tmp_path / "capture"
     capture.mkdir()
-    (capture / "open@pre-apply.json").write_text(
+    (capture / "open@detect.json").write_text(
         json.dumps({"services": [{"metadata": {"name": "reservation"}, "spec": {"ports": [{"targetPort": 9999}]}}]}),
         encoding="utf-8",
     )
-    (capture / "open@pre-apply-recordings.json").write_text("[]")
+    (capture / "open@detect-recordings.json").write_text("[]")
     (capture / "fixed.json").write_text(
         json.dumps(
             {
@@ -184,7 +184,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
         encoding="utf-8",
     )
     # Native captures can omit empty collections or retain legacy JSON null.
-    for filename, policies in (("open@pre-apply.json", opened_policies), ("fixed.json", fixed_policies)):
+    for filename, policies in (("open@detect.json", opened_policies), ("fixed.json", fixed_policies)):
         if policies == "null":
             snapshot_path = capture / filename
             snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -250,7 +250,7 @@ def test_captured_pair_selects_changed_service_and_healthy_peer(tmp_path: Path) 
             }
         ],
     }
-    (tmp_path / "open@pre-apply.json").write_text(json.dumps(open_snapshot), encoding="utf-8")
+    (tmp_path / "open@detect.json").write_text(json.dumps(open_snapshot), encoding="utf-8")
     (tmp_path / "fixed.json").write_text(json.dumps(fixed_snapshot), encoding="utf-8")
     assert scripted_worker._captured_pair(tmp_path) == ("front", "peer")
 

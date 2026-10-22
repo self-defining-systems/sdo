@@ -25,7 +25,6 @@ class DispatchState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DISPATCH_STATE_PENDING: _ClassVar[DispatchState]
     DISPATCH_STATE_RUNNING: _ClassVar[DispatchState]
     DISPATCH_STATE_COMPLETED: _ClassVar[DispatchState]
-    DISPATCH_STATE_ADMISSION_DEFERRED: _ClassVar[DispatchState]
 
 class ClosureState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -62,7 +61,6 @@ DISPATCH_STATE_WORKSPACE_RUNNING: DispatchState
 DISPATCH_STATE_PENDING: DispatchState
 DISPATCH_STATE_RUNNING: DispatchState
 DISPATCH_STATE_COMPLETED: DispatchState
-DISPATCH_STATE_ADMISSION_DEFERRED: DispatchState
 CLOSURE_STATE_UNSPECIFIED: ClosureState
 CLOSURE_STATE_PENDING: ClosureState
 CLOSURE_STATE_PROCESSING: ClosureState
@@ -178,7 +176,7 @@ class ClosureFailure(_message.Message):
     def __init__(self, incident_id: _Optional[str] = ..., attempts: _Optional[int] = ..., max_attempts: _Optional[int] = ..., last_error: _Optional[str] = ..., first_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., next_attempt_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., permanent: _Optional[bool] = ..., action: _Optional[str] = ..., reason: _Optional[_Union[ClosureFailureReason, str]] = ...) -> None: ...
 
 class ControllerState(_message.Message):
-    __slots__ = ("version", "scheduler_deadlines", "finding_states", "pending_batch", "history", "incident_open", "responder_done", "incident_request", "incident_result", "dispatch_error", "incident_detected_at", "incident_dispatched_at", "responder_completed_at", "detector_review_required", "detector_review_required_at", "detector_review_reason", "detector_clear_since", "incident_observed_changes", "dispatch_state", "incident_finding_keys", "pending_closure", "closure_state", "closure_receipt", "closure_failure", "last_acknowledged_incident_id", "pending_releases", "evaluation_iteration", "detector_timeline", "incident_view", "drift_events", "ownership_adoption", "drift_admission", "program_sweep_cursors", "responder_tool_state_json", "failed_closures")
+    __slots__ = ("version", "scheduler_deadlines", "finding_states", "pending_batch", "history", "incident_open", "responder_done", "incident_request", "incident_result", "dispatch_error", "incident_detected_at", "incident_dispatched_at", "responder_completed_at", "detector_review_required", "detector_review_required_at", "detector_review_reason", "detector_clear_since", "incident_observed_changes", "dispatch_state", "incident_finding_keys", "pending_closure", "closure_state", "closure_receipt", "closure_failure", "last_acknowledged_incident_id", "pending_releases", "evaluation_iteration", "detector_timeline", "incident_view", "drift_events", "ownership_adoption", "program_sweep_cursors", "responder_tool_state_json", "failed_closures")
     class SchedulerDeadlinesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -238,7 +236,6 @@ class ControllerState(_message.Message):
     INCIDENT_VIEW_FIELD_NUMBER: _ClassVar[int]
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     OWNERSHIP_ADOPTION_FIELD_NUMBER: _ClassVar[int]
-    DRIFT_ADMISSION_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_SWEEP_CURSORS_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_TOOL_STATE_JSON_FIELD_NUMBER: _ClassVar[int]
     FAILED_CLOSURES_FIELD_NUMBER: _ClassVar[int]
@@ -273,11 +270,10 @@ class ControllerState(_message.Message):
     incident_view: _messages_pb2.IncidentView
     drift_events: _containers.RepeatedCompositeFieldContainer[_messages_pb2.DriftEvent]
     ownership_adoption: OwnershipAdoptionStatus
-    drift_admission: DriftAdmissionState
     program_sweep_cursors: _containers.ScalarMap[str, str]
     responder_tool_state_json: bytes
     failed_closures: _containers.RepeatedCompositeFieldContainer[FailedIncidentClosure]
-    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., drift_admission: _Optional[_Union[DriftAdmissionState, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ..., failed_closures: _Optional[_Iterable[_Union[FailedIncidentClosure, _Mapping]]] = ...) -> None: ...
+    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ..., failed_closures: _Optional[_Iterable[_Union[FailedIncidentClosure, _Mapping]]] = ...) -> None: ...
 
 class ReflectionDecision(_message.Message):
     __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage")
@@ -425,21 +421,3 @@ class OwnershipAdoptionStatus(_message.Message):
     retry_at: _timestamp_pb2.Timestamp
     failures: int
     def __init__(self, source_commit: _Optional[str] = ..., adopted_objects: _Optional[int] = ..., conflicts_taken_over: _Optional[int] = ..., from_managers: _Optional[_Iterable[str]] = ..., last_error: _Optional[str] = ..., skipped_reason: _Optional[str] = ..., retry_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., failures: _Optional[int] = ...) -> None: ...
-
-class DriftAdmissionState(_message.Message):
-    __slots__ = ("seen_keys", "dispatch_at", "token_usage")
-    SEEN_KEYS_FIELD_NUMBER: _ClassVar[int]
-    DISPATCH_AT_FIELD_NUMBER: _ClassVar[int]
-    TOKEN_USAGE_FIELD_NUMBER: _ClassVar[int]
-    seen_keys: _containers.RepeatedScalarFieldContainer[str]
-    dispatch_at: _containers.RepeatedCompositeFieldContainer[_timestamp_pb2.Timestamp]
-    token_usage: _containers.RepeatedCompositeFieldContainer[DriftAdmissionUse]
-    def __init__(self, seen_keys: _Optional[_Iterable[str]] = ..., dispatch_at: _Optional[_Iterable[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]]] = ..., token_usage: _Optional[_Iterable[_Union[DriftAdmissionUse, _Mapping]]] = ...) -> None: ...
-
-class DriftAdmissionUse(_message.Message):
-    __slots__ = ("at", "tokens")
-    AT_FIELD_NUMBER: _ClassVar[int]
-    TOKENS_FIELD_NUMBER: _ClassVar[int]
-    at: _timestamp_pb2.Timestamp
-    tokens: int
-    def __init__(self, at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., tokens: _Optional[int] = ...) -> None: ...

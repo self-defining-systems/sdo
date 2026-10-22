@@ -63,13 +63,8 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     healthy = json.loads((fixture / "healthy.json").read_text())
     fixed["services"].extend(healthy["services"])
     fixed["pods"].extend(healthy["pods"])
-    open_at = "detect" if drift else "pre-apply"
-    (capture / f"open@{open_at}.json").write_text(json.dumps(opened))
-    (capture / f"open@{open_at}-recordings.json").write_text("[]")
-    if drift:
-        # Later captures must not replace the original drift evidence.
-        (capture / "open@pre-apply.json").write_text(json.dumps(fixed))
-        (capture / "open@pre-apply-recordings.json").write_text("[]")
+    (capture / "open@detect.json").write_text(json.dumps(opened))
+    (capture / "open@detect-recordings.json").write_text("[]")
     (capture / "fixed.json").write_text(json.dumps(fixed))
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     monkeypatch.setattr(scripted_worker, "PROGRAM_SOURCE", ROOT / "benchmarks/sregym/fastloop/scripted_program")
@@ -110,10 +105,10 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert "originating_incident: scripted-incident" in (program / "README.md").read_text()
     labels = json.loads(next((app / ".sdo/corpus").glob("*/labels.json")).read_text())
     assert labels["provenance"]["incident_id"] == "scripted-incident"
-    assert labels["provenance"]["open_at"] == open_at
+    assert labels["provenance"]["open_at"] == "detect"
     case = next((app / ".sdo/corpus").iterdir())
-    assert (case / "open.json").read_bytes() == (capture / f"open@{open_at}.json").read_bytes()
-    assert (case / "recordings.json").read_bytes() == (capture / f"open@{open_at}-recordings.json").read_bytes()
+    assert (case / "open.json").read_bytes() == (capture / "open@detect.json").read_bytes()
+    assert (case / "recordings.json").read_bytes() == (capture / "open@detect-recordings.json").read_bytes()
 
 
 def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

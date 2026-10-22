@@ -120,6 +120,7 @@ func TestRunCapturesRoutingWithoutTrafficWorkloads(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("controller did not dispatch")
 			}
+			awaitRoutingSweep(t, sessionRoot, request.IncidentID)
 			dir, err := memory.IncidentCorpusDir(sessionRoot, request.IncidentID)
 			if err != nil {
 				t.Fatal(err)

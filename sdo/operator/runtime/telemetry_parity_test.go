@@ -30,7 +30,7 @@ func TestFiringRelationsMatchProto(t *testing.T) {
 
 func TestLifecyclePhasesMatchProto(t *testing.T) {
 	sameSet(t, "lifecycle phase", wire.StringIn(&contracts.LifecycleEvent{}, "event"), []string{
-		PhaseOpened, PhaseAdmissionDeferred, PhaseAdmissionResumed, PhaseWorkspacePrepared, PhaseDispatched,
+		PhaseOpened, PhaseWorkspacePrepared, PhaseDispatched,
 		PhaseResponderCompleted, PhaseSuperseded, PhaseWorktreeReleased, PhaseDetectorReviewRequired, PhaseClosed,
 		PhaseClosureCommitted, PhaseAcknowledged,
 	})

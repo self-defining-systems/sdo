@@ -110,7 +110,17 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "routing", Namespace: "app", Findings: []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: ref}}}, nil, &changingProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
 	loop.CorpusSessionRoot = t.TempDir()
 	loop.ReadView = func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }
+	// The controller owns the sweep: the responder's own diagnosis never probes.
 	loop.InitialDiagnose(ctx)
+	if len(probe.calls) != 0 {
+		t.Fatalf("responder diagnosis probed: %+v", probe.calls)
+	}
+	capture := func() {
+		if err := captureRoutingEvidence(ctx, loop.CorpusSessionRoot, "routing", "open@detect", loop.Request.Findings, loop.ReadView(snapshot)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	capture()
 	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, "routing")
 	if err != nil {
 		t.Fatal(err)
@@ -144,6 +154,7 @@ func TestIncidentCaptureRecordsRoutingTCPBeforeAnyProgramExists(t *testing.T) {
 	}
 	prior := len(probe.calls)
 	loop.InitialDiagnose(ctx)
+	capture()
 	if len(probe.calls) != prior {
 		t.Fatal("repeated detect capture probed again")
 	}
@@ -364,6 +375,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(controller.routingSweeps.Wait)
 	controller.ConfigureDrift(DriftControllerConfig{View: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s, Prober: probe} }})
 	for i := 0; i < 2; i++ {
 		if err := controller.Step(ctx, time.Unix(int64(i), 0), nil); err != nil {
@@ -372,6 +384,7 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	}
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
+	awaitRoutingSweep(t, captureRoot, request.IncidentID)
 	captureDir, err := memory.IncidentCorpusDir(captureRoot, request.IncidentID)
 	if err != nil {
 		t.Fatal(err)
@@ -507,7 +520,11 @@ func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {
 			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 			defer slog.SetDefault(previous)
 			loop.InitialDiagnose(context.Background())
-			loop.InitialDiagnose(context.Background())
+			for i := 0; i < 2; i++ {
+				if err := captureRoutingEvidence(context.Background(), root, "no-prober", "open@detect", findings, test.view(snapshot)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// A later capture phase must preserve and not log the same gap again.
 			if err := memory.CaptureIncidentSnapshot(root, "no-prober", "fixed", snapshot, "app"); err != nil {
 				t.Fatal(err)

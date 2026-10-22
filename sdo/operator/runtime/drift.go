@@ -41,8 +41,6 @@ type DriftControllerConfig struct {
 	SweepInterval      time.Duration
 	ProgramPersistence sdk.PersistencePolicy
 	BatchWindow        time.Duration
-	DispatchesPerHour  int
-	TokensPerHour      int64
 }
 
 func (c *Controller) ConfigureDrift(config DriftControllerConfig) {

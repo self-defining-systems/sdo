@@ -55,7 +55,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := registerDriftTokenBudget(flags)
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
@@ -111,9 +110,6 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *programTrustThreshold < 1 {
 		return InstallExistingConfig{}, errors.New("program trust threshold must be positive")
 	}
-	if *driftTokensPerHour <= 0 {
-		return InstallExistingConfig{}, errors.New("drift responder token budget must be positive")
-	}
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
@@ -121,10 +117,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxFollowUps: *maxFollowUps, FollowUpCooldownSeconds: int(followUpCooldown.Seconds()), MaxResponseLoops: *maxResponseLoops,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
-		DriftTokensPerHour: *driftTokensPerHour,
-		LateFindings:       *lateFindings,
-		HealthyBaseline:    *healthyBaseline,
-		TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+		LateFindings:    *lateFindings,
+		HealthyBaseline: *healthyBaseline,
+		TimeoutSeconds:  int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,

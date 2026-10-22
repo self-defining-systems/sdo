@@ -425,7 +425,7 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
     )
 
 
-def _captured_pair(capture: Path, open_at: str = "pre-apply") -> tuple[str, str] | None:
+def _captured_pair(capture: Path, open_at: str = "detect") -> tuple[str, str] | None:
     open_path = capture / f"open@{open_at}.json"
     fixed_path = capture / "fixed.json"
     if not open_path.is_file() or not fixed_path.is_file():
@@ -483,11 +483,7 @@ class ScriptedReflector:
         worktree = Path(kwargs["worktree"])
         incident = str(kwargs["incident_id"])
         capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
-        open_at = (
-            "detect"
-            if any(event.investigation_verdict == "bug" for event in kwargs["closure"].request.drift_events)
-            else "pre-apply"
-        )
+        open_at = "detect"
         policy_pair = _captured_policy_pair(capture, open_at)
         program_id = NETWORKPOLICY_PROGRAM_ID if policy_pair else PROGRAM_ID
         program_source = NETWORKPOLICY_PROGRAM_SOURCE if policy_pair else PROGRAM_SOURCE

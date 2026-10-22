@@ -134,9 +134,6 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.ProgramTrustThreshold > 0 {
 		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
 	}
-	if cfg.DriftTokensPerHour > 0 {
-		args = append(args, "--drift-tokens-per-hour", fmt.Sprint(cfg.DriftTokensPerHour))
-	}
 	if cfg.LateFindings == "pull" {
 		args = append(args, "--late-findings", cfg.LateFindings)
 	}
