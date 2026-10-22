@@ -35,6 +35,26 @@ class ClosureState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CLOSURE_STATE_COMMITTED: _ClassVar[ClosureState]
     CLOSURE_STATE_ACKNOWLEDGING: _ClassVar[ClosureState]
     CLOSURE_STATE_FAILED: _ClassVar[ClosureState]
+
+class ClosureFailureReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    CLOSURE_FAILURE_REASON_UNSPECIFIED: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_BROKER_ERROR: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_INVALID_RECEIPT: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED: _ClassVar[ClosureFailureReason]
+    CLOSURE_FAILURE_REASON_AGENT_TIMEOUT: _ClassVar[ClosureFailureReason]
+
+class ReflectionPhase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    REFLECTION_PHASE_UNSPECIFIED: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_INSPECT: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_DISPATCH: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_REVIEW: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_PUBLISH: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_RESET: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_FAILED_CLEANUP: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_DONE: _ClassVar[ReflectionPhase]
+    REFLECTION_PHASE_INSPECT_RESULT: _ClassVar[ReflectionPhase]
 DISPATCH_STATE_UNSPECIFIED: DispatchState
 DISPATCH_STATE_IDLE: DispatchState
 DISPATCH_STATE_WORKSPACE_PENDING: DispatchState
@@ -49,6 +69,20 @@ CLOSURE_STATE_PROCESSING: ClosureState
 CLOSURE_STATE_COMMITTED: ClosureState
 CLOSURE_STATE_ACKNOWLEDGING: ClosureState
 CLOSURE_STATE_FAILED: ClosureState
+CLOSURE_FAILURE_REASON_UNSPECIFIED: ClosureFailureReason
+CLOSURE_FAILURE_REASON_BROKER_ERROR: ClosureFailureReason
+CLOSURE_FAILURE_REASON_INVALID_RECEIPT: ClosureFailureReason
+CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED: ClosureFailureReason
+CLOSURE_FAILURE_REASON_AGENT_TIMEOUT: ClosureFailureReason
+REFLECTION_PHASE_UNSPECIFIED: ReflectionPhase
+REFLECTION_PHASE_INSPECT: ReflectionPhase
+REFLECTION_PHASE_DISPATCH: ReflectionPhase
+REFLECTION_PHASE_REVIEW: ReflectionPhase
+REFLECTION_PHASE_PUBLISH: ReflectionPhase
+REFLECTION_PHASE_RESET: ReflectionPhase
+REFLECTION_PHASE_FAILED_CLEANUP: ReflectionPhase
+REFLECTION_PHASE_DONE: ReflectionPhase
+REFLECTION_PHASE_INSPECT_RESULT: ReflectionPhase
 
 class FindingState(_message.Message):
     __slots__ = ("detector_id", "finding", "firing_count", "clear_count", "active", "first_seen_at", "activations", "clears", "not_persisted", "first_clear_at", "last_observed_at")
@@ -111,8 +145,16 @@ class ClosureReceipt(_message.Message):
     ack_token: str
     def __init__(self, incident_id: _Optional[str] = ..., worktree: _Optional[str] = ..., base_commit: _Optional[str] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., ack_token: _Optional[str] = ...) -> None: ...
 
+class FailedIncidentClosure(_message.Message):
+    __slots__ = ("closure", "failure")
+    CLOSURE_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_FIELD_NUMBER: _ClassVar[int]
+    closure: _messages_pb2.IncidentClosure
+    failure: ClosureFailure
+    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., failure: _Optional[_Union[ClosureFailure, _Mapping]] = ...) -> None: ...
+
 class ClosureFailure(_message.Message):
-    __slots__ = ("incident_id", "attempts", "max_attempts", "last_error", "first_failed_at", "last_failed_at", "next_attempt_at", "permanent", "action")
+    __slots__ = ("incident_id", "attempts", "max_attempts", "last_error", "first_failed_at", "last_failed_at", "next_attempt_at", "permanent", "action", "reason")
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
     MAX_ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
@@ -122,6 +164,7 @@ class ClosureFailure(_message.Message):
     NEXT_ATTEMPT_AT_FIELD_NUMBER: _ClassVar[int]
     PERMANENT_FIELD_NUMBER: _ClassVar[int]
     ACTION_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
     incident_id: str
     attempts: int
     max_attempts: int
@@ -131,10 +174,11 @@ class ClosureFailure(_message.Message):
     next_attempt_at: _timestamp_pb2.Timestamp
     permanent: bool
     action: str
-    def __init__(self, incident_id: _Optional[str] = ..., attempts: _Optional[int] = ..., max_attempts: _Optional[int] = ..., last_error: _Optional[str] = ..., first_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., next_attempt_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., permanent: _Optional[bool] = ..., action: _Optional[str] = ...) -> None: ...
+    reason: ClosureFailureReason
+    def __init__(self, incident_id: _Optional[str] = ..., attempts: _Optional[int] = ..., max_attempts: _Optional[int] = ..., last_error: _Optional[str] = ..., first_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_failed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., next_attempt_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., permanent: _Optional[bool] = ..., action: _Optional[str] = ..., reason: _Optional[_Union[ClosureFailureReason, str]] = ...) -> None: ...
 
 class ControllerState(_message.Message):
-    __slots__ = ("version", "scheduler_deadlines", "finding_states", "pending_batch", "history", "incident_open", "responder_done", "incident_request", "incident_result", "dispatch_error", "incident_detected_at", "incident_dispatched_at", "responder_completed_at", "detector_review_required", "detector_review_required_at", "detector_review_reason", "detector_clear_since", "incident_observed_changes", "dispatch_state", "incident_finding_keys", "pending_closure", "closure_state", "closure_receipt", "closure_failure", "last_acknowledged_incident_id", "pending_releases", "evaluation_iteration", "detector_timeline", "incident_view", "drift_events", "ownership_adoption", "drift_admission", "program_sweep_cursors", "responder_tool_state_json")
+    __slots__ = ("version", "scheduler_deadlines", "finding_states", "pending_batch", "history", "incident_open", "responder_done", "incident_request", "incident_result", "dispatch_error", "incident_detected_at", "incident_dispatched_at", "responder_completed_at", "detector_review_required", "detector_review_required_at", "detector_review_reason", "detector_clear_since", "incident_observed_changes", "dispatch_state", "incident_finding_keys", "pending_closure", "closure_state", "closure_receipt", "closure_failure", "last_acknowledged_incident_id", "pending_releases", "evaluation_iteration", "detector_timeline", "incident_view", "drift_events", "ownership_adoption", "drift_admission", "program_sweep_cursors", "responder_tool_state_json", "failed_closures")
     class SchedulerDeadlinesEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -197,6 +241,7 @@ class ControllerState(_message.Message):
     DRIFT_ADMISSION_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_SWEEP_CURSORS_FIELD_NUMBER: _ClassVar[int]
     RESPONDER_TOOL_STATE_JSON_FIELD_NUMBER: _ClassVar[int]
+    FAILED_CLOSURES_FIELD_NUMBER: _ClassVar[int]
     version: str
     scheduler_deadlines: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
     finding_states: _containers.MessageMap[str, FindingState]
@@ -231,7 +276,8 @@ class ControllerState(_message.Message):
     drift_admission: DriftAdmissionState
     program_sweep_cursors: _containers.ScalarMap[str, str]
     responder_tool_state_json: bytes
-    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., drift_admission: _Optional[_Union[DriftAdmissionState, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ...) -> None: ...
+    failed_closures: _containers.RepeatedCompositeFieldContainer[FailedIncidentClosure]
+    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., drift_admission: _Optional[_Union[DriftAdmissionState, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ..., failed_closures: _Optional[_Iterable[_Union[FailedIncidentClosure, _Mapping]]] = ...) -> None: ...
 
 class ReflectionDecision(_message.Message):
     __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage")
@@ -298,7 +344,7 @@ class ControllerRolloutReceipt(_message.Message):
     def __init__(self, expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., build_artifact: _Optional[str] = ..., controller_revision: _Optional[str] = ..., observed_detector_fingerprint: _Optional[str] = ..., success: _Optional[bool] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class BrokerLedger(_message.Message):
-    __slots__ = ("incident_id", "closure", "proposal_commit", "outcome_document", "requires_reflection", "outcome_commit", "reflection_processed", "reflection_decision", "reflection_commit", "rollout_expectation", "rollout_receipts", "receipt", "acknowledged", "acknowledged_at", "reflection_rejections", "reflection_rejected", "reflection_skipped_reason", "closure_phase_timestamps", "fast_path_skipped_reason", "fast_path_relation_covered_findings")
+    __slots__ = ("incident_id", "closure", "proposal_commit", "outcome_document", "requires_reflection", "outcome_commit", "reflection_processed", "reflection_decision", "reflection_commit", "rollout_expectation", "rollout_receipts", "receipt", "acknowledged", "acknowledged_at", "reflection_rejections", "reflection_rejected", "reflection_skipped_reason", "closure_phase_timestamps", "fast_path_skipped_reason", "fast_path_relation_covered_findings", "reflection_phase", "reflection_workspace", "reflection_paths", "reflection_results", "reflection_max_retries", "reflection_dispatch_at")
     class ClosurePhaseTimestampsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -326,6 +372,12 @@ class BrokerLedger(_message.Message):
     CLOSURE_PHASE_TIMESTAMPS_FIELD_NUMBER: _ClassVar[int]
     FAST_PATH_SKIPPED_REASON_FIELD_NUMBER: _ClassVar[int]
     FAST_PATH_RELATION_COVERED_FINDINGS_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_PHASE_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_WORKSPACE_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_PATHS_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_RESULTS_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_MAX_RETRIES_FIELD_NUMBER: _ClassVar[int]
+    REFLECTION_DISPATCH_AT_FIELD_NUMBER: _ClassVar[int]
     incident_id: str
     closure: _messages_pb2.IncidentClosure
     proposal_commit: str
@@ -346,7 +398,13 @@ class BrokerLedger(_message.Message):
     closure_phase_timestamps: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
     fast_path_skipped_reason: str
     fast_path_relation_covered_findings: _containers.RepeatedCompositeFieldContainer[_program_pb2.RelationCoveredFinding]
-    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., fast_path_skipped_reason: _Optional[str] = ..., fast_path_relation_covered_findings: _Optional[_Iterable[_Union[_program_pb2.RelationCoveredFinding, _Mapping]]] = ...) -> None: ...
+    reflection_phase: ReflectionPhase
+    reflection_workspace: _worker_pb2.ProposalWorkspace
+    reflection_paths: _containers.RepeatedScalarFieldContainer[str]
+    reflection_results: _containers.RepeatedCompositeFieldContainer[ReflectionDecision]
+    reflection_max_retries: int
+    reflection_dispatch_at: _timestamp_pb2.Timestamp
+    def __init__(self, incident_id: _Optional[str] = ..., closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_document: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., requires_reflection: _Optional[bool] = ..., outcome_commit: _Optional[str] = ..., reflection_processed: _Optional[bool] = ..., reflection_decision: _Optional[_Union[ReflectionDecision, _Mapping]] = ..., reflection_commit: _Optional[str] = ..., rollout_expectation: _Optional[_Union[ControllerRolloutExpectation, _Mapping]] = ..., rollout_receipts: _Optional[_Iterable[_Union[ControllerRolloutReceipt, _Mapping]]] = ..., receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., acknowledged: _Optional[bool] = ..., acknowledged_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., reflection_rejections: _Optional[_Iterable[_Union[ProposalRejection, _Mapping]]] = ..., reflection_rejected: _Optional[bool] = ..., reflection_skipped_reason: _Optional[str] = ..., closure_phase_timestamps: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., fast_path_skipped_reason: _Optional[str] = ..., fast_path_relation_covered_findings: _Optional[_Iterable[_Union[_program_pb2.RelationCoveredFinding, _Mapping]]] = ..., reflection_phase: _Optional[_Union[ReflectionPhase, str]] = ..., reflection_workspace: _Optional[_Union[_worker_pb2.ProposalWorkspace, _Mapping]] = ..., reflection_paths: _Optional[_Iterable[str]] = ..., reflection_results: _Optional[_Iterable[_Union[ReflectionDecision, _Mapping]]] = ..., reflection_max_retries: _Optional[int] = ..., reflection_dispatch_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class OwnershipAdoptionStatus(_message.Message):
     __slots__ = ("source_commit", "adopted_objects", "conflicts_taken_over", "from_managers", "last_error", "skipped_reason", "retry_at", "failures")

@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/lifecyclecore"
 )
 
 type WorkspaceEffect struct {
@@ -11,11 +13,13 @@ type WorkspaceEffect struct {
 }
 
 type ClosureEffect struct {
-	Closure IncidentClosure
+	Identity string
+	Closure  IncidentClosure
 }
 
 type ClosureAcknowledgmentEffect struct {
-	Receipt ClosureReceipt
+	Identity string
+	Receipt  ClosureReceipt
 }
 
 func (c *Controller) PendingWorkspaceEffect() (WorkspaceEffect, bool) {
@@ -112,10 +116,19 @@ func (c *Controller) ExecuteReleaseEffect(ctx context.Context, effect ReleaseEff
 func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.pendingClosure == nil || !c.closureRetryDueLocked() {
+	if c.broker == nil {
 		return ClosureEffect{}, false
 	}
-	return ClosureEffect{Closure: *cloneIncidentClosure(c.pendingClosure)}, true
+	effects, err := c.closureEffectsLocked()
+	if err != nil {
+		return ClosureEffect{}, false
+	}
+	for _, effect := range effects {
+		if effect.Kind == lifecyclecore.ProcessClosure {
+			return ClosureEffect{Identity: effect.ID, Closure: incidentClosureState(effect.Closure)}, true
+		}
+	}
+	return ClosureEffect{}, false
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
@@ -125,7 +138,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	}
 	c.mu.Lock()
 	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.pendingClosure == nil ||
-		c.pendingClosure.Request.IncidentID != effect.Closure.Request.IncidentID {
+		c.pendingClosure.Request.IncidentID != effect.Closure.Request.IncidentID || !sameIncidentClosure(*c.pendingClosure, effect.Closure) {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("closure effect is not pending")
@@ -139,12 +152,17 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return err
 	}
 	broker := c.broker
-	c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
+	effects, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Drive, At: c.clock(), EffectID: effect.Identity})
+	if stepErr != nil || len(effects) != 1 || effects[0].ID != effect.Identity {
+		c.mu.Unlock()
+		cancel()
+		return fmt.Errorf("closure effect changed before execution: %v", stepErr)
+	}
 	c.mu.Unlock()
 	go func() {
 		defer cancel()
 		receipt, processErr := broker.ProcessClosure(actionCtx, effect.Closure)
-		c.closureResults <- closureCompletion{receipt: receipt, err: processErr}
+		c.closureResults <- closureCompletion{effectID: effect.Identity, receipt: receipt, err: processErr}
 	}()
 	return nil
 }
@@ -152,10 +170,19 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 func (c *Controller) PendingClosureAcknowledgmentEffect() (ClosureAcknowledgmentEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || c.closureReceipt == nil {
+	if c.broker == nil {
 		return ClosureAcknowledgmentEffect{}, false
 	}
-	return ClosureAcknowledgmentEffect{Receipt: *cloneClosureReceipt(c.closureReceipt)}, true
+	effects, err := c.closureEffectsLocked()
+	if err != nil {
+		return ClosureAcknowledgmentEffect{}, false
+	}
+	for _, effect := range effects {
+		if effect.Kind == lifecyclecore.AcknowledgeClosure {
+			return ClosureAcknowledgmentEffect{Identity: effect.ID, Receipt: *closureReceiptState(effect.Receipt)}, true
+		}
+	}
+	return ClosureAcknowledgmentEffect{}, false
 }
 
 func (c *Controller) ExecuteClosureAcknowledgmentEffect(
@@ -168,7 +195,7 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 	}
 	c.mu.Lock()
 	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || c.closureReceipt == nil ||
-		c.closureReceipt.AckToken != effect.Receipt.AckToken {
+		*c.closureReceipt != effect.Receipt {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("closure acknowledgment effect is not pending")
@@ -195,12 +222,17 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 			return ErrControllerRolloutRestartRequired
 		}
 	}
-	c.closureState = contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING
+	effects, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Drive, At: c.clock(), EffectID: effect.Identity})
+	if stepErr != nil || len(effects) != 1 || effects[0].ID != effect.Identity {
+		c.mu.Unlock()
+		cancel()
+		return fmt.Errorf("closure acknowledgment changed before execution: %v", stepErr)
+	}
 	c.mu.Unlock()
 	go func() {
 		defer cancel()
 		ackErr := broker.AcknowledgeClosure(actionCtx, effect.Receipt)
-		c.acknowledgmentResults <- acknowledgmentCompletion{err: ackErr}
+		c.acknowledgmentResults <- acknowledgmentCompletion{effectID: effect.Identity, err: ackErr}
 	}()
 	return nil
 }
@@ -297,68 +329,78 @@ func (c *Controller) handleWorkspaceCompletion(completion workspaceCompletion) {
 
 func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 	c.mu.Lock()
-	err := completion.err
-	if err == nil && (c.pendingClosure == nil || completion.receipt.IncidentID != c.pendingClosure.Request.IncidentID ||
-		completion.receipt.OutcomeCommit == "" || completion.receipt.AckToken == "") {
-		err = fmt.Errorf("broker returned invalid closure receipt")
-	}
-	if err != nil {
-		if c.pendingClosure == nil {
-			c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-			c.mu.Unlock()
-			c.reportBrokerError("process incident closure", err)
-			return
-		}
-		failure, permanent := c.recordClosureRejectionLocked(err)
+	if (c.closureState != contracts.ClosureState_CLOSURE_STATE_PROCESSING && c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING) || c.pendingClosure == nil || completion.effectID != lifecyclecore.Identity(c.pendingClosure.Request.IncidentID, c.pendingClosure.Request.RepositoryBaseCommit, lifecyclecore.ProcessClosure) {
 		c.mu.Unlock()
-		c.reportBrokerError("process incident closure", err)
-		if permanent {
-			c.reportBrokerError("give up incident closure", failure)
+		return
+	}
+	event := lifecyclecore.Event{Kind: lifecyclecore.Committed, At: c.clock(), EffectID: completion.effectID, Receipt: closureReceiptContract(&completion.receipt)}
+	if completion.err != nil {
+		event.Kind = lifecyclecore.Rejected
+		event.Error = completion.err.Error()
+		if errors.Is(completion.err, context.DeadlineExceeded) {
+			event.Kind = lifecyclecore.AgentTimeout
+		}
+		if errors.Is(completion.err, context.Canceled) {
+			event.Kind = lifecyclecore.Canceled
+		}
+	}
+	_, err := c.stepClosureLocked(event)
+	if err != nil {
+		c.mu.Unlock()
+		c.reportBrokerError("closure transition", err)
+		return
+	}
+	if c.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED {
+		failure := cloneClosureFailure(c.closureFailure)
+		c.mu.Unlock()
+		if completion.err != nil {
+			c.reportBrokerError("process incident closure", completion.err)
+		} else if failure != nil {
+			c.reportBrokerError("process incident closure", fmt.Errorf("%s", failure.LastError))
+		}
+		if failure != nil && failure.Permanent {
+			c.reportBrokerError("give up incident closure", *failure)
 			if c.OnClosureFailed != nil {
-				c.OnClosureFailed(failure)
+				c.OnClosureFailed(*failure)
 			}
 		}
 		return
 	}
-	c.closureReceipt = cloneClosureReceipt(&completion.receipt)
 	c.config.SourceCommit = completion.receipt.OutcomeCommit
 	if completion.receipt.ReflectionCommit != "" {
 		c.config.SourceCommit = completion.receipt.ReflectionCommit
 	}
-	c.closureFailure = nil
-	c.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
-	c.emitLifecycleLocked(&contracts.LifecycleEvent{
-		Event: PhaseClosureCommitted, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.receipt.IncidentID,
-		Worktree: completion.receipt.Worktree, BaseCommit: completion.receipt.BaseCommit,
-		ProposalCommit: completion.receipt.ProposalCommit, OutcomeCommit: completion.receipt.OutcomeCommit,
-		ReflectionCommit: completion.receipt.ReflectionCommit,
-	})
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseClosureCommitted, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.receipt.IncidentID, Worktree: completion.receipt.Worktree, BaseCommit: completion.receipt.BaseCommit, ProposalCommit: completion.receipt.ProposalCommit, OutcomeCommit: completion.receipt.OutcomeCommit, ReflectionCommit: completion.receipt.ReflectionCommit})
 	c.mu.Unlock()
 }
 
 func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCompletion) {
 	c.mu.Lock()
+	if c.closureState != contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING || c.closureReceipt == nil || completion.effectID != lifecyclecore.Identity(c.closureReceipt.IncidentID, c.closureReceipt.OutcomeCommit+"\x00"+c.closureReceipt.ReflectionCommit, lifecyclecore.AcknowledgeClosure) {
+		c.mu.Unlock()
+		return
+	}
+	event := lifecyclecore.Event{Kind: lifecyclecore.Acknowledged, At: c.clock(), EffectID: completion.effectID}
 	if completion.err != nil {
-		c.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
+		event.Kind = lifecyclecore.AcknowledgmentRejected
+	}
+	receipt := cloneClosureReceipt(c.closureReceipt)
+	pending := cloneIncidentClosure(c.pendingClosure)
+	_, err := c.stepClosureLocked(event)
+	if err != nil {
+		c.mu.Unlock()
+		c.reportBrokerError("acknowledgment transition", err)
+		return
+	}
+	if completion.err != nil {
 		c.mu.Unlock()
 		c.reportBrokerError("acknowledge incident closure", completion.err)
 		return
 	}
-	if c.closureReceipt != nil {
-		c.lastAcknowledgedIncidentID = c.closureReceipt.IncidentID
-		c.emitLifecycleLocked(&contracts.LifecycleEvent{
-			Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: c.closureReceipt.IncidentID,
-			OutcomeCommit: c.closureReceipt.OutcomeCommit,
-		})
+	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: receipt.IncidentID, OutcomeCommit: receipt.OutcomeCommit})
+	if pending != nil {
+		c.batcher.RemoveKeys(findingKeys(pending.Request.Findings))
 	}
-	// Only findings represented by this closure are acknowledged. New faults
-	// observed during response or reflection must survive for the next incident.
-	if c.pendingClosure != nil {
-		c.batcher.RemoveKeys(findingKeys(c.pendingClosure.Request.Findings))
-	}
-	c.pendingClosure = nil
-	c.closureReceipt = nil
-	c.closureState = contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED
 	c.mu.Unlock()
 }
 

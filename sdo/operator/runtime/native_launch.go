@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -71,8 +72,8 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if native == nil {
 		return nil
 	}
-	if config == nil || client == nil || registry == nil {
-		return errors.New("native reflector requires typed launch config, Kubernetes client, and agent registry")
+	if config == nil || client == nil || registry == nil || native.LedgerRoot == "" {
+		return errors.New("native reflector requires typed launch config, Kubernetes client, agent registry, and ledger root")
 	}
 	reflectorID, err := registry.AgentFor(&contracts.ReflectionRequest{})
 	if err != nil {
@@ -112,8 +113,9 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		return executor, nil
 	}
 	native.Reflector = RegisteredReflectionWorker{
-		Executor: freshExecutor,
-		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
+		TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
+		Executor:  freshExecutor,
+		AgentID:   reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: timeout,
 		SessionMode:       config.GetReflectionSession(),
 		Guidance:          config.GetReflectionGuidance(),
 		Catalog:           memory.OpenCatalogReader(config.GetAppRoot()),

@@ -1,8 +1,7 @@
 # Go functional-core boundary
 
 Declare production core packages in `scripts/go_pure_packages.txt` and keep their
-path scopes in `.golangci.yml` synchronized. `contracts/outcome` is enrolled;
-lifecycle transitions will be enrolled when extracted. `outcome_derivation` still
+path scopes in `.golangci.yml` synchronized. `contracts/outcome` and `runtime/lifecyclecore` are enrolled. `outcome_derivation` still
 has mutable lookup maps and a context parameter, so it requires a later extraction.
 
 `bash scripts/check_go_core.sh` runs pinned golangci-lint **2.11.4** with depguard

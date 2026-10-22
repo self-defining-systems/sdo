@@ -72,6 +72,21 @@ message ClosureReceipt {
   string ack_token = 7;
 }
 
+enum ClosureFailureReason {
+  CLOSURE_FAILURE_REASON_UNSPECIFIED = 0;
+  CLOSURE_FAILURE_REASON_BROKER_ERROR = 1;
+  CLOSURE_FAILURE_REASON_INVALID_RECEIPT = 2;
+  CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED = 3;
+  CLOSURE_FAILURE_REASON_AGENT_TIMEOUT = 4;
+}
+
+// FailedIncidentClosure preserves terminal evidence independently of the next
+// incident. The storage edge archives each record before accepting new state.
+message FailedIncidentClosure {
+  IncidentClosure closure = 1 [(buf.validate.field).required = true];
+  ClosureFailure failure = 2 [(buf.validate.field).required = true];
+}
+
 // ClosureFailure is the durable record of broker rejections of the pending
 // closure. Permanent means the retry budget is spent.
 message ClosureFailure {
@@ -84,6 +99,7 @@ message ClosureFailure {
   google.protobuf.Timestamp next_attempt_at = 7;
   bool permanent = 8;
   string action = 9;
+  ClosureFailureReason reason = 10 [(buf.validate.field).enum.defined_only = true];
 }
 
 // ControllerState is the controller's restartable state, persisted as
@@ -114,6 +130,16 @@ message ControllerState {
       "!has(this.closure_failure) || (has(this.pending_closure) && "
       "this.closure_failure.incident_id == this.pending_closure.request.incident_id && "
       "this.closure_failure.permanent == (this.closure_state == 5))"
+  };
+  option (buf.validate.message).cel = {
+    id: "state.pending_closure_has_payload"
+    message: "pending or processing closure requires its frozen payload"
+    expression: "!(this.closure_state in [1, 2]) || has(this.pending_closure)"
+  };
+  option (buf.validate.message).cel = {
+    id: "state.committed_closure_has_receipt"
+    message: "committed or acknowledging closure requires its receipt"
+    expression: "!(this.closure_state in [3, 4]) || has(this.closure_receipt)"
   };
   string version = 1 [(buf.validate.field).string.const = "sdo.controller/v1"];
   map<string, google.protobuf.Timestamp> scheduler_deadlines = 2;
@@ -153,6 +179,9 @@ message ControllerState {
   // Incident-scoped attempt counts, limits and failure outcomes. Never stores
   // plans, applications, rollback progress or pending mutations.
   bytes responder_tool_state_json = 35 [(buf.validate.field).bytes.max_len = 700000];
+  // An outbox of failures not yet confirmed in the per-incident archive. The
+  // ConfigMap edge archives these before the main CAS and omits them there.
+  repeated FailedIncidentClosure failed_closures = 36;
   reserved 32;
   reserved "drift_investigation";
 }
@@ -204,6 +233,20 @@ message ControllerRolloutReceipt {
   google.protobuf.Timestamp verified_at = 6;
 }
 
+// ReflectionPhase is the durable reflection proposal lifecycle. Publication is
+// one trusted broker effect: its private clone runs gofmt/validator/commit.
+enum ReflectionPhase {
+  REFLECTION_PHASE_UNSPECIFIED = 0;
+  REFLECTION_PHASE_INSPECT = 1;
+  REFLECTION_PHASE_DISPATCH = 2;
+  REFLECTION_PHASE_REVIEW = 3;
+  REFLECTION_PHASE_PUBLISH = 4;
+  REFLECTION_PHASE_RESET = 5;
+  REFLECTION_PHASE_FAILED_CLEANUP = 6;
+  REFLECTION_PHASE_DONE = 7;
+  REFLECTION_PHASE_INSPECT_RESULT = 8;
+}
+
 // BrokerLedger is the Go incident broker's durable per-incident record, stored
 // as ProtoJSON under the worktree root's native-ledger directory.
 message BrokerLedger {
@@ -236,6 +279,13 @@ message BrokerLedger {
   map<string, google.protobuf.Timestamp> closure_phase_timestamps = 18;
   string fast_path_skipped_reason = 19;
   repeated RelationCoveredFinding fast_path_relation_covered_findings = 20;
+  ReflectionPhase reflection_phase = 21 [(buf.validate.field).enum.defined_only = true];
+  ProposalWorkspace reflection_workspace = 22;
+  repeated string reflection_paths = 23;
+  // Completed decisions survive rejection/reset of a proposal checkout.
+  repeated ReflectionDecision reflection_results = 24;
+  uint32 reflection_max_retries = 25;
+  google.protobuf.Timestamp reflection_dispatch_at = 26;
 }
 
 // Source field ownership adoption survives controller restarts.

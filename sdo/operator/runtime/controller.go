@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/lifecyclecore"
 	"sort"
 	"strings"
 	"sync"
@@ -130,6 +131,7 @@ type Controller struct {
 	closureState               contracts.ClosureState
 	closureReceipt             *ClosureReceipt
 	closureFailure             *ClosureFailure
+	failedClosures             []*contracts.FailedIncidentClosure
 	dispatchFailureAttempts    int
 	dispatchNextRetryAt        time.Time
 	lastAcknowledgedIncidentID string
@@ -423,7 +425,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 // quiet state may become the configuration baseline.
 func (c *Controller) quiet() bool {
 	c.mu.Lock()
-	busy := c.incidentOpen || c.pendingClosure != nil
+	busy := c.incidentOpen || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	_, batched := c.batcher.Deadline()
 	return !busy && !batched && c.tracker.Quiet()
@@ -580,7 +582,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen
 	deferred := c.dispatchState == admissionDeferredState
-	closurePending := c.pendingClosure != nil && c.broker != nil
+	closurePending := c.closureBlocksNextLocked() && c.broker != nil
 	c.mu.Unlock()
 	if incidentOpen {
 		if deferred {
@@ -731,7 +733,7 @@ func (c *Controller) NextWake() time.Time {
 	// A batch deadline only matters when the batch can be dispatched or
 	// attached. Otherwise an expired deadline would spin the runtime loop for
 	// the whole incident.
-	batchActionable := (!c.incidentOpen && (c.pendingClosure == nil || c.broker == nil)) ||
+	batchActionable := (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
 		c.canAttachBeforeLaunchLocked()
 	c.mu.Unlock()
 	if deadline, ok := c.batcher.Deadline(); ok && batchActionable && (next.IsZero() || deadline.Before(next)) {
@@ -1169,9 +1171,15 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		DispatchError: closure.DispatchError != "",
 	})
 	c.timeline = nil
-	c.pendingClosure = cloneIncidentClosure(&closure)
-	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	c.closureReceipt = nil
+	projected, err := incidentClosureContract(closure)
+	if err == nil {
+		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	}
+	if err != nil {
+		c.mu.Unlock()
+		c.reportBrokerError("freeze closure", err)
+		return
+	}
 	c.incidentOpen = false
 	c.responderDone = false
 	c.currentIncidentRequest = nil
@@ -1505,12 +1513,6 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 	} else if dispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING {
 		dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
-	closureState := c.closureState
-	if closureState == contracts.ClosureState_CLOSURE_STATE_PROCESSING {
-		closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	} else if closureState == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
-		closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
-	}
 	findingStates, err := findingStatesContract(c.tracker.Snapshot())
 	if err != nil {
 		return nil, err
@@ -1536,8 +1538,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		DetectorReviewRequired: c.detectorReviewRequired, DetectorReviewRequiredAt: optionalTimestamp(c.detectorReviewRequiredAt),
 		DetectorReviewReason: c.detectorReviewReason, DetectorClearSince: timestampsContract(c.detectorClearSince),
 		IncidentObservedChanges: observedStateChangesContract(c.observedStateChangesLocked()), DispatchState: dispatchState,
-		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: closureState,
-		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure),
+		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
+		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, PendingReleases: append([]string(nil), c.pendingReleases...),
 		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption), DriftAdmission: cloneDriftAdmission(c.driftAdmission), ProgramSweepCursors: maps.Clone(c.programSweepCursors),
@@ -1560,7 +1562,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 			return nil, fmt.Errorf("pending closure: %w", err)
 		}
 	}
-	return message, nil
+	recovered, _ := lifecyclecore.Step(message, lifecyclecore.Event{Kind: lifecyclecore.Restart})
+	return recovered, nil
 }
 
 func (c *Controller) RestoreState(state *contracts.ControllerState) error {
@@ -1612,11 +1615,12 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 		c.pendingClosure = &closure
 	}
 	c.closureState = state.ClosureState
-	if c.pendingClosure != nil && c.closureState == contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED {
-		c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	}
 	c.closureReceipt = cloneClosureReceipt(closureReceiptState(state.GetClosureReceipt()))
 	c.closureFailure = cloneClosureFailure(closureFailureState(state.GetClosureFailure()))
+	c.failedClosures = cloneFailedClosures(state.GetFailedClosures())
+	if _, err := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Restart}); err != nil {
+		return err
+	}
 	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
 	c.pendingReleases = append([]string(nil), state.PendingReleases...)
 	c.releaseInFlight = ""
@@ -1740,8 +1744,13 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	c.stateRevision = revision
 	c.mu.Lock()
 	c.durable = proto.Clone(state).(*contracts.ControllerState)
+	archivedIDs := make([]string, 0, len(state.GetFailedClosures()))
+	for _, record := range state.GetFailedClosures() {
+		archivedIDs = append(archivedIDs, record.GetFailure().GetIncidentId())
+	}
+	_, transitionErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.ArchivesPersisted, ArchivedIncidentIDs: archivedIDs})
 	c.mu.Unlock()
-	return nil
+	return transitionErr
 }
 
 func (c *Controller) actionContext(ctx context.Context) (context.Context, context.CancelFunc, error) {

@@ -659,7 +659,7 @@ func closureFailureContract(failure *ClosureFailure) *contracts.ClosureFailure {
 		IncidentId: failure.IncidentID, Attempts: int32(failure.Attempts), MaxAttempts: int32(failure.MaxAttempts),
 		LastError: failure.LastError, FirstFailedAt: contractTimestamp(failure.FirstFailedAt),
 		LastFailedAt: contractTimestamp(failure.LastFailedAt), NextAttemptAt: optionalTimestamp(failure.NextAttemptAt),
-		Permanent: failure.Permanent, Action: failure.Action,
+		Permanent: failure.Permanent, Action: failure.Action, Reason: failure.Reason,
 	}
 }
 
@@ -671,7 +671,7 @@ func closureFailureState(message *contracts.ClosureFailure) *ClosureFailure {
 		IncidentID: message.GetIncidentId(), Attempts: int(message.GetAttempts()), MaxAttempts: int(message.GetMaxAttempts()),
 		LastError: message.GetLastError(), FirstFailedAt: controllerTime(message.GetFirstFailedAt()),
 		LastFailedAt: controllerTime(message.GetLastFailedAt()), NextAttemptAt: controllerTime(message.GetNextAttemptAt()),
-		Permanent: message.GetPermanent(), Action: message.GetAction(),
+		Permanent: message.GetPermanent(), Action: message.GetAction(), Reason: message.GetReason(),
 	}
 }
 

@@ -14,9 +14,18 @@ turn preserves the committed mitigation and records its error. The closure's `re
 
 ### Historical Python broker fields
 
-The following fields describe retired Python broker ledgers; do not expect them in current native ProtoJSON.
+These fields describe retired Python ledgers, not current ProtoJSON:
+`reflection_attempts` counts turns including backend failures;
+`reflection_backend_error` is the last such failure;
+`reflection_fresh_retry_attempts` counts fresh retries after validation rejection.
+`reflection_session_mode` records `fresh` or `resume`; the first turn fixes it.
+The rejected diff was `<sha256(incident_id)>.reflection-rejected.diff`.
+`reflection_skipped_reason` explained deterministic reuse from verified exact or
+learned-detector matches and trusted successful playbooks. Such a skip used zero
+reflection attempts, empty usage, a `no_change` decision with the skip reason,
+and no reflection commit, accepted detector paths or rollout. Verify those
+historical claims against the incident's detector, action and outcome evidence.
 
-`reflection_attempts` counts reflection turns, including turns whose backend failed; `reflection_backend_error` (absent in older ledgers) is the last such failure, and once the attempts are spent the broker records `no_change` with that error as the reason instead of failing the closure; `reflection_fresh_retry_attempts` (default 0 in older ledgers) counts the subset that retried a validator-rejected proposal in a fresh session instead of resuming the responder session. `reflection_session_mode` (null in older ledgers and when no LLM reflection ran) records how the first attempt ran: `fresh` (the default: a new session given a bounded incident brief of the closure findings and evidence, the responder's structured result, its shell commands from `responder-turns.jsonl`, and relevant memory excerpts; under about 8K tokens) or `resume` (opt-in: the responder session). It is fixed when the first LLM attempt starts, so a restarted broker keeps it. The rejected proposal's diff is kept beside the ledger as `<sha256(incident_id)>.reflection-rejected.diff`. `reflection_skipped_reason` (null in older ledgers) is set when the broker recorded a deterministic no-op reflection without an LLM turn: a repeated exact-match success where the warm rule held (a prior verified outcome matched by `exact-fingerprint`, or by `learned-detector-origin` when an incident detector learned from that outcome fired on the same resource and surfaced a playbook listed in the `possiblePlaybooks` of a registered responder-owned incident detector, fired or not), the responder applied that playbook, every repair action and verification passed, the controller verified health, and that detector was not firing in its latest post-response evaluation (no post-response evaluation is accepted). The reason names the prior incident(s), each playbook with its detector, whether the detector had fired at dispatch, how the playbook surfaced (`active-finding`, `surfaced`, `prior-outcome-applied`, `detector-learned-from-exact-prior`), and each detector's post-response state (`clear after the response` or `not evaluated after the response`). Such a ledger has `reflection_attempts=0`, empty `reflection_usage`, `reflection_learning_decision=no_change` with the same text as `reflection_no_change_reason`, an empty attributable reflection commit, and no accepted detector paths or controller rollout.
 ## Operational memory layout (schema version 3)
 
 Detectors are registered by per-detector manifests at `.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml` (the directory name is the detector ID). The former single `.sdo/diagnostics/manifest.yaml` index exists only in schema version 1 repositories; Upkeep migrates it. Schema version 3 also stores playbook references (`possiblePlaybooks`, detector `Playbooks`) as logical IDs; version 2 repositories used `.sdo/playbooks/<id>/README.md` paths. Readers must enumerate detector manifests instead of parsing one index.
@@ -32,6 +41,14 @@ Go dispatch is the reflection replay unit after the mainline cutover. Each check
 `CLOSURE_STATE_PENDING`, `CLOSURE_STATE_COMMITTED`, `CLOSURE_STATE_FAILED`.
 Absent fields mean `*_UNSPECIFIED`; old lowercase strings and undefined numbers
 are rejected. `runtime/internal/lifecycleio` persists generated messages.
+`BrokerLedger.reflection_phase` drives dispatch/result inspection/review/publication/
+reset/done; `reflection_results` retains completed decisions after rejection.
+Frozen requests live under the ledger's `reflection-tasks/` directory.
+`ControllerState.failed_closures` is an outbox, archived before the next state CAS
+as content-addressed `sdo-failed-closure-*` ConfigMaps (`failed-closure.json`, label
+`sdo.dev/closure-archive=failed`). Exhausted closures retain evidence and allow
+later incidents; archives are runtime evidence, not operational memory.
+
 
 ### Open incidents after controller restart
 

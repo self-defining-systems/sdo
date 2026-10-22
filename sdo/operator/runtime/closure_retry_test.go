@@ -265,3 +265,35 @@ func TestPausedControllerStillWakesForAPendingClosureRetry(t *testing.T) {
 		t.Fatalf("a committed closure still schedules a retry at %s", wake)
 	}
 }
+
+func TestFailedClosureDoesNotBlockNextIncident(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	broker := &rejectingIncidentBroker{rejections: 1000}
+	controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, broker, &now)
+	attemptClosure(t, controller)
+	controller.batcher.AddAt(stateFinding("next-fault"), now)
+	if err := controller.dispatchReady(context.Background(), now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !controller.IncidentOpen() {
+		t.Fatal("a permanently failed closure blocked the next incident")
+	}
+}
+
+func TestClosureRetryBudgetSurvivesRestartConfigurationChange(t *testing.T) {
+	now := time.Unix(1000, 0)
+	broker := &rejectingIncidentBroker{rejections: 10}
+	first := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 2}, broker, &now)
+	attemptClosure(t, first)
+	state := exportState(t, first)
+	restored := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 8}, broker, &now)
+	if err := restored.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(defaultClosureRetryInitialBackoff)
+	attemptClosure(t, restored)
+	failure, ok := restored.ClosureFailure()
+	if !ok || !failure.Permanent || failure.MaxAttempts != 2 {
+		t.Fatalf("restart changed incident retry budget: %+v", failure)
+	}
+}

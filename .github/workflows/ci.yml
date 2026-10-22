@@ -179,7 +179,7 @@ jobs:
       # TestReplay* and TestChaos* have dedicated, 5-minute-capped jobs below;
       # skip them here so the runtime module's tests aren't compiled and run a
       # second time in this job.
-      - run: go test -race -skip '^TestReplay|^TestChaos' ./...
+      - run: go test -race -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...
         working-directory: ${{ matrix.directory }}
 
       - name: Fuzz object reference boundary (bounded)
@@ -261,8 +261,8 @@ jobs:
         with:
           go-version: "1.26.8"
           cache-dependency-path: sdo/operator/runtime/go.sum
-      - name: Run the bounded, seeded chaos suite
-        run: go test -race -run '^TestChaos' -timeout 5m ./...
+      - name: Run bounded chaos and implementation state explorers
+        run: go test -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout 5m ./...
         working-directory: sdo/operator/runtime
 
   # Builds the images SDO runs in and checks each one imports its entry points

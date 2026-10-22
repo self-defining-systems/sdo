@@ -218,9 +218,11 @@ func TestNativeBrokerRejectionRecordedBeforeProposalReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Rewind to the moment after attempt 1's rejection was saved: one
-	// rejection, decision cleared, checkout still holding the rejected edit.
+	// Rewind to the explicit reset checkpoint after attempt 1's rejection.
+	// Recovery must reset the rejected tree before dispatching attempt 2.
 	ledger.ReflectionRejections = ledger.ReflectionRejections[:1]
+	ledger.ReflectionResults = ledger.ReflectionResults[:1]
+	ledger.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_RESET
 	ledger.ReflectionRejected, ledger.ReflectionProcessed, ledger.ReflectionDecision, ledger.Receipt = false, false, nil, nil
 	if err := h.native.saveLedger(ledger); err != nil {
 		t.Fatal(err)
@@ -233,15 +235,20 @@ func TestNativeBrokerRejectionRecordedBeforeProposalReset(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.calls = nil
-	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err == nil {
-		t.Fatal("stale rejected checkout was published or ignored")
+	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err != nil {
+		t.Fatalf("reset checkpoint did not recover: %v", err)
 	}
 	ledger, err = h.native.readLedger("inc-crash")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 1 {
-		t.Fatalf("rejection duplicated by recovery: %+v", ledger.ReflectionRejections)
+	if len(ledger.ReflectionRejections) != 3 {
+		t.Fatalf("recovery lost the retry budget: %v", ledger.ReflectionRejections)
+	}
+	for i, rejection := range ledger.ReflectionRejections {
+		if rejection.Attempt != uint32(i+1) {
+			t.Fatalf("rejection duplicated by recovery: %v", ledger.ReflectionRejections)
+		}
 	}
 	if _, err := h.native.ProcessClosure(context.Background(), h.closure); err != nil {
 		t.Fatal(err)

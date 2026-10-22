@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/runtime/lifecyclecore"
 	"strings"
 	"syscall"
 	"time"
@@ -21,7 +23,6 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/memory/validate"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -52,6 +53,7 @@ type ReflectionWorker interface {
 // is 1-based; after a broker rejection Diagnostics are that rejection's typed
 // validator findings.
 type ReflectionFeedback struct {
+	DispatchAt  time.Time
 	Attempt     uint32
 	Diagnostics []*contracts.MemoryDiagnostic
 }
@@ -75,6 +77,7 @@ func (f ReflectionWorkerFunc) Reflect(ctx context.Context, closure IncidentClosu
 // safe to select when a full OutcomeDeriver and ReflectionWorker are configured;
 // no partial closure can be acknowledged.
 type NativeIncidentBroker struct {
+	Now                  func() time.Time
 	Repository           *broker.Broker
 	LedgerRoot           string
 	Deriver              OutcomeDeriver
@@ -133,7 +136,7 @@ func (n NativeIncidentBroker) recordPhase(ledger *contracts.BrokerLedger, phase 
 	if _, recorded := ledger.ClosurePhaseTimestamps[phase]; recorded {
 		return nil
 	}
-	at := time.Now().UTC()
+	at := n.clock()
 	ledger.ClosurePhaseTimestamps[phase] = contractTimestamp(at)
 	if err := n.saveLedger(ledger); err != nil {
 		return err
@@ -296,7 +299,7 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if n.Reflector == nil {
 				return errors.New("verified success requires a registered reflection worker")
 			}
-			reflectionPaths, err := n.processReflection(ctx, closure, ledger)
+			reflectionPaths, err := n.processReflection(ctx, ledger)
 			if err != nil {
 				return err
 			}
@@ -394,118 +397,53 @@ func allTrustedProgramRepairs(current *contracts.OutcomeRecord, prior []*contrac
 	return true
 }
 
-// processReflection runs the reflection worker until the broker accepts its
-// proposal, the worker declares no change, or the validation retry bound is
-// spent. Every broker rejection is saved to the ledger (with its typed
-// diagnostics) before the checkout is reset, so the attempt count survives a
-// restart and a repeated recovery never records the same rejection twice.
-// After the bound the rejection is terminal: the closure completes with no
-// reflection commit. It returns the paths of the accepted reflection commit.
-func (n NativeIncidentBroker) processReflection(ctx context.Context, closure IncidentClosure, ledger *contracts.BrokerLedger) ([]string, error) {
-	id := closure.Request.IncidentID
+// processReflection is a driver: durable pure transitions choose every effect,
+// and the private adapter performs repository/worker/validator I/O.
+func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *contracts.BrokerLedger) ([]string, error) {
+	update := func(event lifecyclecore.ReflectionEvent) error {
+		next, _ := lifecyclecore.StepReflection(ledger, event)
+		if proto.Equal(next, ledger) {
+			return nil
+		}
+		proto.Reset(ledger)
+		proto.Merge(ledger, next)
+		return n.saveLedger(ledger)
+	}
+	if err := update(lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionBegin, MaxRetries: broker.MaxValidationRetries}); err != nil {
+		return nil, err
+	}
+	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
+		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
+		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+		if err != nil {
+			return nil, fmt.Errorf("reflection worker: %w", err)
+		}
+		result := &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+		if decision.Usage != nil {
+			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
+		}
+		return result, nil
+	}}
 	for {
-		if ledger.ReflectionRejected {
-			return nil, nil
+		_, effects := lifecyclecore.StepReflection(ledger, lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionDrive})
+		if len(effects) == 0 {
+			return append([]string(nil), ledger.GetReflectionPaths()...), nil
 		}
-		if accepted, ok, err := n.Repository.AcceptedCommit(ctx, id, broker.ReflectionPhase); err != nil {
-			return nil, err
-		} else if ok {
-			ledger.ReflectionCommit = accepted.Commit
-			return accepted.ChangedPaths, nil
-		}
-		proposal, err := n.Repository.CreateProposalForPhase(ctx, id, broker.ReflectionPhase)
+		event, err := driver.Execute(ctx, effects[0])
 		if err != nil {
 			return nil, err
 		}
-		paths, err := n.Repository.ChangedPaths(ctx, id, broker.ReflectionPhase)
-		if err != nil {
+		if err := update(event); err != nil {
 			return nil, err
-		}
-		if len(paths) == 0 && ledger.ReflectionDecision == nil {
-			workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
-			record := proto.Clone(ledger.OutcomeDocument).(*contracts.OutcomeRecord)
-			if err := n.recordPhase(ledger, "reflection_dispatch"); err != nil {
-				return nil, err
-			}
-			decision, err := n.Reflector.Reflect(ctx, closure, workspace, record, ledger.ProposalCommit, ledger.OutcomeCommit, reflectionFeedback(ledger))
-			if err != nil {
-				return nil, fmt.Errorf("reflection worker: %w", err)
-			}
-			if err := n.recordPhase(ledger, "worker_result_picked_up"); err != nil {
-				return nil, err
-			}
-			ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
-			if decision.Usage != nil {
-				ledger.ReflectionDecision.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
-			}
-			if err := n.saveLedger(ledger); err != nil {
-				return nil, err
-			}
-			paths, err = n.Repository.ChangedPaths(ctx, id, broker.ReflectionPhase)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if ledger.ReflectionDecision == nil {
-			if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
-				return nil, err
-			}
-			return nil, errors.New("reflection changes lack a durable worker decision; proposal reset")
-		}
-		if ledger.ReflectionDecision.GetLearningDecision() == "failed" && ledger.ReflectionDecision.GetError() != "" {
-			if err := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); err != nil {
-				return nil, err
-			}
-			return nil, nil
-		}
-		decision := ReflectionDecision{LearningDecision: ledger.ReflectionDecision.GetLearningDecision(), NoChangeReason: ledger.ReflectionDecision.GetNoChangeReason(), PlaybookIDs: ledger.ReflectionDecision.GetPlaybookIds()}
-		err = decision.Validate(paths)
-		if err == nil && len(paths) == 0 {
-			return nil, nil
-		}
-		var accepted broker.Receipt
-		if err == nil {
-			publishCtx := ctx
-			if n.SessionRoot != "" {
-				captureDir, captureErr := memory.IncidentCorpusDir(n.SessionRoot, id)
-				if captureErr != nil {
-					return nil, captureErr
-				}
-				publishCtx = validate.WithCaptureSource(ctx, captureDir, id)
-			}
-			accepted, err = n.Repository.PublishReflection(publishCtx, id, ledger.ReflectionDecision)
-		}
-		if err == nil {
-			ledger.ReflectionCommit = accepted.Commit
-			return accepted.ChangedPaths, nil
-		}
-		rejectionDiagnostics, typed := broker.RejectionDiagnostics(err)
-		if !typed {
-			// A transport or publication error is not a rejection of the
-			// worker's proposal. Keep its edits and durable decision so recovery
-			// retries publication without dispatching a new reflection task.
-			return nil, err
-		}
-		ledger.ReflectionRejections = append(ledger.ReflectionRejections, broker.NewProposalRejection(uint32(len(ledger.ReflectionRejections)+1), rejectionDiagnostics))
-		ledger.ReflectionRejected = broker.RetriesExhausted(ledger.ReflectionRejections)
-		ledger.ReflectionDecision = nil
-		if err := n.saveLedger(ledger); err != nil {
-			return nil, err
-		}
-		if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
-			return nil, fmt.Errorf("reflection rejected: %v; reset proposal: %w", err, resetErr)
 		}
 	}
 }
 
-// reflectionFeedback derives the next dispatch from durable rejections only.
-func reflectionFeedback(ledger *contracts.BrokerLedger) ReflectionFeedback {
-	rejections := ledger.GetReflectionRejections()
-	feedback := ReflectionFeedback{Attempt: uint32(len(rejections) + 1)}
-	if len(rejections) > 0 {
-		feedback.Diagnostics = rejections[len(rejections)-1].GetDiagnostics()
+func (n NativeIncidentBroker) clock() time.Time {
+	if n.Now != nil {
+		return n.Now().UTC()
 	}
-	return feedback
+	return time.Now().UTC()
 }
 
 func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt ClosureReceipt) error {
@@ -528,7 +466,7 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 		}
 		ledger.Acknowledged = true
 		if ledger.AcknowledgedAt == nil {
-			ledger.AcknowledgedAt = contractTimestamp(time.Now().UTC())
+			ledger.AcknowledgedAt = contractTimestamp(n.clock())
 		}
 		if err := n.saveLedger(ledger); err != nil {
 			return err
