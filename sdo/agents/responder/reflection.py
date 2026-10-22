@@ -183,6 +183,8 @@ def _logical_learning_request(
         "Go owns the supplied classification, corpus evidence and trust decisions. "
         "Preserve Go-owned cases; answer unresolved questions in this incident session without inferring cause groups. "
         "Unavailable observations remain Unknown. "
+        "Preserve potentially large evidence output in a temporary file, then search or extract the relevant "
+        "observations; never infer missing evidence from a truncated prefix. "
         "Edit final operational-memory files only in this isolated checkout. "
         "Source, outcomes, goal and architecture are protected. "
         "Return updated for a validated nonempty diff, including Go-authored edits, "
