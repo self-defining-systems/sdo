@@ -156,3 +156,28 @@ def test_local_help_is_a_concise_capability_index() -> None:
     assert "record" in help_text
     assert "verify" in help_text
     assert len(help_text) < 2000
+
+
+@pytest.mark.parametrize("response", [{"summary": "captured"}, {"error": "capture failed"}])
+def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, response):
+    seen = []
+
+    def exchange(request, _directory):
+        assert request == {"command": "pre-apply"}
+        seen.append("capture")
+        return response
+
+    def run(*_args, **_kwargs):
+        assert seen == ["capture"]
+        seen.append("mutation")
+        return 0
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", run)
+    result = tools_cli.main(["act", "--resource", "Service/app/api", "--", "true"])
+    if response.get("error"):
+        assert result != 0
+        assert seen == ["capture"]
+    else:
+        assert result == 0
+        assert seen == ["capture", "mutation"]
