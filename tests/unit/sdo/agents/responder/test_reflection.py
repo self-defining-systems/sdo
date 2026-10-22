@@ -435,3 +435,102 @@ def test_provider_missing_session_raises_typed_error(provider: str, backend_type
     backend = backend_type(executor=ScriptedAgent(lambda _request: scripted_resume_failure(provider)).executor)
     with pytest.raises(ResponderSessionUnavailable):
         backend.resume(session_id="missing", worktree=tmp_path, prompt="reflect", idempotency_key="key")
+
+
+def _verified_repeat_closure(worktree: Path) -> IncidentClosure:
+    closure = _fresh_closure(worktree)
+    closure.request.memory_snapshot.playbooks.add(id="service-targetport-mismatch", markdown="# programs")
+    closure.request.memory_snapshot.playbooks.add(id="image-pull-source-drift", markdown="# programs")
+    return closure
+
+
+def _verified_repeat_outcome() -> OutcomeRecord:
+    return from_dict(
+        OutcomeRecord,
+        {
+            "schema_version": 1,
+            "incident_id": "inc-1",
+            "classification": "success",
+            "confirmed_root_causes": [{"summary": "Service targetPort does not match the container port"}],
+            "repair_actions": [
+                {
+                    "action_id": "a1",
+                    "kind": "program-plan",
+                    "target": "Service/reservation",
+                    "summary": "set targetPort",
+                }
+            ],
+            "plan_applications": [
+                {
+                    "program_ids": ["service-targetport-mismatch"],
+                    "applied": True,
+                    "verification": {"result": "RESULT_NO_MATCH"},
+                }
+            ],
+        },
+    )
+
+
+def test_refine_depth_sends_a_short_confirm_only_request_in_the_responder_session(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    closure = _verified_repeat_closure(tmp_path)
+    reflect = {
+        "session_id": "session-1",
+        "incident_id": "inc-1",
+        "worktree": tmp_path,
+        "outcome": _verified_repeat_outcome(),
+        "history": [_outcome()],
+        "outcome_commit": "outcome-sha",
+        "session_mode": "resume",
+        "closure": closure,
+    }
+    SessionReflector(backend).resume(**reflect)
+    SessionReflector(backend).resume(**reflect, depth="refine")
+    full, refine = (str(call["prompt"]) for call in backend.calls)
+    assert [call["mode"] for call in backend.calls] == ["resume", "resume"]
+    assert len(refine) < len(full) / 2
+    assert len(refine) < 6_000
+    assert "service-targetport-mismatch" in refine
+    assert "Service targetPort does not match the container port" in refine
+    assert "no_change" in refine
+    assert "outcome-sha" in refine
+    # No full authoring instructions, snapshot, outcome history or outcome document.
+    assert "Operational memory snapshot:" not in refine
+    assert "Current outcome:" not in refine
+    assert "Outcome history" not in refine
+    assert "sdo-operator program scaffold" not in refine
+
+
+def test_refine_depth_retry_after_a_broker_rejection_carries_the_full_request(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_verified_repeat_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode="resume",
+        closure=_verified_repeat_closure(tmp_path),
+        validation_attempt=2,
+        diagnostics=[MemoryDiagnostic(rule="detector.manifest", path="m.yaml", line=4, message="bad id", hint="kebab")],
+        depth="refine",
+    )
+    (call,) = backend.calls
+    assert call["mode"] == "fresh"
+    assert "[detector.manifest] m.yaml:4: bad id" in str(call["prompt"])
+    assert "sdo-operator program scaffold" in str(call["prompt"])
+
+
+def test_unknown_reflection_depth_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="depth"):
+        SessionReflector(_CapturingBackend()).resume(
+            session_id="session-1",
+            incident_id="inc-1",
+            worktree=tmp_path,
+            outcome=_outcome(),
+            history=[],
+            outcome_commit="outcome-sha",
+            closure=_fresh_closure(tmp_path),
+            depth="skip",
+        )

@@ -141,6 +141,11 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("reflection memory snapshot differs from broker proposal base commit")
 			}
 			request.MemorySnapshot = snapshot
+			installed := make([]string, 0, len(snapshot.GetPlaybooks()))
+			for _, playbook := range snapshot.GetPlaybooks() {
+				installed = append(installed, playbook.GetId())
+			}
+			request.Depth = ReflectionDepth(current, installed)
 			currentWire, err := wire.Marshal(current)
 			if err != nil {
 				return ReflectionDecision{}, err
