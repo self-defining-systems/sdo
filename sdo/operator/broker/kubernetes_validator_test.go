@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -146,7 +147,7 @@ func TestKubernetesValidatorAcceptsOnlyKnownJobAdmissionDefaults(t *testing.T) {
 		return true, admitted, nil
 	})
 	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test"}
-	job := launcher.canaryJob("sdo-validator-allow", "sdo-validator", false)
+	job := launcher.canaryJob("sdo-validator-allow", false)
 	if err := launcher.createJob(context.Background(), job); err != nil {
 		t.Fatalf("known API Job defaults rejected: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestKubernetesValidatorAcceptsOnlyKnownJobAdmissionDefaults(t *testing.T) {
 func TestKubernetesValidatorCanaryUsesGoOperator(t *testing.T) {
 	launcher := KubernetesValidationJobClient{Namespace: "sdo", Image: "validator:test"}
 	for _, denied := range []bool{false, true} {
-		job := launcher.canaryJob("sdo-validator-canary", "sdo-validator", denied)
+		job := launcher.canaryJob("sdo-validator-canary", denied)
 		command := job.Spec.Template.Spec.Containers[0].Command
 		expected := "allow"
 		if denied {
@@ -228,7 +229,7 @@ func TestKubernetesValidatorRejectsCredentialInjectionAtAdmission(t *testing.T) 
 		return true, admitted, nil
 	})
 	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test"}
-	if err := launcher.createJob(context.Background(), launcher.canaryJob("sdo-validator-allow", "sdo-validator", false)); err == nil {
+	if err := launcher.createJob(context.Background(), launcher.canaryJob("sdo-validator-allow", false)); err == nil {
 		t.Fatal("validator accepted service account token injection")
 	}
 }
@@ -363,5 +364,120 @@ func TestKubernetesValidatorReturnsTypedContentFailure(t *testing.T) {
 				t.Fatalf("lost typed failure: %v %v %v", typed, ds, err)
 			}
 		})
+	}
+}
+
+func TestJobValidatorSkipsTheJobWhenNothingExecutableChanged(t *testing.T) {
+	root := repository(t)
+	client := fake.NewSimpleClientset()
+	jobs := 0
+	client.PrependReactor("create", "jobs", func(ktesting.Action) (bool, runtime.Object, error) {
+		jobs++
+		return true, nil, errors.New("no Job may run")
+	})
+	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root), SchemaIdentity: "schema", PollInterval: time.Millisecond}
+	if err := JobValidator(launcher)(context.Background(), root, []string{".sdo/arch.md", ".sdo/playbooks/cache/README.md"}); err != nil {
+		t.Fatalf("prose-only candidate: %v", err)
+	}
+	if jobs != 0 {
+		t.Fatalf("prose-only candidate created %d Jobs", jobs)
+	}
+	if err := JobValidator(nil)(context.Background(), root, []string{".sdo/arch.md"}); err == nil {
+		t.Fatal("a missing launcher must still fail closed for prose-only candidates")
+	}
+	if err := JobValidator(launcher)(context.Background(), root, []string{".sdo/corpus/cache/open.json"}); err == nil || jobs == 0 {
+		t.Fatalf("a corpus change must run the Job: err=%v jobs=%d", err, jobs)
+	}
+}
+
+// succeedingJobs completes every created Job and records its name.
+func succeedingJobs(t *testing.T, client *fake.Clientset) *[]string {
+	t.Helper()
+	var created []string
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+		created = append(created, job.Name)
+		now := metav1.Now()
+		job.Status.Succeeded = 1
+		job.Status.CompletionTime = &now
+		if err := client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, "sdo"); err != nil {
+			t.Fatal(err)
+		}
+		return true, job, nil
+	})
+	return &created
+}
+
+func TestKubernetesValidatorProvesNetworkIsolationOncePerImageUntilExpiry(t *testing.T) {
+	root := repository(t)
+	newClient := func(image string, ttl time.Duration, proof *IsolationProof, client *fake.Clientset) Validator {
+		return JobValidator(KubernetesValidationJobClient{
+			Client: client, Namespace: "sdo", Image: image, RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root),
+			SchemaIdentity: "schema", PollInterval: time.Millisecond, IsolationProof: proof, IsolationProofTTL: ttl,
+		})
+	}
+	paths := []string{"app.txt"}
+	client := fake.NewSimpleClientset()
+	created := succeedingJobs(t, client)
+	proof := &IsolationProof{}
+	validate := newClient("validator:a", time.Hour, proof, client)
+	for run := 0; run < 2; run++ {
+		if err := validate(context.Background(), root, paths); err != nil {
+			t.Fatal(err)
+		}
+	}
+	canaries := 0
+	for _, name := range *created {
+		if strings.HasSuffix(name, "-allow") || strings.HasSuffix(name, "-deny") {
+			canaries++
+		}
+	}
+	if len(*created) != 4 || canaries != 2 {
+		t.Fatalf("second validation reran the canaries: %v", *created)
+	}
+
+	// A different validator image is a new thing to prove.
+	*created = nil
+	if err := newClient("validator:b", time.Hour, proof, client)(context.Background(), root, paths); err != nil || len(*created) != 3 {
+		t.Fatalf("new image skipped the proof: err=%v jobs=%v", err, *created)
+	}
+
+	// An expired proof is rerun against the existing policy.
+	*created = nil
+	if err := newClient("validator:b", time.Nanosecond, proof, client)(context.Background(), root, paths); err != nil || len(*created) != 3 {
+		t.Fatalf("expired proof was reused: err=%v jobs=%v", err, *created)
+	}
+
+	// A policy removed behind the proof is noticed on the next validation.
+	if err := client.NetworkingV1().NetworkPolicies("sdo").Delete(context.Background(), validatorIsolationPolicy, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	*created = nil
+	if err := newClient("validator:b", time.Hour, proof, client)(context.Background(), root, paths); err != nil || len(*created) != 3 {
+		t.Fatalf("missing policy was not re-proven: err=%v jobs=%v", err, *created)
+	}
+	if _, err := client.NetworkingV1().NetworkPolicies("sdo").Get(context.Background(), validatorIsolationPolicy, metav1.GetOptions{}); err != nil {
+		t.Fatalf("policy not restored: %v", err)
+	}
+}
+
+func TestKubernetesValidatorDoesNotRecordAFailedProof(t *testing.T) {
+	root := repository(t)
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
+		job := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+		job.Status.Failed = 1
+		if err := client.Tracker().Create(batchv1.SchemeGroupVersion.WithResource("jobs"), job, "sdo"); err != nil {
+			t.Fatal(err)
+		}
+		return true, job, nil
+	})
+	proof := &IsolationProof{}
+	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root), SchemaIdentity: "schema", PollInterval: time.Millisecond, IsolationProof: proof}
+	if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err == nil {
+		t.Fatal("failed canary accepted")
+	}
+	if proof.valid("validator:test", time.Hour, time.Now()) {
+		t.Fatal("a failed canary was recorded as proof")
 	}
 }

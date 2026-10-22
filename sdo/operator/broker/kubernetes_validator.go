@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -45,6 +46,37 @@ type KubernetesValidationJobClient struct {
 	PollInterval         time.Duration
 	Timeout              time.Duration
 	OnPhase              func(context.Context, string) error
+	// IsolationProof, when set, lets validations within IsolationProofTTL reuse
+	// one successful network canary proof instead of rerunning both canary Jobs.
+	IsolationProof    *IsolationProof
+	IsolationProofTTL time.Duration
+}
+
+// validatorIsolationPolicy is the one default-deny NetworkPolicy that selects
+// every validator pod. It outlives a single validation, so the policy is long
+// programmed in the CNI by the time a validator pod starts.
+const validatorIsolationPolicy = "sdo-validator-isolation"
+
+const defaultIsolationProofTTL = 30 * time.Minute
+
+// IsolationProof records that, for one validator image, an allowed canary
+// reached the network and a canary under the default-deny policy did not.
+type IsolationProof struct {
+	mu       sync.Mutex
+	image    string
+	provenAt time.Time
+}
+
+func (p *IsolationProof) valid(image string, ttl time.Duration, now time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.image == image && !p.provenAt.IsZero() && now.Sub(p.provenAt) < ttl
+}
+
+func (p *IsolationProof) record(image string, now time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.image, p.provenAt = image, now
 }
 
 func (k KubernetesValidationJobClient) Validate(ctx context.Context, request ValidationJobRequest) (ValidationJobReceipt, error) {
@@ -87,20 +119,8 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	}
 	name := "sdo-validator-" + hex.EncodeToString(random)
 	defer k.cleanup(name)
-	if err := k.createJob(validationCtx, k.canaryJob(name+"-allow", name, false)); err != nil {
+	if err := k.proveIsolation(validationCtx, name); err != nil {
 		return ValidationJobReceipt{}, err
-	}
-	if err := k.waitJob(validationCtx, name+"-allow"); err != nil {
-		return ValidationJobReceipt{}, fmt.Errorf("validator network positive control: %w", err)
-	}
-	if err := k.createPolicy(validationCtx, name); err != nil {
-		return ValidationJobReceipt{}, err
-	}
-	if err := k.createJob(validationCtx, k.canaryJob(name+"-deny", name, true)); err != nil {
-		return ValidationJobReceipt{}, err
-	}
-	if err := k.waitJob(validationCtx, name+"-deny"); err != nil {
-		return ValidationJobReceipt{}, fmt.Errorf("validator default-deny egress canary: %w", err)
 	}
 	useBaseline := false
 	if k.HealthyBaseline {
@@ -132,15 +152,68 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	}, nil
 }
 
-func (k KubernetesValidationJobClient) createPolicy(ctx context.Context, name string) error {
-	policy := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: k.Namespace},
+// proveIsolation establishes the default-deny policy and, unless a recent proof
+// for this image still holds and the policy is unchanged, runs the allow and
+// deny canaries. Validator pods are always labelled for the same policy.
+func (k KubernetesValidationJobClient) proveIsolation(ctx context.Context, name string) error {
+	image, now := k.Image, time.Now()
+	ttl := k.IsolationProofTTL
+	if ttl <= 0 {
+		ttl = defaultIsolationProofTTL
+	}
+	if k.IsolationProof != nil && k.IsolationProof.valid(image, ttl, now) {
+		current, err := k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Get(ctx, validatorIsolationPolicy, metav1.GetOptions{})
+		if err == nil && reflect.DeepEqual(current.Spec, validatorPolicy(k.Namespace).Spec) {
+			slog.Info("validator_network_proof_reused", "age_ms", now.Sub(k.IsolationProof.provenAt).Milliseconds())
+			return nil
+		}
+	}
+	if err := k.createJob(ctx, k.canaryJob(name+"-allow", false)); err != nil {
+		return err
+	}
+	if err := k.waitJob(ctx, name+"-allow"); err != nil {
+		return fmt.Errorf("validator network positive control: %w", err)
+	}
+	if err := k.ensurePolicy(ctx); err != nil {
+		return err
+	}
+	if err := k.createJob(ctx, k.canaryJob(name+"-deny", true)); err != nil {
+		return err
+	}
+	if err := k.waitJob(ctx, name+"-deny"); err != nil {
+		return fmt.Errorf("validator default-deny egress canary: %w", err)
+	}
+	if k.IsolationProof != nil {
+		k.IsolationProof.record(image, time.Now())
+	}
+	return nil
+}
+
+func validatorPolicy(namespace string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: validatorIsolationPolicy, Namespace: namespace},
 		Spec: networkingv1.NetworkPolicySpec{
-			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"sdo.dev/validator-isolation": name}},
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"sdo.dev/validator-isolation": validatorIsolationPolicy}},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
 		},
 	}
-	created, err := k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Create(ctx, policy, metav1.CreateOptions{})
+}
+
+func (k KubernetesValidationJobClient) ensurePolicy(ctx context.Context) error {
+	policies := k.Client.NetworkingV1().NetworkPolicies(k.Namespace)
+	policy := validatorPolicy(k.Namespace)
+	current, err := policies.Get(ctx, validatorIsolationPolicy, metav1.GetOptions{})
+	switch {
+	case err == nil && reflect.DeepEqual(current.Spec, policy.Spec):
+		return nil
+	case err == nil:
+		if err := policies.Delete(ctx, validatorIsolationPolicy, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("replace validator NetworkPolicy: %w", err)
+		}
+	case !apierrors.IsNotFound(err):
+		return fmt.Errorf("inspect validator NetworkPolicy: %w", err)
+	}
+	created, err := policies.Create(ctx, policy, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("create default-deny validator NetworkPolicy: %w", err)
 	}
@@ -280,7 +353,7 @@ func (k KubernetesValidationJobClient) cleanup(name string) {
 	for _, job := range []string{name, name + "-allow", name + "-deny"} {
 		err := k.Client.BatchV1().Jobs(k.Namespace).Delete(ctx, job, metav1.DeleteOptions{GracePeriodSeconds: &zero, PropagationPolicy: &foreground})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return // Retain the deny policy while a validator pod may still run.
+			return // The Job may still run; the shared deny policy stays in place.
 		}
 	}
 	for _, job := range []string{name, name + "-allow", name + "-deny"} {
@@ -299,15 +372,14 @@ func (k KubernetesValidationJobClient) cleanup(name string) {
 			}
 		}
 	}
-	_ = k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
-func (k KubernetesValidationJobClient) canaryJob(jobName, isolationName string, denied bool) *batchv1.Job {
+func (k KubernetesValidationJobClient) canaryJob(jobName string, denied bool) *batchv1.Job {
 	labels := map[string]string{"sdo.dev/validator-canary": "allow"}
 	mode := "allow"
 	if denied {
 		labels["sdo.dev/validator-canary"] = "deny"
-		labels["sdo.dev/validator-isolation"] = isolationName
+		labels["sdo.dev/validator-isolation"] = validatorIsolationPolicy
 		mode = "deny"
 	}
 	job := k.baseJob(jobName, labels, 30)
@@ -316,7 +388,7 @@ func (k KubernetesValidationJobClient) canaryJob(jobName, isolationName string, 
 }
 
 func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string, useBaseline bool) *batchv1.Job {
-	job := k.baseJob(name, map[string]string{"sdo.dev/validator-isolation": name}, 600)
+	job := k.baseJob(name, map[string]string{"sdo.dev/validator-isolation": validatorIsolationPolicy}, 600)
 	job.Spec.Template.Spec.Volumes = []corev1.Volume{
 		{Name: "application", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: k.RepositoryPVC, ReadOnly: true}}},
 		{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: resourcePointer("3Gi")}}},
