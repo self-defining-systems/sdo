@@ -313,6 +313,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.apply(ctx, request, &response)
+	case "pre-apply":
+		if err := l.capturePreApply(ctx); err != nil {
+			response.Error = err.Error()
+			break
+		}
+		response.Summary = "first-mutation snapshot captured"
 	case "verify":
 		l.verify(ctx, nil, &response)
 	case "rollback":
@@ -662,6 +668,8 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
+	// A missing capture is an evidence gap; it must not block the repair.
+	_ = l.capturePreApply(ctx)
 	l.batches++
 	started := time.Now().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)
@@ -689,7 +697,12 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	// The application is recorded as observed and left in place; whether to roll
 	// it back, apply again or edit is the responder's decision.
 	if result.Applied {
-		result.VerificationPassed = err == nil && result.VerificationPassed && response.Healthy && boundPlansNoMatch(selected, response.ProgramRuns)
+		// Application credit is binding-scoped; closure still independently
+		// requires global health. A different open fault is not a failed repair.
+		unrelated := onlyUnrelatedFindings(selected, response.Findings)
+		result.VerificationPassed = err == nil && response.Error == "" && result.VerificationCompleted &&
+			boundPlansNoMatch(selected, response.ProgramRuns) &&
+			((result.VerificationPassed && response.Healthy) || unrelated)
 		if !result.VerificationPassed {
 			// Program trust counts an unverified application against the program's
 			// current revision, durably, even if the responder is restarted.
@@ -786,7 +799,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 			old[FindingFingerprint(finding)] = true
 		}
 		for _, finding := range findings {
-			if !old[FindingFingerprint(finding)] {
+			if !old[FindingFingerprint(finding)] && !onlyUnrelatedFindings(applied, []sdk.Finding{finding}) {
 				l.addFailureSignal("new_finding_after_apply:" + FindingFingerprint(finding))
 			}
 		}
@@ -802,13 +815,6 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 			l.addFailureSignal("adhoc_fixed_matched_program")
 		} else {
 			l.addFailureSignal("adhoc_coverage_gap")
-		}
-	}
-	if len(applied) > 0 && len(findings) > 0 {
-		for _, run := range response.ProgramRuns {
-			if run.Verdict.Result == program.NoMatch {
-				l.addFailureSignal("diagnosis_clear_detectors_firing:" + run.ProgramID)
-			}
 		}
 	}
 	response.Findings, response.DetectorStates = append([]sdk.Finding(nil), findings...), states
@@ -851,6 +857,32 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 		}
 		if !clear {
 			return false
+		}
+	}
+	return true
+}
+
+// Only explicit findings on resources outside the applied bindings can explain
+// why global health is still red after those bound diagnoses have cleared.
+func onlyUnrelatedFindings(applied []selectedPlan, findings []sdk.Finding) bool {
+	if len(applied) == 0 || len(findings) == 0 {
+		return false
+	}
+	for _, finding := range findings {
+		if finding.PrimaryResource.Kind == "" || finding.PrimaryResource.Name == "" {
+			return false
+		}
+		for _, plan := range applied {
+			for _, bound := range plan.bindings {
+				if sameResource(finding.PrimaryResource, bound) {
+					return false
+				}
+				for _, ref := range finding.ParameterBindings {
+					if sameResource(ref, bound) {
+						return false
+					}
+				}
+			}
 		}
 	}
 	return true

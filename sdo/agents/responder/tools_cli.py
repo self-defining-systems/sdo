@@ -137,10 +137,20 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
 def _act(args: argparse.Namespace) -> int:
     command = args.act_command[1:] if args.act_command[:1] == ["--"] else args.act_command
     try:
+        if not command:
+            raise ValueError("a command is required after --")
+        # Capture is evidence collection, not mutation authority. Keep repairs and
+        # their receipts available even when the controller cannot capture.
+        try:
+            response = _exchange({"command": "pre-apply"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+            if response.get("error"):
+                raise ValueError(str(response["error"]))
+        except (OSError, ValueError, TimeoutError) as exc:
+            print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
         return recorded_actions.run_and_record(
             command, args.resource, summary=args.summary, reversible=not args.irreversible
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TimeoutError) as exc:
         print(f"sdo: {exc}", file=sys.stderr)
         return 2
 
