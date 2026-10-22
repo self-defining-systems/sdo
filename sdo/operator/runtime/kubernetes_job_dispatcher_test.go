@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -439,6 +440,52 @@ func TestResponderJobStartsBeforeSettleCapture(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("settle capture did not arrive while responder Job was active")
+}
+
+func TestColdFastPathDispatchesResponderWithoutSettling(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		loop, client := trustedPortLoop(t, false, false, true)
+		loop.DiagnosisSettleDelay = DefaultDiagnosisSettleDelay
+		request := goldenRequest(t)
+		request.Namespace, request.SourceCommit, request.RepairPolicy = "app", "tree-a", "recorded-actions"
+		request.Findings = loop.Request.Findings
+		request.RepositoryWorktree = "/workspace/worktrees/" + request.IncidentID
+		dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
+			ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: "/workspace", ProgramFastPath: true,
+			PollInterval: time.Millisecond, LoopFactory: func(request IncidentRequest) *ResponderLoop { loop.Request = request; return loop }}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		finished := make(chan error, 1)
+		go func() { _, err := dispatcher.Dispatch(ctx, request); finished <- err }()
+		synctest.Wait()
+		if _, err := client.BatchV1().Jobs("app").Get(ctx, IncidentJobName(request.IncidentID), metav1.GetOptions{}); err != nil {
+			t.Fatalf("cold responder Job blocked on settle: %v", err)
+		}
+		marker, err := client.CoreV1().ConfigMaps("app").Get(ctx, IncidentJobName(request.IncidentID)+"-fast-path", metav1.GetOptions{})
+		want := "trusted program fast path skipped: " + string(FastPathSkipUntrustedProgram)
+		if err != nil || marker.Data["summary"] != want || marker.Data["state"] != "failed" {
+			t.Fatalf("missing durable skip reason: %+v %v", marker, err)
+		}
+		taskMap, err := client.CoreV1().ConfigMaps("app").Get(ctx, IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := new(contracts.AgentTask)
+		if err := protojson.Unmarshal([]byte(taskMap.Data[jobRequestDataKey]), task); err != nil {
+			t.Fatal(err)
+		}
+		incident := new(contracts.IncidentRequest)
+		if err := task.GetRequest().UnmarshalTo(incident); err != nil {
+			t.Fatal(err)
+		}
+		if incident.GetFastPathSummary() != want {
+			t.Fatalf("responder missed skip reason: %q", incident.GetFastPathSummary())
+		}
+		cancel()
+		if err := <-finished; !errors.Is(err, context.Canceled) {
+			t.Fatalf("dispatcher exit: %v", err)
+		}
+	})
 }
 
 func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
