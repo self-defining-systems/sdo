@@ -39,7 +39,7 @@ func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := &contracts.ControllerConfig{AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume"}
-	native := &NativeIncidentBroker{}
+	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
 	}
