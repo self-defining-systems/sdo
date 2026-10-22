@@ -31,13 +31,16 @@ func TestResponderHistorySidecarHasOnlyIncidentStoreAndPodIdentity(t *testing.T)
 	if sidecar.RestartPolicy == nil || *sidecar.RestartPolicy != corev1.ContainerRestartPolicyAlways || sidecar.StartupProbe == nil || sidecar.Image != "operator@sha256:synthetic" {
 		t.Fatalf("native sidecar: %+v", sidecar)
 	}
-	if len(sidecar.EnvFrom) != 0 || len(sidecar.VolumeMounts) != 1 || sidecar.VolumeMounts[0].SubPath != "tenant/.sdo-runtime/sessions/hash/api-history" || sidecar.VolumeMounts[0].ReadOnly {
+	if len(sidecar.EnvFrom) != 0 || len(sidecar.VolumeMounts) != 2 || sidecar.VolumeMounts[0].SubPath != "tenant/.sdo-runtime/sessions/hash/api-history" || sidecar.VolumeMounts[0].ReadOnly {
 		t.Fatalf("sidecar has unrelated access: %+v", sidecar)
+	}
+	if sidecar.VolumeMounts[1].MountPath != "/sdo/history.generation" || sidecar.VolumeMounts[1].SubPath != "tenant/.sdo-runtime/sessions/hash/api-history.generation" {
+		t.Fatal("missing independent generation mount")
 	}
 	agent := pod.Containers[0]
 	found := false
 	for _, mount := range agent.VolumeMounts {
-		if mount.MountPath == "/sdo/session/api-history" {
+		if mount.MountPath == "/sdo/session/api-history" || mount.MountPath == "/sdo/session/api-history.generation" {
 			found = true
 			if !mount.ReadOnly {
 				t.Fatal("agent can alter history")

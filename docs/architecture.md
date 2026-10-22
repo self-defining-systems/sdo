@@ -332,7 +332,7 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema versions 1 and 2 to 3: it rewrites detector manifests, moves packages, and rewrites playbook paths in detector source to logical IDs, and the broker rejects any other detector change in the same commit. |
 | Benchmark strict/rejected receipts (outside `.sdo/`) | Benchmark Go checker derives and accepts/rejects evidence | Python adapter transports and persists generated results | `NativeProductionReceipt` and `ReceiptFailure` define the decision; rejected raw evidence grants no memory or mitigation authority. |
 | Benchmark submission decisions (outside `.sdo/`) | Benchmark Go guard | Python only transports the decision and opaque upstream reply | Generated `SubmissionGuardDecision`; only the matching observed phase authorizes POST; completion polls never authorize POST. |
-| Session API history (outside `.sdo/`) | Go proxy; memory edge writes verified recovery marker | Same controller-owned paths | Per-incident bounded append-only envelopes and projected content hashes; workers mount read-only; caps, gaps, unfinished requests and epochs cannot establish continuity. |
+| Session API history (outside `.sdo/`) | Go proxy; memory edge writes attempt generation and verified recovery marker | Same controller-owned paths | Per-incident bounded append-only envelopes and projected content hashes; workers mount read-only; caps, gaps, unfinished requests, mismatched attempt generations and epochs cannot establish continuity. |
 | Runtime-state ConfigMap (outside `.sdo/`) | Go controller | Go controller | `ControllerState` is publication-validated by its storage edge; `ControllerObservation` is a read-only Go interpretation, never a second writer or persistence schema. |
 
 
@@ -358,3 +358,10 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 This map does not claim model quality, deployment success across all applications, incident-repair success, or experimental improvement. Those require recorded live runs with exact configuration and evidence.
 
 Program trust fingerprints executable sources and imported helpers, excluding Markdown and Go test files. Successful plan credit remains bound to the applied resources and requires an independently successful incident outcome; a global health failure with no explicit unrelated finding remains a failure. More than one binding of a program can earn equivalence evidence, but an incident contributes at most one trust success per program.
+
+API history completeness is bound to a controller-written attempt generation
+outside the recorder directory (`api-history.generation`). The memory edge
+rotates it before launching an incident Job; launch fails if that write fails.
+Sidecars rotate it again before opening the recorder. Agents mount both history
+and generation read-only, and offline readers reject a stale or missing token
+even after a failed recorder exits. This runtime boundary remains outside `.sdo/`.

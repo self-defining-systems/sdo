@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/apihistory"
 	"time"
 )
 
@@ -30,4 +31,25 @@ func MarkIncidentAPIRecovery(repositoryMount, incidentID string, verifiedAt time
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(directory, "recovery.json"))
+}
+
+// PrepareIncidentAPIAttempt persists the trusted generation boundary before
+// forwarding starts. A controller write failure prevents launching the Job.
+func PrepareIncidentAPIAttempt(repositoryMount, pvcSubPath, incidentID string) (string, error) {
+	sub, err := PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID)
+	if err != nil {
+		return "", err
+	}
+	base := pvcSubPath
+	if base == "" {
+		base = "."
+	}
+	relative, err := filepath.Rel(base, sub)
+	if err != nil {
+		return "", err
+	}
+	if err := apihistory.BeginGeneration(filepath.Join(repositoryMount, relative, "api-history")); err != nil {
+		return "", err
+	}
+	return sub, nil
 }

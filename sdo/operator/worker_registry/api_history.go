@@ -23,6 +23,7 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 	agent := &job.Spec.Template.Spec.Containers[0]
 	sub := path.Join(e.SessionPVCSubPath, "api-history")
 	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/api-history", SubPath: sub, ReadOnly: true})
+	agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/api-history.generation", SubPath: sub + ".generation", ReadOnly: true})
 	agent.Env = append(agent.Env, corev1.EnvVar{Name: "SDO_API_HISTORY_DIR", Value: "/sdo/session/api-history"})
 	if !incident {
 		return
@@ -40,7 +41,7 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 		Command:         []string{"/usr/local/bin/sdo-operator", "api-proxy", "--incident", typed.GetIncidentId(), "--directory", "/sdo/history"},
 		RestartPolicy:   &always,
 		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/sdo-operator", "api-proxy", "ready"}}}, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 60},
-		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/sdo/history", SubPath: sub}},
+		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/sdo/history", SubPath: sub}, {Name: "repository", MountPath: "/sdo/history.generation", SubPath: sub + ".generation"}},
 		SecurityContext: agent.SecurityContext.DeepCopy(),
 		Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("256Mi")}},
 	}

@@ -229,7 +229,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	lateConfigMap := ""
 	sessionSubPath := ""
 	if d.RequireMemorySnapshot {
-		sessionSubPath, err = memory.PrepareIncidentSession(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		sessionSubPath, err = memory.PrepareIncidentAPIAttempt(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
 		if err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare isolated responder session: %w", err)
 		}
