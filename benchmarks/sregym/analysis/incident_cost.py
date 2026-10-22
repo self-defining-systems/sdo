@@ -15,7 +15,13 @@ every SDO stage:
   less than when the agent's last state-changing command before its mitigation
   submission completed (``last_mut_s``, from the exported Codex rollout), since
   subtracting the whole grading wait undercounts an agent that kept repairing
-  while the judge graded its diagnosis; ``ttm_s`` is unknown without the TTL;
+  while the judge graded its diagnosis; ``ttm_s`` is unknown without the TTL.
+  State changes made through scripts count: a ``kubectl`` write inside a script
+  the session wrote and ran, or in inline ``python3 -``/``-c``/``bash -c`` code.
+  A script file whose content the rollout never shows is assumed possibly
+  mutating, and the strict receipt's last repair-action time is a cross-check;
+  ``floor_source`` names the bound that set ``ttm_s`` (``judge_excluded``,
+  ``rollout_mutation``, ``receipt_apply`` or ``unverified_script``);
 - supplementary times: the raw ``raw_incl_judge_s`` (includes diagnosis
   grading), the judge-excluded ``no_judge_s`` alone, when the first
   state-changing command was issued (``first_mut_s``), and the receipt's
@@ -355,6 +361,10 @@ class Verdict:
     diagnosis_seconds: float | None = None
     #: Injection until the agent's last state-changing command before its mitigation POST completed.
     last_mitigation_seconds: float | None = None
+    #: Injection until the last script whose content the rollout never shows finished (may have mutated).
+    unverified_script_seconds: float | None = None
+    #: Injection until the strict receipt's last recorded repair action completed (independent cross-check).
+    receipt_applied_seconds: float | None = None
 
     @property
     def passed(self) -> bool:
@@ -373,16 +383,36 @@ class Verdict:
         """Headline time to mitigation, excluding judge time.
 
         The judge-excluded time, but never less than when the last mitigating
-        command completed: work done while the judge graded the diagnosis is
-        agent time, and subtracting the whole grading wait would drop it.
+        command completed (a kubectl write, directly or inside a script the
+        rollout shows, a script it cannot show, or the receipt's last repair
+        action): work done while the judge graded the diagnosis is agent time,
+        and subtracting the whole grading wait would drop it.
         """
 
+        bound = self._ttm_bound()
+        return bound[0] if bound is not None else None
+
+    @property
+    def floor_source(self) -> str | None:
+        """Which bound set the headline TTM: ``judge_excluded`` (no floor applied), ``rollout_mutation``,
+        ``receipt_apply`` or ``unverified_script``; ``None`` when TTM is unknown."""
+
+        bound = self._ttm_bound()
+        return bound[1] if bound is not None else None
+
+    def _ttm_bound(self) -> tuple[float, str] | None:
         excluded = self.judge_excluded_seconds
         if excluded is None:
             return None
-        if self.last_mitigation_seconds is None:
-            return excluded
-        return max(excluded, self.last_mitigation_seconds)
+        best = (excluded, "judge_excluded")
+        for seconds, source in (
+            (self.last_mitigation_seconds, "rollout_mutation"),
+            (self.receipt_applied_seconds, "receipt_apply"),
+            (self.unverified_script_seconds, "unverified_script"),
+        ):
+            if seconds is not None and seconds > best[0]:
+                best = (seconds, source)
+        return best
 
 
 @dataclass(frozen=True)
@@ -567,6 +597,25 @@ _KUBECTL_ROLLOUT_WRITES = frozenset({"restart", "undo", "pause", "resume"})
 _KUBECTL_VALUE_FLAGS = frozenset({"-n", "--namespace", "--context", "--kubeconfig", "-l", "--selector"})
 _CODE_MODE_CMD = re.compile(r'\bcmd\s*:\s*("(?:[^"\\]|\\.)*")')
 _COMMAND_SPLIT = re.compile(r"&&|\|\||[;|\n]")
+_STATEMENT_SPLIT = re.compile(r"&&|\|\||[;\n]")
+
+#: A script's classification: it changes cluster state, or it ran but its content is not in the rollout.
+_MUTATION = "mutation"
+_UNVERIFIED = "unverified_script"
+
+_KUBECTL_WORD = re.compile(r"(?<![\w-])kubectl\b")
+_PYTHON_ARGV_LIST = re.compile(r"""['"]\s*,""")  # ``['kubectl', ...`` right after the program name
+_ARGV_END = re.compile(r"[\]\)]")
+_SHELL_WORD_END = re.compile(r"[\n;|&)]")
+_ARGV_SEPARATORS = re.compile(r"""[\s,\[\](){}+*%]+""")
+_HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*(['\"]?)(\w+)\1")
+_FEEDS_INTERPRETER = re.compile(r"\b(?:python[\d.]*|bash|sh|zsh)(?:\s+-[\w-]*)*\s*<<")
+_RUNS_INLINE_CODE = re.compile(r"\b(?:python[\d.]*|bash|sh|zsh)\b[^\n]*?\s-[A-Za-z]*c\b")
+_WRITE_TARGET = re.compile(r"""(?:(?<![\d&<])>>?|\btee(?:\s+-a)?)\s*("[^"]+"|'[^']+'|[^\s;|&<>]+)""")
+_INTERPRETER = re.compile(r"python[\d.]*|bash|sh|zsh")
+_INLINE_OPTION = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+_DIRECT_SCRIPT = re.compile(r"""^["']?[^\s"'(){}<>]+\.(?:sh|bash|py)["']?$""")
+_SCRIPT_SUFFIXES = (".sh", ".bash", ".py")
 
 
 def _rollout_commands(payload: dict[str, Any]) -> list[str]:
@@ -592,81 +641,188 @@ def _rollout_commands(payload: dict[str, Any]) -> list[str]:
     return []
 
 
-def _is_state_change(command: str) -> bool:
-    """Whether one shell command changes cluster state: a kubectl write or a playbook repair script."""
+def _kubectl_mutates(args: list[str]) -> bool:
+    """Whether ``kubectl <args>`` writes cluster state (flags before the verb skipped; ``--dry-run`` never does)."""
 
-    for segment in _COMMAND_SPLIT.split(command):
-        tokens = segment.split()
-        while tokens and ("=" in tokens[0] and not tokens[0].startswith("-") or tokens[0] in {"env", "sudo"}):
-            tokens = tokens[1:]
-        if not tokens:
-            continue
-        program = tokens[0]
-        if Path(program).name == "kubectl":
-            if any(token.startswith("--dry-run") for token in tokens):
-                continue
-            rest = iter(tokens[1:])
-            for token in rest:
-                if token in _KUBECTL_VALUE_FLAGS:
-                    next(rest, None)
-                elif not token.startswith("-"):
-                    if token == "rollout":
-                        action = next((item for item in rest if not item.startswith("-")), "")
-                        if action in _KUBECTL_ROLLOUT_WRITES:
-                            return True
-                    elif token in _KUBECTL_WRITES:
-                        return True
-                    break
-            continue
-        if program in {"bash", "sh"}:
-            arguments = [token for token in tokens[1:] if not token.startswith("-")]
-            if any(token.startswith("-n") for token in tokens[1:2]):
-                continue  # ``bash -n`` only checks syntax
-            program = arguments[0] if arguments else ""
-        if Path(program).parent.name == "scripts" and Path(program).name.startswith("repair"):
+    if any(arg.startswith("--dry-run") for arg in args):
+        return False
+    rest = iter(args)
+    for token in rest:
+        if token in _KUBECTL_VALUE_FLAGS:
+            next(rest, None)
+        elif not token.startswith("-"):
+            if token == "rollout":
+                action = next((item for item in rest if not item.startswith("-")), "")
+                return action in _KUBECTL_ROLLOUT_WRITES
+            return token in _KUBECTL_WRITES
+    return False
+
+
+def _text_mutates(text: str) -> bool:
+    """Whether script or inline interpreter source invokes a state-changing ``kubectl``.
+
+    Finds each ``kubectl`` word and reads its arguments as a shell word list or as
+    a Python argv list (``["kubectl", "-n", ns, "patch", ...]``, possibly spanning
+    lines). Arguments held in variables or built by a wrapper are not resolved.
+    """
+
+    text = text.replace("\\\n", " ")
+    for match in _KUBECTL_WORD.finditer(text):
+        rest = text[match.end() :]
+        argv_list = _PYTHON_ARGV_LIST.match(rest) is not None
+        end = (_ARGV_END if argv_list else _SHELL_WORD_END).search(rest)
+        window = rest[: end.start()] if end else rest
+        tokens = [token.strip("'\"") for token in _ARGV_SEPARATORS.split(window)]
+        if _kubectl_mutates([token for token in tokens if token]):
             return True
     return False
 
 
+def _split_heredocs(command: str) -> tuple[str, list[tuple[str, str]]]:
+    """The command without its heredoc bodies, and each body with the statement that introduced it.
+
+    The statement is the text on the heredoc's own command line around its ``<<`` marker, cut at
+    ``;``/``&&``/``||``, so earlier commands on the same line cannot be mistaken for its redirects.
+    """
+
+    lines = command.split("\n")
+    kept: list[str] = []
+    bodies: list[tuple[str, str]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+        for marker in _HEREDOC.finditer(line):
+            delimiter = marker.group(2)
+            header = (
+                _STATEMENT_SPLIT.split(line[: marker.start()])[-1]
+                + "<<"
+                + _STATEMENT_SPLIT.split(line[marker.end() :])[0]
+            )
+            body: list[str] = []
+            while index < len(lines) and lines[index].strip() != delimiter:
+                body.append(lines[index])
+                index += 1
+            index += 1
+            bodies.append((header, "\n".join(body)))
+    return "\n".join(kept), bodies
+
+
+class _CommandClassifier:
+    """Classifies the shell commands of one agent session in order, remembering the scripts it writes.
+
+    A command is a ``mutation`` when it runs a state-changing ``kubectl`` directly,
+    in inline interpreter code (``python3 - <<EOF``, ``python3 -c``, ``bash -c``),
+    in a script file the session wrote earlier, or a playbook ``repair*`` script. A
+    script file whose content the rollout never shows is ``unverified_script``: it
+    may have mutated, which the floor cannot rule out.
+    """
+
+    def __init__(self) -> None:
+        self._by_path: dict[str, str] = {}
+        self._by_name: dict[str, str] = {}
+
+    def classify(self, command: str) -> str | None:
+        stripped, bodies = _split_heredocs(command)
+        for header, body in bodies:
+            if _FEEDS_INTERPRETER.search(header):
+                if _text_mutates(body):
+                    return _MUTATION
+            elif (target := _WRITE_TARGET.search(header)) is not None:
+                path = target.group(1).strip("\"'")
+                self._by_path[path] = self._by_name[Path(path).name] = body
+        if _RUNS_INLINE_CODE.search(stripped) and _text_mutates(stripped):
+            return _MUTATION
+        found: str | None = None
+        for segment in _COMMAND_SPLIT.split(stripped):
+            kind = self._classify_segment(segment.split())
+            if kind == _MUTATION:
+                return kind
+            found = kind or found
+        return found
+
+    def _classify_segment(self, tokens: list[str]) -> str | None:
+        while tokens and ("=" in tokens[0] and not tokens[0].startswith("-") or tokens[0] in {"env", "sudo"}):
+            tokens = tokens[1:]
+        if not tokens:
+            return None
+        name = Path(tokens[0]).name
+        if name == "kubectl":
+            return _MUTATION if _kubectl_mutates(tokens[1:]) else None
+        if name in {"source", "."}:
+            target = next((token for token in tokens[1:] if not token.startswith("-")), None)
+        elif _INTERPRETER.fullmatch(name):
+            if any(token.startswith("-n") for token in tokens[1:2]):
+                return None  # ``bash -n`` only checks syntax
+            target = _script_argument(tokens[1:])
+        elif _DIRECT_SCRIPT.match(tokens[0]):
+            target = tokens[0]
+        else:
+            return None
+        if target is None:
+            return None
+        target = target.strip("\"'")
+        if Path(target).parent.name == "scripts" and Path(target).name.startswith("repair"):
+            return _MUTATION
+        content = self._by_path.get(target, self._by_name.get(Path(target).name))
+        if content is not None:
+            return _MUTATION if _text_mutates(content) else None
+        return _UNVERIFIED if target.endswith(_SCRIPT_SUFFIXES) else None
+
+
+def _script_argument(args: list[str]) -> str | None:
+    """The script file an interpreter runs: its first non-option argument (none for ``-m``, ``-c`` or stdin)."""
+
+    for arg in args:
+        if arg in {"-m", "-"} or _INLINE_OPTION.fullmatch(arg):
+            return None
+        if not arg.startswith("-"):
+            return arg
+    return None
+
+
 def _timestamp(value: object) -> float | None:
+    text = re.sub(r"(\.\d{6})\d+", r"\1", str(value).replace("Z", "+00:00"))
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        return datetime.fromisoformat(text).timestamp()
     except ValueError:
         return None
-
-
-def first_mutation_at(rollouts: list[Path], *, after: float) -> float | None:
-    """Epoch of the first state-changing tool call issued at or after *after* in Codex rollouts."""
-
-    first: float | None = None
-    for path in rollouts:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if '"function_call"' not in line and '"custom_tool_call"' not in line:
-                continue
-            record = json.loads(line)
-            payload = record.get("payload")
-            issued = _timestamp(record.get("timestamp"))
-            if not isinstance(payload, dict) or issued is None or issued < after:
-                continue
-            if (first is None or issued < first) and any(_is_state_change(c) for c in _rollout_commands(payload)):
-                first = issued
-    return first
 
 
 _TOOL_OUTPUTS = frozenset({"function_call_output", "custom_tool_call_output"})
 
 
-def last_mutation_done_at(rollouts: list[Path], *, after: float, before: float) -> float | None:
-    """Epoch at which the last state-changing tool call issued in ``[after, before]`` completed.
+@dataclass(frozen=True)
+class RolloutMutations:
+    """State-changing activity found in Codex rollouts, as epochs."""
 
-    Completion is the call's output record (paired by ``call_id``), capped at
-    *before* (the mitigation POST); a call without a recorded output counts at
-    its issue time.
+    #: Issue time of the first state-changing call at or after the window start.
+    first: float | None = None
+    #: Completion of the last state-changing call issued in the window (capped at its end).
+    last_done: float | None = None
+    #: Completion of the last script call in the window whose content the rollout never shows.
+    last_unverified_done: float | None = None
+
+
+def scan_rollout_mutations(rollouts: list[Path], *, after: float, before: float | None = None) -> RolloutMutations:
+    """Find the state-changing tool calls of Codex rollouts, including those made through scripts.
+
+    Calls are classified in order across *rollouts* so a script written by one call is
+    recognized when a later call runs it, even when the write happened before *after*.
+    Completion is the call's output record (paired by ``call_id``), capped at *before*
+    (the mitigation POST); a call without a recorded output counts at its issue time.
     """
 
-    issued_at: dict[str, float] = {}
+    classifier = _CommandClassifier()
     done_at: dict[str, float] = {}
-    last: float | None = None
+    pending: list[tuple[str, float, str]] = []
+    first: float | None = None
+    last: dict[str, float] = {}
+
+    def settle(kind: str, stamp: float) -> None:
+        last[kind] = max(stamp, last.get(kind, stamp))
+
     for path in rollouts:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if '"call_id"' not in line and '"custom_tool_call"' not in line and '"function_call"' not in line:
@@ -681,32 +837,86 @@ def last_mutation_done_at(rollouts: list[Path], *, after: float, before: float) 
                 if call_id:
                     done_at[call_id] = stamp
                 continue
-            if not after <= stamp <= before:
+            kinds = {classifier.classify(command) for command in _rollout_commands(payload)} - {None}
+            kind = _MUTATION if _MUTATION in kinds else _UNVERIFIED if kinds else None
+            if kind is None or stamp < after:
                 continue
-            if not any(_is_state_change(command) for command in _rollout_commands(payload)):
+            if kind == _MUTATION and (first is None or stamp < first):
+                first = stamp
+            if before is not None and stamp > before:
                 continue
             if call_id:
-                issued_at[call_id] = stamp
+                pending.append((call_id, stamp, kind))
             else:
-                last = stamp if last is None else max(last, stamp)
-    for call_id, issued in issued_at.items():
-        done = min(done_at.get(call_id, issued), before)
-        last = done if last is None else max(last, done)
-    return last
+                settle(kind, stamp)
+    for call_id, issued, kind in pending:
+        done = done_at.get(call_id, issued)
+        settle(kind, min(done, before) if before is not None else done)
+    return RolloutMutations(first, last.get(_MUTATION), last.get(_UNVERIFIED))
 
 
-def with_mitigation_applied(verdict: Verdict, results_dir: Path, rollouts: list[Path]) -> Verdict:
+def first_mutation_at(rollouts: list[Path], *, after: float) -> float | None:
+    """Epoch of the first state-changing tool call issued at or after *after* in Codex rollouts."""
+
+    return scan_rollout_mutations(rollouts, after=after).first
+
+
+def last_mutation_done_at(rollouts: list[Path], *, after: float, before: float) -> float | None:
+    """Epoch at which the last state-changing tool call issued in ``[after, before]`` completed."""
+
+    return scan_rollout_mutations(rollouts, after=after, before=before).last_done
+
+
+def receipt_repair_applied_at(receipt: dict[str, Any], *, after: float, before: float) -> float | None:
+    """Epoch of the last repair action the strict receipt's incident ledger records in ``[after, before]``.
+
+    An independent cross-check on the rollout: the actions are reported by the repair itself,
+    so they are seen even when the rollout hides the mutation inside a script.
+    """
+
+    ledger = receipt.get("native_ledger")
+    if not isinstance(ledger, dict):
+        return None
+    outcome = ledger.get("outcome_document")
+    closure = ledger.get("closure")
+    result = closure.get("result") if isinstance(closure, dict) else None
+    actions = (outcome.get("repair_actions") if isinstance(outcome, dict) else None) or (
+        result.get("repair_actions") if isinstance(result, dict) else None
+    )
+    stamps = [
+        _timestamp(action.get("completed_at") or action.get("started_at"))
+        for action in actions or []
+        if isinstance(action, dict)
+    ]
+    return max((stamp for stamp in stamps if stamp is not None and after <= stamp <= before), default=None)
+
+
+def with_mitigation_applied(
+    verdict: Verdict, results_dir: Path, rollouts: list[Path], *, receipt: dict[str, Any] | None = None
+) -> Verdict:
     row = read_result_row(results_dir) or {}
     injected = _float(row.get("fault_injected_at"))
     submitted = _float(row.get("mitigation_submitted_at"))
-    if injected is None or not rollouts:
+    if injected is None or not (rollouts or receipt):
         return verdict
-    applied = first_mutation_at(rollouts, after=injected)
-    last = last_mutation_done_at(rollouts, after=injected, before=submitted) if submitted is not None else None
+    found = scan_rollout_mutations(rollouts, after=injected, before=submitted) if rollouts else RolloutMutations()
+    receipt_applied = (
+        receipt_repair_applied_at(receipt, after=injected, before=submitted)
+        if receipt is not None and submitted is not None
+        else None
+    )
+
+    def since_injection(epoch: float | None) -> float | None:
+        return epoch - injected if epoch is not None else None
+
+    if not rollouts:
+        return replace(verdict, receipt_applied_seconds=since_injection(receipt_applied))
     return replace(
         verdict,
-        mitigation_applied_seconds=applied - injected if applied is not None else None,
-        last_mitigation_seconds=last - injected if last is not None else None,
+        mitigation_applied_seconds=since_injection(found.first),
+        last_mitigation_seconds=since_injection(found.last_done) if submitted is not None else None,
+        unverified_script_seconds=since_injection(found.last_unverified_done) if submitted is not None else None,
+        receipt_applied_seconds=since_injection(receipt_applied),
     )
 
 
@@ -995,7 +1205,10 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                 path for path in all_rollouts if any(own in path.name for own in reflection_sessions)
             ]
             verdict = with_mitigation_applied(
-                read_verdict(results) or Verdict(None, None, None), results, own_responder_rollouts
+                read_verdict(results) or Verdict(None, None, None),
+                results,
+                own_responder_rollouts,
+                receipt=receipt,
             )
             stages.append(
                 SdoStage(
@@ -1468,6 +1681,7 @@ def render(report: Report) -> str:
                 _fmt_num(stage.verdict.judge_excluded_seconds, 1),
                 _fmt_num(stage.verdict.mitigation_applied_seconds, 1),
                 _fmt_num(stage.verdict.last_mitigation_seconds, 1),
+                stage.verdict.floor_source or "-",
                 _fmt_num(stage.incident_resolution_seconds, 1),
                 _fmt_num(stage.responder.total(uncached=uncached)),
                 _fmt_num(stage.reflection.total(uncached=uncached)),
@@ -1495,6 +1709,7 @@ def render(report: Report) -> str:
                 "no_judge_s",
                 "first_mut_s",
                 "last_mut_s",
+                "floor_source",
                 "resolution_s",
                 "responder_tok",
                 "reflection_tok",
@@ -1597,6 +1812,7 @@ def _report_json(report: Report) -> dict[str, Any]:
     for stage, row in zip(report.stages, document["stages"], strict=True):
         row["verdict"]["judge_excluded_seconds"] = stage.verdict.judge_excluded_seconds
         row["verdict"]["ttm_seconds"] = stage.verdict.ttm_seconds
+        row["verdict"]["floor_source"] = stage.verdict.floor_source
     return document
 
 

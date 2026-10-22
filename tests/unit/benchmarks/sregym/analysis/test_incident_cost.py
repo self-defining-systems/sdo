@@ -20,6 +20,7 @@ from benchmarks.sregym.analysis.incident_cost import (
     load_sdo_pipeline,
     main,
     read_verdict,
+    with_mitigation_applied,
 )
 
 
@@ -973,3 +974,315 @@ def test_native_receipt_responder_usage_comes_from_the_ledger_closure_result() -
     usage = receipt_responder_usage(receipt)
     assert (usage.input_tokens, usage.cached_input_tokens, usage.output_tokens) == (1000, 800, 50)
     assert receipt_responder_usage({}).input_tokens == 0
+
+
+# --------------------------------------------------------------- script-based repairs in the TTM floor
+
+_INJECTED = 1790510410.0  # 12:00:10Z; diagnosis at +30 s, TTL 45 s -> grading wait 15 s
+_SUBMITTED = _INJECTED + 90.0  # judge-excluded time is 90 - 15 = 75 s
+
+
+def _floor_verdict(tmp_path: Path, calls: list[tuple[str, dict[str, object]]], *, receipt: dict | None = None):  # type: ignore[type-arg]
+    results = tmp_path / "exp" / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results"
+    _timing_csv(
+        results,
+        **{
+            "Diagnosis.success": "True",
+            "Mitigation.success": "True",
+            "fault_injected_at": _INJECTED,
+            "diagnosis_submitted_at": _INJECTED + 30.0,
+            "TTL": 45.0,
+            "mitigation_submitted_at": _SUBMITTED,
+        },
+    )
+    _tool_rollout(results / "codex" / PROBLEM_A / "run_1" / "sessions" / "rollout-s.jsonl", calls)
+    (run,) = load_codex_runs(tmp_path / "exp")
+    if receipt is not None:
+        return with_mitigation_applied(run.verdict, results, [], receipt=receipt)
+    return run.verdict
+
+
+def _call(stamp: str, command: str, call_id: str, *, done: str | None = None) -> list[tuple[str, dict[str, object]]]:
+    records: list[tuple[str, dict[str, object]]] = [
+        (
+            stamp,
+            {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": call_id,
+                "arguments": json.dumps({"cmd": command}),
+            },
+        )
+    ]
+    if done is not None:
+        records.append((done, {"type": "function_call_output", "call_id": call_id, "output": ""}))
+    return records
+
+
+_HEREDOC_PY = "cat > /tmp/fix.py <<'PY'\n{body}\nPY"
+_KUBECTL_WRITE_ARGS = [
+    ["patch", "deploy/geo", "-p", "{}"],
+    ["apply", "-f", "cm.yaml"],
+    ["set", "image", "deploy/geo", "geo=img:2"],
+    ["scale", "deploy/geo", "--replicas=2"],
+    ["delete", "pod", "geo-0"],
+    ["edit", "deploy/geo"],
+    ["rollout", "restart", "deploy/geo"],
+    ["replace", "-f", "cm.yaml"],
+    ["label", "pod", "geo-0", "a=b"],
+    ["annotate", "pod", "geo-0", "a=b"],
+]
+
+
+@pytest.mark.parametrize("args", _KUBECTL_WRITE_ARGS, ids=lambda args: " ".join(args[:2]))
+def test_python_script_written_then_run_counts_in_the_floor(tmp_path: Path, args: list[str]) -> None:
+    body = f"import subprocess\nsubprocess.run({json.dumps(['kubectl', '-n', 'hotel-reservation', *args])}, check=True)"
+    calls = [
+        *_call("2026-09-27T12:00:50.000Z", _HEREDOC_PY.format(body=body), "w", done="2026-09-27T12:00:51.000Z"),
+        *_call("2026-09-27T12:01:25.000Z", "python3 /tmp/fix.py", "x", done="2026-09-27T12:01:30.000Z"),
+    ]
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.judge_excluded_seconds == pytest.approx(75.0)
+    assert verdict.mitigation_applied_seconds == pytest.approx(75.0)  # writing the script is not a mutation
+    assert verdict.last_mitigation_seconds == pytest.approx(80.0)
+    assert verdict.ttm_seconds == pytest.approx(80.0)
+    assert verdict.floor_source == "rollout_mutation"
+
+
+@pytest.mark.parametrize("args", _KUBECTL_WRITE_ARGS, ids=lambda args: " ".join(args[:2]))
+def test_shell_script_written_then_run_counts_in_the_floor(tmp_path: Path, args: list[str]) -> None:
+    script = "#!/bin/bash\nset -e\nkubectl -n hotel-reservation get pods\nkubectl -n hotel-reservation " + " ".join(
+        args
+    )
+    calls = [
+        *_call("2026-09-27T12:00:50.000Z", f"cat > fix.sh <<'EOF'\n{script}\nEOF\nchmod +x fix.sh", "w"),
+        *_call("2026-09-27T12:01:25.000Z", "cd /work && bash fix.sh", "x", done="2026-09-27T12:01:30.000Z"),
+    ]
+
+    assert _floor_verdict(tmp_path, calls).ttm_seconds == pytest.approx(80.0)
+
+
+def test_script_written_and_run_in_one_command_through_a_variable_path(tmp_path: Path) -> None:
+    """The responder's real shape: heredoc into ``$SDO_SESSION_SCRATCH/repair.py`` and run it in the same call."""
+
+    command = (
+        "cat > \"$SDO_SESSION_SCRATCH/repair.py\" <<'PY'\n"
+        "import subprocess\n"
+        "subprocess.run(['kubectl','-n','ns','set','image','deployment/'+'user','c='+'img'])\n"
+        "subprocess.run(['kubectl','-n','ns','patch','service','reservation','--type=json','-p','[]'])\n"
+        "PY\n"
+        'python3 "$SDO_SESSION_SCRATCH/repair.py" hotel-reservation user'
+    )
+    calls = _call("2026-09-27T12:01:25.000Z", command, "x", done="2026-09-27T12:01:30.000Z")
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.last_mitigation_seconds == pytest.approx(80.0)
+    assert verdict.floor_source == "rollout_mutation"
+
+
+def test_script_heredoc_after_other_commands_on_the_same_line_is_still_recorded(tmp_path: Path) -> None:
+    """A ``>`` inside an earlier quoted argument (``--format='%an <%ae>'``) must not steal the redirect target."""
+
+    write = (
+        "git log -1 --format='%an <%ae>'; git commit -m 'x'; cat > \"$SCRATCH/fix.py\" <<'PY'\n"
+        "import subprocess\nsubprocess.run(['kubectl','delete','pod','a'])\nPY\n"
+    )
+    calls = [
+        *_call("2026-09-27T12:01:00.000Z", write, "w"),
+        *_call("2026-09-27T12:01:25.000Z", 'python3 "$SCRATCH/fix.py"', "x", done="2026-09-27T12:01:30.000Z"),
+    ]
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.floor_source == "rollout_mutation"
+    assert verdict.unverified_script_seconds is None
+
+
+def test_multiline_python_argument_list_is_read_across_lines(tmp_path: Path) -> None:
+    command = (
+        "python3 - <<'PY'\nimport subprocess\nsubprocess.run([\n  'kubectl',\n  '-n', ns,\n"
+        "  'rollout',\n  'restart', 'deploy/geo',\n])\nPY"
+    )
+    calls = _call("2026-09-27T12:01:25.000Z", command, "x", done="2026-09-27T12:01:30.000Z")
+
+    assert _floor_verdict(tmp_path, calls).floor_source == "rollout_mutation"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['kubectl','patch','deploy/geo','-p','{}'])\nPY",
+        "python3 <<EOF\nimport os\nos.system('kubectl scale deploy/geo --replicas=2')\nEOF",
+        "python3 -c \"import subprocess; subprocess.run(['kubectl', 'delete', 'pod', 'geo-0'])\"",
+        'python3 -c \'import subprocess;subprocess.check_call(["kubectl","-n","x","apply","-f","m.yaml"])\'',
+        "bash -c 'for p in a b; do kubectl delete pod $p; done'",
+        "bash <<'EOF'\nset -e\nkubectl -n x annotate pod a b=c\nEOF",
+        "sh -s <<'EOF'\nkubectl rollout restart deploy/geo\nEOF",
+    ],
+)
+def test_inline_interpreter_code_with_kubectl_writes_counts(tmp_path: Path, command: str) -> None:
+    calls = _call("2026-09-27T12:01:25.000Z", command, "x", done="2026-09-27T12:01:30.000Z")
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.last_mitigation_seconds == pytest.approx(80.0)
+    assert verdict.ttm_seconds == pytest.approx(80.0)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['kubectl','-n','x','get','pods'])\nPY",
+        "python3 -c \"import subprocess; print(subprocess.check_output(['kubectl', 'describe', 'pod', 'a']))\"",
+        "bash -c 'kubectl logs deploy/geo && kubectl rollout status deploy/geo'",
+        "python3 -c \"import subprocess; subprocess.run(['kubectl','apply','--dry-run=server','-f','m.yaml'])\"",
+    ],
+)
+def test_inline_read_only_kubectl_does_not_count(tmp_path: Path, command: str) -> None:
+    verdict = _floor_verdict(tmp_path, _call("2026-09-27T12:01:25.000Z", command, "x", done="2026-09-27T12:01:30.000Z"))
+
+    assert verdict.last_mitigation_seconds is None
+    assert verdict.unverified_script_seconds is None
+    assert verdict.ttm_seconds == pytest.approx(75.0)
+    assert verdict.floor_source == "judge_excluded"
+
+
+def test_read_only_script_written_then_run_does_not_count(tmp_path: Path) -> None:
+    body = (
+        "import subprocess\nfor kind in ('pods', 'svc'):\n    subprocess.run(['kubectl', 'get', kind, '-o', 'wide'])\n"
+    )
+    calls = [
+        *_call("2026-09-27T12:00:50.000Z", _HEREDOC_PY.format(body=body), "w"),
+        *_call("2026-09-27T12:01:25.000Z", "python3 /tmp/fix.py", "x", done="2026-09-27T12:01:30.000Z"),
+    ]
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.last_mitigation_seconds is None
+    assert verdict.unverified_script_seconds is None
+    assert verdict.ttm_seconds == pytest.approx(75.0)
+    assert verdict.floor_source == "judge_excluded"
+
+
+def test_a_file_that_merely_mentions_kubectl_writes_is_not_executed(tmp_path: Path) -> None:
+    calls = _call(
+        "2026-09-27T12:01:25.000Z",
+        "cat > NOTES.md <<'EOF'\nnext: kubectl patch deploy/geo -p '{}'\nEOF",
+        "x",
+        done="2026-09-27T12:01:30.000Z",
+    )
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.last_mitigation_seconds is None
+    assert verdict.floor_source == "judge_excluded"
+
+
+def test_an_unreadable_script_is_an_unverified_floor_candidate_and_flagged(tmp_path: Path) -> None:
+    """Content never appears in the rollout (written elsewhere): assume it may have mutated, and say so."""
+
+    calls = _call(
+        "2026-09-27T12:01:25.000Z",
+        "python3 /opt/prebuilt/fix.py --ns hotel-reservation",
+        "x",
+        done="2026-09-27T12:01:30.000Z",
+    )
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.last_mitigation_seconds is None
+    assert verdict.unverified_script_seconds == pytest.approx(80.0)
+    assert verdict.ttm_seconds == pytest.approx(80.0)
+    assert verdict.floor_source == "unverified_script"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3 -m benchmarks.sregym.adapter.submission mitigation 'done'",
+        "python3 -m pytest tests",
+        "bash -n fix.sh",
+        "python3 --version",
+        "sdo verify",
+    ],
+)
+def test_modules_and_non_script_commands_are_not_unverified_scripts(tmp_path: Path, command: str) -> None:
+    verdict = _floor_verdict(tmp_path, _call("2026-09-27T12:01:25.000Z", command, "x", done="2026-09-27T12:01:30.000Z"))
+
+    assert verdict.unverified_script_seconds is None
+    assert verdict.floor_source == "judge_excluded"
+
+
+def test_a_verified_mutation_outranks_an_earlier_unverified_script_as_the_binding_source(tmp_path: Path) -> None:
+    calls = [
+        *_call("2026-09-27T12:01:00.000Z", "python3 /opt/prebuilt/fix.py", "u", done="2026-09-27T12:01:05.000Z"),
+        *_call("2026-09-27T12:01:20.000Z", "kubectl delete pod geo-0", "k", done="2026-09-27T12:01:30.000Z"),
+    ]
+
+    verdict = _floor_verdict(tmp_path, calls)
+
+    assert verdict.unverified_script_seconds == pytest.approx(55.0)
+    assert verdict.floor_source == "rollout_mutation"
+
+
+def _receipt_applied(*completed: str) -> dict[str, object]:
+    actions = [{"action_id": f"a{i}", "completed_at": stamp} for i, stamp in enumerate(completed)]
+    return {"native_ledger": {"outcome_document": {"repair_actions": actions}}}
+
+
+def test_receipt_repair_apply_time_cross_checks_the_rollout_floor(tmp_path: Path) -> None:
+    receipt = _receipt_applied("2026-09-27T12:01:20.123456Z", "2026-09-27T12:01:30.500000Z")
+
+    verdict = _floor_verdict(tmp_path, [], receipt=receipt)
+
+    assert verdict.receipt_applied_seconds == pytest.approx(80.5)
+    assert verdict.ttm_seconds == pytest.approx(80.5)
+    assert verdict.floor_source == "receipt_apply"
+
+
+def test_the_later_of_the_rollout_floor_and_the_receipt_apply_time_binds(tmp_path: Path) -> None:
+    results = tmp_path / "exp" / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results"
+    verdict = _floor_verdict(
+        tmp_path, _call("2026-09-27T12:01:35.000Z", "kubectl delete pod a", "k", done="2026-09-27T12:01:36.000Z")
+    )
+    rollout = results / "codex" / PROBLEM_A / "run_1" / "sessions" / "rollout-s.jsonl"
+
+    later_rollout = with_mitigation_applied(
+        replace(verdict, last_mitigation_seconds=None),
+        results,
+        [rollout],
+        receipt=_receipt_applied("2026-09-27T12:01:20Z"),
+    )
+    later_receipt = with_mitigation_applied(
+        verdict, results, [rollout], receipt=_receipt_applied("2026-09-27T12:01:38Z")
+    )
+
+    assert later_rollout.ttm_seconds == pytest.approx(86.0)
+    assert later_rollout.floor_source == "rollout_mutation"
+    assert later_receipt.ttm_seconds == pytest.approx(88.0)
+    assert later_receipt.floor_source == "receipt_apply"
+
+
+def test_receipt_apply_after_the_mitigation_submission_or_without_actions_is_ignored(tmp_path: Path) -> None:
+    after = _floor_verdict(tmp_path, [], receipt=_receipt_applied("2026-09-27T12:03:00Z"))
+    none = _floor_verdict(tmp_path / "other", [], receipt={"native_ledger": {}})
+
+    assert after.receipt_applied_seconds is None
+    assert after.floor_source == "judge_excluded"
+    assert none.receipt_applied_seconds is None
+
+
+def test_floor_source_is_reported_in_the_table_and_the_json(
+    pipeline: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = tmp_path / "report.json"
+
+    main([str(pipeline), "--json", str(out), "--include-invalid"])
+
+    printed = capsys.readouterr().out
+    assert "floor_source" in printed
+    for stage in json.loads(out.read_text(encoding="utf-8"))["stages"]:
+        assert "floor_source" in stage["verdict"]
