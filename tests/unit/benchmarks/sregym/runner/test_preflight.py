@@ -593,9 +593,8 @@ def test_unavailable_neighbor_capacity_is_explicit(fake_host: FakeHost, sregym_d
 
 
 def test_model_policy_guards_every_model_variable_the_controller_sets() -> None:
-    from sdo.agents.provider import MODEL_ENV
-
     from benchmarks.sregym.runner.preflight import SDO_MODEL_ENV_OVERRIDES
+    from sdo.agents.provider import MODEL_ENV
 
     assert set(SDO_MODEL_ENV_OVERRIDES) == set(MODEL_ENV.values())
     assert "SDO_REFLECTION_MODEL" in SDO_MODEL_ENV_OVERRIDES

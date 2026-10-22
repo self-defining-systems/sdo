@@ -129,6 +129,39 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	}
 }
 
+// Every reflection executor (fresh Job, resumed session, fresh-in-session) must
+// carry the config's storage and credential routes, not only provider and model.
+func TestNativeReflectionExecutorsCarryConfiguredStorageAndCredentials(t *testing.T) {
+	root := t.TempDir()
+	registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &contracts.ControllerConfig{
+		AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", RepositoryPvcSubpath: "sub", ReflectionSession: "resume",
+		ResponderCredentialsSecret: "creds", HealthyBaseline: true,
+	}
+	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
+	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	worker := native.Reflector.(RegisteredReflectionWorker)
+	executors := map[string]worker_registry.KubernetesExecutor{"fresh": worker.Executor.(worker_registry.KubernetesExecutor)}
+	for name, factory := range map[string]func(string) (ReflectionTaskExecutor, error){"resume": worker.SessionExecutor, "fresh-in-session": worker.FreshSessionExecutor} {
+		executor, err := factory("incident-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executors[name] = executor.(worker_registry.KubernetesExecutor)
+	}
+	for name, executor := range executors {
+		if executor.RepositoryPVC != "repo" || executor.RepositoryMountPath != root || executor.RepositoryPVCSubPath != "sub" ||
+			executor.CredentialsSecret != "creds" || !executor.HealthyBaseline {
+			t.Errorf("%s executor lost config routes: %+v", name, executor)
+		}
+	}
+}
+
 func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
 	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m"})
 	if err != nil {
