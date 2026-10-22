@@ -47,7 +47,7 @@ The controller captures the application namespace's detection view at detection,
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority, logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, and controller-derived typed outcomes |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift admission to responders, revision-bound trusted plans, controller state and its typed projection, builder/supervisor, and Kubernetes installation |
-| `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker, protocol, runner, experiments, and analysis |
+| `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, protocol, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
 
 Production packages do not import SREGym code. Benchmark-only image stages live in `benchmarks/sregym/Dockerfile.worker`, extending the built production responder; development mounts expose only production sources, examples and the operator binary. Benchmark adapters may call production APIs; strict receipts and submission relays remain in the benchmark boundary. The native path passed an end-to-end kind smoke with real goal/source/architecture/judge artifacts, concrete deployment and health evidence, provider credentials, and controller installation. Detector SDK staleness/dependency interface changes are outside this refactor.
@@ -76,6 +76,17 @@ The host uses `SDO_NATIVE_RECEIPT_BIN` (absolute path), an installed
 directory from the local module. Source mode requires Go. Benchmark workers do
 not need this host-side checker. The checker imports the public generated
 contracts only; production Go packages do not import the benchmark module.
+The benchmark submission bridge transports conductor status and acknowledgments
+to `protocol/submission_go`. `benchmark_submission.proto` defines those facts,
+phases, terminal-stage spellings, and the Go guard's typed decisions. The guard
+authorizes a POST only for the observed matching phase and never authorizes one
+during a completion poll. Python performs HTTP and sleeps; it does not interpret
+stage order or acknowledgment status. Opaque upstream reply metadata is retained.
+The benchmark worker copies only the separately built `sdo-submission-guard`
+binary; production images contain no benchmark guard. Hosts may select
+`SDO_SUBMISSION_GUARD_BIN`, an installed binary, or build once from source.
+The upstream untyped `/submit` still has a status-read/POST race: phase checking
+cannot make those separate upstream operations atomic.
 
 ## Controller
 
@@ -226,7 +237,7 @@ Status meanings:
 | Outcome reflection and reuse | `sdo/agents/responder/reflection_worker.py`, `sdo/operator/runtime/native_broker.go` | Active | Reflection edits its isolated checkout and returns a typed decision and playbook IDs; broker validates the actual diff through the shared check and publishes accepted files. |
 | Controller installation | `sdo/operator/install/` | Active | Go installer seeds the accepted commit and starts the controller in a prepared in-cluster checkout. |
 | Toy cluster validation | `apps/toy/`, `benchmarks/sregym/fastloop/toy.py` | Test-only | A three-service kind application with local readiness, real endpoints and watches, scripted workers and cluster-state oracles. Pinned Calico enforces NetworkPolicy, including the production validator isolation canary. |
-| SREGym adapter and receipts | `benchmarks/sregym/`, `third_party/sregym/` | Benchmark-only | Benchmark submission, the Go strict-receipt checker, and harness verdicts never enter production packages. |
+| SREGym adapter and receipts | `benchmarks/sregym/`, `third_party/sregym/` | Benchmark-only | Benchmark submission, the Go submission guard and strict-receipt checker, and harness verdicts never enter production packages. |
 
 The toy real-cluster validation tier keeps reusable application and fault code in
 `apps/toy/`; fastloop selects it through its worker interface without the external
@@ -248,6 +259,7 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 | `.sdo/diagnostics/detectors/<class>/<id>/manifest.yaml` | Owner of the detector class | Owner of the detector class | One manifest per detector; its class, ID, and package must match its location. |
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema versions 1 and 2 to 3: it rewrites detector manifests, moves packages, and rewrites playbook paths in detector source to logical IDs, and the broker rejects any other detector change in the same commit. |
 | Benchmark strict/rejected receipts (outside `.sdo/`) | Benchmark Go checker derives and accepts/rejects evidence | Python adapter transports and persists generated results | `NativeProductionReceipt` and `ReceiptFailure` define the decision; rejected raw evidence grants no memory or mitigation authority. |
+| Benchmark submission decisions (outside `.sdo/`) | Benchmark Go guard | Python only transports the decision and opaque upstream reply | Generated `SubmissionGuardDecision`; only the matching observed phase authorizes POST; completion polls never authorize POST. |
 
 
 Source-absent drift admission also covers reviewed foreign NetworkPolicy creates and spec edits with no controller owner. A successful accepted-source lookup must positively establish absence (`program.Diff.SourceAbsent`); a source error is not absence. Metadata-only edits, informer initial listings and ordinary controller churn do not enter this path. Learned findings clear only after an explicit NoMatch for every active binding, including a retained binding whose policy was deleted. Unexplained drift uses the ordinary responder, with its existing write grants and evidence-before-action policy. Successful source comparison clears restored or adopted affected fields; learned bindings, including deleted objects, each require explicit NoMatch. Unknown, missing bindings and source errors remain unresolved. Reset cancels and awaits controller and worker Jobs before deleting their referenced captures or checkouts. Drift reasoning uses the ordinary responder task; controller and worker images must be upgraded together after draining active work.
@@ -264,7 +276,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
 | `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. `apps/toy/` owns the reusable tiny Kubernetes app, seed and cluster-state fault injectors/oracles; it has no SREGym dependency. |
-| `benchmarks/sregym/{adapter,fastloop,protocol,runner,experiments,analysis}/` | First-party benchmark integration; `protocol/native_receipt_go` owns typed receipt decisions and Python transports/persists the result; scripted restore reads controller-rendered source through `sdo source`. Baseline recovery uses server-side apply as `sdo-deployer` and waits for application rollouts before the benchmark residue check; fastloop rows retain responder usage and mitigation timing from verified stage evidence if learning fails, and expose closure phase intervals, resolution path, and fast-path programs from the native ledger. |
+| `benchmarks/sregym/{adapter,fastloop,protocol,runner,experiments,analysis}/` | First-party benchmark integration; `protocol/native_receipt_go` owns typed receipt decisions and `protocol/submission_go` owns phase and acknowledgment decisions from generated contracts; Python transports/persists the results; scripted restore reads controller-rendered source through `sdo source`. Baseline recovery uses server-side apply as `sdo-deployer` and waits for application rollouts before the benchmark residue check; fastloop rows retain responder usage and mitigation timing from verified stage evidence if learning fails, and expose closure phase intervals, resolution path, and fast-path programs from the native ledger. |
 | `third_party/sregym/` | External benchmark harness Git submodule. |
 | Historical bounded operator, shell health checks, trajectory recorder, UI, prompt stack, standalone fault injection | Excluded from production scope. |
 

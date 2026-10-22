@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// SREGym transport facts are decoded once, by the benchmark-only Go guard.
+// Unknown upstream metadata is opaque and does not affect the phase decision.
+message ConductorStatus {
+  string stage = 1;
+}
+
+message ConductorAcknowledgement {
+  string status = 1;
+  string message = 2;
+}
+
+message ConductorSolution {
+  string solution = 1;
+}
+
+message SubmissionGuardRequest {
+  string phase = 1 [(buf.validate.field).string = {in: ["diagnosis", "mitigation"]}];
+  oneof conductor_event {
+    ConductorStatus status = 2;
+    ConductorAcknowledgement acknowledgement = 4;
+  }
+  // Once this phase's POST completed, the guard can only wait or return.
+  bool submission_sent = 3;
+}
+
+message SubmissionPhaseStatus {
+  string status = 1;
+  optional string stage = 2;
+  optional string message = 3;
+}
+
+message SubmissionBridgeResponse {
+  SubmissionPhaseStatus diagnosis = 1;
+  SubmissionPhaseStatus mitigation = 2;
+  SubmissionPhaseStatus done = 3;
+}
+
+message SubmissionGuardFailure {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CODE_INVALID_WIRE = 1;
+    CODE_INVALID_PHASE = 2;
+    CODE_NOT_ACKNOWLEDGED = 3;
+  }
+  Code code = 1 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  string message = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message SubmissionGuardDecision {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_WAIT = 1;
+    ACTION_POST = 2;
+    ACTION_RETURN = 3;
+  }
+  Action action = 1;
+  SubmissionBridgeResponse response = 2;
+  SubmissionGuardFailure failure = 3;
+}
+
+// External terminal-stage spellings are derived from these names on both sides.
+enum ConductorTerminalStage {
+  CONDUCTOR_TERMINAL_STAGE_UNSPECIFIED = 0;
+  CONDUCTOR_TERMINAL_STAGE_DONE = 1;
+  CONDUCTOR_TERMINAL_STAGE_COMPLETED = 2;
+  CONDUCTOR_TERMINAL_STAGE_FINISHED = 3;
+  CONDUCTOR_TERMINAL_STAGE_AWAITING_CLEANUP = 4;
+}

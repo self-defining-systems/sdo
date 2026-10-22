@@ -1,6 +1,14 @@
 # Benchmark worker extensions. Build from the locally built production responder.
 ARG SDO_RESPONDER_IMAGE=sdo-responder:latest
+FROM ${SDO_RESPONDER_IMAGE} AS submission-guard-build
+# The phase guard contains benchmark protocol policy only, never oracle data.
+COPY benchmarks/sregym/protocol/submission_go/go.mod benchmarks/sregym/protocol/submission_go/go.sum benchmarks/sregym/protocol/submission_go/guard.go /opt/sdo/benchmarks/sregym/protocol/submission_go/
+COPY benchmarks/sregym/protocol/submission_go/cmd/sdo-submission-guard/main.go /opt/sdo/benchmarks/sregym/protocol/submission_go/cmd/sdo-submission-guard/
+RUN cd /opt/sdo/benchmarks/sregym/protocol/submission_go \
+    && go build -o /usr/local/bin/sdo-submission-guard ./cmd/sdo-submission-guard
+
 FROM ${SDO_RESPONDER_IMAGE} AS sregym-responder
+COPY --from=submission-guard-build /usr/local/bin/sdo-submission-guard /usr/local/bin/sdo-submission-guard
 # Benchmark transport clients; production images stay free of them.
 RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
       anyio==4.12.1 \
@@ -24,7 +32,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
 COPY benchmarks/__init__.py /opt/sdo/benchmarks/__init__.py
 COPY benchmarks/sregym/__init__.py /opt/sdo/benchmarks/sregym/__init__.py
 COPY benchmarks/sregym/adapter/__init__.py benchmarks/sregym/adapter/submission.py benchmarks/sregym/adapter/submission_relay.py /opt/sdo/benchmarks/sregym/adapter/
-COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py /opt/sdo/benchmarks/sregym/protocol/
+COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py benchmarks/sregym/protocol/submission_guard.py /opt/sdo/benchmarks/sregym/protocol/
 COPY benchmarks/sregym/fastloop/__init__.py benchmarks/sregym/fastloop/model_recording.py benchmarks/sregym/fastloop/file_edits.py benchmarks/sregym/fastloop/recording_worker.py /opt/sdo/benchmarks/sregym/fastloop/
 RUN chmod -R a+rX /opt/sdo/benchmarks
 

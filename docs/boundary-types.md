@@ -66,5 +66,15 @@ The adapter drain returns a generated failure rather than raising
 `ReceiptRejectedError`; persistent and fastloop callers consume that result.
 The narrow fastloop caller edits follow the changed adapter API and contain no
 new lifecycle decisions. Validity analysis decodes typed rejection artifacts to
-keep checker unavailability separate from rejected agent evidence. Submission phase guards, closure/drain interpretation,
+keep checker unavailability separate from rejected agent evidence. Submission phase guards (next slice), closure/drain interpretation,
 controller-state dictionary readers and the other **N** rows remain follow-ups.
+
+## Implemented submission seam (R2 slice 4)
+
+`benchmark_submission.proto` now owns submission phases, terminal-stage names,
+status/acknowledgment facts, the solution body and the Go phase decision. Python
+forwards external facts to `protocol/submission_go` and consumes generated
+`SubmissionGuardDecision`; its duplicate stage/acknowledgment decision logic is
+deleted. The ready/terminal constants in `protocol/schema.py` come from generated
+descriptors. These decision rows are **G**. Upstream reply metadata remains opaque
+transport data, and the upstream status-read/POST pair is not atomic.

@@ -129,10 +129,20 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
 
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
-    scripted = (
-        _expand([src for src in _local_copy_sources(BENCHMARK_DOCKERFILE) if src.startswith("benchmarks")]) - copied
-    )
+    scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert scripted == {"benchmarks/sregym/adapter/scripted_worker.py", *SCRIPTED_PROGRAM_FILES}
+    guard_build = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "submission-guard-build"))
+    assert guard_build == {
+        "benchmarks/sregym/protocol/submission_go/go.mod",
+        "benchmarks/sregym/protocol/submission_go/go.sum",
+        "benchmarks/sregym/protocol/submission_go/guard.go",
+        "benchmarks/sregym/protocol/submission_go/cmd/sdo-submission-guard/main.go",
+    }
+    assert guard_build.isdisjoint(copied)
+    assert (
+        "COPY --from=submission-guard-build /usr/local/bin/sdo-submission-guard /usr/local/bin/sdo-submission-guard"
+        in BENCHMARK_DOCKERFILE.read_text(encoding="utf-8")
+    )
 
 
 def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_experiments() -> None:

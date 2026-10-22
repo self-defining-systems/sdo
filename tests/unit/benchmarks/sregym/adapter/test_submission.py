@@ -220,3 +220,25 @@ def test_diagnosis_is_not_gated_on_incident_status(monkeypatch: pytest.MonkeyPat
 
     assert code == 0
     assert calls == ["frontend selector matches no pods"]
+
+
+@pytest.mark.parametrize("stage", [42, ["mitigation"], {"bad": "stage"}])
+def test_malformed_stage_is_rejected_without_posting_or_poisoning_next_call(stage: object) -> None:
+    posted = []
+    current = [stage]
+
+    def opener(request, timeout):
+        if request.full_url.endswith("/status"):
+            return Response({"stage": current[0]})
+        posted.append(request.data)
+        return Response({"status": "200"})
+
+    with pytest.raises(SubmissionBridgeError, match="ProtoJSON") as rejected:
+        submit_solution("first", phase="diagnosis", api_base="http://c", opener=opener)
+    from sdo.contracts import SubmissionGuardFailure
+
+    assert rejected.value.failure.code == SubmissionGuardFailure.CODE_INVALID_WIRE
+    assert posted == []
+    current[0] = "diagnosis"
+    assert submit_solution("second", phase="diagnosis", api_base="http://c", opener=opener) == {"status": "200"}
+    assert len(posted) == 1
