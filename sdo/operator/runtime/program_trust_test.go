@@ -3,7 +3,9 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
@@ -280,5 +282,79 @@ func TestProgramTrustConsumesRealResponderApplyEvidence(t *testing.T) {
 	outcome.Classification = "partial"
 	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("real locally green apply in controller-failed outcome earned trust: %+v", got)
+	}
+}
+
+// Plan and apply responses carry patches, findings and per-run evidence, so
+// real ones exceed the recorded-response cap. Trust must survive that.
+func oversizedTrustOutcome(t *testing.T, runs int) *contracts.OutcomeRecord {
+	t.Helper()
+	outcome := boundTrustOutcome(t, "application-1", "success", program.NoMatch)
+	bulk := strings.Repeat("x", 600)
+	var plan ToolResponse
+	var apply ToolResponse
+	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[0].ResponseJson), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[1].ResponseJson), &apply); err != nil {
+		t.Fatal(err)
+	}
+	plan.Summary = bulk
+	for index := 0; index < 5; index++ {
+		plan.Patches = append(plan.Patches, PlanPatch{Patch: json.RawMessage(`"` + bulk + `"`)})
+	}
+	apply.Summary = bulk
+	bindings := apply.ProgramRuns[0].Bindings
+	apply.ProgramRuns = nil
+	for index := 0; index < runs; index++ {
+		other := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("other-%d", index)}}
+		apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: other, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
+	}
+	apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
+	for index, response := range []ToolResponse{plan, apply} {
+		full, _ := json.Marshal(response)
+		if len(full) <= maxRecordedToolResponse {
+			t.Fatalf("fixture response %d is %d bytes, not over the cap", index, len(full))
+		}
+		recorded := recordedToolResponseJSON(response)
+		if len(recorded) > maxRecordedToolResponse {
+			t.Fatalf("recorded response %d is %d bytes, over the cap", index, len(recorded))
+		}
+		outcome.ProgramToolCalls[index].ResponseJson = string(recorded)
+	}
+	return outcome
+}
+
+func TestProgramTrustSurvivesOversizedPlanAndApplyRecords(t *testing.T) {
+	outcome := oversizedTrustOutcome(t, 0)
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
+		t.Fatalf("truncated plan/apply records earned no trust: %+v", got)
+	}
+}
+
+func TestProgramTrustFailsClosedWhenRecordedRunsOverflow(t *testing.T) {
+	outcome := oversizedTrustOutcome(t, 40)
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+		t.Fatalf("overflowed run list earned trust: %+v", got)
+	}
+	var recorded struct {
+		Omitted int `json:"program_runs_omitted"`
+	}
+	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[1].ResponseJson), &recorded); err != nil || recorded.Omitted == 0 {
+		t.Fatalf("overflow is not marked: %v %+v", err, recorded)
+	}
+}
+
+func TestTruncatedRecordKeepsDiagnosisError(t *testing.T) {
+	outcome := oversizedTrustOutcome(t, 0)
+	var apply ToolResponse
+	if err := json.Unmarshal([]byte(outcome.ProgramToolCalls[1].ResponseJson), &apply); err != nil {
+		t.Fatal(err)
+	}
+	apply.ProgramRuns[0].Verdict.Evidence = append(apply.ProgramRuns[0].Verdict.Evidence, program.Evidence{Observed: "diagnosis crashed"})
+	apply.Summary = strings.Repeat("x", 3000)
+	outcome.ProgramToolCalls[1].ResponseJson = string(recordedToolResponseJSON(apply))
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+		t.Fatalf("diagnosis error was dropped by truncation: %+v", got)
 	}
 }
