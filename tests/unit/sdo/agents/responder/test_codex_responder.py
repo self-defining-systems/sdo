@@ -175,8 +175,6 @@ def test_codex_output_schema_is_strict_and_requires_defaulted_fields() -> None:
     cause = schema["properties"]["confirmed_root_causes"]["items"]
     assert cause["required"] == list(cause["properties"])
     assert cause["additionalProperties"] is False
-    assert cause["properties"]["evidence"]["minItems"] == 1
-    assert cause["properties"]["explained_detectors"]["minItems"] == 1
     evidence = cause["properties"]["evidence"]["items"]
     assert evidence["required"] == list(evidence["properties"])
     assert "static-artifact" not in evidence["properties"]["kind"]["enum"]

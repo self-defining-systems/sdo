@@ -83,7 +83,7 @@ func prepareCleanReflection(t *testing.T, root string) {
 	if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/base/README.md"), append(data, []byte("\nVerified recovery.\n")...), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".git", validate.DecisionFile), []byte(`{"learning_decision":"updated","playbook_ids":["base"]}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".git", validate.DecisionFile), []byte(`{"learning_decision":"updated","proposed_artifact_ids":["base"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 }

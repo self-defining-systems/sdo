@@ -606,7 +606,11 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				decision.NoChangeReason = "covered"
 			}
 			if test.phase == validate.ReflectionPhase {
-				data, err := protojson.Marshal(decision)
+				// The decision file is the ReflectionResult the worker returns.
+				data, err := protojson.Marshal(&contracts.ReflectionResult{
+					LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason,
+					ProposedArtifactIds: decision.PlaybookIds, SdkGaps: decision.SdkGaps,
+				})
 				if err != nil {
 					t.Fatal(err)
 				}

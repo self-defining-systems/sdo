@@ -56,7 +56,9 @@ class _ScopedBackend(CodexSessionBackend):
             resume_session_id=session_id,
             executor=self.executor,
         )
-        return ReflectionTurn.model_validate(unwrap_branch(turn.output_json, "reflection")).with_usage(turn_usage(turn))
+        return ReflectionTurn.from_model_output(unwrap_branch(turn.output_json, "reflection")).with_usage(
+            turn_usage(turn)
+        )
 
 
 def _git(cwd: Path, *args: str) -> str:

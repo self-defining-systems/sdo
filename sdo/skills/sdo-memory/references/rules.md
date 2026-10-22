@@ -37,7 +37,7 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
 - Reflection requires the broker's accepted outcome for this incident. Preserve the provisioned publication
   context. Enforced by: `lifecycle.accepted-outcome`.
 - Before checking reflection edits, write the intended learning_decision, no_change_reason and logical
-  playbook_ids to `.git/sdo-reflection-decision.json`, or pass an explicit JSON file with `--decision`.
+  proposed_artifact_ids to `.git/sdo-reflection-decision.json`, or pass an explicit JSON file with `--decision`.
   Return the same decision and IDs; no_change and sdk_gap require a reason and no diff. Enforced by:
   `reflection.decision`.
 - Keep changed lines free of trailing whitespace and keep logical snapshots within the aggregate budget.

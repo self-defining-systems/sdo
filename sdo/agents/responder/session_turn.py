@@ -62,11 +62,9 @@ def session_output_schema() -> dict[str, object]:
     from sdo.agents.responder.codex import _incident_result_schema
     from sdo.agents.responder.reflection import reflection_output_schema
 
-    reflection = reflection_output_schema()
-    definitions = reflection.pop("$defs", {})
     branches: dict[TurnBranch, dict[str, object]] = {
         "incident_result": _incident_result_schema(),
-        "reflection": reflection,
+        "reflection": reflection_output_schema(),
     }
     properties: dict[str, object] = {
         name: {"description": _BRANCH_DESCRIPTIONS[name], "anyOf": [schema, {"type": "null"}]}
@@ -77,7 +75,6 @@ def session_output_schema() -> dict[str, object]:
         "properties": properties,
         "required": list(properties),
         "additionalProperties": False,
-        "$defs": definitions,
     }
 
 

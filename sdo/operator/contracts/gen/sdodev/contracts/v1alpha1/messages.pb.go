@@ -3359,7 +3359,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x10\n" +
 	"\x03old\x18\x02 \x01(\tR\x03old\x12\x10\n" +
 	"\x03new\x18\x03 \x01(\tR\x03new\x12\x16\n" +
-	"\x06source\x18\x04 \x01(\tR\x06source\"\xe3\x05\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\"\x81\x06\n" +
 	"\n" +
 	"DriftEvent\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12=\n" +
@@ -3375,8 +3375,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"manager_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tmanagerAt\x121\n" +
 	"\x14investigation_status\x18\n" +
-	" \x01(\tR\x13investigationStatus\x123\n" +
-	"\x15investigation_verdict\x18\v \x01(\tR\x14investigationVerdict\x121\n" +
+	" \x01(\tR\x13investigationStatus\x12Q\n" +
+	"\x15investigation_verdict\x18\v \x01(\tB\x1c\xbaH\x19r\x17R\x00R\x03bugR\x06benignR\x06unsureR\x14investigationVerdict\x121\n" +
 	"\x14investigation_reason\x18\f \x01(\tR\x13investigationReason\x12_\n" +
 	"\x16investigation_evidence\x18\r \x03(\v2(.sdodev.contracts.v1alpha1.DriftEvidenceR\x15investigationEvidence\x128\n" +
 	"\x18investigation_capture_id\x18\x0e \x01(\tR\x16investigationCaptureId\"\x86\x01\n" +

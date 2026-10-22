@@ -132,7 +132,12 @@ def test_reflection_backend_installs_blocking_validation_tool(
             assert int(request.env["MCP_TOOL_TIMEOUT"]) > 300_000
         return reply(
             provider,
-            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered", "playbook_ids": []},
+            {
+                "summary": "covered",
+                "learning_decision": "no_change",
+                "no_change_reason": "covered",
+                "proposed_artifact_ids": [],
+            },
             session_id="session-1",
             branch="reflection",
         )

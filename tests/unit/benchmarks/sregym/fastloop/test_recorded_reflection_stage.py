@@ -157,7 +157,7 @@ def frontmatter_output() -> dict:
     return {
         "summary": "Learn the service port invariant",
         "learning_decision": "updated",
-        "playbook_ids": ["service-targetport-mismatch"],
+        "proposed_artifact_ids": ["service-targetport-mismatch"],
     }
 
 

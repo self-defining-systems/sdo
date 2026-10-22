@@ -23,13 +23,13 @@ from sdo.agents.responder.session_turn import (
 )
 from sdo.agents.responder.tools_cli import ACT_EXAMPLE, CLI_EXAMPLES
 from sdo.contracts import (
-    ROOT_CAUSE_EVIDENCE_KINDS,
     DetectorEvaluation,
     Finding,
     IncidentRequest,
     IncidentResult,
     MemoryDetector,
     StateFieldChange,
+    model_output_schema,
     timestamp_datetime,
 )
 
@@ -129,138 +129,46 @@ def _evidence_reference_feedback(problems: str) -> str:
     )
 
 
+#: Proto fields the model does not supply: worker accounting and session, the controller's
+#: program-loop state, and the detector states and artifact IDs the responder never reports.
+_MODEL_OMITS: dict[str, tuple[str, ...]] = {
+    "sdodev.contracts.v1alpha1.IncidentResult": (
+        "schema_version",
+        "final_detector_states",
+        "proposed_artifact_ids",
+        "usage",
+        "responder_session_id",
+        "error",
+        "late_findings_pull",
+        "program_tool_calls",
+        "repair_actions",
+        "program_runs",
+        "plan_applications",
+        "response_loops_used",
+        "response_loop_exhausted",
+        "program_failure_signals",
+        "resolution_path",
+        "fast_path_programs",
+        "fast_path_skipped_reason",
+        "fast_path_relation_covered_findings",
+    ),
+    "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
+    "sdodev.contracts.v1alpha1.DriftEvent": (
+        "source",
+        "operation",
+        "observed_at",
+        "program_id",
+        "manager_at",
+        "investigation_status",
+        "investigation_capture_id",
+    ),
+}
+
+
 def _incident_result_schema() -> dict[str, object]:
-    object_ref = {
-        "type": "object",
-        "properties": {
-            "api_version": {"type": "string"},
-            "kind": {"type": "string", "minLength": 1},
-            "namespace": {"type": "string"},
-            "name": {"type": "string", "minLength": 1},
-        },
-        "required": ["api_version", "kind", "namespace", "name"],
-        "additionalProperties": False,
-    }
-    # Only live evidence qualifies; static artifacts go to static_context.
-    evidence_item = {
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": list(ROOT_CAUSE_EVIDENCE_KINDS)},
-            "source": {"type": "string", "minLength": 1},
-            "observation": {"type": "string", "minLength": 1},
-        },
-        "required": ["kind", "source", "observation"],
-        "additionalProperties": False,
-    }
-    properties: dict[str, object] = {
-        "incident_id": {"type": "string", "minLength": 1},
-        "status": {"type": "string", "enum": ["completed", "failed", "cancelled"]},
-        "confirmed_root_causes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "summary": {"type": "string", "minLength": 1},
-                    "resources": {"type": "array", "items": object_ref, "minItems": 1},
-                    "evidence": {"type": "array", "items": evidence_item, "minItems": 1},
-                    "explained_detectors": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "minItems": 1,
-                    },
-                    "static_context": {"type": "array", "items": {"type": "string", "minLength": 1}},
-                },
-                "required": ["summary", "resources", "evidence", "explained_detectors", "static_context"],
-                "additionalProperties": False,
-            },
-        },
-        "applied_playbooks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"playbook_id": {"type": "string", "minLength": 1}},
-                "required": ["playbook_id"],
-                "additionalProperties": False,
-            },
-        },
-        "repair_changes": {"type": "array", "items": {"type": "string"}},
-        "verification_evidence": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "minLength": 1},
-                    "passed": {"type": "boolean"},
-                    "details": {"type": "string", "minLength": 1},
-                    "observed_at": {"type": "string", "format": "date-time"},
-                },
-                "required": ["name", "passed", "details", "observed_at"],
-                "additionalProperties": False,
-            },
-        },
-        "timing": {
-            "type": "object",
-            "properties": {
-                "started_at": {"type": "string", "format": "date-time"},
-                "completed_at": {"type": "string", "format": "date-time"},
-            },
-            "required": ["started_at", "completed_at"],
-            "additionalProperties": False,
-        },
-    }
-    properties["drift_events"] = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "ref": object_ref,
-                "fields": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {key: {"type": "string"} for key in ("path", "old", "new", "source")},
-                        "required": ["path", "old", "new", "source"],
-                        "additionalProperties": False,
-                    },
-                },
-                "manager": {"type": "string"},
-                "classification": {"type": "string", "enum": ["fault", "unexplained"]},
-                "investigation_verdict": {"type": "string", "enum": ["bug", "benign", "unsure"]},
-                "investigation_reason": {"type": "string"},
-                "investigation_evidence": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {
-                                "type": "string",
-                                "enum": ["source_contradiction", "violated_relation", "observed_impact"],
-                            },
-                            "observation": {"type": "string"},
-                        },
-                        "required": ["kind", "observation"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            "required": [
-                "ref",
-                "fields",
-                "manager",
-                "classification",
-                "investigation_verdict",
-                "investigation_reason",
-                "investigation_evidence",
-            ],
-            "additionalProperties": False,
-        },
-    }
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": list(properties),
-        "additionalProperties": False,
-    }
+    """The model-facing schema of ``IncidentResult``, generated from the proto the Go loader reads."""
+
+    return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
 
 #: Upper bounds on playbook text inlined into a warm-path prompt.
