@@ -247,6 +247,28 @@ func objectGroup(kind string) (string, bool) {
 	}
 	return "", false
 }
+
+// Malformed identity/pagination must not turn into a valid empty list that a
+// history reader could mistake for an observation of absence.
+func validIdentity(input map[string]any) bool {
+	raw := input["metadata"]
+	if raw == nil {
+		return true
+	}
+	metadata, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, key := range []string{"name", "namespace", "resourceVersion", "continue"} {
+		if value := metadata[key]; value != nil {
+			if _, ok := value.(string); !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func projectResponse(raw []byte) ([]byte, string, error) {
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
@@ -263,13 +285,19 @@ func projectResponse(raw []byte) ([]byte, string, error) {
 	if !ok || !validVersion {
 		return nil, "", errors.New("unsupported representation")
 	}
+	if !validIdentity(input) {
+		return nil, "", errors.New("invalid object metadata")
+	}
 	output := projectItem(input, inputKind, version)
 	if strings.HasSuffix(inputKind, "List") {
-		items, _ := input["items"].([]any)
+		items, valid := input["items"].([]any)
+		if input["items"] != nil && !valid {
+			return nil, "", errors.New("invalid list items")
+		}
 		projected := make([]any, 0, len(items))
 		for _, rawItem := range items {
 			item, ok := rawItem.(map[string]any)
-			if !ok {
+			if !ok || !validIdentity(item) {
 				return nil, "", errors.New("invalid list item")
 			}
 			projected = append(projected, projectItem(item, kind, version))

@@ -62,3 +62,16 @@ func TestProjectionRejectsUnreviewedShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestMalformedIdentityNeverBecomesEmptyList(t *testing.T) {
+	for _, raw := range []string{
+		`{"apiVersion":"v1","kind":"PodList","items":{"message":"fake-private"}}`,
+		`{"apiVersion":"v1","kind":"PodList","metadata":{"continue":{"message":"fake-private"}},"items":[]}`,
+		`{"apiVersion":"v1","kind":"PodList","metadata":"fake-private","items":[]}`,
+		`{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":{"message":"fake-private"}}}]}`,
+	} {
+		if _, _, err := projectResponse([]byte(raw)); err == nil {
+			t.Errorf("malformed identity/list could be read as absence: %s", raw)
+		}
+	}
+}

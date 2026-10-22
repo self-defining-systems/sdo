@@ -469,6 +469,20 @@ func TestOperationalFieldAllowlist(t *testing.T) {
 				// channel. Recursing also protects templates, init containers,
 				// conditions, previous termination state, and probe exec handlers.
 				poisonExcludedFields(input)
+				// Also exercise all credential channels on kinds whose real API
+				// has no pod spec: an unreviewed spec must stay wholly opaque.
+				spec, ok := input["spec"].(map[string]any)
+				if !ok {
+					spec = map[string]any{}
+					input["spec"] = spec
+				}
+				if _, exists := spec["containers"]; !exists {
+					spec["containers"] = []any{map[string]any{
+						"name": "excluded", "env": []any{map[string]any{"name": "TOKEN", "value": canary}},
+						"command": []any{canary}, "args": []any{canary},
+						"readinessProbe": map[string]any{"exec": map[string]any{"command": []any{canary}}},
+					}}
+				}
 				switch tc.kind {
 				case "Service":
 					input["spec"].(map[string]any)["clusterIP"] = "192.0.2.10"
@@ -585,6 +599,9 @@ func poisonExcludedFields(v any) {
 		}
 		x["annotations"] = map[string]any{"auth": canary}
 		x["command"], x["args"] = []any{canary}, []any{canary}
+		if _, exists := x["operator"]; exists {
+			x["values"] = []any{canary}
+		}
 		if _, exists := x["status"]; !exists {
 			x["status"] = map[string]any{"message": canary}
 		}
