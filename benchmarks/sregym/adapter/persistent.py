@@ -57,12 +57,8 @@ from benchmarks.sregym.adapter.runtime import (
     collect_production_receipt,
     export_controller_logs,
 )
-from benchmarks.sregym.protocol import (
-    DETECTOR_REVIEW_FILENAME,
-    DetectorReviewRecord,
-    ProductionReceiptValidationError,
-    validate_production_receipt,
-)
+from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import ReceiptDrainResult, ReceiptFailure, RejectedProductionReceipt
 

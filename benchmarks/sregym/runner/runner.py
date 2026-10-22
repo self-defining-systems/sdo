@@ -18,12 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from benchmarks.sregym.protocol import (
-    DETECTOR_REVIEW_FILENAME,
-    DetectorReviewRecord,
-    ProductionReceiptValidationError,
-    validate_production_receipt,
-)
+from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.runner.codex_baseline import ensure_agent_image_supports_prompt_appendix
 from benchmarks.sregym.runner.experiment import (
     ExperimentConfig,
