@@ -17,18 +17,19 @@ import (
 // RecordFixedNoMatchCorpus seeds exact observed negative evidence. It is not a
 // positive case and earns no trust. Re-materializing after model edits preserves
 // this regression until the ordinary replay gate accepts a corrected program.
-func RecordFixedNoMatchCorpus(root, captures, incident string, instances map[string][]program.Bindings) ([]string, error) {
+func RecordFixedNoMatchCorpus(root, captures, incident string, instances map[string][]program.Bindings, origins ...map[string]string) ([]string, error) {
 	fixed, err := os.ReadFile(filepath.Join(captures, "fixed.json"))
-	if err != nil {
-		return nil, err
-	}
-	recordings, err := os.ReadFile(filepath.Join(captures, "open@detect-recordings.json"))
 	if err != nil {
 		return nil, err
 	}
 	paths := []string{}
 	for _, id := range slices.Sorted(maps.Keys(instances)) {
 		for _, bindings := range instances[id] {
+			phase := capturedInstancePhase(id, bindings, origins)
+			recordings, err := os.ReadFile(filepath.Join(captures, "open@"+phase+"-recordings.json"))
+			if err != nil {
+				return nil, err
+			}
 			raw, _ := json.Marshal(bindings)
 			digest := sha256.Sum256(append([]byte(incident+"\x00"+id+"\x00"), raw...))
 			relative := filepath.Join(layout.CorpusDir, fmt.Sprintf("fixed-no-match-%x", digest[:12]))

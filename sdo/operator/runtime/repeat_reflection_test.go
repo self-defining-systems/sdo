@@ -36,17 +36,6 @@ func TestCompositeRepairKeepsBoundSuccessWhileOtherFaultIsOpen(t *testing.T) {
 	}
 }
 
-func TestRepeatReflectionNeedsVerifiedEquivalentCoverage(t *testing.T) {
-	outcome := verifiedRepeat(t)
-	if len(verifiedRepeatBindings(outcome)) != 1 {
-		t.Fatal("verified repeat still requires model")
-	}
-	outcome.ProgramToolCalls = nil
-	if len(verifiedRepeatBindings(outcome)) != 0 {
-		t.Fatal("unbound repair skipped reflection")
-	}
-}
-
 func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
 	testHermeticRepeatBroker(t, false)
 }
@@ -130,10 +119,6 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 		data, _ = json.Marshal(response)
 		call.ResponseJson = string(data)
 	}
-	accepted, err := repository.RecordOutcome(ctx, outcome.IncidentId, outcome)
-	if err != nil {
-		t.Fatal(err)
-	}
 	session := t.TempDir()
 	capture, err := memory.IncidentCorpusDir(session, outcome.IncidentId)
 	if err != nil {
@@ -170,11 +155,20 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 		}
 	}
 	modelCalls := 0
-	native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), SessionRoot: session,
+	registry, err := program.NewRegistry([]program.Diagnoser{fastloopPortProgram{}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{Programs: registry, Repository: repository, LedgerRoot: t.TempDir(), SessionRoot: session,
 		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 			modelCalls++
 			return ReflectionDecision{LearningDecision: "updated"}, nil
 		}),
+	}
+	outcome.ReflectionEligibility = native.prepareCauseWork(ctx, outcome, IncidentWorkspace{IncidentID: outcome.IncidentId, Worktree: target, BaseCommit: outcome.SourceCommit})
+	accepted, err := repository.RecordOutcome(ctx, outcome.IncidentId, outcome)
+	if err != nil {
+		t.Fatal(err)
 	}
 	closure, err := incidentClosureContract(nativeClosure(IncidentWorkspace{IncidentID: outcome.IncidentId, Worktree: target, BaseCommit: outcome.SourceCommit}))
 	if err != nil {

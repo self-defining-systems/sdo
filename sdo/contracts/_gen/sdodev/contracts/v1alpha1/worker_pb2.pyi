@@ -3,7 +3,6 @@ import datetime
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import any_pb2 as _any_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
-from sdodev.contracts.v1alpha1 import common_pb2 as _common_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
 from sdodev.contracts.v1alpha1 import memory_pb2 as _memory_pb2
 from sdodev.contracts.v1alpha1 import messages_pb2 as _messages_pb2
@@ -104,34 +103,8 @@ class AgentResult(_message.Message):
     error_summary: str
     def __init__(self, schema_version: _Optional[str] = ..., task_id: _Optional[str] = ..., status: _Optional[str] = ..., response: _Optional[_Union[_any_pb2.Any, _Mapping]] = ..., proposal_id: _Optional[str] = ..., error_summary: _Optional[str] = ...) -> None: ...
 
-class ReflectionCauseWork(_message.Message):
-    __slots__ = ("cause_index", "resources", "items")
-    CAUSE_INDEX_FIELD_NUMBER: _ClassVar[int]
-    RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    ITEMS_FIELD_NUMBER: _ClassVar[int]
-    cause_index: int
-    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
-    items: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
-    def __init__(self, cause_index: _Optional[int] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
-
-class ReflectionWorkItem(_message.Message):
-    __slots__ = ("program_id", "bindings", "disposition", "question", "reason", "resources")
-    PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
-    BINDINGS_FIELD_NUMBER: _ClassVar[int]
-    DISPOSITION_FIELD_NUMBER: _ClassVar[int]
-    QUESTION_FIELD_NUMBER: _ClassVar[int]
-    REASON_FIELD_NUMBER: _ClassVar[int]
-    RESOURCES_FIELD_NUMBER: _ClassVar[int]
-    program_id: str
-    bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
-    disposition: str
-    question: str
-    reason: str
-    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
-    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., disposition: _Optional[str] = ..., question: _Optional[str] = ..., reason: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
-
 class ReflectionRequest(_message.Message):
-    __slots__ = ("closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics", "depth", "cause_work", "unassigned_work")
+    __slots__ = ("closure", "proposal_commit", "outcome_commit", "memory_snapshot", "session_mode", "guidance", "outcome", "prior_outcomes", "validation_attempt", "previous_diagnostics", "cause_work", "unassigned_work")
     CLOSURE_FIELD_NUMBER: _ClassVar[int]
     PROPOSAL_COMMIT_FIELD_NUMBER: _ClassVar[int]
     OUTCOME_COMMIT_FIELD_NUMBER: _ClassVar[int]
@@ -142,7 +115,6 @@ class ReflectionRequest(_message.Message):
     PRIOR_OUTCOMES_FIELD_NUMBER: _ClassVar[int]
     VALIDATION_ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     PREVIOUS_DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
-    DEPTH_FIELD_NUMBER: _ClassVar[int]
     CAUSE_WORK_FIELD_NUMBER: _ClassVar[int]
     UNASSIGNED_WORK_FIELD_NUMBER: _ClassVar[int]
     closure: _messages_pb2.IncidentClosure
@@ -155,10 +127,9 @@ class ReflectionRequest(_message.Message):
     prior_outcomes: _containers.RepeatedCompositeFieldContainer[_outcome_pb2.OutcomeRecord]
     validation_attempt: int
     previous_diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_pb2.MemoryDiagnostic]
-    depth: str
-    cause_work: _containers.RepeatedCompositeFieldContainer[ReflectionCauseWork]
-    unassigned_work: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
-    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., depth: _Optional[str] = ..., cause_work: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
+    cause_work: _containers.RepeatedCompositeFieldContainer[_program_pb2.ReflectionCauseWork]
+    unassigned_work: _containers.RepeatedCompositeFieldContainer[_program_pb2.ReflectionWorkItem]
+    def __init__(self, closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., memory_snapshot: _Optional[_Union[_messages_pb2.OperationalMemorySnapshot, _Mapping]] = ..., session_mode: _Optional[str] = ..., guidance: _Optional[str] = ..., outcome: _Optional[_Union[_outcome_pb2.OutcomeRecord, _Mapping]] = ..., prior_outcomes: _Optional[_Iterable[_Union[_outcome_pb2.OutcomeRecord, _Mapping]]] = ..., validation_attempt: _Optional[int] = ..., previous_diagnostics: _Optional[_Iterable[_Union[_memory_pb2.MemoryDiagnostic, _Mapping]]] = ..., cause_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionCauseWork, _Mapping]]] = ..., unassigned_work: _Optional[_Iterable[_Union[_program_pb2.ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
 
 class ReflectionResult(_message.Message):
     __slots__ = ("summary", "learning_decision", "no_change_reason", "proposed_artifact_ids", "artifact_proposal", "sdk_gaps")

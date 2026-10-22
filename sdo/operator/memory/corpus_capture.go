@@ -155,6 +155,21 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 					trustedName = "open@detect-recordings.json"
 				}
 			}
+			if name == "recordings.json" && openName == "fixed.json" {
+				got, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					return err
+				}
+				exact := false
+				for _, phase := range []string{"detect", "pre-apply"} {
+					want, err := os.ReadFile(filepath.Join(trusted, "open@"+phase+"-recordings.json"))
+					exact = exact || (err == nil && string(got) == string(want))
+				}
+				if !exact {
+					return fmt.Errorf("corpus %s recordings differ from captured incident observations", entry.Name())
+				}
+				continue
+			}
 			want, err := os.ReadFile(filepath.Join(trusted, trustedName))
 			if err != nil {
 				return fmt.Errorf("read trusted captured %s: %w", name, err)

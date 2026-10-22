@@ -93,5 +93,15 @@ func equivalentRepairOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outco
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &contracts.OutcomeRecord{IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit, Classification: "success", ProgramRuns: result.ProgramRuns, ProgramToolCalls: result.ProgramToolCalls, PlanApplications: result.PlanApplications}
+	o := &contracts.OutcomeRecord{IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit, Classification: "success", ProgramRuns: result.ProgramRuns, ProgramToolCalls: result.ProgramToolCalls, PlanApplications: result.PlanApplications}
+	for _, run := range o.GetProgramRuns() {
+		if run.GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
+			for _, binding := range run.GetBindings() {
+				o.ConfirmedRootCauses = append(o.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{binding.GetObject()}})
+				o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{Success: true, Resources: []*contracts.ObjectRef{binding.GetObject()}})
+			}
+		}
+	}
+	settleTestOutcome(o)
+	return o
 }

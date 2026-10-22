@@ -65,9 +65,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
-			if application.FinalEquivalenceVerified != nil && !application.GetFinalEquivalenceVerified() {
-				continue
-			}
 			if !application.GetApplied() && !strings.HasPrefix(application.GetApplicationId(), "fast-path") {
 				continue
 			}
@@ -95,16 +92,43 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
-				} else if !boundPostApplyNoMatch(outcome, application, id, revision) {
-					// Incomplete or inconclusive evidence cannot extend a streak.
-					state.VerifiedSuccesses = 0
-					failedInApplication[id] = true
-				} else if !creditedInOutcome[id] && !failedInApplication[id] {
-					creditedInOutcome[id] = true
-					state.VerifiedSuccesses++
 				}
 				state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
 				stats[id] = state
+			}
+		}
+		// Success comes only from the controller's persisted exact settlement.
+		// Historical outcomes without this versioned proof earn no new credit.
+		eligibility := outcome.GetReflectionEligibility()
+		if eligibility.GetVersion() == 1 {
+			items := append([]*contracts.ReflectionWorkItem{}, eligibility.GetUnassigned()...)
+			for _, cause := range eligibility.GetCauses() {
+				items = append(items, cause.GetItems()...)
+			}
+			for _, item := range items {
+				id, revision := item.GetProgramId(), item.GetProgramRevision()
+				if item.GetDisposition() != "false_match" || id == "" || revision == "" {
+					continue
+				}
+				state := stateForRevision(id, revision)
+				if !failedInApplication[id] {
+					state.Failures = recordFailure(id, revision)
+				}
+				state.VerifiedSuccesses = 0
+				state.Trusted = false
+				failedInApplication[id] = true
+				stats[id] = state
+			}
+			for _, item := range items {
+				id, revision := item.GetProgramId(), item.GetProgramRevision()
+				if item.GetDisposition() != "covered" || id == "" || revision == "" || revision != revisions[id] || failedInApplication[id] || creditedInOutcome[id] {
+					continue
+				}
+				state := stateForRevision(id, revision)
+				state.VerifiedSuccesses++
+				state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
+				stats[id] = state
+				creditedInOutcome[id] = true
 			}
 		}
 		seenFailures := map[string]bool{}

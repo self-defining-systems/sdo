@@ -24,12 +24,12 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 	revisions := programRunRevisions(outcome)
 	credited := map[string][]program.Bindings{}
 	for _, app := range outcome.GetPlanApplications() {
-		if !app.GetApplied() || !app.GetVerificationPassed() || app.GetRolledBack() || app.GetDryRun() || app.GetError() != "" ||
-			(app.FinalEquivalenceVerified != nil && !app.GetFinalEquivalenceVerified()) {
+		if !app.GetApplied() || !app.GetVerificationCompleted() || !app.GetVerificationPassed() || app.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || app.GetRolledBack() || app.GetDryRun() || app.GetError() != "" || app.GetRollbackError() != "" ||
+			!app.GetFinalEquivalenceVerified() {
 			continue
 		}
 		for _, id := range app.GetProgramIds() {
-			failed := outcome.GetClassification() != "success"
+			failed := outcome.GetClassification() != "success" || outcome.RepairCommit != nil || outcome.GetResponseLoopExhausted()
 			for _, signal := range outcome.GetProgramFailureSignals() {
 				if strings.HasSuffix(signal, ":"+id) {
 					failed = true
@@ -90,7 +90,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			for _, ref := range bindings {
 				boundResources = append(boundResources, ref)
 			}
-			item := &contracts.ReflectionWorkItem{ProgramId: run.GetProgramId(), Bindings: programRunContract(ProgramRun{Bindings: bindings}).Bindings, Disposition: "question", Reason: "uncertain", Question: "What reusable relation, if any, does the evidence support for this cause?"}
+			item := &contracts.ReflectionWorkItem{ProgramId: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: programRunContract(ProgramRun{Bindings: bindings}).Bindings, Disposition: "question", Reason: "uncertain", Question: "What reusable relation, if any, does the evidence support for this cause?"}
 			switch fixed[key] {
 			case program.Match:
 				if outcome.GetClassification() != "success" {
@@ -98,7 +98,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 				}
 				item.Disposition, item.Reason = "false_match", "fixed_capture_match"
 				item.Question = "The accepted program still matches the verified fixed capture. Refine it to pass the captured NoMatch regression."
-			case "", program.NoMatch:
+			case program.NoMatch:
 				equivalent := slices.ContainsFunc(credited[run.GetProgramId()], func(candidate program.Bindings) bool { return maps.Equal(candidate, bindings) })
 				if equivalent && touched {
 					item.Disposition, item.Reason, item.Question = "covered", "verified_equivalent_repair", ""
@@ -110,11 +110,13 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			}
 			work.Items = append(work.Items, item)
 		}
+		seenWrites := map[sdk.ObjectRef]bool{}
 		for _, resource := range cause.GetResources() {
 			ref := objectRefState(resource)
-			if written(ref) && !slices.ContainsFunc(boundResources, func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
+			ref.APIVersion = ""
+			if !seenWrites[ref] && written(ref) && !slices.ContainsFunc(boundResources, func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
+				seenWrites[ref] = true
 				work.Items = append(work.Items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired object in this confirmed cause had no matched program binding. What reusable relation is supported?"})
-				break
 			}
 		}
 		if len(work.Items) == 0 {
@@ -127,7 +129,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 
 // fixedCaptureVerdicts uses only the accepted deterministic registry and actual
 // fixed primitive observations. Unknown reads remain questions.
-func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord, registry program.ProgramRegistry, captures string) map[string]program.Result {
+func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord, registry program.ProgramRegistry, captures string, origins ...map[string]string) map[string]program.Result {
 	result := map[string]program.Result{}
 	if registry == nil {
 		return result
@@ -140,16 +142,25 @@ func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord,
 	if json.Unmarshal(raw, &snapshot) != nil {
 		return result
 	}
-	raw, err = os.ReadFile(filepath.Join(captures, "open@detect-recordings.json"))
-	if err != nil {
-		return result
+	type capturedCalls struct {
+		phase string
+		calls []sdktest.PrimitiveCall
 	}
-	var calls []sdktest.PrimitiveCall
-	if json.Unmarshal(raw, &calls) != nil {
-		return result
+	recordings := []capturedCalls{}
+	for _, phase := range []string{"detect", "pre-apply"} {
+		data, err := os.ReadFile(filepath.Join(captures, "open@"+phase+"-recordings.json"))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return result
+		}
+		var calls []sdktest.PrimitiveCall
+		if json.Unmarshal(data, &calls) != nil {
+			return result
+		}
+		recordings = append(recordings, capturedCalls{phase, calls})
 	}
-	corpus := sdktest.CorpusCase{Recordings: calls}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: corpus.PhaseRecordings("fixed")}
 	for _, run := range outcome.GetProgramRuns() {
 		if run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH {
 			continue
@@ -163,7 +174,35 @@ func fixedCaptureVerdicts(ctx context.Context, outcome *contracts.OutcomeRecord,
 			continue
 		}
 		if diagnoser, ok := registry.Diagnoser(run.GetProgramId()); ok {
-			result[key] = program.RunDiagnose(ctx, diagnoser, view, bindings, 10*time.Second).Result
+			preferredOpen := false
+			for _, recording := range recordings {
+				corpus := sdktest.CorpusCase{Recordings: recording.calls}
+				view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: corpus.PhaseRecordings("fixed")}
+				verdict := program.RunDiagnose(ctx, diagnoser, view, bindings, 10*time.Second).Result
+				// A definite fixed Match takes precedence. Otherwise prefer an
+				// independently replayable open Match for a positive corpus case.
+				selected := result[key] == "" || (verdict == program.NoMatch && result[key] != program.Match && !preferredOpen) || verdict == program.Match
+				if selected {
+					result[key] = verdict
+					if len(origins) > 0 {
+						origins[0][key] = recording.phase
+					}
+				}
+				if verdict == program.Match {
+					break
+				}
+				if verdict == program.NoMatch {
+					data, err := os.ReadFile(filepath.Join(captures, "open@"+recording.phase+".json"))
+					var open sdktest.Snapshot
+					if err == nil && json.Unmarshal(data, &open) == nil && program.RunDiagnose(ctx, diagnoser, &sdktest.ReplayReadView{Snapshot: open, Calls: corpus.PhaseRecordings("open")}, bindings, 10*time.Second).Result == program.Match {
+						result[key] = verdict
+						if len(origins) > 0 {
+							origins[0][key] = recording.phase
+						}
+						preferredOpen = true
+					}
+				}
+			}
 		}
 	}
 	return result
@@ -175,7 +214,7 @@ func causeWorkNeedsModel(work []*contracts.ReflectionCauseWork) bool {
 	}
 	for _, cause := range work {
 		for _, item := range cause.GetItems() {
-			if item.GetDisposition() != "covered" {
+			if item.GetDisposition() == "question" {
 				return true
 			}
 		}
@@ -183,21 +222,26 @@ func causeWorkNeedsModel(work []*contracts.ReflectionCauseWork) bool {
 	return false
 }
 
-func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *contracts.OutcomeRecord, workspace IncidentWorkspace) ([]*contracts.ReflectionCauseWork, map[string][]program.Bindings, map[string][]program.Bindings, []*contracts.ReflectionWorkItem) {
+func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *contracts.OutcomeRecord, workspace IncidentWorkspace) *contracts.ReflectionEligibility {
 	capture := ""
 	if n.SessionRoot != "" {
 		capture, _ = memory.IncidentCorpusDir(n.SessionRoot, workspace.IncidentID)
 	}
-	fixed := fixedCaptureVerdicts(ctx, outcome, n.Programs, capture)
+	origins := map[string]string{}
+	fixed := fixedCaptureVerdicts(ctx, outcome, n.Programs, capture, origins)
 	work := classifyCauseWork(outcome, fixed)
 	unassigned := unassignedReflectionQuestions(outcome, fixed)
-	positive, negative := map[string][]program.Bindings{}, map[string][]program.Bindings{}
 	revisions := programRunRevisions(outcome)
 	allItems := append([]*contracts.ReflectionWorkItem{}, unassigned...)
 	for _, cause := range work {
 		allItems = append(allItems, cause.Items...)
 	}
 	for _, item := range allItems {
+		bindings := program.Bindings{}
+		for _, binding := range item.Bindings {
+			bindings[binding.GetName()] = objectRefState(binding.GetObject())
+		}
+		item.CaptureOpenPhase = origins[matchedViewKey(item.ProgramId, bindings)]
 		if item.Disposition == "question" {
 			continue
 		}
@@ -206,17 +250,33 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 			item.Disposition, item.Reason, item.Question = "question", "uncertain", "The accepted program revision differs from the incident evidence. Evaluate this cause without credit."
 			continue
 		}
+	}
+	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned}
+}
+
+// Corpus publication and trust consume the same settled dispositions.
+func settledProgramCases(eligibility *contracts.ReflectionEligibility) (map[string][]program.Bindings, map[string][]program.Bindings) {
+	positive, negative := map[string][]program.Bindings{}, map[string][]program.Bindings{}
+	if eligibility.GetVersion() != 1 {
+		return positive, negative
+	}
+	items := append([]*contracts.ReflectionWorkItem{}, eligibility.GetUnassigned()...)
+	for _, cause := range eligibility.GetCauses() {
+		items = append(items, cause.GetItems()...)
+	}
+	for _, item := range items {
 		bindings := program.Bindings{}
-		for _, binding := range item.Bindings {
+		for _, binding := range item.GetBindings() {
 			bindings[binding.GetName()] = objectRefState(binding.GetObject())
 		}
-		if item.Disposition == "covered" {
-			positive[item.ProgramId] = append(positive[item.ProgramId], bindings)
-		} else if item.Disposition == "false_match" {
-			negative[item.ProgramId] = append(negative[item.ProgramId], bindings)
+		if item.GetDisposition() == "covered" {
+			positive[item.GetProgramId()] = append(positive[item.GetProgramId()], bindings)
+		}
+		if item.GetDisposition() == "false_match" {
+			negative[item.GetProgramId()] = append(negative[item.GetProgramId()], bindings)
 		}
 	}
-	return work, positive, negative, unassigned
+	return positive, negative
 }
 
 func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[string]program.Result) []*contracts.ReflectionWorkItem {
@@ -248,18 +308,21 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 			continue
 		}
 		seen[key] = true
-		item := &contracts.ReflectionWorkItem{ProgramId: run.GetProgramId(), Bindings: run.Bindings, Disposition: "question", Reason: "uncertain", Question: "This matched binding is outside the responder's confirmed cause resources. Review it without inferring another cause group or granting credit."}
+		item := &contracts.ReflectionWorkItem{ProgramId: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: run.Bindings, Disposition: "question", Reason: "uncertain", Question: "This matched binding is outside the responder's confirmed cause resources. Review it without inferring another cause group or granting credit."}
 		if fixed[key] == program.Match && outcome.GetClassification() == "success" {
 			item.Disposition, item.Reason, item.Question = "false_match", "fixed_capture_match", "This unassigned program still matches the verified fixed capture. Correct the required NoMatch regression without inferring a cause group."
 		}
 		items = append(items, item)
 	}
+	seenWrites := map[sdk.ObjectRef]bool{}
 	for _, action := range outcome.GetRepairActions() {
 		if action.GetSuccess() {
 			for _, resource := range action.GetResources() {
-				if !grouped(objectRefState(resource)) {
+				ref := objectRefState(resource)
+				ref.APIVersion = ""
+				if !grouped(ref) && !seenWrites[ref] {
+					seenWrites[ref] = true
 					items = append(items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired resource is outside confirmed cause groups. Review the write without inventing a cause or granting credit."})
-					return items
 				}
 			}
 		}
@@ -267,32 +330,27 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 	return items
 }
 
-// A matched binding outside confirmed causes is a question, not a trust fact.
-// Preserve application evidence while withholding credit for its program.
-func withholdUnassignedProgramCredit(result *IncidentResult) {
-	unassigned := map[string]bool{}
-	for _, run := range result.ProgramRuns {
-		if run.Verdict.Result != program.Match {
-			continue
-		}
-		grouped := false
-		for _, cause := range result.ConfirmedRootCauses {
-			for _, ref := range cause.Resources {
-				for _, bound := range run.Bindings {
-					grouped = grouped || sameResource(ref, bound)
-				}
-			}
-		}
-		if !grouped {
-			unassigned[run.ProgramID] = true
+func reflectionItemsNeedModel(items []*contracts.ReflectionWorkItem) bool {
+	for _, item := range items {
+		if item.GetDisposition() == "question" {
+			return true
 		}
 	}
-	for index := range result.PlanApplications {
-		for _, id := range result.PlanApplications[index].ProgramIDs {
-			if unassigned[id] {
-				exact := false
-				result.PlanApplications[index].Result.FinalEquivalenceVerified = &exact
-			}
-		}
+	return false
+}
+
+func settledCaptureOrigins(eligibility *contracts.ReflectionEligibility) map[string]string {
+	origins := map[string]string{}
+	items := append([]*contracts.ReflectionWorkItem{}, eligibility.GetUnassigned()...)
+	for _, cause := range eligibility.GetCauses() {
+		items = append(items, cause.GetItems()...)
 	}
+	for _, item := range items {
+		bindings := program.Bindings{}
+		for _, binding := range item.GetBindings() {
+			bindings[binding.GetName()] = objectRefState(binding.GetObject())
+		}
+		origins[memory.CapturedInstanceKey(item.GetProgramId(), bindings)] = item.GetCaptureOpenPhase()
+	}
+	return origins
 }
