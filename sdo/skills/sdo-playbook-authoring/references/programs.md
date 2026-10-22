@@ -50,3 +50,9 @@ unchanged. It never treats a Service probe or a fixed-phase answer as proof of a
 The complete memory check compiles, vets and tests the authored sources, validates imports, ownership,
 provenance, captured bytes and README policy, and runs generated corpus, rename and mitigation replay.
 Fix diagnostics in the final proposal files; the broker checks the same files independently.
+
+## Go-owned per-cause work
+
+The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations remain ungrouped questions. Do not infer merge/split decisions.
+
+A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.

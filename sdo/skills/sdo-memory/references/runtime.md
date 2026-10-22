@@ -92,6 +92,35 @@ Select an available open phase that shows the confirmed cause. Bind the
 affected resources and a healthy same-kind peer. Snapshots and recordings
 are copied exactly; the broker independently verifies them.
 
+## evidence_inventory
+
+List capture digests, counts and a few resource names, bound to the accepted outcome.
+
+Recorded method counts cover the whole file. Use recordings_index to locate
+primitive calls without reading result payloads. Full immutable evidence
+remains available through capture_fields and to
+independent validation. Read relevant fields rather than entire captures.
+
+## capture_fields
+
+Read captured resource fields or primitive recordings on demand.
+
+Fields are dotted paths; list indices are numeric (spec.containers.0.image).
+Null collections are empty. Results are paginated and bounded to 12000
+characters; oversized_indices identifies items needing narrower fields.
+Missing fields are null, never evidence that a primitive succeeded.
+
+## recordings_index
+
+Index primitive calls by original position, phase, method, bound object and error.
+
+Filters search the entire recording. next_offset marks incomplete pages;
+a truncated page does not establish that a primitive was unrecorded.
+Empty recorded phases mean open. phase_index locates the call within that
+phase's capture_fields page. Error excerpts report omitted characters.
+open_phase selects the protected recording file, including its fixed observations.
+Result payloads remain available through capture_fields.
+
 ## check_memory
 
 Run the complete memory check and wait for final diagnostics (at most 300s).

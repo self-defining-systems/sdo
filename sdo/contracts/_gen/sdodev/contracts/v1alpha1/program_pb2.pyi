@@ -161,7 +161,7 @@ class ProgramRun(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -177,6 +177,7 @@ class PlanApplication(_message.Message):
     COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     VERIFICATION_COMPLETED_FIELD_NUMBER: _ClassVar[int]
     VERIFICATION_PASSED_FIELD_NUMBER: _ClassVar[int]
+    FINAL_EQUIVALENCE_VERIFIED_FIELD_NUMBER: _ClassVar[int]
     plan: Plan
     applied: bool
     dry_run: bool
@@ -192,7 +193,8 @@ class PlanApplication(_message.Message):
     completed_at: _timestamp_pb2.Timestamp
     verification_completed: bool
     verification_passed: bool
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ...) -> None: ...
+    final_equivalence_verified: bool
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")
@@ -217,3 +219,43 @@ class PlanPreImage(_message.Message):
 class PlanPatch(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
+
+class ReflectionCauseWork(_message.Message):
+    __slots__ = ("cause_index", "resources", "items")
+    CAUSE_INDEX_FIELD_NUMBER: _ClassVar[int]
+    RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    cause_index: int
+    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    items: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
+    def __init__(self, cause_index: _Optional[int] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
+
+class ReflectionWorkItem(_message.Message):
+    __slots__ = ("program_id", "bindings", "disposition", "question", "reason", "resources", "program_revision", "capture_open_phase")
+    PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    DISPOSITION_FIELD_NUMBER: _ClassVar[int]
+    QUESTION_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
+    CAPTURE_OPEN_PHASE_FIELD_NUMBER: _ClassVar[int]
+    program_id: str
+    bindings: _containers.RepeatedCompositeFieldContainer[Binding]
+    disposition: str
+    question: str
+    reason: str
+    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    program_revision: str
+    capture_open_phase: str
+    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., disposition: _Optional[str] = ..., question: _Optional[str] = ..., reason: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., program_revision: _Optional[str] = ..., capture_open_phase: _Optional[str] = ...) -> None: ...
+
+class ReflectionEligibility(_message.Message):
+    __slots__ = ("version", "causes", "unassigned")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    CAUSES_FIELD_NUMBER: _ClassVar[int]
+    UNASSIGNED_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    causes: _containers.RepeatedCompositeFieldContainer[ReflectionCauseWork]
+    unassigned: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
+    def __init__(self, version: _Optional[int] = ..., causes: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
