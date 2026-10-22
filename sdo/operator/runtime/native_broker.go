@@ -421,7 +421,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 		if err != nil {
 			return nil, err
 		}
-		if len(paths) == 0 {
+		if len(paths) == 0 && ledger.ReflectionDecision == nil {
 			workspace := IncidentWorkspace{IncidentID: id, Worktree: proposal.Path, BaseCommit: proposal.BaseCommit}
 			record := proto.Clone(ledger.OutcomeDocument).(*contracts.OutcomeRecord)
 			if err := n.recordPhase(ledger, "reflection_dispatch"); err != nil {
@@ -481,9 +481,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, closure Inc
 		}
 		rejectionDiagnostics, typed := broker.RejectionDiagnostics(err)
 		if !typed {
-			if resetErr := n.Repository.ReleaseProposal(id, broker.ReflectionPhase); resetErr != nil {
-				return nil, fmt.Errorf("reflection rejected: %v; reset proposal: %w", err, resetErr)
-			}
+			// A transport or publication error is not a rejection of the
+			// worker's proposal. Keep its edits and durable decision so recovery
+			// retries publication without dispatching a new reflection task.
 			return nil, err
 		}
 		ledger.ReflectionRejections = append(ledger.ReflectionRejections, broker.NewProposalRejection(uint32(len(ledger.ReflectionRejections)+1), rejectionDiagnostics))

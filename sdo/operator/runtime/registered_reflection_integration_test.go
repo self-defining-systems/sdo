@@ -252,9 +252,11 @@ func TestReflectionInfrastructureFailureDoesNotSpendLearningRetries(t *testing.T
 	ctx := context.Background()
 	target := nativeRepository(t)
 	nativeMemoryFixture(t, target)
+	validations := 0
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(_ context.Context, _ string, paths []string) error {
 		for _, path := range paths {
 			if strings.HasPrefix(path, ".sdo/playbooks/") {
+				validations++
 				return errors.New("validator infrastructure unavailable")
 			}
 		}
@@ -296,8 +298,8 @@ func TestReflectionInfrastructureFailureDoesNotSpendLearningRetries(t *testing.T
 			t.Fatalf("infrastructure consumed learning budget: %v", ledger)
 		}
 	}
-	if calls != 2 {
-		t.Fatalf("worker dispatched %d times", calls)
+	if calls != 1 || validations != 2 {
+		t.Fatalf("worker dispatched %d times for %d validation attempts", calls, validations)
 	}
 }
 
