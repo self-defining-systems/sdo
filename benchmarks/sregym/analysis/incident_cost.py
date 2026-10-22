@@ -150,6 +150,13 @@ class TokenUsage:
         """
         if not isinstance(usage, dict):
             return cls()
+        # Native receipts use ProtoJSON, which encodes int64 counts as decimal
+        # strings. agentshim's mapping reader only accepts numeric values.
+        usage = dict(usage)
+        for name in (*_COUNT_FIELDS, "cache_read_input_tokens", "model_requests"):
+            value = usage.get(name)
+            if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
+                usage[name] = int(value)
         requests = usage.get("model_requests")
         return cls.from_normalized(
             NormalizedUsage.from_dict(usage),
@@ -810,16 +817,40 @@ def _usage_session_ids(paths: list[Path], *, incident_id: str | None = None) -> 
     return sessions
 
 
+def _receipt_responder_result(receipt: dict[str, Any]) -> dict[str, Any]:
+    ledger = receipt.get("native_ledger")
+    closure = ledger.get("closure") if isinstance(ledger, dict) else None
+    result = closure.get("result") if isinstance(closure, dict) else None
+    return result if isinstance(result, dict) else {}
+
+
+def receipt_responder_session_id(receipt: dict[str, Any]) -> str | None:
+    """The responder session in a legacy receipt or native closure result."""
+
+    session = receipt.get("responder_session_id") or _receipt_responder_result(receipt).get("responder_session_id")
+    return session if isinstance(session, str) and session else None
+
+
+def sdo_rollouts(results: Path) -> list[Path]:
+    """Codex exports in both the legacy shared and current per-session layout."""
+
+    return sorted(results.rglob("sdo_runtime/**/codex/sessions/**/rollout-*.jsonl"))
+
+
+def responder_rollouts(results: Path, receipt: dict[str, Any]) -> list[Path]:
+    """Only rollouts bound to this receipt's responder, excluding other incidents."""
+
+    session = receipt_responder_session_id(receipt)
+    return [path for path in sdo_rollouts(results) if session and session in path.name]
+
+
 def receipt_responder_usage(receipt: dict[str, Any]) -> TokenUsage:
     """The responder's recorded usage: the legacy receipt's ``usage``, else the native ledger's closure result."""
 
     legacy = receipt.get("usage")
     if isinstance(legacy, dict):
         return TokenUsage.from_mapping(legacy)
-    ledger = receipt.get("native_ledger")
-    closure = ledger.get("closure") if isinstance(ledger, dict) else None
-    result = closure.get("result") if isinstance(closure, dict) else None
-    return TokenUsage.from_mapping(result.get("usage") if isinstance(result, dict) else None)
+    return TokenUsage.from_mapping(_receipt_responder_result(receipt).get("usage"))
 
 
 def _responder_usage(receipt: dict[str, Any], responder_rollouts: list[Path]) -> TokenUsage:
@@ -864,7 +895,7 @@ def warm_prompt_fired(results_dir: Path, responder_session_id: str | None) -> bo
     Returns ``None`` when no Codex rollout was exported.
     """
 
-    rollouts = sorted(results_dir.rglob("sdo_runtime/codex/sessions/**/rollout-*.jsonl"))
+    rollouts = sdo_rollouts(results_dir)
     if responder_session_id:
         own = [path for path in rollouts if responder_session_id in path.name]
         rollouts = own or rollouts
@@ -954,13 +985,9 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
             scoped_incident = incident_id if isinstance(incident_id, str) and incident_id else None
             _, reflection_seconds = _sum_usage_jsonl(controller_turns, incident_id=scoped_incident)
             lifecycle, _ = _sum_usage_jsonl(sorted(results.rglob(LIFECYCLE_USAGE_NAME)))
-            session = receipt.get("responder_session_id")
-            responder_rollouts = [
-                path
-                for path in sorted(results.rglob("sdo_runtime/codex/sessions/**/rollout-*.jsonl"))
-                if isinstance(session, str) and session and session in path.name
-            ]
-            all_rollouts = sorted(results.rglob("sdo_runtime/codex/sessions/**/rollout-*.jsonl"))
+            session = receipt_responder_session_id(receipt)
+            own_responder_rollouts = responder_rollouts(results, receipt)
+            all_rollouts = sdo_rollouts(results)
             reflection_sessions = [
                 own for own in _usage_session_ids(controller_turns, incident_id=scoped_incident) if own != session
             ]
@@ -968,7 +995,7 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                 path for path in all_rollouts if any(own in path.name for own in reflection_sessions)
             ]
             verdict = with_mitigation_applied(
-                read_verdict(results) or Verdict(None, None, None), results, responder_rollouts
+                read_verdict(results) or Verdict(None, None, None), results, own_responder_rollouts
             )
             stages.append(
                 SdoStage(
@@ -977,8 +1004,8 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     problem_id=problem_id,
                     verdict=verdict,
                     incident_resolution_seconds=_float(receipt.get("incident_resolution_seconds")),
-                    responder=_responder_usage(receipt, responder_rollouts),
-                    reflection=_reflection_usage(receipt, responder_rollouts, reflection_rollouts),
+                    responder=_responder_usage(receipt, own_responder_rollouts),
+                    reflection=_reflection_usage(receipt, own_responder_rollouts, reflection_rollouts),
                     reflection_attempts=receipt.get("reflection_attempts"),
                     reflection_skipped_reason=receipt.get("reflection_skipped_reason"),
                     learning_seconds=_float(phases.get("post_recovery_learning_and_receipt")),

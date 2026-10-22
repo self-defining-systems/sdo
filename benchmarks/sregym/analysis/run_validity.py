@@ -59,7 +59,9 @@ from benchmarks.sregym.analysis.incident_cost import (
     problem_results_dirs,
     read_result_row,
     read_verdict,
+    receipt_responder_session_id,
     receipt_responder_usage,
+    responder_rollouts,
     rollout_turn_usages,
     with_mitigation_applied,
 )
@@ -346,17 +348,13 @@ def _check_codex_tokens(results: Path) -> Check:
 def _check_sdo_tokens(results: Path, receipt: dict[str, Any] | None) -> Check:
     if receipt is None:
         return Check("tokens", "not_recorded", "no strict receipt to reconcile")
-    session = receipt.get("responder_session_id")
+    session = receipt_responder_session_id(receipt)
     sources: dict[str, tuple[int, int, int]] = {}
     recorded = receipt_responder_usage(receipt)
     if recorded.input_tokens:
         sources["receipt usage"] = _triple(recorded)
     if isinstance(session, str) and session:
-        rollouts = [
-            path
-            for path in sorted(results.rglob("sdo_runtime/codex/sessions/**/rollout-*.jsonl"))
-            if session in path.name
-        ]
+        rollouts = responder_rollouts(results, receipt)
         turns = rollout_turn_usages(rollouts)
         if turns and turns[0].input_tokens:
             sources["responder rollout"] = _triple(turns[0])
@@ -611,8 +609,7 @@ def classify_problem_run(
         if agent == "sdo_codex":
             receipt_check, receipt = _check_receipt(experiment_dir, results)
             checks.append(receipt_check)
-            session = (receipt or {}).get("responder_session_id")
-            rollouts = [path for path in rollouts if isinstance(session, str) and session and session in path.name]
+            rollouts = responder_rollouts(results, receipt or {})
             checks.append(_check_sdo_tokens(results, receipt))
             checks.append(_check_helpers(results, receipt))
         else:
