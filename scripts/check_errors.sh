@@ -2,6 +2,7 @@
 # Check for static errors.  Covers:
 #   ruff  — syntax, undefined names, unused imports, style
 #   tach  — architectural module boundary contracts (tach.toml)
+#   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 
 set -e
 
@@ -37,3 +38,7 @@ fi
 
 # Functional Go core: dependency/API lint plus structural purity checks.
 "$SCRIPT_DIR/check_go_core.sh"
+
+# Go programs under benchmarks/ must still compile against the operator API.
+echo "==> go mains (benchmarks/)"
+"$SCRIPT_DIR/check_go_mains.sh"
