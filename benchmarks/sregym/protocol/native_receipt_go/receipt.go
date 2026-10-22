@@ -123,7 +123,7 @@ func validate(r *c.NativeProductionReceipt) error {
 		return errors.New("native closure lacks valid repair policy")
 	}
 	classification := outcome.GetClassification()
-	if outcome.GetSchemaVersion() != 1 || !slices.Contains([]string{"success", "cleared_without_action", "external_recovery", "false_positive"}, classification) {
+	if outcome.GetSchemaVersion() != 1 || !slices.Contains([]string{"success", "cleared_without_action"}, classification) {
 		return errors.New("native outcome is not a verified closure classification")
 	}
 	for _, field := range []struct {
@@ -139,9 +139,6 @@ func validate(r *c.NativeProductionReceipt) error {
 	}
 	if outcome.GetRepairCommit() != l.GetProposalCommit() {
 		return errors.New("native outcome repair commit disagrees with broker proposal")
-	}
-	if request.GetRepairPolicy() == "commit" && classification == "success" && l.GetProposalCommit() == "" {
-		return errors.New("native commit repair lacks an accepted proposal")
 	}
 	if accepted.GetProposalCommit() != l.GetProposalCommit() || accepted.GetOutcomeCommit() != l.GetOutcomeCommit() || accepted.GetReflectionCommit() != l.GetReflectionCommit() {
 		return errors.New("native closure receipt commits disagree with broker ledger")
@@ -159,31 +156,6 @@ func validate(r *c.NativeProductionReceipt) error {
 	}
 	if closure.GetVerifiedAt() == nil || closure.GetVerifiedAt().CheckValid() != nil {
 		return errors.New("native verified_at must be an ISO timestamp")
-	}
-	if classification == "success" {
-		if response.GetStatus() != "completed" {
-			return errors.New("native successful outcome lacks completed responder")
-		}
-		if len(response.GetConfirmedRootCauses()) == 0 {
-			return errors.New("native successful outcome lacks confirmed cause")
-		}
-		confirmed := false
-		for _, verification := range outcome.GetDiagnosisVerification() {
-			if verification.GetVerdict() == "contradicted" {
-				return errors.New("native successful outcome has contradicted diagnosis")
-			}
-			confirmed = confirmed || verification.GetVerdict() == "confirmed"
-		}
-		if !confirmed {
-			return errors.New("native successful outcome lacks independently confirmed diagnosis")
-		}
-		repaired := l.GetProposalCommit() != ""
-		for _, action := range response.GetRepairActions() {
-			repaired = repaired || action.GetSuccess()
-		}
-		if !repaired {
-			return errors.New("native successful outcome lacks accepted repair evidence")
-		}
 	}
 	decision := l.GetReflectionDecision()
 	if l.GetReflectionSkippedReason() != "" && (strings.TrimSpace(l.GetReflectionSkippedReason()) == "" || l.GetRequiresReflection() || decision != nil) {

@@ -48,7 +48,6 @@ type OutcomeRecord struct {
 	ResponderModel                  string                    `protobuf:"bytes,19,opt,name=responder_model,json=responderModel,proto3" json:"responder_model,omitempty"`
 	Usage                           *UsageMetrics             `protobuf:"bytes,20,opt,name=usage,proto3" json:"usage,omitempty"`
 	Timestamps                      *OutcomeTimestamps        `protobuf:"bytes,21,opt,name=timestamps,proto3" json:"timestamps,omitempty"`
-	DiagnosisVerification           []*DiagnosisVerification  `protobuf:"bytes,22,rep,name=diagnosis_verification,json=diagnosisVerification,proto3" json:"diagnosis_verification,omitempty"`
 	ProgramToolCalls                []*ProgramToolCall        `protobuf:"bytes,23,rep,name=program_tool_calls,json=programToolCalls,proto3" json:"program_tool_calls,omitempty"`
 	ProgramRuns                     []*ProgramRun             `protobuf:"bytes,24,rep,name=program_runs,json=programRuns,proto3" json:"program_runs,omitempty"`
 	PlanApplications                []*PlanApplication        `protobuf:"bytes,25,rep,name=plan_applications,json=planApplications,proto3" json:"plan_applications,omitempty"`
@@ -241,13 +240,6 @@ func (x *OutcomeRecord) GetTimestamps() *OutcomeTimestamps {
 	return nil
 }
 
-func (x *OutcomeRecord) GetDiagnosisVerification() []*DiagnosisVerification {
-	if x != nil {
-		return x.DiagnosisVerification
-	}
-	return nil
-}
-
 func (x *OutcomeRecord) GetProgramToolCalls() []*ProgramToolCall {
 	if x != nil {
 		return x.ProgramToolCalls
@@ -401,299 +393,11 @@ func (x *OutcomeTimestamps) GetCompletedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-type DiagnosisVerification struct {
-	state         protoimpl.MessageState    `protogen:"open.v1"`
-	Summary       string                    `protobuf:"bytes,1,opt,name=summary,proto3" json:"summary,omitempty"`
-	Verdict       string                    `protobuf:"bytes,2,opt,name=verdict,proto3" json:"verdict,omitempty"`
-	Evidence      []*OutcomeEvidenceCheck   `protobuf:"bytes,3,rep,name=evidence,proto3" json:"evidence,omitempty"`
-	Detectors     []*OutcomeDetectorFlip    `protobuf:"bytes,4,rep,name=detectors,proto3" json:"detectors,omitempty"`
-	Repair        *OutcomeRepairAttribution `protobuf:"bytes,5,opt,name=repair,proto3" json:"repair,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *DiagnosisVerification) Reset() {
-	*x = DiagnosisVerification{}
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *DiagnosisVerification) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DiagnosisVerification) ProtoMessage() {}
-
-func (x *DiagnosisVerification) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use DiagnosisVerification.ProtoReflect.Descriptor instead.
-func (*DiagnosisVerification) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_outcome_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *DiagnosisVerification) GetSummary() string {
-	if x != nil {
-		return x.Summary
-	}
-	return ""
-}
-
-func (x *DiagnosisVerification) GetVerdict() string {
-	if x != nil {
-		return x.Verdict
-	}
-	return ""
-}
-
-func (x *DiagnosisVerification) GetEvidence() []*OutcomeEvidenceCheck {
-	if x != nil {
-		return x.Evidence
-	}
-	return nil
-}
-
-func (x *DiagnosisVerification) GetDetectors() []*OutcomeDetectorFlip {
-	if x != nil {
-		return x.Detectors
-	}
-	return nil
-}
-
-func (x *DiagnosisVerification) GetRepair() *OutcomeRepairAttribution {
-	if x != nil {
-		return x.Repair
-	}
-	return nil
-}
-
-type OutcomeEvidenceCheck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
-	Source        string                 `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	Verified      *bool                  `protobuf:"varint,3,opt,name=verified,proto3,oneof" json:"verified,omitempty"`
-	Reason        *string                `protobuf:"bytes,4,opt,name=reason,proto3,oneof" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *OutcomeEvidenceCheck) Reset() {
-	*x = OutcomeEvidenceCheck{}
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *OutcomeEvidenceCheck) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*OutcomeEvidenceCheck) ProtoMessage() {}
-
-func (x *OutcomeEvidenceCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use OutcomeEvidenceCheck.ProtoReflect.Descriptor instead.
-func (*OutcomeEvidenceCheck) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_outcome_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *OutcomeEvidenceCheck) GetKind() string {
-	if x != nil {
-		return x.Kind
-	}
-	return ""
-}
-
-func (x *OutcomeEvidenceCheck) GetSource() string {
-	if x != nil {
-		return x.Source
-	}
-	return ""
-}
-
-func (x *OutcomeEvidenceCheck) GetVerified() bool {
-	if x != nil && x.Verified != nil {
-		return *x.Verified
-	}
-	return false
-}
-
-func (x *OutcomeEvidenceCheck) GetReason() string {
-	if x != nil && x.Reason != nil {
-		return *x.Reason
-	}
-	return ""
-}
-
-type OutcomeDetectorFlip struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	DetectorId      string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
-	FiredAtDispatch bool                   `protobuf:"varint,2,opt,name=fired_at_dispatch,json=firedAtDispatch,proto3" json:"fired_at_dispatch,omitempty"`
-	ClearedAfterFix *bool                  `protobuf:"varint,3,opt,name=cleared_after_fix,json=clearedAfterFix,proto3,oneof" json:"cleared_after_fix,omitempty"`
-	Flipped         bool                   `protobuf:"varint,4,opt,name=flipped,proto3" json:"flipped,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
-}
-
-func (x *OutcomeDetectorFlip) Reset() {
-	*x = OutcomeDetectorFlip{}
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *OutcomeDetectorFlip) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*OutcomeDetectorFlip) ProtoMessage() {}
-
-func (x *OutcomeDetectorFlip) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use OutcomeDetectorFlip.ProtoReflect.Descriptor instead.
-func (*OutcomeDetectorFlip) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_outcome_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *OutcomeDetectorFlip) GetDetectorId() string {
-	if x != nil {
-		return x.DetectorId
-	}
-	return ""
-}
-
-func (x *OutcomeDetectorFlip) GetFiredAtDispatch() bool {
-	if x != nil {
-		return x.FiredAtDispatch
-	}
-	return false
-}
-
-func (x *OutcomeDetectorFlip) GetClearedAfterFix() bool {
-	if x != nil && x.ClearedAfterFix != nil {
-		return *x.ClearedAfterFix
-	}
-	return false
-}
-
-func (x *OutcomeDetectorFlip) GetFlipped() bool {
-	if x != nil {
-		return x.Flipped
-	}
-	return false
-}
-
-type OutcomeRepairAttribution struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Attributed         bool                   `protobuf:"varint,1,opt,name=attributed,proto3" json:"attributed,omitempty"`
-	Actions            []string               `protobuf:"bytes,2,rep,name=actions,proto3" json:"actions,omitempty"`
-	RepairedResources  []string               `protobuf:"bytes,3,rep,name=repaired_resources,json=repairedResources,proto3" json:"repaired_resources,omitempty"`
-	ExternallyReverted []string               `protobuf:"bytes,4,rep,name=externally_reverted,json=externallyReverted,proto3" json:"externally_reverted,omitempty"`
-	Reason             string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
-}
-
-func (x *OutcomeRepairAttribution) Reset() {
-	*x = OutcomeRepairAttribution{}
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *OutcomeRepairAttribution) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*OutcomeRepairAttribution) ProtoMessage() {}
-
-func (x *OutcomeRepairAttribution) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use OutcomeRepairAttribution.ProtoReflect.Descriptor instead.
-func (*OutcomeRepairAttribution) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_outcome_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *OutcomeRepairAttribution) GetAttributed() bool {
-	if x != nil {
-		return x.Attributed
-	}
-	return false
-}
-
-func (x *OutcomeRepairAttribution) GetActions() []string {
-	if x != nil {
-		return x.Actions
-	}
-	return nil
-}
-
-func (x *OutcomeRepairAttribution) GetRepairedResources() []string {
-	if x != nil {
-		return x.RepairedResources
-	}
-	return nil
-}
-
-func (x *OutcomeRepairAttribution) GetExternallyReverted() []string {
-	if x != nil {
-		return x.ExternallyReverted
-	}
-	return nil
-}
-
-func (x *OutcomeRepairAttribution) GetReason() string {
-	if x != nil {
-		return x.Reason
-	}
-	return ""
-}
-
 var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\x85\x13\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xf2\x11\n" +
 	"\rOutcomeRecord\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
 	"\vincident_id\x18\x02 \x01(\tB\v\xbaH\br\x06\x10\x012\x02\\SR\n" +
@@ -709,8 +413,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	" \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x11rejectedPlaybooks\x12K\n" +
 	"\x11applied_playbooks\x18\v \x03(\tB\x1e\xbaH\x1b\x92\x01\x18\"\x16r\x142\x12^[a-z][a-z0-9_-]*$R\x10appliedPlaybooks\x12a\n" +
 	"\x15confirmed_root_causes\x18\f \x03(\v2-.sdodev.contracts.v1alpha1.ConfirmedRootCauseR\x13confirmedRootCauses\x12l\n" +
-	"\x1bfinal_health_detector_state\x18\r \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x18finalHealthDetectorState\x12\x9d\x01\n" +
-	"\x0eclassification\x18\x0e \x01(\tBu\xbaHrrpR\asuccessR\apartialR\x11external_recoveryR\x16cleared_without_actionR\x0efalse_positiveR\x0efalse_negativeR\x06failedR\tcancelledR\x0eclassification\x12(\n" +
+	"\x1bfinal_health_detector_state\x18\r \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x18finalHealthDetectorState\x12V\n" +
+	"\x0eclassification\x18\x0e \x01(\tB.\xbaH+r)R\asuccessR\x16cleared_without_actionR\x06failedR\x0eclassification\x12(\n" +
 	"\rrepair_commit\x18\x0f \x01(\tH\x00R\frepairCommit\x88\x01\x01\x12U\n" +
 	"\x0erepair_actions\x18\x10 \x03(\v2..sdodev.contracts.v1alpha1.RepairActionReceiptR\rrepairActions\x12(\n" +
 	"\rmemory_commit\x18\x11 \x01(\tH\x01R\fmemoryCommit\x88\x01\x01\x12+\n" +
@@ -719,8 +423,7 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x05usage\x18\x14 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\x12L\n" +
 	"\n" +
 	"timestamps\x18\x15 \x01(\v2,.sdodev.contracts.v1alpha1.OutcomeTimestampsR\n" +
-	"timestamps\x12g\n" +
-	"\x16diagnosis_verification\x18\x16 \x03(\v20.sdodev.contracts.v1alpha1.DiagnosisVerificationR\x15diagnosisVerification\x12X\n" +
+	"timestamps\x12X\n" +
 	"\x12program_tool_calls\x18\x17 \x03(\v2*.sdodev.contracts.v1alpha1.ProgramToolCallR\x10programToolCalls\x12H\n" +
 	"\fprogram_runs\x18\x18 \x03(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\vprogramRuns\x12W\n" +
 	"\x11plan_applications\x18\x19 \x03(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\x10planApplications\x126\n" +
@@ -733,7 +436,7 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x18fast_path_skipped_reason\x18  \x01(\tR\x15fastPathSkippedReason\x12\x7f\n" +
 	"#fast_path_relation_covered_findings\x18! \x03(\v21.sdodev.contracts.v1alpha1.RelationCoveredFindingR\x1ffastPathRelationCoveredFindingsB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
-	"\x0e_memory_commit\"\xcc\x02\n" +
+	"\x0e_memory_commitJ\x04\b\x16\x10\x17R\x16diagnosis_verification\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
 	"\vdetected_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"detectedAt\x12?\n" +
@@ -741,35 +444,7 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\fmitigated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vmitigatedAt\x12;\n" +
 	"\vverified_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"verifiedAt\x12=\n" +
-	"\fcompleted_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\"\xb3\x02\n" +
-	"\x15DiagnosisVerification\x12\x18\n" +
-	"\asummary\x18\x01 \x01(\tR\asummary\x12\x18\n" +
-	"\averdict\x18\x02 \x01(\tR\averdict\x12K\n" +
-	"\bevidence\x18\x03 \x03(\v2/.sdodev.contracts.v1alpha1.OutcomeEvidenceCheckR\bevidence\x12L\n" +
-	"\tdetectors\x18\x04 \x03(\v2..sdodev.contracts.v1alpha1.OutcomeDetectorFlipR\tdetectors\x12K\n" +
-	"\x06repair\x18\x05 \x01(\v23.sdodev.contracts.v1alpha1.OutcomeRepairAttributionR\x06repair\"\x98\x01\n" +
-	"\x14OutcomeEvidenceCheck\x12\x12\n" +
-	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x16\n" +
-	"\x06source\x18\x02 \x01(\tR\x06source\x12\x1f\n" +
-	"\bverified\x18\x03 \x01(\bH\x00R\bverified\x88\x01\x01\x12\x1b\n" +
-	"\x06reason\x18\x04 \x01(\tH\x01R\x06reason\x88\x01\x01B\v\n" +
-	"\t_verifiedB\t\n" +
-	"\a_reason\"\xc3\x01\n" +
-	"\x13OutcomeDetectorFlip\x12\x1f\n" +
-	"\vdetector_id\x18\x01 \x01(\tR\n" +
-	"detectorId\x12*\n" +
-	"\x11fired_at_dispatch\x18\x02 \x01(\bR\x0ffiredAtDispatch\x12/\n" +
-	"\x11cleared_after_fix\x18\x03 \x01(\bH\x00R\x0fclearedAfterFix\x88\x01\x01\x12\x18\n" +
-	"\aflipped\x18\x04 \x01(\bR\aflippedB\x14\n" +
-	"\x12_cleared_after_fix\"\xcc\x01\n" +
-	"\x18OutcomeRepairAttribution\x12\x1e\n" +
-	"\n" +
-	"attributed\x18\x01 \x01(\bR\n" +
-	"attributed\x12\x18\n" +
-	"\aactions\x18\x02 \x03(\tR\aactions\x12-\n" +
-	"\x12repaired_resources\x18\x03 \x03(\tR\x11repairedResources\x12/\n" +
-	"\x13externally_reverted\x18\x04 \x03(\tR\x12externallyReverted\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reasonB\xff\x01\n" +
+	"\fcompleted_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAtB\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fOutcomeProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -784,53 +459,45 @@ func file_sdodev_contracts_v1alpha1_outcome_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_outcome_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
-	(*OutcomeRecord)(nil),            // 0: sdodev.contracts.v1alpha1.OutcomeRecord
-	(*OutcomeTimestamps)(nil),        // 1: sdodev.contracts.v1alpha1.OutcomeTimestamps
-	(*DiagnosisVerification)(nil),    // 2: sdodev.contracts.v1alpha1.DiagnosisVerification
-	(*OutcomeEvidenceCheck)(nil),     // 3: sdodev.contracts.v1alpha1.OutcomeEvidenceCheck
-	(*OutcomeDetectorFlip)(nil),      // 4: sdodev.contracts.v1alpha1.OutcomeDetectorFlip
-	(*OutcomeRepairAttribution)(nil), // 5: sdodev.contracts.v1alpha1.OutcomeRepairAttribution
-	(*DetectorEvaluation)(nil),       // 6: sdodev.contracts.v1alpha1.DetectorEvaluation
-	(*Finding)(nil),                  // 7: sdodev.contracts.v1alpha1.Finding
-	(*ConfirmedRootCause)(nil),       // 8: sdodev.contracts.v1alpha1.ConfirmedRootCause
-	(*RepairActionReceipt)(nil),      // 9: sdodev.contracts.v1alpha1.RepairActionReceipt
-	(*UsageMetrics)(nil),             // 10: sdodev.contracts.v1alpha1.UsageMetrics
-	(*ProgramToolCall)(nil),          // 11: sdodev.contracts.v1alpha1.ProgramToolCall
-	(*ProgramRun)(nil),               // 12: sdodev.contracts.v1alpha1.ProgramRun
-	(*PlanApplication)(nil),          // 13: sdodev.contracts.v1alpha1.PlanApplication
-	(*DriftEvent)(nil),               // 14: sdodev.contracts.v1alpha1.DriftEvent
-	(*RelationCoveredFinding)(nil),   // 15: sdodev.contracts.v1alpha1.RelationCoveredFinding
-	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
+	(*OutcomeRecord)(nil),          // 0: sdodev.contracts.v1alpha1.OutcomeRecord
+	(*OutcomeTimestamps)(nil),      // 1: sdodev.contracts.v1alpha1.OutcomeTimestamps
+	(*DetectorEvaluation)(nil),     // 2: sdodev.contracts.v1alpha1.DetectorEvaluation
+	(*Finding)(nil),                // 3: sdodev.contracts.v1alpha1.Finding
+	(*ConfirmedRootCause)(nil),     // 4: sdodev.contracts.v1alpha1.ConfirmedRootCause
+	(*RepairActionReceipt)(nil),    // 5: sdodev.contracts.v1alpha1.RepairActionReceipt
+	(*UsageMetrics)(nil),           // 6: sdodev.contracts.v1alpha1.UsageMetrics
+	(*ProgramToolCall)(nil),        // 7: sdodev.contracts.v1alpha1.ProgramToolCall
+	(*ProgramRun)(nil),             // 8: sdodev.contracts.v1alpha1.ProgramRun
+	(*PlanApplication)(nil),        // 9: sdodev.contracts.v1alpha1.PlanApplication
+	(*DriftEvent)(nil),             // 10: sdodev.contracts.v1alpha1.DriftEvent
+	(*RelationCoveredFinding)(nil), // 11: sdodev.contracts.v1alpha1.RelationCoveredFinding
+	(*timestamppb.Timestamp)(nil),  // 12: google.protobuf.Timestamp
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
-	6,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.detector_history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	7,  // 1: sdodev.contracts.v1alpha1.OutcomeRecord.findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	8,  // 2: sdodev.contracts.v1alpha1.OutcomeRecord.confirmed_root_causes:type_name -> sdodev.contracts.v1alpha1.ConfirmedRootCause
-	6,  // 3: sdodev.contracts.v1alpha1.OutcomeRecord.final_health_detector_state:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	9,  // 4: sdodev.contracts.v1alpha1.OutcomeRecord.repair_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
-	10, // 5: sdodev.contracts.v1alpha1.OutcomeRecord.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
+	2,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.detector_history:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	3,  // 1: sdodev.contracts.v1alpha1.OutcomeRecord.findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	4,  // 2: sdodev.contracts.v1alpha1.OutcomeRecord.confirmed_root_causes:type_name -> sdodev.contracts.v1alpha1.ConfirmedRootCause
+	2,  // 3: sdodev.contracts.v1alpha1.OutcomeRecord.final_health_detector_state:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	5,  // 4: sdodev.contracts.v1alpha1.OutcomeRecord.repair_actions:type_name -> sdodev.contracts.v1alpha1.RepairActionReceipt
+	6,  // 5: sdodev.contracts.v1alpha1.OutcomeRecord.usage:type_name -> sdodev.contracts.v1alpha1.UsageMetrics
 	1,  // 6: sdodev.contracts.v1alpha1.OutcomeRecord.timestamps:type_name -> sdodev.contracts.v1alpha1.OutcomeTimestamps
-	2,  // 7: sdodev.contracts.v1alpha1.OutcomeRecord.diagnosis_verification:type_name -> sdodev.contracts.v1alpha1.DiagnosisVerification
-	11, // 8: sdodev.contracts.v1alpha1.OutcomeRecord.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
-	12, // 9: sdodev.contracts.v1alpha1.OutcomeRecord.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	13, // 10: sdodev.contracts.v1alpha1.OutcomeRecord.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	14, // 11: sdodev.contracts.v1alpha1.OutcomeRecord.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
-	15, // 12: sdodev.contracts.v1alpha1.OutcomeRecord.fast_path_relation_covered_findings:type_name -> sdodev.contracts.v1alpha1.RelationCoveredFinding
-	16, // 13: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	16, // 14: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	16, // 15: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	16, // 16: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	16, // 17: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	3,  // 18: sdodev.contracts.v1alpha1.DiagnosisVerification.evidence:type_name -> sdodev.contracts.v1alpha1.OutcomeEvidenceCheck
-	4,  // 19: sdodev.contracts.v1alpha1.DiagnosisVerification.detectors:type_name -> sdodev.contracts.v1alpha1.OutcomeDetectorFlip
-	5,  // 20: sdodev.contracts.v1alpha1.DiagnosisVerification.repair:type_name -> sdodev.contracts.v1alpha1.OutcomeRepairAttribution
-	21, // [21:21] is the sub-list for method output_type
-	21, // [21:21] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	7,  // 7: sdodev.contracts.v1alpha1.OutcomeRecord.program_tool_calls:type_name -> sdodev.contracts.v1alpha1.ProgramToolCall
+	8,  // 8: sdodev.contracts.v1alpha1.OutcomeRecord.program_runs:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	9,  // 9: sdodev.contracts.v1alpha1.OutcomeRecord.plan_applications:type_name -> sdodev.contracts.v1alpha1.PlanApplication
+	10, // 10: sdodev.contracts.v1alpha1.OutcomeRecord.drift_events:type_name -> sdodev.contracts.v1alpha1.DriftEvent
+	11, // 11: sdodev.contracts.v1alpha1.OutcomeRecord.fast_path_relation_covered_findings:type_name -> sdodev.contracts.v1alpha1.RelationCoveredFinding
+	12, // 12: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	12, // 13: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	12, // 14: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	12, // 15: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	12, // 16: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }
@@ -841,15 +508,13 @@ func file_sdodev_contracts_v1alpha1_outcome_proto_init() {
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	file_sdodev_contracts_v1alpha1_program_proto_init()
 	file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[0].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[3].OneofWrappers = []any{}
-	file_sdodev_contracts_v1alpha1_outcome_proto_msgTypes[4].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

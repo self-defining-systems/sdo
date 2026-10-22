@@ -104,11 +104,6 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 	copy.IncidentDetectorStates = cloneEvaluations(closure.IncidentDetectorStates)
 	copy.DetectorTimeline = cloneTimeline(closure.DetectorTimeline)
 	copy.FinalStateChanges = cloneStateChanges(closure.FinalStateChanges)
-	if closure.ObservedStateChanges != nil {
-		copy.ObservedStateChanges = append(
-			make([]ObservedStateChange, 0, len(closure.ObservedStateChanges)), closure.ObservedStateChanges...,
-		)
-	}
 	if closure.HealthClearedAt != nil {
 		clearedAt := *closure.HealthClearedAt
 		copy.HealthClearedAt = &clearedAt

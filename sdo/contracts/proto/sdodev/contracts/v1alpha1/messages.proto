@@ -118,12 +118,6 @@ message StateChanges {
   repeated string unobserved_kinds = 5;
 }
 
-message ObservedStateChange {
-  string kind = 1 [(buf.validate.field).string.min_len = 1];
-  string name = 2 [(buf.validate.field).string.min_len = 1];
-  google.protobuf.Timestamp first_observed_at = 3 [(buf.validate.field).required = true];
-}
-
 // Read-only logical memory supplied by the Go storage edge. Agent workers do
 // not parse the accepted repository's physical .sdo layout to find context.
 message MemoryWatch {
@@ -471,8 +465,8 @@ message IncidentClosure {
   google.protobuf.Timestamp responder_completed_at = 13 [(buf.validate.field).required = true];
   google.protobuf.Timestamp verified_at = 14 [(buf.validate.field).required = true];
   optional google.protobuf.Timestamp health_cleared_at = 15;
-  repeated ObservedStateChange observed_state_changes = 16;
-  reserved 17, 18;
+  reserved 16, 17, 18;
+  reserved "observed_state_changes";
   reserved "detector_review_required_at", "detector_review_reason";
   repeated string cleaned_helpers = 19;
 }

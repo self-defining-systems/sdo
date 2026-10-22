@@ -7,11 +7,6 @@ package outcome
 
 const (
 	Success              = "success"
-	Partial              = "partial"
-	ExternalRecovery     = "external_recovery"
 	ClearedWithoutAction = "cleared_without_action"
-	FalsePositive        = "false_positive"
-	FalseNegative        = "false_negative"
 	Failed               = "failed"
-	Cancelled            = "cancelled"
 )
