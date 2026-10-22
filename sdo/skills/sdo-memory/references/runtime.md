@@ -91,7 +91,6 @@ Select the earliest open phase that shows the confirmed cause. Bind the
 affected resources and a healthy same-kind peer. Snapshots and recordings
 are copied exactly; the broker independently verifies them.
 
-
 ## check_memory
 
 Run the complete memory check and wait for final diagnostics (at most 300s).
@@ -100,4 +99,3 @@ Supply the typed decision fields directly; this tool writes the result
 JSON outside the authored tree. Return the same decision and logical IDs.
 Legacy decision_path files are also supported. One call waits for final
 diagnostics. The broker independently repeats the validation.
-
