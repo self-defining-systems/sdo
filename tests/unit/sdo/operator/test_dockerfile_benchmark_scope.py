@@ -105,8 +105,9 @@ def test_controller_and_plain_responder_stages_copy_no_benchmarks_code() -> None
 
 def test_controller_image_is_separate_from_python_agent_runtime() -> None:
     text = RUNTIME_DOCKERFILE.read_text(encoding="utf-8")
-    controller = text.split("FROM go-runtime AS controller", 1)[1].split("FROM node:", 1)[0]
-    assert "COPY --from=kubectl" in controller
+    go_stage, controller = text.split("FROM go-runtime AS controller", 1)
+    controller = controller.split("FROM node:", 1)[0]
+    assert "COPY --from=kubectl" in go_stage.split("AS go-runtime", 1)[1]
     assert "python3" not in controller
     assert "npm " not in controller
     assert "FROM worker-runtime AS responder" in text

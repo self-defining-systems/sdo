@@ -1,32 +1,61 @@
 # syntax=docker/dockerfile:1.7
 
-FROM golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS go-runtime
+FROM golang:1.26.8-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS go-modules
 WORKDIR /opt/sdo
-# Seed for the controller's in-pod detector build. The runtime has no C
-# compiler, so Go builds there with cgo off; cache keys include that setting.
+# Seed for the in-pod detector build. The runtime has no C compiler, so Go
+# builds there with cgo off; cache keys include that setting.
 ENV GOCACHE=/go/build-cache \
     CGO_ENABLED=0
-# The runtime and synthesized detector workspaces use local Go modules in this
-# tree, including memory, worker registration, and generated contracts.
+# Module downloads and the third-party build cache depend on the manifests
+# alone, so a Go source edit leaves every layer up to go-deps cached.
+COPY sdo/operator/go.mod sdo/operator/go.sum ./sdo/operator/
+COPY sdo/operator/contracts/go.mod sdo/operator/contracts/go.sum ./sdo/operator/contracts/
+COPY sdo/operator/core/go.mod sdo/operator/core/go.sum ./sdo/operator/core/
+COPY sdo/operator/runtime/go.mod sdo/operator/runtime/go.sum ./sdo/operator/runtime/
+COPY sdo/operator/sdk/go.mod sdo/operator/sdk/go.sum ./sdo/operator/sdk/
+RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+      (cd "$dir" && go mod download all); \
+    done
+
+# The package names are the only thing that leaves this stage, so go-deps stays
+# cached until an import is added or removed.
+FROM go-modules AS go-dep-list
 COPY sdo/operator ./sdo/operator
-RUN cd sdo/operator/sdk && go mod download all
-RUN cd sdo/operator/core && go mod download all
-RUN cd sdo/operator/runtime && go mod download all
-RUN cd sdo/operator && go mod download all
-RUN cd sdo/operator/sdk && go test -run '^$' ./...
-RUN cd sdo/operator/core && go test -run '^$' ./...
-RUN cd sdo/operator/runtime && go test -run '^$' ./...
-RUN cd sdo/operator && go build -buildvcs=false -o /usr/local/bin/sdo-operator ./cmd/sdo-operator
+RUN mkdir /deps \
+    && for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+      (cd "$dir" && go list -deps -test ./... | grep -vE '^sdo\.dev|[ ]|\.test$' | sort -u) > "/deps/$(echo "$dir" | tr / _).txt"; \
+    done
+
+FROM go-modules AS go-deps
+COPY --from=go-dep-list /deps /deps
+RUN for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do \
+      (cd "$dir" && go build $(cat "/deps/$(echo "$dir" | tr / _).txt")); \
+    done \
+    && (cd /go/build-cache && find . -type f | LC_ALL=C sort) > /go/build-cache.files
 
 FROM registry.k8s.io/kubectl:v1.33.2@sha256:15ac68dd5ff1c5ef4c5ef85f2ef1a6e20903312ed10090e0c834ca8b156e331e AS kubectl
 
-FROM go-runtime AS controller
-LABEL org.opencontainers.image.title="SDO Go operator" \
-      org.opencontainers.image.version="0.1.0"
+FROM go-deps AS go-runtime
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+# The runtime and synthesized detector workspaces use local Go modules in this
+# tree, including memory, worker registration, and generated contracts.
+COPY sdo/operator ./sdo/operator
+RUN cd sdo/operator/sdk && go test -run '^$' ./...
+RUN cd sdo/operator/core && go test -run '^$' ./...
+RUN cd sdo/operator/runtime && go test -run '^$' ./...
+RUN cd sdo/operator && go build -buildvcs=false -o /usr/local/bin/sdo-operator ./cmd/sdo-operator
+# Cache entries added on top of go-deps, so the worker image copies only these.
+RUN mkdir /go/build-cache-delta \
+    && cd /go/build-cache \
+    && find . -type f | LC_ALL=C sort | LC_ALL=C comm -13 /go/build-cache.files - \
+      | tar -cf - -T - | tar -xf - -C /go/build-cache-delta
+
+FROM go-runtime AS controller
+LABEL org.opencontainers.image.title="SDO Go operator" \
+      org.opencontainers.image.version="0.1.0"
 # The built-in agent manifests are the single source for task types and
 # launch commands; the controller reads them from worker_registry.DefaultDirectory.
 COPY sdo/agents/registrations /opt/sdo/sdo/agents/registrations
@@ -102,10 +131,11 @@ ENV PATH="/usr/local/go/bin:${PATH}" \
     CGO_ENABLED=0 \
     SDO_GO_CACHE_SEED=/opt/sdo/go-build-cache \
     SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs
-COPY --from=go-runtime /usr/local/go /usr/local/go
+COPY --from=go-deps /usr/local/go /usr/local/go
+COPY --from=go-deps /go/pkg/mod /go/pkg/mod
+COPY --from=go-deps /go/build-cache /opt/sdo/go-build-cache
+COPY --from=go-runtime /go/build-cache-delta/ /opt/sdo/go-build-cache/
 COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
-COPY --from=go-runtime /go/pkg/mod /go/pkg/mod
-COPY --from=go-runtime /go/build-cache /opt/sdo/go-build-cache
 COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 COPY examples/playbook-programs /opt/sdo/examples/playbook-programs

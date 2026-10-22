@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[5]
 def test_runtime_and_validator_images_carry_the_prebuilt_go_cache() -> None:
     runtime = (ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
     validator = (ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
-    assert "COPY --from=go-runtime /go/build-cache /opt/sdo/go-build-cache" in runtime
+    assert "COPY --from=go-deps /go/build-cache /opt/sdo/go-build-cache" in runtime
+    assert "COPY --from=go-runtime /go/build-cache-delta/ /opt/sdo/go-build-cache/" in runtime
     assert "SDO_GO_CACHE_SEED=/opt/sdo/go-build-cache" in runtime
     assert "SDO_GO_CACHE_SEED=/go/build-cache" in validator
 
