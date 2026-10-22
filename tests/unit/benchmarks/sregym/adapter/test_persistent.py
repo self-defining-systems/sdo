@@ -1126,3 +1126,69 @@ def test_reflection_drain_accepts_acknowledged_closure_without_controller_relaun
         ops, "demo-sdo", "incident-1", 1.0, Clock(sleep=lambda _: pytest.fail("closure should already be drained"))
     )
     assert state["last_acknowledged_incident_id"] == "incident-1"
+
+
+@pytest.mark.parametrize("trust_threshold", [3, 7])
+def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_reuse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, trust_threshold: int
+) -> None:
+    from benchmarks.sregym.adapter import driver, native_operator
+
+    monkeypatch.setenv(
+        "SREGYM_EXPERIMENT_AGENT_CONFIG",
+        json.dumps(
+            {
+                "deployed_manifest_paths": ["kubernetes"],
+                "program_fast_path": True,
+                "program_trust_threshold": trust_threshold,
+            }
+        ),
+    )
+    monkeypatch.setenv("SREGYM_AGENT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    state_path = tmp_path / "persistent.json"
+    monkeypatch.setenv(driver.PERSISTENT_STATE_ENV, str(state_path))
+    sdo = tmp_path / ".sdo"
+    (sdo / "diagnostics").mkdir(parents=True)
+    (sdo / "diagnostics/manifest.yaml").write_text("detectors: []\n")
+    (sdo / "lifecycle-provenance.yaml").write_text("{}\n")
+    ops = FakeOps()
+    monkeypatch.setattr(driver, "_cluster_ops", lambda *_args: ops)
+    monkeypatch.setattr(driver, "poll_stage_sync", lambda *_args, **_kwargs: driver.AWAITING_FAULT_INJECTION)
+    monkeypatch.setattr(driver, "get_app_info", lambda *_args: {"namespace": "hotel", "app_name": "hotel"})
+    monkeypatch.setattr(
+        driver,
+        "_deployed_lifecycle_context",
+        lambda *_args: driver.DeployedLifecycleContext(
+            health_objective="healthy",
+            active_resources=[],
+        ),
+    )
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
+    monkeypatch.setattr(driver, "request_fault_injection", lambda *_args: None)
+    commands: list[list[str]] = []
+
+    def run(command: str, args: list[str], **_kwargs: object) -> dict[str, object]:
+        assert command == "install-existing"
+        commands.append(args)
+        return {"installed": True, "reused": False, "fingerprint": "abc", "accepted_commit": "a" * 40}
+
+    monkeypatch.setattr(native_operator, "_run", run)
+    for stage in ("stage_0_first", "stage_1_reused"):
+        args = driver._parse_args(["--logs-dir", str(tmp_path / stage / "logs")])
+        resolution = driver._run_persistent(args, "", driver.time.monotonic())
+        record = PersistentState.load(state_path).controllers["hotel"]
+        config = runtime_config_from_payload(record.runtime_config)
+        assert config.deployed_manifest_paths == ("kubernetes",)
+        assert config.program_fast_path is True
+        assert config.program_trust_threshold == trust_threshold
+        ops.reflectable.add(resolution["incident_id"])
+    assert resolution["lifecycle_reused"] is True
+    assert ops.installs == 1
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
+    assert "--program-fast-path" in command
+    assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)

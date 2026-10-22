@@ -350,3 +350,124 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
     assert actual.deployed_manifest_paths == ("kubernetes",)
     if seeded:
         assert controller_args[controller_args.index("--deployed-manifest-path") + 1] == "kubernetes"
+
+
+@pytest.mark.parametrize("entrypoint", ["lifecycle", "evidence"])
+@pytest.mark.parametrize("trust_threshold", [3, 7])
+def test_environment_settings_reach_nonpersistent_native_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entrypoint: str, trust_threshold: int
+) -> None:
+    monkeypatch.setenv(
+        "SREGYM_EXPERIMENT_AGENT_CONFIG",
+        json.dumps(
+            {
+                "deployed_manifest_paths": ["kubernetes"],
+                "program_fast_path": True,
+                "program_trust_threshold": trust_threshold,
+            }
+        ),
+    )
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "inspect_existing", lambda *_args: object())
+    sdo = tmp_path / ".sdo"
+    (sdo / "diagnostics").mkdir(parents=True)
+    (sdo / "diagnostics/manifest.yaml").write_text("detectors: []\n")
+    (sdo / "lifecycle-provenance.yaml").write_text("{}\n")
+    commands: list[list[str]] = []
+
+    def run(command: str, args: list[str], **_kwargs: object) -> dict[str, object]:
+        assert command == "install-existing"
+        commands.append(args)
+        return {"installed": True, "reused": False, "fingerprint": "abc", "accepted_commit": "a" * 40}
+
+    monkeypatch.setattr(native_operator, "_run", run)
+    args = driver._parse_args([])
+    if entrypoint == "lifecycle":
+        driver._launch_native_lifecycle(
+            args,
+            repository=tmp_path,
+            namespace="demo",
+            application="demo",
+            health_objective="healthy",
+            api_base="",
+            persistent=False,
+        )
+    else:
+        native_operator.install_existing(driver._native_install_for_run(args, tmp_path, "demo", "demo", ""))
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
+    assert "--program-fast-path" in command
+    assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
+
+
+def test_driver_cli_overrides_environment_source_and_program_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "SREGYM_EXPERIMENT_AGENT_CONFIG",
+        json.dumps({"deployed_manifest_paths": ["old"], "program_fast_path": True, "program_trust_threshold": 3}),
+    )
+    args = driver._parse_args(
+        [
+            "--deployed-manifest-path",
+            "kubernetes",
+            "--deployed-manifest-path",
+            "extra.yaml",
+            "--no-program-fast-path",
+            "--program-trust-threshold",
+            "7",
+        ]
+    )
+    assert args.deployed_manifest_paths == ("kubernetes", "extra.yaml")
+    assert args.program_fast_path is False
+    assert args.program_trust_threshold == 7
+
+
+@pytest.mark.parametrize("value", ["kubernetes", None, {}, [""], ["  "], [1]])
+def test_driver_rejects_invalid_manifest_selection(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
+    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps({"deployed_manifest_paths": value}))
+    with pytest.raises(ValueError, match="deployed_manifest_paths"):
+        driver._parse_args([])
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("program_fast_path", "false"),
+        ("program_fast_path", 1),
+        ("program_trust_threshold", 0),
+        ("program_trust_threshold", -1),
+        ("program_trust_threshold", True),
+        ("program_trust_threshold", 1.5),
+    ],
+)
+def test_driver_rejects_invalid_program_settings(monkeypatch: pytest.MonkeyPatch, key: str, value: object) -> None:
+    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps({key: value}))
+    with pytest.raises(ValueError, match=key):
+        driver._parse_args([])
+
+
+def test_driver_default_settings_remain_explicitly_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
+    args = driver._parse_args([])
+    assert args.deployed_manifest_paths == ()
+    assert args.program_fast_path is False
+    assert args.program_trust_threshold == 3
+
+
+@pytest.mark.parametrize(
+    ("argv", "field"),
+    [
+        (["--deployed-manifest-path", ""], "deployed_manifest_paths"),
+        (["--program-trust-threshold", "0"], "program_trust_threshold"),
+    ],
+)
+def test_driver_rejects_invalid_cli_settings(argv: list[str], field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        driver._parse_args(argv)
+
+
+def test_driver_cli_can_enable_program_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", '{"program_fast_path": false}')
+    assert driver._parse_args(["--program-fast-path"]).program_fast_path is True
