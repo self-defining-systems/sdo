@@ -324,6 +324,9 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			if got := loop.ProgramRuns(); got[len(got)-1].Verdict.Result != program.Match {
 				t.Fatalf("diagnosis after the pull failure settled: %+v", got)
 			}
+			if response := loop.Handle(ctx, ToolRequest{Command: "pre-apply"}); response.Error != "" {
+				t.Fatal(response.Error)
+			}
 			for _, ref := range []sdk.ObjectRef{port, image} {
 				patch := []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)
 				if ref.Kind == "Deployment" {
@@ -383,12 +386,12 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"open@detect.json", "fixed.json"} {
+		for _, name := range []string{"open@detect.json", "open@pre-apply.json", "fixed.json"} {
 			if _, err := os.Stat(filepath.Join(captureDir, name)); err != nil {
 				t.Fatalf("missing %s: %v", name, err)
 			}
 		}
-		for _, name := range []string{"open@settle.json", "open@pre-apply.json"} {
+		for _, name := range []string{"open@settle.json"} {
 			if _, err := os.Stat(filepath.Join(captureDir, name)); !os.IsNotExist(err) {
 				t.Fatalf("%s must no longer be captured: %v", name, err)
 			}

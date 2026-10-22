@@ -51,6 +51,7 @@ When multiple runs are in scope and subagents are available, assign one run or o
 
 At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md).
 Before judging mitigation or learning, read [outcomes and program evidence](references/outcome-records.md).
+For first-mutation capture and evidence-gap semantics, read [capture boundaries](references/capture-boundaries.md).
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md).

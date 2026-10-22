@@ -278,6 +278,12 @@ jobs:
         run: go test -race -run '^TestChaos|^TestExhaustive|^TestExplorer' -timeout 5m ./...
         working-directory: sdo/operator/runtime
 
+      - name: Run short seeded incident schedules
+        run: go test -race -run '^TestSimSchedule$|^FuzzSimIncidentSchedule$' -timeout 2m .
+        working-directory: sdo/operator/runtime
+        env:
+          SDO_SIM_RUNS: "4"
+
   # Builds the images SDO runs in and checks each one imports its entry points
   # (SDO, agentshim, the benchmark submission client) at the pinned Codex CLI
   # and agentshim versions, so a broken image fails here and not mid-experiment.

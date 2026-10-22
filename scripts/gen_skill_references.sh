@@ -11,7 +11,9 @@ REFERENCE_DIR="$PROJECT_ROOT/sdo/skills/sdo-detector-authoring/references"
 render() {
     local reference="$1"
     cd "$SDK_DIR"
-    if [ "$reference" = "sdk.md" ]; then
+    if [ "$reference" = "program-sdk.md" ]; then
+        echo '# Program SDK reference'
+    elif [ "$reference" = "sdk.md" ]; then
         echo '# Detector SDK reference'
     else
         echo '# Detector replay reference'
@@ -24,7 +26,9 @@ Current Go APIs follow.
 
 HEADER
     local packages=(. ./servicehealth)
-    if [ "$reference" = "replay.md" ]; then
+    if [ "$reference" = "program-sdk.md" ]; then
+        packages=(./program)
+    elif [ "$reference" = "replay.md" ]; then
         packages=(./sdktest)
     fi
     for package in "${packages[@]}"; do
@@ -44,7 +48,10 @@ HEADER
 
 expected="$(mktemp)"
 trap 'rm -f "$expected"' EXIT
-for reference in sdk.md replay.md; do
+for reference in sdk.md replay.md program-sdk.md; do
+    if [ "$reference" = "program-sdk.md" ]; then
+        REFERENCE_DIR="$PROJECT_ROOT/sdo/skills/sdo-playbook-authoring/references"
+    fi
     if [ "${1:-}" = "--check" ]; then
         render "$reference" > "$expected"
         if ! diff -u "$REFERENCE_DIR/$reference" "$expected"; then
