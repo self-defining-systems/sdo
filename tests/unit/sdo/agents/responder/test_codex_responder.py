@@ -22,7 +22,6 @@ from sdo.contracts import (
     MemoryScript,
     MemoryWatch,
     PriorOutcomeEvidence,
-    RootCauseEvidence,
 )
 from tests.proto_messages import evolve, from_dict
 from tests.structured_turns import ScriptedAgent, failure
@@ -386,10 +385,9 @@ def test_prompt_requires_helper_objects_to_carry_the_cleanup_label() -> None:
 def test_prompt_requires_live_evidence_for_every_root_cause() -> None:
     prompt = _responder_prompt(_request())
 
-    assert "Every confirmed root cause needs live evidence" in prompt
+    assert "Every confirmed root cause cites the live evidence behind it" in prompt
     assert "static_context" in prompt
     assert "explained_detectors" in prompt
-    assert "must clear after your fix" in prompt
 
 
 def test_prompt_lists_changes_since_the_healthy_baseline_once() -> None:
@@ -504,9 +502,9 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     request = from_dict(IncidentRequest, raw)
     prompt = _responder_prompt(request)
     assert "ranked program verdicts" in prompt
-    assert "sdo plan then sdo apply" in prompt
-    assert "Always finish with sdo verify" in prompt
-    assert "return the structured incident result immediately" in prompt
+    assert "matching program's plan" in prompt
+    assert "Finish with independent verification" in prompt
+    assert "return once findings are clear and source changes are committed" in prompt
     assert '"program_id": "targetport"' in prompt
 
 
@@ -637,10 +635,10 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         assert view["capability"] == "diagnosis-and-mitigation"
     else:
         assert view["capability"] == "unknown"
-    assert "For a Match with can_mitigate=true" in prompt
-    assert "sdo source Deployment/app/api" in prompt
-    assert "sdo plan targetport --bind service=Service/app/api" in prompt
-    assert "Do not print the tool-description catalog" in prompt
+    assert "matching program's plan when can_mitigate=true" in prompt
+    assert "concise capability help" in prompt
+    assert "--bind" not in prompt
+    assert "Use that index instead of broad tool-catalog output" in prompt
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
@@ -655,40 +653,8 @@ def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
     )
 
 
-def _with_state_change_source(source: str) -> IncidentResult:
-    result = _result()
-    cause = result.confirmed_root_causes[0]
-    evidence = [RootCauseEvidence(kind="state-change", source=source, observation="targetPort changed")]
-    return evolve(result, confirmed_root_causes=[evolve(cause, evidence=evidence)])
-
-
-def test_prompt_requires_one_object_per_state_change_entry() -> None:
+def test_prompt_names_the_evidence_source_forms_without_promising_checks() -> None:
     prompt = _responder_prompt(_request())
 
-    assert "exactly one `Kind/name` or `Kind/namespace/name`" in prompt
-    assert "one state-change entry per object" in prompt
-
-
-def test_compound_state_change_source_gets_one_targeted_retry() -> None:
-    bad = _with_state_change_source("Service/geo; Service/recommendation")
-    good = _with_state_change_source("Service/geo")
-    replies = iter([_scripted_reply(bad, "session-1"), _scripted_reply(good, "session-1")])
-    agent = ScriptedAgent(lambda _request: next(replies))
-
-    completed = execute_incident(_request(), executor=agent.executor)
-
-    assert completed.confirmed_root_causes[0].evidence[0].source == "Service/geo"
-    assert len(agent.requests) == 2
-    retry = agent.prompts[1]
-    assert "Service/geo; Service/recommendation" in retry
-    assert "own evidence entry" in retry
-    assert "session-1" in " ".join(agent.argvs[1])
-
-
-def test_compound_state_change_source_still_malformed_after_retry_fails() -> None:
-    bad = _with_state_change_source("Service/geo, Service/recommendation")
-    agent = ScriptedAgent(lambda _request: _scripted_reply(bad, "session-1"))
-
-    with pytest.raises(ResponderExecutionError, match="exactly one object reference"):
-        execute_incident(_request(), executor=agent.executor)
-    assert len(agent.requests) == 2
+    assert "`Kind/name` or `Kind/namespace/name`" in prompt
+    assert "SDO checks" not in prompt

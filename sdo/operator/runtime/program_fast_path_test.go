@@ -415,7 +415,7 @@ func TestSuccessfulFastPathAddsBoundTrustCredit(t *testing.T) {
 	if state.VerifiedSuccesses != 1 || !state.Trusted {
 		t.Fatalf("successful fast path lost bound evidence: %+v calls=%+v", state, message.ProgramToolCalls)
 	}
-	outcome.Classification = "partial"
+	outcome.Classification = "failed"
 	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]; state.Trusted || state.VerifiedSuccesses != 0 {
 		t.Fatalf("unverified fast path earned credit: %+v", state)
 	}

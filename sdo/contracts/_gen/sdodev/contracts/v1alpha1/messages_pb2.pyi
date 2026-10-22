@@ -184,16 +184,6 @@ class StateChanges(_message.Message):
     unobserved_kinds: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, baseline_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., changes: _Optional[_Iterable[_Union[StateChange, _Mapping]]] = ..., omitted: _Optional[int] = ..., unobserved_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
 
-class ObservedStateChange(_message.Message):
-    __slots__ = ("kind", "name", "first_observed_at")
-    KIND_FIELD_NUMBER: _ClassVar[int]
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    FIRST_OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
-    kind: str
-    name: str
-    first_observed_at: _timestamp_pb2.Timestamp
-    def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., first_observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
-
 class MemoryWatch(_message.Message):
     __slots__ = ("api_version", "kind")
     API_VERSION_FIELD_NUMBER: _ClassVar[int]
@@ -623,7 +613,7 @@ class DetectorTimelineEntry(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbook_ids: _Optional[_Iterable[str]] = ..., first_activated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_seen_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., relation: _Optional[str] = ..., activations: _Optional[int] = ...) -> None: ...
 
 class IncidentClosure(_message.Message):
-    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "observed_state_changes", "cleaned_helpers")
+    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
@@ -639,7 +629,6 @@ class IncidentClosure(_message.Message):
     RESPONDER_COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
     VERIFIED_AT_FIELD_NUMBER: _ClassVar[int]
     HEALTH_CLEARED_AT_FIELD_NUMBER: _ClassVar[int]
-    OBSERVED_STATE_CHANGES_FIELD_NUMBER: _ClassVar[int]
     CLEANED_HELPERS_FIELD_NUMBER: _ClassVar[int]
     request: IncidentRequest
     result: IncidentResult
@@ -656,6 +645,5 @@ class IncidentClosure(_message.Message):
     responder_completed_at: _timestamp_pb2.Timestamp
     verified_at: _timestamp_pb2.Timestamp
     health_cleared_at: _timestamp_pb2.Timestamp
-    observed_state_changes: _containers.RepeatedCompositeFieldContainer[ObservedStateChange]
     cleaned_helpers: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., observed_state_changes: _Optional[_Iterable[_Union[ObservedStateChange, _Mapping]]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ...) -> None: ...

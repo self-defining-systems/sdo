@@ -373,7 +373,7 @@ def test_prompt_routes_mutations_through_act_and_leaves_receipts_to_it() -> None
     prompt = _responder_prompt(_request())
 
     assert "sdo act" in prompt
-    assert "Do not return receipts for `sdo act` calls" in prompt
+    assert "The recorder supplies receipts; do not hand-write them" in prompt
     assert "repair-actions" not in prompt
     assert "parameterized script" not in prompt
 

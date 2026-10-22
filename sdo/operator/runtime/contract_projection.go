@@ -419,7 +419,6 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		message.DispatchError = &closure.DispatchError
 	}
 	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)
-	message.ObservedStateChanges = observedStateChangesContract(closure.ObservedStateChanges)
 	return message, nil
 }
 
@@ -527,26 +526,6 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	return result
 }
 
-func observedStateChangesContract(changes []ObservedStateChange) []*contracts.ObservedStateChange {
-	result := make([]*contracts.ObservedStateChange, 0, len(changes))
-	for _, change := range changes {
-		result = append(result, &contracts.ObservedStateChange{
-			Kind: change.Kind, Name: change.Name, FirstObservedAt: contractTimestamp(change.FirstObservedAt),
-		})
-	}
-	return result
-}
-
-func observedStateChangesState(changes []*contracts.ObservedStateChange) []ObservedStateChange {
-	result := make([]ObservedStateChange, 0, len(changes))
-	for _, change := range changes {
-		result = append(result, ObservedStateChange{
-			Kind: change.GetKind(), Name: change.GetName(), FirstObservedAt: controllerTime(change.GetFirstObservedAt()),
-		})
-	}
-	return result
-}
-
 func detectorTimelineContract(timeline []DetectorTimelineEntry) []*contracts.DetectorTimelineEntry {
 	result := make([]*contracts.DetectorTimelineEntry, 0, len(timeline))
 	for _, entry := range timeline {
@@ -599,9 +578,8 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		FinalStateChanges:                   stateChangesState(message.GetFinalStateChanges()),
 		DetectedAt:                          controllerTime(message.GetDetectedAt()), DispatchedAt: controllerTime(message.GetDispatchedAt()),
 		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), VerifiedAt: controllerTime(message.GetVerifiedAt()),
-		HealthClearedAt:      optionalTimeState(message.HealthClearedAt),
-		ObservedStateChanges: observedStateChangesState(message.GetObservedStateChanges()),
-		CleanedHelpers:       append([]string(nil), message.GetCleanedHelpers()...),
+		HealthClearedAt: optionalTimeState(message.HealthClearedAt),
+		CleanedHelpers:  append([]string(nil), message.GetCleanedHelpers()...),
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request

@@ -148,3 +148,11 @@ def test_responder_package_exports_resolve_lazily():
     assert responder.IncidentStatusReport.__module__ == "sdo.agents.responder.incident_status"
     assert "run_worker_task" in dir(responder)
     assert not hasattr(responder, "not_an_export")
+
+
+def test_local_help_is_a_concise_capability_index() -> None:
+    help_text = tools_cli._parser().format_help()
+    assert "accepted source" in help_text
+    assert "record" in help_text
+    assert "verify" in help_text
+    assert len(help_text) < 2000

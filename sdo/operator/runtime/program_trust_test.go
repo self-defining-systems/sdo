@@ -57,7 +57,7 @@ func TestInterruptedFastPathFailureBreaksTrustWithoutApplication(t *testing.T) {
 }
 
 func TestEquivalentResponderRepairEarnsTrustOnlyAfterIndependentSuccess(t *testing.T) {
-	outcome := boundTrustOutcome(t, "equivalent-repair-1", "partial", program.NoMatch)
+	outcome := boundTrustOutcome(t, "equivalent-repair-1", "failed", program.NoMatch)
 	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; state.VerifiedSuccesses != 0 {
 		t.Fatalf("unverified incident earned trust: %+v", state)
 	}
@@ -107,7 +107,7 @@ func boundTrustOutcome(t *testing.T, kind, classification string, result program
 
 func TestProgramTrustRequiresIndependentSuccessForEveryApplicationKind(t *testing.T) {
 	for _, kind := range []string{"application-1", "fast-path-1", "equivalent-repair-1", "learned-repair-targetport"} {
-		for _, classification := range []string{"partial", "failed", "cancelled", ""} {
+		for _, classification := range []string{"failed", "cleared_without_action", ""} {
 			t.Run(kind+"/"+classification, func(t *testing.T) {
 				outcome := boundTrustOutcome(t, kind, classification, program.NoMatch)
 				if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.VerifiedSuccesses != 0 || got.Trusted {
@@ -279,7 +279,7 @@ func TestProgramTrustConsumesRealResponderApplyEvidence(t *testing.T) {
 	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; !got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("real successful apply earned no trust: %+v", got)
 	}
-	outcome.Classification = "partial"
+	outcome.Classification = "failed"
 	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("real locally green apply in controller-failed outcome earned trust: %+v", got)
 	}

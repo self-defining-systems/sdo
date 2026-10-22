@@ -21,6 +21,7 @@ kind_worker_nodes = 1  # 1 control plane + 1 worker per lane
 reuse_cluster = true
 force_recreate_cluster = false
 preserve_infrastructure = true
+source_build_cache = true  # reuses the app image while its build context is unchanged
 docker_builder = "sdo-example"  # name of a local docker buildx builder; change to yours
 
 [agent.codex]

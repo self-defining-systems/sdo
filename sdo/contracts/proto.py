@@ -102,7 +102,6 @@ PriorOutcomeEvidence = messages_pb2.PriorOutcomeEvidence
 StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
-ObservedStateChange = messages_pb2.ObservedStateChange
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
@@ -123,7 +122,6 @@ MemoryPlaybook = messages_pb2.MemoryPlaybook
 OperationalMemorySnapshot = messages_pb2.OperationalMemorySnapshot
 OutcomeRecord = outcome_pb2.OutcomeRecord
 OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
-DiagnosisVerification = outcome_pb2.DiagnosisVerification
 
 MitigationReplayNote = memory_pb2.MitigationReplayNote
 MemoryDiagnostic = memory_pb2.MemoryDiagnostic
@@ -263,8 +261,6 @@ __all__ = [
     "MemoryOutcomes",
     "OutcomeRecord",
     "OutcomeTimestamps",
-    "DiagnosisVerification",
-    "ObservedStateChange",
     "PriorOutcomeEvidence",
     "ProposalWorkspace",
     "ReflectionRequest",

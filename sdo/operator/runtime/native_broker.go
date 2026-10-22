@@ -413,6 +413,23 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
+		if effect.Attempt == 1 && !n.ForceReflection && n.SessionRoot != "" {
+			bindings := verifiedRepeatBindings(effect.Outcome)
+			current := len(bindings) > 0
+			revisions := programRunRevisions(effect.Outcome)
+			for id := range bindings {
+				revision, err := programDependencyRevision(ctx, workspace.Worktree, workspace.BaseCommit, id)
+				current = current && err == nil && revision == revisions[id]
+			}
+			if current {
+				capture, err := memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
+				if err == nil {
+					if paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, bindings); err == nil && len(paths) > 0 {
+						return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+					}
+				}
+			}
+		}
 		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)

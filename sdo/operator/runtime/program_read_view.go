@@ -154,30 +154,45 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 				return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
 			}
 		}
-		return program.Diff{Changed: true, Text: "accepted object is absent from snapshot"}, nil
+		before, err := json.Marshal(comparableFields(source.Object))
+		if err != nil {
+			return program.Diff{}, err
+		}
+		return program.Diff{Changed: true, Text: fmt.Sprintf("accepted: %s\nobserved: null", before)}, nil
 	}
-	left := comparableFields(source.Object)
-	right := projectSourceFields(comparableFields(observed.Object), left)
+	accepted := comparableFields(source.Object)
+	actual := comparableFields(observed.Object)
+	left := accepted
+	right := projectSourceFields(actual, left)
 	if v.Client != nil {
 		normalized, normalizeErr := dryRunAcceptedSource(ctx, v.Client, ref, source)
 		if normalizeErr != nil {
 			return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, normalizeErr)
 		}
 		left = comparableFields(normalized.Object)
-		right = comparableFields(observed.Object)
+		right = actual
 	}
-	before, err := json.Marshal(left)
+	// Apply normalization answers whether reconciliation changes live state. It
+	// may retain externally owned fields and cannot represent accepted source.
+	// Keep the two complete, source-grounded sides even when Changed is false,
+	// so callers can compare individual fields (including source absence).
+	normalizedBefore, err := json.Marshal(left)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	after, err := json.Marshal(right)
+	normalizedAfter, err := json.Marshal(right)
 	if err != nil {
 		return program.Diff{}, err
 	}
-	if string(before) == string(after) {
-		return program.Diff{}, nil
+	before, err := json.Marshal(accepted)
+	if err != nil {
+		return program.Diff{}, err
 	}
-	return program.Diff{Changed: true, Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
+	after, err := json.Marshal(actual)
+	if err != nil {
+		return program.Diff{}, err
+	}
+	return program.Diff{Changed: string(normalizedBefore) != string(normalizedAfter), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 }
 
 func dryRunAcceptedSource(ctx context.Context, client kubernetes.Interface, ref sdk.ObjectRef, source *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -266,6 +281,7 @@ func removeRevisionStamp(metadata map[string]any) {
 		return
 	}
 	delete(annotations, "sdo.dev/source-tree")
+	delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
 	if len(annotations) == 0 {
 		delete(metadata, "annotations")
 	}

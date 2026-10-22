@@ -64,7 +64,6 @@ def _receipt() -> dict[str, Any]:
                 "schema_version": 1,
                 "incident_id": incident,
                 "classification": "success",
-                "diagnosis_verification": [{"verdict": "confirmed"}],
                 "usage": _usage(1000, 800, 50, 2),
             },
             "receipt": {"incident_id": incident, "outcome_commit": commit, "ack_token": "ack"},

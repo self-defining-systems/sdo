@@ -27,7 +27,7 @@ func fixture() *c.NativeProductionReceipt {
 				Result:              &c.IncidentResult{IncidentId: "incident-1", Status: "completed", RepairActions: []*c.RepairActionReceipt{{ActionId: "repair-1", Success: true}}, ConfirmedRootCauses: []*c.ConfirmedRootCause{{Summary: "unavailable replica"}}},
 				FinalDetectorStates: []*c.DetectorEvaluation{{DetectorId: "health-objective", Status: "clear"}}, VerifiedAt: stamp,
 			},
-			OutcomeDocument: &c.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident-1", Classification: "success", RepairCommit: proto.String(proposal), DiagnosisVerification: []*c.DiagnosisVerification{{Verdict: "confirmed"}}},
+			OutcomeDocument: &c.OutcomeRecord{SchemaVersion: 1, IncidentId: "incident-1", Classification: "success", RepairCommit: proto.String(proposal)},
 		},
 		ResponderJobEvidence: []*c.ResponderJobEvidence{{IncidentId: "incident-1", JobName: "sdo-incident-1-hash", JobUid: "worker-uid", Succeeded: true}},
 	}
@@ -69,9 +69,6 @@ func TestReceiptRejectsConflictingEvidence(t *testing.T) {
 		"health":         func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure.FinalDetectorStates[0].Status = "firing" },
 		"fingerprints": func(r *c.NativeProductionReceipt) {
 			r.NativeLedger.Closure.FinalDetectorStates[0].Fingerprints = []string{"still active"}
-		},
-		"diagnosis": func(r *c.NativeProductionReceipt) {
-			r.NativeLedger.OutcomeDocument.DiagnosisVerification = append(r.NativeLedger.OutcomeDocument.DiagnosisVerification, &c.DiagnosisVerification{Verdict: "contradicted"})
 		},
 		"updated reflection": func(r *c.NativeProductionReceipt) {
 			r.NativeLedger.ReflectionCommit = ""
@@ -170,10 +167,18 @@ func TestReceiptPolicyCoversEveryOutcomeClassification(t *testing.T) {
 			r := fixture()
 			r.NativeLedger.OutcomeDocument.Classification = classification
 			got := Evaluate(encoded(t, r), true)
-			want := classification == "success" || classification == "cleared_without_action" || classification == "external_recovery" || classification == "false_positive"
+			want := classification == "success" || classification == "cleared_without_action"
 			if (got.GetFailure() == nil) != want {
 				t.Fatalf("classification %s acceptance drifted: %v", classification, got)
 			}
 		})
+	}
+}
+
+func TestReceiptAcceptsVerifiedSuccessWithoutDiagnosisEvidence(t *testing.T) {
+	r := fixture()
+	r.NativeLedger.Closure.Result.ConfirmedRootCauses = nil
+	if got := Evaluate(encoded(t, r), true); got.GetFailure() != nil {
+		t.Fatal(got.GetFailure())
 	}
 }

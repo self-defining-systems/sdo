@@ -36,8 +36,6 @@ func mustTime(t *testing.T, value string) time.Time {
 //     Pydantic validators and Go Validate/ValidateFor — valid fixtures pass,
 //     and each invariant violation is rejected.
 //
-// This stage does not change the wire or the fenced verify_diagnosis path; the
-// cutover that replaces the Pydantic/Go structs with these types is Stage 2b.
 
 func mustProtoJSON(t *testing.T, name string, message proto.Message) {
 	t.Helper()
@@ -70,7 +68,7 @@ func TestProtoSchemaParsesGoldenFixtures(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"closure_repaired.json", "closure_own_edit.json"} {
+	for _, name := range []string{"closure_repaired.json"} {
 		closure := &contractsv1alpha1.IncidentClosure{}
 		mustProtoJSON(t, name, closure)
 		if err := validator.Validate(closure); err != nil {
