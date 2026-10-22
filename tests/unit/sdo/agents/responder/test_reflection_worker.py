@@ -79,6 +79,10 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
         outcome=_outcome(closure.request.incident_id),
         outcome_commit="outcome-commit",
     )
+    cause = request.cause_work.add(cause_index=0)
+    cause.items.add(
+        disposition="question", reason="binding_not_written", question="Why did this clear without a write?"
+    )
     request.memory_snapshot.accepted_commit = "outcome-commit"
     packed = Any()
     packed.Pack(request)
@@ -97,6 +101,7 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     run_reflection_task(path, "result-map", publisher, reflector=reflector)
 
     assert reflector.kwargs is not None
+    assert reflector.kwargs["cause_work"] == list(request.cause_work)
     assert reflector.kwargs["outcome_commit"] == "outcome-commit"
     assert reflector.kwargs["session_mode"] == "fresh"
     assert publisher.payload is not None
@@ -320,36 +325,59 @@ def test_reflection_worker_forwards_go_retry_diagnostics(tmp_path: Path) -> None
     assert [d.rule for d in reflector.kwargs["diagnostics"]] == ["detector.manifest"]  # type: ignore[attr-defined]
 
 
-@pytest.mark.parametrize(("depth", "expected"), [("", "full"), ("full", "full"), ("refine", "refine")])
-def test_reflection_worker_forwards_go_chosen_depth(tmp_path: Path, depth: str, expected: str) -> None:
-    closure = _closure()
-    request = ReflectionRequest(
-        closure=closure,
-        outcome=_outcome(closure.request.incident_id),
-        outcome_commit="outcome-commit",
-        depth=depth,
-    )
-    request.memory_snapshot.accepted_commit = "outcome-commit"
-    task = AgentTask(
-        schema_version="sdo.dev/v1alpha1",
-        task_id="reflection-1",
-        agent_id="sdo-reflector",
-        task_type="outcome-reflection-direct-v1",
-        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
-    )
-    task.request.Pack(request)
-    path = tmp_path / "depth-task.json"
-    path.write_text(to_canonical_json(task), encoding="utf-8")
-    reflector = Reflector()
-
-    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
-
-    assert reflector.kwargs is not None
-    assert reflector.kwargs["depth"] == expected
-
-
 def test_reflection_schema_rejects_legacy_proposals() -> None:
     with pytest.raises(ValueError, match="Extra inputs"):
         ReflectionTurn.model_validate(
             {"summary": "Legacy", "learning_decision": "updated", "artifact_proposal": {"playbooks": []}}
         )
+
+
+@pytest.mark.parametrize(
+    ("disposition", "reason"), [("false_match", "fixed_capture_match"), ("covered", "verified_equivalent_repair")]
+)
+def test_registered_task_preserves_settled_work_in_actual_session_prompt(
+    tmp_path: Path, disposition: str, reason: str
+) -> None:
+    from sdo.agents.responder.reflection import SessionReflector
+    from tests.unit.sdo.agents.responder.test_reflection import _CapturingBackend
+
+    closure = _closure()
+    closure.result.responder_session_id = "incident-session"
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=_outcome(closure.request.incident_id),
+        outcome_commit="outcome-commit",
+        session_mode="resume",
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    cause = request.cause_work.add(cause_index=0)
+    cause.items.add(
+        program_id="source-repair",
+        disposition=disposition,
+        reason=reason,
+        question="Review the fixed regression" if disposition == "false_match" else "",
+    )
+    request.outcome.reflection_eligibility.version = 1
+    request.outcome.reflection_eligibility.causes.extend(request.cause_work)
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    path = tmp_path / "task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    backend = _CapturingBackend()
+    run_reflection_task(path, "result-map", Publisher(), reflector=SessionReflector(backend))
+    prompt = str(backend.calls[0]["prompt"])
+    assert backend.calls[0]["mode"] == "resume"
+    assert disposition in prompt
+    assert reason in prompt
+    assert "Return updated whenever final files include Go or agent edits" in prompt
+    assert "leave the tree unchanged" not in prompt
+    assert "skip validation" not in prompt
+    assert prompt.count(reason) == 1

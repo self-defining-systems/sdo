@@ -184,7 +184,7 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	}
 }
 
-func TestHermeticTrustedLatentDriftFastPathSkipsResponderAndReflection(t *testing.T) {
+func TestHermeticTrustedLatentDriftSkipsResponderAndRetainsLearningClassification(t *testing.T) {
 	loop, client := trustedPortLoop(t, false, false, true)
 	loop.Detectors = []sdk.Detector{fastloopClearDetector{}}
 	finding := loop.Request.Findings[0]
@@ -231,7 +231,7 @@ func TestHermeticTrustedLatentDriftFastPathSkipsResponderAndReflection(t *testin
 		}),
 		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 			reflections++
-			return ReflectionDecision{}, nil
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no capture proof available"}, nil
 		})}
 	workspace, err := native.PrepareIncident(context.Background(), "trusted-drift")
 	if err != nil {
@@ -245,7 +245,7 @@ func TestHermeticTrustedLatentDriftFastPathSkipsResponderAndReflection(t *testin
 		t.Fatal(err)
 	}
 	ledger, err := native.readLedger("trusted-drift")
-	if err != nil || reflections != 0 || ledger.ReflectionSkippedReason != "trusted program fast path" {
+	if err != nil || reflections != 1 || ledger.GetOutcomeDocument().GetReflectionEligibility().GetVersion() != 1 {
 		t.Fatalf("trusted drift dispatched reflection: ledger=%+v calls=%d err=%v", ledger, reflections, err)
 	}
 }

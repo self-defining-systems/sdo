@@ -129,7 +129,7 @@ plan validation with `skipped_unreplayable_effect`, without post-plan replay.
 statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
 and effect types separately from rejecting diagnostics. Notes prove no external effect or trust.
 
-Skipped replay earns no origin credit. Default trust requires three independently
+Corpus acceptance supplies no origin credit; current trust consumes only persisted covered instances. Default trust requires three independently
 verified live successes and zero failures for the unchanged revision. Equivalent
 ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
 unrelated repairs in the outcome do not suppress credit. Every planned resource

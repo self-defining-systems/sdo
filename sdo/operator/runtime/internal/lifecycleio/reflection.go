@@ -67,7 +67,11 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		}
 		event.Kind = lifecyclecore.ReflectionCompleted
 	case lifecyclecore.ReviewReflection:
-		err = validate.Err(validate.ReflectionDiagnostics(effect.Decision, effect.Paths))
+		diagnostics := validate.ReflectionDiagnostics(effect.Decision, effect.Paths)
+		for _, diagnostic := range lifecyclecore.EvidenceGapDiagnostics(effect.Decision, effect.EvidenceGapCount) {
+			diagnostics = append(diagnostics, validate.Diagnostic{Rule: diagnostic.GetRule(), Message: diagnostic.GetMessage()})
+		}
+		err = validate.Err(diagnostics)
 		event.Kind = lifecyclecore.ReflectionReviewed
 	case lifecyclecore.PublishReflection:
 		publishCtx := ctx

@@ -131,6 +131,7 @@ class IncidentRecord(_PersistedModel):
     binding_sources: list[str] = Field(default_factory=list)
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    reflection_evidence_gap_count: int | None = None
     resolution_path: str | None = None
     fast_path_programs: list[str] = Field(default_factory=list)
     fast_path_relation_covered_findings: list[dict[str, Any]] = Field(default_factory=list)

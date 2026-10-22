@@ -21,9 +21,10 @@ from sdo.contracts import ReflectionResult, model_output_schema
 async def test_skill_contract_matches_live_decision_enums_and_tools(tmp_path: Path) -> None:
     assert CONTRACT_PATH.read_text() == await render_contract()
     tools = {tool.name: tool for tool in await validation_server(tmp_path).list_tools()}
-    decision = tools["check_memory"].inputSchema["properties"]["learning_decision"]
-    allowed = next(branch["enum"] for branch in decision["anyOf"] if "enum" in branch)
-    assert allowed == model_output_schema(ReflectionResult.DESCRIPTOR)["properties"]["learning_decision"]["enum"]
+    for field in ("learning_decision", "decline_reason"):
+        decision = tools["check_memory"].inputSchema["properties"][field]
+        allowed = decision.get("enum") or next(branch["enum"] for branch in decision["anyOf"] if "enum" in branch)
+        assert allowed == model_output_schema(ReflectionResult.DESCRIPTOR)["properties"][field]["enum"]
 
 
 @pytest.mark.asyncio

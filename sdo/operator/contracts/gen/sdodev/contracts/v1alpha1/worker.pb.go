@@ -569,15 +569,12 @@ type ReflectionRequest struct {
 	// Go-owned retry feedback: the broker rejected the previous attempt's
 	// proposal. validation_attempt is 1 for the first dispatch; later attempts
 	// carry that rejection's diagnostics.
-	ValidationAttempt   uint32              `protobuf:"varint,11,opt,name=validation_attempt,json=validationAttempt,proto3" json:"validation_attempt,omitempty"`
-	PreviousDiagnostics []*MemoryDiagnostic `protobuf:"bytes,12,rep,name=previous_diagnostics,json=previousDiagnostics,proto3" json:"previous_diagnostics,omitempty"`
-	// Go-owned depth, chosen from typed outcome facts. Empty or "full" authors
-	// memory as usual. "refine" means accepted programs already diagnosed,
-	// repaired and verified this incident: confirm them and edit only on contrary
-	// evidence.
-	Depth         string `protobuf:"bytes,13,opt,name=depth,proto3" json:"depth,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ValidationAttempt   uint32                 `protobuf:"varint,11,opt,name=validation_attempt,json=validationAttempt,proto3" json:"validation_attempt,omitempty"`
+	PreviousDiagnostics []*MemoryDiagnostic    `protobuf:"bytes,12,rep,name=previous_diagnostics,json=previousDiagnostics,proto3" json:"previous_diagnostics,omitempty"`
+	CauseWork           []*ReflectionCauseWork `protobuf:"bytes,14,rep,name=cause_work,json=causeWork,proto3" json:"cause_work,omitempty"`
+	UnassignedWork      []*ReflectionWorkItem  `protobuf:"bytes,15,rep,name=unassigned_work,json=unassignedWork,proto3" json:"unassigned_work,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *ReflectionRequest) Reset() {
@@ -680,11 +677,18 @@ func (x *ReflectionRequest) GetPreviousDiagnostics() []*MemoryDiagnostic {
 	return nil
 }
 
-func (x *ReflectionRequest) GetDepth() string {
+func (x *ReflectionRequest) GetCauseWork() []*ReflectionCauseWork {
 	if x != nil {
-		return x.Depth
+		return x.CauseWork
 	}
-	return ""
+	return nil
+}
+
+func (x *ReflectionRequest) GetUnassignedWork() []*ReflectionWorkItem {
+	if x != nil {
+		return x.UnassignedWork
+	}
+	return nil
 }
 
 type ReflectionResult struct {
@@ -697,6 +701,7 @@ type ReflectionResult struct {
 	// Deprecated: Marked as deprecated in sdodev/contracts/v1alpha1/worker.proto.
 	ArtifactProposal *OperationalArtifactProposal `protobuf:"bytes,5,opt,name=artifact_proposal,json=artifactProposal,proto3" json:"artifact_proposal,omitempty"`
 	SdkGaps          []*SdkGap                    `protobuf:"bytes,6,rep,name=sdk_gaps,json=sdkGaps,proto3" json:"sdk_gaps,omitempty"`
+	DeclineReason    string                       `protobuf:"bytes,7,opt,name=decline_reason,json=declineReason,proto3" json:"decline_reason,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -774,6 +779,13 @@ func (x *ReflectionResult) GetSdkGaps() []*SdkGap {
 	return nil
 }
 
+func (x *ReflectionResult) GetDeclineReason() string {
+	if x != nil {
+		return x.DeclineReason
+	}
+	return ""
+}
+
 type SdkGap struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FaultClass    string                 `protobuf:"bytes,1,opt,name=fault_class,json=faultClass,proto3" json:"fault_class,omitempty"`
@@ -846,7 +858,7 @@ var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a'sdodev/contracts/v1alpha1/program.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
 	"\x11AgentRegistration\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12\"\n" +
@@ -891,7 +903,7 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xdc\a\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xe3\b\n" +
 	"\x11ReflectionRequest\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
@@ -904,16 +916,19 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\x0eprior_outcomes\x18\n" +
 	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomes\x12-\n" +
 	"\x12validation_attempt\x18\v \x01(\rR\x11validationAttempt\x12^\n" +
-	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics\x12+\n" +
-	"\x05depth\x18\r \x01(\tB\x15\xbaH\x12r\x10R\x00R\x04fullR\x06refineR\x05depth:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
-	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xaf\x04\n" +
+	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics\x12M\n" +
+	"\n" +
+	"cause_work\x18\x0e \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\tcauseWork\x12V\n" +
+	"\x0funassigned_work\x18\x0f \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x0eunassignedWork:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
+	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\r\x10\x0eR\foutcome_jsonR\x12prior_outcome_jsonR\x05depth\"\xed\x04\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +
 	"\x11learning_decision\x18\x02 \x01(\tB\"\xbaH\x1fr\x1dR\aupdatedR\tno_changeR\asdk_gapR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x03 \x01(\tR\x0enoChangeReason\x122\n" +
 	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12g\n" +
 	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposal\x12<\n" +
-	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
+	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12<\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
 	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''\"\xaa\x01\n" +
 	"\x06SdkGap\x12(\n" +
 	"\vfault_class\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -953,7 +968,9 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*OperationalMemorySnapshot)(nil),   // 13: sdodev.contracts.v1alpha1.OperationalMemorySnapshot
 	(*OutcomeRecord)(nil),               // 14: sdodev.contracts.v1alpha1.OutcomeRecord
 	(*MemoryDiagnostic)(nil),            // 15: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*OperationalArtifactProposal)(nil), // 16: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*ReflectionCauseWork)(nil),         // 16: sdodev.contracts.v1alpha1.ReflectionCauseWork
+	(*ReflectionWorkItem)(nil),          // 17: sdodev.contracts.v1alpha1.ReflectionWorkItem
+	(*OperationalArtifactProposal)(nil), // 18: sdodev.contracts.v1alpha1.OperationalArtifactProposal
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
@@ -968,13 +985,15 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	14, // 9: sdodev.contracts.v1alpha1.ReflectionRequest.outcome:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
 	14, // 10: sdodev.contracts.v1alpha1.ReflectionRequest.prior_outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
 	15, // 11: sdodev.contracts.v1alpha1.ReflectionRequest.previous_diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	16, // 12: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
-	9,  // 13: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	16, // 12: sdodev.contracts.v1alpha1.ReflectionRequest.cause_work:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
+	17, // 13: sdodev.contracts.v1alpha1.ReflectionRequest.unassigned_work:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	18, // 14: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	9,  // 15: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }
@@ -982,6 +1001,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_init() {
 	if File_sdodev_contracts_v1alpha1_worker_proto != nil {
 		return
 	}
+	file_sdodev_contracts_v1alpha1_program_proto_init()
 	file_sdodev_contracts_v1alpha1_memory_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()
 	file_sdodev_contracts_v1alpha1_outcome_proto_init()
