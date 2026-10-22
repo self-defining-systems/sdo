@@ -40,6 +40,17 @@ per probe and two seconds total. Open recordings live in the existing protected
 `*-routing.done` files prevent resampling an immutable capture. Missing, capped,
 or failed reads remain Unknown, not a refused connection.
 
+The builder emits the isolated prober even when an application has no traffic
+generators or traffic-consuming detectors. Startup awaits its readiness before
+incident capture; disabling synthetic workloads still leaves routing primitives
+available. Older builds silently skipped routing capture when that prober was
+absent. New captures record `routing-probe-note.json` in the incident corpus with
+`capability: routing_probe`, `status: unavailable`, `reason` (`prober_not_configured`,
+`read_view_not_live`, or `probe_failed`), the first affected `phase`, and optional
+error `detail`. The controller logs the same gap once per incident. A note is
+capability evidence, not a TCP result or a routing diagnosis; inspect the
+adjacent recordings for actual successes, refusals and read errors.
+
 A routing Match needs a successful candidate-port TCP result and refused faulty
 numeric target on selected ready Pods; declarations alone prove no listener.
 Healthy-peer replay also needs recorded evidence. Service-targetPort-only

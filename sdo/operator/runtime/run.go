@@ -233,7 +233,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum wait for a first sample of every synthetic scenario before the first evaluation after start or resume",
 	)
 	proberBinary := flags.String(
-		"prober-binary", "", "compiled traffic prober on the shared repository volume; the controller runs it as an isolated pod",
+		"prober-binary", "", "compiled routing and traffic prober on the shared repository volume; the controller runs it as an isolated pod",
 	)
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
@@ -406,7 +406,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// Responders outlive prober pod IPs, so they get a stable address.
 	var responderProberAddress func(context.Context, bool) (string, error)
 	switch {
-	case !*syntheticTraffic || len(trafficWorkloads) == 0:
 	case *proberURL != "":
 		proberAddress = StaticProberURL(*proberURL)
 		proberAPI = HTTPProberClient{BaseURL: proberAddress}
@@ -420,12 +419,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Client: bootstrapProvider.Client, Namespace: *controlNamespace, AppNamespace: *namespace, Image: image,
 			RepositoryPVC: *repositoryPVC, RepositoryMountPath: *repositoryMountPath,
 			RepositoryPVCSubPath: *repositoryPVCSubPath, Binary: *proberBinary,
+			DisableSyntheticTraffic: !*syntheticTraffic,
 		}
 		proberAddress = pod.Address
 		responderProberAddress = pod.ServiceAddress
 		proberAPI = HTTPProberClient{BaseURL: proberAddress}
 	}
-	trafficObserver := NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
+	var trafficObserver *TrafficObserver
+	if *syntheticTraffic {
+		trafficObserver = NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
+	}
 	var snapshotProvider SnapshotProvider = kubernetesCache
 	if trafficObserver != nil {
 		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver}
@@ -640,6 +643,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// observed traffic.
 	startTraffic := func() {
 		if trafficObserver == nil {
+			// Routing capture has a short sampling budget, so create and await
+			// the isolated pod before detection, even without traffic consumers.
+			if proberAddress != nil {
+				readyCtx, cancel := context.WithTimeout(runCtx, defaultProberReadyAfter)
+				_, err := proberAddress(readyCtx, false)
+				cancel()
+				if err != nil {
+					fmt.Fprintf(stderr, "routing prober startup: %v\n", err)
+				}
+			}
 			if len(trafficWorkloads) > 0 {
 				if err := encoder.Encode(map[string]any{
 					"synthetic_traffic": "disabled", "synthetic_traffic_workloads": trafficWorkloads,

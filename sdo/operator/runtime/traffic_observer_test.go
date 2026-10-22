@@ -373,3 +373,24 @@ func TestProberEnvironmentTellsTheResponderWhereToVerify(t *testing.T) {
 		t.Fatalf("an unresolvable prober must not block dispatch: %v", got)
 	}
 }
+
+func TestProberPodPrimitiveOnlyModeChangesFingerprint(t *testing.T) {
+	active := proberPodConfig(t, fake.NewSimpleClientset())
+	activeFingerprint, err := active.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := &ProberPod{Client: active.Client, Namespace: active.Namespace, AppNamespace: active.AppNamespace,
+		Image: active.Image, RepositoryPVC: active.RepositoryPVC, RepositoryMountPath: active.RepositoryMountPath,
+		RepositoryPVCSubPath: active.RepositoryPVCSubPath, Binary: active.Binary, DisableSyntheticTraffic: true}
+	_, pod, err := disabled.Manifests()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Labels[proberFingerprintLabel] == activeFingerprint {
+		t.Fatal("disabling workloads must replace a prober that still runs them")
+	}
+	if got := strings.Join(pod.Spec.Containers[0].Args, " "); !strings.Contains(got, "--synthetic-traffic=false") {
+		t.Fatalf("workloads remain enabled: %s", got)
+	}
+}
