@@ -156,7 +156,7 @@ it was not added to the implementation.
 - Focused fastloop and skill command checks: 193 passed, 1 skipped.
 - Full Go operator suite and real broker seed validation passed.
 - `scripts/test_fastloop_hermetic.sh` passed.
-- Formatting, Ruff and Tach passed. Buf lint and breaking passed; remote Python
+- Formatting, Ruff and Tach passed. Buf lint passed; remote Python
   generation was rate limited. Local Go generation matched committed output,
   and no generated files were left deleted or changed.
 - The iterate-sdo skill lint and command/path test passed.

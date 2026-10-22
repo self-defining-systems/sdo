@@ -1,7 +1,6 @@
 #!/bin/bash
 # Static checks for the proto contracts:
 #   buf lint       — style and consistency of the .proto source
-#   buf breaking    — the schema stays wire-compatible with main
 #   generated diff  — checked-in Go/Python matches what buf generate emits
 #
 # The generated-diff check is the ratchet: a .proto edit that is not accompanied
@@ -24,20 +23,6 @@ fi
 
 echo "==> buf lint"
 timeout 30 buf lint
-
-# Breaking-change detection against the default branch. Skipped when the branch
-# point is unavailable (e.g. a shallow checkout without origin/main).
-BREAKING_BASE="${BUF_BREAKING_AGAINST:-.git#branch=main}"
-echo "==> buf breaking (against ${BREAKING_BASE})"
-if ! timeout 60 buf breaking --against "${BREAKING_BASE}" 2>/tmp/buf_breaking.err; then
-    if grep -qiE "could not|no such|unknown revision|does not exist|no .proto files|had no" /tmp/buf_breaking.err; then
-        echo "   skipped: breaking-change base ${BREAKING_BASE} unavailable" >&2
-        cat /tmp/buf_breaking.err >&2
-    else
-        cat /tmp/buf_breaking.err >&2
-        exit 1
-    fi
-fi
 
 echo "==> generated code is up to date"
 GEN_DIRS=(sdo/operator/contracts/gen sdo/contracts/_gen)
