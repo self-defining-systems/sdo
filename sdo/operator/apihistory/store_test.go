@@ -113,3 +113,66 @@ func TestStoreByteCapAndQueueGap(t *testing.T) {
 		t.Fatalf("caps: %+v", h)
 	}
 }
+
+func TestUnfinishedRequestNeverClaimsCompleteHistory(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir, "incident", Limits{})
+	s.Record(Event{RequestID: "unfinished", Phase: "start", Verb: "patch", Started: time.Now()}, nil)
+	s.Close()
+	h, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Manifest.Complete {
+		t.Fatal("unfinished mutation claims complete history")
+	}
+}
+
+func TestDefaultQueueRetainsSmallRequestBursts(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, "incident", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 100 {
+		s.Record(Event{Phase: "end", Verb: "get"}, nil)
+	}
+	s.Close()
+	h, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Events) != 100 || h.Manifest.Dropped != 0 {
+		t.Fatalf("small burst exceeded queue budget: events=%d dropped=%d", len(h.Events), h.Manifest.Dropped)
+	}
+}
+
+func TestRestartRecoversCapAccountingAfterManifestLag(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir, "incident", Limits{})
+	s.Record(Event{Phase: "end", Verb: "get"}, nil)
+	s.Close()
+	h, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Manifest.Events = 0
+	h.Manifest.Bytes = 0
+	data, _ := json.Marshal(h.Manifest)
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir, "incident", Limits{Events: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Record(Event{Phase: "end", Verb: "get"}, nil)
+	s.Close()
+	h, err = Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Events) != 1 || h.Manifest.Dropped != 1 {
+		t.Fatalf("restart exceeded incident cap: %+v", h.Manifest)
+	}
+}

@@ -428,8 +428,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if options.NativeBroker != nil {
 			catalog = memory.OpenCatalogReader(resolvedRoot)
 		}
+		apiProxyImage := *responderImage
+		if launchConfig != nil {
+			apiProxyImage = launchConfig.GetValidatorImage()
+		}
 		dispatcher = KubernetesJobDispatcher{
-			Client: bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			APIProxyImage: apiProxyImage,
+			Client:        bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
