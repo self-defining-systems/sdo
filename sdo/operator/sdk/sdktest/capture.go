@@ -19,6 +19,7 @@ const MaxCapturedSnapshotBytes = 4 << 20
 var sensitiveEnvironmentName = regexp.MustCompile(`(?i)SECRET|TOKEN|PASSWORD|KEY`)
 
 // CaptureSnapshot copies the namespace-local detection view for corpus replay.
+// ConfigMap data and binaryData retain key names only; live read views are unchanged.
 func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, error) {
 	if view == nil || namespace == "" || view.Namespace() != namespace {
 		return Snapshot{}, errors.New("capture requires a matching application namespace")
@@ -28,6 +29,7 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		if object.Namespace == namespace {
 			copy := *object.DeepCopy()
 			compactMeta(&copy.ObjectMeta)
+			redactConfigMapValues(&copy)
 			s.ConfigMapList = append(s.ConfigMapList, copy)
 		}
 	}
@@ -173,4 +175,20 @@ func redactContainer(container *corev1.Container) {
 			container.Env[i].ValueFrom = nil
 		}
 	}
+}
+
+// redactConfigMapValues runs only on a private capture copy. Empty values retain
+// key-existence evidence; the annotation distinguishes omission from observation
+// of an actual empty value. Never apply this policy to live detector read views.
+func redactConfigMapValues(object *corev1.ConfigMap) {
+	for key := range object.Data {
+		object.Data[key] = ""
+	}
+	for key := range object.BinaryData {
+		object.BinaryData[key] = []byte{}
+	}
+	if object.Annotations == nil {
+		object.Annotations = make(map[string]string)
+	}
+	object.Annotations["sdo.dev/configmap-values-redacted"] = "true"
 }
