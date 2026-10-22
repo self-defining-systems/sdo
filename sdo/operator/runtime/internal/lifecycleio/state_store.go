@@ -129,6 +129,9 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state *contracts.Control
 	if err != nil {
 		return "", err
 	}
+	if err := checkBudget(s.name, payload, document); err != nil {
+		return "", err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cached != nil && expectedRevision != "" &&

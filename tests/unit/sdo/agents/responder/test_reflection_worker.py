@@ -107,6 +107,35 @@ def test_reflection_worker_uses_typed_context_and_returns_decision(tmp_path: Pat
     assert decision.learning_decision == "no_change"
 
 
+def test_reflection_worker_restores_result_program_runs_from_the_outcome(tmp_path: Path) -> None:
+    closure = _closure()
+    del closure.result.program_runs[:]
+    outcome = _outcome(closure.request.incident_id)
+    outcome.program_runs.add(program_id="targetport").duration.FromMilliseconds(5)
+    request = ReflectionRequest(closure=closure, outcome=outcome, outcome_commit="outcome-commit")
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    packed = Any()
+    packed.Pack(request)
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        request=packed,
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    path = tmp_path / "agent-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+    seen = reflector.kwargs["closure"]
+    assert isinstance(seen, IncidentClosure)
+    assert [run.program_id for run in seen.result.program_runs] == ["targetport"]
+
+
 def test_reflection_worker_resumes_only_with_valid_responder_session(tmp_path: Path) -> None:
     closure = _closure()
     assert closure.HasField("result")

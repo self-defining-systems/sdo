@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -28,7 +31,42 @@ import (
 const (
 	TaskDataKey   = "agent-task.json"
 	ResultDataKey = "agent-result.json"
+	// MaxConfigMapRequestBytes keeps a ConfigMap request well under the API server's 1 MiB object limit. Larger
+	// requests are staged on the repository volume instead.
+	MaxConfigMapRequestBytes = 512 << 10
+	// MaxStagedRequestBytes is the hard budget for one staged request. Exceeding it fails before any API call.
+	MaxStagedRequestBytes = 64 << 20
+	stagedRequestsDir     = ".sdo-runtime/requests"
 )
+
+// requestSource says where a worker reads /sdo/request/agent-task.json: a ConfigMap, or a repository-volume subPath.
+type requestSource struct {
+	ConfigMap  string
+	PVCSubPath string
+}
+
+// RequestTooLargeError names the request components that exhausted the staged-request budget.
+type RequestTooLargeError struct {
+	TaskID     string
+	Bytes      int
+	Limit      int
+	Components []string
+}
+
+func (err *RequestTooLargeError) Error() string {
+	return fmt.Sprintf("agent request for task %q is %d bytes, over the %d byte budget; largest components: %s", err.TaskID, err.Bytes, err.Limit, strings.Join(err.Components, ", "))
+}
+
+// RequestStagingError reports that a large request could not be written to the repository volume.
+type RequestStagingError struct {
+	TaskID string
+	Err    error
+}
+
+func (err *RequestStagingError) Error() string {
+	return fmt.Sprintf("stage agent request for task %q on the repository volume: %v", err.TaskID, err.Err)
+}
+func (err *RequestStagingError) Unwrap() error { return err.Err }
 
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
@@ -102,10 +140,20 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	}
 	jobName := JobName(task.GetTaskId())
 	requestName, resultName := jobName+"-request", jobName+"-result"
-	if err := e.ensureRequest(ctx, requestName, string(payload)); err != nil {
-		return nil, err
+	request := requestSource{ConfigMap: requestName}
+	if len(payload) <= MaxConfigMapRequestBytes {
+		if err := e.ensureRequest(ctx, requestName, string(payload)); err != nil {
+			return nil, err
+		}
+	} else {
+		staged, err := e.stageRequest(task, jobName, payload)
+		if err != nil {
+			return nil, err
+		}
+		request = requestSource{PVCSubPath: staged}
+		defer e.unstageRequest(jobName)
 	}
-	if err := e.ensureJob(ctx, task, launch, jobName, requestName, resultName, proposalSubPath); err != nil {
+	if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
 	if e.OnPhase != nil {
@@ -189,6 +237,50 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	}
 }
 
+// stageRequest writes an oversized request under a per-job directory of the repository volume and returns the PVC
+// subPath that holds it. The directory is outside every proposal checkout and session.
+func (e KubernetesExecutor) stageRequest(task *contracts.AgentTask, jobName string, payload []byte) (string, error) {
+	if len(payload) > MaxStagedRequestBytes {
+		return "", &RequestTooLargeError{TaskID: task.GetTaskId(), Bytes: len(payload), Limit: MaxStagedRequestBytes, Components: requestComponents(task)}
+	}
+	if err := writeStaged(e.RepositoryMountPath, jobName, TaskDataKey, payload); err != nil {
+		return "", &RequestStagingError{TaskID: task.GetTaskId(), Err: err}
+	}
+	return path.Join(e.RepositoryPVCSubPath, stagedRequestsDir, jobName), nil
+}
+
+// unstageRequest removes the Job's request copy but not a prepared task the controller state still references.
+func (e KubernetesExecutor) unstageRequest(jobName string) {
+	directory := filepath.Join(e.RepositoryMountPath, filepath.FromSlash(stagedRequestsDir), jobName)
+	_ = os.Remove(filepath.Join(directory, TaskDataKey))
+	_ = os.Remove(directory)
+}
+
+// requestComponents lists the request's largest populated top-level fields with their encoded sizes.
+func requestComponents(task *contracts.AgentTask) []string {
+	message, err := task.GetRequest().UnmarshalNew()
+	if err != nil {
+		return []string{"request"}
+	}
+	type component struct {
+		name string
+		size int
+	}
+	var components []component
+	message.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		single := message.ProtoReflect().Type().New()
+		single.Set(field, value)
+		components = append(components, component{string(field.Name()), proto.Size(single.Interface())})
+		return true
+	})
+	sort.Slice(components, func(i, j int) bool { return components[i].size > components[j].size })
+	names := []string{}
+	for _, c := range components[:min(len(components), 3)] {
+		names = append(names, fmt.Sprintf("%s=%d", c.name, c.size))
+	}
+	return names
+}
+
 func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload string) error {
 	maps := e.Client.CoreV1().ConfigMaps(e.Namespace)
 	_, err := maps.Create(ctx, &corev1.ConfigMap{
@@ -218,7 +310,7 @@ const (
 	CodexHomesMountPath = "/sdo/codex-homes"
 )
 
-func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName, requestName, resultName, proposalSubPath string) error {
+func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.AgentTask, launch *contracts.KubernetesJobLaunch, jobName string, request requestSource, resultName, proposalSubPath string) error {
 	backoffLimit := int32(0)
 	ttl := int32(3600)
 	nonRoot := true
@@ -227,16 +319,21 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 	readOnlyRoot := true
 	envFrom := []corev1.EnvFromSource{}
 	mounts := []corev1.VolumeMount{
-		{Name: "request", MountPath: "/sdo/request", ReadOnly: true},
 		{Name: "repository", MountPath: task.GetWorkspace().GetCheckoutPath(), SubPath: proposalSubPath, ReadOnly: e.RepositoryReadOnly},
 		{Name: "scratch", MountPath: "/tmp"},
 		{Name: codexHomesVolume, MountPath: CodexHomesMountPath},
 	}
 	volumes := []corev1.Volume{
-		{Name: "request", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: requestName}}}},
 		{Name: "repository", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: e.RepositoryPVC}}},
 		{Name: "scratch", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: codexHomesVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+	}
+	if request.PVCSubPath != "" {
+		// The request outgrew a ConfigMap: the worker reads the same /sdo/request/agent-task.json from the repository volume.
+		mounts = append(mounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/request", SubPath: request.PVCSubPath, ReadOnly: true})
+	} else {
+		mounts = append(mounts, corev1.VolumeMount{Name: "request", MountPath: "/sdo/request", ReadOnly: true})
+		volumes = append(volumes, corev1.Volume{Name: "request", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: request.ConfigMap}}}})
 	}
 	if e.SessionPVCSubPath != "" {
 		// The same PVC is mounted a second time through the repository volume: two volumes backed by one claim
@@ -266,7 +363,7 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		volumes = append(volumes, corev1.Volume{Name: "credentials", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: e.CredentialsSecret}}})
 	}
 	env := []corev1.EnvVar{
-		{Name: "SDO_REQUEST_CONFIGMAP", Value: requestName},
+		{Name: "SDO_REQUEST_CONFIGMAP", Value: request.ConfigMap},
 		{Name: "SDO_RESULT_CONFIGMAP", Value: resultName},
 		{Name: "SDO_NAMESPACE", Value: e.Namespace},
 		{Name: "SDO_CODEX_HOME_ROOT", Value: CodexHomesMountPath},

@@ -2,7 +2,11 @@ package worker_registry
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"sdo.dev/operator/contracts/wire"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,8 +60,8 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged"},
 	}
 	results := make(chan *contracts.AgentResult, 1)
-	errors := make(chan error, 1)
-	go func() { result, err := executor.Execute(context.Background(), task); results <- result; errors <- err }()
+	errs := make(chan error, 1)
+	go func() { result, err := executor.Execute(context.Background(), task); results <- result; errs <- err }()
 	jobName := JobName(task.TaskId)
 	var job *batchv1.Job
 	deadline := time.Now().Add(time.Second)
@@ -159,7 +163,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	if _, err := client.BatchV1().Jobs("demo").UpdateStatus(context.Background(), job, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-errors; err != nil {
+	if err := <-errs; err != nil {
 		t.Fatal(err)
 	}
 	if got := <-results; got.GetTaskId() != task.TaskId {
@@ -184,7 +188,7 @@ func TestJudgeJobPinsMemoryCheckOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &contracts.AgentTask{Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/workspace/judge", BaseCommit: "accepted-architecture"}}
-	if err := executor.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "judge:1"}, "judge", "request", "result", "judge"); err != nil {
+	if err := executor.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "judge:1"}, "judge", requestSource{ConfigMap: "request"}, "result", "judge"); err != nil {
 		t.Fatal(err)
 	}
 	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), "judge", metav1.GetOptions{})
@@ -215,7 +219,7 @@ func TestKubernetesExecutorCanMountSourceReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := executor.ensureJob(context.Background(), task, registration.GetKubernetesJob(), "read-only-test", "request", "result", "proposals/reflection-1"); err != nil {
+	if err := executor.ensureJob(context.Background(), task, registration.GetKubernetesJob(), "read-only-test", requestSource{ConfigMap: "request"}, "result", "proposals/reflection-1"); err != nil {
 		t.Fatal(err)
 	}
 	job, err := client.BatchV1().Jobs("demo").Get(context.Background(), "read-only-test", metav1.GetOptions{})
@@ -254,7 +258,7 @@ func TestWorkerJobKeepsToolAccessWithReadOnlySource(t *testing.T) {
 		executor := base
 		executor.ServiceAccount = tc.account
 		executor.RepositoryReadOnly = tc.readOnly
-		if err := executor.ensureJob(context.Background(), task, launch.GetKubernetesJob(), tc.name, "request", "result", "proposals/reflection-1"); err != nil {
+		if err := executor.ensureJob(context.Background(), task, launch.GetKubernetesJob(), tc.name, requestSource{ConfigMap: "request"}, "result", "proposals/reflection-1"); err != nil {
 			t.Fatal(err)
 		}
 		job, err := client.BatchV1().Jobs("demo").Get(context.Background(), tc.name, metav1.GetOptions{})
@@ -280,5 +284,92 @@ func TestWorkerJobKeepsToolAccessWithReadOnlySource(t *testing.T) {
 		if !mounts["/sdo/request"].ReadOnly || mounts["/sdo/session"].ReadOnly || mounts["/tmp"].ReadOnly || mounts[task.Workspace.CheckoutPath].ReadOnly != tc.readOnly {
 			t.Fatalf("%s lost request, session, scratch, or source mount contract: %+v", tc.name, mounts)
 		}
+	}
+}
+
+func largeReflectionTask(t *testing.T, checkout string, snapshotBytes int) *contracts.AgentTask {
+	t.Helper()
+	snapshot := &contracts.OperationalMemorySnapshot{AcceptedCommit: "abc", Playbooks: []*contracts.MemoryPlaybook{{Id: "big", Markdown: strings.Repeat("playbook line\n", snapshotBytes/14)}}}
+	payload, err := anypb.New(&contracts.ReflectionRequest{OutcomeCommit: "abc", MemorySnapshot: snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &contracts.AgentTask{
+		SchemaVersion: SchemaVersion, TaskId: "reflection:incident-big:abc", AgentId: "external-reflector", TaskType: "custom-reflection", Request: payload,
+		Workspace: &contracts.ProposalWorkspace{ProposalId: "reflection-big", CheckoutPath: checkout, BaseCommit: "abc"},
+	}
+}
+
+func TestKubernetesExecutorStagesRequestsAboveConfigMapBudgetOnRepositoryVolume(t *testing.T) {
+	mount := t.TempDir()
+	client := fake.NewSimpleClientset()
+	task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := executor.Execute(ctx, task); done <- err }()
+	jobName := JobName(task.TaskId)
+	var job *batchv1.Job
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && job == nil; time.Sleep(time.Millisecond) {
+		job, _ = client.BatchV1().Jobs("demo").Get(ctx, jobName, metav1.GetOptions{})
+	}
+	if job == nil {
+		t.Fatal("agent Job was not created")
+	}
+	if maps, _ := client.CoreV1().ConfigMaps("demo").List(ctx, metav1.ListOptions{}); len(maps.Items) != 0 {
+		t.Fatalf("an oversized request must not use a ConfigMap: %d created", len(maps.Items))
+	}
+	var request *corev1.VolumeMount
+	for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if mount.MountPath == "/sdo/request" {
+			request = &mount
+		}
+	}
+	wantSubPath := "tenant/.sdo-runtime/requests/" + jobName
+	if request == nil || request.Name != "repository" || request.SubPath != wantSubPath || !request.ReadOnly {
+		t.Fatalf("worker request is not a read-only repository subPath: %+v", request)
+	}
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		if volume.ConfigMap != nil {
+			t.Fatalf("job mounts a ConfigMap request: %+v", volume)
+		}
+	}
+	staged, err := os.ReadFile(filepath.Join(mount, ".sdo-runtime/requests", jobName, TaskDataKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := wire.Canonical(task)
+	if err != nil || string(staged) != string(want) || len(staged) <= 1<<20 {
+		t.Fatalf("staged request differs from the canonical task (%d bytes, err %v)", len(staged), err)
+	}
+	cancel()
+	<-done
+}
+
+func TestKubernetesExecutorRejectsRequestOverStagedBudgetNamingTheComponent(t *testing.T) {
+	mount := t.TempDir()
+	client := fake.NewSimpleClientset()
+	task := largeReflectionTask(t, mount+"/proposals/reflection-big", MaxStagedRequestBytes+1<<20)
+	executor := KubernetesExecutor{Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount, PollInterval: time.Millisecond}
+	_, err := executor.Execute(context.Background(), task)
+	var tooLarge *RequestTooLargeError
+	if !errors.As(err, &tooLarge) || !strings.Contains(err.Error(), "memory_snapshot=") {
+		t.Fatalf("want RequestTooLargeError naming memory_snapshot, got %v", err)
+	}
+	if jobs, _ := client.BatchV1().Jobs("demo").List(context.Background(), metav1.ListOptions{}); len(jobs.Items) != 0 {
+		t.Fatal("a job was created for an over-budget request")
+	}
+}
+
+func TestKubernetesExecutorReportsUnwritableRequestStaging(t *testing.T) {
+	mount := t.TempDir()
+	task := largeReflectionTask(t, mount+"/proposals/reflection-big", 2<<20)
+	if err := os.WriteFile(filepath.Join(mount, ".sdo-runtime"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executor := KubernetesExecutor{Client: fake.NewSimpleClientset(), Namespace: "demo", Registry: reflectionTestRegistry(t), RepositoryPVC: "repo", RepositoryMountPath: mount}
+	var staging *RequestStagingError
+	if _, err := executor.Execute(context.Background(), task); !errors.As(err, &staging) {
+		t.Fatalf("want RequestStagingError, got %v", err)
 	}
 }

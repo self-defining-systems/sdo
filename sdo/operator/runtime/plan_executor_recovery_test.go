@@ -138,9 +138,9 @@ type dryRunRejectingClient struct {
 	dryRuns int
 }
 
-func (c *dryRunRejectingClient) DryRunPatch(context.Context, sdk.ObjectRef, types.PatchType, []byte) error {
+func (c *dryRunRejectingClient) DryRunPatch(context.Context, sdk.ObjectRef, types.PatchType, []byte) (*unstructured.Unstructured, error) {
 	c.dryRuns++
-	return errors.New("admission dry-run denied")
+	return nil, errors.New("admission dry-run denied")
 }
 func TestPlanExecutorChecksAdmissionBeforeAnyWrite(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
