@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
 
@@ -21,10 +23,10 @@ const durabilityStateName = "sdo-controller-state"
 
 // durableState reads the controller state straight from the fake API
 // server's storage, bypassing reactors, as a restarted controller would see it.
-func durableState(client *fake.Clientset) (RuntimeState, error) {
+func durableState(client *fake.Clientset) (*contracts.ControllerState, error) {
 	object, err := client.Tracker().Get(configMapsResource, "demo", durabilityStateName)
 	if err != nil {
-		return RuntimeState{}, err
+		return nil, err
 	}
 	return decodeControllerState([]byte(object.(*corev1.ConfigMap).Data[stateDataKey]))
 }
@@ -41,7 +43,7 @@ func durabilityController(t *testing.T, client *fake.Clientset, config Controlle
 		t.Fatalf("new controller: %v", err)
 	}
 	if err := controller.AttachStateStore(
-		context.Background(), NewConfigMapStateStore(client, "demo", durabilityStateName),
+		context.Background(), lifecycleio.NewConfigMapStateStore(client, "demo", durabilityStateName),
 	); err != nil {
 		t.Fatalf("attach state store: %v", err)
 	}
@@ -58,7 +60,7 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 		switch {
 		case err != nil:
 			observed <- fmt.Errorf("no durable controller state at Job creation: %w", err)
-		case !state.IncidentOpen || state.DispatchState != "pending" || state.IncidentRequest == nil:
+		case !state.IncidentOpen || state.DispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || state.IncidentRequest == nil:
 			observed <- fmt.Errorf("durable state lacks the pending dispatch at Job creation: %#v", state)
 		case state.IncidentRequest.PreparedAgentTask == "":
 			observed <- fmt.Errorf("durable state lacks the exact dispatched agent task")
@@ -106,7 +108,7 @@ func TestDispatchRecordIsDurableBeforeResponderJobIsCreated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requestMap, err := client.CoreV1().ConfigMaps("demo").Get(ctx, IncidentJobName(state.IncidentRequest.IncidentID)+"-request", metav1.GetOptions{})
+	requestMap, err := client.CoreV1().ConfigMaps("demo").Get(ctx, IncidentJobName(state.IncidentRequest.IncidentId)+"-request", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +223,7 @@ type stateCheckingBroker struct {
 	observed  chan string
 }
 
-func (b *stateCheckingBroker) report(operation string, ok bool, state RuntimeState, err error) {
+func (b *stateCheckingBroker) report(operation string, ok bool, state *contracts.ControllerState, err error) {
 	if err != nil || !ok {
 		b.observed <- fmt.Sprintf("%s without durable record: err=%v state=%#v", operation, err, state)
 		return
@@ -231,8 +233,8 @@ func (b *stateCheckingBroker) report(operation string, ok bool, state RuntimeSta
 
 func (b *stateCheckingBroker) PrepareIncident(_ context.Context, incidentID string) (IncidentWorkspace, error) {
 	state, err := durableState(b.client)
-	b.report("prepare", err == nil && state.IncidentOpen && state.DispatchState == "workspace_pending" &&
-		state.IncidentRequest != nil && state.IncidentRequest.IncidentID == incidentID, state, err)
+	b.report("prepare", err == nil && state.IncidentOpen && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING &&
+		state.IncidentRequest != nil && state.IncidentRequest.IncidentId == incidentID, state, err)
 	workspace := b.workspace
 	workspace.IncidentID = incidentID
 	return workspace, nil
@@ -240,8 +242,8 @@ func (b *stateCheckingBroker) PrepareIncident(_ context.Context, incidentID stri
 
 func (b *stateCheckingBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (ClosureReceipt, error) {
 	state, err := durableState(b.client)
-	b.report("process", err == nil && state.ClosureState == "pending" && state.PendingClosure != nil &&
-		state.PendingClosure.Request.IncidentID == closure.Request.IncidentID && !state.IncidentOpen, state, err)
+	b.report("process", err == nil && state.ClosureState == contracts.ClosureState_CLOSURE_STATE_PENDING && state.PendingClosure != nil &&
+		state.PendingClosure.Request.IncidentId == closure.Request.IncidentID && !state.IncidentOpen, state, err)
 	receipt := b.receipt
 	receipt.IncidentID = closure.Request.IncidentID
 	return receipt, nil
@@ -249,7 +251,7 @@ func (b *stateCheckingBroker) ProcessClosure(_ context.Context, closure Incident
 
 func (b *stateCheckingBroker) AcknowledgeClosure(_ context.Context, receipt ClosureReceipt) error {
 	state, err := durableState(b.client)
-	b.report("ack", err == nil && state.ClosureState == "committed" && state.ClosureReceipt != nil &&
+	b.report("ack", err == nil && state.ClosureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED && state.ClosureReceipt != nil &&
 		state.ClosureReceipt.AckToken == receipt.AckToken, state, err)
 	return nil
 }
@@ -353,7 +355,7 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear}},
 		DetectedAt:          start, DispatchedAt: start, ResponderCompletedAt: start, VerifiedAt: start,
 	}
-	controller.closureState = "pending"
+	controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 	controller.mu.Unlock()
 
 	closure, ok := controller.PendingClosureEffect()
@@ -399,7 +401,7 @@ func TestIncidentClosureAndReceiptAreDurableBeforeBrokerCommitAndAcknowledgment(
 		t.Fatalf("persist acknowledgment: %v", err)
 	}
 	state, err := durableState(client)
-	if err != nil || state.LastAcknowledgedIncidentID != request.IncidentID || state.PendingClosure != nil {
+	if err != nil || state.LastAcknowledgedIncidentId != request.IncidentID || state.PendingClosure != nil {
 		t.Fatalf("acknowledged closure is not durable: err=%v state=%#v", err, state)
 	}
 }

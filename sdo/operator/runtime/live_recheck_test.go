@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
 
@@ -258,12 +259,12 @@ func TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles(t *testing.T) {
 			if !verified.Healthy {
 				t.Fatalf("live verification: %+v", verified)
 			}
-			state, _, err := NewConfigMapStateStore(kube, "app", IncidentJobName(loop.Request.IncidentID)+"-tools-state").Load(ctx)
+			state, _, err := lifecycleio.NewConfigMapStateStore(kube, "app", IncidentJobName(loop.Request.IncidentID)+"-tools-state").Load(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			var facts map[string]any
-			if err = json.Unmarshal(state.ResponderToolStateJSON, &facts); err != nil {
+			if err = json.Unmarshal(state.ResponderToolStateJson, &facts); err != nil {
 				t.Fatal(err)
 			}
 			for _, field := range []string{"Plans", "Applications", "ApplicationsLog", "Calls", "Runs", "Findings"} {

@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 )
 
 // restoreToolState uses the same CAS ConfigMap state edge as the controller.
@@ -13,18 +15,18 @@ func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request I
 	if d.Client == nil {
 		return nil
 	}
-	store := NewConfigMapStateStore(d.Client, d.Namespace, IncidentJobName(request.IncidentID)+"-tools-state")
+	store := lifecycleio.NewConfigMapStateStore(d.Client, d.Namespace, IncidentJobName(request.IncidentID)+"-tools-state")
 	state, revision, err := store.Load(ctx)
 	if err != nil {
 		return err
 	}
-	if len(state.ResponderToolStateJSON) > 0 {
-		if err := loop.restoreToolSnapshot(state.ResponderToolStateJSON); err != nil {
+	if len(state.GetResponderToolStateJson()) > 0 {
+		if err := loop.restoreToolSnapshot(state.GetResponderToolStateJson()); err != nil {
 			return err
 		}
 	}
 	loop.saveToolState = func(ctx context.Context, payload []byte) error {
-		next, err := store.Save(ctx, RuntimeState{Version: RuntimeStateVersion, ResponderToolStateJSON: payload}, revision)
+		next, err := store.Save(ctx, &contracts.ControllerState{Version: RuntimeStateVersion, ResponderToolStateJson: payload}, revision)
 		if err != nil {
 			return fmt.Errorf("save incident attempt facts: %w", err)
 		}

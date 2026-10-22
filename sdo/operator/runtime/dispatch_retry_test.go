@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func newDispatchRetryController(t *testing.T, policy DispatchRetryPolicy, now *t
 	controller.incidentOpen = true
 	controller.responderDone = false
 	controller.currentIncidentRequest = cloneIncidentRequest(&request)
-	controller.dispatchState = "pending"
+	controller.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	controller.incidentDetectedAt = *now
 	controller.mu.Unlock()
 	return controller, request

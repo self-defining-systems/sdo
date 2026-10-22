@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
 
@@ -311,7 +312,7 @@ func TestControllerRecordsActivationBatchingAndClearingWithDispatchRelation(t *t
 		closure.NoIncidentDetectorFired {
 		t.Fatalf("closure booleans: %#v", closure)
 	}
-	if len(controller.ExportState().DetectorTimeline) != 0 {
+	if len(exportState(t, controller).DetectorTimeline) != 0 {
 		t.Fatal("the timeline must reset once its closure is cut")
 	}
 }
@@ -334,7 +335,7 @@ func TestControllerClassifiesAnIncidentDetectorThatActivatesWhileTheResponderRun
 	if len(activated) != 1 || activated[0].DispatchRelation != string(RelationAfterDispatch) || activated[0].IncidentId == "" {
 		t.Fatalf("late activation: %#v", sink.records)
 	}
-	before, after, onlyHealth := timelineSummary(controller.ExportState().DetectorTimeline)
+	before, after, onlyHealth := timelineSummary(detectorTimelineState(exportState(t, controller).DetectorTimeline))
 	if !before || !after || onlyHealth {
 		t.Fatalf("summary before=%v after=%v onlyHealth=%v", before, after, onlyHealth)
 	}
@@ -361,7 +362,7 @@ func TestControllerRecordsFindingsThatNeverPersisted(t *testing.T) {
 	if len(records) != 1 || records[0].FiringCount != 1 || records[0].FiringThreshold != 2 {
 		t.Fatalf("not_persisted: %#v", sink.records)
 	}
-	if len(sink.events(FiringActivated, "blip")) != 0 || len(controller.ExportState().DetectorTimeline) != 0 {
+	if len(sink.events(FiringActivated, "blip")) != 0 || len(exportState(t, controller).DetectorTimeline) != 0 {
 		t.Fatal("a finding that never persisted must not enter the timeline")
 	}
 }
@@ -377,7 +378,7 @@ func TestFiringTelemetryDoesNotDuplicateAfterRestartOrReplay(t *testing.T) {
 		}
 		controller := telemetryController(t, sink, &recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 			incidentDetector("cause", stateFinding("cause")))
-		if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "demo", "state")); err != nil {
+		if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo", "state")); err != nil {
 			t.Fatal(err)
 		}
 		return controller, sink
@@ -391,8 +392,8 @@ func TestFiringTelemetryDoesNotDuplicateAfterRestartOrReplay(t *testing.T) {
 	}
 	// Restart after a persisted state: the active finding must not re-activate.
 	second, _ := build()
-	if !second.RestoredFromState() || second.ExportState().EvaluationIteration != 2 {
-		t.Fatalf("state not restored: %#v", second.ExportState())
+	if !second.RestoredFromState() || exportState(t, second).EvaluationIteration != 2 {
+		t.Fatalf("state not restored: %#v", exportState(t, second))
 	}
 	step(t, second, 2)
 	step(t, second, 3)

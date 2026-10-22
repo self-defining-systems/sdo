@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"time"
 )
 
@@ -115,7 +116,7 @@ func (c *Controller) dispatchRetryDueLocked() bool {
 func (c *Controller) dispatchRetryWake(next time.Time) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dispatchState != "pending" || c.dispatchNextRetryAt.IsZero() {
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.dispatchNextRetryAt.IsZero() {
 		return next
 	}
 	if next.IsZero() || c.dispatchNextRetryAt.Before(next) {

@@ -102,16 +102,16 @@ func TestControllerAdoptsSeededServiceThenDispatchesLaterDrift(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), start, nil); err != nil {
 		t.Fatal(err)
 	}
-	status := controller.ExportState().OwnershipAdoption
-	if status.AdoptedObjects != 1 || status.ConflictsTakenOver == 0 || len(status.FromManagers) != 1 || status.FromManagers[0] != "kubectl-client-side-apply" || len(controller.ExportState().DriftEvents) != 0 {
-		t.Fatalf("adoption status or drift wrong: %+v", controller.ExportState())
+	status := exportState(t, controller).OwnershipAdoption
+	if status.AdoptedObjects != 1 || status.ConflictsTakenOver == 0 || len(status.FromManagers) != 1 || status.FromManagers[0] != "kubectl-client-side-apply" || len(exportState(t, controller).DriftEvents) != 0 {
+		t.Fatalf("adoption status or drift wrong: %+v", exportState(t, controller))
 	}
 	controller.drift.Events = &fixedObjectChanges{changes: []ObjectChange{objectChange(t, seeded, &api.service, "v1", "Service")}}
 	if err := controller.StepEvents(context.Background(), start.Add(500*time.Millisecond), nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(controller.ExportState().DriftEvents) != 0 {
-		t.Fatalf("ownership-only update entered drift feed: %+v", controller.ExportState().DriftEvents)
+	if len(exportState(t, controller).DriftEvents) != 0 {
+		t.Fatalf("ownership-only update entered drift feed: %+v", exportState(t, controller).DriftEvents)
 	}
 	before := api.service.DeepCopy()
 	api.service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
@@ -121,15 +121,15 @@ func TestControllerAdoptsSeededServiceThenDispatchesLaterDrift(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
-	events := controller.ExportState().DriftEvents
-	if len(events) != 1 || events[0].Classification != sdk.DriftUnexplained || events[0].Fields[0].Path != "spec.ports[0].targetPort" || len(controller.ExportState().PendingBatch.Findings) != 1 {
-		t.Fatalf("later drift did not reach responder admission: %+v", controller.ExportState())
+	events := exportState(t, controller).DriftEvents
+	if len(events) != 1 || events[0].Classification != string(sdk.DriftUnexplained) || events[0].Fields[0].Path != "spec.ports[0].targetPort" || len(exportState(t, controller).PendingBatch.Findings) != 1 {
+		t.Fatalf("later drift did not reach responder admission: %+v", exportState(t, controller))
 	}
 	if err := controller.StepEvents(context.Background(), start.Add(22*time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
-	if !controller.IncidentOpen() || controller.ExportState().IncidentRequest.Findings[0].DetectorID != "drift.unexplained" {
-		t.Fatalf("drift did not open responder incident: %+v", controller.ExportState())
+	if !controller.IncidentOpen() || exportState(t, controller).IncidentRequest.Findings[0].DetectorId != "drift.unexplained" {
+		t.Fatalf("drift did not open responder incident: %+v", exportState(t, controller))
 	}
 
 }
@@ -146,19 +146,19 @@ func TestControllerKeepsDetectingWhileAdoptionRetries(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), start, nil); err != nil {
 		t.Fatal(err)
 	}
-	status := controller.ExportState().OwnershipAdoption
-	if status.LastError == "" || !status.RetryAt.After(start) || calls != 1 {
+	status := exportState(t, controller).OwnershipAdoption
+	if status.LastError == "" || !controllerTime(status.RetryAt).After(start) || calls != 1 {
 		t.Fatalf("adoption failure status = %+v; calls=%d", status, calls)
 	}
-	wire, err := json.Marshal(controller.ExportState())
+	payload, err := encodeControllerState(exportState(t, controller))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var persisted RuntimeState
-	if err := json.Unmarshal(wire, &persisted); err != nil {
+	persisted, err := decodeControllerState(payload)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.OwnershipAdoption.LastError != status.LastError || !persisted.OwnershipAdoption.RetryAt.Equal(status.RetryAt) {
+	if persisted.OwnershipAdoption.LastError != status.LastError || !controllerTime(persisted.OwnershipAdoption.RetryAt).Equal(controllerTime(status.RetryAt)) {
 		t.Fatalf("adoption retry status was not durable: %+v", persisted.OwnershipAdoption)
 	}
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), nil); err != nil {
@@ -168,10 +168,10 @@ func TestControllerKeepsDetectingWhileAdoptionRetries(t *testing.T) {
 		t.Fatalf("health stopped or adoption ignored backoff: detector=%d adoption=%d", detector.calls, calls)
 	}
 	controller.drift.Source = adoptionSource{object: source.object, calls: &calls}
-	if err := controller.StepEvents(context.Background(), status.RetryAt, nil); err != nil {
+	if err := controller.StepEvents(context.Background(), controllerTime(status.RetryAt), nil); err != nil {
 		t.Fatal(err)
 	}
-	status = controller.ExportState().OwnershipAdoption
+	status = exportState(t, controller).OwnershipAdoption
 	if status.LastError != "" || status.AdoptedObjects != 1 || calls != 2 {
 		t.Fatalf("adoption did not recover: %+v; calls=%d", status, calls)
 	}
@@ -185,7 +185,7 @@ func TestControllerRecordsSkippedAdoptionWithoutDeployedPlan(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), time.Unix(10, 0).UTC(), nil); err != nil {
 		t.Fatal(err)
 	}
-	status := controller.ExportState().OwnershipAdoption
+	status := exportState(t, controller).OwnershipAdoption
 	if status.SkippedReason == "" || status.LastError != "" || status.AdoptedObjects != 0 || controller.adoptionNeeded {
 		t.Fatalf("unknown deployed set was adopted or hidden: %+v", status)
 	}
@@ -197,9 +197,9 @@ func TestControllerLeavesPreexistingDifferenceForInvestigation(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), time.Unix(10, 0).UTC(), nil); err != nil {
 		t.Fatal(err)
 	}
-	events := controller.ExportState().DriftEvents
-	if api.patches != 0 || api.service.Spec.Ports[0].TargetPort.IntVal != 9999 || len(events) != 1 || events[0].Classification != sdk.DriftUnexplained || events[0].Fields[0].Path != "spec.ports[0].targetPort" || len(controller.ExportState().PendingBatch.Findings) != 1 {
-		t.Fatalf("preexisting fault was overwritten or lost: %+v, %+v", api, controller.ExportState())
+	events := exportState(t, controller).DriftEvents
+	if api.patches != 0 || api.service.Spec.Ports[0].TargetPort.IntVal != 9999 || len(events) != 1 || events[0].Classification != string(sdk.DriftUnexplained) || events[0].Fields[0].Path != "spec.ports[0].targetPort" || len(exportState(t, controller).PendingBatch.Findings) != 1 {
+		t.Fatalf("preexisting fault was overwritten or lost: %+v, %+v", api, exportState(t, controller))
 	}
 }
 
@@ -214,7 +214,7 @@ func TestControllerDoesNotReinvestigateUnchangedAdoptedDifference(t *testing.T) 
 	if err := controller.EvaluateAll(context.Background(), start.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if len(controller.ExportState().PendingBatch.Findings) != 1 {
+	if len(exportState(t, controller).PendingBatch.Findings) != 1 {
 		t.Fatal("pending exact drift was duplicated")
 	}
 
@@ -230,8 +230,8 @@ func TestControllerAdoptionIsIdempotentAndNotDrift(t *testing.T) {
 	if err := controller.EvaluateAll(context.Background(), start.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if api.patches != 1 || api.dryRuns != 2 || controller.ExportState().OwnershipAdoption.AdoptedObjects != 1 || len(controller.ExportState().DriftEvents) != 0 {
-		t.Fatalf("adoption repeated or reported as drift: %+v, %+v", api, controller.ExportState())
+	if api.patches != 1 || api.dryRuns != 2 || exportState(t, controller).OwnershipAdoption.AdoptedObjects != 1 || len(exportState(t, controller).DriftEvents) != 0 {
+		t.Fatalf("adoption repeated or reported as drift: %+v, %+v", api, exportState(t, controller))
 	}
 }
 
@@ -248,9 +248,9 @@ func TestControllerReadoptsNewDeclaredFieldAtAcceptedCommit(t *testing.T) {
 	if err := controller.EvaluateAll(context.Background(), start.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	status := controller.ExportState().OwnershipAdoption
-	if api.patches != 2 || status.SourceCommit != "next-accepted" || status.AdoptedObjects != 1 || len(controller.ExportState().DriftEvents) != 0 {
-		t.Fatalf("accepted source was not re-adopted: %+v, %+v", api, controller.ExportState())
+	status := exportState(t, controller).OwnershipAdoption
+	if api.patches != 2 || status.SourceCommit != "next-accepted" || status.AdoptedObjects != 1 || len(exportState(t, controller).DriftEvents) != 0 {
+		t.Fatalf("accepted source was not re-adopted: %+v, %+v", api, exportState(t, controller))
 	}
 }
 
@@ -324,7 +324,7 @@ func TestControllerAdoptionDoesNotOverwriteConcurrentMutation(t *testing.T) {
 			if err := controller.StepEvents(context.Background(), time.Unix(10, 0).UTC(), nil); err != nil {
 				t.Fatal(err)
 			}
-			state := controller.ExportState()
+			state := exportState(t, controller)
 			if api.patches != 0 || api.conflicts != 1 || api.lastApply == nil || api.lastApply.UID != "original" || api.lastApply.ResourceVersion != "1" {
 				t.Fatalf("adoption lacked checked preconditions or retried a conflict: patches=%d conflicts=%d apply=%+v", api.patches, api.conflicts, api.lastApply)
 			}
@@ -332,7 +332,7 @@ func TestControllerAdoptionDoesNotOverwriteConcurrentMutation(t *testing.T) {
 				t.Fatalf("conflict reported as adoption: %+v", state.OwnershipAdoption)
 			}
 			if tc.drift {
-				if api.service.Spec.Ports[0].TargetPort.IntVal != 9999 || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != sdk.DriftUnexplained || len(state.PendingBatch.Findings) != 1 {
+				if api.service.Spec.Ports[0].TargetPort.IntVal != 9999 || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != string(sdk.DriftUnexplained) || len(state.PendingBatch.Findings) != 1 {
 					t.Fatalf("concurrent drift overwritten or not classified: service=%+v state=%+v", api.service, state)
 				}
 			} else if len(state.DriftEvents) != 0 {

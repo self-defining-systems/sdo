@@ -12,6 +12,29 @@ import "sdodev/contracts/v1alpha1/program.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
+// DispatchState is the responder/workspace lifecycle. Running states are
+// transient; a durable snapshot records the corresponding pending state.
+enum DispatchState {
+  DISPATCH_STATE_UNSPECIFIED = 0;
+  DISPATCH_STATE_IDLE = 1;
+  DISPATCH_STATE_WORKSPACE_PENDING = 2;
+  DISPATCH_STATE_WORKSPACE_RUNNING = 3;
+  DISPATCH_STATE_PENDING = 4;
+  DISPATCH_STATE_RUNNING = 5;
+  DISPATCH_STATE_COMPLETED = 6;
+  DISPATCH_STATE_ADMISSION_DEFERRED = 7;
+}
+
+// ClosureState is the lifecycle of an incident's durable memory commit.
+enum ClosureState {
+  CLOSURE_STATE_UNSPECIFIED = 0;
+  CLOSURE_STATE_PENDING = 1;
+  CLOSURE_STATE_PROCESSING = 2;
+  CLOSURE_STATE_COMMITTED = 3;
+  CLOSURE_STATE_ACKNOWLEDGING = 4;
+  CLOSURE_STATE_FAILED = 5;
+}
+
 // FindingState is the controller's firing-streak bookkeeping for one finding.
 message FindingState {
   string detector_id = 1;
@@ -82,7 +105,7 @@ message ControllerState {
   option (buf.validate.message).cel = {
     id: "state.failed_closure_has_permanent_failure"
     message: "a failed closure requires its permanent failure record"
-    expression: "this.closure_state != 'failed' || (has(this.closure_failure) && this.closure_failure.permanent)"
+    expression: "this.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)"
   };
   option (buf.validate.message).cel = {
     id: "state.closure_failure_matches_pending_closure"
@@ -90,7 +113,7 @@ message ControllerState {
     expression:
       "!has(this.closure_failure) || (has(this.pending_closure) && "
       "this.closure_failure.incident_id == this.pending_closure.request.incident_id && "
-      "this.closure_failure.permanent == (this.closure_state == 'failed'))"
+      "this.closure_failure.permanent == (this.closure_state == 5))"
   };
   string version = 1 [(buf.validate.field).string.const = "sdo.controller/v1"];
   map<string, google.protobuf.Timestamp> scheduler_deadlines = 2;
@@ -111,10 +134,10 @@ message ControllerState {
   // Start of each detector's current clear streak.
   map<string, google.protobuf.Timestamp> detector_clear_since = 17;
   repeated ObservedStateChange incident_observed_changes = 18;
-  string dispatch_state = 19;
+  DispatchState dispatch_state = 19 [(buf.validate.field).enum.defined_only = true];
   repeated string incident_finding_keys = 20;
   IncidentClosure pending_closure = 21;
-  string closure_state = 22;
+  ClosureState closure_state = 22 [(buf.validate.field).enum.defined_only = true];
   ClosureReceipt closure_receipt = 23;
   ClosureFailure closure_failure = 24;
   string last_acknowledged_incident_id = 25;

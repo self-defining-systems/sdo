@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sync"
 	"testing"
 	"time"
@@ -229,7 +230,7 @@ func TestAdmissionDefersThenResumesUnderLoad(t *testing.T) {
 	step(0)       // first firing sample, below the firing threshold
 	step(1)       // firing threshold reached: the incident opens, but is held
 
-	if got := controller.ExportState().DispatchState; got != admissionDeferredState {
+	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
 		t.Fatalf("incident was not held under load: dispatch state %q", got)
 	}
 	if _, ok := controller.PendingDispatchEffect(); ok {
@@ -255,7 +256,7 @@ func TestAdmissionDefersThenResumesUnderLoad(t *testing.T) {
 	// Still above the low watermark: the hold persists and emits nothing new.
 	gauge.set(60)
 	step(2)
-	if got := controller.ExportState().DispatchState; got != admissionDeferredState {
+	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
 		t.Fatalf("incident resumed inside the hysteresis band: dispatch state %q", got)
 	}
 	if len(lifecycle.byPhase(PhaseAdmissionDeferred)) != 1 {
@@ -299,7 +300,7 @@ func TestAdmissionHeldIncidentCoalescesLaterFindings(t *testing.T) {
 	gauge.set(90)
 	step(0)
 	step(1) // health opens the incident, held under load
-	if got := controller.ExportState().DispatchState; got != admissionDeferredState {
+	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
 		t.Fatalf("incident was not held: %q", got)
 	}
 	// A second detector activates while the incident is held.
@@ -334,7 +335,7 @@ func TestAdmissionDefersOnReleaseBacklog(t *testing.T) {
 
 	step(0)
 	step(1) // incident opens but is held behind the reap backlog
-	if got := controller.ExportState().DispatchState; got != admissionDeferredState {
+	if got := exportState(t, controller).DispatchState; got != admissionDeferredState {
 		t.Fatalf("incident was not held behind the release backlog: %q", got)
 	}
 	deferredEvents := lifecycle.byPhase(PhaseAdmissionDeferred)
@@ -370,7 +371,7 @@ func TestAdmissionDeferredStateSurvivesRestart(t *testing.T) {
 	gauge.set(90)
 	step(0)
 	step(1)
-	state := controller.ExportState()
+	state := exportState(t, controller)
 	if state.DispatchState != admissionDeferredState {
 		t.Fatalf("held incident not exported as deferred: %q", state.DispatchState)
 	}
@@ -381,7 +382,7 @@ func TestAdmissionDeferredStateSurvivesRestart(t *testing.T) {
 	if err := restarted.RestoreState(state); err != nil {
 		t.Fatalf("restore held incident: %v", err)
 	}
-	if got := restarted.ExportState().DispatchState; got != admissionDeferredState {
+	if got := exportState(t, restarted).DispatchState; got != admissionDeferredState {
 		t.Fatalf("restore lost the held state: %q", got)
 	}
 	restartStep(2) // re-sample: load has cleared, the incident resumes
@@ -402,7 +403,7 @@ func TestAdmissionDisabledAdmitsImmediately(t *testing.T) {
 	controller, dispatcher, _, lifecycle, step := admissionController(t, AdmissionConfig{}, admissionDetector())
 	step(0)
 	step(1)
-	if got := controller.ExportState().DispatchState; got != "pending" {
+	if got := exportState(t, controller).DispatchState; got != contracts.DispatchState_DISPATCH_STATE_PENDING {
 		t.Fatalf("disabled admission held the incident: %q", got)
 	}
 	if len(lifecycle.byPhase(PhaseAdmissionDeferred)) != 0 || len(lifecycle.byPhase(PhaseAdmissionResumed)) != 0 {

@@ -131,7 +131,7 @@ func TestObservedChangesSurviveARestart(t *testing.T) {
 	if err := controller.Step(context.Background(), time.Unix(2, 0), nil); err != nil {
 		t.Fatalf("late step: %v", err)
 	}
-	state := controller.ExportState()
+	state := exportState(t, controller)
 	if len(state.IncidentObservedChanges) != 2 {
 		t.Fatalf("exported observed changes = %+v", state.IncidentObservedChanges)
 	}
@@ -140,8 +140,8 @@ func TestObservedChangesSurviveARestart(t *testing.T) {
 	if err := restarted.RestoreState(state); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	restored := restarted.ExportState().IncidentObservedChanges
-	if len(restored) != 2 || !restored[1].FirstObservedAt.Equal(time.Unix(2, 0).UTC()) {
+	restored := exportState(t, restarted).IncidentObservedChanges
+	if len(restored) != 2 || !controllerTime(restored[1].FirstObservedAt).Equal(time.Unix(2, 0).UTC()) {
 		t.Fatalf("restored observed changes = %+v", restored)
 	}
 }

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"sync"
 	"testing"
@@ -74,7 +75,7 @@ func newClosureRetryController(t *testing.T, policy ClosureRetryPolicy, broker I
 		DetectedAt:          *now, DispatchedAt: *now, ResponderCompletedAt: *now, VerifiedAt: *now,
 	}
 	controller.pendingClosure = &closure
-	controller.closureState = "pending"
+	controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 	if err := controller.SetIncidentBroker(broker); err != nil {
 		t.Fatalf("set broker: %v", err)
 	}
@@ -110,8 +111,8 @@ func TestRejectedClosureRetriesWithBackoffThenFailsPermanently(t *testing.T) {
 	if wake := controller.NextWake(); !wake.Equal(now.Add(time.Second)) {
 		t.Fatalf("controller does not wake for the retry: got %s want %s", wake, now.Add(time.Second))
 	}
-	state := controller.ExportState()
-	if state.ClosureState != "pending" || state.ClosureFailure == nil || state.ClosureFailure.Attempts != 1 ||
+	state := exportState(t, controller)
+	if state.ClosureState != contracts.ClosureState_CLOSURE_STATE_PENDING || state.ClosureFailure == nil || state.ClosureFailure.Attempts != 1 ||
 		state.ClosureFailure.Permanent {
 		t.Fatalf("retry state was not durable: %#v", state.ClosureFailure)
 	}
@@ -132,12 +133,12 @@ func TestRejectedClosureRetriesWithBackoffThenFailsPermanently(t *testing.T) {
 	if broker.processCalls() != 3 {
 		t.Fatalf("broker processed %d closures, want exactly 3", broker.processCalls())
 	}
-	state = controller.ExportState()
+	state = exportState(t, controller)
 	failure := state.ClosureFailure
-	if state.ClosureState != "failed" || failure == nil || !failure.Permanent || failure.Attempts != 3 {
+	if state.ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED || failure == nil || !failure.Permanent || failure.Attempts != 3 {
 		t.Fatalf("closure was not marked permanently failed: state=%q failure=%#v", state.ClosureState, failure)
 	}
-	if failure.IncidentID != state.PendingClosure.Request.IncidentID ||
+	if failure.IncidentId != state.PendingClosure.Request.IncidentId ||
 		!strings.Contains(failure.LastError, "trailing whitespace") || failure.Action == "" {
 		t.Fatalf("failure lacks actionable context: %#v", failure)
 	}
@@ -147,7 +148,7 @@ func TestRejectedClosureRetriesWithBackoffThenFailsPermanently(t *testing.T) {
 	if len(failures) != 1 || failures[0].Attempts != 3 {
 		t.Fatalf("permanent failure was not reported exactly once: %#v", failures)
 	}
-	if err := ClosureFailureError(controller); err == nil || !strings.Contains(err.Error(), failure.IncidentID) {
+	if err := ClosureFailureError(controller); err == nil || !strings.Contains(err.Error(), failure.IncidentId) {
 		t.Fatalf("closure failure error lacks the incident: %v", err)
 	}
 
@@ -158,7 +159,7 @@ func TestRejectedClosureRetriesWithBackoffThenFailsPermanently(t *testing.T) {
 	if _, ok := restored.PendingClosureEffect(); ok {
 		t.Fatal("a restart re-armed a permanently failed closure")
 	}
-	if restored.ExportState().ClosureState != "failed" {
+	if exportState(t, restored).ClosureState != contracts.ClosureState_CLOSURE_STATE_FAILED {
 		t.Fatal("failed closure state did not survive a restart")
 	}
 }
@@ -172,8 +173,8 @@ func TestClosureCommittedAfterTransientRejectionClearsFailure(t *testing.T) {
 	now = now.Add(defaultClosureRetryInitialBackoff)
 	attemptClosure(t, controller)
 
-	state := controller.ExportState()
-	if state.ClosureState != "committed" || state.ClosureFailure != nil {
+	state := exportState(t, controller)
+	if state.ClosureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || state.ClosureFailure != nil {
 		t.Fatalf("a committed closure kept its failure record: state=%q failure=%#v", state.ClosureState, state.ClosureFailure)
 	}
 	if err := ClosureFailureError(controller); err != nil {
@@ -205,12 +206,12 @@ func TestClosureRetryPolicyRejectsInvalidValues(t *testing.T) {
 func TestRuntimeStateRejectsFailedClosureWithoutFailureRecord(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	controller := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
-	state := controller.ExportState()
-	state.ClosureState = "failed"
+	state := exportState(t, controller)
+	state.ClosureState = contracts.ClosureState_CLOSURE_STATE_FAILED
 	if err := validateRuntimeState(state); err == nil {
 		t.Fatal("failed closure without a failure record was accepted")
 	}
-	state.ClosureFailure = &ClosureFailure{IncidentID: "other", Attempts: 1, Permanent: true}
+	state.ClosureFailure = &contracts.ClosureFailure{IncidentId: "other", Attempts: 1, Permanent: true}
 	if err := validateRuntimeState(state); err == nil {
 		t.Fatal("closure failure for another incident was accepted")
 	}
@@ -237,9 +238,9 @@ func TestAPausedControllerStillRetriesARejectedClosure(t *testing.T) {
 	}
 	awaitBrokerResult(t, controller.closureResults)
 	controller.processBrokerCompletions()
-	if broker.processCalls() != 2 || controller.ExportState().ClosureState == "pending" {
+	if broker.processCalls() != 2 || exportState(t, controller).ClosureState == contracts.ClosureState_CLOSURE_STATE_PENDING {
 		t.Fatalf("the paused controller did not retry the closure: calls=%d state=%q",
-			broker.processCalls(), controller.ExportState().ClosureState)
+			broker.processCalls(), exportState(t, controller).ClosureState)
 	}
 }
 

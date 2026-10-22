@@ -54,7 +54,7 @@ func TestOrdinaryDriftAdmissionBudgetsBatchingAndNewKeyPriority(t *testing.T) {
 	if len(c.driftAdmission.TokenUsage) != 1 || c.driftAdmission.TokenUsage[0].Tokens != 10 {
 		t.Fatal("merged responder usage was charged more than once")
 	}
-	payload, err := encodeControllerState(c.ExportState())
+	payload, err := encodeControllerState(exportState(t, c))
 	if err != nil {
 		t.Fatal(err)
 	}

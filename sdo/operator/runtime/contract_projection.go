@@ -3,7 +3,6 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"strings"
 	"time"
 
@@ -691,7 +690,7 @@ func incidentViewContract(view *IncidentView) (*contracts.IncidentView, error) {
 	return &contracts.IncidentView{
 		IncidentId: view.IncidentID, ObservedAt: contractTimestamp(view.ObservedAt),
 		BlockingDetectors: append([]string(nil), view.BlockingDetectors...), BlockingFindings: blocking,
-		ClearingFindings: clearing, StateChanges: stateChangesContract(view.StateChanges),
+		ClearingFindings: clearing, StateChanges: stateChangesContract(view.StateChanges), DriftEvents: driftEventsContract(view.DriftEvents),
 	}, nil
 }
 
@@ -726,94 +725,6 @@ func findingStatesState(states map[string]*contracts.FindingState) map[string]Fi
 		}
 	}
 	return result
-}
-
-// controllerStateContract projects the controller's restartable state onto the
-// ProtoJSON document persisted in its state ConfigMap.
-func controllerStateContract(state RuntimeState) (*contracts.ControllerState, error) {
-	findingStates, err := findingStatesContract(state.FindingStates)
-	if err != nil {
-		return nil, err
-	}
-	batch, err := findingsContract(state.PendingBatch.Findings)
-	if err != nil {
-		return nil, fmt.Errorf("pending batch: %w", err)
-	}
-	timeline := detectorTimelineContract(state.DetectorTimeline)
-	view, err := incidentViewContract(state.IncidentView)
-	if err != nil {
-		return nil, err
-	}
-	message := &contracts.ControllerState{
-		Version: state.Version, SchedulerDeadlines: timestampsContract(state.SchedulerDeadlines), FindingStates: findingStates,
-		PendingBatch: &contracts.BatcherState{
-			Findings: batch, Deadlines: timestampsContract(state.PendingBatch.Deadlines), Deadline: optionalTimestamp(state.PendingBatch.Deadline),
-		},
-		History: evaluationsContract(state.History), IncidentOpen: state.IncidentOpen, ResponderDone: state.ResponderDone,
-		DispatchError: state.DispatchError, IncidentDetectedAt: optionalTimestamp(state.IncidentDetectedAt),
-		IncidentDispatchedAt: optionalTimestamp(state.IncidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(state.ResponderCompletedAt),
-		DetectorReviewRequired: state.DetectorReviewRequired, DetectorReviewRequiredAt: optionalTimestamp(state.DetectorReviewRequiredAt),
-		DetectorReviewReason: state.DetectorReviewReason, DetectorClearSince: timestampsContract(state.DetectorClearSince),
-		IncidentObservedChanges: observedStateChangesContract(state.IncidentObservedChanges), DispatchState: state.DispatchState,
-		IncidentFindingKeys: append([]string(nil), state.IncidentFindingKeys...), ClosureState: state.ClosureState,
-		ClosureReceipt: closureReceiptContract(state.ClosureReceipt), ClosureFailure: closureFailureContract(state.ClosureFailure),
-		LastAcknowledgedIncidentId: state.LastAcknowledgedIncidentID, PendingReleases: append([]string(nil), state.PendingReleases...),
-		EvaluationIteration: int32(state.EvaluationIteration), DetectorTimeline: timeline, IncidentView: view,
-		DriftEvents: driftEventsContract(state.DriftEvents), OwnershipAdoption: adoptionContract(state.OwnershipAdoption), DriftAdmission: cloneDriftAdmission(state.DriftAdmission), ProgramSweepCursors: maps.Clone(state.ProgramSweepCursors),
-	}
-	if state.IncidentRequest != nil {
-		message.IncidentRequest, err = incidentRequestContract(*state.IncidentRequest)
-		if err != nil {
-			return nil, fmt.Errorf("incident request: %w", err)
-		}
-	}
-	if state.IncidentResult != nil {
-		message.IncidentResult, err = incidentResultContract(*state.IncidentResult)
-		if err != nil {
-			return nil, fmt.Errorf("incident result: %w", err)
-		}
-	}
-	if state.PendingClosure != nil {
-		message.PendingClosure, err = incidentClosureContract(*state.PendingClosure)
-		if err != nil {
-			return nil, fmt.Errorf("pending closure: %w", err)
-		}
-	}
-	return message, nil
-}
-
-// controllerStateState restores in-memory controller state from its persisted
-// document. The incident view is published for responders and never restored.
-func controllerStateState(message *contracts.ControllerState) RuntimeState {
-	state := RuntimeState{
-		Version: message.GetVersion(), SchedulerDeadlines: timestampsState(message.GetSchedulerDeadlines()),
-		FindingStates: findingStatesState(message.GetFindingStates()),
-		PendingBatch: BatcherState{
-			Findings: findingsState(message.GetPendingBatch().GetFindings()), Deadlines: timestampsState(message.GetPendingBatch().GetDeadlines()),
-			Deadline: controllerTime(message.GetPendingBatch().GetDeadline()),
-		},
-		History: evaluationsState(message.GetHistory()), IncidentOpen: message.GetIncidentOpen(), ResponderDone: message.GetResponderDone(),
-		IncidentRequest: incidentRequestState(message.GetIncidentRequest()), DispatchError: message.GetDispatchError(),
-		IncidentDetectedAt: controllerTime(message.GetIncidentDetectedAt()), IncidentDispatchedAt: controllerTime(message.GetIncidentDispatchedAt()),
-		ResponderCompletedAt: controllerTime(message.GetResponderCompletedAt()), DetectorReviewRequired: message.GetDetectorReviewRequired(),
-		DetectorReviewRequiredAt: controllerTime(message.GetDetectorReviewRequiredAt()), DetectorReviewReason: message.GetDetectorReviewReason(),
-		DetectorClearSince:      timestampsState(message.GetDetectorClearSince()),
-		IncidentObservedChanges: observedStateChangesState(message.GetIncidentObservedChanges()), DispatchState: message.GetDispatchState(),
-		IncidentFindingKeys: append([]string(nil), message.GetIncidentFindingKeys()...), ClosureState: message.GetClosureState(),
-		ClosureReceipt: closureReceiptState(message.GetClosureReceipt()), ClosureFailure: closureFailureState(message.GetClosureFailure()),
-		LastAcknowledgedIncidentID: message.GetLastAcknowledgedIncidentId(), PendingReleases: append([]string(nil), message.GetPendingReleases()...),
-		EvaluationIteration: int(message.GetEvaluationIteration()), DetectorTimeline: detectorTimelineState(message.GetDetectorTimeline()),
-		DriftEvents: driftEventsState(message.GetDriftEvents()), OwnershipAdoption: adoptionState(message.GetOwnershipAdoption()), DriftAdmission: cloneDriftAdmission(message.GetDriftAdmission()), ProgramSweepCursors: maps.Clone(message.GetProgramSweepCursors()),
-	}
-	if message.GetIncidentResult() != nil {
-		result := incidentResultState(message.GetIncidentResult())
-		state.IncidentResult = &result
-	}
-	if message.GetPendingClosure() != nil {
-		closure := incidentClosureState(message.GetPendingClosure())
-		state.PendingClosure = &closure
-	}
-	return state
 }
 
 // isPreCutoverFormat reports whether a strict ProtoJSON decode failed on a

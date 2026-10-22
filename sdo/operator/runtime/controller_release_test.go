@@ -127,7 +127,7 @@ func TestSupersededReleaseSurvivesRestart(t *testing.T) {
 	}
 
 	restored, _ := newFollowUpController(t, 2, healthBPersistent())
-	if err := restored.RestoreState(controller.ExportState()); err != nil {
+	if err := restored.RestoreState(exportState(t, controller)); err != nil {
 		t.Fatalf("restore state: %v", err)
 	}
 	if err := restored.SetIncidentBroker(broker); err != nil {

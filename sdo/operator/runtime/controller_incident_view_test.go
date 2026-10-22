@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"testing"
 	"time"
 
@@ -39,7 +41,7 @@ func TestControllerPublishesTheOpenIncidentsLiveView(t *testing.T) {
 		BaselineAt: time.Unix(0, 0).UTC(), ObservedAt: time.Unix(1, 0).UTC(), Changes: []StateChange{first},
 	}}
 	controller.Baseline = baseline
-	if state := controller.ExportState(); state.IncidentView != nil {
+	if state := exportState(t, controller); state.IncidentView != nil {
 		t.Fatalf("no incident, no view: %#v", state.IncidentView)
 	}
 
@@ -60,8 +62,8 @@ func TestControllerPublishesTheOpenIncidentsLiveView(t *testing.T) {
 		t.Fatalf("step 2: %v", err)
 	}
 
-	view := controller.ExportState().IncidentView
-	if view == nil || view.IncidentID != request.IncidentID || !view.ObservedAt.Equal(time.Unix(2, 0).UTC()) {
+	view := exportState(t, controller).IncidentView
+	if view == nil || view.IncidentId != request.IncidentID || !controllerTime(view.ObservedAt).Equal(time.Unix(2, 0).UTC()) {
 		t.Fatalf("the open incident must publish a live view: %#v", view)
 	}
 	if len(view.BlockingDetectors) != 1 || view.BlockingDetectors[0] != "health" {
@@ -76,7 +78,7 @@ func TestControllerPublishesTheOpenIncidentsLiveView(t *testing.T) {
 	if len(request.StateChanges.Changes) != 1 {
 		t.Fatalf("the dispatched request keeps its own snapshot: %#v", request.StateChanges)
 	}
-	if err := validateRuntimeState(controller.ExportState()); err != nil {
+	if err := validateRuntimeState(exportState(t, controller)); err != nil {
 		t.Fatalf("a state with a view must validate: %v", err)
 	}
 
@@ -86,11 +88,11 @@ func TestControllerPublishesTheOpenIncidentsLiveView(t *testing.T) {
 			t.Fatalf("step %d: %v", step, err)
 		}
 	}
-	view = controller.ExportState().IncidentView
+	view = exportState(t, controller).IncidentView
 	if view == nil || len(view.BlockingDetectors) != 0 || len(view.BlockingFindings) != 0 {
 		t.Fatalf("cleared health detectors no longer block: %#v", view)
 	}
-	if _, err := incidentViewContract(view); err != nil {
+	if err := wire.Validate(view); err != nil {
 		t.Fatalf("project incident view: %v", err)
 	}
 	close(dispatcher.release)
@@ -102,12 +104,12 @@ func TestRestoredStateIgnoresAStaleIncidentView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
-	state := controller.ExportState()
-	state.IncidentView = &IncidentView{IncidentID: "old", ObservedAt: time.Unix(1, 0).UTC(), BlockingDetectors: []string{"health"}}
+	state := exportState(t, controller)
+	state.IncidentView = &contracts.IncidentView{IncidentId: "old", ObservedAt: contractTimestamp(time.Unix(1, 0)), BlockingDetectors: []string{"health"}}
 	if err := controller.RestoreState(state); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	if view := controller.ExportState().IncidentView; view != nil {
+	if view := exportState(t, controller).IncidentView; view != nil {
 		t.Fatalf("a restored controller republishes its view only after it evaluates again: %#v", view)
 	}
 }

@@ -4,7 +4,7 @@
 // (chaos_harness_test.go): not "a timing interleaving nobody tried", but "a
 // recorded incident that needs a live cluster to reproduce". A real incident's
 // durable artifacts -- the detector-firing telemetry stream, the
-// IncidentClosure the controller produced, and the RuntimeState it persisted --
+// IncidentClosure the controller produced, and the ControllerState it persisted --
 // are frozen on disk as a golden fixture under testdata/replay/<name>/ and
 // driven back through the controller's existing deterministic artifact paths
 // with no cluster. The invariant is that every value the controller re-derives
@@ -33,6 +33,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
 	"testing"
@@ -43,7 +44,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
-	"sdo.dev/operator/sdk"
 )
 
 // replayFixtureRoot is the directory tree of frozen incidents, relative to the
@@ -80,7 +80,7 @@ type replayFixture struct {
 	firings   []*contracts.FiringRecord
 	lifecycle []*contracts.LifecycleEvent
 	closure   *IncidentClosure
-	state     *RuntimeState
+	state     *contracts.ControllerState
 	meta      replayMeta
 }
 
@@ -139,7 +139,7 @@ func loadReplayFixture(t *testing.T, dir string, name string) replayFixture {
 		if err != nil {
 			t.Fatalf("decode %s state: %v", name, err)
 		}
-		fixture.state = &state
+		fixture.state = state
 	}
 	if raw, ok := readReplayFile(t, filepath.Join(dir, replayMetaFile)); ok {
 		if err := json.Unmarshal(raw, &fixture.meta); err != nil {
@@ -322,7 +322,7 @@ func replayClosureAnalysis(t *testing.T, fx replayFixture) {
 	}
 }
 
-// replayStateRoundTrip loads the frozen RuntimeState into the production
+// replayStateRoundTrip loads the frozen ControllerState into the production
 // ConfigMapStateStore backed by a fake clientset (no API server), then reads it
 // back, and asserts the round-trip is faithful and byte-stable: the loaded
 // state marshals to the same bytes as the frozen one, and a second Save at the
@@ -333,9 +333,9 @@ func replayStateRoundTrip(t *testing.T, fx replayFixture) {
 	t.Helper()
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
-	store := NewConfigMapStateStore(client, "demo", "sdo-controller-state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "sdo-controller-state")
 
-	revision, err := store.Save(ctx, *fx.state, "")
+	revision, err := store.Save(ctx, fx.state, "")
 	if err != nil {
 		t.Fatalf("save recorded state: %v", err)
 	}
@@ -346,7 +346,7 @@ func replayStateRoundTrip(t *testing.T, fx replayFixture) {
 	if loadedRevision != revision {
 		t.Fatalf("revision drifted on load: saved %s, loaded %s", revision, loadedRevision)
 	}
-	assertStateBytesEqual(t, *fx.state, loaded)
+	assertStateBytesEqual(t, fx.state, loaded)
 
 	// A second save of the same state at the loaded revision is the store's
 	// digest no-op: the revision must not advance.
@@ -360,36 +360,36 @@ func replayStateRoundTrip(t *testing.T, fx replayFixture) {
 }
 
 // TestReplayStateRoundTripContract exercises the state-round-trip dimension
-// directly. The stored runs expose no per-incident RuntimeState dump (the
+// directly. The stored runs expose no per-incident ControllerState dump (the
 // controller's state ConfigMap is not exported), so no golden fixture lights
 // this dimension up today; this self-test pins the dimension against a
 // representative valid state so the shipped path is covered and the
 // ConfigMapStateStore round-trip contract stays guarded. When a real
-// RuntimeState is ever captured, dropping it in as state.json replays here
+// ControllerState is ever captured, dropping it in as state.json replays here
 // unchanged.
 func TestReplayStateRoundTripContract(t *testing.T) {
 	now := time.Unix(1_790_931_114, 0).UTC()
-	state := RuntimeState{
+	state := &contracts.ControllerState{
 		Version:            RuntimeStateVersion,
-		SchedulerDeadlines: map[string]time.Time{"health-objective": now},
-		FindingStates: map[string]FindingState{
+		SchedulerDeadlines: timestampsContract(map[string]time.Time{"health-objective": now}),
+		FindingStates: mustConvert(t, findingStatesContract, map[string]FindingState{
 			"health-objective/deployment-unavailable/hotel-reservation/geo": {
 				DetectorID: "health-objective", Finding: stateFinding("health-objective"), FiringCount: 2, Active: true,
 				FirstSeenAt: now, Activations: 1,
 			},
-		},
-		PendingBatch:        BatcherState{Findings: []sdk.Finding{}},
+		}),
+		PendingBatch:        &contracts.BatcherState{},
 		EvaluationIteration: 42,
-		DetectorTimeline: []DetectorTimelineEntry{{
+		DetectorTimeline: detectorTimelineContract([]DetectorTimelineEntry{{
 			DetectorID: "health-objective", DetectorClass: "health", Owner: "health_judge",
 			RuleID: "deployment-unavailable", Fingerprint: "health-objective/deployment-unavailable/hotel-reservation/geo",
 			FirstActivatedAt: now, LastSeenAt: now, Relation: RelationBeforeDispatch, Activations: 1,
-		}},
+		}}),
 	}
 	if err := validateRuntimeState(state); err != nil {
 		t.Fatalf("representative state must be valid: %v", err)
 	}
-	replayStateRoundTrip(t, replayFixture{name: "state-round-trip-contract", state: &state})
+	replayStateRoundTrip(t, replayFixture{name: "state-round-trip-contract", state: state})
 }
 
 // replayLifecycleStreamDurable re-emits the recorded lifecycle stream through
@@ -563,7 +563,7 @@ func assertFiringRecordsEqual(t *testing.T, want []*contracts.FiringRecord, got 
 
 // assertStateBytesEqual asserts two runtime states serialize identically, the
 // strongest faithfulness check for a durable round-trip.
-func assertStateBytesEqual(t *testing.T, want RuntimeState, got RuntimeState) {
+func assertStateBytesEqual(t *testing.T, want *contracts.ControllerState, got *contracts.ControllerState) {
 	t.Helper()
 	wantBytes, err := encodeControllerState(want)
 	if err != nil {

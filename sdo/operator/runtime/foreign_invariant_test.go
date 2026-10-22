@@ -204,7 +204,7 @@ func TestHermeticForeignNetworkPolicyInvariantRepeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !controller.IncidentOpen() {
-		t.Fatalf("compiled program did not open repeat incident: %+v", controller.ExportState())
+		t.Fatalf("compiled program did not open repeat incident: %+v", exportState(t, controller))
 	}
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)

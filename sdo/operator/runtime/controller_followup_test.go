@@ -142,8 +142,8 @@ func TestControllerFollowUpsAreBoundedAcrossRestarts(t *testing.T) {
 	if !controller.DetectorReviewRequired() {
 		t.Fatal("exhausted follow-ups must fall back to detector review")
 	}
-	state := controller.ExportState()
-	if state.IncidentRequest == nil || state.IncidentRequest.IncidentID != followUp.IncidentID ||
+	state := exportState(t, controller)
+	if state.IncidentRequest == nil || state.IncidentRequest.IncidentId != followUp.IncidentID ||
 		state.IncidentRequest.FollowUp == nil || state.IncidentRequest.FollowUp.Attempt != 1 {
 		t.Fatalf("follow-up attempt was not persisted: %#v", state.IncidentRequest)
 	}

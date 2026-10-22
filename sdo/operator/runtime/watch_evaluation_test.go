@@ -243,7 +243,7 @@ func TestControllerEvaluatesConfigMapWatcherAfterDeleteBehindPodBacklog(t *testi
 	if err := controller.StepEvents(ctx, faultObserved, takeEventsThrough(t, informerCache, "ConfigMap")); err != nil {
 		t.Fatalf("event step: %v", err)
 	}
-	if got := lastEvaluation(controller.ExportState().History, incident.spec.ID); got.Status != DetectorEvaluationFiring ||
+	if got := lastEvaluation(evaluationsState(exportState(t, controller).History), incident.spec.ID); got.Status != DetectorEvaluationFiring ||
 		!got.EvaluatedAt.Equal(faultObserved) {
 		t.Fatalf("incident detector was not evaluated after the ConfigMap delete: %#v", got)
 	}
@@ -298,7 +298,7 @@ func TestIncidentFindingActivatedBeforeResponderLaunchIsAttached(t *testing.T) {
 	if !controller.IncidentOpen() {
 		t.Fatal("health activation did not open an incident")
 	}
-	opened := controller.ExportState().IncidentRequest.IncidentID
+	opened := exportState(t, controller).IncidentRequest.IncidentId
 
 	event := sdk.WatchKind{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo"}
 	if err := controller.StepEvents(context.Background(), start.Add(100*time.Millisecond), []sdk.WatchKind{event}); err != nil {
@@ -321,7 +321,7 @@ func TestIncidentFindingActivatedBeforeResponderLaunchIsAttached(t *testing.T) {
 	if got := lastEvaluation(request.DetectorHistory, incident.spec.ID); got.Status != DetectorEvaluationFiring {
 		t.Fatalf("request history was not refreshed on attachment: %#v", request.DetectorHistory)
 	}
-	if keys := controller.ExportState().IncidentFindingKeys; len(keys) != 2 {
+	if keys := exportState(t, controller).IncidentFindingKeys; len(keys) != 2 {
 		t.Fatalf("attached finding is not tracked for verification: %#v", keys)
 	}
 }
@@ -391,8 +391,8 @@ func TestLaunchedResponderKeepsRequestAndBatchDoesNotSpinLoop(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), now, []sdk.WatchKind{event}); err != nil {
 		t.Fatalf("incident activation: %v", err)
 	}
-	state := controller.ExportState()
-	if requestHasDetector(*state.IncidentRequest, incident.spec.ID) || len(state.IncidentRequest.Findings) != len(launched.Findings) {
+	state := exportState(t, controller)
+	if requestHasDetector(*incidentRequestState(state.IncidentRequest), incident.spec.ID) || len(state.IncidentRequest.Findings) != len(launched.Findings) {
 		t.Fatalf("launched responder's request was mutated: %#v", state.IncidentRequest.Findings)
 	}
 	if next := controller.NextWake(); !next.After(now) {

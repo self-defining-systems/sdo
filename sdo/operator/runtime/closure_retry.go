@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"time"
 )
 
@@ -14,7 +15,7 @@ const (
 
 	// closureStateFailed is terminal: the broker rejected the closure
 	// MaxAttempts times, so the controller stops resubmitting it.
-	closureStateFailed = "failed"
+	closureStateFailed = contracts.ClosureState_CLOSURE_STATE_FAILED
 )
 
 // ClosureRetryPolicy bounds how often the controller resubmits an incident
@@ -118,7 +119,7 @@ func (c *Controller) closureRetryWake(next time.Time) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	failure := c.closureFailure
-	if c.closureState != "pending" || failure == nil || failure.Permanent || failure.NextAttemptAt.IsZero() {
+	if c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || failure == nil || failure.Permanent || failure.NextAttemptAt.IsZero() {
 		return next
 	}
 	if next.IsZero() || failure.NextAttemptAt.Before(next) {
@@ -132,7 +133,7 @@ func (c *Controller) closureRetryWake(next time.Time) time.Time {
 // returns the failure when this attempt spent the retry budget. Callers hold
 // c.mu.
 func (c *Controller) recordClosureRejectionLocked(err error) (ClosureFailure, bool) {
-	c.closureState = "pending"
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 	if errors.Is(err, context.Canceled) {
 		// Lost leadership or shutdown is not a broker verdict.
 		return ClosureFailure{}, false
@@ -156,7 +157,7 @@ func (c *Controller) recordClosureRejectionLocked(err error) (ClosureFailure, bo
 	failure.NextAttemptAt = time.Time{}
 	failure.Permanent = true
 	failure.Action = "the broker will not commit this closure as proposed; inspect the incident worktree and " +
-		"the broker ledger, fix the proposal or the broker check, then set closure_state to \"pending\" and " +
+		"the broker ledger, fix the proposal or the broker check, then set closure_state to \"CLOSURE_STATE_PENDING\" and " +
 		"remove closure_failure in the sdo-controller-state ConfigMap to retry; new incidents stay blocked until then"
 	c.closureState = closureStateFailed
 	return *failure, true

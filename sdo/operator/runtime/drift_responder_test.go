@@ -117,13 +117,13 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 	}
 	executePendingEffect(t, c)
 	first := awaitRequest(t, dispatcher.requests)
-	frozen := c.ExportState().IncidentRequest.PreparedAgentTask
+	frozen := exportState(t, c).IncidentRequest.PreparedAgentTask
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, broken)
 	if err := c.StepEvents(context.Background(), start.Add(2*time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
 	}
-	state := c.ExportState()
-	if state.IncidentRequest.IncidentID != first.IncidentID || len(state.IncidentRequest.DriftEvents) != 1 || len(state.PendingBatch.Findings) != 0 || state.IncidentRequest.PreparedAgentTask != frozen {
+	state := exportState(t, c)
+	if state.IncidentRequest.IncidentId != first.IncidentID || len(state.IncidentRequest.DriftEvents) != 1 || len(state.PendingBatch.Findings) != 0 || state.IncidentRequest.PreparedAgentTask != frozen {
 		t.Fatalf("late drift created another request or lost evidence: %+v", state)
 	}
 	late := 0
@@ -168,11 +168,11 @@ func TestUnexplainedTargetPortOpensLatentIncidentWithDriftCorpus(t *testing.T) {
 	if err := c.StepEvents(context.Background(), start.Add(2*time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
-	request := c.ExportState().IncidentRequest
-	if request == nil || len(request.DriftEvents) != 1 || request.Findings[0].DetectorID != "drift.unexplained" {
+	request := exportState(t, c).IncidentRequest
+	if request == nil || len(request.DriftEvents) != 1 || request.Findings[0].DetectorId != "drift.unexplained" {
 		t.Fatalf("drift did not enter ordinary responder: %+v", request)
 	}
-	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
+	dir, err := memory.IncidentCorpusDir(root, request.IncidentId)
 	if err != nil {
 		t.Fatal(err)
 	}

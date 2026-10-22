@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"testing"
 	"time"
@@ -204,7 +205,7 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err := controller.SetIncidentBroker(native); err != nil {
 		t.Fatal(err)
 	}
-	if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "app", stateName)); err != nil {
+	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "app", stateName)); err != nil {
 		t.Fatal(err)
 	}
 	if err := controller.EvaluateAll(ctx, at.Add(-time.Second)); err != nil {
@@ -238,11 +239,11 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatal(err)
 	}
-	state, _, err := NewConfigMapStateStore(client, "app", stateName).Load(ctx)
+	state, _, err := lifecycleio.NewConfigMapStateStore(client, "app", stateName).Load(ctx)
 	if err != nil || state.IncidentRequest == nil {
 		t.Fatalf("persist dispatch: %+v %v", state, err)
 	}
-	request := *state.IncidentRequest
+	request := *incidentRequestState(state.IncidentRequest)
 	if retry {
 		controller.now = func() time.Time { return at }
 		executePendingEffect(t, controller)
@@ -254,8 +255,8 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 			t.Fatal(err)
 		}
 		controller.now = func() time.Time { return at.Add(5 * time.Second) }
-		reloaded, _, err := NewConfigMapStateStore(client, "app", stateName).Load(ctx)
-		if err != nil || reloaded.IncidentRequest == nil || !fastloopSameRequest(*reloaded.IncidentRequest, request) {
+		reloaded, _, err := lifecycleio.NewConfigMapStateStore(client, "app", stateName).Load(ctx)
+		if err != nil || reloaded.IncidentRequest == nil || !fastloopSameRequest(*incidentRequestState(reloaded.IncidentRequest), request) {
 			t.Fatalf("retry lost persisted dispatch request: %+v %v", reloaded.IncidentRequest, err)
 		}
 	}
@@ -320,11 +321,11 @@ func fastloopGateProcessClosure(t *testing.T, ctx context.Context, controller *C
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatal(err)
 	}
-	state := controller.ExportState()
-	if state.ClosureState != "committed" || state.ClosureReceipt == nil {
+	state := exportState(t, controller)
+	if state.ClosureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || state.ClosureReceipt == nil {
 		t.Fatalf("native broker did not commit controller closure: %s", state.ClosureState)
 	}
-	return *state.ClosureReceipt
+	return *closureReceiptState(state.ClosureReceipt)
 }
 
 func fastloopGateAcknowledge(t *testing.T, ctx context.Context, controller *Controller) {
@@ -610,7 +611,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatalf("changed peer was not classified: %+v %v; before=%+v after=%+v owned=%+v managed=%+v", classified, err, flattenDriftObject(change.Old), flattenDriftObject(change.New), ownedDriftPaths(change.Old, "sdo-deployer"), change.Old.GetManagedFields())
 	}
 	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
-		controller.driftEvents = append([]sdk.DriftEvent(nil), first.ExportState().DriftEvents...)
+		controller.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(exportState(t, first).DriftEvents)...)
 		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 		}, BatchWindow: time.Nanosecond})

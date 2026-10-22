@@ -8,6 +8,7 @@ import (
 	"reflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
 
@@ -64,12 +65,12 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := RuntimeState{Version: RuntimeStateVersion, IncidentResult: &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: "program-state", Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)},
+	state := &contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: "program-state", Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)},
 		ProgramRuns:      []ProgramRun{{ProgramID: "capacity", Bindings: program.Bindings{"deployment": ref}, Verdict: program.Verdict{Result: program.NoMatch}}},
 		ProgramToolCalls: []ToolCall{{Command: "status", RequestJSON: `{"command":"status"}`, ResponseJSON: string(response), Summary: "healthy"}},
 		PlanApplications: []RecordedPlanApplication{{ID: "application-1", ProgramIDs: []string{"capacity"}, Result: application}},
-	}}
-	store := NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
+	})}
+	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "state")
 	if _, err := store.Save(ctx, state, ""); err != nil {
 		t.Fatalf("persist applied plan: %v", err)
 	}
@@ -77,9 +78,9 @@ func TestStateRoundTripRetainsAppliedActionsAndProgramEvidenceWithoutRollbackSta
 	if err != nil {
 		t.Fatalf("reload applied plan: %v", err)
 	}
-	result := loaded.IncidentResult
-	if len(result.ProgramRuns) != 1 || !reflect.DeepEqual(result.ProgramRuns[0].Bindings, state.IncidentResult.ProgramRuns[0].Bindings) ||
-		!reflect.DeepEqual(result.ProgramToolCalls, state.IncidentResult.ProgramToolCalls) {
+	result := incidentResultState(loaded.IncidentResult)
+	if len(result.ProgramRuns) != 1 || !reflect.DeepEqual(result.ProgramRuns[0].Bindings, incidentResultState(state.IncidentResult).ProgramRuns[0].Bindings) ||
+		!reflect.DeepEqual(result.ProgramToolCalls, incidentResultState(state.IncidentResult).ProgramToolCalls) {
 		t.Fatalf("program evidence changed after reload: %+v", result)
 	}
 	var restoredResponse ToolResponse
@@ -130,8 +131,8 @@ func TestCloneIncidentClosureKeepsAnEmptyClosingViewDiffAList(t *testing.T) {
 
 func TestConfigMapStateStoreRoundTripAndCASConflict(t *testing.T) {
 	ctx := context.Background()
-	store := NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "sdo-controller-state")
-	state := RuntimeState{Version: RuntimeStateVersion, History: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: time.Unix(1, 0).UTC(), Status: DetectorEvaluationFiring}}}
+	store := lifecycleio.NewConfigMapStateStore(fake.NewSimpleClientset(), "demo", "sdo-controller-state")
+	state := &contracts.ControllerState{Version: RuntimeStateVersion, History: evaluationsContract([]DetectorEvaluation{{DetectorID: "health", EvaluatedAt: time.Unix(1, 0).UTC(), Status: DetectorEvaluationFiring}})}
 
 	revision, err := store.Save(ctx, state, "")
 	if err != nil {
@@ -145,7 +146,7 @@ func TestConfigMapStateStoreRoundTripAndCASConflict(t *testing.T) {
 		t.Fatalf("unexpected loaded state %#v revision %q", loaded, loadedRevision)
 	}
 	changed := loaded
-	changed.History = append(changed.History, DetectorEvaluation{DetectorID: "incident", EvaluatedAt: time.Unix(2, 0).UTC(), Status: DetectorEvaluationFiring})
+	changed.History = append(changed.History, evaluationsContract([]DetectorEvaluation{{DetectorID: "incident", EvaluatedAt: time.Unix(2, 0).UTC(), Status: DetectorEvaluationFiring}})[0])
 	if _, err := store.Save(ctx, changed, revision); err != nil {
 		t.Fatalf("update state: %v", err)
 	}
@@ -167,7 +168,7 @@ func TestConfigMapStateStoreRejectsCorruptAndUnsupportedState(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "state", Namespace: "demo", Annotations: map[string]string{stateRevisionAnnotation: "1"}},
 				Data:       map[string]string{stateDataKey: test.data},
 			})
-			store := NewConfigMapStateStore(client, "demo", "state")
+			store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 			if _, _, err := store.Load(context.Background()); err == nil {
 				t.Fatal("expected invalid state error")
 			}
@@ -186,7 +187,7 @@ func TestControllerRestoreContinuesFiringCount(t *testing.T) {
 	if err := first.Step(context.Background(), start, nil); err != nil {
 		t.Fatalf("first sample: %v", err)
 	}
-	state := first.ExportState()
+	state := exportState(t, first)
 
 	restoredDetector := controllerDetector("fault", time.Second, stateFinding("fault"))
 	restoredDispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
@@ -219,7 +220,7 @@ func TestControllerRestorePreservesIncidentLockWithoutRedispatch(t *testing.T) {
 	}
 	executePendingEffect(t, first)
 	awaitRequest(t, dispatcher.requests)
-	state := first.ExportState()
+	state := exportState(t, first)
 
 	restoredDetector := controllerDetector("fault", time.Second, stateFinding("fault"), stateFinding("fault"))
 	restoredDispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
@@ -258,7 +259,7 @@ func TestControllerRestoreResumesPendingDebounceBatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new restored controller: %v", err)
 	}
-	if err := restored.RestoreState(first.ExportState()); err != nil {
+	if err := restored.RestoreState(exportState(t, first)); err != nil {
 		t.Fatalf("restore state: %v", err)
 	}
 	if err := restored.Step(context.Background(), start.Add(time.Second), nil); err != nil {
@@ -299,7 +300,7 @@ func TestControllerRestoreDropsPendingFindingThatClearsBeforeDeadline(t *testing
 	if err != nil {
 		t.Fatalf("new restored controller: %v", err)
 	}
-	if err := restored.RestoreState(first.ExportState()); err != nil {
+	if err := restored.RestoreState(exportState(t, first)); err != nil {
 		t.Fatalf("restore state: %v", err)
 	}
 	if err := restored.Step(context.Background(), start.Add(500*time.Millisecond), nil); err != nil {
@@ -320,7 +321,7 @@ func TestDispatchEffectIsAbsentBeforeSaveAndReplayedAfterSave(t *testing.T) {
 	config := testControllerConfig()
 	config.FiringThreshold = 1
 	client := fake.NewSimpleClientset()
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
@@ -386,7 +387,7 @@ func TestLeadershipGuardBlocksPersistenceAndDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
-	if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "demo", "state")); err != nil {
+	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo", "state")); err != nil {
 		t.Fatalf("attach state store: %v", err)
 	}
 	if err := controller.Step(ctx, start, nil); err != nil {
@@ -418,7 +419,7 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 	firstDispatcher := &blockingDispatcher{requests: make(chan IncidentRequest, 2), release: make(chan struct{}, 1)}
 	t.Cleanup(func() { close(firstDispatcher.release) })
 	client := fake.NewSimpleClientset()
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	controller, err := NewController(config, []sdk.Detector{primary, secondary}, staticProvider{snapshot: sdktest.Snapshot{}}, firstDispatcher, start)
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
@@ -446,8 +447,8 @@ func TestFindingArrivingDuringIncidentIsDeferredAndRestartRecoverable(t *testing
 	if effect, ok := controller.PendingDispatchEffect(); ok {
 		t.Fatalf("new fault dispatched while primary responder is running: %#v", effect)
 	}
-	state := controller.ExportState()
-	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentID != firstEffect.Request.IncidentID {
+	state := exportState(t, controller)
+	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentId != firstEffect.Request.IncidentID {
 		t.Fatalf("new fault replaced the running primary incident: %#v", state.IncidentRequest)
 	}
 	if len(state.PendingBatch.Findings) != 1 || state.PendingBatch.Findings[0].Fingerprint != "secondary-fault" {
@@ -508,7 +509,7 @@ func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
 	result := completedResult("legacy-state")
 	result.PlanApplications = []RecordedPlanApplication{{ID: "old-application", ProgramIDs: []string{"targetport"}, Result: PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, Applied: true, ActionsApplied: []program.Action{action}}}}
 	result.ProgramFailureSignals = []string{"fast_path_failure:targetport@original-revision"}
-	payload, err := encodeControllerState(RuntimeState{Version: RuntimeStateVersion, IncidentResult: &result})
+	payload, err := encodeControllerState(&contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, result)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +528,7 @@ func TestControllerStateDropsRetiredRollbackFieldsFromPriorBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := loaded.IncidentResult.PlanApplications[0].Result
+	got := incidentResultState(loaded.IncidentResult).PlanApplications[0].Result
 	if len(got.PreImages) != 0 || len(got.Patches) != 0 || len(got.ActionsApplied) != 1 || !got.Applied {
 		t.Fatalf("retired fields corrupted outcome facts: %+v", got)
 	}

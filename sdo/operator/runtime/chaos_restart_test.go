@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func TestChaosRestartDispatchesExactlyOnceWithStableIncidentID(t *testing.T) {
 		detector := newChaosHealthDetector("health") // shared across the restart
 		dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 8)}
 		client := fake.NewSimpleClientset()
-		store := NewConfigMapStateStore(client, "demo", "state")
+		store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 
 		var now time.Time
 		build := func() *Controller {
