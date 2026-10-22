@@ -136,7 +136,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			}
 		}
 		trimReflectionClosure(closed)
-		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics}
+		request := &contracts.ReflectionRequest{Closure: closed, Outcome: current, PriorOutcomes: history, ProposalCommit: proposalCommit, OutcomeCommit: outcomeCommit, SessionMode: mode, Guidance: guidance, ValidationAttempt: attempt, PreviousDiagnostics: feedback.Diagnostics, CauseWork: feedback.CauseWork, UnassignedWork: feedback.UnassignedWork}
 		if w.Catalog != nil {
 			snapshot, err := w.Catalog.Snapshot(ctx)
 			if err != nil {
@@ -146,11 +146,6 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 				return ReflectionDecision{}, errors.New("reflection memory snapshot differs from broker proposal base commit")
 			}
 			request.MemorySnapshot = snapshot
-			installed := make([]string, 0, len(snapshot.GetPlaybooks()))
-			for _, playbook := range snapshot.GetPlaybooks() {
-				installed = append(installed, playbook.GetId())
-			}
-			request.Depth = ReflectionDepth(ReflectionDepthInput{Outcome: current, InstalledProgramIDs: installed, SessionMode: mode, Attempt: attempt, HasDiagnostics: len(feedback.Diagnostics) > 0})
 			currentWire, err := wire.Marshal(current)
 			if err != nil {
 				return ReflectionDecision{}, err
