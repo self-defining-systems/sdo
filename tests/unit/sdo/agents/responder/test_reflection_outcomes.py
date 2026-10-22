@@ -9,6 +9,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from sdo.agents.responder.reflection import SessionReflector
 from sdo.agents.responder.reflection_outcomes import (
+    MAX_HISTORY_INCIDENTS,
     collapse_detector_history,
     current_outcome_view,
     history_view,
@@ -171,6 +172,15 @@ def test_history_view_excludes_the_current_incident_and_keeps_order() -> None:
     assert [entry["incident_id"] for entry in view] == ["inc-0", "inc-1"]
 
 
+def test_history_view_keeps_only_the_last_two_prior_incidents() -> None:
+    records = [_outcome(f"inc-{index}") for index in range(5)]
+
+    view = history_view(records, current_incident_id="inc-4")
+
+    assert MAX_HISTORY_INCIDENTS == 2
+    assert [entry["incident_id"] for entry in view] == ["inc-2", "inc-3"]
+
+
 class _Backend:
     def __init__(self) -> None:
         self.prompt = ""
@@ -210,12 +220,14 @@ def test_reflection_prompt_growth_per_prior_outcome_is_bounded(tmp_path: Path) -
     priors = [_outcome(f"inc-{index}") for index in range(6)]
     large = _prompt([*priors, current], current, tmp_path)
 
-    per_prior = (len(large) - len(small)) / len(priors)
-    assert per_prior < 2_500
+    # Only the most recent priors are carried, so growth stops at the cap.
+    assert (len(large) - len(small)) / MAX_HISTORY_INCIDENTS < 2_500
     # The current incident is never repeated inside the history.
     assert large.count("inc-current: required ConfigMap was removed") == 1
-    for prior in priors:
+    for prior in priors[-MAX_HISTORY_INCIDENTS:]:
         assert f"{prior.incident_id}: required ConfigMap was removed" in large
+    for prior in priors[:-MAX_HISTORY_INCIDENTS]:
+        assert f"{prior.incident_id}: required ConfigMap was removed" not in large
 
 
 def test_reflection_prompt_without_prior_outcomes_says_so(tmp_path: Path) -> None:

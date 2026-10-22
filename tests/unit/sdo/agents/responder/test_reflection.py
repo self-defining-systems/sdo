@@ -307,6 +307,47 @@ def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
         assert required in prompt
 
 
+def test_reflection_prompt_orients_in_one_read_and_waits_once_for_the_check(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+
+    assert "Orient with one read command" in prompt
+    assert "programs.md" in prompt
+    assert "/sdo/session/corpus" in prompt
+    assert "one command" in prompt
+    assert "yield_time_ms" in prompt
+    assert "never poll or retry while it runs" in prompt
+
+
+def test_reflection_prompt_accepts_any_open_capture_phase_as_evidence(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+
+    assert "open@detect, open@settle or open@pre-apply" in prompt
+    assert "Detect time is not mandatory" in prompt
+    assert "sdk_gap only when no open capture" in prompt
+    assert "open_at (detect)" not in prompt
+    assert "use open@detect.json" not in prompt
+
+
 def test_reflection_prompt_uses_configured_example_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", "/custom/examples")
     backend = _CapturingBackend()
