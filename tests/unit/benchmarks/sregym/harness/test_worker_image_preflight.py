@@ -31,35 +31,71 @@ def test_kind_cluster_prefix_is_read_when_used(monkeypatch: pytest.MonkeyPatch) 
     assert module.kind_cluster_prefix() == "sregym-w"
 
 
-def test_kind_image_preflight_loads_and_verifies_every_node(monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _worker_infra()
-    calls: list[list[str]] = []
-    digests = {
-        "controller:run": "sha256:" + "1" * 64,
-        "responder:run": "sha256:" + "2" * 64,
-    }
+def _kind_fake_run(
+    digests: dict[str, str],
+    node_digests: dict[str, dict[str, str]],
+    calls: list[list[str]],
+) -> Any:
+    """Fake subprocess.run for a kind cluster whose nodes hold ``node_digests``; ``kind load`` upgrades them."""
 
     def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         if command[:3] == ["docker", "image", "inspect"]:
             return subprocess.CompletedProcess(command, 0, digests[command[3]] + "\n", "")
         if command[:3] == ["kind", "get", "nodes"]:
-            return subprocess.CompletedProcess(command, 0, "node-a\nnode-b\n", "")
-        if command[:3] == ["docker", "exec", "node-a"] or command[:3] == ["docker", "exec", "node-b"]:
+            return subprocess.CompletedProcess(command, 0, "\n".join(node_digests) + "\n", "")
+        if command[:3] == ["kind", "load", "docker-image"]:
+            for held in node_digests.values():
+                held.update({image: digests[image] for image in command[5:]})
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command[:2] == ["docker", "exec"]:
             image = command[-1].removeprefix("name==").removeprefix("docker.io/library/")
-            return subprocess.CompletedProcess(command, 0, f"image @{'@' if False else ''}{digests[image]}\n", "")
+            held = node_digests[command[2]]
+            if image not in held:
+                raise subprocess.CalledProcessError(1, command)
+            return subprocess.CompletedProcess(command, 0, f"image @{held[image]}\n", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    return fake_run
+
+
+def test_kind_image_preflight_skips_load_when_every_node_holds_the_digest(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _worker_infra()
+    calls: list[list[str]] = []
+    digests = {
+        "controller:run": "sha256:" + "1" * 64,
+        "responder:run": "sha256:" + "2" * 64,
+    }
+    nodes = {"node-a": dict(digests), "node-b": dict(digests)}
+    monkeypatch.setattr(module.subprocess, "run", _kind_fake_run(digests, nodes, calls))
 
     evidence = module.ensure_kind_images("sregym-w0", list(digests))
 
-    assert evidence == {
-        "node-a": digests,
-        "node-b": digests,
+    assert evidence == {"node-a": digests, "node-b": digests}
+    assert not any(command[:2] == ["kind", "load"] for command in calls)
+
+
+def test_kind_image_preflight_loads_only_missing_or_stale_images_and_verifies_every_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _worker_infra()
+    calls: list[list[str]] = []
+    digests = {
+        "controller:run": "sha256:" + "1" * 64,
+        "responder:run": "sha256:" + "2" * 64,
+        "validator:run": "sha256:" + "3" * 64,
     }
-    assert ["kind", "load", "docker-image", "--name", "sregym-w0", *digests] in calls
-    assert sum(command[:2] == ["docker", "exec"] for command in calls) == 8  # crictl and ctr per node and image
+    nodes = {
+        "node-a": dict(digests),
+        "node-b": {"controller:run": digests["controller:run"], "responder:run": "sha256:" + "0" * 64},
+    }
+    monkeypatch.setattr(module.subprocess, "run", _kind_fake_run(digests, nodes, calls))
+
+    evidence = module.ensure_kind_images("sregym-w0", list(digests))
+
+    assert evidence == {"node-a": digests, "node-b": digests}
+    loads = [command for command in calls if command[:2] == ["kind", "load"]]
+    assert loads == [["kind", "load", "docker-image", "--name", "sregym-w0", "responder:run", "validator:run"]]
 
 
 def test_kind_image_preflight_rejects_stale_node_digest(monkeypatch: pytest.MonkeyPatch) -> None:

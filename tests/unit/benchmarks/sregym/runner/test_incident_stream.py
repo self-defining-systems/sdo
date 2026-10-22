@@ -118,6 +118,14 @@ def test_the_sdo_pipeline_has_one_chained_stage_per_incident_on_one_persistent_c
     assert document["defaults"]["allow_failed_verdicts"] is True
 
 
+def test_both_arms_enable_the_source_build_cache_identically() -> None:
+    sdo = tomllib.loads(render_sdo_pipeline_toml(_stream(), name="t"))["defaults"]["env"]
+    baseline = tomllib.loads(render_baseline_toml(_stream()[:PILOT]))["runner"]["env"]
+    for key in ("source_build_cache", "fast_namespace_teardown", "preserve_infrastructure"):
+        assert sdo[key] is True
+        assert baseline[key] is True
+
+
 def test_the_baseline_lists_the_identical_problems_in_order() -> None:
     document = tomllib.loads(render_baseline_toml(_stream()[:PILOT]))
     assert document["runner"]["problems"] == [i.problem_id for i in _stream()[:PILOT]]
