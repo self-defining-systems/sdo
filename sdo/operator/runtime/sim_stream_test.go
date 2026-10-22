@@ -17,6 +17,10 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
 
+	"buf.build/go/protovalidate"
+	"google.golang.org/protobuf/proto"
+
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 )
@@ -48,6 +52,8 @@ type simWorld struct {
 	client     *fake.Clientset
 	restarts   int
 	storeFails int
+
+	outcomes *memory.JSONStore
 
 	mu         sync.Mutex
 	closed     []IncidentClosure
@@ -168,6 +174,9 @@ func (b *simBroker) ProcessClosure(_ context.Context, closure IncidentClosure) (
 		b.failed[id] = true
 		return ClosureReceipt{}, errors.New("simulated: broker validation rejected the closure")
 	}
+	// Only a persisted closure reaches the broker, and a retry of it must derive
+	// the identical record.
+	b.world.checkOutcomeDocument(closure)
 	return ClosureReceipt{IncidentID: id, Worktree: "/worktrees/" + id, BaseCommit: "base", OutcomeCommit: "outcome-" + id, AckToken: "ack-" + id}, nil
 }
 
@@ -179,7 +188,7 @@ var simEpoch = newSimClock().now
 func newSimWorld(t *testing.T, seed uint64) *simWorld {
 	t.Helper()
 	rng := newSimRNG(seed)
-	w := &simWorld{t: t, rng: rng, clock: newSimClock()}
+	w := &simWorld{t: t, rng: rng, clock: newSimClock(), outcomes: memory.NewJSONStore(t.TempDir())}
 	objects := make([]*unstructured.Unstructured, 0, simStreamServices)
 	for i := 0; i < simStreamServices; i++ {
 		objects = append(objects, simServiceNamed(simServiceName(i), 8080))
@@ -287,6 +296,39 @@ func (w *simWorld) onClosed(closure IncidentClosure) {
 	w.mu.Unlock()
 	if faulty := w.faulty(); len(faulty) > 0 {
 		w.violate("incident %s closed verified while %v still faulty", closure.Request.IncidentID, faulty)
+	}
+}
+
+// checkOutcomeDocument derives the closure's outcome the way the broker's edge
+// does and requires a record that satisfies its contract and survives the
+// repository adapter byte-for-byte: written, read back, and written again.
+func (w *simWorld) checkOutcomeDocument(closure IncidentClosure) {
+	id := closure.Request.IncidentID
+	ctx := context.Background()
+	derived, err := ProtoOutcomeDeriver{}.Derive(ctx, closure, "outcome-commit", "codex", "sim")
+	if err != nil {
+		w.violate("incident %s: outcome derivation failed: %v", id, err)
+		return
+	}
+	if err := protovalidate.Validate(derived.Record); err != nil {
+		w.violate("incident %s: outcome record violates its contract: %v", id, err)
+		return
+	}
+	stored, err := w.outcomes.Put(ctx, derived.Record)
+	if err != nil {
+		w.violate("incident %s: outcome write failed: %v", id, err)
+		return
+	}
+	read, err := w.outcomes.Get(ctx, id)
+	if err != nil {
+		w.violate("incident %s: outcome read failed: %v", id, err)
+		return
+	}
+	if !proto.Equal(read.Record, derived.Record) || read.IncidentID != stored.IncidentID {
+		w.violate("incident %s: outcome did not round-trip through the repository", id)
+	}
+	if _, err := w.outcomes.Put(ctx, read.Record); err != nil {
+		w.violate("incident %s: re-writing the stored outcome failed: %v", id, err)
 	}
 }
 
