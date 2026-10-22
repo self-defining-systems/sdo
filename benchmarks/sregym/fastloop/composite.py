@@ -31,7 +31,6 @@ from benchmarks.sregym.adapter import (
     DetectorReviewRequiredError,
     PersistentControllerError,
     PersistentState,
-    ReceiptRejectedError,
     collect_followup_incident,
     drain_pending_incident,
     pause_controller,
@@ -499,16 +498,15 @@ class CompositeSdoAgent(SdoPersistentAgent):
         if self._reflection_started_at is None:
             self._reflection_started_at = self._clock.now()
         started = self._clock.monotonic()
-        try:
-            drain_pending_incident(
-                record,
-                ops=self._ops,
-                repository=settings.repository,
-                drained_by=first_label,
-                clock=self._clock,
-            )
-        except ReceiptRejectedError as exc:
-            logger.warning("incident %s strict receipt rejected: %s", record.pending.incident_id, exc)
+        drained = drain_pending_incident(
+            record,
+            ops=self._ops,
+            repository=settings.repository,
+            drained_by=first_label,
+            clock=self._clock,
+        )
+        if drained.HasField("failure"):
+            logger.warning("incident %s strict receipt rejected: %s", drained.incident_id, drained.failure.message)
         self._reflection_drain_seconds += self._clock.monotonic() - started
         record.pending = None
         state.save(settings.state_path)
@@ -575,16 +573,15 @@ class CompositeSdoAgent(SdoPersistentAgent):
         record = state.controllers.get(settings.namespace)
         error: str | None = None
         if record is not None and record.pending is not None:
-            try:
-                drain_pending_incident(
-                    record,
-                    ops=self._ops,
-                    repository=settings.repository,
-                    drained_by=f"fastloop-learn-{outcome.incident_id}",
-                    clock=self._clock,
-                )
-            except ReceiptRejectedError as exc:
-                error = f"drain failed: {type(exc).__name__}: {exc}"
+            drained = drain_pending_incident(
+                record,
+                ops=self._ops,
+                repository=settings.repository,
+                drained_by=f"fastloop-learn-{outcome.incident_id}",
+                clock=self._clock,
+            )
+            if drained.HasField("failure"):
+                error = f"drain failed: {drained.failure.message}"
             record.pending = None
             state.save(settings.state_path)
         usage = TokenCounts()

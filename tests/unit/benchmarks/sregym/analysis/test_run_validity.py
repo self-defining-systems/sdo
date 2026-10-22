@@ -311,3 +311,22 @@ def test_a_stage_waiting_for_its_deferred_receipt_reports_pending(tmp_path: Path
     assert "pending" in results[0].reasons[0]
     assert "pipeline stopped" not in results[0].reasons[0]
     assert results[1].reasons == ("no problem run was recorded",)
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [("CODE_CHECKER_UNAVAILABLE", "invalid_infra"), ("CODE_REJECTED_EVIDENCE", "agent_failure")],
+)
+def test_typed_receipt_failure_distinguishes_checker_infrastructure(tmp_path: Path, code: str, expected: str) -> None:
+    stage = Run(agent="sdo_codex", receipt=None).write(tmp_path / "exp")
+    rejected = next(stage.rglob("run_1")) / "sdo_rejected_production_receipt.json"
+    rejected.write_text(
+        json.dumps(
+            {
+                "validation_error": "receipt check failed",
+                "failure": {"incident_id": "one", "code": code, "message": "receipt check failed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _one(stage).classification == expected
