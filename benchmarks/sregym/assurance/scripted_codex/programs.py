@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .faults import PlanError, _finding_evidence, _object_ref, fired_detectors, state_changes
-from .responder import _poll_status, _verification
+from .responder import STATUS_COMMAND, STATUS_POLL_SECONDS, _verification
 from .turn import Turn, utc_now
 
 PROGRAM_FAULT = "service_target_port"
@@ -84,6 +84,16 @@ def _baseline_images(request: dict[str, Any], deployment: str) -> dict[str, str]
                 if name.startswith("container[") and name.endswith("].image") and field.get("before"):
                     images[name[len("container[") : -len("].image")]] = str(field["before"])
     return images
+
+
+def _poll_status(turn: Turn, attempts: int) -> tuple[bool, str]:
+    output = ""
+    for attempt in range(attempts):
+        command = STATUS_COMMAND if attempt == 0 else f"sleep {STATUS_POLL_SECONDS}; {STATUS_COMMAND}"
+        code, output = turn.run(command, timeout=120)
+        if code == 0:
+            return True, output
+    return False, output
 
 
 _TARGET_PORT = re.compile(r"spec\.ports\[(\d+)\]\.targetPort")
@@ -201,7 +211,7 @@ def respond_program(turn: Turn, request: dict[str, Any], worktree: Path) -> dict
             if code:
                 raise PlanError(f"sdo act failed ({code}): {output[:300]}")
         _tool(turn, "verify")
-        healthy, status_output = _poll_status(turn, namespace, 24)
+        healthy, status_output = _poll_status(turn, 24)
     except PlanError as exc:
         result["repair_changes"] = [f"scripted plan stopped: {exc}"]
         result["timing"] = {"started_at": started, "completed_at": utc_now()}

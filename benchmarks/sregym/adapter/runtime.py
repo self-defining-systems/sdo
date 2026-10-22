@@ -191,7 +191,8 @@ def _responder_instructions() -> str:
         "`python3 -m benchmarks.sregym.adapter.submission diagnosis '<diagnosis>'`; after repair and your own "
         "verification, run `python3 -m benchmarks.sregym.adapter.submission mitigation '<mitigation>'`. "
         "The controller alone determines closure from live detectors. Do not begin repair until diagnosis is "
-        "acknowledged. Before mitigation, wait for affected rollouts and verify representative requests. "
+        "acknowledged. Before mitigation, wait for affected rollouts, verify representative requests, and run "
+        "`python3 -m sdo.agents.responder.status_cli` until it reports healthy. "
         "Submit mitigation once; return the incident "
         "result after the benchmark accepts it."
     )

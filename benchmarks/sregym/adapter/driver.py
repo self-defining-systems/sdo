@@ -205,20 +205,17 @@ def _submit_recorded_result(
         if isinstance(item, dict) and str(item.get("summary", "")).strip()
     )
     repair_actions = result.get("repair_actions", [])
-    summaries = [
+    mitigation = "; ".join(
         str(item.get("summary", "")).strip()
         for item in repair_actions
         if isinstance(item, dict) and str(item.get("summary", "")).strip()
-    ]
-    if not summaries:
-        summaries = [str(change).strip() for change in result.get("repair_changes", []) if str(change).strip()]
-    mitigation = "; ".join(summaries)
+    )
     if stage == "diagnosis":
         if not diagnosis:
             raise RuntimeError("SDO result has no confirmed root cause to submit")
         submitter(diagnosis, phase="diagnosis", api_base=api_base)
     if not mitigation:
-        raise RuntimeError("SDO result has no repair action or repair change to submit")
+        raise RuntimeError("SDO result has no successful repair action to submit")
     submitter(mitigation, phase="mitigation", api_base=api_base)
 
 

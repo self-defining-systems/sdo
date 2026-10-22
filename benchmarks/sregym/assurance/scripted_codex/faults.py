@@ -245,7 +245,7 @@ class NetworkPolicyBlock:
         return (
             absent,
             f"kubectl -n {facts.namespace} delete networkpolicy {policy}",
-            f"{absent} && kubectl -n {facts.namespace} wait --for=condition=Available deployment --all --timeout=60s",
+            f"{absent} && python3 -m sdo.agents.responder.status_cli",
         )
 
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
@@ -369,7 +369,7 @@ class MissingConfigMap:
         return (
             f"kubectl -n {facts.namespace} get configmap {configmap} -o name",
             f"kubectl -n {facts.namespace} create configmap {configmap} --from-file=k8s-geo-mongo.sh",
-            f"kubectl -n {facts.namespace} get configmap {configmap} -o name && kubectl -n {facts.namespace} wait --for=condition=Available deployment --all --timeout=60s",
+            f"kubectl -n {facts.namespace} get configmap {configmap} -o name && python3 -m sdo.agents.responder.status_cli",
         )
 
     def memory(self, facts: Facts, *, incident_id: str, outcome_commit: str) -> MemoryFiles:
@@ -559,7 +559,7 @@ _README = """# {title}
 
 This playbook was learned from an incident whose cause the controller confirmed: the incident detector
 `{detector_id}` encodes the cause, the health detectors that fired at dispatch cleared after the repair, and
-the Deployments in the namespace were available again before the responder returned.
+`python3 -m sdo.agents.responder.status_cli` reported healthy before the responder returned.
 """
 
 _NP_DETECT = """
@@ -653,10 +653,10 @@ Repair:
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <NETWORK_POLICY>
 ```
 
-Then run the verification:
+Then run the verification and `python3 -m sdo.agents.responder.status_cli` together:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT>
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
 ```
 """
 
@@ -799,10 +799,10 @@ Repair (`-` finds the missing ConfigMap from the Deployment's volumes):
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <DEPLOYMENT> <CONFIGMAP>
 ```
 
-Then verify:
+Then verify together with `python3 -m sdo.agents.responder.status_cli`:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT>
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && python3 -m sdo.agents.responder.status_cli
 ```
 """
 
