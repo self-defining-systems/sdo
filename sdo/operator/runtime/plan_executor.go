@@ -118,6 +118,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}
 	result.PreImages = make([]PlanPreImage, 0, len(plan.Actions))
 	current := make(map[sdk.ObjectRef]*unstructured.Unstructured)
+	originals := make(map[sdk.ObjectRef]*unstructured.Unstructured)
 	refs := make([]sdk.ObjectRef, 0, len(plan.Actions))
 	// Capture every pre-image before any write, including later actions' targets.
 	for _, action := range plan.Actions {
@@ -143,15 +144,17 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		}
 		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
 		current[ref] = object.DeepCopy()
+		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
 	}
+	prepared := make([]*unstructured.Unstructured, 0, len(plan.Actions))
+	cumulative := make([][]byte, 0, len(plan.Actions))
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
 		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
 		if actionErr != nil {
 			return result, actionErr
 		}
-		canonicalizePlanObject(next)
 		before, marshalErr := json.Marshal(current[ref].Object)
 		if marshalErr != nil {
 			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
@@ -168,15 +171,27 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if patchErr != nil {
 			return result, patchErr
 		}
+		// The server dry-run starts from the live object, which has none of the
+		// earlier actions, so it needs the change from the pre-image to this action.
+		original, marshalErr := json.Marshal(originals[ref].Object)
+		if marshalErr != nil {
+			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
+		}
+		total, patchErr := jsonpatch.CreateMergePatch(original, after)
+		if patchErr != nil {
+			return result, fmt.Errorf("patch %s/%s: %w", ref.Kind, ref.Name, patchErr)
+		}
+		total, patchErr = conditionalPlanPatch(total, originals[ref])
+		if patchErr != nil {
+			return result, patchErr
+		}
+		prepared = append(prepared, next.DeepCopy())
+		cumulative = append(cumulative, total)
 		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
 		current[ref] = next
 	}
-	if client, ok := e.Client.(planDryRunner); ok {
-		for _, patch := range result.Patches {
-			if err := client.DryRunPatch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil && !errors.Is(err, ErrPlanDryRunUnsupported) {
-				return result, fmt.Errorf("server dry-run %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
-			}
-		}
+	if err := e.normalizeAfterImages(ctx, result.Patches, cumulative); err != nil {
+		return result, err
 	}
 	if dryRun {
 		return result, nil
@@ -207,7 +222,8 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			return result, errors.New("applied object was recreated")
 		}
 		for _, field := range []string{"spec", "data", "binaryData"} {
-			if mismatch, found := findPlanOwnedFieldMismatch(field, observed.Object[field], patch.After.Object[field]); found {
+			written := projectPlanOwned(patch.After.Object[field], prepared[index].Object[field])
+			if mismatch, found := findPlanOwnedFieldMismatch(field, observed.Object[field], written); found {
 				return result, fmt.Errorf("concurrent change after action %d: %s", index, mismatch)
 			}
 		}
