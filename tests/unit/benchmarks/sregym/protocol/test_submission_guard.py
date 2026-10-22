@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmarks.sregym.protocol import _submission_guard as guard
+from benchmarks.sregym.protocol import submission_guard as guard
 from sdo.contracts import SubmissionGuardFailure
 
 

@@ -32,7 +32,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
 COPY benchmarks/__init__.py /opt/sdo/benchmarks/__init__.py
 COPY benchmarks/sregym/__init__.py /opt/sdo/benchmarks/sregym/__init__.py
 COPY benchmarks/sregym/adapter/__init__.py benchmarks/sregym/adapter/submission.py benchmarks/sregym/adapter/submission_relay.py /opt/sdo/benchmarks/sregym/adapter/
-COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py benchmarks/sregym/protocol/_submission_guard.py /opt/sdo/benchmarks/sregym/protocol/
+COPY benchmarks/sregym/protocol/__init__.py benchmarks/sregym/protocol/_http.py benchmarks/sregym/protocol/benchmark.py benchmarks/sregym/protocol/conductor.py benchmarks/sregym/protocol/mcp_client.py benchmarks/sregym/protocol/receipt.py benchmarks/sregym/protocol/schema.py benchmarks/sregym/protocol/submission_guard.py /opt/sdo/benchmarks/sregym/protocol/
 COPY benchmarks/sregym/fastloop/__init__.py benchmarks/sregym/fastloop/model_recording.py benchmarks/sregym/fastloop/file_edits.py benchmarks/sregym/fastloop/recording_worker.py /opt/sdo/benchmarks/sregym/fastloop/
 RUN chmod -R a+rX /opt/sdo/benchmarks
 

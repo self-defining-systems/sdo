@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from google.protobuf import json_format
 
-from benchmarks.sregym.protocol._submission_guard import SubmissionGuardError, evaluate_submission
+from benchmarks.sregym.protocol.submission_guard import SubmissionGuardError, evaluate_submission
 from sdo.agents.responder import IncidentStatusReport, IncidentStatusState, live_incident_status
 from sdo.contracts import SUBMISSION_PHASES, ConductorSolution, SubmissionGuardDecision, SubmissionGuardFailure
 
