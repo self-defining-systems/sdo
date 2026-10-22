@@ -54,7 +54,7 @@ from agentshim import (
 from agentshim.providers.codex import install_rules
 
 if TYPE_CHECKING:
-    from agentshim import AgentEvent, CommandExecutor, Provider, ProviderUsage
+    from agentshim import AgentEvent, CommandExecutor, McpServer, Provider, ProviderUsage
 
 AgentProvider = Literal["codex", "claude"]
 logger = logging.getLogger(__name__)
@@ -196,6 +196,8 @@ def run_structured_turn(
     timeout_seconds: float | None = None,
     resume_session_id: str | None = None,
     executor: CommandExecutor | None = None,
+    mcp_servers: Sequence[McpServer] = (),
+    environment: Mapping[str, str] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
@@ -229,7 +231,7 @@ def run_structured_turn(
                 selected,
                 model=model,
                 executor=executor,
-                env={**os.environ, **extra_env},
+                env={**os.environ, **(environment or {}), **extra_env},
                 event_handler=recorder,
                 check_timeout=_CLI_CHECK_TIMEOUT_S,
             )
@@ -245,6 +247,7 @@ def run_structured_turn(
                     output_schema=OutputSchema(schema=dict(output_schema), host_dir=Path(schema_dir)),
                     reasoning_effort=reasoning_effort,
                     extra_args=extra_args,
+                    mcp_servers=mcp_servers,
                 )
             )
             # Read the rollout now: a workspace-write Codex home is deleted

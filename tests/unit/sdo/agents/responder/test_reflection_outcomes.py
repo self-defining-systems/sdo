@@ -15,17 +15,22 @@ from sdo.agents.responder.reflection_outcomes import (
     prior_outcome_view,
 )
 from sdo.contracts.proto import (
+    Binding,
     ConfirmedRootCause,
     DetectorEvaluation,
     Finding,
     ObjectRef,
     OutcomeRecord,
     OutcomeTimestamps,
+    ProgramRun,
     RepairActionReceipt,
+    Verdict,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 _T0 = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _EVIDENCE = "FailedMount: configmap mongo-geo-script not found " * 40
@@ -218,3 +223,114 @@ def test_reflection_prompt_without_prior_outcomes_says_so(tmp_path: Path) -> Non
     prompt = _prompt([current], current, tmp_path)
 
     assert "Outcome history (prior incidents, compact): none" in prompt
+
+
+def _program_outcome(*, sweeps: int = 52) -> OutcomeRecord:
+    """Hand-written three-binding fixture shaped like the I2 repeated sweeps."""
+    outcome = _outcome("inc-program")
+    for sweep in range(sweeps):
+        for name in ("frontend", "search", "rate"):
+            outcome.program_runs.append(
+                ProgramRun(
+                    program_id="image-pull",
+                    program_revision="revision-a",
+                    binding_source="sweep",
+                    bindings=[
+                        Binding(
+                            name="deployment",
+                            object=ObjectRef(api_version="apps/v1", kind="Deployment", namespace="app", name=name),
+                        )
+                    ],
+                    verdict=Verdict(result=Verdict.RESULT_NO_MATCH),
+                    duration={"nanos": (sweep + 1) * 1000},
+                )
+            )
+    outcome.program_failure_signals.append("image-pull/search: unsupported replay")
+    for _ in range(5):
+        outcome.program_tool_calls.add(
+            command="source",
+            request_json='{"ref":"Deployment/search"}',
+            response_json=json.dumps(
+                {"source": {"manifest": "image: accepted\n" * 1200}, "corpus_ref": "captured/open@detect.json"}
+            ),
+            summary="Accepted search source",
+            at=_stamp(_T0),
+        )
+    return outcome
+
+
+def test_current_outcome_collapses_program_sweeps_without_mutating_durable_evidence() -> None:
+    outcome = _program_outcome()
+    before = outcome.SerializeToString()
+    view = current_outcome_view(outcome)
+    assert len(view["program_runs"]) == 3
+    assert [run["evaluations"] for run in view["program_runs"]] == [52] * 3
+    assert view["reflection_compaction"]["program_runs_omitted_duplicates"] == 153
+    assert view["program_failure_signals"] == list(outcome.program_failure_signals)
+    assert outcome.SerializeToString() == before
+
+
+def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -> None:
+    outcome = _program_outcome(sweeps=1)
+    run = outcome.program_runs[1]
+    for verdict, revision, error in [
+        (Verdict.RESULT_MATCH, "revision-a", ""),
+        (Verdict.RESULT_NO_MATCH, "revision-a", ""),
+        (Verdict.RESULT_UNKNOWN, "revision-a", "read unavailable"),
+        (Verdict.RESULT_UNKNOWN, "revision-b", "read unavailable"),
+    ]:
+        updated = ProgramRun()
+        updated.CopyFrom(run)
+        updated.verdict.result = verdict
+        updated.program_revision = revision
+        updated.error = error
+        outcome.program_runs.append(updated)
+    view = current_outcome_view(outcome)
+    assert len(view["program_runs"]) == 7
+    assert any(run["error"] == "read unavailable" for run in view["program_runs"])
+    assert any(run["program_revision"] == "revision-b" for run in view["program_runs"])
+    assert view["repair_actions"]
+    assert view["confirmed_root_causes"]
+    assert view["findings"][0]["evidence"] == _EVIDENCE
+
+
+def test_current_outcome_bounds_tool_responses_and_keeps_corpus_refs() -> None:
+    outcome = _program_outcome()
+    view = current_outcome_view(outcome)
+    calls = view["program_tool_calls"]
+    assert len(calls) == 1
+    assert calls[0]["evaluations"] == 5
+    assert view["reflection_compaction"]["program_tool_calls_omitted_duplicates"] == 4
+    assert len(json.dumps(calls)) < 6000
+    assert calls[0]["corpus_refs"] == ["captured/open@detect.json"]
+    assert calls[0]["response_json_omitted_chars"] > 0
+
+
+def test_reflection_prompt_repeated_sweep_payload_is_bounded(tmp_path: Path) -> None:
+    small = _program_outcome(sweeps=1)
+    large = _program_outcome(sweeps=52)
+    small_prompt = _prompt([], small, tmp_path)
+    large_prompt = _prompt([], large, tmp_path)
+    assert len(large_prompt) - len(small_prompt) < 100
+    assert large_prompt.count("FailedMount") == 40
+
+
+def test_reflection_prompt_size_reduction_on_synthetic_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sdo.agents.responder.reflection as reflection
+
+    outcome = _program_outcome()
+    full = json_format.MessageToDict(
+        outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+    )
+    # The old model view only collapsed detector_history. Keep the same prompt
+    # instructions on both sides to isolate the outcome-projection savings.
+    full["detector_history"] = collapse_detector_history(outcome.detector_history)
+    with monkeypatch.context() as baseline:
+        baseline.setattr(reflection, "current_outcome_view", lambda _: full)
+        before = _prompt([], outcome, tmp_path)
+    after = _prompt([], outcome, tmp_path)
+    reduction = 100 * (len(before) - len(after)) / len(before)
+    print(
+        json.dumps({"before_chars": len(before), "after_chars": len(after), "reduction_percent": round(reduction, 2)})
+    )
+    assert reduction > 85
