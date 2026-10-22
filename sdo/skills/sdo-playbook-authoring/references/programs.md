@@ -8,3 +8,42 @@
 6. Run `sdo-operator memory check` and fix diagnostics in the same checkout until green. It checks source/import/library/README/corpus policy, provenance, compilation, vet, ordinary tests and generated open/fixed/healthy, rename and mitigation replay tests. Return a decision and changed logical playbook IDs; the broker independently checks the same final bytes.
 
 There is no `program propose` command or scratch projection. A failed local check never authorizes publication.
+
+## Keep source-restoration mitigators
+
+Keep `mitigate.go` for image, readiness and ConfigMap restoration from accepted
+source. Never delete a mitigator merely because its effect cannot be simulated.
+The shared validator first validates its plan. A plan containing any effect other
+than `SetField` is accepted with an informational `skipped_unreplayable_effect`
+note; no post-plan effect is replayed for that plan. `SetField`-only plans still
+must repair the open fixture and return NoMatch on the projected state.
+
+Diagnosis replay stays mandatory: open Match, fixed/healthy-peer NoMatch,
+generalization and rename invariance all still run. Missing diagnosis primitives
+remain Unknown; a mitigation skip cannot supply missing diagnosis evidence.
+
+This minimal source-restoration pattern uses a source contradiction already
+established by the diagnosis. Narrow Match to the observed mechanism, such as a
+source image difference plus a selected Pod's ImagePullBackOff, or an incorrect
+readiness probe. Source/baseline differences used in diagnosis need recorded
+primitive answers in every required corpus phase.
+
+```go
+func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+    verdict, err := p.Diagnose(ctx, v, b)
+    if err != nil || verdict.Result != program.Match { return program.Plan{}, err }
+    return program.Plan{Actions: []program.Action{
+        program.ReconcileFromSource{Ref: b["workload"]},
+    }}, nil
+}
+```
+
+Skipped replay proves no repair and earns no origin learning credit. The default
+fast path requires three independently verified live successes and zero failures
+for the unchanged accepted revision. Use a matching program's plan/apply tools
+when available. An ad-hoc repair can also earn a live credit when the controller
+has a pre-repair matching plan, successful receipts covering every planned
+resource, exact observed plan equivalence, a bound post-repair NoMatch and an
+independently successful outcome. Merely flipping Match to NoMatch is insufficient.
+The live executor's object/rollout checks still apply; a skipped replay does not
+authorize an unsupported mutation such as recreating a missing target.

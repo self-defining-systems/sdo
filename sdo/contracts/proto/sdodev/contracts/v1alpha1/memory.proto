@@ -20,6 +20,19 @@ message MemoryDiagnostic {
   string hint = 5;
 }
 
+// Informational mitigation policy result, never a trust credit.
+message MitigationReplayNote {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_REPLAYED = 1;
+    STATUS_SKIPPED_UNREPLAYABLE_EFFECT = 2;
+  }
+  string program_id = 1;
+  string case_id = 2;
+  Status status = 3;
+  repeated string effects = 4;
+}
+
 // Result of `memory check`.
 message MemoryCheckReport {
   repeated MemoryDiagnostic diagnostics = 1;
@@ -27,6 +40,7 @@ message MemoryCheckReport {
   string actor = 3;
   string phase = 4;
   string base = 5;
+  repeated MitigationReplayNote mitigation_replay_notes = 6;
 }
 
 // One artifact of operational memory, identified by its logical ID.

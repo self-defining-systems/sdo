@@ -108,6 +108,17 @@ func (d KubernetesJobDispatcher) learningReplayCredit(ctx context.Context, reque
 		if open.Result != program.Match || fixed.Result != program.NoMatch {
 			continue
 		}
+		// A skipped external effect proves no origin repair. Only live matched
+		// plan applications/equivalent repairs may earn those trust credits.
+		mitigator, ok := loop.Programs.Mitigator(learned.ProgramID)
+		if !ok {
+			continue
+		}
+		replay, err := sdktest.CheckMitigation(diagnoser, mitigator, c)
+		if err != nil || replay.Status != sdktest.MitigationReplayPassed {
+			continue
+		}
+
 		run := ProgramRun{ProgramID: learned.ProgramID, ProgramRevision: revision, Bindings: cloneProgramBindings(labels.Bindings), Verdict: fixed}
 		applicationID := "learned-repair-" + learned.ProgramID
 		planID := "learned-plan-" + learned.ProgramID

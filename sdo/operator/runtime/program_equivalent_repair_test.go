@@ -6,6 +6,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -68,4 +69,18 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if len(loop.PlanApplications()) != 1 {
 		t.Fatalf("equivalent source repair with defaults earned no credit: %+v", loop.PlanApplications())
 	}
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 1 || !state.Trusted {
+		t.Fatalf("equivalent source repair missing bound trust receipt: %+v", state)
+	}
+}
+
+func equivalentRepairOutcome(t *testing.T, loop *ResponderLoop) *contracts.OutcomeRecord {
+	t.Helper()
+	runs := loop.ProgramRuns()
+	fillProgramRevisions(context.Background(), runs, loop.Request.RepositoryWorktree, loop.Request.SourceCommit)
+	result, err := incidentResultContract(IncidentResult{ProgramRuns: runs, ProgramToolCalls: loop.ToolCalls(), PlanApplications: loop.PlanApplications()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &contracts.OutcomeRecord{IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit, Classification: "success", ProgramRuns: result.ProgramRuns, ProgramToolCalls: result.ProgramToolCalls, PlanApplications: result.PlanApplications}
 }

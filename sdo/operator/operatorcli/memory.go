@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // MemoryUsage is the help text of the memory subcommand.
@@ -165,21 +166,26 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		}
 	}
 
+	var replayNotes []sdktest.MitigationReplayResult
 	diagnostics, err := validate.Check(ctx, validate.Request{
-		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
+		MitigationReplayNotes: &replayNotes,
+		Root:                  absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),
 	}, validate.CompileCandidate)
 	if err != nil {
 		return exitInfra, err
 	}
 	if *asJSON {
-		report := &contracts.MemoryCheckReport{Diagnostics: validate.ProtoDiagnostics(diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base}
+		report := &contracts.MemoryCheckReport{MitigationReplayNotes: validate.ProtoMitigationReplayNotes(replayNotes), Diagnostics: validate.ProtoDiagnostics(diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base}
 		if err := writeJSON(stdout, report); err != nil {
 			return exitInfra, err
 		}
 	} else {
 		for _, diagnostic := range diagnostics {
 			fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+		}
+		for _, note := range replayNotes {
+			fmt.Fprintf(stdout, "program=%s case=%s mitigation_replay=%s\n", note.ProgramID, note.CaseID, note.Status)
 		}
 	}
 	if len(diagnostics) > 0 {

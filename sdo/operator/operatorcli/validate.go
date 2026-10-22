@@ -11,6 +11,7 @@ import (
 
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func ParseValidateLaunch(args []string) (builder.Config, error) {
@@ -54,13 +55,15 @@ func RunValidate(ctx context.Context, config builder.Config) error {
 
 // RunValidateReport carries content failures across the isolated Job boundary.
 func RunValidateReport(ctx context.Context, config builder.Config, out io.Writer) error {
+	var notes []sdktest.MitigationReplayResult
 	diagnostics, err := validate.CompileCandidate(ctx, validate.Request{
-		Root: config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
+		MitigationReplayNotes: &notes,
+		Root:                  config.ApplicationRoot, Layers: validate.Compile, OperatorRoot: config.OperatorRoot, HealthyBaseline: config.HealthyBaseline,
 	})
 	if err != nil {
 		return err
 	}
-	if err := validate.WriteReport(out, diagnostics); err != nil {
+	if err := validate.WriteReport(out, diagnostics, notes...); err != nil {
 		return err
 	}
 	return validate.Err(diagnostics)

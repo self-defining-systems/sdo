@@ -105,6 +105,7 @@ OutcomeRecord = outcome_pb2.OutcomeRecord
 OutcomeTimestamps = outcome_pb2.OutcomeTimestamps
 DiagnosisVerification = outcome_pb2.DiagnosisVerification
 
+MitigationReplayNote = memory_pb2.MitigationReplayNote
 MemoryDiagnostic = memory_pb2.MemoryDiagnostic
 MemoryCheckReport = memory_pb2.MemoryCheckReport
 MemoryArtifact = memory_pb2.MemoryArtifact
@@ -218,6 +219,7 @@ __all__ = [
     "MemoryArtifact",
     "MemoryCheckReport",
     "MemoryDiagnostic",
+    "MitigationReplayNote",
     "MemoryListing",
     "MemoryOutcomes",
     "OutcomeRecord",

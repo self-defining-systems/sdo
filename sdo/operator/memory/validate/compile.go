@@ -47,6 +47,13 @@ func (s *run) compile(ctx context.Context) error {
 	defer workspace.Close()
 	err = workspace.Check(ctx)
 	if err == nil {
+		notes, noteErr := workspace.MitigationReplayResults()
+		if noteErr != nil {
+			return noteErr
+		}
+		if s.req.MitigationReplayNotes != nil {
+			*s.req.MitigationReplayNotes = append(*s.req.MitigationReplayNotes, notes...)
+		}
 		return nil
 	}
 	var stage *builder.StageError

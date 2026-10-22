@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // Actor is the party that authored a candidate change.
@@ -63,6 +64,8 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// MitigationReplayNotes optionally receives informational corpus replay results.
+	MitigationReplayNotes *[]sdktest.MitigationReplayResult
 	// Root is the checkout to validate.
 	Root string
 	// Publication is broker-derived context. CLI callers load its provisioned

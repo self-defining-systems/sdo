@@ -216,7 +216,7 @@ func TestLearningCreditRequiresCapturedBoundFixedNoMatch(t *testing.T) {
 		t.Run(string(fixed), func(t *testing.T) {
 			root, commit := learningTrustRepository(t)
 			p := learningReplayDiagnoser{fixed: fixed}
-			registry, err := program.NewRegistry([]program.Diagnoser{p}, nil)
+			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{fastloopPortProgram{}})
 			if err != nil {
 				t.Fatal(err)
 			}
