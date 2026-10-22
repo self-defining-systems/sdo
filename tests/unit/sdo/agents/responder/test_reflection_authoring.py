@@ -23,7 +23,7 @@ def test_program_reference_uses_shipped_sdk_and_worked_example() -> None:
     assert "type ReadView interface" in authoring_reference("sdk")
 
 
-@pytest.mark.parametrize("phase", ["detect"])
+@pytest.mark.parametrize("phase", ["detect", "pre-apply"])
 def test_corpus_tool_supplies_provenance_and_preserves_capture_bytes(tmp_path: Path, phase: str) -> None:
     captures = tmp_path / "captures"
     captures.mkdir()
