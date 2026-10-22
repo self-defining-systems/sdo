@@ -52,6 +52,7 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
         "error",
         "late_findings_pull",
         "program_tool_calls",
+        "repair_actions",
         "program_runs",
         "plan_applications",
         "response_loops_used",
