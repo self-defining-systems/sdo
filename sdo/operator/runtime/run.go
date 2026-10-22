@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strconv"
 	"strings"
 	"time"
@@ -478,7 +479,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					if controller == nil {
 						return nil
 					}
-					return controller.ExportState().IncidentRequest
+					controller.mu.Lock()
+					defer controller.mu.Unlock()
+					return cloneIncidentRequest(controller.currentIncidentRequest)
 				}
 				loop.DiagnosisDeadline = *diagnosisDeadline
 				loop.CorpusReplayPassed = options.NativeBroker != nil
@@ -554,7 +557,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
-	stateStore := NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap)
+	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap)
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
 	}

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 	"time"
 
@@ -85,7 +86,7 @@ func TestControllerIntegrationInformerPersistenceAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
-	store := NewConfigMapStateStore(client, "demo", "sdo-controller-state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "sdo-controller-state")
 	if err := controller.AttachStateStore(ctx, store); err != nil {
 		t.Fatalf("attach store: %v", err)
 	}

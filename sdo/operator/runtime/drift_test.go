@@ -49,7 +49,7 @@ func TestIncidentRequestCarriesOnlyFindingDriftAndPreservesStatusHistory(t *test
 	if len(request.DriftEvents) != 1 || request.DriftEvents[0].Ref != current.Ref {
 		t.Fatalf("request carried unrelated historical drift: %+v", request.DriftEvents)
 	}
-	if events := controller.ExportState().DriftEvents; len(events) != 2 || events[0].Ref != old.Ref {
+	if events := exportState(t, controller).DriftEvents; len(events) != 2 || objectRefState(events[0].Ref) != old.Ref {
 		t.Fatalf("status lost drift history: %+v", events)
 	}
 }
@@ -220,8 +220,8 @@ func TestControllerOpensLatentIncidentOnDriftWithinOneStep(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
 	}
-	state := controller.ExportState()
-	if !state.IncidentOpen || len(state.IncidentRequest.Findings) != 1 || state.IncidentRequest.Findings[0].Severity != sdk.SeverityLatent || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != sdk.DriftFault || state.IncidentView == nil || len(state.IncidentView.DriftEvents) != 1 {
+	state := exportState(t, controller)
+	if !state.IncidentOpen || len(state.IncidentRequest.Findings) != 1 || state.IncidentRequest.Findings[0].Severity != string(sdk.SeverityLatent) || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != string(sdk.DriftFault) || state.IncidentView == nil || len(state.IncidentView.DriftEvents) != 1 {
 		t.Fatalf("latent incident not opened in one reconcile: %+v", state)
 	}
 }
@@ -257,7 +257,7 @@ func TestControllerFullProgramSweepFallsBackAfterConfiguredInterval(t *testing.T
 		t.Fatal(err)
 	}
 	if controller.IncidentOpen() || !controller.NextWake().Equal(start.Add(10*time.Second)) {
-		t.Fatalf("program swept early: %+v", controller.ExportState())
+		t.Fatalf("program swept early: %+v", exportState(t, controller))
 	}
 	if err := controller.StepEvents(context.Background(), start.Add(10*time.Second), nil); err != nil {
 		t.Fatal(err)
@@ -288,8 +288,8 @@ func TestControllerPersistsUnexplainedChangeWithoutIncident(t *testing.T) {
 	if err := controller.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
 		t.Fatal(err)
 	}
-	state := controller.ExportState()
-	if state.IncidentOpen || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != sdk.DriftUnexplained {
+	state := exportState(t, controller)
+	if state.IncidentOpen || len(state.DriftEvents) != 1 || state.DriftEvents[0].Classification != string(sdk.DriftUnexplained) {
 		t.Fatalf("unexplained event was not retained: %+v", state)
 	}
 }

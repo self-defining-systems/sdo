@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -101,7 +102,7 @@ func runRestartStorm(t *testing.T, qps float32, burst int, podEvents int, spacin
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
-	if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "demo", "sdo-controller-state")); err != nil {
+	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo", "sdo-controller-state")); err != nil {
 		t.Fatalf("attach state store: %v", err)
 	}
 	if err := controller.Step(ctx, time.Now().UTC(), nil); err != nil {

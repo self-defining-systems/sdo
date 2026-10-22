@@ -125,7 +125,7 @@ func (h *gateHarness) advance(until time.Time, each func()) {
 
 func (h *gateHarness) view() *IncidentView {
 	h.t.Helper()
-	view := h.controller.ExportState().IncidentView
+	view := cloneIncidentView(h.controller.incidentView)
 	if view == nil || view.IncidentID != h.request.IncidentID {
 		h.t.Fatalf("the open incident must publish its view: %#v", view)
 	}
@@ -363,7 +363,7 @@ func TestGateConfirmationDisabledFollowsClosure(t *testing.T) {
 	if err := controller.Step(context.Background(), time.Unix(5, 0), &event); err != nil {
 		t.Fatalf("step: %v", err)
 	}
-	if view := controller.ExportState().IncidentView; len(view.BlockingFindings) != 0 {
+	if view := exportState(t, controller).IncidentView; len(view.BlockingFindings) != 0 {
 		t.Fatalf("without a gate policy the gate follows closure's clear count: %#v", view)
 	}
 }

@@ -76,7 +76,7 @@ func TestHermeticBenignDriftAcrossFastloopResetAndNextIncident(t *testing.T) {
 				t.Fatal(err)
 			}
 			if c.IncidentOpen() == tc.suppressed {
-				t.Fatalf("exact benign suppression=%v state=%+v", tc.suppressed, c.ExportState())
+				t.Fatalf("exact benign suppression=%v state=%+v", tc.suppressed, exportState(t, c))
 			}
 		})
 	}
@@ -129,7 +129,7 @@ func TestCheckedBenignNoopClosesWithoutMitigationCredit(t *testing.T) {
 	if err := c.StepEvents(ctx, start.Add(time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
-	request := c.ExportState().IncidentRequest
+	request := exportState(t, c).IncidentRequest
 	if request == nil {
 		t.Fatal("missing ordinary drift incident")
 	}

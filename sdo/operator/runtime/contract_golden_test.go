@@ -106,7 +106,7 @@ func goldenIncident(
 	if err := controller.Step(context.Background(), time.Unix(2, 0), nil); err != nil {
 		t.Fatalf("step: %v", err)
 	}
-	view := controller.ExportState().IncidentView
+	view := cloneIncidentView(controller.incidentView)
 	for sample := 3; sample < 8; sample++ {
 		if err := controller.Step(context.Background(), time.Unix(int64(sample), 0), nil); err != nil {
 			t.Fatalf("step %d: %v", sample, err)
@@ -227,16 +227,13 @@ func TestGoContractFixtures(t *testing.T) {
 		)
 	})
 	checkGoContractFixture(t, "closure_own_edit.json", mustProject(t, incidentClosureContract, ownEdit))
-	open := wireState()
-	open.PendingClosure = &repaired
-	open.ClosureFailure.IncidentID = repaired.Request.IncidentID
+	open := wireState(t)
+	open.PendingClosure = mustProject(t, incidentClosureContract, repaired)
+	open.ClosureFailure.IncidentId = repaired.Request.IncidentID
 	openRequest := repaired.Request
-	open.IncidentRequest = &openRequest
-	open.IncidentResult = repaired.Result
-	state, err := controllerStateContract(open)
-	if err != nil {
-		t.Fatal(err)
-	}
+	open.IncidentRequest = mustProject(t, incidentRequestContract, openRequest)
+	open.IncidentResult = mustProject(t, incidentResultContract, *repaired.Result)
+	state := open
 	checkGoContractFixture(t, "controller_state.json", state)
 	closure, err := incidentClosureContract(repaired)
 	if err != nil {

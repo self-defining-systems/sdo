@@ -7,7 +7,7 @@
     "last_failed_at": "2026-01-02T03:04:05.000000006Z",
     "max_attempts": 3
   },
-  "dispatch_state": "pending",
+  "dispatch_state": "DISPATCH_STATE_PENDING",
   "finding_states": {
     "health/fp": {
       "activations": 1,
@@ -188,7 +188,6 @@
     "incident_id": "incident-wire",
     "observed_at": "2026-01-02T03:04:05.000000006Z"
   },
-  "ownership_adoption": {},
   "pending_batch": {
     "deadline": "2026-01-02T03:04:05.000000006Z",
     "deadlines": {

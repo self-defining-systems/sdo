@@ -21,7 +21,7 @@ type ClosureAcknowledgmentEffect struct {
 func (c *Controller) PendingWorkspaceEffect() (WorkspaceEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil || c.dispatchState != "workspace_pending" || c.currentIncidentRequest == nil {
+	if c.broker == nil || c.dispatchState != contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING || c.currentIncidentRequest == nil {
 		return WorkspaceEffect{}, false
 	}
 	return WorkspaceEffect{IncidentID: c.currentIncidentRequest.IncidentID}, true
@@ -33,22 +33,22 @@ func (c *Controller) ExecuteWorkspaceEffect(ctx context.Context, effect Workspac
 		return err
 	}
 	c.mu.Lock()
-	if c.broker == nil || c.dispatchState != "workspace_pending" || c.currentIncidentRequest == nil ||
+	if c.broker == nil || c.dispatchState != contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING || c.currentIncidentRequest == nil ||
 		c.currentIncidentRequest.IncidentID != effect.IncidentID {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("workspace effect is not pending")
 	}
-	if err := c.requireDurableLocked("incident worktree preparation", func(state RuntimeState) bool {
-		return state.IncidentOpen && state.DispatchState == "workspace_pending" && state.IncidentRequest != nil &&
-			state.IncidentRequest.IncidentID == effect.IncidentID
+	if err := c.requireDurableLocked("incident worktree preparation", func(state *contracts.ControllerState) bool {
+		return state.IncidentOpen && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING && state.IncidentRequest != nil &&
+			state.IncidentRequest.IncidentId == effect.IncidentID
 	}); err != nil {
 		c.mu.Unlock()
 		cancel()
 		return err
 	}
 	broker := c.broker
-	c.dispatchState = "workspace_running"
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING
 	c.mu.Unlock()
 	go func() {
 		defer cancel()
@@ -86,7 +86,7 @@ func (c *Controller) ExecuteReleaseEffect(ctx context.Context, effect ReleaseEff
 		cancel()
 		return fmt.Errorf("release effect is not pending")
 	}
-	if err := c.requireDurableLocked("incident worktree release", func(state RuntimeState) bool {
+	if err := c.requireDurableLocked("incident worktree release", func(state *contracts.ControllerState) bool {
 		for _, id := range state.PendingReleases {
 			if id == effect.IncidentID {
 				return true
@@ -112,7 +112,7 @@ func (c *Controller) ExecuteReleaseEffect(ctx context.Context, effect ReleaseEff
 func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil || c.closureState != "pending" || c.pendingClosure == nil || !c.closureRetryDueLocked() {
+	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.pendingClosure == nil || !c.closureRetryDueLocked() {
 		return ClosureEffect{}, false
 	}
 	return ClosureEffect{Closure: *cloneIncidentClosure(c.pendingClosure)}, true
@@ -124,22 +124,22 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return err
 	}
 	c.mu.Lock()
-	if c.broker == nil || c.closureState != "pending" || c.pendingClosure == nil ||
+	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_PENDING || c.pendingClosure == nil ||
 		c.pendingClosure.Request.IncidentID != effect.Closure.Request.IncidentID {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("closure effect is not pending")
 	}
-	if err := c.requireDurableLocked("incident closure", func(state RuntimeState) bool {
-		return state.ClosureState == "pending" && state.PendingClosure != nil &&
-			sameIncidentClosure(*state.PendingClosure, effect.Closure)
+	if err := c.requireDurableLocked("incident closure", func(state *contracts.ControllerState) bool {
+		return state.ClosureState == contracts.ClosureState_CLOSURE_STATE_PENDING && state.PendingClosure != nil &&
+			sameIncidentClosure(incidentClosureState(state.PendingClosure), effect.Closure)
 	}); err != nil {
 		c.mu.Unlock()
 		cancel()
 		return err
 	}
 	broker := c.broker
-	c.closureState = "processing"
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
 	c.mu.Unlock()
 	go func() {
 		defer cancel()
@@ -152,7 +152,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 func (c *Controller) PendingClosureAcknowledgmentEffect() (ClosureAcknowledgmentEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.broker == nil || c.closureState != "committed" || c.closureReceipt == nil {
+	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || c.closureReceipt == nil {
 		return ClosureAcknowledgmentEffect{}, false
 	}
 	return ClosureAcknowledgmentEffect{Receipt: *cloneClosureReceipt(c.closureReceipt)}, true
@@ -167,15 +167,15 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 		return err
 	}
 	c.mu.Lock()
-	if c.broker == nil || c.closureState != "committed" || c.closureReceipt == nil ||
+	if c.broker == nil || c.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || c.closureReceipt == nil ||
 		c.closureReceipt.AckToken != effect.Receipt.AckToken {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("closure acknowledgment effect is not pending")
 	}
-	if err := c.requireDurableLocked("closure acknowledgment", func(state RuntimeState) bool {
-		return state.ClosureState == "committed" && state.ClosureReceipt != nil &&
-			*state.ClosureReceipt == effect.Receipt
+	if err := c.requireDurableLocked("closure acknowledgment", func(state *contracts.ControllerState) bool {
+		return state.ClosureState == contracts.ClosureState_CLOSURE_STATE_COMMITTED && state.ClosureReceipt != nil &&
+			*closureReceiptState(state.ClosureReceipt) == effect.Receipt
 	}); err != nil {
 		c.mu.Unlock()
 		cancel()
@@ -195,7 +195,7 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 			return ErrControllerRolloutRestartRequired
 		}
 	}
-	c.closureState = "acknowledging"
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING
 	c.mu.Unlock()
 	go func() {
 		defer cancel()
@@ -273,21 +273,21 @@ func (c *Controller) handleReleaseCompletion(completion releaseCompletion) {
 func (c *Controller) handleWorkspaceCompletion(completion workspaceCompletion) {
 	c.mu.Lock()
 	if completion.err != nil {
-		c.dispatchState = "workspace_pending"
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 		c.mu.Unlock()
 		c.reportBrokerError("prepare incident worktree", completion.err)
 		return
 	}
 	if c.currentIncidentRequest == nil || completion.workspace.IncidentID != c.currentIncidentRequest.IncidentID ||
 		completion.workspace.Worktree == "" || completion.workspace.BaseCommit == "" {
-		c.dispatchState = "workspace_pending"
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 		c.mu.Unlock()
 		c.reportBrokerError("prepare incident worktree", fmt.Errorf("broker returned invalid workspace"))
 		return
 	}
 	c.currentIncidentRequest.RepositoryWorktree = completion.workspace.Worktree
 	c.currentIncidentRequest.RepositoryBaseCommit = completion.workspace.BaseCommit
-	c.dispatchState = "pending"
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseWorkspacePrepared, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.workspace.IncidentID,
 		Worktree: completion.workspace.Worktree, BaseCommit: completion.workspace.BaseCommit,
@@ -304,7 +304,7 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 	}
 	if err != nil {
 		if c.pendingClosure == nil {
-			c.closureState = "pending"
+			c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 			c.mu.Unlock()
 			c.reportBrokerError("process incident closure", err)
 			return
@@ -326,7 +326,7 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 		c.config.SourceCommit = completion.receipt.ReflectionCommit
 	}
 	c.closureFailure = nil
-	c.closureState = "committed"
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosureCommitted, RecordedAt: contractTimestamp(c.clock()), IncidentId: completion.receipt.IncidentID,
 		Worktree: completion.receipt.Worktree, BaseCommit: completion.receipt.BaseCommit,
@@ -339,7 +339,7 @@ func (c *Controller) handleClosureCompletion(completion closureCompletion) {
 func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCompletion) {
 	c.mu.Lock()
 	if completion.err != nil {
-		c.closureState = "committed"
+		c.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
 		c.mu.Unlock()
 		c.reportBrokerError("acknowledge incident closure", completion.err)
 		return
@@ -358,7 +358,7 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 	}
 	c.pendingClosure = nil
 	c.closureReceipt = nil
-	c.closureState = ""
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED
 	c.mu.Unlock()
 }
 

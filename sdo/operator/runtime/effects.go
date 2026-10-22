@@ -21,7 +21,7 @@ type DispatchEffect struct {
 func (c *Controller) PendingDispatchEffect() (DispatchEffect, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dispatchState != "pending" || c.currentIncidentRequest == nil {
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil {
 		return DispatchEffect{}, false
 	}
 	if !c.dispatchRetryDueLocked() {
@@ -36,7 +36,7 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		return err
 	}
 	c.mu.Lock()
-	if c.dispatchState != "pending" || c.currentIncidentRequest == nil {
+	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
 		cancel()
 		return fmt.Errorf("dispatch effect is not pending")
@@ -46,15 +46,15 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		cancel()
 		return fmt.Errorf("dispatch effect incident %q does not match pending incident %q", effect.Request.IncidentID, c.currentIncidentRequest.IncidentID)
 	}
-	if err := c.requireDurableLocked("responder dispatch", func(state RuntimeState) bool {
-		return state.IncidentOpen && state.DispatchState == "pending" && state.IncidentRequest != nil &&
-			sameIncidentRequest(*state.IncidentRequest, effect.Request)
+	if err := c.requireDurableLocked("responder dispatch", func(state *contracts.ControllerState) bool {
+		return state.IncidentOpen && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil &&
+			sameIncidentRequest(*incidentRequestState(state.IncidentRequest), effect.Request)
 	}); err != nil {
 		c.mu.Unlock()
 		cancel()
 		return err
 	}
-	c.dispatchState = "running"
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.incidentDetectedAt
 	}
@@ -74,11 +74,11 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 // requireDurableLocked returns ErrEffectNotDurable unless the last durable
 // state records the effect. Callers hold c.mu. Without a state store nothing
 // survives a restart, so there is no record to wait for.
-func (c *Controller) requireDurableLocked(effect string, recorded func(RuntimeState) bool) error {
+func (c *Controller) requireDurableLocked(effect string, recorded func(*contracts.ControllerState) bool) error {
 	if c.stateStore == nil {
 		return nil
 	}
-	if c.durable == nil || !recorded(*c.durable) {
+	if c.durable == nil || !recorded(c.durable) {
 		return fmt.Errorf("%w: %s", ErrEffectNotDurable, effect)
 	}
 	return nil

@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strconv"
 	"sync"
 	"testing"
@@ -77,10 +79,10 @@ func equalVerbs(got []string, want ...string) bool {
 	return true
 }
 
-func historyState(detectorIDs ...string) RuntimeState {
-	state := RuntimeState{Version: RuntimeStateVersion}
+func historyState(detectorIDs ...string) *contracts.ControllerState {
+	state := &contracts.ControllerState{Version: RuntimeStateVersion}
 	for _, detectorID := range detectorIDs {
-		state.History = append(state.History, DetectorEvaluation{DetectorID: detectorID, EvaluatedAt: time.Unix(1, 0).UTC(), Status: DetectorEvaluationFiring})
+		state.History = append(state.History, &contracts.DetectorEvaluation{DetectorId: detectorID, EvaluatedAt: contractTimestamp(time.Unix(1, 0)), Status: string(DetectorEvaluationFiring)})
 	}
 	return state
 }
@@ -89,7 +91,7 @@ func TestConfigMapStateStoreSkipsUnchangedStateWithoutAPICalls(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	enforceConfigMapResourceVersions(client)
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	revision, err := store.Save(ctx, historyState("health"), "")
 	if err != nil {
 		t.Fatalf("create state: %v", err)
@@ -112,10 +114,10 @@ func TestConfigMapStateStoreSkipsStateUnchangedSinceLoad(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	enforceConfigMapResourceVersions(client)
-	if _, err := NewConfigMapStateStore(client, "demo", "state").Save(ctx, historyState("health"), ""); err != nil {
+	if _, err := lifecycleio.NewConfigMapStateStore(client, "demo", "state").Save(ctx, historyState("health"), ""); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	loaded, revision, err := store.Load(ctx)
 	if err != nil {
 		t.Fatalf("load state: %v", err)
@@ -133,7 +135,7 @@ func TestConfigMapStateStoreWritesChangedStateWithOneUpdate(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	enforceConfigMapResourceVersions(client)
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	revision, err := store.Save(ctx, historyState("health"), "")
 	if err != nil {
 		t.Fatalf("create state: %v", err)
@@ -147,7 +149,7 @@ func TestConfigMapStateStoreWritesChangedStateWithOneUpdate(t *testing.T) {
 	if got := verbs(client); !equalVerbs(got, "update") {
 		t.Fatalf("changed state used %v, want a single update", got)
 	}
-	loaded, loadedRevision, err := NewConfigMapStateStore(client, "demo", "state").Load(ctx)
+	loaded, loadedRevision, err := lifecycleio.NewConfigMapStateStore(client, "demo", "state").Load(ctx)
 	if err != nil {
 		t.Fatalf("reload state: %v", err)
 	}
@@ -160,11 +162,11 @@ func TestConfigMapStateStoreStaleWriterConflictsUnderResourceVersionCAS(t *testi
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	enforceConfigMapResourceVersions(client)
-	if _, err := NewConfigMapStateStore(client, "demo", "state").Save(ctx, historyState("health"), ""); err != nil {
+	if _, err := lifecycleio.NewConfigMapStateStore(client, "demo", "state").Save(ctx, historyState("health"), ""); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
-	leader := NewConfigMapStateStore(client, "demo", "state")
-	stale := NewConfigMapStateStore(client, "demo", "state")
+	leader := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
+	stale := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	_, leaderRevision, err := leader.Load(ctx)
 	if err != nil {
 		t.Fatalf("leader load: %v", err)
@@ -179,11 +181,11 @@ func TestConfigMapStateStoreStaleWriterConflictsUnderResourceVersionCAS(t *testi
 	if _, err := stale.Save(ctx, historyState("stale"), staleRevision); !errors.Is(err, ErrStateConflict) {
 		t.Fatalf("stale writer: got %v, want ErrStateConflict", err)
 	}
-	durable, _, err := NewConfigMapStateStore(client, "demo", "state").Load(ctx)
+	durable, _, err := lifecycleio.NewConfigMapStateStore(client, "demo", "state").Load(ctx)
 	if err != nil {
 		t.Fatalf("reload state: %v", err)
 	}
-	if len(durable.History) != 1 || durable.History[0].DetectorID != "leader" {
+	if len(durable.History) != 1 || durable.History[0].DetectorId != "leader" {
 		t.Fatalf("stale writer overwrote leader state: %#v", durable.History)
 	}
 }
@@ -192,7 +194,7 @@ func TestConfigMapStateStoreRetriesMetadataOnlyConflictWithGetAndUpdate(t *testi
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	enforceConfigMapResourceVersions(client)
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	revision, err := store.Save(ctx, historyState("health"), "")
 	if err != nil {
 		t.Fatalf("create state: %v", err)
@@ -228,7 +230,7 @@ func TestConfigMapStateStoreDoesNotTreatFailedWriteAsPersisted(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	enforceConfigMapResourceVersions(client)
-	store := NewConfigMapStateStore(client, "demo", "state")
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
 	revision, err := store.Save(ctx, historyState("health"), "")
 	if err != nil {
 		t.Fatalf("create state: %v", err)
@@ -253,7 +255,7 @@ func TestConfigMapStateStoreDoesNotTreatFailedWriteAsPersisted(t *testing.T) {
 	if got := verbs(client); len(got) == 0 {
 		t.Fatal("retry after a failed write skipped the write as unchanged")
 	}
-	durable, _, err := NewConfigMapStateStore(client, "demo", "state").Load(ctx)
+	durable, _, err := lifecycleio.NewConfigMapStateStore(client, "demo", "state").Load(ctx)
 	if err != nil {
 		t.Fatalf("reload state: %v", err)
 	}

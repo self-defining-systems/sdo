@@ -64,7 +64,7 @@ func TestHermeticControllerClosureReachesNativeOutcomeBroker(t *testing.T) {
 	}
 	workspaceEffect, ok := controller.PendingWorkspaceEffect()
 	if !ok {
-		t.Fatalf("controller did not prepare the broker workspace: %+v", controller.ExportState())
+		t.Fatalf("controller did not prepare the broker workspace: %+v", exportState(t, controller))
 	}
 	if err := controller.ExecuteWorkspaceEffect(ctx, workspaceEffect); err != nil {
 		t.Fatal(err)

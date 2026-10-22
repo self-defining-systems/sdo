@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sync"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestAcknowledgmentWaitsForRestartedDetectorRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := ClosureReceipt{IncidentID: "rollout-1", OutcomeCommit: "outcome", ReflectionCommit: "learned", AckToken: "ack"}
-	controller.closureState = "committed"
+	controller.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
 	controller.closureReceipt = &receipt
 	broker := &rolloutRecordingBroker{pending: true}
 	if err := controller.SetIncidentBroker(broker); err != nil {
@@ -38,7 +39,7 @@ func TestAcknowledgmentWaitsForRestartedDetectorRevision(t *testing.T) {
 	if err := controller.ExecuteClosureAcknowledgmentEffect(context.Background(), effect); !errors.Is(err, ErrControllerRolloutRestartRequired) {
 		t.Fatalf("expected restart handoff, got %v", err)
 	}
-	if controller.closureState != "committed" || len(broker.calls()) != 0 {
+	if controller.closureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED || len(broker.calls()) != 0 {
 		t.Fatal("ACK began before detector rollout")
 	}
 	broker.pending = false
@@ -136,7 +137,7 @@ func TestWorkspacePreparationIsPersistedAndReplayableBeforeDispatch(t *testing.T
 	if err != nil {
 		t.Fatalf("new restored controller: %v", err)
 	}
-	if err := restored.RestoreState(first.ExportState()); err != nil {
+	if err := restored.RestoreState(exportState(t, first)); err != nil {
 		t.Fatalf("restore workspace effect: %v", err)
 	}
 	if err := restored.SetIncidentBroker(broker); err != nil {
@@ -187,7 +188,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 		DetectedAt:          start, DispatchedAt: start, ResponderCompletedAt: start, VerifiedAt: start,
 	}
 	controller.pendingClosure = &closure
-	controller.closureState = "pending"
+	controller.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 	broker := &recordingIncidentBroker{receipt: ClosureReceipt{
 		Worktree: "/worktrees/incident", BaseCommit: "base", ProposalCommit: "repair",
 		OutcomeCommit: "outcome", AckToken: "token",
@@ -205,8 +206,8 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	}
 	awaitBrokerResult(t, controller.closureResults)
 	controller.processBrokerCompletions()
-	state := controller.ExportState()
-	if state.PendingClosure == nil || state.ClosureReceipt == nil || state.ClosureState != "committed" {
+	state := exportState(t, controller)
+	if state.PendingClosure == nil || state.ClosureReceipt == nil || state.ClosureState != contracts.ClosureState_CLOSURE_STATE_COMMITTED {
 		t.Fatalf("closure receipt was not durable before acknowledgment: %#v", state)
 	}
 	if controller.CurrentAcceptedCommit() != "outcome" {
@@ -245,8 +246,8 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	if pending := restored.batcher.Snapshot().Findings; len(pending) != 0 {
 		t.Fatalf("acknowledgment left stale findings eligible for duplicate dispatch: %#v", pending)
 	}
-	acknowledged := restored.ExportState()
-	if acknowledged.LastAcknowledgedIncidentID != request.IncidentID {
+	acknowledged := exportState(t, restored)
+	if acknowledged.LastAcknowledgedIncidentId != request.IncidentID {
 		t.Fatalf("acknowledged incident was not durable: %#v", acknowledged)
 	}
 	recovered, err := NewController(

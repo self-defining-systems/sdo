@@ -299,8 +299,8 @@ func TestClearRefireWhileResponderRunsMergesEvidenceIntoTheSameIncident(t *testi
 			t.Fatalf("rollout transition step: %v", err)
 		}
 	}
-	state := controller.ExportState()
-	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentID != first.IncidentID {
+	state := exportState(t, controller)
+	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentId != first.IncidentID {
 		t.Fatalf("clear/re-fire released the original incident lock: %#v", state)
 	}
 	if len(state.IncidentRequest.Findings) != 1 || state.IncidentRequest.Findings[0].Evidence != recurrence.Evidence {
@@ -347,8 +347,8 @@ func TestDifferentFingerprintCannotDispatchWhileResponderRuns(t *testing.T) {
 		t.Fatalf("idle scheduler step: %v", err)
 	}
 
-	state := controller.ExportState()
-	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentID != request.IncidentID {
+	state := exportState(t, controller)
+	if !state.IncidentOpen || state.IncidentRequest == nil || state.IncidentRequest.IncidentId != request.IncidentID {
 		t.Fatalf("queued fingerprint transition replaced the open incident: %#v", state)
 	}
 	if effect, ok := controller.PendingDispatchEffect(); ok {
@@ -485,8 +485,8 @@ func TestResponderCompletionDoesNotCloseIncidentUntilAllHealthFindingsClear(t *t
 	if !controller.IncidentOpen() {
 		t.Fatal("responder completion closed incident while independent health finding remained")
 	}
-	state := controller.ExportState()
-	if state.IncidentResult == nil || state.ResponderCompletedAt.IsZero() || state.IncidentDispatchedAt.IsZero() {
+	state := exportState(t, controller)
+	if state.IncidentResult == nil || controllerTime(state.ResponderCompletedAt).IsZero() || controllerTime(state.IncidentDispatchedAt).IsZero() {
 		t.Fatalf("open incident did not persist responder result and timestamps: %#v", state)
 	}
 	select {
@@ -582,8 +582,8 @@ func TestControllerRequiresDetectorReviewWhenPostResponseHealthNeverClears(t *te
 	if !controller.DetectorReviewRequired() {
 		t.Fatal("persistent post-response health finding did not require detector review")
 	}
-	state := controller.ExportState()
-	if !state.DetectorReviewRequired || state.DetectorReviewRequiredAt.IsZero() || state.DetectorReviewReason == "" {
+	state := exportState(t, controller)
+	if !state.DetectorReviewRequired || controllerTime(state.DetectorReviewRequiredAt).IsZero() || state.DetectorReviewReason == "" {
 		t.Fatalf("detector review state was not durable: %#v", state)
 	}
 }
@@ -649,7 +649,7 @@ func TestAFailedResponderJobIsATerminalDispatchFailure(t *testing.T) {
 	select {
 	case closure = <-closed:
 	case <-time.After(time.Second):
-		t.Fatalf("incident with a failed responder never closed: %#v", controller.ExportState())
+		t.Fatalf("incident with a failed responder never closed: %#v", exportState(t, controller))
 	}
 	if closure.Result != nil || !strings.Contains(closure.DispatchError, "failed") {
 		t.Fatalf("closure must record the terminal dispatch failure: %#v", closure)

@@ -4,7 +4,7 @@
 
 For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broker workspace root. The broker stages trusted source deployment evidence before publishing source, then reconciles that evidence to the attributed accepted commit after a crash. The evidence binds the candidate Git tree, strategy, immutable image digests, resource IDs, and observed ready revision; agent claims and annotations alone are not authoritative.
 
-Ledger files under `.git/sdo-broker/` and the controller's runtime-state ConfigMap are canonical ProtoJSON of `BrokerLedger` and `ControllerState` (`controller_state.proto`): snake_case keys, empty and zero fields omitted (so a missing key means the zero value), RFC3339 timestamps, enums as names, and the closure as an `IncidentClosure`. The Go structs carry no JSON tags, so pre-cutover ledgers with legacy keys (for example `playbooks` or `path` in place of `playbook_ids`) are not readable by the current tools. `reflection_rejections` lists each broker rejection of a reflection proposal (`attempt`, typed `diagnostics` of `rule`/`path`/`line`/`message`/`hint`, `rejected_at`); Go re-dispatches reflection with the previous rejection's diagnostics up to twice, and `reflection_rejected` marks the terminal rejection after the bound (the closure completes with no reflection commit). Ledger fields can include proposal processing state; optional proposal commit; mandatory outcome, reflection, and validator-evidence commits; responder session ID; accepted detector paths; closure and acknowledgement state; network-policy canaries; topology fingerprints; and controller-update rollout records. Current native ledgers use `reflection_rejections`, `reflection_rejected`,
+Ledger files under `.git/sdo-broker/` and the controller's runtime-state ConfigMap are canonical ProtoJSON of `BrokerLedger` and `ControllerState` (`controller_state.proto`): snake_case keys, empty and zero fields omitted (so a missing key means the zero value), RFC3339 timestamps, enums as names, and the closure as an `IncidentClosure`. The Go structs carry no JSON tags, so pre-cutover ledgers with legacy keys (for example `playbooks` or `path` in place of `playbook_ids`) are not readable by the current tools. `reflection_rejections` lists each broker rejection of a reflection proposal (`attempt`, typed `diagnostics` of `rule`/`path`/`line`/`message`/`hint`, `rejected_at`); Go re-dispatches reflection with the previous rejection's diagnostics up to twice, and `reflection_rejected` marks the terminal rejection after the bound (the closure completes with no reflection commit). Current native ledgers use `reflection_rejections`, `reflection_rejected`,
 `reflection_processed`, and typed `reflection_decision` (decision, reason, logical
 playbook IDs, error, SDK gaps and usage). `ReflectionDecision.playbook_ids` remains
 wire field 3. A verified fast path skips reflection; exact accepted repair replay
@@ -24,6 +24,14 @@ Detectors are registered by per-detector manifests at `.sdo/diagnostics/detector
 Program and drift integration: controller state and broker ledgers use generated ProtoJSON. State carries ownership adoption, ordinary batching, retained incident drift and `drift_admission` retry accounting. There is no active investigator worker, task/result protocol or verdict ConfigMap. Synthetic IDs are `drift.<program>` and `drift.unexplained`. Empty repeated fields may be omitted. Removed config tags 59–61 and state tag 32 are reserved; use coordinated worker/controller images after draining. Schema version 3 classifies program Go sources, shared libraries and corpus through `memory/layout`; policy/replay tests are centralized under `memory/validate`.
 
 Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains concrete applied actions, verification outcomes and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
+
+### Controller lifecycle phases
+
+`ControllerState` uses generated `DispatchState` and `ClosureState` enums:
+`DISPATCH_STATE_PENDING`, `DISPATCH_STATE_ADMISSION_DEFERRED`,
+`CLOSURE_STATE_PENDING`, `CLOSURE_STATE_COMMITTED`, `CLOSURE_STATE_FAILED`.
+Absent fields mean `*_UNSPECIFIED`; old lowercase strings and undefined numbers
+are rejected. `runtime/internal/lifecycleio` persists generated messages.
 
 ### Open incidents after controller restart
 

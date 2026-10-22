@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ import (
 // dispatched, because admission is deferred under load. It is a stable state (no
 // goroutine is in flight), so it persists across a restart unchanged and the
 // controller re-samples on the next step.
-const admissionDeferredState = "admission_deferred"
+const admissionDeferredState = contracts.DispatchState_DISPATCH_STATE_ADMISSION_DEFERRED
 
 // Admission-decision reasons recorded on the lifecycle events. They name a
 // controller-internal load fact, never a benchmark verdict.

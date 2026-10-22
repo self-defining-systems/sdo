@@ -73,7 +73,7 @@ func TestHealthyBaselineResumesAfterRestartWithHistoricalFinding(t *testing.T) {
 	if err := before.Step(context.Background(), start, nil); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := encodeControllerState(before.ExportState())
+	raw, err := encodeControllerState(exportState(t, before))
 	if err != nil {
 		t.Fatal(err)
 	}

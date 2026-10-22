@@ -7,6 +7,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -163,7 +164,7 @@ func TestHermeticDriftlive4NewFaultAfterHealthyBaseline(t *testing.T) {
 		t.Fatal("first repair did not close")
 	}
 	acknowledgeScenario(t, c)
-	state := c.ExportState()
+	state := exportState(t, c)
 	if len(state.FindingStates) == 0 || len(state.DriftEvents) == 0 {
 		t.Fatal("earlier drift was not retained")
 	}
@@ -183,7 +184,7 @@ func TestHermeticDriftlive4NewFaultAfterHealthyBaseline(t *testing.T) {
 	if second.IncidentID == first.IncidentID || len(second.Findings) != 1 || second.Findings[0].PrimaryResource.Name != "peer" || second.Findings[0].ParameterBindings["service"].Name != "peer" || len(second.DriftEvents) != 1 || second.DriftEvents[0].Ref.Name != "peer" {
 		t.Fatalf("new incident is not bound to new fault: %+v", second)
 	}
-	view := c.ExportState().IncidentView
+	view := exportState(t, c).IncidentView
 	if view == nil || len(view.DriftEvents) != 1 || view.DriftEvents[0].Ref.Name != "peer" {
 		t.Fatalf("moving incident view includes historical drift: %+v", view)
 	}
@@ -202,7 +203,7 @@ func TestRepairedDriftRecursWithoutProgramAfterRestart(t *testing.T) {
 	awaitDispatchCompletionQueued(t, c)
 	stepScenario(t, c, cache, start.Add(3*time.Second))
 	acknowledgeScenario(t, c)
-	state := c.ExportState()
+	state := exportState(t, c)
 	if err := c.RestoreState(state); err != nil {
 		t.Fatal(err)
 	}
@@ -243,8 +244,8 @@ func TestTerminalDriftResponderFailureDoesNotWaitForTTLOrCloseHealthy(t *testing
 	dispatchScenario(t, c)
 	awaitDispatchCompletionQueued(t, c)
 	stepScenario(t, c, cache, start.Add(3*time.Second))
-	state := c.ExportState()
-	if !state.ResponderDone || state.DispatchError == "" || state.IncidentResult != nil || !state.IncidentOpen || state.DispatchState != "completed" {
+	state := exportState(t, c)
+	if !state.ResponderDone || state.DispatchError == "" || state.IncidentResult != nil || !state.IncidentOpen || state.DispatchState != contracts.DispatchState_DISPATCH_STATE_COMPLETED {
 		t.Fatalf("terminal failure was not immediate and unresolved: %+v", state)
 	}
 	if _, ok := c.PendingDispatchEffect(); ok {
@@ -275,7 +276,7 @@ func TestWatchEventProgramMatchesUnownedServiceBeforeSweep(t *testing.T) {
 	}
 	injectScenarioPort(t, client, cache, "peer")
 	stepScenario(t, c, cache, start.Add(time.Second))
-	if c.IncidentOpen() || len(c.ExportState().PendingBatch.Findings) != 0 {
+	if c.IncidentOpen() || len(exportState(t, c).PendingBatch.Findings) != 0 {
 		t.Fatal("program fired before minimum duration")
 	}
 	if c.NextWake().After(start.Add(2 * time.Second)) {
@@ -286,15 +287,15 @@ func TestWatchEventProgramMatchesUnownedServiceBeforeSweep(t *testing.T) {
 		t.Fatal("program fired just before minimum duration")
 	}
 	stepScenario(t, c, cache, start.Add(2*time.Second))
-	state := c.ExportState()
+	state := exportState(t, c)
 	if !state.IncidentOpen || state.IncidentRequest == nil || len(state.IncidentRequest.Findings) != 1 {
 		t.Fatalf("unowned watch event did not open a learned incident before sweep: %+v", state)
 	}
 	finding := state.IncidentRequest.Findings[0]
-	if finding.DetectorID != "drift.targetport" || finding.Severity != sdk.SeverityLatent || finding.PrimaryResource.Name != "peer" || finding.ParameterBindings["service"].Name != "peer" {
+	if finding.DetectorId != "drift.targetport" || finding.Severity != string(sdk.SeverityLatent) || finding.PrimaryResource.Name != "peer" || finding.ParameterBindings["service"].Name != "peer" {
 		t.Fatalf("watch finding lost learned binding: %+v", finding)
 	}
-	if len(state.DriftEvents) != 1 || state.DriftEvents[0].Source != "watch event program match" || !state.DriftEvents[0].ObservedAt.Equal(start.Add(time.Second)) {
+	if len(state.DriftEvents) != 1 || state.DriftEvents[0].Source != "watch event program match" || !controllerTime(state.DriftEvents[0].ObservedAt).Equal(start.Add(time.Second)) {
 		t.Fatalf("watch source and event time missing: %+v", state.DriftEvents)
 	}
 }
@@ -307,7 +308,7 @@ func TestWatchEventProgramMatchesOwnedServiceBeforeSweep(t *testing.T) {
 	c.ConfigureDrift(config)
 	injectScenarioPort(t, client, cache, "peer")
 	stepScenario(t, c, cache, start.Add(time.Second))
-	if c.IncidentOpen() || len(c.ExportState().PendingBatch.Findings) != 0 {
+	if c.IncidentOpen() || len(exportState(t, c).PendingBatch.Findings) != 0 {
 		t.Fatal("program fired before minimum duration")
 	}
 	if c.NextWake().After(start.Add(2 * time.Second)) {
@@ -318,15 +319,15 @@ func TestWatchEventProgramMatchesOwnedServiceBeforeSweep(t *testing.T) {
 		t.Fatal("program fired just before minimum duration")
 	}
 	stepScenario(t, c, cache, start.Add(2*time.Second))
-	state := c.ExportState()
+	state := exportState(t, c)
 	if !state.IncidentOpen || state.IncidentRequest == nil || len(state.IncidentRequest.Findings) != 1 {
 		t.Fatalf("owned watch event did not open a learned incident before sweep: %+v", state)
 	}
 	finding := state.IncidentRequest.Findings[0]
-	if finding.DetectorID != "drift.targetport" || finding.Severity != sdk.SeverityLatent || finding.PrimaryResource.Name != "peer" || finding.ParameterBindings["service"].Name != "peer" {
+	if finding.DetectorId != "drift.targetport" || finding.Severity != string(sdk.SeverityLatent) || finding.PrimaryResource.Name != "peer" || finding.ParameterBindings["service"].Name != "peer" {
 		t.Fatalf("watch finding lost learned binding: %+v", finding)
 	}
-	if len(state.DriftEvents) != 1 || len(state.DriftEvents[0].Fields) != 1 || state.DriftEvents[0].Source != "watch event program match" || !state.DriftEvents[0].ObservedAt.Equal(start.Add(time.Second)) {
+	if len(state.DriftEvents) != 1 || len(state.DriftEvents[0].Fields) != 1 || state.DriftEvents[0].Source != "watch event program match" || !controllerTime(state.DriftEvents[0].ObservedAt).Equal(start.Add(time.Second)) {
 		t.Fatalf("watch source and event time missing: %+v", state.DriftEvents)
 	}
 }
@@ -348,7 +349,7 @@ func TestWatchEventUnownedChangeWithoutProgramMatchIsQuiet(t *testing.T) {
 	}
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, after)
 	stepScenario(t, c, cache, start.Add(time.Second))
-	state := c.ExportState()
+	state := exportState(t, c)
 	if state.IncidentOpen || len(state.DriftEvents) != 0 || len(state.PendingBatch.Findings) != 0 {
 		t.Fatalf("unmatched unowned change produced drift: %+v", state)
 	}
@@ -388,7 +389,7 @@ func TestWatchEventTransientMidRolloutProgramNeverFires(t *testing.T) {
 	c.ConfigureDrift(config)
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, after)
 	stepScenario(t, c, cache, start.Add(time.Second))
-	state := c.ExportState()
+	state := exportState(t, c)
 	if calls != 1 || state.IncidentOpen || len(state.PendingBatch.Findings) != 0 {
 		t.Fatalf("rollout should be diagnosed but pending: calls=%d state=%+v", calls, state)
 	}
@@ -397,8 +398,8 @@ func TestWatchEventTransientMidRolloutProgramNeverFires(t *testing.T) {
 	provider.snapshot = snapshot
 	stepScenario(t, c, cache, start.Add(2*time.Second))
 	stepScenario(t, c, cache, start.Add(3*time.Second))
-	if calls != 2 || c.IncidentOpen() || !c.tracker.Quiet() || len(c.ExportState().PendingBatch.Findings) != 0 {
-		t.Fatalf("transient mismatch fired or retained confirmation: calls=%d state=%+v", calls, c.ExportState())
+	if calls != 2 || c.IncidentOpen() || !c.tracker.Quiet() || len(exportState(t, c).PendingBatch.Findings) != 0 {
+		t.Fatalf("transient mismatch fired or retained confirmation: calls=%d state=%+v", calls, exportState(t, c))
 	}
 }
 
@@ -435,8 +436,8 @@ func TestWatchEventRepairQueuesNothingAndSweepClearsLearnedIncident(t *testing.T
 		t.Fatal(err)
 	}
 	c.processDrift(context.Background(), start.Add(3*time.Second), snapshot, cache.TakeObjectChanges(), false)
-	state := c.ExportState()
-	if calls != 1 || !state.IncidentOpen || state.IncidentRequest.IncidentID != request.IncidentID || len(state.IncidentRequest.Findings) != 1 || len(state.PendingBatch.Findings) != 0 {
+	state := exportState(t, c)
+	if calls != 1 || !state.IncidentOpen || state.IncidentRequest.IncidentId != request.IncidentID || len(state.IncidentRequest.Findings) != 1 || len(state.PendingBatch.Findings) != 0 {
 		t.Fatalf("repair must diagnose without queueing another finding: calls=%d state=%+v", calls, state)
 	}
 	if !c.tracker.HasActiveDetector("drift.targetport") {
@@ -447,7 +448,7 @@ func TestWatchEventRepairQueuesNothingAndSweepClearsLearnedIncident(t *testing.T
 		t.Fatal("confirmed repair did not clear the program")
 	}
 	if _, ok := c.PendingIncidentClosure(); !ok {
-		t.Fatalf("sweep NoMatch did not clear the repaired learned incident: %+v", c.ExportState())
+		t.Fatalf("sweep NoMatch did not clear the repaired learned incident: %+v", exportState(t, c))
 	}
 }
 
@@ -461,7 +462,7 @@ func TestWatchEventPendingBindingsSurviveRestartIndependently(t *testing.T) {
 	stepScenario(t, c, cache, start.Add(time.Second))
 	injectScenarioPort(t, client, cache, "peer")
 	stepScenario(t, c, cache, start.Add(3*time.Second))
-	raw, err := encodeControllerState(c.ExportState())
+	raw, err := encodeControllerState(exportState(t, c))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,12 +476,12 @@ func TestWatchEventPendingBindingsSurviveRestartIndependently(t *testing.T) {
 		t.Fatal(err)
 	}
 	stepScenario(t, c, cache, start.Add(11*time.Second))
-	state = c.ExportState()
+	state = exportState(t, c)
 	if state.IncidentRequest == nil || len(state.IncidentRequest.Findings) != 1 || state.IncidentRequest.Findings[0].PrimaryResource.Name != "api" {
 		t.Fatalf("one binding changed another's confirmation streak: %+v", state)
 	}
 	stepScenario(t, c, cache, start.Add(13*time.Second))
-	if findings := c.ExportState().IncidentRequest.Findings; len(findings) != 2 {
+	if findings := exportState(t, c).IncidentRequest.Findings; len(findings) != 2 {
 		t.Fatalf("second binding failed to confirm independently: %+v", findings)
 	}
 }
@@ -504,7 +505,7 @@ func TestProgramSweepUsesDefaultTimedConfirmation(t *testing.T) {
 		t.Fatal("sweep bypassed default persistence")
 	}
 	stepScenario(t, c, cache, start.Add(11*time.Second))
-	state := c.ExportState()
+	state := exportState(t, c)
 	if !state.IncidentOpen || state.IncidentRequest == nil || len(state.IncidentRequest.Findings) != 1 {
 		t.Fatalf("sweep match did not confirm at default 10s duration: %+v", state)
 	}

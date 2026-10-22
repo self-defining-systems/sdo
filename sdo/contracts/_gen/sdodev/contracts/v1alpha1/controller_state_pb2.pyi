@@ -8,12 +8,47 @@ from sdodev.contracts.v1alpha1 import outcome_pb2 as _outcome_pb2
 from sdodev.contracts.v1alpha1 import worker_pb2 as _worker_pb2
 from sdodev.contracts.v1alpha1 import program_pb2 as _program_pb2
 from google.protobuf.internal import containers as _containers
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
 from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class DispatchState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DISPATCH_STATE_UNSPECIFIED: _ClassVar[DispatchState]
+    DISPATCH_STATE_IDLE: _ClassVar[DispatchState]
+    DISPATCH_STATE_WORKSPACE_PENDING: _ClassVar[DispatchState]
+    DISPATCH_STATE_WORKSPACE_RUNNING: _ClassVar[DispatchState]
+    DISPATCH_STATE_PENDING: _ClassVar[DispatchState]
+    DISPATCH_STATE_RUNNING: _ClassVar[DispatchState]
+    DISPATCH_STATE_COMPLETED: _ClassVar[DispatchState]
+    DISPATCH_STATE_ADMISSION_DEFERRED: _ClassVar[DispatchState]
+
+class ClosureState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    CLOSURE_STATE_UNSPECIFIED: _ClassVar[ClosureState]
+    CLOSURE_STATE_PENDING: _ClassVar[ClosureState]
+    CLOSURE_STATE_PROCESSING: _ClassVar[ClosureState]
+    CLOSURE_STATE_COMMITTED: _ClassVar[ClosureState]
+    CLOSURE_STATE_ACKNOWLEDGING: _ClassVar[ClosureState]
+    CLOSURE_STATE_FAILED: _ClassVar[ClosureState]
+DISPATCH_STATE_UNSPECIFIED: DispatchState
+DISPATCH_STATE_IDLE: DispatchState
+DISPATCH_STATE_WORKSPACE_PENDING: DispatchState
+DISPATCH_STATE_WORKSPACE_RUNNING: DispatchState
+DISPATCH_STATE_PENDING: DispatchState
+DISPATCH_STATE_RUNNING: DispatchState
+DISPATCH_STATE_COMPLETED: DispatchState
+DISPATCH_STATE_ADMISSION_DEFERRED: DispatchState
+CLOSURE_STATE_UNSPECIFIED: ClosureState
+CLOSURE_STATE_PENDING: ClosureState
+CLOSURE_STATE_PROCESSING: ClosureState
+CLOSURE_STATE_COMMITTED: ClosureState
+CLOSURE_STATE_ACKNOWLEDGING: ClosureState
+CLOSURE_STATE_FAILED: ClosureState
 
 class FindingState(_message.Message):
     __slots__ = ("detector_id", "finding", "firing_count", "clear_count", "active", "first_seen_at", "activations", "clears", "not_persisted", "first_clear_at", "last_observed_at")
@@ -180,10 +215,10 @@ class ControllerState(_message.Message):
     detector_review_reason: str
     detector_clear_since: _containers.MessageMap[str, _timestamp_pb2.Timestamp]
     incident_observed_changes: _containers.RepeatedCompositeFieldContainer[_messages_pb2.ObservedStateChange]
-    dispatch_state: str
+    dispatch_state: DispatchState
     incident_finding_keys: _containers.RepeatedScalarFieldContainer[str]
     pending_closure: _messages_pb2.IncidentClosure
-    closure_state: str
+    closure_state: ClosureState
     closure_receipt: ClosureReceipt
     closure_failure: ClosureFailure
     last_acknowledged_incident_id: str
@@ -196,7 +231,7 @@ class ControllerState(_message.Message):
     drift_admission: DriftAdmissionState
     program_sweep_cursors: _containers.ScalarMap[str, str]
     responder_tool_state_json: bytes
-    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[str] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[str] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., drift_admission: _Optional[_Union[DriftAdmissionState, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ...) -> None: ...
+    def __init__(self, version: _Optional[str] = ..., scheduler_deadlines: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., finding_states: _Optional[_Mapping[str, FindingState]] = ..., pending_batch: _Optional[_Union[BatcherState, _Mapping]] = ..., history: _Optional[_Iterable[_Union[_messages_pb2.DetectorEvaluation, _Mapping]]] = ..., incident_open: _Optional[bool] = ..., responder_done: _Optional[bool] = ..., incident_request: _Optional[_Union[_messages_pb2.IncidentRequest, _Mapping]] = ..., incident_result: _Optional[_Union[_messages_pb2.IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., incident_detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., incident_dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., detector_review_required_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_reason: _Optional[str] = ..., detector_clear_since: _Optional[_Mapping[str, _timestamp_pb2.Timestamp]] = ..., incident_observed_changes: _Optional[_Iterable[_Union[_messages_pb2.ObservedStateChange, _Mapping]]] = ..., dispatch_state: _Optional[_Union[DispatchState, str]] = ..., incident_finding_keys: _Optional[_Iterable[str]] = ..., pending_closure: _Optional[_Union[_messages_pb2.IncidentClosure, _Mapping]] = ..., closure_state: _Optional[_Union[ClosureState, str]] = ..., closure_receipt: _Optional[_Union[ClosureReceipt, _Mapping]] = ..., closure_failure: _Optional[_Union[ClosureFailure, _Mapping]] = ..., last_acknowledged_incident_id: _Optional[str] = ..., pending_releases: _Optional[_Iterable[str]] = ..., evaluation_iteration: _Optional[int] = ..., detector_timeline: _Optional[_Iterable[_Union[_messages_pb2.DetectorTimelineEntry, _Mapping]]] = ..., incident_view: _Optional[_Union[_messages_pb2.IncidentView, _Mapping]] = ..., drift_events: _Optional[_Iterable[_Union[_messages_pb2.DriftEvent, _Mapping]]] = ..., ownership_adoption: _Optional[_Union[OwnershipAdoptionStatus, _Mapping]] = ..., drift_admission: _Optional[_Union[DriftAdmissionState, _Mapping]] = ..., program_sweep_cursors: _Optional[_Mapping[str, str]] = ..., responder_tool_state_json: _Optional[bytes] = ...) -> None: ...
 
 class ReflectionDecision(_message.Message):
     __slots__ = ("learning_decision", "no_change_reason", "playbook_ids", "error", "sdk_gaps", "usage")

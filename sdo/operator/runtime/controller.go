@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"maps"
 	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -101,11 +102,11 @@ type Controller struct {
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
-	durable                  *RuntimeState
+	durable                  *contracts.ControllerState
 	incidentOpen             bool
 	responderDone            bool
 	currentIncidentRequest   *IncidentRequest
-	dispatchState            string
+	dispatchState            contracts.DispatchState
 	incidentFindingKeys      []string
 	cleanedHelpers           []string
 	healthDetectorIDs        []string
@@ -126,7 +127,7 @@ type Controller struct {
 	// incident's diff showed that object changed. Guarded by mu.
 	incidentObservedChanges    map[string]ObservedStateChange
 	pendingClosure             *IncidentClosure
-	closureState               string
+	closureState               contracts.ClosureState
 	closureReceipt             *ClosureReceipt
 	closureFailure             *ClosureFailure
 	dispatchFailureAttempts    int
@@ -499,7 +500,7 @@ func (c *Controller) canAttachBeforeLaunchLocked() bool {
 		return false
 	}
 	switch c.dispatchState {
-	case "workspace_pending", "workspace_running", "pending", admissionDeferredState:
+	case contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING, contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING, contracts.DispatchState_DISPATCH_STATE_PENDING, admissionDeferredState:
 		return true
 	default:
 		return false
@@ -551,9 +552,9 @@ func (c *Controller) reassessDeferredAdmission(now time.Time) {
 		c.admissionRecheckAt = now.Add(c.config.Admission.RecheckInterval)
 		return
 	}
-	next := "pending"
+	next := contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
-		next = "workspace_pending"
+		next = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	c.dispatchState = next
 	c.admissionRecheckAt = time.Time{}
@@ -656,9 +657,9 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.resetDispatchRetryLocked()
 	c.incidentObservedChanges = make(map[string]ObservedStateChange)
 	c.observeStateChangesLocked(request.StateChanges, now)
-	readyState := "pending"
+	readyState := contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
-		readyState = "workspace_pending"
+		readyState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	// Load-aware admission: when the controller is over a pressure threshold the
 	// incident is held (admission_deferred) before any worktree is prepared or
@@ -978,7 +979,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
 			c.responderCompletedAt = c.incidentDispatchedAt
 		}
-		c.dispatchState = "completed"
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = completion.err.Error()
 		c.currentIncidentResult = nil
 		c.resetDispatchRetryLocked()
@@ -991,7 +992,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		// spinning the dispatch effect in a hot loop.
 		c.responderDone = false
 		c.responderCompletedAt = time.Time{}
-		c.dispatchState = "pending"
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 		c.dispatchError = completion.err.Error()
 		c.currentIncidentResult = nil
 		c.recordDispatchFailureLocked()
@@ -1008,7 +1009,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
 			c.responderCompletedAt = c.incidentDispatchedAt
 		}
-		c.dispatchState = "completed"
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = ""
 		completion.result.DriftEvents = checkedDriftAssessments(*c.currentIncidentRequest, completion.result.DriftEvents)
 		for _, label := range completion.result.DriftEvents {
@@ -1154,7 +1155,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	})
 	c.timeline = nil
 	c.pendingClosure = cloneIncidentClosure(&closure)
-	c.closureState = "pending"
+	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 	c.closureReceipt = nil
 	c.incidentOpen = false
 	c.responderDone = false
@@ -1167,7 +1168,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	c.detectorReviewRequired = false
 	c.detectorReviewRequiredAt = time.Time{}
 	c.detectorReviewReason = ""
-	c.dispatchState = "idle"
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
 	c.incidentFindingKeys = nil
 	c.cleanedHelpers = nil
 	c.incidentObservedChanges = nil
@@ -1261,9 +1262,9 @@ func (c *Controller) startFollowUpLocked(now time.Time) bool {
 	c.dispatchError = ""
 	c.responderDone = false
 	c.responderCompletedAt = time.Time{}
-	c.dispatchState = "pending"
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
-		c.dispatchState = "workspace_pending"
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	c.incidentFindingKeys = findingKeys(residual)
 	return true
@@ -1476,7 +1477,7 @@ func (c *Controller) latestEvaluations(
 	return result, true
 }
 
-func (c *Controller) ExportState() RuntimeState {
+func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	history := append([]DetectorEvaluation(nil), c.history...)
@@ -1484,98 +1485,128 @@ func (c *Controller) ExportState() RuntimeState {
 		history = history[len(history)-100:]
 	}
 	dispatchState := c.dispatchState
-	if dispatchState == "running" {
-		dispatchState = "pending"
-	} else if dispatchState == "workspace_running" {
-		dispatchState = "workspace_pending"
+	if dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING {
+		dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
+	} else if dispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING {
+		dispatchState = contracts.DispatchState_DISPATCH_STATE_WORKSPACE_PENDING
 	}
 	closureState := c.closureState
-	if closureState == "processing" {
-		closureState = "pending"
-	} else if closureState == "acknowledging" {
-		closureState = "committed"
+	if closureState == contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+		closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
+	} else if closureState == contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING {
+		closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
 	}
-	return RuntimeState{
-		Version: RuntimeStateVersion, SchedulerDeadlines: c.scheduler.Deadlines(),
-		FindingStates: c.tracker.Snapshot(), PendingBatch: c.batcher.Snapshot(), History: history,
-		IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
-		IncidentRequest: cloneIncidentRequest(c.currentIncidentRequest),
-		IncidentResult:  cloneIncidentResult(c.currentIncidentResult), DispatchError: c.dispatchError,
-		IncidentDetectedAt: c.incidentDetectedAt, IncidentDispatchedAt: c.incidentDispatchedAt,
-		ResponderCompletedAt: c.responderCompletedAt, DispatchState: dispatchState,
-		DetectorReviewRequired:     c.detectorReviewRequired,
-		DetectorReviewRequiredAt:   c.detectorReviewRequiredAt,
-		DetectorReviewReason:       c.detectorReviewReason,
-		DetectorClearSince:         cloneClearSince(c.detectorClearSince),
-		IncidentObservedChanges:    c.observedStateChangesLocked(),
-		IncidentFindingKeys:        append([]string(nil), c.incidentFindingKeys...),
-		PendingClosure:             cloneIncidentClosure(c.pendingClosure),
-		ClosureState:               closureState,
-		ClosureReceipt:             cloneClosureReceipt(c.closureReceipt),
-		ClosureFailure:             cloneClosureFailure(c.closureFailure),
-		LastAcknowledgedIncidentID: c.lastAcknowledgedIncidentID,
-		PendingReleases:            append([]string(nil), c.pendingReleases...),
-		IncidentView:               cloneIncidentView(c.incidentView),
-		DriftEvents:                append([]sdk.DriftEvent(nil), c.driftEvents...),
-		DriftAdmission:             cloneDriftAdmission(c.driftAdmission),
-		ProgramSweepCursors:        maps.Clone(c.programSweepCursors),
-		OwnershipAdoption:          c.ownershipAdoption,
-		EvaluationIteration:        c.evaluationIteration,
-		DetectorTimeline:           cloneTimeline(c.timeline),
+	findingStates, err := findingStatesContract(c.tracker.Snapshot())
+	if err != nil {
+		return nil, err
 	}
+	pendingBatch := c.batcher.Snapshot()
+	batch, err := findingsContract(pendingBatch.Findings)
+	if err != nil {
+		return nil, fmt.Errorf("pending batch: %w", err)
+	}
+	timeline := detectorTimelineContract(c.timeline)
+	view, err := incidentViewContract(c.incidentView)
+	if err != nil {
+		return nil, err
+	}
+	message := &contracts.ControllerState{
+		Version: RuntimeStateVersion, SchedulerDeadlines: timestampsContract(c.scheduler.Deadlines()), FindingStates: findingStates,
+		PendingBatch: &contracts.BatcherState{
+			Findings: batch, Deadlines: timestampsContract(pendingBatch.Deadlines), Deadline: optionalTimestamp(pendingBatch.Deadline),
+		},
+		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
+		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
+		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
+		DetectorReviewRequired: c.detectorReviewRequired, DetectorReviewRequiredAt: optionalTimestamp(c.detectorReviewRequiredAt),
+		DetectorReviewReason: c.detectorReviewReason, DetectorClearSince: timestampsContract(c.detectorClearSince),
+		IncidentObservedChanges: observedStateChangesContract(c.observedStateChangesLocked()), DispatchState: dispatchState,
+		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: closureState,
+		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure),
+		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, PendingReleases: append([]string(nil), c.pendingReleases...),
+		EvaluationIteration: int32(c.evaluationIteration), DetectorTimeline: timeline, IncidentView: view,
+		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption), DriftAdmission: cloneDriftAdmission(c.driftAdmission), ProgramSweepCursors: maps.Clone(c.programSweepCursors),
+	}
+	if c.currentIncidentRequest != nil {
+		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
+		if err != nil {
+			return nil, fmt.Errorf("incident request: %w", err)
+		}
+	}
+	if c.currentIncidentResult != nil {
+		message.IncidentResult, err = incidentResultContract(*c.currentIncidentResult)
+		if err != nil {
+			return nil, fmt.Errorf("incident result: %w", err)
+		}
+	}
+	if c.pendingClosure != nil {
+		message.PendingClosure, err = incidentClosureContract(*c.pendingClosure)
+		if err != nil {
+			return nil, fmt.Errorf("pending closure: %w", err)
+		}
+	}
+	return message, nil
 }
 
-func (c *Controller) RestoreState(state RuntimeState) error {
+func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	if err := validateRuntimeState(state); err != nil {
 		return err
 	}
-	if err := c.scheduler.RestoreDeadlines(state.SchedulerDeadlines); err != nil {
+	if err := c.scheduler.RestoreDeadlines(timestampsState(state.GetSchedulerDeadlines())); err != nil {
 		return err
 	}
-	c.tracker.Restore(state.FindingStates)
-	c.batcher.Restore(state.PendingBatch)
-	c.history = append([]DetectorEvaluation(nil), state.History...)
+	c.tracker.Restore(findingStatesState(state.GetFindingStates()))
+	c.batcher.Restore(BatcherState{Findings: findingsState(state.GetPendingBatch().GetFindings()), Deadlines: timestampsState(state.GetPendingBatch().GetDeadlines()), Deadline: controllerTime(state.GetPendingBatch().GetDeadline())})
+	c.history = append([]DetectorEvaluation(nil), evaluationsState(state.GetHistory())...)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.incidentOpen = state.IncidentOpen
 	// A subprocess cannot survive a controller restart. Preserve the incident
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
-	c.currentIncidentRequest = cloneIncidentRequest(state.IncidentRequest)
-	c.currentIncidentResult = cloneIncidentResult(state.IncidentResult)
-	c.driftEvents = append([]sdk.DriftEvent(nil), state.DriftEvents...)
+	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
+	c.currentIncidentResult = nil
+	if state.IncidentResult != nil {
+		result := incidentResultState(state.IncidentResult)
+		c.currentIncidentResult = &result
+	}
+	c.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(state.GetDriftEvents())...)
 	c.driftAdmission = cloneDriftAdmission(state.DriftAdmission)
 	c.programSweepCursors = maps.Clone(state.ProgramSweepCursors)
-	c.ownershipAdoption = state.OwnershipAdoption
+	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
 	c.dispatchError = state.DispatchError
-	c.incidentDetectedAt = state.IncidentDetectedAt
-	c.incidentDispatchedAt = state.IncidentDispatchedAt
-	c.responderCompletedAt = state.ResponderCompletedAt
+	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
+	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
+	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
 	c.detectorReviewRequired = state.DetectorReviewRequired
-	c.detectorReviewRequiredAt = state.DetectorReviewRequiredAt
+	c.detectorReviewRequiredAt = controllerTime(state.GetDetectorReviewRequiredAt())
 	c.detectorReviewReason = state.DetectorReviewReason
-	c.detectorClearSince = cloneClearSince(state.DetectorClearSince)
+	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
 	c.incidentObservedChanges = nil
 	if state.IncidentOpen {
-		c.incidentObservedChanges = make(map[string]ObservedStateChange, len(state.IncidentObservedChanges))
-		for _, entry := range state.IncidentObservedChanges {
+		c.incidentObservedChanges = make(map[string]ObservedStateChange, len(observedStateChangesState(state.GetIncidentObservedChanges())))
+		for _, entry := range observedStateChangesState(state.GetIncidentObservedChanges()) {
 			c.incidentObservedChanges[entry.Kind+"/"+entry.Name] = entry
 		}
 	}
 	c.dispatchState = state.DispatchState
 	c.incidentFindingKeys = append([]string(nil), state.IncidentFindingKeys...)
-	c.pendingClosure = cloneIncidentClosure(state.PendingClosure)
-	c.closureState = state.ClosureState
-	if c.pendingClosure != nil && c.closureState == "" {
-		c.closureState = "pending"
+	c.pendingClosure = nil
+	if state.PendingClosure != nil {
+		closure := incidentClosureState(state.PendingClosure)
+		c.pendingClosure = &closure
 	}
-	c.closureReceipt = cloneClosureReceipt(state.ClosureReceipt)
-	c.closureFailure = cloneClosureFailure(state.ClosureFailure)
-	c.lastAcknowledgedIncidentID = state.LastAcknowledgedIncidentID
+	c.closureState = state.ClosureState
+	if c.pendingClosure != nil && c.closureState == contracts.ClosureState_CLOSURE_STATE_UNSPECIFIED {
+		c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
+	}
+	c.closureReceipt = cloneClosureReceipt(closureReceiptState(state.GetClosureReceipt()))
+	c.closureFailure = cloneClosureFailure(closureFailureState(state.GetClosureFailure()))
+	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
 	c.pendingReleases = append([]string(nil), state.PendingReleases...)
 	c.releaseInFlight = ""
-	c.evaluationIteration = state.EvaluationIteration
-	c.timeline = cloneTimeline(state.DetectorTimeline)
+	c.evaluationIteration = int(state.GetEvaluationIteration())
+	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))
 	return nil
 }
 
@@ -1644,7 +1675,7 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 	c.stateRestored = revision != ""
 	c.durable = nil
 	if revision != "" {
-		c.durable = &state
+		c.durable = proto.Clone(state).(*contracts.ControllerState)
 	}
 	c.mu.Unlock()
 	return nil
@@ -1659,22 +1690,28 @@ func (c *Controller) PersistState(ctx context.Context) error {
 		return err
 	}
 	defer cancel()
-	state := c.ExportState()
+	state, err := c.ExportState()
+	if err != nil {
+		return fmt.Errorf("snapshot controller state: %w", err)
+	}
 	if preparer, ok := c.dispatcher.(interface {
 		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
-	}); ok && state.DispatchState == "pending" && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
-		prepared, err := preparer.PrepareDispatch(actionCtx, *state.IncidentRequest)
+	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" {
+		prepared, err := preparer.PrepareDispatch(actionCtx, *incidentRequestState(state.IncidentRequest))
 		if err != nil {
 			return fmt.Errorf("prepare responder dispatch: %w", err)
 		}
 		c.mu.Lock()
-		if c.currentIncidentRequest == nil || !sameIncidentRequest(*c.currentIncidentRequest, *state.IncidentRequest) {
+		if c.currentIncidentRequest == nil || !sameIncidentRequest(*c.currentIncidentRequest, *incidentRequestState(state.IncidentRequest)) {
 			c.mu.Unlock()
 			return ErrStateConflict
 		}
 		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
 		c.mu.Unlock()
-		state.IncidentRequest = cloneIncidentRequest(&prepared)
+		state.IncidentRequest, err = incidentRequestContract(prepared)
+		if err != nil {
+			return fmt.Errorf("prepared incident request: %w", err)
+		}
 	}
 	revision, err := c.stateStore.Save(actionCtx, state, c.stateRevision)
 	if err != nil {
@@ -1687,7 +1724,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 	}
 	c.stateRevision = revision
 	c.mu.Lock()
-	c.durable = &state
+	c.durable = proto.Clone(state).(*contracts.ControllerState)
 	c.mu.Unlock()
 	return nil
 }

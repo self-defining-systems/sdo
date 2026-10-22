@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sync"
 	"testing"
 	"time"
@@ -240,7 +241,7 @@ func TestControllerSweepVisitsTwoHundredBindingsAcrossRestarts(t *testing.T) {
 	}
 	provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: services}}
 	start := time.Unix(10, 0).UTC()
-	var state RuntimeState
+	var state *contracts.ControllerState
 	for sweep := 0; sweep < 4; sweep++ {
 		config := testControllerConfig()
 		config.Namespace = "app"
@@ -259,7 +260,7 @@ func TestControllerSweepVisitsTwoHundredBindingsAcrossRestarts(t *testing.T) {
 		if err := controller.StepEvents(context.Background(), start.Add(time.Duration(sweep+1)*time.Second), nil); err != nil {
 			t.Fatal(err)
 		}
-		raw, err := encodeControllerState(controller.ExportState())
+		raw, err := encodeControllerState(exportState(t, controller))
 		if err != nil {
 			t.Fatal(err)
 		}

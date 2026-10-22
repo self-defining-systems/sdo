@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"testing"
 	"time"
@@ -187,8 +189,8 @@ func TestHermeticFakePodReportsUnloadedImage(t *testing.T) {
 }
 
 func TestHermeticFakeConfigMapEnforcesProductionLimit(t *testing.T) {
-	state := RuntimeState{Version: RuntimeStateVersion, DispatchError: strings.Repeat("x", 1<<20)}
-	_, err := NewConfigMapStateStore(fastloopClient(), "app", "oversized-state").Save(context.Background(), state, "")
+	state := &contracts.ControllerState{Version: RuntimeStateVersion, DispatchError: strings.Repeat("x", 1<<20)}
+	_, err := lifecycleio.NewConfigMapStateStore(fastloopClient(), "app", "oversized-state").Save(context.Background(), state, "")
 	if err == nil || !strings.Contains(err.Error(), "1 MiB") {
 		t.Fatalf("oversized controller state passed the fake API: %v", err)
 	}
@@ -344,13 +346,13 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			if applied.ApplicationID == "" || len(loop.PlanApplications()) != 1 {
 				t.Fatalf("plans were not applied: %+v", applied)
 			}
-			state := RuntimeState{Version: RuntimeStateVersion, IncidentResult: &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: id, Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}, PlanApplications: loop.PlanApplications()}}
-			store := NewConfigMapStateStore(client, "app", "controller-state")
+			state := &contracts.ControllerState{Version: RuntimeStateVersion, IncidentResult: mustProject(t, incidentResultContract, IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: id, Status: IncidentCompleted, Timing: TimingMetrics{StartedAt: time.Unix(1, 0), CompletedAt: time.Unix(2, 0)}, PlanApplications: loop.PlanApplications()})}
+			store := lifecycleio.NewConfigMapStateStore(client, "app", "controller-state")
 			if _, err := store.Save(ctx, state, ""); err != nil {
 				t.Fatalf("persist plan outcome: %v", err)
 			}
-			reloaded, _, err := NewConfigMapStateStore(client, "app", "controller-state").Load(ctx)
-			if err != nil || len(reloaded.IncidentResult.PlanApplications[0].Result.ActionsApplied) != 2 || len(reloaded.IncidentResult.PlanApplications[0].Result.PreImages) != 0 {
+			reloaded, _, err := lifecycleio.NewConfigMapStateStore(client, "app", "controller-state").Load(ctx)
+			if err != nil || len(incidentResultState(reloaded.IncidentResult).PlanApplications[0].Result.ActionsApplied) != 2 || len(incidentResultState(reloaded.IncidentResult).PlanApplications[0].Result.PreImages) != 0 {
 				t.Fatalf("reload plan outcome: %+v %v", reloaded.IncidentResult, err)
 			}
 		}

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"path/filepath"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
 
 	"k8s.io/client-go/kubernetes/fake"
@@ -37,7 +38,7 @@ func TestChaosTelemetryEventIDsStableAcrossCrashPoint(t *testing.T) {
 			controller := telemetryController(
 				t, sink, &recordingDispatcher{requests: make(chan IncidentRequest, 4)}, cause,
 			)
-			if err := controller.AttachStateStore(ctx, NewConfigMapStateStore(client, "demo", "state")); err != nil {
+			if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo", "state")); err != nil {
 				t.Fatalf("attach store: %v", err)
 			}
 			return controller

@@ -53,8 +53,8 @@ func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) 
 			t.Fatalf("step %d: %v", sample, err)
 		}
 		if sample == 4 {
-			state := controller.ExportState()
-			if got := state.DetectorClearSince["health"]; !got.Equal(time.Unix(4, 0).UTC()) {
+			state := exportState(t, controller)
+			if got := state.DetectorClearSince["health"]; !controllerTime(got).Equal(time.Unix(4, 0).UTC()) {
 				t.Fatalf("the persisted clear streak must start at the latest clear evaluation, got %v", got)
 			}
 		}
@@ -94,12 +94,12 @@ func TestHealthClearStreakSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
-	state := controller.ExportState()
-	state.DetectorClearSince = map[string]time.Time{"health": time.Unix(3, 0).UTC()}
+	state := exportState(t, controller)
+	state.DetectorClearSince = timestampsContract(map[string]time.Time{"health": time.Unix(3, 0).UTC()})
 	if err := controller.RestoreState(state); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
-	if got := controller.ExportState().DetectorClearSince["health"]; !got.Equal(time.Unix(3, 0).UTC()) {
+	if got := exportState(t, controller).DetectorClearSince["health"]; !controllerTime(got).Equal(time.Unix(3, 0).UTC()) {
 		t.Fatalf("restored clear streak = %v", got)
 	}
 }
