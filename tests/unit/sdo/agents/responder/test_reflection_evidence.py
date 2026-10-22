@@ -78,3 +78,46 @@ def test_oversized_capture_item_is_explicit_and_narrow_fields_remain_exact(tmp_p
     assert broad["items"] == []
     narrow = read_capture(tmp_path, "detect", "pods", fields=["status.phase"])
     assert narrow["items"] == [{"status.phase": "Pending"}]
+
+
+def test_recording_index_finds_late_primitive_without_dumping_results(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_evidence import recording_index
+
+    calls = [{"method": "Logs", "arguments": [], "result": "large-result" * 10000} for _ in range(27)]
+    ref = {"kind": "Deployment", "namespace": "app", "name": "frontend"}
+    calls.append({"phase": "fixed", "method": "DiffAgainstSource", "arguments": [ref], "error": "source unavailable"})
+    raw = json.dumps(calls).encode()
+    (tmp_path / "open@detect-recordings.json").write_bytes(raw)
+    page = recording_index(tmp_path)
+    assert page["total"] == 28
+    assert page["next_offset"] is None
+    assert page["items"][27] == {
+        "index": 27,
+        "phase": "fixed",
+        "method": "DiffAgainstSource",
+        "bound_object": ref,
+        "error": "source unavailable",
+        "error_omitted_characters": 0,
+    }
+    assert page["items"][0]["phase"] == "open"
+    assert "large-result" not in json.dumps(page)
+    assert len(json.dumps(page)) < 8000
+    assert (tmp_path / "open@detect-recordings.json").read_bytes() == raw
+    inventory = capture_inventory(tmp_path)
+    assert inventory["captures"][0]["recorded_methods"] == {"DiffAgainstSource": 1, "Logs": 27}
+
+
+def test_recording_index_pagination_is_explicit_and_filters_whole_file(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_evidence import recording_index
+
+    calls = [{"method": "Logs", "arguments": [], "error": "x" * 1000} for _ in range(65)]
+    calls.append({"method": "DiffAgainstSource", "arguments": []})
+    (tmp_path / "open@detect-recordings.json").write_text(json.dumps(calls))
+    first = recording_index(tmp_path)
+    assert first["next_offset"] == 64
+    assert first["total"] == 66
+    assert first["items"][0]["error_omitted_characters"] > 0
+    filtered = recording_index(tmp_path, method="DiffAgainstSource")
+    assert filtered["items"][0]["index"] == 65
+    assert filtered["total"] == 1
+    assert filtered["next_offset"] is None

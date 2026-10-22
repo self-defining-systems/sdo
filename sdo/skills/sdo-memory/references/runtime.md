@@ -96,7 +96,9 @@ are copied exactly; the broker independently verifies them.
 
 List capture digests, counts and a few resource names, bound to the accepted outcome.
 
-Full immutable evidence remains available through capture_fields and to
+Recorded method counts cover the whole file. Use recordings_index to locate
+primitive calls without reading result payloads. Full immutable evidence
+remains available through capture_fields and to
 independent validation. Read relevant fields rather than entire captures.
 
 
@@ -108,6 +110,16 @@ Fields are dotted paths; list indices are numeric (spec.containers.0.image).
 Null collections are empty. Results are paginated and bounded to 12000
 characters; oversized_indices identifies items needing narrower fields.
 Missing fields are null, never evidence that a primitive succeeded.
+
+
+## recordings_index
+
+Index primitive calls by original position, phase, method, bound object and error.
+
+Filters search the entire recording. next_offset marks incomplete pages;
+a truncated page does not establish that a primitive was unrecorded.
+Empty recorded phases mean open. Error excerpts report omitted characters.
+Result payloads remain available through capture_fields.
 
 
 ## check_memory

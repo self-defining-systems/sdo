@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -46,12 +47,31 @@ class CaptureSummary(BaseModel):
     bytes: int
     namespace: str
     resources: dict[str, ResourceSummary]
+    recorded_methods: dict[str, int] = Field(default_factory=dict)
 
 
 class CaptureInventory(BaseModel):
     incident_id: str
     accepted_commit: str
     captures: list[CaptureSummary]
+
+
+class RecordingEntry(BaseModel):
+    index: int
+    phase: str
+    method: str
+    bound_object: dict[str, str] | None = None
+    error: str
+    error_omitted_characters: int
+
+
+class RecordingIndex(BaseModel):
+    incident_id: str
+    accepted_commit: str
+    sha256: str
+    items: list[RecordingEntry]
+    total: int
+    next_offset: int | None = None
 
 
 class CapturePage(BaseModel):
@@ -87,12 +107,55 @@ def capture_inventory(captures: Path) -> dict[str, Any]:
                 bytes=len(raw),
                 namespace=snapshot.get("namespace", "") if isinstance(snapshot, dict) else "",
                 resources=resources,
+                recorded_methods=dict(sorted(Counter(call["method"] for call in snapshot).items()))
+                if isinstance(snapshot, list)
+                else {},
             )
         )
     return CaptureInventory(
         incident_id=os.environ.get("SDO_INCIDENT_ID", ""),
         accepted_commit=os.environ.get("SDO_BASE_COMMIT", ""),
         captures=summaries,
+    ).model_dump()
+
+
+def recording_index(
+    captures: Path, *, method: str | None = None, phase: str | None = None, offset: int = 0, limit: int = 64
+) -> dict[str, Any]:
+    """Index metadata across the entire recording; never load result bodies into context."""
+    if offset < 0 or not 1 <= limit <= 100:
+        raise ValueError("recording pages require a nonnegative offset and limit between 1 and 100")
+    raw = (captures / "open@detect-recordings.json").read_bytes()
+    calls = [
+        (index, call)
+        for index, call in enumerate(json.loads(raw))
+        if (method is None or call["method"] == method) and (phase is None or (call.get("phase") or "open") == phase)
+    ]
+    entries = []
+    for index, call in calls[offset : offset + limit]:
+        arguments = call.get("arguments") or []
+        ref = arguments[0] if arguments and isinstance(arguments[0], dict) else None
+        error = call.get("error") or ""
+        entries.append(
+            RecordingEntry(
+                index=index,
+                phase=call.get("phase") or "open",
+                method=call["method"],
+                bound_object={key: str(ref[key]) for key in ("api_version", "kind", "namespace", "name") if key in ref}
+                if ref is not None
+                else None,
+                error=error[:256],
+                error_omitted_characters=max(0, len(error) - 256),
+            )
+        )
+    stop = offset + len(entries)
+    return RecordingIndex(
+        incident_id=os.environ.get("SDO_INCIDENT_ID", ""),
+        accepted_commit=os.environ.get("SDO_BASE_COMMIT", ""),
+        sha256=hashlib.sha256(raw).hexdigest(),
+        items=entries,
+        total=len(calls),
+        next_offset=stop if stop < len(calls) else None,
     ).model_dump()
 
 
@@ -189,7 +252,9 @@ def install_evidence_tools(server: FastMCP) -> None:
     def evidence_inventory() -> CaptureInventory:
         """List capture digests, counts and a few resource names, bound to the accepted outcome.
 
-        Full immutable evidence remains available through capture_fields and to
+        Recorded method counts cover the whole file. Use recordings_index to locate
+        primitive calls without reading result payloads. Full immutable evidence
+        remains available through capture_fields and to
         independent validation. Read relevant fields rather than entire captures.
         """
         return CaptureInventory.model_validate(capture_inventory(directory()))
@@ -215,4 +280,22 @@ def install_evidence_tools(server: FastMCP) -> None:
             read_capture(
                 directory(), phase, section, name=name, namespace=namespace, fields=fields, offset=offset, limit=limit
             )
+        )
+
+    @server.tool()
+    def recordings_index(
+        method: str | None = None,
+        phase: str | None = None,
+        offset: int = 0,
+        limit: int = 64,
+    ) -> RecordingIndex:
+        """Index primitive calls by original position, phase, method, bound object and error.
+
+        Filters search the entire recording. next_offset marks incomplete pages;
+        a truncated page does not establish that a primitive was unrecorded.
+        Empty recorded phases mean open. Error excerpts report omitted characters.
+        Result payloads remain available through capture_fields.
+        """
+        return RecordingIndex.model_validate(
+            recording_index(directory(), method=method, phase=phase, offset=offset, limit=limit)
         )
