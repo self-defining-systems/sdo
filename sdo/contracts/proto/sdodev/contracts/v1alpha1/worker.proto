@@ -5,6 +5,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/memory.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
@@ -101,11 +102,10 @@ message ReflectionRequest {
   // carry that rejection's diagnostics.
   uint32 validation_attempt = 11;
   repeated MemoryDiagnostic previous_diagnostics = 12;
-  // Go-owned depth, chosen from typed outcome facts. Empty or "full" authors
-  // memory as usual. "refine" means accepted programs already diagnosed,
-  // repaired and verified this incident: confirm them and edit only on contrary
-  // evidence.
-  string depth = 13 [(buf.validate.field).string = {in: ["", "full", "refine"]}];
+  reserved 13;
+  reserved "depth";
+  repeated ReflectionCauseWork cause_work = 14;
+  repeated ReflectionWorkItem unassigned_work = 15;
 }
 
 message ReflectionResult {
@@ -121,6 +121,7 @@ message ReflectionResult {
   repeated string proposed_artifact_ids = 4;
   OperationalArtifactProposal artifact_proposal = 5 [deprecated = true];
   repeated SdkGap sdk_gaps = 6;
+  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
 }
 
 message SdkGap {

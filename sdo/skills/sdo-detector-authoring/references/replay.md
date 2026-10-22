@@ -10,6 +10,9 @@ package sdktest // import "sdo.dev/operator/sdk/sdktest"
 
 CONSTANTS
 
+const CapturedFixedNoMatchPhase = "fixed"
+    CapturedFixedNoMatchPhase identifies observed negative evidence only.
+
 const MaxCapturedSnapshotBytes = 4 << 20
 
 FUNCTIONS
@@ -22,8 +25,8 @@ func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCa
 
 func CheckMitigatorGeneralization(t testing.TB, p program.Mitigator, c CorpusCase)
 func CheckNoMatchCase(t testing.TB, p program.Diagnoser, c CorpusCase)
-    CheckNoMatchCase exercises a recorded synthetic near miss used to tighten a
-    program. The reason in labels.json makes this exception explicit.
+    CheckNoMatchCase exercises an explicit synthetic near miss or a controller
+    fixed capture labeled as observed negative evidence.
 
 func CheckRenameInvariance(t testing.TB, p program.Diagnoser, c CorpusCase)
     CheckRenameInvariance requires a diagnosis to survive a consistent rename of

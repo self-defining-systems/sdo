@@ -973,3 +973,20 @@ def test_native_receipt_responder_usage_comes_from_the_ledger_closure_result() -
     usage = receipt_responder_usage(receipt)
     assert (usage.input_tokens, usage.cached_input_tokens, usage.output_tokens) == (1000, 800, 50)
     assert receipt_responder_usage({}).input_tokens == 0
+
+
+def test_stage_reports_go_evidence_gap_counts_and_actual_declines(pipeline: Path) -> None:
+    receipt = next(
+        pipeline.glob("stage_0_*/runs/*/worker_0/results/sdo_codex/*/run_1/sdo_production_receipt_strict.json")
+    )
+    document = json.loads(receipt.read_text())
+    document["native_ledger"] = {
+        "reflection_evidence_gap_count": 2,
+        "reflection_decision": {"decline_reason": "evidence_gap"},
+    }
+    receipt.write_text(json.dumps(document))
+    stages = load_sdo_pipeline(pipeline)
+    assert stages[0].reflection_evidence_gap_count == 2
+    assert stages[0].evidence_gap_declined is True
+    assert stages[1].reflection_evidence_gap_count is None
+    assert stages[1].evidence_gap_declined is None

@@ -14,7 +14,11 @@ The installed `sdo-memory` skill defines ownership, logical IDs and the generate
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references without searching installation directories.
-3. Ground positive cases in controller captures. Use
+3. Ground positive cases in controller captures. Start with
+   [evidence_inventory](../sdo-memory/references/runtime.md#evidence_inventory), then retrieve relevant
+   [capture_fields](../sdo-memory/references/runtime.md#capture_fields) on demand. Locate primitive calls with
+   [recordings_index](../sdo-memory/references/runtime.md#recordings_index); a partial result does not establish
+   that a primitive was unrecorded. Use
    [create_corpus](../sdo-memory/references/runtime.md#create_corpus) to preserve captured bytes and supply
    provenance. Inspect available evidence before deciding a cause is learnable; later live observations do
    not establish what an earlier capture contained.

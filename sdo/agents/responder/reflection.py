@@ -21,8 +21,8 @@ from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
+from sdo.agents.responder.reflection_evidence import memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
-from sdo.agents.responder.reflection_refine import refine_learning_request
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
     branch_correction,
@@ -30,14 +30,12 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.contracts import OutcomeClassification, ReflectionResult, model_output_schema, validate
+from sdo.contracts import ReflectionResult, model_output_schema, validate
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
 REFLECTION_GUIDANCE_MODES: tuple[ReflectionGuidance, ...] = ("baseline", "generalize", "generalize-spec")
 REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh")
-ReflectionDepth = Literal["full", "refine"]
-REFLECTION_DEPTHS: tuple[ReflectionDepth, ...] = ("full", "refine")
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,18 +43,7 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor
 
-    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord
-
-
-def _classification_directive(classification: str, guidance: ReflectionGuidance = "baseline") -> str:
-    if classification == OutcomeClassification.SUCCESS:
-        if guidance in _GENERALIZING_GUIDANCE:
-            return (
-                "Capture the confirmed signature at the level of its root-cause class, following the generalization "
-                "protocol above, and stay within what the evidence supports."
-            )
-        return "Capture the confirmed signature without generalizing beyond the observed successful evidence."
-    return "Do not encode the result as successful operational memory."
+    from sdo.contracts import IncidentClosure, MemoryDiagnostic, OutcomeRecord, ReflectionCauseWork, ReflectionWorkItem
 
 
 class ReflectionTurn(BaseModel):
@@ -65,6 +52,7 @@ class ReflectionTurn(BaseModel):
     summary: str = Field(min_length=1)
     learning_decision: Literal["updated", "no_change", "sdk_gap"]
     no_change_reason: str | None = Field(default=None, min_length=1)
+    decline_reason: Literal["", "evidence_gap"] = ""
     playbook_ids: list[str] = Field(default_factory=list)
     sdk_gaps: list[SdkGap] = Field(default_factory=list)
     # Provider accounting for the turn; kept out of the model-facing schema.
@@ -87,6 +75,7 @@ class ReflectionTurn(BaseModel):
             summary=result.summary,
             learning_decision=cast("Literal['updated', 'no_change', 'sdk_gap']", result.learning_decision),
             no_change_reason=result.no_change_reason or None,
+            decline_reason=cast("Literal['', 'evidence_gap']", result.decline_reason),
             playbook_ids=list(result.proposed_artifact_ids),
             sdk_gaps=[
                 SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
@@ -103,6 +92,12 @@ class ReflectionTurn(BaseModel):
             raise ValueError("reflection requires logical playbook IDs")
         if len(set(self.playbook_ids)) != len(self.playbook_ids):
             raise ValueError("reflection playbook IDs must be unique")
+        if (
+            self.decline_reason == "evidence_gap"
+            and self.learning_decision == "no_change"
+            and self.no_change_reason != "evidence gap"
+        ):
+            raise ValueError("evidence gap no_change uses the canonical evidence gap reason")
         if self.learning_decision == "no_change" and self.sdk_gaps:
             raise ValueError("no_change reflection cannot report SDK gaps")
         if self.learning_decision in {"no_change", "sdk_gap"}:
@@ -150,29 +145,6 @@ INCIDENT_REASONING_EFFORT = "medium"
 _GENERALIZING_GUIDANCE = ("generalize", "generalize-spec")
 
 
-def _logical_guidance(guidance: ReflectionGuidance) -> str:
-    if guidance == "baseline":
-        return (
-            "Capture the confirmed signature without generalizing beyond the observed successful evidence. "
-            "Add a precise matching test and near-miss regression test for any incident detector.\n"
-        )
-    protocol = (
-        "Generalize by root-cause class: compare the confirmed failure mechanism and repair with existing "
-        "incident detectors. Widen one existing detector and playbook when only resource identity or a parameter "
-        "differs; do not add a sibling. Use Finding.ParameterBindings for affected roles, preserve existing "
-        "originatingIncident and originatingCommit, and include matching and near-miss tests. "
-        "Create a new logical detector and playbook only for a different failure mechanism or repair.\n"
-    )
-    if guidance == "generalize-spec":
-        protocol += (
-            "Spec-first: prefer a detector predicate decidable from current Kubernetes spec or status. "
-            "Events, logs, and restart counts may corroborate, but must not be the firing precondition when "
-            "current state is sufficient. Prove a matching snapshot without Event objects and a near-miss. "
-            "If the confirmed cause is not decidable from spec or status, name the earliest available evidence.\n"
-        )
-    return protocol
-
-
 def _logical_learning_request(
     *,
     outcome: OutcomeRecord,
@@ -180,35 +152,50 @@ def _logical_learning_request(
     outcome_commit: str,
     closure: IncidentClosure,
     guidance: ReflectionGuidance,
+    cause_work: Sequence[ReflectionCauseWork] = (),
+    unassigned_work: Sequence[ReflectionWorkItem] = (),
 ) -> str:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
     snapshot = closure.request.memory_snapshot
-    classification = outcome.classification
+    work_section = ""
+    if cause_work or unassigned_work:
+        work_json = json.dumps(
+            {
+                "causes": [json_format.MessageToDict(item, preserving_proto_field_name=True) for item in cause_work],
+                "unassigned": [
+                    json_format.MessageToDict(item, preserving_proto_field_name=True) for item in unassigned_work
+                ],
+            },
+            indent=2,
+        )
+        work_section = (
+            "Go has settled covered items and materialized their evidence in this checkout. "
+            "Preserve Go-owned cases and address only the per-cause questions in the same incident session. "
+            "A false-match fixed capture is a required NoMatch regression. "
+            "Only Go-flagged gaps permit declining for missing evidence; explain which observation is missing. "
+            "Return updated whenever final files include Go or agent edits.\n"
+            f"Per-cause work:\n{work_json}\n"
+        )
     return (
         "The controller verified this incident and committed its outcome. "
-        "Learn a reusable relation for each confirmed fault, refine accepted memory when the mechanism is shared, "
-        "or explain why the captured evidence cannot support safe learning. "
-        "Record reused program IDs in the summary. "
-        f"Start with the skill index at {SKILLS_ROOT}/sdo-memory/SKILL.md and follow its authoring links. "
-        "The installed skills are the authoring guide; authoring_reference retrieves the same shipped references. "
-        "Read only what is needed and keep accepted provenance. "
-        "Edit the final files directly in the operational memory directory of this isolated checkout. "
-        "Source edits, outcomes, goal and architecture are protected. "
-        "Use captured observations, parameterized programs, and matching and near-miss tests. "
-        "Unavailable observations remain Unknown. Preserve supported source-restoration mitigators. "
-        "Use create_corpus for captured cases and check_memory with typed decision fields for final validation. "
-        "Correct named diagnostics until it exits zero; the broker independently checks the same final files. "
-        "Return updated only with a nonempty diff and every changed logical playbook ID; otherwise return "
-        "no_change or a typed sdk_gap with a concrete reason and no authored diff. "
-        "Return decisions and logical IDs only. "
+        "Learn reusable operational memory for the responder's confirmed causes within the captured evidence. "
+        f"The authoring guide starts at {SKILLS_ROOT}/sdo-memory/SKILL.md. "
+        "Go owns the supplied classification, corpus evidence and trust decisions. "
+        "Preserve Go-owned cases; answer unresolved questions in this incident session without inferring cause groups. "
+        "Unavailable observations remain Unknown. "
+        "Preserve potentially large evidence output in a temporary file, then search or extract the relevant "
+        "observations; never infer missing evidence from a truncated prefix. "
+        "Edit final operational-memory files only in this isolated checkout. "
+        "Source, outcomes, goal and architecture are protected. "
+        "Return updated for a validated nonempty diff, including Go-authored edits, "
+        "and name changed logical playbook IDs. "
+        "Otherwise return no_change or a typed sdk_gap with a concrete reason. "
+        "The broker independently validates and publishes final files. "
         f"{branch_instruction('reflection')}\n\n"
-        f"{_logical_guidance(guidance)}"
-        f"For this {classification} outcome, "
-        f"{_classification_directive(classification, guidance)}\n\n"
-        "Before returning an update, the complete final files must be in the checkout and memory check must pass. "
+        f"{work_section}"
         f"Outcome commit: {outcome_commit}\n"
-        f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
+        f"Operational memory snapshot:\n{json.dumps(memory_view(snapshot), indent=2)}\n\n"
         "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
         "outcome_call_index and response_json_sha256 identify the full response in the committed outcome. "
         "Root causes, findings, action receipts and program transitions are retained.\n"
@@ -229,8 +216,8 @@ class SessionReflector:
 
     The first attempt resumes the responder session (``session_mode="resume"``)
     or, opt-in, starts a fresh session from a compact incident brief
-    (``"fresh"``). A retry after a broker rejection (non-empty ``diagnostics``)
-    is always a short fresh session that carries the typed diagnostics.
+    (``"fresh"``). A retry after a broker rejection carries typed diagnostics in the same
+    resumed incident session.
     """
 
     def __init__(self, backend: StatefulResponderBackend, *, guidance: str = "baseline") -> None:
@@ -252,12 +239,11 @@ class SessionReflector:
         closure: IncidentClosure | None = None,
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
-        depth: ReflectionDepth = "full",
+        cause_work: Sequence[ReflectionCauseWork] = (),
+        unassigned_work: Sequence[ReflectionWorkItem] = (),
     ) -> ReflectionTurn:
         if session_mode not in REFLECTION_SESSION_MODES:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
-        if depth not in REFLECTION_DEPTHS:
-            raise ValueError(f"unsupported reflection depth: {depth!r}")
         if closure is None or not closure.request.HasField("memory_snapshot"):
             raise ValueError("reflection requires a logical memory snapshot")
         request = _logical_learning_request(
@@ -266,30 +252,27 @@ class SessionReflector:
             outcome_commit=outcome_commit,
             closure=closure,
             guidance=self.guidance,
+            cause_work=cause_work,
+            unassigned_work=unassigned_work,
         )
         idempotency_key = f"reflection:{incident_id}:{outcome_commit}"
         if diagnostics:
-            # Re-sending the responder transcript on every model request is the
-            # dominant retry cost; the typed diagnostics are all a retry needs.
+            # Keep the incident session; only rejected-edit feedback is new.
             prompt = (
                 "Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. "
                 "The controller has "
                 "independently verified incident closure and committed its authoritative outcome; the responder's "
-                "session transcript is intentionally not available.\n\n"
+                "session context remains available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
                 "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
-                "Author corrected final files here, then call check_memory until green.\n\n"
+                "Resolve the broker diagnostics in the final proposal files.\n\n"
                 f"Original reflection request:\n{request}"
             )
+            if session_mode == "resume":
+                return self.backend.resume(
+                    session_id=session_id, worktree=worktree, prompt=prompt, idempotency_key=idempotency_key
+                )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-        if depth == "refine" and session_mode == "resume":
-            # Verified repeat: the programs already in memory did the work, so
-            # the session only confirms them. A fresh session has no transcript
-            # to confirm against, so it always gets the full request.
-            request = (
-                refine_learning_request(outcome=outcome, closure=closure, outcome_commit=outcome_commit)
-                + f"\n\n{branch_instruction('reflection')}"
-            )
         if session_mode == "fresh":
             if closure is None:
                 raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
@@ -332,15 +315,15 @@ class SessionReflector:
                 outcome_commit=outcome_commit,
                 session_mode="fresh",
                 closure=closure,
-                depth="full",
+                cause_work=cause_work,
+                unassigned_work=unassigned_work,
             )
 
 
 class CodexSessionBackend:
     """Resume the responder's own Codex session to reflect on its outcome.
 
-    Validation retries use :meth:`fresh` instead, so they never re-send the
-    responder transcript.
+    Validation retries retain the responder session and carry typed feedback.
     """
 
     provider: ClassVar[AgentProvider] = "codex"
