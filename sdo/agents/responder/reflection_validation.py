@@ -5,13 +5,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import json
 import math
 import os
 import signal
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
+
+from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
+from sdo.agents.responder.reflection_evidence import install_evidence_tools
 
 # Codex forwards only a small default environment to MCP servers. Carry the
 # worker-pinned ownership and offline toolchain settings explicitly.
@@ -22,6 +28,7 @@ VALIDATION_ENVIRONMENT = (
     "SDO_INCIDENT_ID",
     "SDO_CAPTURED_CORPUS_DIR",
     "SDO_OPERATOR_ROOT",
+    "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR",
     "SDO_HEALTHY_BASELINE",
     "SDO_GO_CACHE_SEED",
     "PATH",
@@ -66,17 +73,46 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
     if not checkout.is_dir():
         raise ValueError("validation root must be a checkout directory")
     server = FastMCP("sdo_reflection")
+    install_authoring_tools(server, checkout)
+    install_evidence_tools(server)
 
     @server.tool()
-    async def check_memory(decision_path: str | None = None) -> ValidationResult:
+    async def check_memory(
+        decision_path: str | None = None,
+        learning_decision: Literal["updated", "no_change", "sdk_gap"] | None = None,
+        summary: str = "",
+        no_change_reason: str = "",
+        proposed_artifact_ids: list[str] | None = None,
+        sdk_gaps: list[SdkGap] | None = None,
+    ) -> ValidationResult:
         """Run the complete memory check and wait for final diagnostics (at most 300s).
 
-        Write the decision JSON first (your returned result JSON works as is;
-        it is the same ReflectionResult). Pass its filename as decision_path, or use the
-        default .git/sdo-reflection-decision.json. One call waits for the final
-        result; never poll.
-        The broker independently repeats this same validation before acceptance.
+        Supply the typed decision fields directly; this tool writes the result
+        JSON outside the authored tree. Return the same decision and logical IDs.
+        Legacy decision_path files are also supported. One call waits for final
+        diagnostics. The broker independently repeats the validation.
         """
+        if learning_decision is not None:
+            if decision_path is not None:
+                raise ValueError("supply decision fields or decision_path, not both")
+            # Proposal checkouts may be Git worktrees, where .git is a file.
+            with tempfile.TemporaryDirectory(prefix="sdo-decision-") as temporary:
+                decision = Path(temporary) / "decision.json"
+                decision.write_text(
+                    json.dumps(
+                        {
+                            "summary": summary,
+                            "learning_decision": learning_decision,
+                            "no_change_reason": no_change_reason,
+                            "proposed_artifact_ids": proposed_artifact_ids or [],
+                            "sdk_gaps": [gap.model_dump() for gap in sdk_gaps or []],
+                        }
+                    )
+                )
+                return await run_check(str(decision))
+        return await run_check(decision_path)
+
+    async def run_check(decision_path: str | None) -> ValidationResult:
         argv = ["sdo-operator", "memory", "check", "--json"]
         if decision_path is not None:
             argv.extend(["--decision", decision_path])

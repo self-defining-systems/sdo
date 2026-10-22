@@ -183,9 +183,9 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     prompt = str(call["prompt"])
     assert "artifact_proposal" not in prompt
     assert "until it exits zero" in prompt
-    assert "sdo-operator memory check" in prompt
+    assert "check_memory" in prompt
     assert "draft-test" not in prompt
-    assert "sdo-detector-authoring" in prompt
+    assert "sdo-memory/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
     assert "Edit the final files directly" in prompt
@@ -257,10 +257,9 @@ def test_broker_diagnostic_correction_keeps_the_incident_session(tmp_path: Path)
     assert "artifact_proposal" not in str(call["prompt"])
 
 
-def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", raising=False)
+def test_reflection_prompt_routes_to_one_shipped_guide_without_protocol_recipes(tmp_path: Path) -> None:
+    from sdo.agents.responder.credentials import SKILLS_ROOT
+
     backend = _CapturingBackend()
     SessionReflector(backend).resume(
         session_id="session-1",
@@ -272,94 +271,15 @@ def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
         closure=_fresh_closure(tmp_path),
     )
     prompt = str(backend.calls[0]["prompt"])
-    for required in (
-        "for each confirmed fault",
-        "diagnose.go",
-        "mitigate.go",
-        "open and return NoMatch at fixed and healthy",
-        "recordings",
-        "labels",
-        "root_cause_program_ids",
-        "peer_bindings",
-        "open_sha256",
-        "ReconcileFromSource or Rollback",
-        "Keep mitigate.go",
-        "skipped_unreplayable_effect",
-        "declared ports alone never establish a listener",
-        "captured ProbeTCP",
-        "three independently verified live successes",
-        "container status reasons",
-        "sdo.dev/operator/sdk/program",
-        "diagnostics-module library helpers",
-        "diagnostics module path",
-        "Params",
-        "derive names, ports and images from bindings and the ReadView",
-        "every name, port and image renamed",
-        "allowed imports",
-        "/opt/sdo/examples/playbook-programs/playbooks/service-targetport-mismatch/diagnose.go",
-        "/opt/sdo/examples/playbook-programs/corpus/targetport-mismatch/",
-        "sdk_gap",
-        "Record each reused program ID",
-        "NoMatch",
-        "no shell commands",
-        "rerun",
-    ):
-        assert required in prompt
-
-
-def test_reflection_prompt_orients_in_one_read_and_waits_once_for_the_check(tmp_path: Path) -> None:
-    backend = _CapturingBackend()
-    SessionReflector(backend).resume(
-        session_id="session-1",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    prompt = str(backend.calls[0]["prompt"])
-
-    assert "Read what you need once" in prompt
-    assert "programs.md" in prompt
-    assert "/sdo/session/corpus" in prompt
-    assert "do not poll or retry while it runs" in prompt
-    assert "yield_time_ms" not in prompt
-
-
-def test_reflection_prompt_accepts_any_open_capture_phase_as_evidence(tmp_path: Path) -> None:
-    backend = _CapturingBackend()
-    SessionReflector(backend).resume(
-        session_id="session-1",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    prompt = str(backend.calls[0]["prompt"])
-
-    assert "open@detect, open@settle or open@pre-apply" in prompt
-    assert "Detect time is not mandatory" in prompt
-    assert "sdk_gap only when no open capture" in prompt
-    assert "open_at (detect)" not in prompt
-    assert "use open@detect.json" not in prompt
-
-
-def test_reflection_prompt_uses_configured_example_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR", "/custom/examples")
-    backend = _CapturingBackend()
-    SessionReflector(backend).resume(
-        session_id="session-1",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        closure=_fresh_closure(tmp_path),
-    )
-    assert "/custom/examples/playbooks/service-targetport-mismatch/diagnose.go" in str(backend.calls[0]["prompt"])
+    assert str(SKILLS_ROOT / "sdo-memory/SKILL.md") in prompt
+    for tool in ("authoring_reference", "create_corpus", "check_memory"):
+        assert tool in prompt
+    assert "--" not in prompt
+    assert "open_at" not in prompt
+    assert "open@settle" not in prompt
+    assert "open@pre-apply" not in prompt
+    assert "Unknown" in prompt
+    assert "near-miss" in prompt
 
 
 def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) -> None:
@@ -531,7 +451,7 @@ def test_refine_depth_sends_a_short_confirm_only_request_in_the_responder_sessio
     SessionReflector(backend).resume(**reflect, depth="refine")
     full, refine = (str(call["prompt"]) for call in backend.calls)
     assert [call["mode"] for call in backend.calls] == ["resume", "resume"]
-    assert len(refine) < len(full) / 2
+    assert len(refine) < len(full)
     assert len(refine) < 6_000
     assert "service-targetport-mismatch" in refine
     assert "Service targetPort does not match the container port" in refine
@@ -562,7 +482,7 @@ def test_refine_depth_retry_after_a_broker_rejection_carries_the_full_request(tm
     (call,) = backend.calls
     assert call["mode"] == "resume"
     assert "[detector.manifest] m.yaml:4: bad id" in str(call["prompt"])
-    assert "sdo-operator program scaffold" in str(call["prompt"])
+    assert "authoring_reference" in str(call["prompt"])
 
 
 @pytest.mark.parametrize("fresh_reason", ["fresh_mode", "missing_session"])
@@ -586,7 +506,7 @@ def test_refine_depth_never_runs_in_a_fresh_session(tmp_path: Path, fresh_reason
     fresh = [call for call in backend.calls if call["mode"] == "fresh"]
     assert len(fresh) == 1
     # The fresh session needs the whole authoring request, not the confirm-only nudge.
-    assert "sdo-operator program scaffold" in str(fresh[0]["prompt"])
+    assert "authoring_reference" in str(fresh[0]["prompt"])
 
 
 def test_unknown_reflection_depth_is_rejected(tmp_path: Path) -> None:

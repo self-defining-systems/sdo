@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
@@ -18,7 +17,10 @@ from libs.agent_cli.structured import (
     turn_usage,
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
+from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.reflection_authoring import SdkGap
 from sdo.agents.responder.reflection_brief import incident_brief
+from sdo.agents.responder.reflection_evidence import memory_view
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.reflection_refine import refine_learning_request
 from sdo.agents.responder.session_turn import (
@@ -112,15 +114,6 @@ class ReflectionTurn(BaseModel):
             raise ValueError("sdk_gap reflection requires typed gaps")
 
 
-class SdkGap(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    fault_class: str = Field(min_length=1)
-    primitive: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-    scratch_script: str = Field(min_length=1)
-
-
 def reflection_output_schema() -> dict[str, object]:
     """The model-facing schema of ``ReflectionResult``, generated from the proto the Go decision loader reads."""
 
@@ -192,7 +185,6 @@ def _logical_learning_request(
 ) -> str:
     if not closure.request.HasField("memory_snapshot"):
         raise ValueError("logical reflection requires an operational memory snapshot")
-    example_dir = os.environ.get("SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR") or "/opt/sdo/examples/playbook-programs"
     snapshot = closure.request.memory_snapshot
     classification = outcome.classification
     work_section = ""
@@ -215,72 +207,31 @@ def _logical_learning_request(
         )
     return (
         "The controller verified this incident and committed its outcome. "
-        "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
-        "sdo-detector-authoring and sdo-playbook-authoring skills (SKILL.md and the references programs.md, sdk.md, "
-        "replay.md and rules.md under the sdo-* skill directories of your CODEX_HOME or ~/.claude), the example "
-        "program and corpus named below, and the captures in /sdo/session/corpus. Read what you need once, "
-        "together, rather than file by file. "
-        "Edit the final files directly "
-        "in the operational memory directory `.sdo/` of this isolated checkout. "
-        "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
-        "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
-        "Run `sdo-operator memory ls` to inspect existing artifacts. "
-        "After editing, run the memory check once with the installed sdo_reflection check_memory tool "
-        "(`sdo-operator memory check`) and wait for its result; it takes about a minute, so do not poll or retry "
-        "while it runs. "
-        "The decision file is your returned result JSON as is. "
-        "Fix named diagnostics and call it again only after correcting the files, "
-        "until it exits zero, within your turn budget. SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT "
-        "are already set; do not override them. The Go broker repeats the same check independently. "
-        "Return learning_decision=updated only with a nonempty diff and proposed_artifact_ids listing every changed "
-        "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
-        "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content. "
+        "Learn a reusable relation for each confirmed fault, refine accepted memory when the mechanism is shared, "
+        "or explain why the captured evidence cannot support safe learning. "
+        "Record reused program IDs in the summary. "
+        f"Start with the skill index at {SKILLS_ROOT}/sdo-memory/SKILL.md and follow its authoring links. "
+        "The installed skills are the authoring guide; authoring_reference retrieves the same shipped references. "
+        "Read only what is needed and keep accepted provenance. "
+        "Use evidence_inventory and recordings_index to locate evidence; "
+        "retrieve relevant observations with capture_fields. "
+        "Edit the final files directly in the operational memory directory of this isolated checkout. "
+        "Source edits, outcomes, goal and architecture are protected. "
+        "Use captured observations, parameterized programs, and matching and near-miss tests. "
+        "Unavailable observations remain Unknown. Preserve supported source-restoration mitigators. "
+        "Use create_corpus for captured cases and check_memory with typed decision fields for final validation. "
+        "Correct named diagnostics until it exits zero; the broker independently checks the same final files. "
+        "Return updated only with a nonempty diff and every changed logical playbook ID; otherwise return "
+        "no_change or a typed sdk_gap with a concrete reason and no authored diff. "
+        "Return decisions and logical IDs only. "
         f"{branch_instruction('reflection')}\n\n"
-        "for each confirmed fault, compile or refine a program, reuse an accepted program and explain why, "
-        "or report a typed sdk_gap with the missing primitive, reason, and scratch script that proved the check. "
-        "Record each reused program ID in summary. A program directory contains diagnose.go, optional mitigate.go, "
-        "Go tests, and a README with responder owner, fault_class and originating_incident front matter. "
-        "Use `sdo-operator program scaffold --fault-class <class> --param name=Kind [--mitigate] "
-        "--out .sdo/playbooks/<class>` for direct file creation, then fill in the final files. "
-        "Use sdo.dev/operator/sdk/program and diagnostics-module library helpers imported through the "
-        "diagnostics module path. Declare Params and derive names, ports and images from bindings and the ReadView. "
-        "The allowed imports are SDK, Kubernetes read types, standard read-only packages and shared helpers. "
-        "Validation replays with every name, port and image renamed. Diagnose must Match at open and return "
-        "NoMatch at fixed and healthy; Mitigate plans actions only at open. Prefer structured container status "
-        "reasons. For desired values from source or rollout history, return ReconcileFromSource or Rollback. "
-        "Keep mitigate.go for image/readiness/ConfigMap restore-from-source effects even when mitigation "
-        "replay reports skipped_unreplayable_effect; never delete a mitigator just to pass validation. "
-        "Diagnosis corpus replay remains mandatory; SetField-only plans must still replay to NoMatch. "
-        "An unreplayed mitigator requires three independently verified live successes and zero failures "
-        "before trusted fast-path use; skipped replay earns no origin credit. "
-        "For targetPort faults, declared ports alone never establish a listener: use captured ProbeTCP "
-        "results for the selected ready Pods at the faulty numeric target and candidate declared port. "
-        "Keep the SetField mitigator when those observations and replay validate it. "
-        "An unrecorded or failed primitive read remains Unknown; never invent listener evidence. "
-        "Keep README prose to judgement and context, with no shell commands and no persisted scratch scripts. "
-        "Author a corpus directory under .sdo/corpus/<case-id> with open.json, fixed.json, healthy.json, "
-        "recordings.json and labels.json. Copy controller captures byte-for-byte from the read-only "
-        "/sdo/session/corpus directory: choose the earliest pre-mitigation open capture among "
-        "open@detect, open@settle or open@pre-apply that shows the confirmed cause in spec or status "
-        "(the validator accepts any of them). Detect time is not mandatory: a pod still ContainerCreating or "
-        "events not yet reported at detect do not make the cause undecidable when a later open capture shows it. "
-        "Report sdk_gap only when no open capture holds the evidence. Copy that open@<phase>.json, its "
-        "open@<phase>-recordings.json when present, and fixed.json; healthy.json must equal fixed.json. "
-        "The labels contain root_cause_program_ids, bindings, peer_bindings and provenance with incident_id, "
-        "open_at (the chosen phase), open_sha256 and fixed_sha256. Bind a same-kind healthy peer in "
-        "the fixed snapshot. Never reconstruct the snapshots or recordings. Synthetic tightening NoMatch cases "
-        "need synthetic_no_match_reason and no_match_program_ids. Update the playbook index README. "
-        f"See {example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
-        f"{example_dir}/corpus/targetport-mismatch/ for a complete example. "
-        "Call check_memory, read every failure, fix the files and rerun check_memory until it passes.\n\n"
         f"{_logical_guidance(guidance)}"
         f"For this {classification} outcome, "
         f"{_classification_directive(classification, guidance)}\n\n"
         "Before returning an update, the complete final files must be in the checkout and memory check must pass. "
-        "The trusted detector SDK reference is references/sdk.md of the sdo-detector-authoring skill.\n"
         f"{work_section}"
         f"Outcome commit: {outcome_commit}\n"
-        f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
+        f"Operational memory snapshot:\n{json.dumps(memory_view(snapshot), indent=2)}\n\n"
         "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
         "outcome_call_index and response_json_sha256 identify the full response in the committed outcome. "
         "Root causes, findings, action receipts and program transitions are retained.\n"
