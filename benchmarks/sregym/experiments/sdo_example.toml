@@ -53,6 +53,12 @@ controller_image = "sdo-controller:v0.1.0"
 responder_image = "sdo-sregym-responder:v0.1.0"
 validator_image = "sdo-detector-validator:v0.1.0"
 credentials_secret = "sdo-agent-credentials"
+# Explicit source tree deployed by SREGym's hotel adapter; required for accepted-source lookup.
+deployed_manifest_paths = ["kubernetes"]
+# Opt in to agent-free incident resolution by trusted playbook programs.
+program_fast_path = true
+# Require this many independently verified successful repairs before trusting a program.
+program_trust_threshold = 3
 
 [[stages]]
 name = "first-incident"

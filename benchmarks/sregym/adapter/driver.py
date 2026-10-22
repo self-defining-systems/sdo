@@ -264,6 +264,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--buildkit-image", default=config.get("buildkit_image", DEFAULT_BUILDKIT_IMAGE))
     parser.add_argument("--kind-cluster-name", default=config.get("kind_cluster_name"))
     parser.add_argument("--max-deployment-attempts", type=int, default=int(config.get("max_deployment_attempts", 3)))
+    parser.add_argument(
+        "--deployed-manifest-path",
+        dest="deployed_manifest_paths",
+        action="append",
+        default=None,
+        help="explicit deployed manifest file/directory; repeat to select multiple paths (replaces configured list)",
+    )
+    parser.add_argument(
+        "--program-fast-path",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("program_fast_path", False),
+        help="enable trusted playbook programs to resolve incidents without a responder",
+    )
+    parser.add_argument(
+        "--program-trust-threshold",
+        type=int,
+        default=config.get("program_trust_threshold", 3),
+        help="successful verified repairs required before a program is trusted (positive integer)",
+    )
     parser.add_argument("--agent-registrations", default=config.get("agent_registrations"))
     parser.add_argument(
         "--reflection-session",
@@ -316,7 +335,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--summary-model", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--enable-summary", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-inject-summary", action="store_true", help=argparse.SUPPRESS)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    paths = args.deployed_manifest_paths
+    if paths is None:
+        paths = config.get("deployed_manifest_paths", [])
+    if not isinstance(paths, list) or any(not isinstance(path, str) or not path.strip() for path in paths):
+        raise ValueError("deployed_manifest_paths must be a list of non-empty strings")
+    args.deployed_manifest_paths = tuple(paths)
+    if type(args.program_fast_path) is not bool:
+        raise ValueError("program_fast_path must be a boolean")
+    if type(args.program_trust_threshold) is not int or args.program_trust_threshold <= 0:
+        raise ValueError("program_trust_threshold must be a positive integer")
+    return args
 
 
 def _application_repository() -> Path:
@@ -600,6 +630,9 @@ def _launch_native_lifecycle(
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
+        deployed_manifest_paths=args.deployed_manifest_paths,
+        program_fast_path=args.program_fast_path,
+        program_trust_threshold=args.program_trust_threshold,
         healthy_baseline=args.healthy_baseline,
         max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
@@ -703,6 +736,9 @@ def _native_install_for_run(
         late_findings=args.late_findings,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
+        deployed_manifest_paths=args.deployed_manifest_paths,
+        program_fast_path=args.program_fast_path,
+        program_trust_threshold=args.program_trust_threshold,
         max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
         follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
@@ -893,6 +929,9 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         agent_provider=args.provider,
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
+        deployed_manifest_paths=args.deployed_manifest_paths,
+        program_fast_path=args.program_fast_path,
+        program_trust_threshold=args.program_trust_threshold,
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         max_follow_ups=args.max_follow_ups,
