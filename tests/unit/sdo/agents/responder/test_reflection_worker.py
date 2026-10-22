@@ -291,6 +291,34 @@ def test_reflection_worker_forwards_go_retry_diagnostics(tmp_path: Path) -> None
     assert [d.rule for d in reflector.kwargs["diagnostics"]] == ["detector.manifest"]  # type: ignore[attr-defined]
 
 
+@pytest.mark.parametrize(("depth", "expected"), [("", "full"), ("full", "full"), ("refine", "refine")])
+def test_reflection_worker_forwards_go_chosen_depth(tmp_path: Path, depth: str, expected: str) -> None:
+    closure = _closure()
+    request = ReflectionRequest(
+        closure=closure,
+        outcome=_outcome(closure.request.incident_id),
+        outcome_commit="outcome-commit",
+        depth=depth,
+    )
+    request.memory_snapshot.accepted_commit = "outcome-commit"
+    task = AgentTask(
+        schema_version="sdo.dev/v1alpha1",
+        task_id="reflection-1",
+        agent_id="sdo-reflector",
+        task_type="outcome-reflection-direct-v1",
+        workspace={"proposal_id": "proposal-1", "checkout_path": str(tmp_path), "base_commit": "outcome-commit"},
+    )
+    task.request.Pack(request)
+    path = tmp_path / "depth-task.json"
+    path.write_text(to_canonical_json(task), encoding="utf-8")
+    reflector = Reflector()
+
+    run_reflection_task(path, "result-map", Publisher(), reflector=reflector)
+
+    assert reflector.kwargs is not None
+    assert reflector.kwargs["depth"] == expected
+
+
 def test_reflection_schema_rejects_legacy_proposals() -> None:
     with pytest.raises(ValueError, match="Extra inputs"):
         ReflectionTurn.model_validate(

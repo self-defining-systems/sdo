@@ -571,8 +571,13 @@ type ReflectionRequest struct {
 	// carry that rejection's diagnostics.
 	ValidationAttempt   uint32              `protobuf:"varint,11,opt,name=validation_attempt,json=validationAttempt,proto3" json:"validation_attempt,omitempty"`
 	PreviousDiagnostics []*MemoryDiagnostic `protobuf:"bytes,12,rep,name=previous_diagnostics,json=previousDiagnostics,proto3" json:"previous_diagnostics,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Go-owned depth, chosen from typed outcome facts. Empty or "full" authors
+	// memory as usual. "refine" means accepted programs already diagnosed,
+	// repaired and verified this incident: confirm them and edit only on contrary
+	// evidence.
+	Depth         string `protobuf:"bytes,13,opt,name=depth,proto3" json:"depth,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReflectionRequest) Reset() {
@@ -673,6 +678,13 @@ func (x *ReflectionRequest) GetPreviousDiagnostics() []*MemoryDiagnostic {
 		return x.PreviousDiagnostics
 	}
 	return nil
+}
+
+func (x *ReflectionRequest) GetDepth() string {
+	if x != nil {
+		return x.Depth
+	}
+	return ""
 }
 
 type ReflectionResult struct {
@@ -879,7 +891,7 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\bresponse\x18\x04 \x01(\v2\x14.google.protobuf.AnyR\bresponse\x12\x1f\n" +
 	"\vproposal_id\x18\x05 \x01(\tR\n" +
 	"proposalId\x12#\n" +
-	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xaf\a\n" +
+	"\rerror_summary\x18\x06 \x01(\tR\ferrorSummary\"\xdc\a\n" +
 	"\x11ReflectionRequest\x12D\n" +
 	"\aclosure\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentClosureR\aclosure\x12'\n" +
 	"\x0fproposal_commit\x18\x04 \x01(\tR\x0eproposalCommit\x12%\n" +
@@ -892,7 +904,8 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\x0eprior_outcomes\x18\n" +
 	" \x03(\v2(.sdodev.contracts.v1alpha1.OutcomeRecordR\rpriorOutcomes\x12-\n" +
 	"\x12validation_attempt\x18\v \x01(\rR\x11validationAttempt\x12^\n" +
-	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
+	"\x14previous_diagnostics\x18\f \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x13previousDiagnostics\x12+\n" +
+	"\x05depth\x18\r \x01(\tB\x15\xbaH\x12r\x10R\x00R\x04fullR\x06refineR\x05depth:\xcb\x01\xbaH\xc7\x01\x1a\xc4\x01\n" +
 	",reflection_request.diagnostics_only_on_retry\x12Lprevious_diagnostics are carried exactly by a retry (validation_attempt > 1)\x1aF(this.validation_attempt > 1) == (size(this.previous_diagnostics) > 0)J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\foutcome_jsonR\x12prior_outcome_json\"\xaf\x04\n" +
 	"\x10ReflectionResult\x12\x18\n" +
 	"\asummary\x18\x01 \x01(\tR\asummary\x12O\n" +

@@ -379,10 +379,7 @@ func allTrustedProgramRepairs(current *contracts.OutcomeRecord, prior []*contrac
 		}
 	}
 	trust := ProgramTrustStats(prior)
-	revisions := make(map[string]string)
-	for _, run := range current.GetProgramRuns() {
-		revisions[run.GetProgramId()] = run.GetProgramRevision()
-	}
+	revisions := programRunRevisions(current)
 	for _, application := range current.GetPlanApplications() {
 		if !application.GetApplied() || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(application.GetProgramIds()) == 0 {
 			return false
