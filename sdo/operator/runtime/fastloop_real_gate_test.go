@@ -479,6 +479,13 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	jaegerBefore.Name, jaegerLive.Name = "jaeger", "jaeger"
 	changes := &fixedObjectChanges{changes: []ObjectChange{objectChange(t, before, broken, "v1", "Service")}}
 	first, firstDispatch, firstRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-first", start, false, func(controller *Controller) {
+		controller.Baseline = &scriptedBaseline{changes: func(now time.Time) []StateChange {
+			if now.Before(start.Add(500 * time.Millisecond)) {
+				return []StateChange{{Kind: "Service", Name: "api", Change: StateChangeModified,
+					Fields: []StateFieldChange{{Field: "spec.ports", Before: "8080", After: "9999"}}}}
+			}
+			return []StateChange{}
+		}}
 		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: changes, View: func(snapshot sdk.DetectionContext) program.ReadView {
 			services := snapshot.(sdktest.Snapshot).ServiceList
 			changed := false
@@ -507,6 +514,10 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	}
 	changes.changes = []ObjectChange{objectChange(t, broken, before, "v1", "Service")}
 	firstResult := fastloopGateResult(firstRequest, []sdk.ObjectRef{port})
+	// Live responders use this allowed namespaced citation; success and reflection
+	// below must survive the real controller -> outcome deriver -> broker path.
+	firstResult.ConfirmedRootCauses[0].Evidence = append(firstResult.ConfirmedRootCauses[0].Evidence,
+		RootCauseEvidence{Kind: "state-change", Source: "Service/app/api", Observation: "targetPort changed"})
 	fixed, err := provider.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -522,6 +533,13 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatalf("latent repair cutoff preceded dispatch: %s < %s", closure.HealthClearedAt, closure.DispatchedAt)
 	}
 	receipt := fastloopGateProcessClosure(t, ctx, first, firstRequest.IncidentID)
+	ledger, err := native.readLedger(firstRequest.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ledger.OutcomeDocument.GetClassification() != "success" || !ledger.OutcomeDocument.GetDiagnosisVerification()[0].GetEvidence()[1].GetVerified() {
+		t.Fatalf("namespaced state-change evidence did not reach success: %v", ledger.OutcomeDocument)
+	}
 	if receipt.ReflectionCommit == "" {
 		ledger, _ := native.readLedger(firstRequest.IncidentID)
 		t.Fatalf("real broker did not accept reflected program: %v", ledger)

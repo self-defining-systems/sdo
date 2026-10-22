@@ -231,7 +231,7 @@ func restoredFieldCheck(closure *contractsv1alpha1.IncidentClosure, cause *contr
 		cited := false
 		for _, evidence := range cause.GetEvidence() {
 			if evidence.GetKind() == "state-change" {
-				if source, ok := parseKey(evidence.GetSource()); ok && source.matches(key) {
+				if source, reason := evidenceKey(evidence.GetSource(), closure.GetRequest().GetNamespace()); reason == nil && source.matches(key) {
 					cited = true
 				}
 			}
@@ -335,6 +335,22 @@ func parseKey(source string) (objectKey, bool) {
 	}
 	return objectKey{}, false
 }
+
+// evidenceKey resolves namespace-local evidence against the controller's
+// namespace-less state observations. Reject foreign namespaces before matching
+// any observation or repair whose namespace may be omitted.
+func evidenceKey(source, namespace string) (objectKey, *string) {
+	key, ok := parseKey(source)
+	if !ok {
+		return objectKey{}, stringPointer("state-change evidence must reference exactly one object: Kind/name or Kind/namespace/name")
+	}
+	if key.namespace != "" && key.namespace != namespace {
+		return objectKey{}, stringPointer(fmt.Sprintf("evidence namespace %q does not match incident application namespace %q", key.namespace, namespace))
+	}
+	key.namespace = namespace
+	return key, nil
+}
+
 func (key objectKey) matches(other objectKey) bool {
 	if key.namespace != "" && other.namespace != "" && key.namespace != other.namespace {
 		return false
@@ -376,7 +392,7 @@ func diffKeys(changes *contractsv1alpha1.StateChanges) []objectKey {
 func keyLabels(keys []objectKey) map[string]bool {
 	labels := map[string]bool{}
 	for _, key := range keys {
-		labels[key.label] = true
+		labels[keyID(key)] = true
 	}
 	return labels
 }
@@ -399,6 +415,7 @@ type actionWithKeys struct {
 	keys    []objectKey
 }
 type stateEvidence struct {
+	namespace string
 	dispatch  map[string]bool
 	changed   map[string]bool
 	observed  map[string]time.Time
@@ -416,7 +433,7 @@ func newStateEvidence(closure *contractsv1alpha1.IncidentClosure) stateEvidence 
 	if closure.GetObservedStateChanges() != nil {
 		observed = map[string]time.Time{}
 		for _, item := range closure.GetObservedStateChanges() {
-			label := item.GetKind() + "/" + item.GetName()
+			label := keyID(objectKey{kind: canonicalKind(item.GetKind()), name: item.GetName()})
 			seen := item.GetFirstObservedAt().AsTime()
 			if prior, ok := observed[label]; !ok || seen.Before(prior) {
 				observed[label] = seen
@@ -427,23 +444,27 @@ func newStateEvidence(closure *contractsv1alpha1.IncidentClosure) stateEvidence 
 	for _, receipt := range closure.GetResult().GetRepairActions() {
 		actions = append(actions, actionWithKeys{receipt, actionKeys(receipt)})
 	}
-	return stateEvidence{dispatch, changed, observed, actions, closure.GetRequest().GetStateChanges() != nil || closure.GetFinalStateChanges() != nil || observed != nil}
+	return stateEvidence{closure.GetRequest().GetNamespace(), dispatch, changed, observed, actions, closure.GetRequest().GetStateChanges() != nil || closure.GetFinalStateChanges() != nil || observed != nil}
 }
 func (e stateEvidence) check(source string) (*bool, *string) {
+	cited, reason := evidenceKey(source, e.namespace)
+	if reason != nil {
+		return boolPointer(false), reason
+	}
+	label := keyID(cited)
 	if !e.checkable {
 		return nil, nil
 	}
-	if e.dispatch[source] {
+	if e.dispatch[label] {
 		return boolPointer(true), nil
 	}
 	if e.observed == nil {
-		return boolPointer(e.changed[source]), nil
+		return boolPointer(e.changed[label]), nil
 	}
-	first, ok := e.observed[source]
+	first, ok := e.observed[label]
 	if !ok {
 		return boolPointer(false), stringPointer("the controller never observed this object change while the incident was open")
 	}
-	cited, valid := parseKey(source)
 	type start struct {
 		at time.Time
 		id string
@@ -451,7 +472,7 @@ func (e stateEvidence) check(source string) (*bool, *string) {
 	starts := []start{}
 	for _, action := range e.actions {
 		for _, key := range action.keys {
-			if valid && cited.matches(key) {
+			if cited.matches(key) {
 				starts = append(starts, start{action.receipt.GetStartedAt().AsTime(), action.receipt.GetActionId()})
 				break
 			}
@@ -470,6 +491,7 @@ func (e stateEvidence) check(source string) (*bool, *string) {
 }
 
 type repairs struct {
+	namespace       string
 	actions         []actionWithKeys
 	dispatch        []objectKey
 	reverted        []string
@@ -542,7 +564,7 @@ func newRepairs(closure *contractsv1alpha1.IncidentClosure) repairs {
 			}
 		}
 	}
-	return repairs{actions, dispatch, sortedUnique(reverted), cleared}
+	return repairs{closure.GetRequest().GetNamespace(), actions, dispatch, sortedUnique(reverted), cleared}
 }
 func (r repairs) attribute(cause *contractsv1alpha1.ConfirmedRootCause) *contractsv1alpha1.OutcomeRepairAttribution {
 	blamed := []objectKey{}
@@ -551,7 +573,7 @@ func (r repairs) attribute(cause *contractsv1alpha1.ConfirmedRootCause) *contrac
 	}
 	for _, item := range cause.GetEvidence() {
 		if item.GetKind() == "state-change" {
-			if key, ok := parseKey(item.GetSource()); ok {
+			if key, reason := evidenceKey(item.GetSource(), r.namespace); reason == nil {
 				blamed = append(blamed, key)
 			}
 		}
