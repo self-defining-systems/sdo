@@ -60,3 +60,30 @@ def test_worker_installs_linked_skill_contracts(tmp_path: Path, role: str) -> No
     assert (installed / "sdo-memory/references/runtime.md").read_text() == CONTRACT_PATH.read_text()
     for name in AGENT_SKILLS[role]:
         assert (installed / name / "SKILL.md").is_file()
+
+
+@pytest.mark.asyncio
+async def test_contract_is_stable_across_python_docstring_indentation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import inspect
+
+    from sdo.agents.responder import skill_contracts
+
+    expected = await render_contract()
+    server = validation_server(tmp_path)
+    tools = await server.list_tools()
+    for tool in tools:
+        clean = inspect.cleandoc(tool.description or "")
+        lines = clean.splitlines()
+        if lines:
+            # Python 3.12 retains this indentation in function.__doc__; newer
+            # Python versions can strip it while compiling the function.
+            tool.description = lines[0] + "\n" + "\n".join("        " + line for line in lines[1:]) + "\n        "
+
+    async def raw_tools() -> object:
+        return tools
+
+    monkeypatch.setattr(server, "list_tools", raw_tools)
+    monkeypatch.setattr(skill_contracts, "validation_server", lambda _: server)
+    assert await render_contract() == expected
