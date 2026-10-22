@@ -20,6 +20,7 @@ from benchmarks.sregym.adapter.persistent import (
     PersistentControllerError,
     PersistentState,
     StageInputs,
+    _resolution_timings,
     _wait_for_reflection_drain,
     collect_followup_incident,
     control_namespace_for,
@@ -187,6 +188,7 @@ class FakeOps:
             "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
             "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
             "verified_at": verified.isoformat(),
+            "final_detector_states": [{"detector_id": "health", "status": "clear"}],
         }
         return {"controller_baseline_wait": 3.0, "fault_injection_request": 0.5}
 
@@ -1053,7 +1055,7 @@ def test_a_drained_receipt_is_published_as_soon_as_the_next_stage_drains_it(tmp_
 
 @dataclass
 class _StuckOps(FakeOps):
-    """The responder reported failure, so the controller keeps the incident open for detector review."""
+    """The responder reported failure, so the incident stays unverified until the stage times out."""
 
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
@@ -1184,6 +1186,7 @@ def _second_closure(ops: FakeOps, incident_id: str = "incident-2") -> None:
         "dispatched_at": (DETECTED + timedelta(seconds=301)).isoformat(),
         "responder_completed_at": (DETECTED + timedelta(seconds=330)).isoformat(),
         "verified_at": (DETECTED + timedelta(seconds=350)).isoformat(),
+        "final_detector_states": [{"detector_id": "health", "status": "clear"}],
     }
 
 
@@ -1365,3 +1368,16 @@ def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_
     assert rejection["failure"]["incident_id"] == "incident-1"
     _run(tmp_path, ops, "s1", [])
     assert ("fault", "s1") in ops.events
+
+
+def test_a_closure_cut_by_the_verification_timeout_reports_no_verified_timings() -> None:
+    closure = {
+        "detected_at": DETECTED.isoformat(),
+        "dispatched_at": (DETECTED + timedelta(seconds=1)).isoformat(),
+        "responder_completed_at": (DETECTED + timedelta(seconds=35)).isoformat(),
+        "verified_at": (DETECTED + timedelta(seconds=155)).isoformat(),
+    }
+
+    assert _resolution_timings(closure) == {}
+    closure["final_detector_states"] = [{"detector_id": "health", "status": "clear"}]
+    assert _resolution_timings(closure)["incident_resolution_seconds"] == 155.0

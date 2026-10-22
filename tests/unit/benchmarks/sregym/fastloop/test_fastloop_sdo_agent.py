@@ -174,7 +174,6 @@ class FakeOps:
     #: Worktree directory names under the shared /workspace/worktrees root. Empty by
     #: default, so there is nothing for the quiescent-drain reap to remove.
     worktrees: set[str] = field(default_factory=set)
-    #: The controller stops for detector review: the responder finished, but a drift finding never clears.
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
@@ -252,6 +251,7 @@ class FakeOps:
             "dispatched_at": DETECTED.isoformat(),
             "responder_completed_at": (DETECTED + timedelta(seconds=40)).isoformat(),
             "verified_at": VERIFIED.isoformat(),
+            "final_detector_states": [{"detector_id": "health", "status": "clear"}],
         }
         return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
 

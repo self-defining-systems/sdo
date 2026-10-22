@@ -13,8 +13,7 @@ import (
 // observable. The detector firing stream records whether and when detectors
 // fired; this stream records the controller's own incident lifecycle
 // transitions -- when an incident opened, when its worktree was prepared, when
-// the responder was dispatched and completed, when a follow-up superseded it,
-// when a stranded worktree was released, and when the incident closed, its
+// the responder was dispatched and completed, and when the incident closed, its
 // outcome committed, and the closure was acknowledged. Joined by incident id
 // (and, for firings, the same id field), the two streams plus the outcome commit
 // each closure_committed event names let an operator reconstruct one incident's
@@ -166,8 +165,6 @@ type TimelineEntry struct {
 // incident id into a single, deterministically ordered timeline. This is the
 // offline reconstruction an operator runs against the durable artifacts: no
 // cluster, no clock, no RNG -- the same inputs always yield the same timeline.
-// Follow-up children are distinct incident ids; a caller walks the chain by
-// following ParentIncidentID / SupersededBy on the reconstructed events.
 func ReconstructIncidentTimeline(
 	incidentID string, lifecycle []*contracts.LifecycleEvent, firings []*contracts.FiringRecord,
 ) []TimelineEntry {

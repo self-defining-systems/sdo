@@ -46,6 +46,7 @@ def _closure(incident_id: str, offset: int) -> dict[str, Any]:
         "dispatched_at": at.isoformat(),
         "responder_completed_at": (at + timedelta(seconds=20)).isoformat(),
         "verified_at": (at + timedelta(seconds=30)).isoformat(),
+        "final_detector_states": [{"detector_id": "health", "status": "clear"}],
     }
 
 

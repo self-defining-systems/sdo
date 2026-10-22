@@ -1033,7 +1033,8 @@ def _resolution_timings(closure: dict[str, Any]) -> dict[str, Any]:
     dispatched = _timestamp(closure.get("dispatched_at"))
     responder_completed = _timestamp(closure.get("responder_completed_at"))
     verified = _timestamp(closure.get("verified_at"))
-    if detected is None or verified is None:
+    # A closure cut by the verification timeout carries no final detector states: health never cleared.
+    if detected is None or verified is None or not closure.get("final_detector_states"):
         return {}
     timings: dict[str, float] = {"operational_recovery": (verified - detected).total_seconds()}
     if dispatched is not None:
