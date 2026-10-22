@@ -221,6 +221,30 @@ func TestPlanExecutorReconcilesPendingWriteDespiteServerDefaulting(t *testing.T)
 	}
 }
 
+func TestPlanExecutorReconcilesPendingWriteDespiteUnknownServerNormalization(t *testing.T) {
+	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
+	// A mutating webhook rewrites a field the local canonicalizer knows nothing about.
+	client.afterPatch = func(object *unstructured.Unstructured) {
+		containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+		containers[0].(map[string]any)["image"] = "mirror.invalid/rate:good"
+		_ = unstructured.SetNestedSlice(object.Object, containers, "spec", "template", "spec", "containers")
+	}
+	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
+	dry, err := PlanExecutor{Client: client, Source: source}.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Patch(context.Background(), ref, types.MergePatchType, dry.Patches[0].Patch); err != nil {
+		t.Fatal(err)
+	}
+	pending := 0
+	dry.PendingAction = &pending
+	reconciled, err := PlanExecutor{Client: client}.Reconcile(context.Background(), dry)
+	if err != nil || !reconciled.Applied || reconciled.PendingAction != nil || len(reconciled.ActionsApplied) != 1 {
+		t.Fatalf("pending write not recognized: %+v, %v", reconciled, err)
+	}
+}
+
 // frontendDeployment mirrors the kompose-generated hotel-reservation frontend
 // source manifest, whose CPU limit is written as "1000m".
 func frontendDeployment(image string) *unstructured.Unstructured {

@@ -23,28 +23,23 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 	if err != nil {
 		return result, err
 	}
-	if live.GetUID() != patch.Before.GetUID() {
-		return result, fmt.Errorf("interrupted write conflict: object recreated")
-	}
-	matchesAfter := true
-	matchesBefore := true
+	// The write landed unless the object still holds its pre-image. Anything else
+	// is the write plus whatever the server made of it, so no after-image is compared.
+	landed := false
 	for _, field := range []string{"spec", "data", "binaryData"} {
 		b, bok := patch.Before.Object[field]
 		a, aok := patch.After.Object[field]
 		v, vok := live.Object[field]
-		matchesAfter = matchesAfter && planFieldsMatch(b, bok, a, aok, v, vok, false)
-		matchesBefore = matchesBefore && planFieldsMatch(b, bok, a, aok, v, vok, true)
+		landed = landed || !planFieldsMatch(b, bok, a, aok, v, vok, true)
 	}
-	if !matchesAfter && !matchesBefore {
-		return result, fmt.Errorf("interrupted write conflict: owned fields changed")
-	}
-	if matchesAfter && !matchesBefore && len(result.ActionsApplied) == index {
+	if landed && len(result.ActionsApplied) == index {
 		result.ActionsApplied = append(result.ActionsApplied, result.Plan.Actions[index])
 		result.Applied = true
 	}
 	result.PendingAction = nil
 	return result, nil
 }
+
 func planFieldsMatch(before any, bok bool, after any, aok bool, live any, lok bool, wantBefore bool) bool {
 	if bok == aok && planValuesEqual(before, after) {
 		return true
