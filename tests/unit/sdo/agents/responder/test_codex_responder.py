@@ -504,9 +504,9 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     request = from_dict(IncidentRequest, raw)
     prompt = _responder_prompt(request)
     assert "ranked program verdicts" in prompt
-    assert "sdo plan then sdo apply" in prompt
-    assert "Always finish with sdo verify" in prompt
-    assert "return the structured incident result immediately" in prompt
+    assert "matching program's plan" in prompt
+    assert "Finish with independent verification" in prompt
+    assert "return once findings are clear and source changes are committed" in prompt
     assert '"program_id": "targetport"' in prompt
 
 
@@ -637,10 +637,10 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         assert view["capability"] == "diagnosis-and-mitigation"
     else:
         assert view["capability"] == "unknown"
-    assert "For a Match with can_mitigate=true" in prompt
-    assert "sdo source Deployment/app/api" in prompt
-    assert "sdo plan targetport --bind service=Service/app/api" in prompt
-    assert "Do not print the tool-description catalog" in prompt
+    assert "matching program's plan when can_mitigate=true" in prompt
+    assert "concise capability help" in prompt
+    assert "--bind" not in prompt
+    assert "Use that index instead of broad tool-catalog output" in prompt
 
 
 def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:

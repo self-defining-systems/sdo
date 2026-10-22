@@ -22,7 +22,6 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.agents.responder.tools_cli import ACT_EXAMPLE, CLI_EXAMPLES
 from sdo.contracts import (
     DetectorEvaluation,
     Finding,
@@ -622,20 +621,12 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
     program_guidance = (
-        "Start with the ranked program verdicts and evidence in initial_program_runs. "
-        "For a Match with can_mitigate=true, prefer sdo plan then sdo apply using the returned plan_id. "
-        "Diagnosis-only programs have no mitigator: use their evidence, then repair from accepted source. "
-        "An unknown capability is not evidence of a mitigator; check sdo diagnose for current metadata. "
-        "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
-        "When no program fits, make the fix with plain commands, each live mutation through `sdo act`. "
-        "Always finish with sdo verify. "
-        "Concrete CLI examples (replace the program, namespace, resource and binding name with those in the verdict): "
-        + "; ".join(f"`{example}`" for example in CLI_EXAMPLES)
-        + ". Repeat --bind for each named parameter. "
-        "Run these through the session shell tool; discover its name only if needed. "
-        "Do not print the tool-description catalog. "
-        "When verify reports healthy and source changes are committed, "
-        "return the structured incident result immediately. "
+        "Start with ranked program verdicts and evidence in initial_program_runs. "
+        "Prefer a matching program's plan when can_mitigate=true; a diagnosis-only program supplies evidence, "
+        "not a repair. Investigate Unknown or NeedsJudgement against current state and accepted source. "
+        "The local sdo interface exposes concise capability help and resource argument schemas. "
+        "Use that index instead of broad tool-catalog output. "
+        "Finish with independent verification; return once findings are clear and source changes are committed. "
         if request.max_response_loops > 0
         else ""
     )
@@ -668,13 +659,10 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "natural language. Never put scratch files in operational memory. "
         f"{memory_guard}Return only the IncidentResult JSON "
         f"required by the output schema. {branch_instruction('incident_result')}\n\n"
-        f"Repair evidence mode: {request.repair_policy}. Run every live mutation as one `sdo act` call, for example "
-        f"`{ACT_EXAMPLE}`; it runs the command and records the repair receipt. "
-        "Do not return receipts for `sdo act` calls. SDO "
-        "confirms a root cause only when a successful action that started before health cleared mutated that "
-        "cause's resources, so pass a `--resource` for every object the command changes. In recorded-actions "
-        "mode, a successful live-only repair needs at least one successful `sdo act`; repository changes are "
-        "still committed when present.\n\n"
+        f"Repair evidence mode: {request.repair_policy}. Every live mutation uses the session's sdo act recorder "
+        "and declares every changed resource. The recorder supplies receipts; do not hand-write them. "
+        "A confirmed cause requires a successful repair action that began before health cleared and mutated "
+        "that cause's resources. Commit repository source changes when present.\n\n"
         f"{late_findings_guidance(request)}"
         f"{additional_context}\n"
         f"{_inlined_architecture_summary(request)}"
