@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
@@ -65,9 +66,17 @@ def execute_incident(
     provider: str | None = None,
     executor: CommandExecutor | None = None,
 ) -> IncidentResult:
-    selected_provider = (provider or os.getenv("SDO_AGENT_PROVIDER") or "codex").strip().lower()
-    if selected_provider not in AGENT_PROVIDERS:
-        raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+    if provider is None:
+        try:
+            resolved = resolve_agent("responder", "SDO_RESPONDER_MODEL")
+        except ValueError as exc:
+            raise ResponderExecutionError(str(exc)) from exc
+        selected_provider, model = resolved.provider, model or resolved.model
+    else:
+        selected_provider = provider.strip().lower()
+        if selected_provider not in AGENT_PROVIDERS:
+            raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+        model = model or os.getenv("SDO_RESPONDER_MODEL") or None
     prompt = _responder_prompt(request)
     recorded_actions.reset()
     resume_session_id: str | None = None
@@ -79,7 +88,7 @@ def execute_incident(
                 prompt,
                 cwd=request.repository_worktree,
                 access="danger-full-access",
-                model=model or os.getenv("SDO_RESPONDER_MODEL") or None,
+                model=model,
                 reasoning_effort=INCIDENT_REASONING_EFFORT,
                 resume_session_id=resume_session_id,
                 executor=executor,

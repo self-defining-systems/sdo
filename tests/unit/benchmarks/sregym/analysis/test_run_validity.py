@@ -183,6 +183,58 @@ def test_leftover_responder_helpers_are_an_agent_failure(tmp_path: Path) -> None
     assert any("sdo.dev/responder-helper" in reason for reason in result.reasons)
 
 
+def _configured(provider: str, model: str) -> dict[str, object]:
+    roles = {
+        role: {"provider": provider, "model": model, "effort": "high", "source": "agent.sdo_codex"}
+        for role in ("responder", "reflection", "lifecycle_deployer", "health_judge")
+    }
+    return {"schema_version": 1, "preflight": {"ok": True, "waived": False, "checks": []}, "models": [roles]}
+
+
+def _provider_check(run: Run, tmp_path: Path):
+    result = _one(run.write(tmp_path / "exp"))
+    (check,) = (check for check in result.checks if check.name == "agent-provider")
+    return result, check
+
+
+def test_workers_that_resolved_the_configured_provider_and_model_pass(tmp_path: Path) -> None:
+    resolved = [{"role": "responder", "provider": "claude", "model": "claude-haiku-5-5"}]
+    _, check = _provider_check(
+        Run(agent="sdo_codex", manifest=_configured("claude", "claude-haiku-5-5"), resolved_agents=resolved), tmp_path
+    )
+
+    assert check.status == "pass"
+
+
+def test_a_worker_that_ran_a_different_provider_than_configured_is_invalid_infra(tmp_path: Path) -> None:
+    resolved = [{"role": "responder", "provider": "codex", "model": None}]
+    result, check = _provider_check(
+        Run(agent="sdo_codex", manifest=_configured("claude", "claude-haiku-5-5"), resolved_agents=resolved), tmp_path
+    )
+
+    assert check.status == "fail"
+    assert result.classification == "invalid_infra"
+    assert any("claude/claude-haiku-5-5" in reason and "codex" in reason for reason in result.reasons)
+
+
+def test_a_worker_on_another_model_than_configured_is_invalid_infra(tmp_path: Path) -> None:
+    resolved = [
+        {"role": "responder", "provider": "claude", "model": "claude-haiku-5-5"},
+        {"role": "reflection", "provider": "claude", "model": "claude-opus-5-5"},
+    ]
+    _, check = _provider_check(
+        Run(agent="sdo_codex", manifest=_configured("claude", "claude-haiku-5-5"), resolved_agents=resolved), tmp_path
+    )
+
+    assert check.status == "fail"
+
+
+def test_runs_without_worker_resolution_records_are_not_recorded(tmp_path: Path) -> None:
+    _, check = _provider_check(Run(agent="sdo_codex", manifest=_configured("claude", "m")), tmp_path)
+
+    assert check.status == "not_recorded"
+
+
 def test_the_cli_prints_every_run_and_exits_nonzero_when_any_is_invalid(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -330,3 +382,14 @@ def test_typed_receipt_failure_distinguishes_checker_infrastructure(tmp_path: Pa
         encoding="utf-8",
     )
     assert _one(stage).classification == expected
+
+
+def test_a_truncated_worker_resolution_record_fails_the_check_instead_of_crashing(tmp_path: Path) -> None:
+    run = Run(agent="sdo_codex", manifest=_configured("claude", "m"), resolved_agents=[])
+    experiment = run.write(tmp_path / "exp")
+    (record,) = experiment.rglob("agent-resolved.jsonl")
+    record.write_text('{"role": "responder", "prov', encoding="utf-8")
+
+    (check,) = (c for c in _one(experiment).checks if c.name == "agent-provider")
+
+    assert check.status == "fail"

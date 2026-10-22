@@ -17,6 +17,7 @@ from sdo.agents.lifecycle import (
     DeployerAssessment,
     TopologyResourceDTO,
 )
+from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     SCHEMA_VERSION,
@@ -62,13 +63,8 @@ class SourceProposalDraft(BaseModel):
     expected_workload_ids: list[str]
 
 
-def _provider() -> Literal["codex", "claude"]:
-    provider = os.environ.get("SDO_AGENT_PROVIDER", "codex").strip().lower()
-    if provider == "codex":
-        return "codex"
-    if provider == "claude":
-        return "claude"
-    raise ValueError(f"unsupported deployment provider {provider!r}")
+def _provider(model_env: str) -> Literal["codex", "claude"]:
+    return "claude" if resolve_agent("deployer", model_env).provider == "claude" else "codex"
 
 
 def _source_path(value: str) -> str:
@@ -96,7 +92,7 @@ def _workload_id(value: str) -> str:
 def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
     """Let the built-in coding agent edit a proposal and return a constrained plan."""
 
-    provider = _provider()
+    provider = _provider("SDO_DEPLOYMENT_MODEL")
     prompt = f"""You are the SDO source deployer for application {request.application!r}.
 Inspect this proposal checkout and prepare source/manifests to run in Kubernetes namespace {request.namespace!r}.
 The human health objective is: {request.health_objective}
@@ -150,7 +146,7 @@ benchmark data.
 def describe_architecture(request: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
     """Generate a source-grounded handoff after the broker accepted source."""
 
-    provider = _provider()
+    provider = _provider("SDO_LIFECYCLE_MODEL")
     if provider == "codex":
         architect = CodexLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
     else:

@@ -413,6 +413,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig); err != nil {
+		return err
+	}
 	jobEnvironment[ControllerStateEnvironment] = controllerStateLocation(*controlNamespace)
 	if launchConfig != nil {
 		if err := attachNativeReflector(options.NativeBroker, launchConfig, bootstrapProvider.Client, registeredWorkers, *responseTimeout); err != nil {
