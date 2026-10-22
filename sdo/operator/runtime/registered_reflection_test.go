@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/worker_registry/registrytest"
@@ -283,5 +284,46 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 				t.Fatalf("error = %v, wantError %v", err, tc.wantError)
 			}
 		})
+	}
+}
+
+func TestRegisteredReflectionRequestCarriesProgramRunsOnlyOnceAndNotForPriorOutcomes(t *testing.T) {
+	root := nativeRepository(t)
+	base := nativeGit(t, root, "rev-parse", "HEAD")
+	store := memory.NewJSONStore(t.TempDir())
+	run := &contracts.ProgramRun{ProgramId: "program", Duration: durationpb.New(time.Second), Verdict: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}
+	if _, err := store.Put(context.Background(), &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success", ProgramRuns: []*contracts.ProgramRun{run, run}}); err != nil {
+		t.Fatal(err)
+	}
+	w := RegisteredReflectionWorker{TaskType: reflectionTaskType(t), AgentID: "reflector", Outcomes: store, Timeout: time.Minute}
+	w.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
+		request := &contracts.ReflectionRequest{}
+		if err := task.Request.UnmarshalTo(request); err != nil {
+			t.Fatal(err)
+		}
+		if len(request.GetPriorOutcomes()) != 1 || len(request.GetPriorOutcomes()[0].GetProgramRuns()) != 0 || request.GetPriorOutcomes()[0].GetClassification() != "success" {
+			t.Fatalf("a prior outcome carries program runs: %+v", request.GetPriorOutcomes())
+		}
+		if len(request.GetOutcome().GetProgramRuns()) != 1 {
+			t.Fatalf("the current outcome lost its program runs: %+v", request.GetOutcome())
+		}
+		closure := request.GetClosure()
+		if len(closure.GetResult().GetProgramRuns()) != 0 || closure.GetRequest().GetPreparedAgentTask() != "" || len(closure.GetRequest().GetInitialProgramRuns()) != 0 {
+			t.Fatalf("the closure repeats evidence the request carries elsewhere: %+v", closure)
+		}
+		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "covered"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, nil
+	})
+	workspace := IncidentWorkspace{IncidentID: "current", Worktree: root, BaseCommit: base}
+	closure := nativeClosure(workspace)
+	closure.Request.PreparedAgentTask = strings.Repeat("t", 1024)
+	closure.Request.InitialProgramRuns = []ProgramRun{{ProgramID: "program"}}
+	closure.Result.ProgramRuns = []ProgramRun{{ProgramID: "program"}}
+	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success", ProgramRuns: []*contracts.ProgramRun{run}}
+	if _, err := w.Reflect(context.Background(), closure, workspace, outcome, "repair", "outcome", ReflectionFeedback{}); err != nil {
+		t.Fatal(err)
 	}
 }

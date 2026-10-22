@@ -51,7 +51,10 @@ func ObserveController(data []byte) *c.ControllerObservation {
 	result.Acknowledged = request.GetIncidentId() != "" && state.GetLastAcknowledgedIncidentId() == request.GetIncidentId()
 	result.OpenIncidentSummary = controllerSummary(state)
 	failure := state.GetClosureFailure()
-	if state.GetClosureState() == c.ClosureState_CLOSURE_STATE_FAILED && failure.GetPermanent() && (request.GetIncidentId() == "" || failure.GetIncidentId() == request.GetIncidentId()) {
+	// A wait for any new incident (empty request incident) is not failed by an incident it already knew: the
+	// controller continues with later incidents after a permanent closure failure.
+	failedIncidentRequested := failure.GetIncidentId() == request.GetIncidentId() || (request.GetIncidentId() == "" && !slices.Contains(request.GetKnownIncidentIds(), failure.GetIncidentId()))
+	if state.GetClosureState() == c.ClosureState_CLOSURE_STATE_FAILED && failure.GetPermanent() && failedIncidentRequested {
 		id := failure.GetIncidentId()
 		if id == "" {
 			id = request.GetIncidentId()

@@ -189,10 +189,10 @@ func TestHermeticFakePodReportsUnloadedImage(t *testing.T) {
 }
 
 func TestHermeticFakeConfigMapEnforcesProductionLimit(t *testing.T) {
-	state := &contracts.ControllerState{Version: RuntimeStateVersion, DispatchError: strings.Repeat("x", 1<<20)}
-	_, err := lifecycleio.NewConfigMapStateStore(fastloopClient(), "app", "oversized-state").Save(context.Background(), state, "")
+	configMap := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "oversized"}, Data: map[string]string{"state": strings.Repeat("x", 1<<20+1)}}
+	_, err := fastloopClient().CoreV1().ConfigMaps("app").Create(context.Background(), configMap, metav1.CreateOptions{})
 	if err == nil || !strings.Contains(err.Error(), "1 MiB") {
-		t.Fatalf("oversized controller state passed the fake API: %v", err)
+		t.Fatalf("oversized ConfigMap passed the fake API: %v", err)
 	}
 }
 

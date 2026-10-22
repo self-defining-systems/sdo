@@ -453,9 +453,15 @@ def run_persistent_stage(
     if record is not None and pod is not None and pod.uid == record.controller_pod_uid and record.pending is not None:
         # The previous problem's learning must reach memory (and any learned
         # detector the controller) before this problem's fault is injected.
-        drained = drain_pending_incident(
-            record, ops=ops, repository=config.repository, drained_by=inputs.stage_label, clock=clock
-        )
+        drain_started = clock.monotonic()
+        try:
+            drained = drain_pending_incident(
+                record, ops=ops, repository=config.repository, drained_by=inputs.stage_label, clock=clock
+            )
+        except ClosureFailedError as exc:
+            # The controller continues with later incidents after a permanent closure failure,
+            # so this stage's fault must not wait on it. The failure stays on the previous stage's record.
+            drained = _record_failed_closure(record.pending, str(exc), clock.monotonic() - drain_started)
         drain_seconds = drained.waited_seconds
         if drained.HasField("failure"):
             logger.warning("previous incident %s: %s", drained.incident_id, drained.failure.message)
@@ -854,6 +860,20 @@ def _collect_settled_receipt(
         clock.sleep(POLL_SECONDS)
         receipt = ops.collect_receipt(config, incident_id, receipt_dir)
     return receipt
+
+
+def _record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:
+    """Record an incident whose closure the controller gave up on as that incident's rejected receipt."""
+
+    failure = ReceiptFailure(
+        incident_id=pending.incident_id, code=ReceiptFailure.CODE_REJECTED_EVIDENCE, message=message
+    )
+    rejection = RejectedProductionReceipt(validation_error=message, failure=failure, receipt_json="{}")
+    _write_json(
+        json_format.MessageToDict(rejection, preserving_proto_field_name=True),
+        pending.receipt_dir / REJECTED_RECEIPT_FILENAME,
+    )
+    return ReceiptDrainResult(incident_id=pending.incident_id, waited_seconds=waited_seconds, failure=failure)
 
 
 def drain_pending_incident(
