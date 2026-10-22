@@ -1012,6 +1012,8 @@ def test_each_stage_exports_its_runtime_evidence_when_it_ends(tmp_path: Path) ->
     evidence = resolution["stage_end_runtime_artifacts"]
     assert evidence["error"] is None
     assert evidence["scope"] == "stage-end snapshot; the drained strict receipt supersedes it"
+    assert set(evidence["export_seconds"]) == {"controller_logs", "runtime_artifacts"}
+    assert all(seconds >= 0 for seconds in evidence["export_seconds"].values())
     order = [event[0] for event in ops.events]
     # Exported after verified recovery, so it never delays the fault or the responder.
     assert order.index("paused") < order.index("stage_evidence")
