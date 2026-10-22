@@ -14,7 +14,7 @@ from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
-from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
+from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
     branch_correction,
@@ -80,7 +80,7 @@ def execute_incident(
     prompt = _responder_prompt(request)
     recorded_actions.reset()
     resume_session_id: str | None = None
-    corrected_evidence = corrected_branch = False
+    corrected_branch = False
     while True:
         try:
             completed = run_structured_turn(
@@ -101,13 +101,6 @@ def execute_incident(
                 unwrap_branch(completed.output_json, "incident_result"), turn_usage(completed)
             )
             break
-        except EvidenceReferenceError as exc:
-            if corrected_evidence:
-                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-            # One resumed turn lets the agent split a compound reference instead of losing the diagnosis.
-            corrected_evidence = True
-            resume_session_id = completed.session_id
-            prompt = _evidence_reference_feedback(str(exc))
         except WrongBranchError as exc:
             if corrected_branch:
                 raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
@@ -125,17 +118,6 @@ def execute_incident(
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
     return result
-
-
-def _evidence_reference_feedback(problems: str) -> str:
-    return (
-        "Your result was not accepted: a state-change evidence source must name exactly one object. "
-        f"Problems: {problems}\n"
-        "Resubmit the same result with each changed object as its own evidence entry, for example "
-        '{"kind": "state-change", "source": "Service/geo", ...} and '
-        '{"kind": "state-change", "source": "Service/recommendation", ...}. '
-        "Change nothing else unless it is wrong."
-    )
 
 
 #: Proto fields the model does not supply: worker accounting and session, the controller's
@@ -527,16 +509,12 @@ def _verification_instructions() -> str:
         "addressed, so keep investigating along those request paths. Only when it reports unavailable, rely on "
         "`sdo verify` and plain `kubectl get`/`rollout status` checks. Record its final output as a "
         "verification_evidence entry named `sdo-incident-status`.\n\n"
-        "Every confirmed root cause needs live evidence: a detector finding (source: its detector ID or "
-        "finding fingerprint), a failing "
-        "synthetic scenario (source: its scenario ID), a change listed since the last healthy state (source: its "
-        "exactly one `Kind/name` or `Kind/namespace/name`, never a list or a compound like `Service/a; Service/b`: "
-        "when one cause changed two objects, give one state-change entry per object; a change your own repair "
-        "made is not evidence of the cause, and SDO checks that the change predates your repair of that object), "
-        "or a live observation (source: the command; observation: what its output showed). Scripts, "
-        "manifests, ConfigMap bodies, source files, and architecture notes show what could go wrong, not what did: "
-        "list them only in static_context. Name in explained_detectors the detectors whose findings the cause "
-        "explains; they must clear after your fix, and SDO checks that they do.\n\n"
+        "Every confirmed root cause cites the live evidence behind it: a detector finding (source: its detector ID "
+        "or finding fingerprint), a failing synthetic scenario (source: its scenario ID), a change listed since the "
+        "last healthy state (source: the changed object as `Kind/name` or `Kind/namespace/name`), or a live "
+        "observation (source: the command; observation: what its output showed). Scripts, manifests, ConfigMap "
+        "bodies, source files, and architecture notes show what could go wrong, not what did: list them only in "
+        "static_context. Name in explained_detectors the detectors whose findings the cause explains.\n\n"
         "Label pods or Jobs you create only to investigate or check with `sdo.dev/responder-helper=true`; the "
         "controller deletes them when you finish. Never label application workloads with it. "
         "Clean up the temporary state changes you introduced while troubleshooting before you submit.\n\n"

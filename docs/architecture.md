@@ -57,9 +57,9 @@ keeps a comparable value projection for detector maps and plans. Its
 `ParseObjectRef`/`FormatObjectRef` pair owns agent text parsing and canonical
 formatting (including kubectl aliases and explicit namespaces). The Python
 responder CLI forwards reference text verbatim; Go decodes it before handling
-tools. Outcome verification uses the same parser and still rejects a foreign
-namespace or a compound state-change citation before granting repair credit.
-Schema validation of evidence remains generated from `messages.proto`.
+tools. Root-cause evidence entries are recorded as the responder cites them: the
+generated schema checks their kinds, and neither the responder nor the
+controller re-checks or retries an evidence source.
 
 Native production receipts use `benchmark_receipt.proto` and the benchmark-only
 Go module `benchmarks/sregym/protocol/native_receipt_go`. Its
