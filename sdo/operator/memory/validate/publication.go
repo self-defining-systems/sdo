@@ -67,8 +67,8 @@ func LoadPublicationContext(ctx context.Context, root string) (*PublicationConte
 	return &publication, nil
 }
 
-// LoadReflectionDecision reads the intended result without adding authored
-// metadata to the candidate tree. The worker's actual result is supplied
+// LoadReflectionDecision reads the intended result (the returned result JSON; a
+// summary is ignored) without adding authored metadata to the candidate tree. The worker's actual result is supplied
 // independently to publication and checked by the same rule.
 func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.ReflectionDecision, error) {
 	if path == "" {
@@ -83,6 +83,16 @@ func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	// Reflection copies its returned result, whose only extra field is the
+	// free-text summary; every other unknown field stays an error.
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("reflection decision: %w", err)
+	}
+	delete(fields, "summary")
+	if data, err = json.Marshal(fields); err != nil {
 		return nil, err
 	}
 	decision := &contracts.ReflectionDecision{}
