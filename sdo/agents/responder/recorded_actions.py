@@ -88,11 +88,12 @@ _REF_COMPONENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 #: Text whose command line and output must not reach receipts, outcomes or reflection: Secrets, literal or
 #: file-sourced values, environment changes and credential-looking assignments.
 _SENSITIVE = re.compile(
-    r"secret|--from-literal|--from-file|--from-env-file|--env\b|\bset\s+env\b|[\"']?\benv[\"']?\s*:"
-    r"|(?:password|passwd|api[_-]?key|token)\w*\s*=",
+    r"secret|--from-literal|--from-file|--from-env-file"
+    r"|\benv\b|create\s+token|printenv\b"
+    r"|(?:pass(?:wo?r?d)?|api[_-]?key|token|credential|secret)\w*[\"']?\s*[:=]",
     re.IGNORECASE,
 )
-_SDO_ACT_LINE = re.compile(r"\bsdo\s+act\b|\btools_cli\s+act\b")
+_SDO_ACT_LINE = re.compile(r"\bsdo\s+act\b|\btools_cli(?:\.py)?\s+act\b")
 
 
 class RecordedActionsError(ValueError):
@@ -196,10 +197,13 @@ def _unmentioned_kubectl_objects(command: Sequence[str], resources: Sequence[dic
 
 
 @contextlib.contextmanager
-def _sigterm_as_exit() -> Iterator[None]:
-    """Turn SIGTERM into ``SystemExit`` so the running command is killed and its receipt finished."""
+def _sigterm_kills_group(children: list[subprocess.Popen[str]]) -> Iterator[None]:
+    """Turn SIGTERM into ``SystemExit`` after killing the running command's process group, grandchildren included."""
 
     def stop(signum: int, _frame: object) -> None:
+        for child in children:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
         raise SystemExit(128 + signum)
 
     try:
@@ -211,6 +215,26 @@ def _sigterm_as_exit() -> Iterator[None]:
         yield
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+def _run_in_own_group(command: Sequence[str]) -> tuple[int, str]:
+    """Run *command* in its own session so SIGTERM can stop it and everything it spawned."""
+
+    children: list[subprocess.Popen[str]] = []
+    with _sigterm_kills_group(children):
+        try:
+            child = subprocess.Popen(
+                list(command),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            return 127, f"{exc}\n"
+        children.append(child)
+        output, _ = child.communicate()
+        return child.returncode, output
 
 
 def _receipt(
@@ -307,12 +331,7 @@ def run_and_record(
     code: int | None = None
     output = ""
     try:
-        with _sigterm_as_exit():
-            try:
-                completed = subprocess.run(list(command), capture_output=True, text=True, check=False)
-                code, output = completed.returncode, completed.stdout + completed.stderr
-            except OSError as exc:
-                code, output = 127, f"{exc}\n"
+        code, output = _run_in_own_group(command)
     finally:
         _append(path, _FINISHED, receipt(code, output, datetime.now(UTC)))
     sys.stdout.write(output)

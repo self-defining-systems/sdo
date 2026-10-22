@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -185,6 +186,24 @@ def test_act_withholds_the_command_line_when_a_secret_is_involved(scratch: Path)
             None,
         ),
         ("Deployment/app/api", ["echo", "ok"], "set DB_PASSWORD=hunter2 on api"),
+        (
+            "Deployment/app/api",
+            [
+                "echo",
+                "patch",
+                "deployment",
+                "api",
+                "--type=json",
+                "-p",
+                '[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"X","value":"hunter2"}}]',
+            ],
+            None,
+        ),  # fmt: skip
+        ("ConfigMap/app/c", ["echo", "patch", "configmap", "c", "-p", '{"data":{"DB_PASSWORD":"hunter2"}}'], None),
+        ("ConfigMap/app/c", ["echo", "patch", "configmap", "c", "-p", '{"data":{"api_key": "hunter2"}}'], None),
+        ("ServiceAccount/app/sa", ["echo", "-n", "app", "create", "token", "sa", "hunter2"], None),
+        ("Pod/app/api", ["echo", "exec", "api", "--", "printenv", "hunter2"], None),
+        ("Pod/app/api", ["echo", "exec", "api", "--", "env", "hunter2"], None),
     ],
 )
 def test_act_withholds_command_and_output_that_may_carry_secret_values(
@@ -209,6 +228,8 @@ def test_act_keeps_the_command_line_of_an_ordinary_mutation(scratch: Path) -> No
 def test_reflection_shell_commands_withhold_sensitive_sdo_act_lines(tmp_path: Path) -> None:
     log = tmp_path / "usage.jsonl"
     lines = [
+        "python tools_cli.py act --resource Pod/app/api -- kubectl exec api -- printenv X=hunter2",
+        "uv run python sdo/agents/responder/tools_cli.py act --resource Pod/app/api -- kubectl exec api -- env hunter2",
         "sdo act --resource Deployment/app/api -- kubectl -n app set env deployment/api DB_PASSWORD=hunter2",
         "sdo act --resource Deployment/app/api -- kubectl -n app scale deployment/api --replicas=2",
         "kubectl get secret db -o yaml",
@@ -219,8 +240,10 @@ def test_reflection_shell_commands_withhold_sensitive_sdo_act_lines(tmp_path: Pa
 
     assert commands is not None
     assert "hunter2" not in json.dumps(commands)
-    assert commands[1] == lines[1]
-    assert commands[2] == lines[2]  # only recorded `sdo act` lines are scrubbed
+    assert commands[0].startswith("sdo act [command withheld")
+    assert commands[1].startswith("sdo act [command withheld")
+    assert commands[3] == lines[3]
+    assert commands[4] == lines[4]  # only recorded `sdo act` lines are scrubbed
 
 
 @pytest.mark.parametrize(
@@ -257,6 +280,8 @@ def _go_tables() -> tuple[dict[str, str], dict[str, str]]:
     source = _OBJECT_REF_GO.read_text(encoding="utf-8")
     kinds_block = source[source.index("var objectKinds") : source.index("// CanonicalObjectKind")]
     kinds = dict(re.findall(r'"([a-z]+)": "([A-Za-z]+)"', kinds_block))
+    # Every `"alias": "Kind"` pair must match the strict pattern, or an odd alias would vanish from the comparison.
+    assert len(kinds) == len(re.findall(r'"[^"]*"\s*:\s*"[^"]*"', kinds_block))
     versions_block = source[source.index("func objectAPIVersion") : source.index("func refComponent")]
     versions: dict[str, str] = {}
     for names, version in re.findall(r'case ((?:"[A-Za-z]+",? ?)+):\s*return "([^"]+)"', versions_block):
@@ -409,8 +434,16 @@ def _wait_for(predicate: object, timeout: float = 20.0) -> None:
     raise AssertionError("timed out waiting for the condition")
 
 
-def test_a_sigterm_mid_command_leaves_an_unfinished_receipt(scratch: Path, tmp_path: Path) -> None:
-    kubectl = _stub(tmp_path / "bin", "sleep 30")
+def _is_dead(pid: int) -> bool:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0] == "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return True
+
+
+def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(scratch: Path, tmp_path: Path) -> None:
+    pid_file = tmp_path / "grandchild.pid"
+    kubectl = _stub(tmp_path / "bin", f"sleep 30 &\necho $! > {pid_file}\nwait")
     env = {**os.environ, "SDO_SESSION_SCRATCH": str(scratch), "PYTHONPATH": str(Path(__file__).resolve().parents[5])}
     process = subprocess.Popen(
         [
@@ -419,19 +452,29 @@ def test_a_sigterm_mid_command_leaves_an_unfinished_receipt(scratch: Path, tmp_p
             str(kubectl), "-n", "app", "rollout", "restart", "deploy/api",
         ],
         env=env,
+        start_new_session=True,
     )  # fmt: skip
     path = scratch / "repair-actions.jsonl"
-    _wait_for(lambda: path.exists() and path.read_text(encoding="utf-8").strip())
+    _wait_for(lambda: pid_file.exists() and pid_file.read_text(encoding="utf-8").strip())
+    grandchild = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=20)
 
-    process.send_signal(signal.SIGTERM)
-    process.wait(timeout=20)
-
-    result = evolve(_bare_result())
-    recorded_actions.merge_into(result)
-    (action,) = result.repair_actions
-    assert action.success is False
-    assert "interrupted" in action.details
-    assert action.kind == "kubectl-rollout-restart"
+        _wait_for(lambda: _is_dead(grandchild), timeout=5.0)  # the command's own children died too
+        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        assert records[-1]["state"] == "finished"
+        result = evolve(_bare_result())
+        recorded_actions.merge_into(result)
+        (action,) = result.repair_actions
+        assert action.success is False
+        assert "interrupted" in action.details
+        assert action.kind == "kubectl-rollout-restart"
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(grandchild, signal.SIGKILL)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
 
 
 def test_a_started_only_entry_is_a_recorded_unfinished_mutation(scratch: Path) -> None:
