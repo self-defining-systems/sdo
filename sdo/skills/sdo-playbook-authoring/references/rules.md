@@ -49,7 +49,7 @@ diagnostic; look it up here.
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
 - A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, including under consistent renaming. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
-- A mitigation effect must be reproducible from recorded evidence; unavailable source reconciliation, revision lookup, or rollout effects fail explicitly. Use replayable SetField patches when the fixture proves the repair. Enforced by: `program.mitigation-unreplayable`.
+- SetField replay requires available primitive observations and valid patches. External source, revision or rollout effects may skip effect replay without proving repair; retain supported source-restoration mitigators. Enforced by: `program.mitigation-unreplayable`.
 
 ## Corpus evidence
 
