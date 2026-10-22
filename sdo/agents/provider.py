@@ -15,7 +15,12 @@ from libs.agent_cli.structured import AGENT_PROVIDERS
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-PROVIDER_ENV = "SDO_AGENT_PROVIDER"
+_ENVIRONMENT = json.loads((Path(__file__).resolve().parents[1] / "contracts" / "agent_env.json").read_text("utf-8"))
+#: The worker environment the controller sets (``worker_registry.AgentEnvironment``); one manifest names it for
+#: both languages.
+PROVIDER_ENV: str = _ENVIRONMENT["provider"]
+#: Model variable by role: ``responder``, ``reflection``, ``lifecycle`` (health judge, architect) or ``deployment``.
+MODEL_ENV: dict[str, str] = dict(_ENVIRONMENT["models"])
 SESSION_DIR_ENV = "SDO_SESSION_DIR"
 RESOLVED_LOG_NAME = "agent-resolved.jsonl"
 
@@ -31,17 +36,20 @@ class ResolvedAgent:
             raise ValueError(f"unsupported agent provider {self.provider!r}")
 
 
-def resolve_agent(role: str, model_env: str, environ: Mapping[str, str] | None = None) -> ResolvedAgent:
-    """Resolve *role*'s provider and model, report them, and record them beside the incident session.
+def resolve_agent(role: str, model: str, environ: Mapping[str, str] | None = None) -> ResolvedAgent:
+    """Resolve *role*'s provider and model (*model* is a key of ``MODEL_ENV``), report them, and record them.
+
+    The resolution is recorded beside the incident session.
 
     An unset provider means Codex; a provider that is set to anything else must be known.
     """
 
     environ = os.environ if environ is None else environ
+    model_env = MODEL_ENV[model]
     provider = environ.get(PROVIDER_ENV, "").strip().lower() or "codex"
     if provider not in AGENT_PROVIDERS:
         raise ValueError(
-            f"unsupported agent provider {provider!r} for {role} (SDO_AGENT_PROVIDER must be one of {AGENT_PROVIDERS})"
+            f"unsupported agent provider {provider!r} for {role} ({PROVIDER_ENV} must be one of {AGENT_PROVIDERS})"
         )
     resolved = ResolvedAgent(role, provider, environ.get(model_env, "").strip() or None)
     print(

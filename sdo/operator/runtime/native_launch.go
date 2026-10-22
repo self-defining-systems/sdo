@@ -145,20 +145,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 // when SDO_AGENT_PROVIDER is absent, so a configured provider must always travel
 // with the Job. An unconfigured provider adds nothing; an unknown one is an error.
 func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]string, error) {
-	provider := config.GetResponderBackend()
-	if provider == "" {
-		return map[string]string{}, nil
-	}
-	if provider != "codex" && provider != "claude" {
-		return nil, fmt.Errorf("unsupported responder backend %q: must be codex or claude", provider)
-	}
-	environment := map[string]string{"SDO_AGENT_PROVIDER": provider}
-	if model := config.GetResponderModel(); model != "" {
-		for _, name := range []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"} {
-			environment[name] = model
-		}
-	}
-	return environment, nil
+	return worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel())
 }
 
 // withAgentEnvironment makes the launch config authoritative for provider and

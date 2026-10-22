@@ -17,7 +17,7 @@ from sdo.agents.lifecycle import (
     DeployerAssessment,
     TopologyResourceDTO,
 )
-from sdo.agents.provider import resolve_agent
+from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     SCHEMA_VERSION,
@@ -63,8 +63,8 @@ class SourceProposalDraft(BaseModel):
     expected_workload_ids: list[str]
 
 
-def _provider(model_env: str) -> Literal["codex", "claude"]:
-    return "claude" if resolve_agent("deployer", model_env).provider == "claude" else "codex"
+def _provider(model: str) -> Literal["codex", "claude"]:
+    return "claude" if resolve_agent("deployer", model).provider == "claude" else "codex"
 
 
 def _source_path(value: str) -> str:
@@ -92,7 +92,7 @@ def _workload_id(value: str) -> str:
 def propose_source(request: SourceDeploymentRequest, checkout: Path) -> SourceDeploymentResult:
     """Let the built-in coding agent edit a proposal and return a constrained plan."""
 
-    provider = _provider("SDO_DEPLOYMENT_MODEL")
+    provider = _provider("deployment")
     prompt = f"""You are the SDO source deployer for application {request.application!r}.
 Inspect this proposal checkout and prepare source/manifests to run in Kubernetes namespace {request.namespace!r}.
 The human health objective is: {request.health_objective}
@@ -114,7 +114,7 @@ benchmark data.
         output_schema=SourceProposalDraft.model_json_schema(),
         cwd=checkout,
         access="workspace-write",
-        model=os.environ.get("SDO_DEPLOYMENT_MODEL") or None,
+        model=os.environ.get(MODEL_ENV["deployment"]) or None,
         reasoning_effort="high",
         timeout_seconds=1800,
     )
@@ -146,11 +146,11 @@ benchmark data.
 def describe_architecture(request: ArchitectureRequest, checkout: Path) -> ArchitectureResult:
     """Generate a source-grounded handoff after the broker accepted source."""
 
-    provider = _provider("SDO_LIFECYCLE_MODEL")
+    provider = _provider("lifecycle")
     if provider == "codex":
-        architect = CodexLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
+        architect = CodexLifecycleBackend(model=os.environ.get(MODEL_ENV["lifecycle"]) or None)
     else:
-        architect = ClaudeLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
+        architect = ClaudeLifecycleBackend(model=os.environ.get(MODEL_ENV["lifecycle"]) or None)
     if not request.source_topology_fingerprint or not request.source_resources:
         raise ValueError("architecture requires trusted accepted-source inventory")
     handoff = architect.run_deployer(

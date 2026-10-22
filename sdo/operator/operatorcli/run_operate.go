@@ -81,14 +81,16 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		return lifecycle.Result{}, err
 	}
 	readiness.AcceptedRoot = config.ApplicationRoot
+	agentEnvironment, err := worker_registry.AgentEnvironment(config.Install.AgentProvider, config.Install.Model)
+	if err != nil {
+		return lifecycle.Result{}, err
+	}
+	agentEnvironment["CODEX_HOME"], agentEnvironment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	workers := worker_registry.KubernetesExecutor{
 		Client: client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		CredentialsSecret: config.Install.CredentialsSecret,
-		Environment: map[string]string{
-			"SDO_AGENT_PROVIDER": config.Install.AgentProvider, "SDO_LIFECYCLE_MODEL": config.Install.Model,
-			"SDO_DEPLOYMENT_MODEL": config.Install.Model, "CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude",
-		},
+		Environment:       agentEnvironment,
 	}
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},

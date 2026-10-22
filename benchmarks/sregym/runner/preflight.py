@@ -65,6 +65,7 @@ from collections.abc import Callable
 
 from benchmarks.sregym.runner.experiment import ExperimentConfig, load_experiment_config, resolve_config
 from benchmarks.sregym.runner.pipeline import is_pipeline_config, load_pipeline_config, merge_stage_config
+from sdo.agents.provider import MODEL_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -98,7 +99,7 @@ AGENT_IMAGES = ("responder_image",)
 #: The SDO driver's model when neither ``[agent.sdo_codex].model`` nor ``MODEL_ID`` is set.
 SDO_DRIVER_DEFAULT_MODEL = "gpt-6-luna"
 #: Env overrides some SDO entry points read when they are given no model.
-SDO_MODEL_ENV_OVERRIDES = ("SDO_RESPONDER_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL")
+SDO_MODEL_ENV_OVERRIDES = tuple(dict.fromkeys(MODEL_ENV.values()))
 JUDGE_EFFORT_ENV = "JUDGE_REASONING_EFFORT"
 #: SREGym's Codex judge effort when ``JUDGE_REASONING_EFFORT`` is unset.
 SREGYM_DEFAULT_JUDGE_EFFORT = "xhigh"

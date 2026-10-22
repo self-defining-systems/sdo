@@ -1,0 +1,9 @@
+{
+  "provider": "SDO_AGENT_PROVIDER",
+  "models": {
+    "responder": "SDO_RESPONDER_MODEL",
+    "reflection": "SDO_REFLECTION_MODEL",
+    "lifecycle": "SDO_LIFECYCLE_MODEL",
+    "deployment": "SDO_DEPLOYMENT_MODEL"
+  }
+}
