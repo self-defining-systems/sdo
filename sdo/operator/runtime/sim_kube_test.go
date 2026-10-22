@@ -33,7 +33,9 @@ import (
 
 const (
 	simDefaultRuns = 256
-	simWallBudget  = 45 * time.Second
+	// simMaxChurn bounds the churn bumps drawn for one write.
+	simMaxChurn   = 4
+	simWallBudget = 45 * time.Second
 )
 
 // simSeeds returns the seeds to sweep; SDO_SIM_SEED replays one.
@@ -102,7 +104,7 @@ func (c *simClock) Sleep(_ context.Context, d time.Duration) error {
 // asks for a hard fault.
 type simFaults struct {
 	// churnPerPatch is the number of status-only resourceVersion bumps that land
-	// between the caller's read and each of its patches (0..maxApplyAttempts-1).
+	// between the caller's read and each of its patches (0..simMaxChurn).
 	churnPerPatch func() int
 	// failAfterCommit reports whether this patch commits and then returns a
 	// transport error, as a request that times out after etcd accepted it.
@@ -117,7 +119,7 @@ func drawSimFaults(rng *rand.Rand) simFaults {
 	return simFaults{
 		churnPerPatch: func() int {
 			if rng.Float64() < churnP {
-				return 1 + rng.IntN(maxApplyAttempts-1)
+				return 1 + rng.IntN(simMaxChurn)
 			}
 			return 0
 		},
@@ -140,6 +142,8 @@ type simKube struct {
 	patches int
 	// churned is set once a logical write has drawn its churn, until it commits.
 	churned bool
+	// churns counts status-only resourceVersion bumps injected so far.
+	churns int
 	// timeouts counts writes that committed but reported a transport error.
 	timeouts int
 }
@@ -161,6 +165,7 @@ func (k *simKube) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.Patch
 	k.patches++
 	if !k.churned {
 		k.churned, k.raceBeforePatch = true, k.faults.churnPerPatch()
+		k.churns += k.raceBeforePatch
 	}
 	for _, hook := range k.beforeWrite {
 		hook()

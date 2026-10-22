@@ -26,7 +26,9 @@ func simFastPathLoop(t *testing.T, seed uint64) (*ResponderLoop, *simKube) {
 	t.Helper()
 	rng := newSimRNG(seed)
 	faults := drawSimFaults(rng)
-	faults.failAfterCommit = func() bool { return false } // transport faults are the plan sweep's concern
+	// Transport faults and write conflicts are the plan sweep's concern; this test isolates read lag.
+	faults.failAfterCommit = func() bool { return false }
+	faults.churnPerPatch = func() int { return 0 }
 	kube := newSimKube(faults, simService(9999))
 	cache := newSimCache(kube, faults)
 	view, err := cache.Snapshot(context.Background())
@@ -44,7 +46,7 @@ func simFastPathLoop(t *testing.T, seed uint64) (*ResponderLoop, *simKube) {
 	clock := newSimClock()
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "sim", Namespace: "app", SourceCommit: "tree-a", RepairPolicy: "recorded-actions", Findings: findings},
 		registry, cache, []sdk.Detector{fastloopDetector{}}, PlanExecutor{
-			Client: kube, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Observer: cache, Now: clock.Now, Sleep: clock.Sleep,
+			Client: kube, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Observer: cache, Now: clock.Now,
 		}, 5)
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
