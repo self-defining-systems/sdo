@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -120,6 +121,23 @@ func (b *Batcher) DrainReady(now time.Time) []sdk.Finding {
 	for key, finding := range b.findings {
 		deadline := b.deadlines[key]
 		if !deadline.IsZero() && now.Before(deadline) {
+			continue
+		}
+		result = append(result, finding)
+		delete(b.findings, key)
+		delete(b.deadlines, key)
+	}
+	sortFindings(result)
+	b.recomputeDeadline()
+	return result
+}
+
+// DrainDetectorPrefix removes and returns pending findings whose detector ID
+// starts with prefix, ignoring their debounce deadlines.
+func (b *Batcher) DrainDetectorPrefix(prefix string) []sdk.Finding {
+	result := make([]sdk.Finding, 0)
+	for key, finding := range b.findings {
+		if !strings.HasPrefix(finding.DetectorID, prefix) {
 			continue
 		}
 		result = append(result, finding)

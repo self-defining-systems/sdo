@@ -248,3 +248,108 @@ func TestUnexplainedDriftRetainsIndependentFieldSetsOnSameObject(t *testing.T) {
 		t.Fatal("independent retained field sets collapsed into one finding")
 	}
 }
+
+// pendingDriftController queues one unexplained drift finding behind a 20s
+// batch window at start+1s while a health detector with a 500ms debounce stays
+// quiet for its first sample and fires from the second.
+func pendingDriftController(t *testing.T, start time.Time, health []sdk.Finding, changed *bool) (*Controller, *memorySink, *KubernetesCache) {
+	t.Helper()
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := testControllerConfig()
+	config.Namespace = "app"
+	config.FiringThreshold = 1
+	var detectors []sdk.Detector
+	if len(health) > 0 {
+		detector := controllerDetector("health", time.Second, health...)
+		detector.spec.Class, detector.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+		detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning, Debounce: 500 * time.Millisecond}
+		detector.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+		detector.spec.OriginatingCommit = "source"
+		detectors = append(detectors, detector)
+	}
+	c, err := NewController(config, detectors, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*driftService(9999)}}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &memorySink{}
+	c.SetFiringSink(sink)
+	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, BatchWindow: 20 * time.Second, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: *changed}}
+	}})
+	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(driftService(8080), driftService(9999))
+	if err := c.StepEvents(context.Background(), start.Add(time.Second), cache.TakeEvents()); err != nil {
+		t.Fatal(err)
+	}
+	return c, sink, cache
+}
+
+// stepHealthIncident fires the health finding at start+2s and lets its 500ms
+// debounce pass at start+3s, still inside the drift batch window.
+func stepHealthIncident(t *testing.T, c *Controller, start time.Time) {
+	t.Helper()
+	for _, offset := range []time.Duration{2 * time.Second, 3 * time.Second} {
+		if err := c.StepEvents(context.Background(), start.Add(offset), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestHealthIncidentCoalescesPendingUnexplainedDrift(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	changed := true
+	c, sink, _ := pendingDriftController(t, start, []sdk.Finding{{}, stateFinding("health")}, &changed)
+	if c.IncidentOpen() {
+		t.Fatal("incident opened before the health finding fired")
+	}
+	stepHealthIncident(t, c, start)
+	state := exportState(t, c)
+	request := state.IncidentRequest
+	if request == nil || len(request.Findings) != 2 || len(request.DriftEvents) != 1 || len(state.PendingBatch.Findings) != 0 {
+		t.Fatalf("pending drift did not join the health incident: request=%+v pending=%+v", request, state.PendingBatch)
+	}
+	detectors := map[string]bool{}
+	for _, finding := range request.Findings {
+		detectors[finding.DetectorId] = true
+	}
+	if !detectors["health"] || !detectors["drift.unexplained"] {
+		t.Fatalf("request findings=%v", detectors)
+	}
+	records := sink.events(FiringBatched, "drift.unexplained")
+	if len(records) != 1 || records[0].GetDispatchRelation() != "before_dispatch" {
+		t.Fatalf("drift not tracked as before_dispatch: %+v", records)
+	}
+}
+
+func TestPendingDriftAloneStillWaitsForBatchWindow(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	changed := true
+	c, _, _ := pendingDriftController(t, start, nil, &changed)
+	if err := c.StepEvents(context.Background(), start.Add(2*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.IncidentOpen() {
+		t.Fatal("drift-only batch opened inside the batch window")
+	}
+	if err := c.StepEvents(context.Background(), start.Add(22*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !c.IncidentOpen() {
+		t.Fatal("drift-only batch never opened after the batch window")
+	}
+}
+
+func TestClearedPendingDriftIsNotCoalesced(t *testing.T) {
+	start := time.Unix(100, 0).UTC()
+	changed := true
+	c, _, _ := pendingDriftController(t, start, []sdk.Finding{{}, stateFinding("health")}, &changed)
+	changed = false
+	stepHealthIncident(t, c, start)
+	state := exportState(t, c)
+	request := state.IncidentRequest
+	if request == nil || len(request.Findings) != 1 || request.Findings[0].DetectorId != "health" || len(request.DriftEvents) != 0 || len(state.PendingBatch.Findings) != 0 {
+		t.Fatalf("cleared drift was pulled into the incident: request=%+v pending=%+v", request, state.PendingBatch)
+	}
+}
