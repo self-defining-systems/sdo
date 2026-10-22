@@ -259,7 +259,7 @@ ready/not-ready counts. Secret/ConfigMap payloads remain key names only. All
 annotations, environment values, commands/arguments (including probe exec), probe
 headers/hosts, mount paths and messages stay opaque under an explicit `redacted`
 marker. Unknown fields and wrong JSON shapes cannot widen the allowlist. The
-field-by-field review and limitations are in [KP3_REPORT.md](../KP3_REPORT.md). Unsupported representations,
+enforced field-by-field allowlist is in [projection.go](../sdo/operator/apihistory/projection.go). Unsupported representations,
 all log bodies, watches and connection payloads retain envelopes only. Headers
 and request bodies are never recorded; the reverse proxy discards upstream error
 logger text, including body-copy errors.

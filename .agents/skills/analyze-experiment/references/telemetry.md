@@ -62,7 +62,7 @@ are dropped. Every projected object keeps `redacted: true`; absence of a field
 must not be read as evidence of its absence in Kubernetes. Label/selector keys
 alone cannot establish selector equality or backend membership. Older blobs may
 have only identity/key names; no store format migration is required. See
-`KP3_REPORT.md` for the complete reviewed allowlist and exclusions. Controller snapshot projection is
+`sdo/operator/apihistory/projection.go` for the enforced per-kind allowlist and exclusions. Controller snapshot projection is
 independent. Unknown representations, log bodies and streaming payloads retain
 envelopes only. Request bodies and headers are never stored; upstream error
 logger text is discarded.
