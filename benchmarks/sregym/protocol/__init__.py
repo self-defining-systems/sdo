@@ -15,6 +15,7 @@ from benchmarks.sregym.protocol.conductor import (
     wait_for_stages_or_last_seen,
     wait_for_stages_or_last_seen_sync,
 )
+from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.protocol.mcp_client import submit_to_benchmark
 from benchmarks.sregym.protocol.receipt import (
     RECEIPT_RESOLUTIONS,
@@ -25,11 +26,13 @@ from benchmarks.sregym.protocol.receipt import (
 from benchmarks.sregym.protocol.schema import MAX_DIAGNOSIS_CANDIDATES, READY_STAGES, TERMINAL_STAGES
 
 __all__ = [
+    "DETECTOR_REVIEW_FILENAME",
     "MAX_DIAGNOSIS_CANDIDATES",
     "READY_STAGES",
     "RECEIPT_RESOLUTIONS",
     "TERMINAL_STAGES",
     "BenchmarkResult",
+    "DetectorReviewRecord",
     "Oracle",
     "ProductionReceiptValidationError",
     "Stage",

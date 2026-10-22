@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,10 +11,21 @@ import pytest
 
 from benchmarks.sregym.adapter import ControllerInstallError, RuntimeConfig
 from benchmarks.sregym.adapter.driver import DeployedLifecycle, DeployedLifecycleContext
-from benchmarks.sregym.adapter.persistent import Clock, ControllerPod, PersistentState, control_namespace_for
+from benchmarks.sregym.adapter.persistent import (
+    CONTROLLER_LOGS_SUBDIR,
+    RESOLUTION_FILENAME,
+    Clock,
+    ControllerPod,
+    DetectorReviewRequiredError,
+    PersistentState,
+    control_namespace_for,
+    publish_deferred_receipts,
+)
 from benchmarks.sregym.fastloop.loop import InjectionWindow, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
+from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
+from benchmarks.sregym.runner.runner import _stage_results_error
 
 
 def test_program_metrics_exports_fast_path_resolution() -> None:
@@ -167,6 +179,8 @@ class FakeOps:
     #: Worktree directory names under the shared /workspace/worktrees root. Empty by
     #: default, so there is nothing for the quiescent-drain reap to remove.
     worktrees: set[str] = field(default_factory=set)
+    #: The controller stops for detector review: the responder finished, but a drift finding never clears.
+    detector_review_required: bool = False
 
     def controller_pod(self, control_namespace: str) -> ControllerPod | None:
         return self.pods.get(control_namespace)
@@ -226,6 +240,27 @@ class FakeOps:
         inject()
         self.incidents += 1
         incident_id = f"incident-{self.incidents}"
+        if self.detector_review_required:
+            self.states[control_namespace].update(
+                {
+                    "incident_open": True,
+                    "responder_done": True,
+                    "incident_request": {"incident_id": incident_id},
+                    "incident_result": {
+                        "confirmed_root_causes": ROOT_CAUSES,
+                        "repair_actions": REPAIRS,
+                        "usage": {"input_tokens": 300000, "output_tokens": 3000},
+                    },
+                    "incident_view": {
+                        "incident_id": incident_id,
+                        "blocking_detectors": ["drift.unexplained"],
+                        "blocking_findings": [{"detector_id": "drift.unexplained"}],
+                    },
+                    "detector_review_required": True,
+                    "detector_review_reason": "health detectors did not clear within 2m0s after responder completion",
+                }
+            )
+            return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
         if self.reflect_before_first_poll:
             self._reflect(control_namespace, incident_id)
             return {"controller_baseline_wait": 1.5, "fault_injection_request": 6.0}
@@ -261,7 +296,9 @@ class FakeOps:
         return {"directory": None, "error": None}
 
     def export_controller_logs(self, control_namespace: str, artifacts_dir: Path) -> None:
-        pass
+        log = artifacts_dir / CONTROLLER_LOGS_SUBDIR / "controller.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(self.controller_logs(control_namespace) + "\n", encoding="utf-8")
 
 
 def _clock() -> Clock:
@@ -639,3 +676,38 @@ def test_checkpoint_opt_out_preserves_resolution_and_learning(tmp_path: Path, mo
     assert learned.incident_id == "incident-1"
     assert learned.resolved_at == VERIFIED
     assert learned.reflection_tokens.input_tokens > 0
+
+
+def test_a_detector_review_stop_publishes_its_evidence_and_the_runner_names_the_reason(tmp_path: Path) -> None:
+    ops = FakeOps(detector_review_required=True)
+    agent = _agent(tmp_path, ops, [])
+
+    with pytest.raises(DetectorReviewRequiredError, match="incident-1"):
+        agent.resolve(0, "problem", _inject)
+
+    # SREGym publishes the staged resolution to the run directory; the deferred publication then
+    # completes it with the receipt and the controller log.
+    staging = tmp_path / "incidents" / "000_problem"
+    stage = tmp_path / "stage"
+    results = stage / "runs" / "000000_problem" / "worker_0" / "results" / "sdo_codex" / "problem" / "run_1"
+    results.mkdir(parents=True)
+    shutil.copyfile(staging / RESOLUTION_FILENAME, results / RESOLUTION_FILENAME)
+    publish_deferred_receipts(tmp_path / "sdo_persistent_controller.json", stage)
+
+    review = DetectorReviewRecord.model_validate_json((results / DETECTOR_REVIEW_FILENAME).read_text())
+    assert review.status == "detector_review_required"
+    assert review.incident_id == "incident-1"
+    assert review.blocking_detectors == ["drift.unexplained"]
+    assert review.usage == {"input_tokens": 300000, "output_tokens": 3000}
+    assert (results / CONTROLLER_LOGS_SUBDIR / "controller.log").is_file()
+    assert json.loads((results / RESOLUTION_FILENAME).read_text())["usage"] == review.usage
+
+    (results / "problem_results.csv").write_text(
+        '"Diagnosis.success","Mitigation.success","problem_id"\nTrue,True,"problem"\n', encoding="utf-8"
+    )
+    error = _stage_results_error(stage, require_strict_receipt=True)
+    assert error is not None
+    assert "detector review" in error
+    assert "incident-1" in error
+    assert "drift.unexplained" in error
+    assert "exactly one" not in error

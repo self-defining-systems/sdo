@@ -18,7 +18,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol import (
+    DETECTOR_REVIEW_FILENAME,
+    DetectorReviewRecord,
+    ProductionReceiptValidationError,
+    validate_production_receipt,
+)
 from benchmarks.sregym.runner.codex_baseline import ensure_agent_image_supports_prompt_appendix
 from benchmarks.sregym.runner.experiment import (
     ExperimentConfig,
@@ -359,6 +364,22 @@ def _strict_receipt_error(receipt_path: Path) -> str | None:
     return None
 
 
+def _detector_review_error(path: Path) -> str | None:
+    """Why the controller stopped this problem's incident for detector review, if it did."""
+
+    if not path.is_file():
+        return None
+    try:
+        record = DetectorReviewRecord.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return f"detector review record is unreadable or malformed: {exc}"
+    detectors = ", ".join(record.blocking_detectors) or "none reported"
+    return (
+        f"stopped for detector review on incident {record.incident_id}: {record.reason} "
+        f"(blocking detectors: {detectors}); no strict receipt was produced"
+    )
+
+
 def _stage_results_error(
     stage_exp_dir: Path, *, require_strict_receipt: bool = False, allow_failed_verdicts: bool = False
 ) -> str | None:
@@ -385,10 +406,17 @@ def _stage_results_error(
                     return f"problem {problem} requires {stage}.success=true"
         if require_strict_receipt:
             receipt_dir = result.parent if result.parent.name.startswith("run_") else result.parent / "agent"
+            problem = result.parent.name
+            review_error = _detector_review_error(receipt_dir / DETECTOR_REVIEW_FILENAME)
+            if review_error is not None:
+                return f"problem {problem} {review_error}"
             receipts = sorted(receipt_dir.glob("sdo_production_receipt_*.json"))
             expected = receipt_dir / "sdo_production_receipt_strict.json"
+            if not receipts:
+                return f"problem {problem} produced no strict receipt"
             if receipts != [expected]:
-                return f"problem {result.parent.name} must produce exactly one standalone strict receipt"
+                names = ", ".join(path.name for path in receipts)
+                return f"problem {problem} must produce exactly one standalone strict receipt, found {names}"
             receipt_error = _strict_receipt_error(expected)
             if receipt_error is not None:
                 return f"problem {result.parent.name} {receipt_error}"
