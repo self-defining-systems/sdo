@@ -451,3 +451,21 @@ def test_typed_evidence_gap_decline_has_a_canonical_reason() -> None:
             no_change_reason="some inferred absence",
             decline_reason="evidence_gap",
         )
+
+
+def test_large_evidence_principle_is_stated_once(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    assert prompt.count("Preserve potentially large evidence output") == 1
+    assert "temporary file" in prompt
+    assert "search or extract" in prompt
+    assert "never infer missing evidence from a truncated prefix" in prompt
