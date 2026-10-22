@@ -71,7 +71,7 @@ class Reflector(Protocol):
 
 
 def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
-    resolved = resolve_agent("reflection", "SDO_REFLECTION_MODEL")
+    resolved = resolve_agent("reflection", "reflection")
     backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(model=resolved.model)
     return SessionReflector(backend, guidance=guidance)
 

@@ -78,7 +78,7 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
             for row in request.source_resources
         ],
     )
-    resolved = resolve_agent("health_judge", "SDO_LIFECYCLE_MODEL")
+    resolved = resolve_agent("health_judge", "lifecycle")
     backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(model=resolved.model)
     artifact = backend.run_health_judge(
         repository=checkout,

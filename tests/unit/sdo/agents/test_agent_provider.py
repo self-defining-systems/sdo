@@ -13,31 +13,54 @@ if TYPE_CHECKING:
 
 def test_configured_provider_and_model_are_resolved_and_logged(capsys: pytest.CaptureFixture[str]) -> None:
     environ = {"SDO_AGENT_PROVIDER": " Claude ", "SDO_RESPONDER_MODEL": "claude-haiku-5-5"}
-    assert resolve_agent("responder", "SDO_RESPONDER_MODEL", environ) == ResolvedAgent(
-        "responder", "claude", "claude-haiku-5-5"
-    )
+    assert resolve_agent("responder", "responder", environ) == ResolvedAgent("responder", "claude", "claude-haiku-5-5")
     assert capsys.readouterr().err.strip() == "sdo-agent-resolved role=responder provider=claude model=claude-haiku-5-5"
 
 
 def test_unconfigured_provider_defaults_to_codex_with_default_model(capsys: pytest.CaptureFixture[str]) -> None:
-    assert resolve_agent("health_judge", "SDO_LIFECYCLE_MODEL", {}) == ResolvedAgent("health_judge", "codex", None)
+    assert resolve_agent("health_judge", "lifecycle", {}) == ResolvedAgent("health_judge", "codex", None)
     assert "provider=codex model=default" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("provider", ["gemini", "claude-code", "openai"])
 def test_unknown_configured_provider_fails_instead_of_defaulting(provider: str) -> None:
     with pytest.raises(ValueError, match="unsupported agent provider"):
-        resolve_agent("reflection", "SDO_REFLECTION_MODEL", {"SDO_AGENT_PROVIDER": provider})
+        resolve_agent("reflection", "reflection", {"SDO_AGENT_PROVIDER": provider})
 
 
 def test_resolution_is_recorded_beside_the_session_for_the_run_validity_guard(tmp_path: Path) -> None:
     environ = {"SDO_AGENT_PROVIDER": "claude", "SDO_REFLECTION_MODEL": "m", "SDO_SESSION_DIR": str(tmp_path)}
-    resolve_agent("reflection", "SDO_REFLECTION_MODEL", environ)
+    resolve_agent("reflection", "reflection", environ)
     records = [json.loads(line) for line in (tmp_path / "agent-resolved.jsonl").read_text().splitlines()]
     assert [(r["role"], r["provider"], r["model"]) for r in records] == [("reflection", "claude", "m")]
 
 
 def test_a_failed_session_record_does_not_stop_the_worker(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     environ = {"SDO_SESSION_DIR": str(tmp_path / "missing")}
-    assert resolve_agent("responder", "SDO_RESPONDER_MODEL", environ).provider == "codex"
+    assert resolve_agent("responder", "responder", environ).provider == "codex"
     assert "could not record resolution" in capsys.readouterr().err
+
+
+def test_workers_name_model_variables_only_through_the_shared_manifest() -> None:
+    import re
+    from pathlib import Path
+
+    from sdo.agents.provider import MODEL_ENV, PROVIDER_ENV
+
+    assert PROVIDER_ENV == "SDO_AGENT_PROVIDER"
+    root = Path(__file__).resolve().parents[4] / "sdo" / "agents"
+    literal = re.compile(r"SDO_[A-Z_]*MODEL\b|SDO_AGENT_PROVIDER")
+    offenders = {
+        str(path.relative_to(root)): sorted(set(literal.findall(path.read_text("utf-8"))))
+        for path in root.rglob("*.py")
+        if path.name != "provider.py" and literal.search(path.read_text("utf-8"))
+    }
+    assert offenders == {}, f"use MODEL_ENV/PROVIDER_ENV from sdo.agents.provider ({sorted(MODEL_ENV.values())})"
+
+
+def test_every_role_variable_the_controller_sets_resolves_for_its_role() -> None:
+    from sdo.agents.provider import MODEL_ENV
+
+    environ = {"SDO_AGENT_PROVIDER": "claude", **{name: f"model-for-{role}" for role, name in MODEL_ENV.items()}}
+    for role in MODEL_ENV:
+        assert resolve_agent("worker", role, environ).model == f"model-for-{role}"

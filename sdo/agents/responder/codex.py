@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
-from sdo.agents.provider import resolve_agent
+from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
@@ -68,7 +68,7 @@ def execute_incident(
 ) -> IncidentResult:
     if provider is None:
         try:
-            resolved = resolve_agent("responder", "SDO_RESPONDER_MODEL")
+            resolved = resolve_agent("responder", "responder")
         except ValueError as exc:
             raise ResponderExecutionError(str(exc)) from exc
         selected_provider, model = resolved.provider, model or resolved.model
@@ -76,7 +76,7 @@ def execute_incident(
         selected_provider = provider.strip().lower()
         if selected_provider not in AGENT_PROVIDERS:
             raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
-        model = model or os.getenv("SDO_RESPONDER_MODEL") or None
+        model = model or os.getenv(MODEL_ENV["responder"]) or None
     prompt = _responder_prompt(request)
     recorded_actions.reset()
     resume_session_id: str | None = None
