@@ -42,7 +42,7 @@ func TestEvidenceReadOnlyHistoryShowAndStateCuts(t *testing.T) {
 			if result["unknown"] != true || result["stale"] != true {
 				t.Fatalf("claimed reconstructed state: %s", out.String())
 			}
-			if args[3] == "before-first-mutation" && !bytes.Contains(out.Bytes(), []byte("broken")) {
+			if args[3] == "before-first-mutation" && (!bytes.Contains(out.Bytes(), []byte(`"last_observed"`)) || bytes.Contains(out.Bytes(), []byte("broken"))) {
 				t.Fatalf("lost last observation: %s", out.String())
 			}
 			if args[3] == "after-fix" && bytes.Contains(out.Bytes(), []byte("fixed")) {

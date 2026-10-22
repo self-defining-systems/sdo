@@ -4,8 +4,8 @@ package kubeproxy
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -33,6 +33,16 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 				recorder.Record(event, body)
 			}
 		}
+		var completed *apihistory.Event
+		var responseBody []byte
+		// Projection starts after forwarding returns. Store.Record schedules bounded
+		// workers; raw bytes never enter its recording queue.
+		defer func() {
+			if completed != nil {
+				record(*completed, responseBody)
+			}
+		}()
+		recordEnd := func(event apihistory.Event, body []byte) { completed = &event; responseBody = body }
 		record(e, nil)
 		transport := readTransport
 		if mutating(r.Method) {
@@ -40,6 +50,7 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 		}
 		proxy := httputil.NewSingleHostReverseProxy(upstream)
 		proxy.Transport = transport
+		proxy.ErrorLog = log.New(io.Discard, "", 0)
 		proxy.FlushInterval = -1
 		director := proxy.Director
 		proxy.Director = func(req *http.Request) {
@@ -57,7 +68,7 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			if res.StatusCode == http.StatusSwitchingProtocols {
 				end.Finished = time.Now().UTC()
 				end.Omission = "upgrade_metadata_only"
-				record(end, nil)
+				recordEnd(end, nil)
 				return nil
 			}
 			mode := "json"
@@ -66,16 +77,16 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 				mode = "metadata"
 			case e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward":
 				mode = "metadata"
-			case e.Subresource == "log" && queryTrue(r, "follow"):
-				mode = "metadata"
 			case e.Subresource == "log":
-				mode = "tail"
-				end.BodyFormat = "log_tail"
+				mode = "metadata"
 			case e.Resource == "serviceaccounts" && e.Subresource == "token":
 				mode = "metadata"
 			}
 			if mode == "metadata" {
-				end.Omission = "stream_metadata_only"
+				end.Omission = "redacted_stream_metadata_only"
+				if e.Subresource == "log" {
+					end.Omission = "redacted_log_metadata_only"
+				}
 			}
 			res.Body = &captureBody{ReadCloser: res.Body, mode: mode, finish: func(body []byte, tooLarge, broken bool) {
 				end.Finished = time.Now().UTC()
@@ -88,17 +99,13 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 				}
 				if tooLarge {
 					end.Partial = true
-					end.Omission = "body_cap"
-					if end.BodyFormat == "log_tail" {
-						end.Omission = "log_tail_capped"
-					} else {
-						body = nil
-					}
+					end.Omission = "redacted_projection_budget"
+					body = nil
 					if recorder != nil {
 						recorder.Gap()
 					}
 				}
-				record(end, body)
+				recordEnd(end, body)
 			}}
 			return nil
 		}
@@ -108,7 +115,7 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			end.Status = http.StatusBadGateway
 			end.Finished = time.Now().UTC()
 			end.Omission = "upstream_error"
-			record(end, nil)
+			recordEnd(end, nil)
 			// Transport errors can contain URLs. Do not echo them into history or the
 			// response, especially credential-bearing query arguments.
 			w.Header().Set("Content-Type", "application/json")
@@ -122,7 +129,7 @@ func mutating(method string) bool { return method != "GET" && method != "HEAD" &
 func requestEvent(r *http.Request) apihistory.Event {
 	var id [16]byte
 	_, _ = rand.Read(id[:])
-	e := apihistory.Event{RequestID: hex.EncodeToString(id[:]), Phase: "start", Started: time.Now().UTC(), Verb: strings.ToLower(r.Method), DryRun: r.URL.Query().Get("dryRun") != ""}
+	e := apihistory.Event{RequestID: hex.EncodeToString(id[:]), Phase: "start", Started: time.Now().UTC(), Verb: strings.ToLower(r.Method)}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) >= 2 && parts[0] == "api" {
 		e.Version = parts[1]
@@ -158,12 +165,16 @@ func requestEvent(r *http.Request) apihistory.Event {
 	if queryTrue(r, "watch") {
 		e.Verb = "watch"
 	}
+	// Only recognized dry-run writes can move the mutation boundary. Connection
+	// subresources never acquire dry-run semantics from a query parameter.
+	values := r.URL.Query()["dryRun"]
+	e.DryRun = mutating(r.Method) && len(values) == 1 && values[0] == "All" &&
+		(e.Subresource == "" || e.Subresource == "status" || e.Subresource == "scale" || e.Subresource == "finalize")
 	e.Partial = r.URL.Query().Get("labelSelector") != "" || r.URL.Query().Get("fieldSelector") != "" || r.URL.Query().Get("continue") != "" || r.URL.Query().Get("limit") != ""
 	return e
 }
 
 type captureBody struct {
-	seen int64
 	io.ReadCloser
 	mode     string
 	body     []byte
@@ -180,25 +191,12 @@ func (b *captureBody) Read(p []byte) (int, error) {
 		switch b.mode {
 		case "json":
 			if !b.tooLarge {
-				if len(b.body)+n > apihistory.MaxBodyBytes {
+				if len(b.body)+n > apihistory.MaxProjectionBytes {
 					b.body = nil
 					b.tooLarge = true
 				} else {
 					b.body = append(b.body, p[:n]...)
 				}
-			}
-		case "tail":
-			b.seen += int64(n)
-			if b.seen > apihistory.MaxLogBytes {
-				b.tooLarge = true
-			}
-			if n >= apihistory.MaxLogBytes {
-				b.body = append(b.body[:0], p[n-apihistory.MaxLogBytes:n]...)
-			} else {
-				if len(b.body)+n > apihistory.MaxLogBytes {
-					b.body = append(b.body[:0], b.body[len(b.body)+n-apihistory.MaxLogBytes:]...)
-				}
-				b.body = append(b.body, p[:n]...)
 			}
 		}
 	}
@@ -215,15 +213,6 @@ func (b *captureBody) complete() {
 	b.once.Do(func() { b.finish(b.body, b.tooLarge, b.broken || !b.eof) })
 }
 func (b *captureBody) Close() error { err := b.ReadCloser.Close(); b.complete(); return err }
-
-// ValidateListen restricts this unauthenticated proxy to the responder Pod's
-// loopback interface. It is never a controller Service.
-func ValidateListen(address string) error {
-	if address != "127.0.0.1:18080" {
-		return fmt.Errorf("proxy must listen on 127.0.0.1:18080")
-	}
-	return nil
-}
 
 func queryTrue(r *http.Request, name string) bool {
 	value, _ := strconv.ParseBool(r.URL.Query().Get(name))

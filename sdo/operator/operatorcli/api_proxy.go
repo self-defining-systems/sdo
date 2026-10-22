@@ -51,14 +51,20 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The directory lease exposes this forwarding generation even if storage
+	// writes fail and an old closed manifest remains readable.
+	lease, leaseErr := apihistory.BeginWriter(*directory)
+	if leaseErr == nil {
+		defer lease.Close()
+	}
 	var recorder kubeproxy.Recorder
 	store, storeErr := apihistory.Open(*directory, *incident, apihistory.Limits{})
 	if storeErr == nil {
 		recorder = store
 		defer store.Close()
 	}
-	// Missing/unreadable manifest is itself Unknown. Recording initialization
-	// failure must not prevent the localhost forwarding endpoint from starting.
+	// Disabled markers and writer liveness make failed initialization Unknown.
+	// Recording failure must not prevent the forwarding endpoint from starting.
 	server := &http.Server{Addr: APIProxyAddress, Handler: kubeproxy.New(upstream, reads, writes, recorder), ReadHeaderTimeout: 10 * time.Second}
 	listener, err := net.Listen("tcp", APIProxyAddress)
 	if err != nil {

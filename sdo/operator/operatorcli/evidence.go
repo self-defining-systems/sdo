@@ -114,6 +114,11 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 		s.Reason = "object must be Kind/namespace/name"
 		return s
 	}
+	identity, ok := resolveStateResource(parts[0])
+	if !ok {
+		s.Reason = "Unknown: unsupported or ambiguous API group/resource"
+		return s
+	}
 	var cut, after time.Time
 	switch at {
 	case "before-first-mutation":
@@ -122,7 +127,7 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 			return s
 		}
 		for _, e := range h.Events {
-			if e.Phase == "start" && !e.DryRun && isMutation(e) && (cut.IsZero() || e.Started.Before(cut)) {
+			if e.Phase == "start" && isMutation(e) && (!e.DryRun || opaqueMutation(e)) && (cut.IsZero() || e.Started.Before(cut)) {
 				cut = e.Started
 			}
 		}
@@ -162,10 +167,10 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 		if e.Phase != "end" || e.Finished.IsZero() || e.Finished.After(cut) || (!after.IsZero() && e.Started.Before(after)) || e.Finished.Before(s.ObservedAt) || e.Subresource != "" || e.DryRun {
 			continue
 		}
-		if e.Namespace != parts[1] {
+		if e.Group != identity.Group || e.Resource != identity.Resource {
 			continue
 		}
-		if e.Status == 404 && e.Name == parts[2] && resourceMatches(parts[0], e.Resource) && e.Verb == "get" {
+		if e.Status == 404 && e.Namespace == parts[1] && e.Name == parts[2] && e.Verb == "get" {
 			s.ObservedAt = e.Finished
 			s.ObservedAbsent = true
 			s.Event = e.Sequence
@@ -180,8 +185,9 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 			continue
 		}
 		var o struct {
-			Kind     string `json:"kind"`
-			Metadata struct {
+			Kind       string `json:"kind"`
+			APIVersion string `json:"apiVersion"`
+			Metadata   struct {
 				Name      string `json:"name"`
 				Namespace string `json:"namespace"`
 				Continue  string `json:"continue"`
@@ -191,12 +197,19 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 		if json.Unmarshal(body, &o) != nil {
 			continue
 		}
+		group := ""
+		if before, _, found := strings.Cut(o.APIVersion, "/"); found {
+			group = before
+		}
+		if group != identity.Group {
+			continue
+		}
 		var match json.RawMessage
-		if o.Metadata.Name == parts[2] && o.Metadata.Namespace == parts[1] && (strings.EqualFold(parts[0], o.Kind) || resourceMatches(parts[0], e.Resource)) {
+		if o.Metadata.Name == parts[2] && o.Metadata.Namespace == parts[1] && strings.EqualFold(identity.Kind, o.Kind) {
 			match = body
 		}
 		if strings.HasSuffix(o.Kind, "List") {
-			if !strings.EqualFold(parts[0], strings.TrimSuffix(o.Kind, "List")) && !resourceMatches(parts[0], e.Resource) {
+			if !strings.EqualFold(identity.Kind, strings.TrimSuffix(o.Kind, "List")) {
 				continue
 			}
 			for _, item := range o.Items {
@@ -212,7 +225,7 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 				}
 			}
 			// Only a complete, unfiltered namespace list can observe absence.
-			if match == nil && e.Verb == "list" && !e.Partial && o.Metadata.Continue == "" {
+			if match == nil && e.Namespace == parts[1] && e.Verb == "list" && !e.Partial && o.Metadata.Continue == "" {
 				s.ObservedAt = e.Finished
 				s.ObservedAbsent = true
 				s.LastObserved = nil
@@ -232,13 +245,35 @@ func stateAt(h apihistory.History, directory, object, at string) observedState {
 	}
 	return s
 }
-func resourceMatches(kind, resource string) bool {
-	return strings.EqualFold(kind, resource) || strings.EqualFold(kind+"s", resource) || strings.EqualFold(strings.TrimSuffix(kind, "y")+"ies", resource)
+
+type stateResource struct{ Kind, Group, Resource string }
+
+// Unqualified built-in kinds resolve to a reviewed GroupResource. Optional
+// Kind.group selectors must name that same group; unknown groups stay Unknown.
+func resolveStateResource(selector string) (stateResource, bool) {
+	kind, group, qualified := strings.Cut(selector, ".")
+	for _, identity := range []stateResource{
+		{"Pod", "", "pods"}, {"Service", "", "services"}, {"ConfigMap", "", "configmaps"},
+		{"Secret", "", "secrets"}, {"Event", "", "events"}, {"Endpoints", "", "endpoints"},
+		{"Deployment", "apps", "deployments"}, {"StatefulSet", "apps", "statefulsets"}, {"ReplicaSet", "apps", "replicasets"},
+		{"HorizontalPodAutoscaler", "autoscaling", "horizontalpodautoscalers"},
+		{"PodDisruptionBudget", "policy", "poddisruptionbudgets"},
+		{"EndpointSlice", "discovery.k8s.io", "endpointslices"},
+		{"NetworkPolicy", "networking.k8s.io", "networkpolicies"},
+	} {
+		if strings.EqualFold(identity.Kind, kind) && (!qualified || identity.Group == group) {
+			return identity, true
+		}
+	}
+	return stateResource{}, false
+}
+func opaqueMutation(e apihistory.Event) bool {
+	return e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward"
 }
 func isMutation(e apihistory.Event) bool {
 	switch e.Verb {
 	case "post", "put", "patch", "delete":
 		return true
 	}
-	return e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward"
+	return opaqueMutation(e)
 }

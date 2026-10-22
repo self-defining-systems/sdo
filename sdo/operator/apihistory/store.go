@@ -14,12 +14,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"sdo.dev/operator/sdk/sdktest"
 )
 
 const MaxBodyBytes = 4 << 20
 const MaxLogBytes = 64 << 10
+
+// MaxProjectionBytes bounds parsing work; larger responses retain envelopes only.
+const MaxProjectionBytes = 256 << 10
 const MaxQueuedBytes = 8 << 20
 
 type Limits struct {
@@ -82,6 +83,8 @@ type observation struct {
 }
 type Store struct {
 	queuedBytes atomic.Int64
+	projecting  chan struct{}
+	projections sync.WaitGroup
 	directory   string
 	limits      Limits
 	manifest    Manifest
@@ -97,6 +100,16 @@ type Store struct {
 func Open(directory, incident string, limits Limits) (*Store, error) {
 	if directory == "" || incident == "" {
 		return nil, errors.New("history directory and incident required")
+	}
+	// Invalidate the previous generation before any fallible initialization.
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(directory, "disabled.tmp"), []byte("redacted: recording unavailable\n"), 0600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(filepath.Join(directory, "disabled.tmp"), filepath.Join(directory, "recording-disabled")); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Join(directory, "blobs"), 0700); err != nil {
 		return nil, err
@@ -126,7 +139,12 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	s := &Store{directory: directory, limits: limits.defaults(), manifest: m, file: f, done: make(chan struct{})}
 	s.dropped.Store(m.Dropped)
 	s.queue = make(chan observation, s.limits.Queue)
+	s.projecting = make(chan struct{}, 8)
 	if err := s.writeManifest(); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if err := os.Remove(filepath.Join(directory, "recording-disabled")); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -134,59 +152,89 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	return s, nil
 }
 
-// Record never waits for disk. Projection happens before hashing or queuing;
-// neither request bodies nor HTTP headers are part of this API.
+// Record admits bounded projection work without waiting for parsing or disk.
+// Raw bytes exist only in at most eight transient workers, never in the recording
+// queue. Projection precedes hashing, queueing and persistence. Callers retain
+// ownership of raw; an admitted worker receives its own bounded copy.
 func (s *Store) Record(event Event, raw []byte) {
-	var body []byte
-	if len(raw) > MaxBodyBytes {
-		event.Omission = "body_cap"
-		s.dropped.Add(1)
-	} else if len(raw) > 0 {
-		if event.BodyFormat == "log_tail" {
-			if len(raw) > MaxLogBytes {
-				raw = raw[len(raw)-MaxLogBytes:]
-			}
-			body = append([]byte(nil), raw...)
-		} else {
-			var meta struct {
-				Metadata struct {
-					ResourceVersion string `json:"resourceVersion"`
-				} `json:"metadata"`
-			}
-			_ = json.Unmarshal(raw, &meta)
-			event.ResourceVersion = meta.Metadata.ResourceVersion
-			var err error
-			body, err = sdktest.ProjectCapturedObject(raw)
-			if err != nil {
-				event.Omission = "unsupported_projection"
-				body = nil
-			} else {
-				event.BodyFormat = "projected_json"
-			}
-		}
-	}
 	s.gate.RLock()
 	defer s.gate.RUnlock()
 	if s.closed {
 		return
 	}
+	event.BodyHash = ""
+	if event.BodyFormat == "log_tail" || event.Subresource == "log" {
+		event.BodyFormat = ""
+		event.Omission = "redacted_log_metadata_only"
+		s.enqueue(event, nil)
+		return
+	}
+	if len(raw) > MaxProjectionBytes {
+		event.Omission = "redacted_projection_budget"
+		event.Partial = true
+		s.Gap()
+		s.enqueue(event, nil)
+		return
+	}
+	if len(raw) == 0 {
+		s.enqueue(event, nil)
+		return
+	}
+	if len(s.queue) == cap(s.queue) {
+		s.Gap()
+		return
+	}
+	select {
+	case s.projecting <- struct{}{}:
+		s.projections.Add(1)
+		captured := append([]byte(nil), raw...)
+		go func() {
+			defer s.projections.Done()
+			defer func() { <-s.projecting }()
+			body, rv, err := projectResponse(captured)
+			event.ResourceVersion = rv
+			if err != nil {
+				event.Omission = "redacted_unsupported_projection"
+				body = nil
+				event.BodyFormat = ""
+			} else {
+				event.BodyFormat = "projected_json"
+				event.Omission = "redacted_metadata_only"
+			}
+			s.enqueue(event, body)
+		}()
+	default:
+		event.Omission = "redacted_projection_busy"
+		s.Gap()
+		s.enqueue(event, nil)
+	}
+}
+
+func (s *Store) enqueue(event Event, body []byte) {
 	envelope, _ := json.Marshal(event)
 	weight := int64(len(body) + len(envelope) + 256)
 	if s.queuedBytes.Add(weight) > MaxQueuedBytes {
 		s.queuedBytes.Add(-weight)
-		s.dropped.Add(1)
+		s.Gap()
 		return
 	}
 	select {
 	case s.queue <- observation{event: event, body: body, weight: weight}:
 	default:
 		s.queuedBytes.Add(-weight)
-		s.dropped.Add(1)
+		s.Gap()
 	}
 }
 func (s *Store) Gap() { s.dropped.Add(1) }
 func (s *Store) Close() {
-	s.closeOnce.Do(func() { s.gate.Lock(); s.closed = true; close(s.queue); s.gate.Unlock(); <-s.done })
+	s.closeOnce.Do(func() {
+		s.gate.Lock()
+		s.closed = true
+		s.gate.Unlock()
+		s.projections.Wait()
+		close(s.queue)
+		<-s.done
+	})
 }
 func (s *Store) writeManifest() error {
 	s.manifest.Dropped = s.dropped.Load()
@@ -279,6 +327,10 @@ type History struct {
 
 func Read(directory string) (History, error) {
 	h := History{directory: directory}
+	// Directory locks remain available on read-only mounts and filesystems. A
+	// live forwarding generation invalidates a previous closed manifest even if
+	// the recorder cannot write a disabled marker.
+	writerOpen := writerPresent(directory)
 	b, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
 	if err != nil {
 		return h, fmt.Errorf("Unknown: history manifest: %w", err)
@@ -322,6 +374,10 @@ func Read(directory string) (History, error) {
 	}
 	if uint64(len(h.Events)) != h.Manifest.Events {
 		h.Manifest.Complete = false
+	}
+	if _, err := os.Stat(filepath.Join(directory, "recording-disabled")); writerOpen || !errors.Is(err, os.ErrNotExist) {
+		h.Manifest.Complete = false
+		h.Manifest.Dropped++
 	}
 	return h, nil
 }

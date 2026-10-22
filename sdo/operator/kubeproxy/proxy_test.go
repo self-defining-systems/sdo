@@ -131,10 +131,10 @@ func TestProxyCapsNeverTruncateAndStreamsMetadataOnly(t *testing.T) {
 				t.Fatalf("events: %+v", h)
 			}
 			b := h.Body(h.Events[1])
-			if query == "" && len(b) != apihistory.MaxLogBytes {
-				t.Fatalf("tail %d", len(b))
+			if h.Events[1].Omission == "" {
+				t.Fatal("missing redaction marker")
 			}
-			if query != "" && len(b) != 0 {
+			if len(b) != 0 {
 				t.Fatal("stream payload stored")
 			}
 		})
@@ -234,5 +234,29 @@ func TestProxyIdentifiesNamespaceSubresourcesAndWatchForms(t *testing.T) {
 		if e.Resource != tc.resource || e.Namespace != tc.namespace || e.Name != tc.name || e.Subresource != tc.subresource || e.Verb != tc.verb {
 			t.Errorf("%s: %+v", tc.path, e)
 		}
+	}
+}
+
+func TestDryRunOnlyRecognizesSupportedOperations(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{"PATCH", "/api/v1/namespaces/app/pods/p?dryRun=All", true},
+		{"PATCH", "/api/v1/namespaces/app/pods/p/status?dryRun=All", true},
+		{"PATCH", "/api/v1/namespaces/app/pods/p?dryRun=invalid", false},
+		{"PATCH", "/api/v1/namespaces/app/pods/p?dryRun=All&dryRun=invalid", false},
+		{"GET", "/api/v1/namespaces/app/pods/p?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/pods/p/exec?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/pods/p/attach?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/pods/p/portforward?dryRun=All", false},
+		{"POST", "/api/v1/namespaces/app/serviceaccounts/sa/token?dryRun=All", false},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			event := requestEvent(httptest.NewRequest(tc.method, tc.path, nil))
+			if event.DryRun != tc.want {
+				t.Fatalf("dryRun=%v want %v", event.DryRun, tc.want)
+			}
+		})
 	}
 }
