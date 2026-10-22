@@ -522,6 +522,30 @@ def test_refine_depth_retry_after_a_broker_rejection_carries_the_full_request(tm
     assert "sdo-operator program scaffold" in str(call["prompt"])
 
 
+@pytest.mark.parametrize("fresh_reason", ["fresh_mode", "missing_session"])
+def test_refine_depth_never_runs_in_a_fresh_session(tmp_path: Path, fresh_reason: str) -> None:
+    class MissingSession(_CapturingBackend):
+        def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
+            raise ResponderSessionUnavailable("session not found")
+
+    backend = MissingSession() if fresh_reason == "missing_session" else _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_verified_repeat_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode="fresh" if fresh_reason == "fresh_mode" else "resume",
+        closure=_verified_repeat_closure(tmp_path),
+        depth="refine",
+    )
+    fresh = [call for call in backend.calls if call["mode"] == "fresh"]
+    assert len(fresh) == 1
+    # The fresh session needs the whole authoring request, not the confirm-only nudge.
+    assert "sdo-operator program scaffold" in str(fresh[0]["prompt"])
+
+
 def test_unknown_reflection_depth_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="depth"):
         SessionReflector(_CapturingBackend()).resume(

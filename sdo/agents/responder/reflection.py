@@ -314,10 +314,10 @@ class SessionReflector:
                 f"Original reflection request:\n{request}"
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-        if depth == "refine":
+        if depth == "refine" and session_mode == "resume":
             # Verified repeat: the programs already in memory did the work, so
-            # the session only confirms them. The full authoring protocol,
-            # snapshot and outcome documents are for the full depth and retries.
+            # the session only confirms them. A fresh session has no transcript
+            # to confirm against, so it always gets the full request.
             request = refine_learning_request(outcome=outcome, closure=closure, outcome_commit=outcome_commit)
         if session_mode == "fresh":
             if closure is None:
@@ -361,7 +361,7 @@ class SessionReflector:
                 outcome_commit=outcome_commit,
                 session_mode="fresh",
                 closure=closure,
-                depth=depth,
+                depth="full",
             )
 
 
