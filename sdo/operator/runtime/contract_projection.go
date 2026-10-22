@@ -401,6 +401,9 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	if err != nil {
 		return nil, fmt.Errorf("closure request: %w", err)
 	}
+	// A closed incident's evidence needs the findings it handled, not the frozen task bytes (which carry the
+	// whole memory snapshot) that every later reader of the closure would otherwise copy.
+	request.PreparedAgentTask = ""
 	message := &contracts.IncidentClosure{
 		Request: request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
 		IncidentDetectorStates:              evaluationsContract(closure.IncidentDetectorStates),

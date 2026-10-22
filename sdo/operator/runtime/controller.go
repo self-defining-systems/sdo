@@ -98,6 +98,8 @@ type Controller struct {
 	gateProbes    map[string]time.Time
 	stateStore    StateStore
 	stateRevision string
+	// stagedTaskIncident is the incident whose prepared task the last saved state references on the repository volume.
+	stagedTaskIncident string
 
 	mu sync.Mutex
 	// durable is the state stateStore last confirmed durable. With a store
@@ -1657,6 +1659,10 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 }
 
 func (c *Controller) RestoreState(state *contracts.ControllerState) error {
+	state, err := c.resolvePreparedTask(state)
+	if err != nil {
+		return err
+	}
 	if err := validateRuntimeState(state); err != nil {
 		return err
 	}
@@ -1774,6 +1780,9 @@ func (c *Controller) AttachStateStore(ctx context.Context, store StateStore) err
 		return err
 	}
 	if revision != "" {
+		if state, err = c.resolvePreparedTask(state); err != nil {
+			return err
+		}
 		if err := c.RestoreState(state); err != nil {
 			return err
 		}
@@ -1822,7 +1831,11 @@ func (c *Controller) PersistState(ctx context.Context) error {
 			return fmt.Errorf("prepared incident request: %w", err)
 		}
 	}
-	revision, err := c.stateStore.Save(actionCtx, state, c.stateRevision)
+	saved, stagedIncident, err := c.externalizePreparedTask(state)
+	if err != nil {
+		return err
+	}
+	revision, err := c.stateStore.Save(actionCtx, saved, c.stateRevision)
 	if err != nil {
 		// The write may or may not have landed; no effect recorded since the
 		// last confirmed save may run until a later save confirms it.
@@ -1832,6 +1845,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 		return err
 	}
 	c.stateRevision = revision
+	c.releaseStaleStagedTask(stagedIncident)
 	c.mu.Lock()
 	c.durable = proto.Clone(state).(*contracts.ControllerState)
 	archivedIDs := make([]string, 0, len(state.GetFailedClosures()))

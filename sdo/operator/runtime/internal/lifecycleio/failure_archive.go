@@ -28,6 +28,9 @@ func (s *ConfigMapStateStore) archiveFailures(ctx context.Context, records []*co
 		if err != nil {
 			return fmt.Errorf("encode failed closure: %w", err)
 		}
+		if err := checkBudget("failed closure archive", payload, record); err != nil {
+			return err
+		}
 		id := record.GetFailure().GetIncidentId()
 		if id == "" || record.GetClosure().GetRequest().GetIncidentId() != id {
 			return fmt.Errorf("failed closure archive incident mismatch")
