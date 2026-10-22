@@ -23,8 +23,11 @@ touched:
 - ``arm-parity``: every compared arm and stage shares the model, reasoning
   effort, judge and environment that affect grading or timing;
 - ``codex-quota``: the weekly Codex quota has headroom, read offline from the
-  newest rate-limit snapshot in the local Codex session logs; ``unknown`` when
-  there is none or it is stale.
+  newest rate-limit snapshot in the local Codex session logs. The check reports
+  the snapshot's age and fails when it is older than 30 minutes (in-cluster
+  workers share the quota window but write no local sessions, so an old local
+  reading under-reports it); ``unknown`` when there is no snapshot or its
+  window has already reset.
 
 ``SDO_PREFLIGHT=warn`` downgrades failures to warnings. The manifest then
 records the preflight as waived, and the validity checker counts such a run as
@@ -70,6 +73,7 @@ CheckStatus = Literal["pass", "fail", "unknown"]
 PreflightMode = Literal["enforce", "warn"]
 PREFLIGHT_MODE_ENV = "SDO_PREFLIGHT"
 MAX_QUOTA_USED_ENV = "SDO_PREFLIGHT_MAX_QUOTA_USED_PERCENT"
+SNAPSHOT_AGE_ENV = "SDO_PREFLIGHT_QUOTA_SNAPSHOT_MAX_AGE_SECONDS"
 
 GB = 10**9
 DEFAULT_KIND_CLUSTER_PREFIX = "sregym-w"
@@ -138,8 +142,8 @@ class PreflightSettings:
     min_free_bytes: int = 100 * GB
     #: Fail when the newest Codex quota snapshot shows at least this much of a window used.
     max_quota_used_percent: float = 85.0
-    #: A snapshot older than this says nothing reliable about the quota now.
-    quota_snapshot_max_age_seconds: float = 6 * 3600
+    #: A snapshot older than this fails the check: other writers share the quota window.
+    quota_snapshot_max_age_seconds: float = 30 * 60
     policy: ModelPolicy = field(default_factory=ModelPolicy)
 
     def __post_init__(self) -> None:
@@ -148,12 +152,19 @@ class PreflightSettings:
         if not 0 < self.max_quota_used_percent <= 100:
             raise ValueError(f"max_quota_used_percent must be in (0, 100], got {self.max_quota_used_percent}")
         if self.quota_snapshot_max_age_seconds <= 0:
-            raise ValueError("quota_snapshot_max_age_seconds must be positive")
+            raise ValueError(
+                f"quota_snapshot_max_age_seconds must be positive, got {self.quota_snapshot_max_age_seconds}"
+            )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> PreflightSettings:
-        raw = env.get(MAX_QUOTA_USED_ENV, "").strip()
-        return cls(max_quota_used_percent=float(raw)) if raw else cls()
+        defaults = cls()
+        max_used = env.get(MAX_QUOTA_USED_ENV, "").strip()
+        max_age = env.get(SNAPSHOT_AGE_ENV, "").strip()
+        return cls(
+            max_quota_used_percent=float(max_used) if max_used else defaults.max_quota_used_percent,
+            quota_snapshot_max_age_seconds=float(max_age) if max_age else defaults.quota_snapshot_max_age_seconds,
+        )
 
 
 # --------------------------------------------------------------------------- report
@@ -542,14 +553,20 @@ def read_quota_snapshot(codex_home: Path, *, newest_files: int = 20) -> QuotaSna
     """The newest Codex rate-limit snapshot in the local session rollouts (offline, no API call).
 
     Every Codex response writes a ``token_count`` event whose ``rate_limits``
-    carries the account's window usage; the newest one is the latest reading.
+    carries the account's window usage. The newest observation across the most
+    recently written rollouts is the latest reading: a rollout's mtime is never
+    older than its last event, so once the best observation postdates the next
+    rollout's mtime no remaining file can beat it.
     """
 
     sessions = codex_home / "sessions"
     if not sessions.is_dir():
         return None
     rollouts = sorted(sessions.rglob("rollout-*.jsonl"), key=lambda path: path.stat().st_mtime, reverse=True)
+    best: QuotaSnapshot | None = None
     for path in rollouts[:newest_files]:
+        if best is not None and best.observed_at >= path.stat().st_mtime:
+            break
         latest: QuotaSnapshot | None = None
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if '"rate_limits"' not in line:
@@ -573,9 +590,9 @@ def read_quota_snapshot(codex_home: Path, *, newest_files: int = 20) -> QuotaSna
                     )
             if windows:
                 latest = QuotaSnapshot(observed_at=observed, source=str(path), windows=windows)
-        if latest is not None:
-            return latest
-    return None
+        if latest is not None and (best is None or latest.observed_at > best.observed_at):
+            best = latest
+    return best
 
 
 def _iso_seconds(value: object) -> float | None:
@@ -942,16 +959,27 @@ def _check_quota(ctx: _Context) -> PreflightCheck:
         "source": snapshot.source,
         "windows": {name: asdict(window) for name, window in snapshot.windows.items()},
     }
+    max_age = ctx.settings.quota_snapshot_max_age_seconds
+    if age > max_age:
+        ctx.facts["codex_quota"]["status"] = "stale"
+        return PreflightCheck(
+            "codex-quota",
+            "fail",
+            f"newest local Codex rate-limit snapshot is {_fmt_age(age)} old "
+            f"(observed {_fmt_epoch(snapshot.observed_at)}, limit {_fmt_age(max_age)}); "
+            "in-cluster workers share the quota window but write no local sessions, "
+            "so an old reading under-reports usage",
+            "run any Codex command on this host to refresh the snapshot (for example `codex exec 'say ok'`), "
+            f"or raise {SNAPSHOT_AGE_ENV} if the run is small",
+        )
     windows = {
         name: window
         for name, window in snapshot.windows.items()
         if window.resets_at is None or window.resets_at > ctx.now
     }
-    if age > ctx.settings.quota_snapshot_max_age_seconds or not windows:
+    if not windows:
         ctx.facts["codex_quota"]["status"] = "unknown"
-        return PreflightCheck(
-            "codex-quota", "unknown", f"newest Codex rate-limit snapshot is {age / 3600:.1f} h old or past its reset"
-        )
+        return PreflightCheck("codex-quota", "unknown", "newest Codex rate-limit snapshot is past its reset")
     exhausted = [
         f"{name} window {window.used_percent:.0f}% used (resets {_fmt_epoch(window.resets_at)})"
         for name, window in windows.items()
@@ -968,6 +996,10 @@ def _check_quota(ctx: _Context) -> PreflightCheck:
     ctx.facts["codex_quota"]["status"] = "ok"
     used = ", ".join(f"{name} {window.used_percent:.0f}%" for name, window in windows.items())
     return PreflightCheck("codex-quota", "pass", f"Codex quota used: {used}")
+
+
+def _fmt_age(seconds: float) -> str:
+    return f"{seconds / 3600:.1f} h" if seconds >= 3600 else f"{seconds / 60:.0f} min"
 
 
 def _fmt_epoch(value: float | None) -> str:
