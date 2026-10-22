@@ -2,7 +2,11 @@ package validate
 
 import (
 	"bytes"
+	"reflect"
+	"time"
+
 	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
@@ -25,5 +29,16 @@ func TestMitigationReplayNotesAreInformational(t *testing.T) {
 	diagnostics, err := ParseReport(output.String())
 	if err != nil || Err(diagnostics) != nil {
 		t.Fatalf("note became rejection: %+v %v", diagnostics, err)
+	}
+}
+
+func TestStageTimingsRoundTripThroughRunnerOutput(t *testing.T) {
+	var out bytes.Buffer
+	want := []builder.StageTiming{{Stage: "build ./...", Duration: 4200 * time.Millisecond}, {Stage: "test ./...", Duration: 31 * time.Second}}
+	if err := WriteStageTimings(&out, want); err != nil {
+		t.Fatal(err)
+	}
+	if got := ParseStageTimings("noise\n" + out.String()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("stage timings = %+v, want %+v", got, want)
 	}
 }

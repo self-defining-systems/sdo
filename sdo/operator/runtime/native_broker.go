@@ -461,6 +461,9 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ReflectionPhase); err != nil {
 			return err
 		}
+		if err := n.recordPhase(ledger, "closure_ack"); err != nil {
+			return err
+		}
 		ledger.Acknowledged = true
 		if ledger.AcknowledgedAt == nil {
 			ledger.AcknowledgedAt = contractTimestamp(n.clock())

@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -13,6 +15,38 @@ import (
 // ReportPrefix frames the trusted runner report separately from tool output.
 const ReportPrefix = "SDO_MEMORY_REPORT:"
 const MaxReportBytes = 1024 * 1024
+
+// StageReportPrefix frames one Go toolchain stage duration in the runner's output.
+const StageReportPrefix = "SDO_VALIDATOR_STAGE:"
+
+// WriteStageTimings reports how long each compile-layer stage took so the
+// broker can log where validator wall time goes.
+func WriteStageTimings(out io.Writer, timings []builder.StageTiming) error {
+	for _, timing := range timings {
+		if _, err := fmt.Fprintf(out, "%s%s\t%d\n", StageReportPrefix, timing.Stage, timing.Duration.Milliseconds()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ParseStageTimings reads the stage lines of a runner's output. Malformed
+// lines are skipped: timings are diagnostics and never affect acceptance.
+func ParseStageTimings(logs string) []builder.StageTiming {
+	var timings []builder.StageTiming
+	for _, line := range strings.Split(logs, "\n") {
+		stage, millis, ok := strings.Cut(strings.TrimPrefix(line, StageReportPrefix), "\t")
+		if !strings.HasPrefix(line, StageReportPrefix) || !ok {
+			continue
+		}
+		var ms int64
+		if _, err := fmt.Sscanf(millis, "%d", &ms); err != nil {
+			continue
+		}
+		timings = append(timings, builder.StageTiming{Stage: stage, Duration: time.Duration(ms) * time.Millisecond})
+	}
+	return timings
+}
 
 func WriteReport(out io.Writer, diagnostics []Diagnostic, notes ...sdktest.MitigationReplayResult) error {
 	data, err := protojson.Marshal(&contracts.MemoryCheckReport{Diagnostics: ProtoDiagnostics(diagnostics), MitigationReplayNotes: ProtoMitigationReplayNotes(notes)})

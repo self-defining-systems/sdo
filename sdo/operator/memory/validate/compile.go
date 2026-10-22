@@ -46,6 +46,9 @@ func (s *run) compile(ctx context.Context) error {
 	}
 	defer workspace.Close()
 	err = workspace.Check(ctx)
+	if s.req.StageTimings != nil {
+		*s.req.StageTimings = append(*s.req.StageTimings, workspace.StageTimings...)
+	}
 	if err == nil {
 		notes, noteErr := workspace.MitigationReplayResults()
 		if noteErr != nil {

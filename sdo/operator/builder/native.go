@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/memory/layout"
 )
@@ -27,6 +28,15 @@ type Workspace struct {
 	Directory  string
 	ModulePath string
 	HasProber  bool
+	// StageTimings lists each Go toolchain stage run by Check or
+	// ValidateAndBuild, including a rejected final stage.
+	StageTimings []StageTiming
+}
+
+// StageTiming is the wall-clock cost of one Go toolchain stage.
+type StageTiming struct {
+	Stage    string
+	Duration time.Duration
 }
 
 // StageError reports the Go toolchain stage that rejected a workspace.
@@ -79,7 +89,10 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	}
 	stages = append(stages, []string{"test", "./..."}, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
 	for _, args := range stages {
-		if err := workspace.runGo(ctx, args...); err != nil {
+		started := time.Now()
+		err := workspace.runGo(ctx, args...)
+		workspace.StageTimings = append(workspace.StageTimings, StageTiming{Stage: strings.Join(args, " "), Duration: time.Since(started)})
+		if err != nil {
 			return "", err
 		}
 	}
