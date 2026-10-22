@@ -20,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/kubernetes"
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	"sdo.dev/operator/devmount"
@@ -186,6 +187,17 @@ func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string)
 	for {
 		job, err := k.Client.BatchV1().Jobs(k.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
+			// Inspection is read-only. Retry temporary API/etcd failures on the
+			// same Job within the existing validation deadline; they say nothing
+			// about whether the candidate passed validation.
+			if apierrors.IsServiceUnavailable(err) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsInternalError(err) || utilnet.IsTimeout(err) {
+				select {
+				case <-ctx.Done():
+					return fmt.Errorf("inspect Job %s: %v: %w", name, err, ctx.Err())
+				case <-ticker.C:
+					continue
+				}
+			}
 			return fmt.Errorf("inspect Job %s: %w", name, err)
 		}
 		if track && !started && (job.Status.Active > 0 || job.Status.StartTime != nil || job.Status.Succeeded > 0) {
