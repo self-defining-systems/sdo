@@ -37,7 +37,7 @@ projected bytes. Known object projections reuse controller corpus capture;
 Secrets retain data/stringData key names with empty values. Unknown response
 representations carry metadata only. Request bodies and headers are never stored.
 
-Default incident limits are 64 MiB and 10,000 envelopes, with a two-entry queue
+Default incident limits are 64 MiB and 10,000 envelopes, with a queue bounded by 1,024 entries / 8 MiB
 and 4 MiB response limit. Deduplicated bodies count once toward the byte limit;
 envelopes count per occurrence. `complete=false`, nonzero `dropped`, an open
 writer, missing files, or a new epoch after restart prevent continuity claims.
@@ -58,3 +58,12 @@ the last write response is never a recovery marker. Filtered/paginated lists,
 unknown representations, crossing requests and metadata-only watches cannot
 establish absence or continuity. A named GET 404 or complete scoped list can
 record absence at the observation time only.
+
+Native responder Jobs run the proxy as a loopback native sidecar with the Pod's
+existing service account. The proxy alone writes its incident history directory;
+workers and fresh/resumed reflection mount it read-only. Exec, attach,
+port-forward and watches retain metadata only; non-follow logs keep at most a
+64 KiB tail marked partial when capped, without truncating caller output. The
+Go memory edge writes the verified recovery marker before reflection. Only
+requests using the generated localhost kubeconfig are visible: direct network,
+alternate endpoints and controller SDK observations are outside this history.

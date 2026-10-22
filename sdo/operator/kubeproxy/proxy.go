@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,11 +62,11 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			}
 			mode := "json"
 			switch {
-			case r.URL.Query().Get("watch") == "true" || r.URL.Query().Get("watch") == "1":
+			case e.Verb == "watch":
 				mode = "metadata"
 			case e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward":
 				mode = "metadata"
-			case e.Subresource == "log" && (r.URL.Query().Get("follow") == "true" || r.URL.Query().Get("follow") == "1"):
+			case e.Subresource == "log" && queryTrue(r, "follow"):
 				mode = "metadata"
 			case e.Subresource == "log":
 				mode = "tail"
@@ -133,7 +134,12 @@ func requestEvent(r *http.Request) apihistory.Event {
 	} else {
 		return e
 	}
-	if len(parts) >= 3 && parts[0] == "namespaces" {
+	if len(parts) > 0 && parts[0] == "watch" {
+		e.Verb = "watch"
+		parts = parts[1:]
+	}
+	namespaceSubresource := len(parts) == 3 && (parts[2] == "status" || parts[2] == "finalize")
+	if len(parts) >= 3 && parts[0] == "namespaces" && !namespaceSubresource {
 		e.Namespace = parts[1]
 		parts = parts[2:]
 	}
@@ -146,10 +152,10 @@ func requestEvent(r *http.Request) apihistory.Event {
 	if len(parts) > 2 {
 		e.Subresource = parts[2]
 	}
-	if r.Method == "GET" && e.Name == "" {
+	if r.Method == "GET" && e.Name == "" && e.Verb != "watch" {
 		e.Verb = "list"
 	}
-	if r.URL.Query().Get("watch") == "true" || r.URL.Query().Get("watch") == "1" {
+	if queryTrue(r, "watch") {
 		e.Verb = "watch"
 	}
 	e.Partial = r.URL.Query().Get("labelSelector") != "" || r.URL.Query().Get("fieldSelector") != "" || r.URL.Query().Get("continue") != "" || r.URL.Query().Get("limit") != ""
@@ -217,4 +223,9 @@ func ValidateListen(address string) error {
 		return fmt.Errorf("proxy must listen on 127.0.0.1:18080")
 	}
 	return nil
+}
+
+func queryTrue(r *http.Request, name string) bool {
+	value, _ := strconv.ParseBool(r.URL.Query().Get(name))
+	return value
 }

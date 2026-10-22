@@ -226,6 +226,56 @@ Status meanings:
 - **Active** — selected by the public production command.
 - **Benchmark-only** — lives behind the SREGym adapter and is excluded from production imports.
 
+## Responder Kubernetes API history
+
+Native responder Jobs start one Go recording proxy as a Kubernetes native sidecar
+(requires native-sidecar support, Kubernetes 1.29+). It listens on plain HTTP at
+`127.0.0.1:18080`; the generated application kubeconfig points there without
+client credentials. The proxy uses the same Pod service account upstream, with
+its normal TLS CA and rotating token, so existing responder RBAC still applies.
+The native controller selects the existing validator image for the proxy binary,
+independent of the registered agent's language or image. Startup probing gates
+agent launch. No controller Service, TokenReview, serving certificate, or identity
+mapping is needed: the controller passes the incident ID when launching the Job.
+
+The memory edge prepares `.sdo-runtime/sessions/<digest>/api-history/` on the
+repository PVC. Only the sidecar mounts that directory writable; responder and
+fresh/resumed reflection mount it read-only. The sidecar gets no model-provider
+credential mounts or environment. It appends request start/end envelopes with
+UTC times, verb, GVR, namespace, name, subresource, status and opaque
+resourceVersion. Sanitized response bodies are SHA-256-addressed and deduplicated.
+Known objects reuse `sdk/sdktest` controller capture projections; Secrets retain
+only data/stringData key names. Unknown encodings/objects are metadata-only.
+Headers and request bodies are never recorded. This preserves the existing
+capture projection rather than introducing a stronger general sanitization
+policy for arbitrary ConfigMap, annotation or diagnostic values.
+
+The default incident budget is 64 MiB / 10,000 envelopes, a queue bounded by 1,024 entries and 8 MiB of projected envelopes/bodies, and a 4 MiB response capture ceiling.
+A reserved manifest reports completeness, dropped counts, bytes, writer status
+and restart epoch. Unfinished requests and restarted writers invalidate
+continuity. Disk, queue and cap failures leave forwarding active and mark gaps;
+missing manifests are Unknown. Upstream failure returns a Kubernetes-shaped 502;
+write connections are fresh and never automatically retried. Watches, exec,
+attach and port-forward record metadata only; non-follow logs retain a marked
+64 KiB tail in the runtime store. Every stream reaches the caller unchanged.
+History follows existing incident-session cleanup, with no additional retention
+policy, and adds no durable `.sdo/` artifact class.
+
+Reflection can run `sdo-operator evidence history`, `show --event N`, and
+`state Kind/namespace/name --at RFC3339|before-first-mutation|after-fix` using
+`SDO_API_HISTORY_DIR`. These commands read files only. State is explicitly last
+observed, stale and Unknown at the requested instant because metadata-only
+watches provide no continuity. Complete unfiltered scoped lists or named GET
+404s can observe absence only at their observation times. The first mutation
+boundary includes opaque exec and excludes dry-run writes; crossing requests,
+partial history and filtered/paginated lists cannot establish broader facts.
+The controller writes `recovery.json` only for independently verified successful
+or cleared closures; `after-fix` requires compatible observations beginning after
+that marker. A final API write is never recovery evidence. Proxy history does
+not replace captures, pre-apply checkpoints or action receipts, and is not a
+replay source, coverage policy or `evidence_gap` implementation. Direct network
+traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
+
 ## Component map
 
 | Capability | Repository implementation | Status | Evidence and limit |
@@ -233,6 +283,7 @@ Status meanings:
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
 | Lifecycle decisions | `sdo/operator/lifecycle/`, `artifacts/`, `deployment/` | Active | Source receipt binds the candidate tree, observed immutable images, and selected manifest paths; architecture cites the broker-accepted source commit. The broker carries the paths through accepted source recovery into the controller launch. |
 | Modular agent registration | `sdo/contracts/proto/.../worker.proto`, `sdo/operator/worker_registry/`, `sdo/agents/registrations/` | Active | Strict ProtoJSON capabilities and typed task/result URLs select workers without assuming Python or a model provider; Kubernetes Jobs mount isolated proposal checkouts. |
+| Responder API observations | `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go`, `worker_registry/` | Stage 1 | Per-task localhost sidecar uses Pod RBAC; bounded projected runtime history and read-only CLI expose last-observed state and Unknown without replay or coverage decisions. |
 | Built-in agents | `sdo/agents/{deployer,health_judge,responder}/` | Active | Each implementation owns its prompts and provider choice; tasks carry logical memory snapshots; reflection and the judge return decisions/IDs after direct file edits. |
 | Detector SDK and execution | `sdo/operator/sdk/`, `core/`, `runtime/` | Active | Deterministic Go snapshots, detector evaluation, findings, batching, leader election, and generated controller state have Go tests; lifecycle storage is private to `runtime/internal/lifecycleio`. |
 | Program responder loop and fast path | `sdo/operator/runtime/`, `sdo/agents/responder/tools_cli.py`, `sdo/contracts/proto/.../program.proto` | Active | The controller ranks bound candidates, serves incident-scoped `sdo` tools through the responder session PVC, including rendered accepted source, applies each plan as written, reports the resulting verification, and records tool and program evidence on the outcome. `apply` has no in-command judging: no dry-run after-images, owned-field or concurrent-change checks, write retries, or automatic rollback after a landed write; a write conflict is returned as the error, a failed rollout or health check leaves the plan applied and recorded (with a revision-bound `application_verification_failure` signal), and the responder decides whether to call `rollback` or retry. Only a failed multi-write plan compensates the writes that already landed. `sdo act --resource Kind/ns/name -- <command>` runs one live mutation in the responder session and records its repair receipt (resources, timing, outcome and command line) under the session scratch directory; the responder worker merges those receipts into `IncidentResult.repair_actions`, so the model writes no receipt or wrapper script. The trusted-program fast path is opt-in; one verified plan batch can resolve without an agent, which rolls back its own unresolved attempt in process before handing off to the responder. Restart rechecks live bound diagnoses and independent verification; it never replays or undoes a persisted mutation. Only incident identity/status, attempt budgets, bound diagnosis observations and revision-bound failure facts survive. |
@@ -268,6 +319,7 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema versions 1 and 2 to 3: it rewrites detector manifests, moves packages, and rewrites playbook paths in detector source to logical IDs, and the broker rejects any other detector change in the same commit. |
 | Benchmark strict/rejected receipts (outside `.sdo/`) | Benchmark Go checker derives and accepts/rejects evidence | Python adapter transports and persists generated results | `NativeProductionReceipt` and `ReceiptFailure` define the decision; rejected raw evidence grants no memory or mitigation authority. |
 | Benchmark submission decisions (outside `.sdo/`) | Benchmark Go guard | Python only transports the decision and opaque upstream reply | Generated `SubmissionGuardDecision`; only the matching observed phase authorizes POST; completion polls never authorize POST. |
+| Session API history (outside `.sdo/`) | Go proxy; memory edge writes verified recovery marker | Same controller-owned paths | Per-incident bounded append-only envelopes and projected content hashes; workers mount read-only; caps, gaps, unfinished requests and epochs cannot establish continuity. |
 | Runtime-state ConfigMap (outside `.sdo/`) | Go controller | Go controller | `ControllerState` is publication-validated by its storage edge; `ControllerObservation` is a read-only Go interpretation, never a second writer or persistence schema. |
 
 
@@ -282,6 +334,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
 | `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority, physical storage and explicit generic-health preparation, the single operational-memory validator, three-class outcome derivation without evidence-reference checks, read-only controller observation, and installer. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller, typed plan execution and rollback, accepted-revision trust, and generated contracts. |
+| `sdo/operator/apihistory/`, `kubeproxy/`, `operatorcli/evidence.go` | Production runtime observation storage, Kubernetes forwarding edge and offline read-only queries; no benchmark dependencies, replay or coverage authority. |
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
 | `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. `apps/toy/` owns the reusable tiny Kubernetes app, seed and cluster-state fault injectors/oracles; it has no SREGym dependency. |

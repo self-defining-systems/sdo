@@ -20,6 +20,7 @@ import (
 
 const MaxBodyBytes = 4 << 20
 const MaxLogBytes = 64 << 10
+const MaxQueuedBytes = 8 << 20
 
 type Limits struct {
 	Bytes  int64
@@ -35,7 +36,7 @@ func (l Limits) defaults() Limits {
 		l.Events = 10000
 	}
 	if l.Queue <= 0 {
-		l.Queue = 2
+		l.Queue = 1024
 	}
 	return l
 }
@@ -75,20 +76,22 @@ type Manifest struct {
 	Updated  time.Time `json:"updated"`
 }
 type observation struct {
-	event Event
-	body  []byte
+	weight int64
+	event  Event
+	body   []byte
 }
 type Store struct {
-	directory string
-	limits    Limits
-	manifest  Manifest
-	queue     chan observation
-	dropped   atomic.Uint64
-	closeOnce sync.Once
-	gate      sync.RWMutex
-	closed    bool
-	done      chan struct{}
-	file      *os.File
+	queuedBytes atomic.Int64
+	directory   string
+	limits      Limits
+	manifest    Manifest
+	queue       chan observation
+	dropped     atomic.Uint64
+	closeOnce   sync.Once
+	gate        sync.RWMutex
+	closed      bool
+	done        chan struct{}
+	file        *os.File
 }
 
 func Open(directory, incident string, limits Limits) (*Store, error) {
@@ -108,6 +111,9 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 			return nil, errors.New("history identity mismatch")
 		}
 		m.Complete = false
+		if err := recoverUsage(directory, &m); err != nil {
+			return nil, err
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -164,9 +170,17 @@ func (s *Store) Record(event Event, raw []byte) {
 	if s.closed {
 		return
 	}
+	envelope, _ := json.Marshal(event)
+	weight := int64(len(body) + len(envelope) + 256)
+	if s.queuedBytes.Add(weight) > MaxQueuedBytes {
+		s.queuedBytes.Add(-weight)
+		s.dropped.Add(1)
+		return
+	}
 	select {
-	case s.queue <- observation{event, body}:
+	case s.queue <- observation{event: event, body: body, weight: weight}:
 	default:
+		s.queuedBytes.Add(-weight)
 		s.dropped.Add(1)
 	}
 }
@@ -201,6 +215,7 @@ func (s *Store) run() {
 				_ = s.writeManifest()
 				return
 			}
+			s.queuedBytes.Add(-item.weight)
 			if err := s.append(item); err != nil {
 				s.dropped.Add(1)
 			}
@@ -289,6 +304,19 @@ func Read(directory string) (History, error) {
 		}
 		h.Events = append(h.Events, e)
 	}
+	unfinished := make(map[string]bool)
+	for _, e := range h.Events {
+		if e.RequestID != "" {
+			if e.Phase == "start" {
+				unfinished[e.RequestID] = true
+			} else if e.Phase == "end" {
+				delete(unfinished, e.RequestID)
+			}
+		}
+	}
+	if len(unfinished) > 0 {
+		h.Manifest.Complete = false
+	}
 	if err := scan.Err(); err != nil {
 		return h, err
 	}
@@ -313,4 +341,47 @@ func (h History) Body(e Event) []byte {
 		return nil
 	}
 	return b
+}
+
+// A crash may land an append before its manifest update. Recover usage from
+// append-only bytes so a new epoch cannot reset the incident's caps or sequence.
+func recoverUsage(directory string, m *Manifest) error {
+	file, err := os.Open(filepath.Join(directory, "events.jsonl"))
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	m.Bytes = info.Size()
+	m.Events = 0
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 4096), 64<<10)
+	for scanner.Scan() {
+		var event Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return fmt.Errorf("unfinished history envelope: %w", err)
+		}
+		m.Events++
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Join(directory, "blobs"))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("nonregular history blob")
+		}
+		m.Bytes += info.Size()
+	}
+	return nil
 }

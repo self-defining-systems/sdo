@@ -25,7 +25,7 @@ func PrepareIncidentSession(repositoryMount, pvcSubPath, incidentID string) (str
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(incidentID)))[:32]
 	local := filepath.Join(repositoryMount, ".sdo-runtime", "sessions", digest)
-	for _, directory := range []string{filepath.Join(repositoryMount, ".sdo-runtime"), filepath.Join(repositoryMount, ".sdo-runtime", "sessions"), local} {
+	for _, directory := range []string{filepath.Join(repositoryMount, ".sdo-runtime"), filepath.Join(repositoryMount, ".sdo-runtime", "sessions"), local, filepath.Join(local, "api-history")} {
 		if err := os.Mkdir(directory, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return "", fmt.Errorf("prepare incident session directory: %w", err)
 		}
