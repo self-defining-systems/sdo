@@ -71,7 +71,7 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 		t.Fatalf("stale diagnosis: %+v", diagnosis)
 	}
 	for _, command := range []string{"status", "diagnose"} {
-		if !strings.Contains(logs.String(), "msg=responder_tool incident_id=i command="+command+" duration_ms=") {
+		if !strings.Contains(logs.String(), "msg=responder_tool_timing incident_id=i command="+command+" ") {
 			t.Fatalf("handler duration for %s is not logged:\n%s", command, logs.String())
 		}
 	}
