@@ -226,6 +226,7 @@ def _run_in_own_group(command: Sequence[str]) -> tuple[int, str]:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                errors="replace",
                 start_new_session=True,
             )
         except OSError as exc:

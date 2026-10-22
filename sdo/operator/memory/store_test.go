@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -131,5 +132,27 @@ func TestReadersSeeLegacyHistoryWithoutMutatingRepository(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("reader mutated the repository: %v", err)
+	}
+}
+
+func TestLegacyStreamShowsRepeatedIncidentOnce(t *testing.T) {
+	root := t.TempDir()
+	path := writeLegacy(t, root, legacyPhysical+"\n"+legacyPhysical)
+	store := OpenReader(root)
+	all, err := store.List(context.Background())
+	if err != nil || len(all) != 1 {
+		t.Fatalf("list = %d outcomes, %v", len(all), err)
+	}
+	conflicting := strings.Replace(legacyPhysical, `"success"`, `"failed"`, 1)
+	if err := os.WriteFile(path, []byte(legacyPhysical+"\n"+conflicting+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, read := range map[string]func() error{
+		"list": func() error { _, err := store.List(context.Background()); return err },
+		"get":  func() error { _, err := store.Get(context.Background(), "old"); return err },
+	} {
+		if err := read(); !errors.Is(err, ErrConflict) {
+			t.Errorf("%s accepted conflicting repeats of one incident: %v", name, err)
+		}
 	}
 }

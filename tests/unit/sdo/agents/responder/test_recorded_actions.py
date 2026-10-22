@@ -10,11 +10,14 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from google.protobuf import json_format
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from benchmarks.sregym.protocol import validate_production_receipt
 from sdo.agents.responder import recorded_actions, tools_cli
@@ -569,3 +572,75 @@ def test_a_repair_and_verify_leave_one_receipt_and_run_the_stubbed_tools(
         {"api_version": "v1", "kind": "Service", "namespace": "hotel", "name": "reservation"}
     ]
     assert "targetPort" in str(receipt["details"])
+
+
+_OBJECT_REF_CORPUS = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts" / "object_ref_grammar.json"
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(_OBJECT_REF_CORPUS.read_text(encoding="utf-8")), ids=lambda c: repr(c["input"])
+)
+def test_resource_ref_matches_the_shared_object_ref_corpus(case: dict[str, Any]) -> None:
+    # The Go test TestObjectRefGrammarCorpus checks the same file against ParseObjectRef.
+    if case["python"] is None:
+        with pytest.raises(ValueError, match="Kind/name"):
+            recorded_actions.resource_ref(case["input"])
+    else:
+        assert recorded_actions.resource_ref(case["input"]) == case["python"]
+
+
+def test_command_output_that_is_not_utf8_is_still_recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    resources = [recorded_actions.resource_ref("Deployment/app/api")]
+    code = recorded_actions.run_and_record(["printf", r"\377ok"], resources)
+    assert code == 0
+    [receipt] = recorded_actions._read_receipts(recorded_actions.actions_path())
+    assert receipt.success
+    assert "ok" in receipt.details
+
+
+# argv from the OS can carry undecodable bytes, which Python represents as lone surrogates.
+_ARGV_TEXT = st.text(max_size=40) | st.text(
+    alphabet=st.characters(min_codepoint=0xDC80, max_codepoint=0xDCFF), max_size=5
+)
+
+
+@settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    command=st.lists(_ARGV_TEXT, min_size=1, max_size=8),
+    output=st.text(max_size=2000),
+    summary=st.none() | st.text(max_size=80),
+    code=st.none() | st.integers(-300, 300),
+)
+def test_arbitrary_command_text_round_trips_through_the_recorded_receipts(
+    tmp_path: Path, command: list[str], output: str, summary: str | None, code: int | None
+) -> None:
+    # `sdo act` records whatever argv and output the responder produced; the record must load back as one receipt.
+    path = tmp_path / "repair-actions.jsonl"
+    path.unlink(missing_ok=True)
+    resources = [recorded_actions.resource_ref("Deployment/app/api")]
+    now = datetime.now(UTC)
+
+    def build() -> dict[str, Any]:
+        return recorded_actions._receipt(
+            "sdo-act-1",
+            command,
+            resources,
+            summary=summary,
+            reversible=True,
+            started=now,
+            finished=now,
+            code=code,
+            output=output,
+        )
+
+    if any(re.search("[\udc80-\udcff]", token) for token in command):
+        # Undecodable argv is refused before the command runs.
+        with pytest.raises(ValueError, match="cannot record an invalid repair receipt"):
+            build()
+        return
+    receipt = build()
+    recorded_actions._append(path, "finished", receipt)
+    [loaded] = recorded_actions._read_receipts(path)
+    assert loaded.action_id == "sdo-act-1"
+    assert loaded.success == (code == 0)
