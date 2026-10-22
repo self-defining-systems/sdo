@@ -30,7 +30,7 @@ from tests.proto_messages import from_dict
 
 GO_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sdo" / "contracts" / "go"
 VIEWS = ("incident_view_empty.json", "incident_view_open.json", "incident_view_populated.json")
-CLOSURES = ("closure_repaired.json", "closure_own_edit.json")
+CLOSURES = ("closure_repaired.json",)
 
 
 def _text(name: str) -> str:
@@ -112,15 +112,6 @@ def test_a_repaired_closure_carries_the_f17_facts() -> None:
     assert closure.HasField("health_cleared_at")
     assert closure.HasField("result")
     assert [(ref.kind, ref.name) for ref in closure.result.repair_actions[0].resources] == [("Service", "frontend")]
-    assert [(item.kind, item.name) for item in closure.observed_state_changes] == [("Service", "frontend")]
-
-
-def test_a_wrong_fix_citing_its_own_edit_is_contradicted_from_go_facts() -> None:
-    closure = parse_json(_text("closure_own_edit.json"), IncidentClosure())
-
-    assert closure.HasField("result")
-    [observed] = closure.observed_state_changes
-    assert observed.first_observed_at.ToNanoseconds() > closure.result.repair_actions[0].started_at.ToNanoseconds()
 
 
 def test_the_controllers_persisted_state_is_protojson_the_status_command_reads() -> None:

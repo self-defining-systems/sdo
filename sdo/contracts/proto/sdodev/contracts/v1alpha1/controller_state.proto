@@ -152,7 +152,8 @@ message ControllerState {
   reserved "detector_review_required", "detector_review_required_at", "detector_review_reason";
   // Start of each detector's current clear streak.
   map<string, google.protobuf.Timestamp> detector_clear_since = 17;
-  repeated ObservedStateChange incident_observed_changes = 18;
+  reserved 18;
+  reserved "incident_observed_changes";
   DispatchState dispatch_state = 19 [(buf.validate.field).enum.defined_only = true];
   repeated string incident_finding_keys = 20;
   IncidentClosure pending_closure = 21;

@@ -81,7 +81,7 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 		return verifiedTrustOutcome(t, id, revision)
 	case simUnverified:
 		outcome := verifiedTrustOutcome(t, id, revision)
-		outcome.Classification = "partial"
+		outcome.Classification = "failed"
 		return outcome
 	case simInconclusive:
 		outcome := verifiedTrustOutcome(t, id, revision)

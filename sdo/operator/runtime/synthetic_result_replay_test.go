@@ -37,7 +37,13 @@ func TestSyntheticWorkerResultReachesNativeBroker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native := NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "synthetic", ResponderModel: "none"}
+	native := NativeIncidentBroker{
+		Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"),
+		Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "synthetic", ResponderModel: "none",
+		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic fixture"}, nil
+		}),
+	}
 	workspace, err := native.PrepareIncident(context.Background(), result.IncidentID)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +66,7 @@ func TestSyntheticWorkerResultReachesNativeBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored, err := memory.OpenReader(accepted).Get(context.Background(), result.IncidentID)
-	if err != nil || receipt.OutcomeCommit == "" || stored.Record.GetClassification() != "false_positive" {
+	if err != nil || receipt.OutcomeCommit == "" || stored.Record.GetClassification() != "success" {
 		t.Fatalf("synthetic results did not reach accepted outcome: %+v %v", stored.Record, err)
 	}
 }

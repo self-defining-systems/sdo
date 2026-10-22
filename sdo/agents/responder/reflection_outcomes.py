@@ -281,9 +281,6 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
         "applied_playbooks": list(record.applied_playbooks),
         "confirmed_playbooks": list(record.confirmed_playbooks),
         "rejected_playbooks": list(record.rejected_playbooks),
-        "diagnosis_verification": [
-            {"verdict": check.verdict, "summary": check.summary} for check in record.diagnosis_verification
-        ],
         "detector_history": collapse_detector_history(record.detector_history),
         "memory_commit": record.memory_commit if record.HasField("memory_commit") else None,
     }

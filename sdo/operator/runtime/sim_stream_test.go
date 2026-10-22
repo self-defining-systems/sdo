@@ -107,6 +107,7 @@ const (
 	simFixNone
 	simFixFirst
 	simDispatchError
+	simJobFailed
 )
 
 // simResponder is the scripted responder: it repairs the simulated cluster the
@@ -127,6 +128,9 @@ func (r *simResponder) Dispatch(ctx context.Context, request IncidentRequest) (I
 	behavior := r.behavior()
 	var resources []sdk.ObjectRef
 	switch behavior {
+	case simJobFailed:
+		w.mu.Unlock()
+		return IncidentResult{}, &ResponderJobFailedError{JobName: request.IncidentID}
 	case simDispatchError:
 		w.mu.Unlock()
 		return IncidentResult{}, errors.New("simulated: result transport failure")
@@ -448,4 +452,49 @@ func TestSimIncidentStream(t *testing.T) {
 			t.Fatalf("invariants violated (replay with SDO_SIM_SEED=%d):\n%v", seed, w.violations)
 		}
 	})
+}
+
+// A failed repair is terminal for its incident. A new fault after it must get
+// a distinct dispatch, even across a durable controller restart.
+func TestSimNextIncidentAfterFailedRepair(t *testing.T) {
+	for _, behavior := range []simBehavior{simFixNone, simJobFailed} {
+		t.Run(fmt.Sprint(behavior), func(t *testing.T) {
+			w := newSimWorld(t, 81)
+			// This regression isolates admission from the separately fuzzed store faults.
+			w.client.ReactionChain = w.client.ReactionChain[2:]
+			w.responder.behavior = func() simBehavior { return behavior }
+			w.broker.reject = func() bool { return false }
+			w.setPort(simServiceName(0), 9999)
+			for tick := 0; tick < 300 && !w.endedUnverified(); tick++ {
+				w.clock.now = w.clock.now.Add(time.Second)
+				w.step()
+				w.drain()
+			}
+			if !w.endedUnverified() {
+				t.Fatal("failed repair never reached a terminal closure")
+			}
+			first := w.closed[len(w.closed)-1].Request.IncidentID
+			w.setPort(simServiceName(0), 8080)
+			w.step()
+			w.drain()
+			w.restart()
+			w.responder.behavior = func() simBehavior { return simFixAll }
+			w.setPort(simServiceName(1), 9999)
+			for tick := 0; tick < 300 && !w.idle(); tick++ {
+				w.clock.now = w.clock.now.Add(time.Second)
+				w.step()
+				w.drain()
+			}
+			if !w.idle() || len(w.closed) < 2 {
+				t.Fatal("next incident was not admitted and closed")
+			}
+			last := w.closed[len(w.closed)-1]
+			if last.Request.IncidentID == first || len(last.FinalDetectorStates) == 0 {
+				t.Fatal("next incident was not independently verified")
+			}
+			if len(w.violations) > 0 {
+				t.Fatal(w.violations)
+			}
+		})
+	}
 }

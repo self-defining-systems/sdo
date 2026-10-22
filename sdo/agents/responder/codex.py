@@ -15,7 +15,7 @@ from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
-from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
+from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
     branch_correction,
@@ -23,7 +23,6 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.agents.responder.tools_cli import ACT_EXAMPLE, CLI_EXAMPLES
 from sdo.contracts import (
     DetectorEvaluation,
     Finding,
@@ -81,7 +80,7 @@ def execute_incident(
     prompt = _responder_prompt(request)
     recorded_actions.reset()
     resume_session_id: str | None = None
-    corrected_evidence = corrected_branch = False
+    corrected_branch = False
     while True:
         try:
             completed = run_structured_turn(
@@ -102,13 +101,6 @@ def execute_incident(
                 unwrap_branch(completed.output_json, "incident_result"), turn_usage(completed)
             )
             break
-        except EvidenceReferenceError as exc:
-            if corrected_evidence:
-                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
-            # One resumed turn lets the agent split a compound reference instead of losing the diagnosis.
-            corrected_evidence = True
-            resume_session_id = completed.session_id
-            prompt = _evidence_reference_feedback(str(exc))
         except WrongBranchError as exc:
             if corrected_branch:
                 raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
@@ -126,17 +118,6 @@ def execute_incident(
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
     return result
-
-
-def _evidence_reference_feedback(problems: str) -> str:
-    return (
-        "Your result was not accepted: a state-change evidence source must name exactly one object. "
-        f"Problems: {problems}\n"
-        "Resubmit the same result with each changed object as its own evidence entry, for example "
-        '{"kind": "state-change", "source": "Service/geo", ...} and '
-        '{"kind": "state-change", "source": "Service/recommendation", ...}. '
-        "Change nothing else unless it is wrong."
-    )
 
 
 #: Proto fields the model does not supply: worker accounting and session, the controller's
@@ -528,16 +509,12 @@ def _verification_instructions() -> str:
         "addressed, so keep investigating along those request paths. Only when it reports unavailable, rely on "
         "`sdo verify` and plain `kubectl get`/`rollout status` checks. Record its final output as a "
         "verification_evidence entry named `sdo-incident-status`.\n\n"
-        "Every confirmed root cause needs live evidence: a detector finding (source: its detector ID or "
-        "finding fingerprint), a failing "
-        "synthetic scenario (source: its scenario ID), a change listed since the last healthy state (source: its "
-        "exactly one `Kind/name` or `Kind/namespace/name`, never a list or a compound like `Service/a; Service/b`: "
-        "when one cause changed two objects, give one state-change entry per object; a change your own repair "
-        "made is not evidence of the cause, and SDO checks that the change predates your repair of that object), "
-        "or a live observation (source: the command; observation: what its output showed). Scripts, "
-        "manifests, ConfigMap bodies, source files, and architecture notes show what could go wrong, not what did: "
-        "list them only in static_context. Name in explained_detectors the detectors whose findings the cause "
-        "explains; they must clear after your fix, and SDO checks that they do.\n\n"
+        "Every confirmed root cause cites the live evidence behind it: a detector finding (source: its detector ID "
+        "or finding fingerprint), a failing synthetic scenario (source: its scenario ID), a change listed since the "
+        "last healthy state (source: the changed object as `Kind/name` or `Kind/namespace/name`), or a live "
+        "observation (source: the command; observation: what its output showed). Scripts, manifests, ConfigMap "
+        "bodies, source files, and architecture notes show what could go wrong, not what did: list them only in "
+        "static_context. Name in explained_detectors the detectors whose findings the cause explains.\n\n"
         "Label pods or Jobs you create only to investigate or check with `sdo.dev/responder-helper=true`; the "
         "controller deletes them when you finish. Never label application workloads with it. "
         "Clean up the temporary state changes you introduced while troubleshooting before you submit.\n\n"
@@ -623,20 +600,12 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
     program_guidance = (
-        "Start with the ranked program verdicts and evidence in initial_program_runs. "
-        "For a Match with can_mitigate=true, prefer sdo plan then sdo apply using the returned plan_id. "
-        "Diagnosis-only programs have no mitigator: use their evidence, then repair from accepted source. "
-        "An unknown capability is not evidence of a mitigator; check sdo diagnose for current metadata. "
-        "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
-        "When no program fits, make the fix with plain commands, each live mutation through `sdo act`. "
-        "Always finish with sdo verify. "
-        "Concrete CLI examples (replace the program, namespace, resource and binding name with those in the verdict): "
-        + "; ".join(f"`{example}`" for example in CLI_EXAMPLES)
-        + ". Repeat --bind for each named parameter. "
-        "Run these through the session shell tool; discover its name only if needed. "
-        "Do not print the tool-description catalog. "
-        "When verify reports healthy and source changes are committed, "
-        "return the structured incident result immediately. "
+        "Start with ranked program verdicts and evidence in initial_program_runs. "
+        "Prefer a matching program's plan when can_mitigate=true; a diagnosis-only program supplies evidence, "
+        "not a repair. Investigate Unknown or NeedsJudgement against current state and accepted source. "
+        "The local sdo interface exposes concise capability help and resource argument schemas. "
+        "Use that index instead of broad tool-catalog output. "
+        "Finish with independent verification; return once findings are clear and source changes are committed. "
         if request.max_response_loops > 0
         else ""
     )
@@ -670,13 +639,10 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "natural language. Never put scratch files in operational memory. "
         f"{memory_guard}Return only the IncidentResult JSON "
         f"required by the output schema. {branch_instruction('incident_result')}\n\n"
-        f"Repair evidence mode: {request.repair_policy}. Run every live mutation as one `sdo act` call, for example "
-        f"`{ACT_EXAMPLE}`; it runs the command and records the repair receipt. "
-        "Do not return receipts for `sdo act` calls. SDO "
-        "confirms a root cause only when a successful action that started before health cleared mutated that "
-        "cause's resources, so pass a `--resource` for every object the command changes. In recorded-actions "
-        "mode, a successful live-only repair needs at least one successful `sdo act`; repository changes are "
-        "still committed when present.\n\n"
+        f"Repair evidence mode: {request.repair_policy}. Every live mutation uses the session's sdo act recorder "
+        "and declares every changed resource. The recorder supplies receipts; do not hand-write them. "
+        "A confirmed cause requires a successful repair action that began before health cleared and mutated "
+        "that cause's resources. Commit repository source changes when present.\n\n"
         f"{late_findings_guidance(request)}"
         f"{additional_context}\n"
         f"{_inlined_architecture_summary(request)}"

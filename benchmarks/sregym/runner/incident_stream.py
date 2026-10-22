@@ -325,6 +325,7 @@ reuse_cluster = true
 force_recreate_cluster = false
 preserve_infrastructure = true
 fast_namespace_teardown = true  # skips pod termination grace between incidents; outside every measured window
+source_build_cache = true  # reuses the app image while its build context is unchanged; repaired source rebuilds
 cleanup_defer_timeout_seconds = 4200
 docker_builder = "sdo-example"
 
@@ -392,6 +393,7 @@ reuse_cluster = true
 force_recreate_cluster = false
 preserve_infrastructure = true
 fast_namespace_teardown = true  # skips pod termination grace between incidents; outside every measured window
+source_build_cache = true  # reuses the app image while its build context is unchanged; repaired source rebuilds
 docker_builder = "sdo-example"
 """
 

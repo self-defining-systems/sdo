@@ -25,7 +25,7 @@ message OutcomeRecord {
   repeated string applied_playbooks = 11 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   repeated ConfirmedRootCause confirmed_root_causes = 12;
   repeated DetectorEvaluation final_health_detector_state = 13;
-  string classification = 14 [(buf.validate.field).string = {in: ["success", "partial", "external_recovery", "cleared_without_action", "false_positive", "false_negative", "failed", "cancelled"]}];
+  string classification = 14 [(buf.validate.field).string = {in: ["success", "cleared_without_action", "failed"]}];
   optional string repair_commit = 15;
   repeated RepairActionReceipt repair_actions = 16;
   optional string memory_commit = 17;
@@ -33,7 +33,8 @@ message OutcomeRecord {
   string responder_model = 19;
   UsageMetrics usage = 20;
   OutcomeTimestamps timestamps = 21;
-  repeated DiagnosisVerification diagnosis_verification = 22;
+  reserved 22;
+  reserved "diagnosis_verification";
   repeated ProgramToolCall program_tool_calls = 23;
   repeated ProgramRun program_runs = 24;
   repeated PlanApplication plan_applications = 25;
@@ -53,34 +54,4 @@ message OutcomeTimestamps {
   google.protobuf.Timestamp mitigated_at = 3;
   google.protobuf.Timestamp verified_at = 4;
   google.protobuf.Timestamp completed_at = 5;
-}
-
-message DiagnosisVerification {
-  string summary = 1;
-  string verdict = 2;
-  repeated OutcomeEvidenceCheck evidence = 3;
-  repeated OutcomeDetectorFlip detectors = 4;
-  OutcomeRepairAttribution repair = 5;
-}
-
-message OutcomeEvidenceCheck {
-  string kind = 1;
-  string source = 2;
-  optional bool verified = 3;
-  optional string reason = 4;
-}
-
-message OutcomeDetectorFlip {
-  string detector_id = 1;
-  bool fired_at_dispatch = 2;
-  optional bool cleared_after_fix = 3;
-  bool flipped = 4;
-}
-
-message OutcomeRepairAttribution {
-  bool attributed = 1;
-  repeated string actions = 2;
-  repeated string repaired_resources = 3;
-  repeated string externally_reverted = 4;
-  string reason = 5;
 }

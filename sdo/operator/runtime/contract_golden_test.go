@@ -197,36 +197,6 @@ func TestGoContractFixtures(t *testing.T) {
 	checkGoContractFixture(t, "incident_view_open.json", mustProject(t, incidentViewContract, view))
 	checkGoContractFixture(t, "closure_repaired.json", mustProject(t, incidentClosureContract, repaired))
 
-	// A wrong fix citing its own edit: the real fault is invisible to the
-	// diff and recovers by other means; the responder restarts frontend at
-	// t=1.5 and cites the restart, which the diff first shows at t=2.
-	restartTimeline := func(now time.Time) []StateChange {
-		if now.Before(time.Unix(2, 0)) {
-			return []StateChange{}
-		}
-		return []StateChange{{Kind: "Deployment", Name: "frontend", Change: StateChangeModified, Fields: []StateFieldChange{
-			{Field: "template.annotations.kubectl.kubernetes.io/restartedAt", After: "1970-01-01T00:00:01Z"},
-		}}}
-	}
-	_, _, ownEdit := goldenIncident(t, restartTimeline, func(request IncidentRequest) IncidentResult {
-		return goldenResult(request,
-			ConfirmedRootCause{
-				Summary:   "a stale frontend rollout broke the service",
-				Resources: []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Name: "frontend"}},
-				Evidence: []RootCauseEvidence{
-					{Kind: "state-change", Source: "Deployment/frontend", Observation: "frontend rollout changed"},
-				},
-				ExplainedDetectors: []string{"cause"},
-			},
-			RepairActionReceipt{
-				ActionID: "restart-frontend", Kind: "kubectl", Target: "deployment/frontend",
-				Resources: []sdk.ObjectRef{{APIVersion: "apps/v1", Kind: "Deployment", Name: "frontend"}},
-				Summary:   "restart frontend", Details: "kubectl rollout restart", StartedAt: time.Unix(1, 500_000_000).UTC(),
-				CompletedAt: time.Unix(1, 600_000_000).UTC(), Success: true, Reversible: true,
-			},
-		)
-	})
-	checkGoContractFixture(t, "closure_own_edit.json", mustProject(t, incidentClosureContract, ownEdit))
 	open := wireState(t)
 	open.PendingClosure = mustProject(t, incidentClosureContract, repaired)
 	open.ClosureFailure.IncidentId = repaired.Request.IncidentID
@@ -244,7 +214,4 @@ func TestGoContractFixtures(t *testing.T) {
 		Receipt:      &contracts.ClosureReceipt{IncidentId: closure.GetRequest().GetIncidentId(), OutcomeCommit: "def", AckToken: "token"},
 		Acknowledged: true,
 	})
-	if len(ownEdit.ObservedStateChanges) != 1 || !ownEdit.ObservedStateChanges[0].FirstObservedAt.Equal(time.Unix(2, 0).UTC()) {
-		t.Fatalf("the restart must first be observed after the repair started: %+v", ownEdit.ObservedStateChanges)
-	}
 }
