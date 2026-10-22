@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -113,7 +114,18 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (*contracts.ControllerSt
 // returned revision. After an error nothing new is known to be durable, and
 // the next Save re-reads the ConfigMap instead of trusting the cache.
 func (s *ConfigMapStateStore) Save(ctx context.Context, state *contracts.ControllerState, expectedRevision string) (string, error) {
-	payload, err := encodeControllerState(state)
+	if state == nil {
+		return "", fmt.Errorf("controller state is required")
+	}
+	if err := s.archiveFailures(ctx, state.GetFailedClosures()); err != nil {
+		return "", err
+	}
+	document := state
+	if len(state.GetFailedClosures()) > 0 {
+		document = proto.Clone(state).(*contracts.ControllerState)
+		document.FailedClosures = nil
+	}
+	payload, err := encodeControllerState(document)
 	if err != nil {
 		return "", err
 	}

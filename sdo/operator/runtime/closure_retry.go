@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"time"
@@ -12,10 +10,6 @@ const (
 	defaultClosureRetryMaxAttempts    = 8
 	defaultClosureRetryInitialBackoff = 2 * time.Second
 	defaultClosureRetryMaxBackoff     = time.Minute
-
-	// closureStateFailed is terminal: the broker rejected the closure
-	// MaxAttempts times, so the controller stops resubmitting it.
-	closureStateFailed = contracts.ClosureState_CLOSURE_STATE_FAILED
 )
 
 // ClosureRetryPolicy bounds how often the controller resubmits an incident
@@ -49,17 +43,6 @@ func (p ClosureRetryPolicy) withDefaults() (ClosureRetryPolicy, error) {
 	return p, nil
 }
 
-func (p ClosureRetryPolicy) backoff(attempts int) time.Duration {
-	delay := p.InitialBackoff
-	for range attempts - 1 {
-		if delay >= p.MaxBackoff/2 {
-			return p.MaxBackoff
-		}
-		delay *= 2
-	}
-	return min(delay, p.MaxBackoff)
-}
-
 // ClosureFailure is the durable record of broker rejections of the pending
 // closure. Permanent means the retry budget is spent and the closure is left
 // for an operator; the pending closure keeps its evidence.
@@ -73,6 +56,7 @@ type ClosureFailure struct {
 	NextAttemptAt time.Time
 	Permanent     bool
 	Action        string
+	Reason        contracts.ClosureFailureReason
 }
 
 func (f ClosureFailure) Error() string {
@@ -97,16 +81,6 @@ func (c *Controller) clock() time.Time {
 	return time.Now().UTC()
 }
 
-// closureRetryDueLocked reports whether a pending closure may be resubmitted.
-// Callers hold c.mu.
-func (c *Controller) closureRetryDueLocked() bool {
-	failure := c.closureFailure
-	if failure == nil {
-		return true
-	}
-	return !failure.Permanent && !c.clock().Before(failure.NextAttemptAt)
-}
-
 // PausedWake is when a paused controller must wake: the next closure retry,
 // or zero. A pause stops observing the application, not committing memory.
 func (c *Controller) PausedWake() time.Time {
@@ -126,41 +100,6 @@ func (c *Controller) closureRetryWake(next time.Time) time.Time {
 		return failure.NextAttemptAt
 	}
 	return next
-}
-
-// recordClosureRejectionLocked counts a failed closure attempt and either
-// schedules the next attempt or marks the closure permanently failed. It
-// returns the failure when this attempt spent the retry budget. Callers hold
-// c.mu.
-func (c *Controller) recordClosureRejectionLocked(err error) (ClosureFailure, bool) {
-	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
-	if errors.Is(err, context.Canceled) {
-		// Lost leadership or shutdown is not a broker verdict.
-		return ClosureFailure{}, false
-	}
-	now := c.clock()
-	failure := c.closureFailure
-	incidentID := c.pendingClosure.Request.IncidentID
-	if failure == nil || failure.IncidentID != incidentID {
-		failure = &ClosureFailure{IncidentID: incidentID, FirstFailedAt: now}
-	}
-	policy := c.config.ClosureRetry
-	failure.Attempts++
-	failure.MaxAttempts = policy.MaxAttempts
-	failure.LastError = err.Error()
-	failure.LastFailedAt = now
-	c.closureFailure = failure
-	if failure.Attempts < policy.MaxAttempts {
-		failure.NextAttemptAt = now.Add(policy.backoff(failure.Attempts))
-		return ClosureFailure{}, false
-	}
-	failure.NextAttemptAt = time.Time{}
-	failure.Permanent = true
-	failure.Action = "the broker will not commit this closure as proposed; inspect the incident worktree and " +
-		"the broker ledger, fix the proposal or the broker check, then set closure_state to \"CLOSURE_STATE_PENDING\" and " +
-		"remove closure_failure in the sdo-controller-state ConfigMap to retry; new incidents stay blocked until then"
-	c.closureState = closureStateFailed
-	return *failure, true
 }
 
 // ClosureFailure returns the durable closure rejection record, if any.

@@ -49,10 +49,61 @@ ignores it and publishes fresh observations.
 * Child deadlines fit the remaining parent budget with headroom.
 * New faults observed during an incident survive its acknowledgment.
 
-Slice 1 enforces generated, closed phase types and retains existing behavior.
-Pure transitions, the exhaustive fault/restart explorer and real-driver simulation
-are subsequent slices. The current controller still requires operator intervention
-after exhausting closure retries; phase typing alone does not prove progress.
+The controller and native reflection coordinator now call
+`runtime/lifecyclecore.Step` and `StepReflection`. Their only inputs are generated
+state and plain events; effects contain values, never contexts or I/O interfaces.
+The declared core passes the [enforced purity gate](go-purity.md).
+
+The closure explorer covers two incidents, three transient faults and one
+restart: 457 reachable states and 931 transitions. The reflection explorer covers
+34,046 states and 75,166 transitions with three API faults, one restart and three
+bounded worker attempts. Every transition is repeated and compared byte for byte;
+inputs must remain unchanged. The checks cover stable retry identities/payloads,
+completed-result retention, bounded correction, reset only after typed rejection,
+and a path to terminal outcomes from every reachable state under bounded faults.
+Mutation helpers demonstrate rejection of time-dependent retry payloads,
+non-determinism, lost results and failure that blocks the next incident. Each
+explorer has a two-minute wall cap; the existing chaos CI job runs them with a
+five-minute process timeout.
+
+Publication remains one trusted broker effect containing gofmt, independent
+validator Jobs and commit. The explorer does not prove that effect's internal
+ordering; broker validation/transport tests cover it. This preserves the broker
+boundary for the later extraction in the table below. Incident-response ordering
+and real-driver seeded simulation (slices 3–4) are explicitly deferred by the user
+to conserve the shared account quota; these models do not prove them.
+
+## Durable retry and failure evidence
+
+A closure error consumes the retry budget frozen at that incident's first failure; restart configuration cannot enlarge it. Shutdown/leadership cancellation
+does not. Agent deadline errors and invalid receipts have typed reasons; exhausted
+retries become `CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED`. The failed closure and
+reason remain available, while later incidents can open.
+
+`ControllerState.failed_closures` is an archive outbox. Before accepting the next
+main-state CAS, the private ConfigMap adapter writes every queued record to a
+content-addressed `sdo-failed-closure-*` ConfigMap (`failed-closure.json`, label
+`sdo.dev/closure-archive=failed`). It omits the completed outbox from the main
+ConfigMap. New workspace/dispatch effects still require confirmed state durability,
+so an archive failure cannot discard evidence or authorize a later effect. The
+archive is runtime evidence outside `.sdo/`, not a new operational-memory class.
+A crash after archive creation but before the root CAS safely replays the write;
+distinct terminal observations retain distinct content-addressed records.
+
+`BrokerLedger.reflection_phase`, `reflection_workspace`, `reflection_paths` and
+`reflection_dispatch_at` are the nested reflection state. `reflection_results`
+retains completed decisions even when a typed rejection resets a checkout.
+Infrastructure faults never request reset. A restart rejoins the same task even
+when the completed checkout has edits but its decision was not yet persisted.
+
+The full `AgentTask` is atomically frozen outside the checkout under the native
+ledger's `reflection-tasks/` directory before worker execution. Retries read it
+before consulting changing memory/configuration. IDs keep the previous happy-path
+format; corrections get distinct attempt IDs. Reflection deadlines derive from
+the persisted dispatch event timestamp plus the configured budget; a transport
+retry cannot rebuild or extend an attempt's deadline. A typed correction is a new
+attempt with a distinct identity. General child-budget/headroom
+enforcement remains follow-up work.
 
 ## Further functional-core extractions
 

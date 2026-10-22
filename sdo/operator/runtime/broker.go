@@ -46,12 +46,14 @@ type workspaceCompletion struct {
 }
 
 type closureCompletion struct {
-	receipt ClosureReceipt
-	err     error
+	effectID string
+	receipt  ClosureReceipt
+	err      error
 }
 
 type acknowledgmentCompletion struct {
-	err error
+	effectID string
+	err      error
 }
 
 type releaseCompletion struct {
