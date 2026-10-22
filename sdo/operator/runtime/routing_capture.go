@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,8 +20,14 @@ import (
 )
 
 const maxRoutingCaptureProbes = 24
-const routingCaptureBudget = 2 * time.Second
-const routingCaptureProbeTimeout = 200 * time.Millisecond
+
+// A probe's deadline is the client's transport bound. The prober spends half of
+// it on the dial and reports a dial that exceeds that as a failed observation,
+// so the deadline must dwarf a healthy round trip on a CPU-throttled node:
+// a short one turns scheduler delay into a false "port is closed" observation.
+// The budget bounds the whole capture, which runs on the incident-open path.
+const routingCaptureBudget = 6 * time.Second
+const routingCaptureProbeTimeout = 4 * time.Second
 
 var routingCaptureMu sync.Mutex
 
@@ -129,7 +136,13 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 	budget, cancel := context.WithTimeout(ctx, routingCaptureBudget)
 	defer cancel()
 	for index, target := range targets {
-		if index >= maxRoutingCaptureProbes || budget.Err() != nil {
+		if index >= maxRoutingCaptureProbes {
+			break
+		}
+		if budget.Err() != nil {
+			if err := recordRoutingProbeUnavailable(dir, incidentID, phase, "budget_exhausted", fmt.Sprintf("%d of %d probes skipped", len(targets)-index, len(targets))); err != nil {
+				return err
+			}
 			break
 		}
 		args, _ := json.Marshal([]any{target.ref, target.port})

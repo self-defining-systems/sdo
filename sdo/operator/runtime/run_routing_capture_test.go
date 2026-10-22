@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -30,7 +31,7 @@ import (
 
 // The real prober HTTP API has no generators or workloads. Only its network
 // edge is replaced: our hand-written app listens on 8080 and refuses other ports.
-func noTrafficRoutingProber(t *testing.T) HTTPProberClient {
+func noTrafficProberHandler(t *testing.T) http.Handler {
 	t.Helper()
 	p, err := prober.New(prober.Config{Namespace: "app", DialContext: func(_ context.Context, _, address string) (net.Conn, error) {
 		if !strings.HasSuffix(address, ":8080") {
@@ -43,7 +44,13 @@ func noTrafficRoutingProber(t *testing.T) HTTPProberClient {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := httptest.NewServer(prober.Handler(p))
+	return prober.Handler(p)
+}
+
+// noTrafficRoutingProber serves that API on a real loopback socket.
+func noTrafficRoutingProber(t *testing.T) HTTPProberClient {
+	t.Helper()
+	api := httptest.NewServer(noTrafficProberHandler(t))
 	t.Cleanup(api.Close)
 	return HTTPProberClient{BaseURL: StaticProberURL(api.URL)}
 }
