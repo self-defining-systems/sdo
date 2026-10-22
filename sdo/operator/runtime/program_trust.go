@@ -197,6 +197,10 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 		if call.GetCommand() != "apply" || response.ApplicationID != application.GetApplicationId() || call.GetAt() == nil || call.GetAt().CheckValid() != nil || call.GetAt().AsTime().Before(application.GetCompletedAt().AsTime()) {
 			continue
 		}
+		if response.ProgramRunsOmitted > 0 {
+			// The record lost runs, so absence of a bad run proves nothing.
+			return false
+		}
 		selected := false
 		for _, planID := range request.PlanIDs {
 			plan, exists := plans[planID]
