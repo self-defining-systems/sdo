@@ -192,7 +192,7 @@ jobs:
         if: matrix.module == 'operator'
         env:
           GOMAXPROCS: "2"
-        run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95)$' -v ./kubeproxy ./operatorcli
+        run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95|TestProjectionTailLatency)$' -v ./kubeproxy ./operatorcli
         working-directory: sdo/operator
 
       - name: Fuzz object reference boundary (bounded)
