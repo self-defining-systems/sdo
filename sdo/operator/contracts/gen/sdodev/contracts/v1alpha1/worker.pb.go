@@ -914,13 +914,13 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\x15proposed_artifact_ids\x18\x04 \x03(\tR\x13proposedArtifactIds\x12g\n" +
 	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposal\x12<\n" +
 	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
-	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''\"\x86\x01\n" +
-	"\x06SdkGap\x12\x1f\n" +
-	"\vfault_class\x18\x01 \x01(\tR\n" +
-	"faultClass\x12\x1c\n" +
-	"\tprimitive\x18\x02 \x01(\tR\tprimitive\x12\x16\n" +
-	"\x06reason\x18\x03 \x01(\tR\x06reason\x12%\n" +
-	"\x0escratch_script\x18\x04 \x01(\tR\rscratchScriptB\xfe\x01\n" +
+	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''\"\xaa\x01\n" +
+	"\x06SdkGap\x12(\n" +
+	"\vfault_class\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"faultClass\x12%\n" +
+	"\tprimitive\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tprimitive\x12\x1f\n" +
+	"\x06reason\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\x12.\n" +
+	"\x0escratch_script\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\rscratchScriptB\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

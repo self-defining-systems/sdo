@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import recorded_actions
-from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
 from sdo.agents.responder.session_turn import (
@@ -24,13 +24,13 @@ from sdo.agents.responder.session_turn import (
 )
 from sdo.agents.responder.tools_cli import ACT_EXAMPLE, CLI_EXAMPLES
 from sdo.contracts import (
-    ROOT_CAUSE_EVIDENCE_KINDS,
     DetectorEvaluation,
     Finding,
     IncidentRequest,
     IncidentResult,
     MemoryDetector,
     StateFieldChange,
+    model_output_schema,
     timestamp_datetime,
 )
 
@@ -66,9 +66,17 @@ def execute_incident(
     provider: str | None = None,
     executor: CommandExecutor | None = None,
 ) -> IncidentResult:
-    selected_provider = (provider or os.getenv("SDO_AGENT_PROVIDER") or "codex").strip().lower()
-    if selected_provider not in AGENT_PROVIDERS:
-        raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+    if provider is None:
+        try:
+            resolved = resolve_agent("responder", "SDO_RESPONDER_MODEL")
+        except ValueError as exc:
+            raise ResponderExecutionError(str(exc)) from exc
+        selected_provider, model = resolved.provider, model or resolved.model
+    else:
+        selected_provider = provider.strip().lower()
+        if selected_provider not in AGENT_PROVIDERS:
+            raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
+        model = model or os.getenv("SDO_RESPONDER_MODEL") or None
     prompt = _responder_prompt(request)
     recorded_actions.reset()
     resume_session_id: str | None = None
@@ -80,7 +88,7 @@ def execute_incident(
                 prompt,
                 cwd=request.repository_worktree,
                 access="danger-full-access",
-                model=model or os.getenv("SDO_RESPONDER_MODEL") or None,
+                model=model,
                 reasoning_effort=INCIDENT_REASONING_EFFORT,
                 resume_session_id=resume_session_id,
                 executor=executor,
@@ -116,9 +124,7 @@ def execute_incident(
         result.responder_session_id = completed.session_id
     if result.incident_id != request.incident_id:
         raise ResponderExecutionError(f"{selected_provider} result incident_id does not match request")
-    # Withhold weakly-evidenced causes before the result reaches the broker;
-    # this is upstream of and independent from the fenced diagnosis verifier.
-    return apply_cause_admissibility(result, request)
+    return result
 
 
 def _evidence_reference_feedback(problems: str) -> str:
@@ -132,169 +138,46 @@ def _evidence_reference_feedback(problems: str) -> str:
     )
 
 
+#: Proto fields the model does not supply: worker accounting and session, the controller's
+#: program-loop state, and the detector states and artifact IDs the responder never reports.
+_MODEL_OMITS: dict[str, tuple[str, ...]] = {
+    "sdodev.contracts.v1alpha1.IncidentResult": (
+        "schema_version",
+        "final_detector_states",
+        "proposed_artifact_ids",
+        "usage",
+        "responder_session_id",
+        "error",
+        "late_findings_pull",
+        "program_tool_calls",
+        "repair_actions",
+        "program_runs",
+        "plan_applications",
+        "response_loops_used",
+        "response_loop_exhausted",
+        "program_failure_signals",
+        "resolution_path",
+        "fast_path_programs",
+        "fast_path_skipped_reason",
+        "fast_path_relation_covered_findings",
+    ),
+    "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
+    "sdodev.contracts.v1alpha1.DriftEvent": (
+        "source",
+        "operation",
+        "observed_at",
+        "program_id",
+        "manager_at",
+        "investigation_status",
+        "investigation_capture_id",
+    ),
+}
+
+
 def _incident_result_schema() -> dict[str, object]:
-    object_ref = {
-        "type": "object",
-        "properties": {
-            "api_version": {"type": "string"},
-            "kind": {"type": "string", "minLength": 1},
-            "namespace": {"type": "string"},
-            "name": {"type": "string", "minLength": 1},
-        },
-        "required": ["api_version", "kind", "namespace", "name"],
-        "additionalProperties": False,
-    }
-    # Only live evidence qualifies; static artifacts go to static_context.
-    evidence_item = {
-        "type": "object",
-        "properties": {
-            "kind": {"type": "string", "enum": list(ROOT_CAUSE_EVIDENCE_KINDS)},
-            "source": {"type": "string", "minLength": 1},
-            "observation": {"type": "string", "minLength": 1},
-        },
-        "required": ["kind", "source", "observation"],
-        "additionalProperties": False,
-    }
-    properties: dict[str, object] = {
-        "incident_id": {"type": "string", "minLength": 1},
-        "status": {"type": "string", "enum": ["completed", "failed", "cancelled"]},
-        "confirmed_root_causes": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "summary": {"type": "string", "minLength": 1},
-                    "resources": {"type": "array", "items": object_ref, "minItems": 1},
-                    "evidence": {"type": "array", "items": evidence_item, "minItems": 1},
-                    "explained_detectors": {
-                        "type": "array",
-                        "items": {"type": "string", "minLength": 1},
-                        "minItems": 1,
-                    },
-                    "static_context": {"type": "array", "items": {"type": "string", "minLength": 1}},
-                },
-                "required": ["summary", "resources", "evidence", "explained_detectors", "static_context"],
-                "additionalProperties": False,
-            },
-        },
-        "applied_playbooks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"playbook_id": {"type": "string", "minLength": 1}},
-                "required": ["playbook_id"],
-                "additionalProperties": False,
-            },
-        },
-        "repair_changes": {"type": "array", "items": {"type": "string"}},
-        "repair_actions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "action_id": {"type": "string", "minLength": 1},
-                    "kind": {"type": "string", "minLength": 1},
-                    "target": {"type": "string", "minLength": 1},
-                    "resources": {"type": "array", "items": object_ref},
-                    "summary": {"type": "string", "minLength": 1},
-                    "details": {"type": "string", "minLength": 1},
-                    "started_at": {"type": "string", "format": "date-time"},
-                    "completed_at": {"type": "string", "format": "date-time"},
-                    "success": {"type": "boolean"},
-                    "reversible": {"type": "boolean"},
-                },
-                "required": [
-                    "action_id",
-                    "kind",
-                    "target",
-                    "resources",
-                    "summary",
-                    "details",
-                    "started_at",
-                    "completed_at",
-                    "success",
-                    "reversible",
-                ],
-                "additionalProperties": False,
-            },
-        },
-        "verification_evidence": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "minLength": 1},
-                    "passed": {"type": "boolean"},
-                    "details": {"type": "string", "minLength": 1},
-                    "observed_at": {"type": "string", "format": "date-time"},
-                },
-                "required": ["name", "passed", "details", "observed_at"],
-                "additionalProperties": False,
-            },
-        },
-        "timing": {
-            "type": "object",
-            "properties": {
-                "started_at": {"type": "string", "format": "date-time"},
-                "completed_at": {"type": "string", "format": "date-time"},
-            },
-            "required": ["started_at", "completed_at"],
-            "additionalProperties": False,
-        },
-    }
-    properties["drift_events"] = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "ref": object_ref,
-                "fields": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {key: {"type": "string"} for key in ("path", "old", "new", "source")},
-                        "required": ["path", "old", "new", "source"],
-                        "additionalProperties": False,
-                    },
-                },
-                "manager": {"type": "string"},
-                "classification": {"type": "string", "enum": ["fault", "unexplained"]},
-                "investigation_verdict": {"type": "string", "enum": ["bug", "benign", "unsure"]},
-                "investigation_reason": {"type": "string"},
-                "investigation_evidence": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {
-                                "type": "string",
-                                "enum": ["source_contradiction", "violated_relation", "observed_impact"],
-                            },
-                            "observation": {"type": "string"},
-                        },
-                        "required": ["kind", "observation"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            "required": [
-                "ref",
-                "fields",
-                "manager",
-                "classification",
-                "investigation_verdict",
-                "investigation_reason",
-                "investigation_evidence",
-            ],
-            "additionalProperties": False,
-        },
-    }
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": list(properties),
-        "additionalProperties": False,
-    }
+    """The model-facing schema of ``IncidentResult``, generated from the proto the Go loader reads."""
+
+    return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
 
 #: Upper bounds on playbook text inlined into a warm-path prompt.
@@ -623,23 +506,6 @@ def _state_changes_section(request: IncidentRequest) -> str:
     )
 
 
-def _cause_admissibility_guidance() -> str:
-    """Problem-agnostic bar for asserting a confirmed root cause; empty when the gate is off."""
-
-    if not CauseAdmissibilityPolicy.from_environment().enabled:
-        return ""
-    return (
-        "Admissibility of a confirmed root cause: assert a cause in confirmed_root_causes only when it is anchored "
-        "to an incident signal that can be checked independently -- a detector you list in explained_detectors that "
-        "fired for this incident, a failing synthetic scenario, or a configuration change listed since the last "
-        "healthy state. A change you observe that does not explain the failing health signal (a benign drift) is "
-        "not a root cause: record it in static_context, never in confirmed_root_causes. A cause supported only by "
-        "your own narrative live observations, explaining no detector that fired and citing no corroborating finding "
-        "or change, is weakly evidenced; do not assert it. Asserting a weakly-evidenced or benign cause lowers "
-        "diagnosis quality even when your repair is correct.\n\n"
-    )
-
-
 def _verification_instructions() -> str:
     return (
         "Prefer one blocking command over checking in on a backgrounded one: give a command enough time to "
@@ -674,7 +540,9 @@ def _verification_instructions() -> str:
         "Label every pod or Job you create only to investigate or check (debug, curl, DNS, or database-client "
         "pods) with `sdo.dev/responder-helper=true`, for example `kubectl run ... --labels "
         "sdo.dev/responder-helper=true`; the controller deletes them when you finish. Never put that label on "
-        "application workloads.\n\n"
+        "application workloads. Run probes with `kubectl run --rm -i --restart=Never ...` or `kubectl exec` into an "
+        "existing pod, and delete any helper Pod you created before you submit: a leftover Completed Pod in the "
+        "application namespace can fail the final check.\n\n"
     )
 
 
@@ -798,7 +666,6 @@ def _responder_prompt(request: IncidentRequest) -> str:
         f"{surfaced_context}"
         f"{_no_action_instructions()}"
         f"{_verification_instructions()}"
-        f"{_cause_admissibility_guidance()}"
         "During this response, use plain commands and chain independent ones in one shell call. "
         "Do not write helper scripts for repairs, receipts or verification; keep interpretation and decisions in "
         "natural language. Never put scratch files in operational memory. "

@@ -26,12 +26,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from google.protobuf import json_format
-
-from sdo.contracts import IncidentResult, RepairActionReceipt, validate
-
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+
+    from sdo.contracts import IncidentResult, RepairActionReceipt
 
 _LOG = logging.getLogger(__name__)
 
@@ -278,6 +276,11 @@ def _receipt(
         "success": code == 0,
         "reversible": reversible,
     }
+    # Protobuf loads only when an action is recorded, so `sdo --help` and the other commands stay fast.
+    from google.protobuf import json_format
+
+    from sdo.contracts import RepairActionReceipt
+
     try:
         json_format.ParseDict(receipt, RepairActionReceipt())
     except json_format.ParseError as exc:
@@ -342,6 +345,10 @@ def run_and_record(
 def _read_receipts(path: Path) -> list[RepairActionReceipt]:
     """The last record of each action in file order; torn lines are logged and skipped."""
 
+    from google.protobuf import json_format
+
+    from sdo.contracts import RepairActionReceipt
+
     last: dict[str, dict[str, Any]] = {}
     for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         if not line.strip():
@@ -377,6 +384,8 @@ def merge_into(result: IncidentResult) -> None:
     receipts = _read_receipts(path)
     if not receipts:
         return
+    from sdo.contracts import validate
+
     result.repair_actions.extend(receipts)
     try:
         validate(result)

@@ -1,3 +1,4 @@
+from sdo.contracts.model_schema import model_output_schema
 from sdo.contracts.proto import (
     CONDUCTOR_TERMINAL_STAGES,
     NATIVE_RECEIPT_SCHEMA_VERSION,
@@ -124,6 +125,7 @@ from sdo.contracts.proto import (
 )
 
 __all__ = [
+    "model_output_schema",
     "NATIVE_RECEIPT_SCHEMA_VERSION",
     "ResponderJobEvidence",
     "NativeProductionReceipt",

@@ -113,6 +113,8 @@ type ResponderLoop struct {
 	BeforeFastPathApply             func(context.Context, []ProgramRun) error
 	CorpusSessionRoot               string
 	capturePhase                    string
+	timing                          toolTiming
+	preApplyCaptured                bool
 	saveToolState                   func(context.Context, []byte) error
 	operationMu                     sync.Mutex
 	mu                              sync.Mutex
@@ -183,14 +185,22 @@ func (l *ResponderLoop) Exhausted() bool {
 	return l.batches >= l.MaxBatches && len(l.findings) > 0
 }
 
+// toolTiming accumulates the phase durations of one Handle call. capture is
+// the time spent in snapshotView (provider snapshot, corpus capture, routing
+// probes) and refresh is the time spent in refresh, which includes capture.
+type toolTiming struct{ capture, refresh, persist time.Duration }
+
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
-	started := time.Now()
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	started := time.Now()
+	l.timing = toolTiming{}
 	defer func() {
-		slog.Info("responder_tool", "incident_id", l.Request.IncidentID, "command", request.Command, "duration_ms", time.Since(started).Milliseconds(), "error", response.Error)
+		slog.Info("responder_tool_timing", "incident_id", l.Request.IncidentID, "command", request.Command,
+			"capture_ms", l.timing.capture.Milliseconds(), "refresh_ms", l.timing.refresh.Milliseconds(),
+			"persist_ms", l.timing.persist.Milliseconds(), "total_ms", time.Since(started).Milliseconds())
 	}()
 	defer func() { l.capturePhase = "" }()
 	if l.CurrentEvidence != nil {
@@ -216,7 +226,10 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		responseJSON := recordedToolResponseJSON(response, applied)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
-		if err := l.persistToolState(ctx); err != nil {
+		persistStarted := time.Now()
+		err := l.persistToolState(ctx)
+		l.timing.persist = time.Since(persistStarted)
+		if err != nil {
 			response.Error = err.Error()
 			response.Summary = response.Error
 		}
@@ -428,6 +441,8 @@ func (l *ResponderLoop) deadline() time.Duration {
 }
 
 func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, error) {
+	started := time.Now()
+	defer func() { l.timing.capture += time.Since(started) }()
 	if l.Provider == nil {
 		return nil, errors.New("snapshot provider is unavailable")
 	}
@@ -481,6 +496,8 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding) []
 }
 
 func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRun, string) {
+	started := time.Now()
+	defer func() { l.timing.refresh += time.Since(started) }()
 	view, err := l.snapshotView(ctx)
 	if err != nil {
 		return nil, nil, err.Error()
@@ -669,36 +686,27 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		response.Error = err.Error()
 	}
 	l.verify(ctx, selected, response)
-	if result.Applied && (err != nil || !result.VerificationPassed || !response.Healthy || !boundPlansNoMatch(selected, response.ProgramRuns)) {
-		result.VerificationPassed = false
-		if response.Error == "" {
-			response.Error = "plan verification failed"
-		}
-		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		// Preserve the failed revision independently of the in-process application
-		// log, including when rollback succeeds or the process stops during it.
-		failedRuns := make([]ProgramRun, 0, len(programIDs))
-		for _, programID := range programIDs {
-			failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
-		}
-		fillProgramRevisions(recoveryCtx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
-		for _, run := range failedRuns {
-			signal := "application_verification_failure:" + run.ProgramID
-			if run.ProgramRevision != "" {
-				signal += "@" + run.ProgramRevision
+	// The application is recorded as observed and left in place; whether to roll
+	// it back, apply again or edit is the responder's decision.
+	if result.Applied {
+		result.VerificationPassed = err == nil && result.VerificationPassed && response.Healthy && boundPlansNoMatch(selected, response.ProgramRuns)
+		if !result.VerificationPassed {
+			// Program trust counts an unverified application against the program's
+			// current revision, durably, even if the responder is restarted.
+			failedRuns := make([]ProgramRun, 0, len(programIDs))
+			for _, programID := range programIDs {
+				failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
 			}
-			l.addFailureSignal(signal)
-		}
-		if persistErr := l.persistToolState(recoveryCtx); persistErr != nil {
-			response.Error += ": " + persistErr.Error()
-		}
-		rollbackErr := executor.rollback(recoveryCtx, &result)
-		cancel()
-		if rollbackErr != nil {
-			result.RollbackError = rollbackErr.Error()
-			response.Error += ": rollback failed: " + rollbackErr.Error()
-			for _, id := range programIDs {
-				l.addFailureSignal("rollback_failure:" + id)
+			fillProgramRevisions(ctx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
+			for _, run := range failedRuns {
+				signal := "application_verification_failure:" + run.ProgramID
+				if run.ProgramRevision != "" {
+					signal += "@" + run.ProgramRevision
+				}
+				l.addFailureSignal(signal)
+			}
+			if persistErr := l.persistToolState(ctx); persistErr != nil {
+				response.Error = persistErr.Error()
 			}
 		}
 	}

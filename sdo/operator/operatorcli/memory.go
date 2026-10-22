@@ -29,9 +29,11 @@ commands:
         default to $SDO_OPERATOR_ROOT or /opt/sdo/sdo/operator. Optional recorded
         healthy snapshots come from SDO_HEALTHY_BASELINE. Publication context is
         provisioned in .git/sdo-check-context.json. Reflection must write its
-        intended ReflectionDecision JSON (learning_decision, no_change_reason,
-        playbook_ids) to .git/sdo-reflection-decision.json or --decision FILE.
-        The returned result must use the same decision and logical IDs.
+        intended ReflectionResult JSON (summary, learning_decision, no_change_reason,
+        proposed_artifact_ids, sdk_gaps; the returned result JSON can be written
+        as is) to .git/sdo-reflection-decision.json
+        or --decision FILE. The returned result must use the same decision and
+        logical IDs.
         Exit 0 when clean,
         1 for diagnostics, 2 for missing inputs or infrastructure/usage errors.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]

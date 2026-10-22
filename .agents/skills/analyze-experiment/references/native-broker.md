@@ -60,7 +60,7 @@ later incidents; archives are runtime evidence, not operational memory.
 ### Open incidents after controller restart
 
 The controller is the only application writer. Within a process it applies a
-plan, verifies independently, and conditionally rolls back on failure. A restart
+plan, reports independent verification and leaves rollback to the responder (the fast path rolls back its own failed attempt; a partial multi-write failure is compensated). A restart
 never replays or compensates a stored application, rollback or pending write.
 
 `<IncidentJobName(incident_id)>-tools-state` still uses the CAS state store.
@@ -76,8 +76,8 @@ state and prepares a fresh plan when needed.
 
 Failed responder verification adds
 `application_verification_failure:<program_id>@<accepted_dependency_revision>` to
-`FailureSignals` and saves it before rollback. It survives successful or failed
-rollback and restarts without retaining executable application state. A successful
+`FailureSignals` and saves it; `apply` does not roll back. It survives any later
+responder-issued rollback and restarts without retaining executable application state. A successful
 retry does not erase the earlier revision's failure or restore its trust.
 
 `<IncidentJobName(incident_id)>-fast-path` stores `state` (`attempting`, `failed`,

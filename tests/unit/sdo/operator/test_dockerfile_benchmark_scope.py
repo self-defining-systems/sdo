@@ -48,9 +48,13 @@ SCRIPTED_PROGRAM_FILES = {
     "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
 }
 
-#: The scripted-Codex test wrapper is allowed to add exactly this, and nothing else that
-#: FORBIDDEN_PREFIXES would otherwise catch.
-SCRIPTED_ALLOWANCE = "benchmarks/sregym/assurance/scripted_codex"
+#: The scripted-Codex test wrapper is allowed to add exactly these, and nothing else that
+#: FORBIDDEN_PREFIXES would otherwise catch. ``scripted_codex`` installs the program from
+#: ``scripted_program`` (``programs.py`` ``PROGRAM_SOURCE``).
+SCRIPTED_ALLOWANCES = (
+    "benchmarks/sregym/assurance/scripted_codex",
+    "benchmarks/sregym/fastloop/scripted_program",
+)
 
 _COPY_LOCAL = re.compile(r"^COPY\s+(?!--from=)(\S.*?)\s+(\S+)\s*$", re.MULTILINE)
 
@@ -79,7 +83,11 @@ def _expand(paths: list[str]) -> set[str]:
     for rel in paths:
         absolute = REPO_ROOT / rel
         if absolute.is_dir():
-            files.update(str(p.relative_to(REPO_ROOT)) for p in absolute.rglob("*") if p.is_file())
+            files.update(
+                str(p.relative_to(REPO_ROOT))
+                for p in absolute.rglob("*")
+                if p.is_file() and "__pycache__" not in p.parts  # git-ignored, never in the build context
+            )
         elif absolute.is_file():
             files.add(rel)
         else:
@@ -152,14 +160,19 @@ def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_exp
     leaked = {
         path
         for path in copied
-        if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES) and not path.startswith(SCRIPTED_ALLOWANCE)
+        if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES) and not path.startswith(SCRIPTED_ALLOWANCES)
     }
 
     assert leaked == set(), f"the :assure scripted wrapper would copy answer-key paths: {sorted(leaked)}"
     assert copied, "the scripted wrapper copies nothing"
-    assert all(path.startswith(SCRIPTED_ALLOWANCE) for path in copied), (
-        f"the scripted wrapper should add only {SCRIPTED_ALLOWANCE}, not {sorted(copied)}"
+    assert all(path.startswith(SCRIPTED_ALLOWANCES) for path in copied), (
+        f"the scripted wrapper should add only {SCRIPTED_ALLOWANCES}, not {sorted(copied)}"
     )
+    assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == {
+        "benchmarks/sregym/fastloop/scripted_program/README.md",
+        "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
+        "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
+    }
 
 
 def _entry_point_module_closure(entry_points: tuple[str, ...]) -> set[str]:

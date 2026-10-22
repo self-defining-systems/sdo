@@ -103,7 +103,7 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "playbook_ids": [],
+                "proposed_artifact_ids": [],
             },
             session_id="session-1",
             branch="reflection",
@@ -137,7 +137,7 @@ def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "playbook_ids": [],
+                "proposed_artifact_ids": [],
             },
             session_id="session-1",
             branch="reflection",
@@ -233,7 +233,7 @@ def test_reflection_output_schema_is_strict_and_carries_only_decision_and_ids() 
     assert schema["additionalProperties"] is False
     assert "artifact_proposal" not in schema["properties"]
     assert "proposed_changes" not in schema["properties"]
-    assert "playbook_ids" in schema["properties"]
+    assert "proposed_artifact_ids" in schema["properties"]
     assert schema["required"] == list(schema["properties"])
 
 
@@ -305,6 +305,47 @@ def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
         "rerun",
     ):
         assert required in prompt
+
+
+def test_reflection_prompt_orients_in_one_read_and_waits_once_for_the_check(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+
+    assert "Orient with one read command" in prompt
+    assert "programs.md" in prompt
+    assert "/sdo/session/corpus" in prompt
+    assert "one command" in prompt
+    assert "yield_time_ms" in prompt
+    assert "never poll or retry while it runs" in prompt
+
+
+def test_reflection_prompt_accepts_any_open_capture_phase_as_evidence(tmp_path: Path) -> None:
+    backend = _CapturingBackend()
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id="inc-1",
+        worktree=tmp_path,
+        outcome=_outcome(),
+        history=[],
+        outcome_commit="outcome-sha",
+        closure=_fresh_closure(tmp_path),
+    )
+    prompt = str(backend.calls[0]["prompt"])
+
+    assert "open@detect, open@settle or open@pre-apply" in prompt
+    assert "Detect time is not mandatory" in prompt
+    assert "sdk_gap only when no open capture" in prompt
+    assert "open_at (detect)" not in prompt
+    assert "use open@detect.json" not in prompt
 
 
 def test_reflection_prompt_uses_configured_example_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

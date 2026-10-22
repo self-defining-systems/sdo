@@ -75,6 +75,8 @@ class Run:
     tool_output: str = "pod/geo-1 Running on luna-w0-worker"
     receipt: dict[str, Any] | None = None
     controller_log: str = ""
+    #: ``agent-resolved.jsonl`` records the SDO workers wrote beside their incident session.
+    resolved_agents: list[dict[str, Any]] | None = None
 
     def write(self, experiment_dir: Path, sequence: int = 0) -> Path:
         experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +113,12 @@ class Run:
                 sessions.mkdir(parents=True)
                 (sessions / "rollout-2026-09-27T21-00-00-resp1.jsonl").write_text(
                     _rollout(self.rollout_turns, tool_output=self.tool_output), encoding="utf-8"
+                )
+            if self.resolved_agents is not None:
+                session = run / "sdo_runtime" / "sessions" / "abc123"
+                session.mkdir(parents=True)
+                (session / "agent-resolved.jsonl").write_text(
+                    "".join(json.dumps(record) + "\n" for record in self.resolved_agents), encoding="utf-8"
                 )
             if self.controller_log:
                 logs = run / "sdo_runtime" / "controller_logs"

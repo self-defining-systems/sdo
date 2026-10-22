@@ -28,7 +28,7 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.contracts import OutcomeClassification
+from sdo.contracts import OutcomeClassification, ReflectionResult, model_output_schema, validate
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -72,6 +72,26 @@ class ReflectionTurn(BaseModel):
     def usage(self) -> dict[str, int | float]:
         return dict(self._usage)
 
+    @classmethod
+    def from_model_output(cls, payload: object) -> ReflectionTurn:
+        """Parse the model's reply as the ``ReflectionResult`` it was asked for, then view it as a turn."""
+
+        try:
+            result = json_format.ParseDict(payload, ReflectionResult())
+        except json_format.ParseError as exc:
+            raise ValueError(f"invalid reflection result: {exc}") from exc
+        validate(result)
+        return cls(
+            summary=result.summary,
+            learning_decision=cast("Literal['updated', 'no_change', 'sdk_gap']", result.learning_decision),
+            no_change_reason=result.no_change_reason or None,
+            playbook_ids=list(result.proposed_artifact_ids),
+            sdk_gaps=[
+                SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
+                for gap in result.sdk_gaps
+            ],
+        )
+
     def with_usage(self, usage: dict[str, int | float]) -> ReflectionTurn:
         self._usage = dict(usage)
         return self
@@ -102,31 +122,9 @@ class SdkGap(BaseModel):
 
 
 def reflection_output_schema() -> dict[str, object]:
-    """ReflectionTurn as a strict structured-output schema.
+    """The model-facing schema of ``ReflectionResult``, generated from the proto the Go decision loader reads."""
 
-    Strict provider schemas (Codex/OpenAI) require every property to be listed
-    in ``required``; optional fields are expressed as nullable instead.
-    """
-
-    schema = ReflectionTurn.model_json_schema()
-
-    def strict_object(node: object) -> None:
-        if isinstance(node, dict):
-            properties = node.get("properties")
-            if isinstance(properties, dict):
-                for prop in properties.values():
-                    if isinstance(prop, dict):
-                        prop.pop("default", None)
-                node["required"] = list(properties)
-                node["additionalProperties"] = False
-            for child in node.values():
-                strict_object(child)
-        elif isinstance(node, list):
-            for child in node:
-                strict_object(child)
-
-    strict_object(schema)
-    return schema
+    return model_output_schema(ReflectionResult.DESCRIPTOR)
 
 
 class StatefulResponderBackend(Protocol):
@@ -198,18 +196,25 @@ def _logical_learning_request(
     return (
         "The controller verified this incident and committed its outcome. "
         "Read the supplied logical memory snapshot, source code, and installed sdo-memory, "
-        "sdo-detector-authoring and sdo-playbook-authoring skills. Edit the final files directly "
+        "sdo-detector-authoring and sdo-playbook-authoring skills. Orient with one read command, not one file per "
+        "request: `cat` the three SKILL.md files and their references (programs.md, sdk.md, replay.md, rules.md) "
+        "under the sdo-* skill directories of your CODEX_HOME or ~/.claude, then the example program and corpus "
+        "named below, together in one command. Read the captures in /sdo/session/corpus with one command too. "
+        "Edit the final files directly "
         "in the operational memory directory `.sdo/` of this isolated checkout. "
         "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
         "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
         "Run `sdo-operator memory ls` to inspect existing artifacts. "
         "After editing, call the installed sdo_reflection check_memory tool once to run "
         "`sdo-operator memory check` and wait for its final result (bounded to 300 seconds). "
-        "Do not launch validation through a background shell or poll a process. "
+        "The check takes about a minute and one call blocks until it finishes: never poll or retry while it runs. "
+        "If you run it through a shell tool instead, wait once with a long yield (yield_time_ms of 300000), "
+        "never with short waits. Do not launch validation through a background shell. "
+        "The decision file is your returned result JSON as is. "
         "Fix named diagnostics and call it again only after correcting the files, "
         "until it exits zero, within your turn budget. SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT "
         "are already set; do not override them. The Go broker repeats the same check independently. "
-        "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
+        "Return learning_decision=updated only with a nonempty diff and proposed_artifact_ids listing every changed "
         "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
         "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content. "
         f"{branch_instruction('reflection')}\n\n"
@@ -237,10 +242,14 @@ def _logical_learning_request(
         "Keep README prose to judgement and context, with no shell commands and no persisted scratch scripts. "
         "Author a corpus directory under .sdo/corpus/<case-id> with open.json, fixed.json, healthy.json, "
         "recordings.json and labels.json. Copy controller captures byte-for-byte from the read-only "
-        "/sdo/session/corpus directory: use open@detect.json. Copy "
-        "open@detect-recordings.json and fixed.json; healthy.json must equal fixed.json. "
+        "/sdo/session/corpus directory: choose the earliest pre-mitigation open capture among "
+        "open@detect, open@settle or open@pre-apply that shows the confirmed cause in spec or status "
+        "(the validator accepts any of them). Detect time is not mandatory: a pod still ContainerCreating or "
+        "events not yet reported at detect do not make the cause undecidable when a later open capture shows it. "
+        "Report sdk_gap only when no open capture holds the evidence. Copy that open@<phase>.json, its "
+        "open@<phase>-recordings.json when present, and fixed.json; healthy.json must equal fixed.json. "
         "The labels contain root_cause_program_ids, bindings, peer_bindings and provenance with incident_id, "
-        "open_at (detect), open_sha256 and fixed_sha256. Bind a same-kind healthy peer in "
+        "open_at (the chosen phase), open_sha256 and fixed_sha256. Bind a same-kind healthy peer in "
         "the fixed snapshot. Never reconstruct the snapshots or recordings. Synthetic tightening NoMatch cases "
         "need synthetic_no_match_reason and no_match_program_ids. Update the playbook index README. "
         f"See {example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
@@ -440,7 +449,7 @@ class CodexSessionBackend:
             # One resumed turn moves the answer to the right branch; a second miss is the caller's error.
             turn = self._run(worktree=worktree, prompt=branch_correction("reflection"), session_id=turn.session_id)
             payload = unwrap_branch(turn.output_json, "reflection")
-        return ReflectionTurn.model_validate(payload).with_usage(turn_usage(turn))
+        return ReflectionTurn.from_model_output(payload).with_usage(turn_usage(turn))
 
     def _run(self, *, worktree: Path, prompt: str, session_id: str | None) -> StructuredTurn:
         try:

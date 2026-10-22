@@ -20,7 +20,12 @@ from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
 from tests.unit.sdo.agents.responder.test_codex_responder import _fixture
 
-_REFLECTION = {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "ok", "playbook_ids": []}
+_REFLECTION = {
+    "summary": "covered",
+    "learning_decision": "no_change",
+    "no_change_reason": "ok",
+    "proposed_artifact_ids": [],
+}
 
 
 def _raw_schema(request: object) -> str:
@@ -113,9 +118,9 @@ def test_session_schema_is_a_strict_wrapper_of_both_turn_results() -> None:
     for name, branch in properties.items():
         assert branch["anyOf"][1] == {"type": "null"}, name
         assert branch["anyOf"][0]["additionalProperties"] is False
-    # A ``$ref`` inside a branch resolves against the root, so definitions live there.
-    assert "SdkGap" in schema["$defs"]
-    assert "$defs" not in properties["reflection"]["anyOf"][0]
+    # Generated schemas are inlined: no reference needs a root definition.
+    assert "$ref" not in json.dumps(schema)
+    assert "$defs" not in schema
 
 
 @pytest.mark.parametrize(

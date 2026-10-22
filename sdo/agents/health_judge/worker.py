@@ -16,6 +16,7 @@ from sdo.agents.lifecycle import (
     TopologyResourceDTO,
 )
 from sdo.agents.memory_diagnostics import render_validation_feedback
+from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     SCHEMA_VERSION,
@@ -77,13 +78,8 @@ def author_health_diagnostics(request: HealthJudgeRequest, checkout: Path) -> He
             for row in request.source_resources
         ],
     )
-    provider = os.environ.get("SDO_AGENT_PROVIDER", "codex").strip().lower()
-    if provider == "codex":
-        backend = CodexLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
-    elif provider == "claude":
-        backend = ClaudeLifecycleBackend(model=os.environ.get("SDO_LIFECYCLE_MODEL") or None)
-    else:
-        raise ValueError(f"unsupported health judge provider {provider!r}")
+    resolved = resolve_agent("health_judge", "SDO_LIFECYCLE_MODEL")
+    backend = (ClaudeLifecycleBackend if resolved.provider == "claude" else CodexLifecycleBackend)(model=resolved.model)
     artifact = backend.run_health_judge(
         repository=checkout,
         application=request.application,
