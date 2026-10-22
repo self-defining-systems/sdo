@@ -102,6 +102,7 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		log.Printf("incident %s trusted program fast path skipped: %s", request.IncidentID, attempt.SkippedReason)
 	}
 	if attempt.Resolved {
+		loop.CreditEquivalentRepairs(ctx, ProgramRepairReceipts(loop.PlanApplications(), nil))
 		result := fastPathResult(request, loop, attempt, started)
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		if err = validateIncidentResultFor(result, request); err != nil {

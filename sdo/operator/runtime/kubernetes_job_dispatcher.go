@@ -307,7 +307,6 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			result.Error = "response loop budget exhausted with unresolved findings"
 		}
 	}
-	withholdUnassignedProgramCredit(&result)
 	if d.RequireMemorySnapshot && result.LateFindingsPull != nil {
 		pull := result.LateFindingsPull
 		store := latefindings.Store{Client: d.Client, Namespace: d.Namespace}
@@ -333,39 +332,6 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	for _, outcome := range stored {
 		if outcome.Record != nil {
 			records = append(records, outcome.Record)
-		}
-	}
-	evidence, err := memory.ReadProgramLearningEvidence(ctx, request.RepositoryWorktree, request.SourceCommit)
-	if err != nil {
-		return nil, err
-	}
-	for _, learned := range evidence {
-		originRevision, err := programDependencyRevision(ctx, request.RepositoryWorktree, learned.AcceptedCommit, learned.ProgramID)
-		if err != nil {
-			continue
-		}
-		currentRevision, err := programDependencyRevision(ctx, request.RepositoryWorktree, request.SourceCommit, learned.ProgramID)
-		if err != nil || currentRevision != originRevision {
-			continue
-		}
-		for index, record := range records {
-			if record.GetIncidentId() != learned.IncidentID || record.GetClassification() != "success" {
-				continue
-			}
-			alreadyRecorded := false
-			for _, run := range record.GetProgramRuns() {
-				alreadyRecorded = alreadyRecorded || run.GetProgramId() == learned.ProgramID
-			}
-			if alreadyRecorded {
-				continue
-			}
-			credited, err := d.learningReplayCredit(ctx, request, learned, originRevision, record)
-			if err != nil {
-				return nil, fmt.Errorf("read validated learning replay: %w", err)
-			}
-			if credited != nil {
-				records[index] = credited
-			}
 		}
 	}
 	return ProgramTrustStats(records, d.ProgramTrustThreshold), nil

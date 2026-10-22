@@ -219,3 +219,47 @@ class PlanPreImage(_message.Message):
 class PlanPatch(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
+
+class ReflectionCauseWork(_message.Message):
+    __slots__ = ("cause_index", "resources", "items")
+    CAUSE_INDEX_FIELD_NUMBER: _ClassVar[int]
+    RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    ITEMS_FIELD_NUMBER: _ClassVar[int]
+    cause_index: int
+    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    items: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
+    def __init__(self, cause_index: _Optional[int] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., items: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ...) -> None: ...
+
+class ReflectionWorkItem(_message.Message):
+    __slots__ = ("program_id", "bindings", "disposition", "question", "reason", "resources", "evidence_phase", "program_revision", "capture_open_phase")
+    PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    DISPOSITION_FIELD_NUMBER: _ClassVar[int]
+    QUESTION_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    RESOURCES_FIELD_NUMBER: _ClassVar[int]
+    EVIDENCE_PHASE_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
+    CAPTURE_OPEN_PHASE_FIELD_NUMBER: _ClassVar[int]
+    program_id: str
+    bindings: _containers.RepeatedCompositeFieldContainer[Binding]
+    disposition: str
+    question: str
+    reason: str
+    resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
+    evidence_phase: str
+    program_revision: str
+    capture_open_phase: str
+    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., disposition: _Optional[str] = ..., question: _Optional[str] = ..., reason: _Optional[str] = ..., resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., evidence_phase: _Optional[str] = ..., program_revision: _Optional[str] = ..., capture_open_phase: _Optional[str] = ...) -> None: ...
+
+class ReflectionEligibility(_message.Message):
+    __slots__ = ("version", "causes", "unassigned", "evidence_gap_count")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    CAUSES_FIELD_NUMBER: _ClassVar[int]
+    UNASSIGNED_FIELD_NUMBER: _ClassVar[int]
+    EVIDENCE_GAP_COUNT_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    causes: _containers.RepeatedCompositeFieldContainer[ReflectionCauseWork]
+    unassigned: _containers.RepeatedCompositeFieldContainer[ReflectionWorkItem]
+    evidence_gap_count: int
+    def __init__(self, version: _Optional[int] = ..., causes: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ..., evidence_gap_count: _Optional[int] = ...) -> None: ...

@@ -182,13 +182,12 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert call["mode"] == "fresh"
     prompt = str(call["prompt"])
     assert "artifact_proposal" not in prompt
-    assert "until it exits zero" in prompt
-    assert "check_memory" in prompt
+    assert "broker independently validates" in prompt
     assert "draft-test" not in prompt
     assert "sdo-memory/SKILL.md" in prompt
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
-    assert "Edit the final files directly" in prompt
+    assert "Edit final operational-memory files only" in prompt
     assert "in the `reflection` field and leave `incident_result` null" in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt
@@ -273,13 +272,12 @@ def test_reflection_prompt_routes_to_one_shipped_guide_without_protocol_recipes(
     prompt = str(backend.calls[0]["prompt"])
     assert str(SKILLS_ROOT / "sdo-memory/SKILL.md") in prompt
     for tool in ("authoring_reference", "create_corpus", "check_memory"):
-        assert tool in prompt
+        assert tool not in prompt
     assert "--" not in prompt
     assert "open_at" not in prompt
     assert "open@settle" not in prompt
     assert "open@pre-apply" not in prompt
     assert "Unknown" in prompt
-    assert "near-miss" in prompt
 
 
 def test_fresh_reflection_brief_keeps_observed_state_for_corpus(tmp_path: Path) -> None:
@@ -432,95 +430,6 @@ def _verified_repeat_outcome() -> OutcomeRecord:
             ],
         },
     )
-
-
-def test_refine_depth_sends_a_short_confirm_only_request_in_the_responder_session(tmp_path: Path) -> None:
-    backend = _CapturingBackend()
-    closure = _verified_repeat_closure(tmp_path)
-    reflect = {
-        "session_id": "session-1",
-        "incident_id": "inc-1",
-        "worktree": tmp_path,
-        "outcome": _verified_repeat_outcome(),
-        "history": [_outcome()],
-        "outcome_commit": "outcome-sha",
-        "session_mode": "resume",
-        "closure": closure,
-    }
-    SessionReflector(backend).resume(**reflect)
-    SessionReflector(backend).resume(**reflect, depth="refine")
-    full, refine = (str(call["prompt"]) for call in backend.calls)
-    assert [call["mode"] for call in backend.calls] == ["resume", "resume"]
-    assert len(refine) < len(full)
-    assert len(refine) < 6_000
-    assert "service-targetport-mismatch" in refine
-    assert "Service targetPort does not match the container port" in refine
-    assert "no_change" in refine
-    assert "outcome-sha" in refine
-    # No full authoring instructions, snapshot, outcome history or outcome document.
-    assert "Operational memory snapshot:" not in refine
-    assert "Current outcome:" not in refine
-    assert "Outcome history" not in refine
-    assert "sdo-operator program scaffold" not in refine
-
-
-def test_refine_depth_retry_after_a_broker_rejection_carries_the_full_request(tmp_path: Path) -> None:
-    backend = _CapturingBackend()
-    SessionReflector(backend).resume(
-        session_id="session-1",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_verified_repeat_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        session_mode="resume",
-        closure=_verified_repeat_closure(tmp_path),
-        validation_attempt=2,
-        diagnostics=[MemoryDiagnostic(rule="detector.manifest", path="m.yaml", line=4, message="bad id", hint="kebab")],
-        depth="refine",
-    )
-    (call,) = backend.calls
-    assert call["mode"] == "resume"
-    assert "[detector.manifest] m.yaml:4: bad id" in str(call["prompt"])
-    assert "authoring_reference" in str(call["prompt"])
-
-
-@pytest.mark.parametrize("fresh_reason", ["fresh_mode", "missing_session"])
-def test_refine_depth_never_runs_in_a_fresh_session(tmp_path: Path, fresh_reason: str) -> None:
-    class MissingSession(_CapturingBackend):
-        def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
-            raise ResponderSessionUnavailable("session not found")
-
-    backend = MissingSession() if fresh_reason == "missing_session" else _CapturingBackend()
-    SessionReflector(backend).resume(
-        session_id="session-1",
-        incident_id="inc-1",
-        worktree=tmp_path,
-        outcome=_verified_repeat_outcome(),
-        history=[],
-        outcome_commit="outcome-sha",
-        session_mode="fresh" if fresh_reason == "fresh_mode" else "resume",
-        closure=_verified_repeat_closure(tmp_path),
-        depth="refine",
-    )
-    fresh = [call for call in backend.calls if call["mode"] == "fresh"]
-    assert len(fresh) == 1
-    # The fresh session needs the whole authoring request, not the confirm-only nudge.
-    assert "authoring_reference" in str(fresh[0]["prompt"])
-
-
-def test_unknown_reflection_depth_is_rejected(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="depth"):
-        SessionReflector(_CapturingBackend()).resume(
-            session_id="session-1",
-            incident_id="inc-1",
-            worktree=tmp_path,
-            outcome=_outcome(),
-            history=[],
-            outcome_commit="outcome-sha",
-            closure=_fresh_closure(tmp_path),
-            depth="skip",
-        )
 
 
 def test_typed_evidence_gap_decline_has_a_canonical_reason() -> None:

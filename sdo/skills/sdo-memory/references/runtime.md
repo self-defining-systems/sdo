@@ -81,11 +81,12 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 }
 ```
 
-## Current capture phases
+## Supported open phase selections
 
-- Capture filename: open@detect.json; provenance open_at: detect.
-- Fixed capture: fixed.json; primitive recordings: open@detect-recordings.json.
-Historical corpora may carry older phases; the current worker advertises only phases the controller captures.
+- When captured, filename: open@detect.json; provenance open_at: detect.
+- When captured, filename: open@pre-apply.json; provenance open_at: pre-apply.
+- Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.
+Select only files actually supplied by the controller. Supported phase values do not promise capture availability.
 
 ## authoring_reference
 
@@ -95,7 +96,7 @@ Read the references shipped with this worker, without guessed installation paths
 
 Create a new positive corpus case from controller captures, with runtime provenance.
 
-Select the earliest open phase that shows the confirmed cause. Bind the
+Select an available open phase that shows the confirmed cause. Bind the
 affected resources and a healthy same-kind peer. Snapshots and recordings
 are copied exactly; the broker independently verifies them.
 
@@ -123,7 +124,9 @@ Index primitive calls by original position, phase, method, bound object and erro
 
 Filters search the entire recording. next_offset marks incomplete pages;
 a truncated page does not establish that a primitive was unrecorded.
-Empty recorded phases mean open. Error excerpts report omitted characters.
+Empty recorded phases mean open. phase_index locates the call within that
+phase's capture_fields page. Error excerpts report omitted characters.
+open_phase selects the protected recording file, including its fixed observations.
 Result payloads remain available through capture_fields.
 
 ## check_memory

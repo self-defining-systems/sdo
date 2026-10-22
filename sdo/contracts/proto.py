@@ -161,8 +161,9 @@ LocalProcessLaunch = worker_pb2.LocalProcessLaunch
 ProposalWorkspace = worker_pb2.ProposalWorkspace
 AgentTask = worker_pb2.AgentTask
 AgentResult = worker_pb2.AgentResult
-ReflectionCauseWork = worker_pb2.ReflectionCauseWork
-ReflectionWorkItem = worker_pb2.ReflectionWorkItem
+ReflectionEligibility = program_pb2.ReflectionEligibility
+ReflectionCauseWork = program_pb2.ReflectionCauseWork
+ReflectionWorkItem = program_pb2.ReflectionWorkItem
 ReflectionRequest = worker_pb2.ReflectionRequest
 ReflectionResult = worker_pb2.ReflectionResult
 DriftEvent = messages_pb2.DriftEvent
@@ -265,6 +266,7 @@ __all__ = [
     "OutcomeTimestamps",
     "PriorOutcomeEvidence",
     "ProposalWorkspace",
+    "ReflectionEligibility",
     "ReflectionCauseWork",
     "ReflectionWorkItem",
     "ReflectionRequest",

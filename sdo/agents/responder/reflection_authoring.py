@@ -11,7 +11,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,7 +20,7 @@ from sdo.agents.responder.credentials import SKILLS_ROOT
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-OpenPhase = Literal["detect"]
+OpenPhase = Literal["detect", "pre-apply"]
 ReferenceTopic = Literal["programs", "sdk", "rules"]
 
 
@@ -84,7 +84,7 @@ def prepare_corpus(
     """Copy immutable controller evidence and derive the provenance the validator expects."""
     if not re.fullmatch(r"[a-z][a-z0-9_-]*", case_id) or not incident_id:
         raise ValueError("corpus requires a logical case ID and a provisioned incident")
-    if open_phase != "detect":
+    if open_phase not in get_args(OpenPhase):
         raise ValueError("unknown open capture phase")
     target = root / ".sdo/corpus" / case_id
     if not target.resolve().is_relative_to(root.resolve()):
@@ -130,7 +130,7 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
     ) -> dict[str, str]:
         """Create a new positive corpus case from controller captures, with runtime provenance.
 
-        Select the earliest open phase that shows the confirmed cause. Bind the
+        Select an available open phase that shows the confirmed cause. Bind the
         affected resources and a healthy same-kind peer. Snapshots and recordings
         are copied exactly; the broker independently verifies them.
         """

@@ -10,9 +10,9 @@ The worker's authoring reference tool supplies the current worked routing exampl
 
 ## Evidence and corpus
 
-Use the captures actually present in the incident evidence inventory. The current controller captures the
-incident-open boundary and the independently verified fixed boundary; it does not promise intermediate
-snapshots. A symptom observed later in the responder session cannot be backfilled into the open capture.
+Use the captures actually present in the incident evidence inventory. Choose an available open boundary
+that contains the confirmed cause and the independently verified fixed boundary. Supported phase values
+do not promise that a capture exists. Never backfill a later symptom into an earlier capture.
 An unsupported positive case is an evidence gap.
 
 The [generated runtime contract](../../sdo-memory/references/runtime.md) distinguishes capture filenames

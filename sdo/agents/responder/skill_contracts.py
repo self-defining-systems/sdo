@@ -28,12 +28,14 @@ async def render_contract() -> str:
         "The worker task/result envelopes are transport-owned and are never authored by the model. "
         "The check_memory tool accepts the decision fields directly and writes the CLI file.\n\n"
         f"```json\n{json.dumps(schema, indent=2)}\n```",
-        "## Current capture phases\n\n"
+        "## Supported open phase selections\n\n"
         + "\n".join(
-            f"- Capture filename: open@{phase}.json; provenance open_at: {phase}." for phase in get_args(OpenPhase)
+            f"- When captured, filename: open@{phase}.json; provenance open_at: {phase}."
+            for phase in get_args(OpenPhase)
         )
-        + "\n- Fixed capture: fixed.json; primitive recordings: open@detect-recordings.json.\n"
-        "Historical corpora may carry older phases; the current worker advertises only phases the controller captures.",
+        + "\n- Fixed capture: fixed.json; selected open recordings: open@<phase>-recordings.json.\n"
+        "Select only files actually supplied by the controller. "
+        "Supported phase values do not promise capture availability.",
     ]
     with tempfile.TemporaryDirectory() as directory:
         tools = await validation_server(Path(directory)).list_tools()

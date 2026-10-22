@@ -48,7 +48,13 @@ def test_advertised_capture_phases_match_controller(tmp_path: Path) -> None:
     repository = SKILLS_ROOT.parents[1]
     loop = (repository / "sdo/operator/runtime/responder_loop.go").read_text()
     actual = set(re.findall(r'l\.capturePhase = "open@([^\"]+)"', loop))
-    assert actual == set(get_args(OpenPhase))
+    for file in (repository / "sdo/operator/runtime").glob("*.go"):
+        if not file.name.endswith("_test.go"):
+            actual.update(re.findall(r'CaptureIncidentSnapshot\([^\n]*?"open@([^\"]+)"', file.read_text()))
+    assert actual <= set(get_args(OpenPhase))
+    validator = (repository / "sdo/operator/memory/corpus_capture.go").read_text()
+    accepted = set(re.findall(r'label\.Provenance\.OpenAt != "([^\"]+)"', validator))
+    assert set(get_args(OpenPhase)) <= accepted
     controller = (repository / "sdo/operator/runtime/controller.go").read_text()
     assert '"open@detect"' in controller
     assert '"fixed"' in controller

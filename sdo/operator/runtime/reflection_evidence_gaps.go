@@ -47,6 +47,7 @@ func appendEvidenceGaps(work []*contracts.ReflectionCauseWork, capture string) u
 	}
 	distinct := map[string]bool{}
 	for _, cause := range work {
+		seen := map[string]bool{}
 		for _, resource := range cause.Resources {
 			for _, phase := range []string{"open", "fixed"} {
 				found := false
@@ -56,12 +57,16 @@ func appendEvidenceGaps(work []*contracts.ReflectionCauseWork, capture string) u
 				if found {
 					continue
 				}
+				key, _ := json.Marshal([]string{resource.GetKind(), resource.GetNamespace(), resource.GetName(), phase})
+				if seen[string(key)] {
+					continue
+				}
+				seen[string(key)] = true
 				cause.Items = append(cause.Items, &contracts.ReflectionWorkItem{
 					Disposition: "question", Reason: "evidence_gap", EvidencePhase: phase,
 					Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)},
 					Question:  "Go found no recorded observation of this resource at the named phase. Assess whether this gap blocks learning.",
 				})
-				key, _ := json.Marshal([]string{resource.GetKind(), resource.GetNamespace(), resource.GetName(), phase})
 				distinct[string(key)] = true
 			}
 		}

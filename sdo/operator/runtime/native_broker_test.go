@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -296,7 +295,7 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	}
 }
 
-func TestNativeBrokerSkipsReflectionAfterTrustedFastPath(t *testing.T) {
+func TestNativeBrokerClassifiesTrustedFastPathBeforeModelDispatch(t *testing.T) {
 	target := nativeRepository(t)
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
 	if err != nil {
@@ -314,7 +313,7 @@ func TestNativeBrokerSkipsReflectionAfterTrustedFastPath(t *testing.T) {
 		}),
 		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 			reflections++
-			return ReflectionDecision{}, nil
+			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "no supported new relation"}, nil
 		}),
 	}
 	workspace, err := native.PrepareIncident(context.Background(), "trusted")
@@ -327,7 +326,7 @@ func TestNativeBrokerSkipsReflectionAfterTrustedFastPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger, err := native.readLedger("trusted")
-	if err != nil || reflections != 0 || ledger.ReflectionSkippedReason != "trusted program fast path" {
+	if err != nil || reflections != 1 || ledger.GetOutcomeDocument().GetReflectionEligibility().GetVersion() != 1 {
 		t.Fatalf("fast path reflection: ledger=%+v calls=%d err=%v", ledger, reflections, err)
 	}
 }
@@ -337,53 +336,6 @@ type priorOutcomeReader struct{ outcomes []memory.Outcome }
 func (r priorOutcomeReader) List(context.Context) ([]memory.Outcome, error) { return r.outcomes, nil }
 func (r priorOutcomeReader) Get(context.Context, string) (memory.Outcome, error) {
 	return memory.Outcome{}, memory.ErrNotFound
-}
-
-func TestNativeBrokerSkipsOnlyExactAcceptedRepairReplayUnlessForced(t *testing.T) {
-	for _, force := range []bool{false, true} {
-		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
-			target := nativeRepository(t)
-			repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			workspace, err := repository.CreateProposal(context.Background(), "replayed")
-			if err != nil {
-				t.Fatal(err)
-			}
-			action := &contracts.RepairActionReceipt{ActionId: "source-repair", StartedAt: contractTimestamp(time.Unix(1, 0)), CompletedAt: contractTimestamp(time.Unix(2, 0)), Kind: "kubectl-patch", Target: "Service/api", Summary: "restore accepted source", Details: "accepted source fields", Success: true}
-			cause := &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{{Kind: "Service", Name: "api"}}, Summary: "Service/api target port mismatch"}
-			prior := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "prior", Classification: "success", SourceCommit: workspace.BaseCommit, RepairActions: []*contracts.RepairActionReceipt{action}, ConfirmedRootCauses: []*contracts.ConfirmedRootCause{cause}}
-			calls := 0
-			native := NativeIncidentBroker{
-				Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), ForceReflection: force,
-				PriorOutcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "prior", Record: prior}}},
-				Deriver: OutcomeDeriverFunc(func(_ context.Context, closure IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
-					return DerivedOutcome{Record: &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: closure.Request.IncidentID, Classification: "success", SourceCommit: workspace.BaseCommit, RepairActions: []*contracts.RepairActionReceipt{action}, ConfirmedRootCauses: []*contracts.ConfirmedRootCause{cause}}, RequiresReflection: true}, nil
-				}),
-				Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-					calls++
-					return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already accepted"}, nil
-				}),
-				ResponderBackend: "test", ResponderModel: "test",
-			}
-			closure := nativeClosure(IncidentWorkspace{IncidentID: "replayed", Worktree: workspace.Path, BaseCommit: workspace.BaseCommit})
-			closure.Request.RepairPolicy = "recorded-actions"
-			if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
-				t.Fatal(err)
-			}
-			ledger, err := native.readLedger("replayed")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if force && (calls != 1 || ledger.ReflectionSkippedReason != "") {
-				t.Fatalf("forced reflection: calls=%d ledger=%+v", calls, ledger)
-			}
-			if !force && (calls != 0 || ledger.ReflectionSkippedReason != "exact replay of accepted repairs" || ledger.OutcomeCommit == "") {
-				t.Fatalf("replayed repair was not skipped after outcome commit: calls=%d ledger=%+v", calls, ledger)
-			}
-		})
-	}
 }
 
 func TestNativeBrokerCompletesClosureAfterTypedReflectionFailure(t *testing.T) {

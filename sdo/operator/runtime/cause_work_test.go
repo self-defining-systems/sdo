@@ -54,17 +54,14 @@ func TestUnassignedMatchesStayQuestionsWithoutNewCauseOrTrustCredit(t *testing.T
 	if len(questions) != 1 || questions[0].Disposition != "question" || len(classifyCauseWork(outcome, nil)) != 0 {
 		t.Fatalf("inferred a cause: %v", questions)
 	}
-	result := IncidentResult{ProgramRuns: []ProgramRun{{ProgramID: repeatProgram, Bindings: program.Bindings{"service": objectRefState(repeatService)}, Verdict: program.Verdict{Result: program.Match}}}, PlanApplications: []RecordedPlanApplication{{ProgramIDs: []string{repeatProgram}}}}
-	withholdUnassignedProgramCredit(&result)
-	if result.PlanApplications[0].Result.FinalEquivalenceVerified == nil || *result.PlanApplications[0].Result.FinalEquivalenceVerified {
-		t.Fatal("unassigned match earned credit")
-	}
+
 }
 
 func TestUnprovenFinalEquivalenceEarnsNeitherSuccessNorFailure(t *testing.T) {
 	outcome := verifiedTrustOutcome(t, "targetport", "revision")
 	notExact := false
 	outcome.PlanApplications[0].FinalEquivalenceVerified = &notExact
+	settleTestOutcome(outcome)
 	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]
 	if state.Trusted || state.VerifiedSuccesses != 0 || state.Failures != 0 {
 		t.Fatalf("question became a trust judgment: %+v", state)
@@ -80,5 +77,30 @@ func TestUnboundWritesKeepTheExactConfirmedResource(t *testing.T) {
 	if len(work) != 1 || len(work[0].Items) != 1 || work[0].Items[0].Reason != "unbound_write" ||
 		!proto.Equal(work[0].Items[0].Resources[0], repeatService) {
 		t.Fatalf("unbound write lost its resource: %v", work)
+	}
+}
+
+func TestMissingProofAndFixedVerdictRemainQuestions(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		proof bool
+		fixed program.Result
+	}{
+		{"missing final proof", false, program.NoMatch}, {"missing fixed verdict", true, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o := verifiedRepeat(t)
+			o.RepairActions[0].Resources = []*contracts.ObjectRef{repeatService}
+			if test.proof {
+				o.PlanApplications[0].FinalEquivalenceVerified = proto.Bool(true)
+			} else {
+				o.PlanApplications[0].FinalEquivalenceVerified = nil
+			}
+			key := matchedViewKey(repeatProgram, program.Bindings{"service": objectRefState(repeatService)})
+			work := classifyCauseWork(o, map[string]program.Result{key: test.fixed})
+			if work[0].Items[0].Disposition != "question" {
+				t.Fatalf("unproven case settled: %v", work)
+			}
+		})
 	}
 }

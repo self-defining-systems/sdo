@@ -24,7 +24,6 @@ const (
 	ReflectionReset
 	ReflectionCleaned
 	ReflectionFault
-	ReflectionEvidenceIndexed
 )
 
 type ReflectionEffectKind uint8
@@ -39,16 +38,15 @@ const (
 )
 
 type ReflectionEvent struct {
-	Kind             ReflectionEventKind
-	EffectID         string
-	At               time.Time
-	MaxRetries       uint32
-	EvidenceGapCount uint32
-	Workspace        *contracts.ProposalWorkspace
-	Paths            []string
-	Commit           string
-	Decision         *contracts.ReflectionDecision
-	Diagnostics      []*contracts.MemoryDiagnostic
+	Kind        ReflectionEventKind
+	EffectID    string
+	At          time.Time
+	MaxRetries  uint32
+	Workspace   *contracts.ProposalWorkspace
+	Paths       []string
+	Commit      string
+	Decision    *contracts.ReflectionDecision
+	Diagnostics []*contracts.MemoryDiagnostic
 }
 
 type ReflectionEffect struct {
@@ -95,6 +93,12 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		next = proto.Clone(state).(*contracts.BrokerLedger)
 	}
 	if event.Kind == ReflectionBegin {
+		eligibility := next.GetOutcomeDocument().GetReflectionEligibility()
+		if next.ReflectionEvidenceGapCount == nil && eligibility != nil && eligibility.EvidenceGapCount != nil {
+			count := eligibility.GetEvidenceGapCount()
+			next.ReflectionEvidenceGapCount = &count
+		}
+
 		if next.ReflectionCommit != "" {
 			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 			return next, nil
@@ -105,13 +109,6 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 			if next.ReflectionRejected {
 				next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_RESET
 			}
-		}
-		return next, nil
-	}
-	if event.Kind == ReflectionEvidenceIndexed {
-		if next.GetReflectionPhase() == contracts.ReflectionPhase_REFLECTION_PHASE_DISPATCH && event.EffectID == reflectionIdentity(next, DispatchReflection) {
-			count := event.EvidenceGapCount
-			next.ReflectionEvidenceGapCount = &count
 		}
 		return next, nil
 	}
