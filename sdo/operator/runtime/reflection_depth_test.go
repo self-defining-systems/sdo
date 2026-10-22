@@ -13,6 +13,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -78,6 +79,12 @@ func repeatInput(outcome *contracts.OutcomeRecord) ReflectionDepthInput {
 	return ReflectionDepthInput{Outcome: outcome, InstalledProgramIDs: []string{"image-pull-source-drift", repeatProgram}, SessionMode: "resume", Attempt: 1}
 }
 
+// faultDrift is the drift event a watch-detected injected fault records for
+// itself: classified as the fault and attributed to the program that owns it.
+func faultDrift(programID string, ref *contracts.ObjectRef) *contracts.DriftEvent {
+	return &contracts.DriftEvent{Ref: ref, Classification: string(sdk.DriftFault), ProgramId: programID, InvestigationVerdict: "bug"}
+}
+
 func TestReflectionDepthIsDecidedFromTypedOutcomeFacts(t *testing.T) {
 	otherService := &contracts.ObjectRef{Kind: "Service", Namespace: "default", Name: "search"}
 	cases := []struct {
@@ -130,7 +137,32 @@ func TestReflectionDepthIsDecidedFromTypedOutcomeFacts(t *testing.T) {
 			o.ProgramFailureSignals = []string{"adhoc_coverage_gap"}
 		}, ReflectionDepthFull},
 		{"source repair commit is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) { commit := "abc"; o.RepairCommit = &commit }, ReflectionDepthFull},
-		{"drift event is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) { o.DriftEvents = []*contracts.DriftEvent{{}} }, ReflectionDepthFull},
+		{"empty drift event is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) { o.DriftEvents = []*contracts.DriftEvent{{}} }, ReflectionDepthFull},
+		{"own-fault drift on an applied binding refines", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			o.DriftEvents = []*contracts.DriftEvent{faultDrift(repeatProgram, repeatService)}
+		}, ReflectionDepthRefine},
+		{"one own-fault drift event per faulted resource refines", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			o.DriftEvents = []*contracts.DriftEvent{faultDrift(repeatProgram, repeatService), faultDrift(repeatProgram, repeatService)}
+		}, ReflectionDepthRefine},
+		{"unexplained drift on an applied binding is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			event := faultDrift(repeatProgram, repeatService)
+			event.Classification = string(sdk.DriftUnexplained)
+			o.DriftEvents = []*contracts.DriftEvent{event}
+		}, ReflectionDepthFull},
+		{"own-fault drift beside an unexplained one is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			event := faultDrift("", otherService)
+			event.Classification = string(sdk.DriftUnexplained)
+			o.DriftEvents = []*contracts.DriftEvent{faultDrift(repeatProgram, repeatService), event}
+		}, ReflectionDepthFull},
+		{"fault drift on an unbound object is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			o.DriftEvents = []*contracts.DriftEvent{faultDrift(repeatProgram, otherService)}
+		}, ReflectionDepthFull},
+		{"fault drift without a program is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			o.DriftEvents = []*contracts.DriftEvent{faultDrift("", repeatService)}
+		}, ReflectionDepthFull},
+		{"fault drift attributed to a program that applied nothing is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
+			o.DriftEvents = []*contracts.DriftEvent{faultDrift("image-pull-source-drift", repeatService)}
+		}, ReflectionDepthFull},
 		{"exhausted response loop is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) { o.ResponseLoopExhausted = true }, ReflectionDepthFull},
 		{"matched program that was not applied is full", func(o *contracts.OutcomeRecord, _ *ReflectionDepthInput) {
 			o.ProgramRuns[1].Verdict.Result = contracts.Verdict_RESULT_MATCH

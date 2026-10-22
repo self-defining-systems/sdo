@@ -39,13 +39,14 @@ type ReflectionDepthInput struct {
 // its post-apply NoMatch is bound to the applied bindings by controller-recorded
 // tool evidence; every repair action is one of those applications; every
 // matched binding was applied and every confirmed root cause is covered by an
-// applied binding; and no source repair, drift event, exhausted loop or program
-// failure signal exists. Anything else needs a full reflection.
+// applied binding; every drift event is the fault's own (driftIsOwnFault); and
+// no source repair, exhausted loop or program failure signal exists. Anything
+// else needs a full reflection.
 func ReflectionDepth(input ReflectionDepthInput) string {
 	outcome := input.Outcome
 	if outcome == nil || input.SessionMode != "resume" || input.Attempt > 1 || input.HasDiagnostics ||
 		outcome.GetClassification() != "success" || outcome.RepairCommit != nil ||
-		len(outcome.GetProgramFailureSignals()) != 0 || len(outcome.GetDriftEvents()) != 0 || outcome.GetResponseLoopExhausted() ||
+		len(outcome.GetProgramFailureSignals()) != 0 || outcome.GetResponseLoopExhausted() ||
 		len(outcome.GetRepairActions()) == 0 || len(outcome.GetPlanApplications()) == 0 {
 		return ReflectionDepthFull
 	}
@@ -86,7 +87,29 @@ func ReflectionDepth(input ReflectionDepthInput) string {
 			return ReflectionDepthFull
 		}
 	}
+	for _, event := range outcome.GetDriftEvents() {
+		if !driftIsOwnFault(event, appliedBindings) {
+			return ReflectionDepthFull
+		}
+	}
 	return ReflectionDepthRefine
+}
+
+// driftIsOwnFault accepts the drift event a watch-detected fault records for
+// itself: classified as the fault, attributed to a program that was applied,
+// and on an object that program's applied binding selected. Unexplained drift,
+// drift without a program, and drift on any other object needs a full reflection.
+func driftIsOwnFault(event *contracts.DriftEvent, appliedBindings map[string][]program.Bindings) bool {
+	if event.GetClassification() != string(sdk.DriftFault) {
+		return false
+	}
+	ref := objectRefState(event.GetRef())
+	for _, bindings := range appliedBindings[event.GetProgramId()] {
+		if slices.ContainsFunc(slices.Collect(maps.Values(bindings)), func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
+			return true
+		}
+	}
+	return false
 }
 
 // repairActionIsApplication accepts only receipts that the controller's plan
