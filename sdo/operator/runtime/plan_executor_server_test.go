@@ -30,6 +30,8 @@ type serverPlanClient struct {
 	afterDryRun func()
 	// raceBeforePatch controller updates land between the caller's read and its next patch.
 	raceBeforePatch int
+	// raceEdit also changes the object on each raceBeforePatch update.
+	raceEdit func(*unstructured.Unstructured)
 }
 
 func newServerPlanClient(object *unstructured.Unstructured) (*serverPlanClient, sdk.ObjectRef) {
@@ -109,6 +111,9 @@ func (c *serverPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind ty
 	if c.raceBeforePatch > 0 {
 		c.raceBeforePatch--
 		c.bump(c.objects[ref])
+		if c.raceEdit != nil {
+			c.raceEdit(c.objects[ref])
+		}
 	}
 	var document map[string]any
 	if err := json.Unmarshal(patch, &document); err != nil {
@@ -116,10 +121,8 @@ func (c *serverPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind ty
 	}
 	if metadata, ok := document["metadata"].(map[string]any); ok {
 		current := c.objects[ref]
-		if metadata["uid"] != string(current.GetUID()) {
-			return errors.New("uid precondition failed")
-		}
-		if metadata["resourceVersion"] != current.GetResourceVersion() {
+		// The API server reports a failed uid precondition as a conflict too.
+		if metadata["uid"] != string(current.GetUID()) || metadata["resourceVersion"] != current.GetResourceVersion() {
 			return apierrors.NewConflict(schema.GroupResource{Group: "apps", Resource: "deployments"}, ref.Name, errors.New("the object has been modified"))
 		}
 	}
@@ -361,17 +364,35 @@ func TestPlanExecutorStillReportsThirdPartyEditOfNormalizedField(t *testing.T) {
 	}
 }
 
-func TestPlanExecutorDetectsEditBetweenDryRunAndApply(t *testing.T) {
+func TestPlanExecutorRetriesStatusChurnBetweenDryRunAndApply(t *testing.T) {
 	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
 	client.afterDryRun = func() { client.bump(client.objects[ref]) }
 	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Sleep: noSleep}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if !apierrors.IsConflict(err) {
-		t.Fatalf("edit after dry-run not rejected: %v", err)
+	if err != nil || !result.Applied || !result.VerificationPassed {
+		t.Fatalf("status churn after dry-run failed the application: %+v, %v", result, err)
+	}
+	image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
+	if image != "cache:new" {
+		t.Fatalf("image = %v", image)
+	}
+}
+
+func TestPlanExecutorDetectsOwnedEditBetweenDryRunAndApply(t *testing.T) {
+	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
+	client.afterDryRun = func() {
+		client.bump(client.objects[ref])
+		_ = program.ApplySetField(client.objects[ref].Object, "spec.template.spec.containers[0].image", "cache:other")
+	}
+	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Sleep: noSleep}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
+	if err == nil || !strings.Contains(err.Error(), "concurrent change before action 0: spec.template.spec.containers[0].image") {
+		t.Fatalf("owned edit after dry-run not reported: %v", err)
 	}
 	if result.Applied {
-		t.Fatalf("write landed on a stale version: %+v", result)
+		t.Fatalf("write landed over a concurrent edit: %+v", result)
 	}
 }
 
