@@ -6,6 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,7 +71,7 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 		t.Fatalf("stale diagnosis: %+v", diagnosis)
 	}
 	for _, command := range []string{"status", "diagnose"} {
-		if !strings.Contains(logs.String(), "msg=responder_tool incident_id=i command="+command+" duration_ms=") {
+		if !strings.Contains(logs.String(), "msg=responder_tool_timing incident_id=i command="+command+" capture_ms=") {
 			t.Fatalf("handler duration for %s is not logged:\n%s", command, logs.String())
 		}
 	}
@@ -322,5 +323,27 @@ func TestColdLearningCapturesResponderSourceReads(t *testing.T) {
 	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
 	if _, err := view.DiffAgainstSource(ref); err != nil {
 		t.Fatalf("cold source inspection was not replayable: %v", err)
+	}
+}
+
+func TestResponderLoopLogsPhaseTimingsPerToolCall(t *testing.T) {
+	var logged strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	loop := NewResponderLoop(IncidentRequest{IncidentID: "i-timing", Namespace: "app"}, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, nil, PlanExecutor{}, 5)
+	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
+	}
+	loop.saveToolState = func(context.Context, []byte) error { return nil }
+	loop.Handle(context.Background(), ToolRequest{Command: "status"})
+	lines := strings.Split(strings.TrimSpace(logged.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want one timing line per tool call, got %q", logged.String())
+	}
+	for _, want := range []string{"msg=responder_tool_timing", "incident_id=i-timing", "command=status", "capture_ms=", "refresh_ms=", "persist_ms=", "total_ms="} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("timing line missing %q: %s", want, lines[0])
+		}
 	}
 }

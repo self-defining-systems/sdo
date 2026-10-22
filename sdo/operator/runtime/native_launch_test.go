@@ -65,3 +65,79 @@ func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 		t.Fatalf("fresh reflection lost incident usage mount: %+v", fresh)
 	}
 }
+
+func TestAgentWorkerEnvironmentCarriesConfiguredProviderAndModel(t *testing.T) {
+	environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"SDO_AGENT_PROVIDER": "claude", "SDO_RESPONDER_MODEL": "claude-haiku-5-5", "SDO_REFLECTION_MODEL": "claude-haiku-5-5",
+		"SDO_LIFECYCLE_MODEL": "claude-haiku-5-5", "SDO_DEPLOYMENT_MODEL": "claude-haiku-5-5",
+	} {
+		if environment[name] != want {
+			t.Errorf("%s = %q, want %q", name, environment[name], want)
+		}
+	}
+}
+
+func TestAgentWorkerEnvironmentRejectsUnknownProvider(t *testing.T) {
+	if _, err := AgentWorkerEnvironment(&contracts.ControllerConfig{ResponderBackend: "gemini", ResponderModel: "m"}); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+	if environment, err := AgentWorkerEnvironment(&contracts.ControllerConfig{}); err != nil || len(environment) != 0 {
+		t.Fatalf("unconfigured provider must add nothing: %v %v", environment, err)
+	}
+}
+
+func TestNativeLaunchRejectsUnknownProvider(t *testing.T) {
+	root := nativeRepository(t)
+	config := &contracts.ControllerConfig{
+		BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "default",
+		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
+		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "gemini", ResponderModel: "model",
+	}
+	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, fake.NewSimpleClientset()); err == nil {
+		t.Fatal("unknown provider accepted by native launch")
+	}
+}
+
+func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
+	root := t.TempDir()
+	registry, err := worker_registry.New(builtInReflectorRegistration("agent:test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &contracts.ControllerConfig{AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
+	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	worker := native.Reflector.(RegisteredReflectionWorker)
+	environments := []map[string]string{worker.Executor.(worker_registry.KubernetesExecutor).Environment}
+	for _, factory := range []func(string) (ReflectionTaskExecutor, error){worker.SessionExecutor, worker.FreshSessionExecutor} {
+		executor, err := factory("incident-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		environments = append(environments, executor.(worker_registry.KubernetesExecutor).Environment)
+	}
+	for i, environment := range environments {
+		if environment["SDO_AGENT_PROVIDER"] != "claude" || environment["SDO_REFLECTION_MODEL"] != "claude-haiku-5-5" {
+			t.Errorf("reflection executor %d lost provider/model: %v", i, environment)
+		}
+	}
+}
+
+func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
+	merged, err := withAgentEnvironment(map[string]string{"SDO_AGENT_PROVIDER": "codex", "KEEP": "1"}, &contracts.ControllerConfig{ResponderBackend: "claude", ResponderModel: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged["SDO_AGENT_PROVIDER"] != "claude" || merged["SDO_RESPONDER_MODEL"] != "m" || merged["KEEP"] != "1" {
+		t.Fatalf("launch config must be authoritative: %v", merged)
+	}
+	if untouched, err := withAgentEnvironment(map[string]string{"A": "b"}, nil); err != nil || untouched["A"] != "b" {
+		t.Fatalf("no launch config must leave env: %v %v", untouched, err)
+	}
+}
