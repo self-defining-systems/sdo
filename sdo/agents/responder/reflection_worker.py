@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from google.protobuf import json_format
 
+from sdo.agents.provider import resolve_agent
 from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
@@ -67,13 +68,8 @@ class Reflector(Protocol):
 
 
 def _default_reflector(guidance: ReflectionGuidance) -> SessionReflector:
-    provider = os.environ.get("SDO_AGENT_PROVIDER", "codex").strip().lower()
-    if provider == "codex":
-        backend = CodexSessionBackend()
-    elif provider == "claude":
-        backend = ClaudeSessionBackend()
-    else:
-        raise ValueError(f"unsupported reflection provider {provider!r}")
+    resolved = resolve_agent("reflection", "SDO_REFLECTION_MODEL")
+    backend = (ClaudeSessionBackend if resolved.provider == "claude" else CodexSessionBackend)(model=resolved.model)
     return SessionReflector(backend, guidance=guidance)
 
 
