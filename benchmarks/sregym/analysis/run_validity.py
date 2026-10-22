@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
+from google.protobuf import json_format
 
 from benchmarks.sregym.analysis.incident_cost import (
     RECEIPT_NAME,
@@ -66,6 +67,8 @@ from benchmarks.sregym.analysis.incident_cost import (
     with_mitigation_applied,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
+from sdo.contracts import ReceiptFailure, RejectedProductionReceipt
 
 Classification = Literal["valid", "invalid_infra", "agent_failure"]
 CheckStatus = Literal["pass", "fail", "not_recorded"]
@@ -497,14 +500,24 @@ def _check_receipt(experiment_dir: Path, results: Path) -> tuple[Check, dict[str
         try:
             validate_production_receipt(receipt)
         except ProductionReceiptValidationError as exc:
-            return Check(
-                "receipt", "fail", f"strict receipt fails production validation: {exc}", blame="agent"
-            ), receipt
+            blame: Blame = (
+                "infra"
+                if isinstance(exc, NativeReceiptValidationError)
+                and exc.failure.code == ReceiptFailure.CODE_CHECKER_UNAVAILABLE
+                else "agent"
+            )
+            return Check("receipt", "fail", f"strict receipt fails production validation: {exc}", blame=blame), receipt
         return Check("receipt", "pass"), receipt
     rejected = sorted(results.rglob(REJECTED_RECEIPT_NAME))
     if rejected:
-        error = (_read_json(rejected[-1]) or {}).get("validation_error")
-        return Check("receipt", "fail", f"SDO receipt rejected: {error}", blame="agent"), None
+        document = _read_json(rejected[-1]) or {}
+        error = document.get("validation_error")
+        try:
+            typed = json_format.ParseDict(document, RejectedProductionReceipt(), ignore_unknown_fields=True)
+            blame = "infra" if typed.failure.code == ReceiptFailure.CODE_CHECKER_UNAVAILABLE else "agent"
+        except json_format.ParseError:
+            blame = "agent"
+        return Check("receipt", "fail", f"SDO receipt rejected: {error}", blame=blame), None
     if any(results.rglob(RESOLUTION_NAME)) and not _pipeline_finished(experiment_dir):
         # A persistent controller's receipt is published by the next stage's drain or by teardown.
         return Check(

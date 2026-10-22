@@ -80,3 +80,19 @@ Every structured agent turn appends one JSONL record to the file named by `SDO_T
 Result CSVs may flatten stage results into fields such as `Diagnosis.success` and `Mitigation.success`. They also carry conductor wall-clock epochs `fault_injected_at`, `diagnosis_submitted_at`, and `mitigation_submitted_at` (recorded when the agent's `/submit` request arrives, before API retries or oracles) and, for agents with `defer_fault_injection`, `fault_injection_deferred_seconds`. Report timing judge-free for every arm: time to diagnosis is `diagnosis_submitted_at - fault_injected_at`, and the headline time to mitigation is `mitigation_submitted_at - fault_injected_at` minus the diagnosis-grading wait `fault_injected_at + TTL - diagnosis_submitted_at`, but never less than when the agent's last state-changing command before the mitigation POST completed (from the exported Codex rollout). The unadjusted `mitigation_submitted_at - fault_injected_at` includes judge time and is supplementary only (`raw_incl_judge_s`). The CSV's own `TTM` column additionally includes the mitigation oracle and is not a headline number. Runs with `defer_diagnosis_grading = true` carry `diagnosis_grading_deferred = true`: the diagnosis is graded by the same judge in the background while the mitigation stage is already open, so their grading wait is zero, `TTL` is measured at diagnosis submission, and the CSV's `TTM` no longer includes diagnosis judging; compare raw `TTM` only between runs with the same marker. Require explicit true values and inspect `agent_error`; missing or malformed values are not success.
 
 For multi-stage SDO pipelines compared against stock Codex, `uv run python -m benchmarks.sregym.analysis.incident_cost <sdo-pipeline-dir> --codex <codex-dir>...` prints per stage `ttd_s` and the headline judge-free `ttm_s`; the supplementary `raw_incl_judge_s`, `no_judge_s` (raw minus the grading wait, which is zero for `diagnosis_grading_deferred = true` rows), `first_mut_s` and `last_mut_s` (first state-changing command issued, and last one completed, both from rollouts); cumulative `ttm_s`; `incident_resolution_seconds`; oracle verdicts, responder and reflection tokens (reflection kept out of resolution time), a token-breakdown table (uncached input, cache reads, cache writes and their one-hour part, output, reasoning, raw total, cost-weighted total, USD, model requests) for every SDO stage and baseline problem with the pricing table version and date it used (see "Token metrics" in `benchmarks/sregym/AGENTS.md`), receipt `memory_reuse.warm_path` beside whether the responder rollout's user prompt carried the warm-path instructions, `.sdo/` detector and playbook counts, and token break-even against the per-problem Codex mean with and without the one-time lifecycle (`sdo_turn_usage.jsonl`, or `--lifecycle-usage` for a seeded lifecycle).
+
+## Typed receipt rejection
+
+Native receipt v2 is defined by `benchmark_receipt.proto`; its acceptance,
+classification summary and evidence checks run in the benchmark-only Go receipt
+checker. `sdo_rejected_production_receipt.json` keeps `validation_error`, the
+structured `receipt` when representable, and exact `receipt_json` for malformed
+transport evidence. Its generated `failure` has `incident_id`, `code`
+(`CODE_INVALID_WIRE`, `CODE_REJECTED_EVIDENCE`, or
+`CODE_CHECKER_UNAVAILABLE`) and `message`. A checker transport failure is
+infrastructure evidence, distinct from rejected incident evidence; run validity
+classifies it as `invalid_infra`, while evidence rejections remain `agent_failure`. Do not count
+either as a verified mitigation. The drain returns a typed failure for that one
+incident; receipt rejection alone does not stop the next injection. Closure
+failure and drain scheduling are separate, unchanged controller-state paths.
+Flat reflection usage follows ProtoJSON: int64 token counts may be strings.

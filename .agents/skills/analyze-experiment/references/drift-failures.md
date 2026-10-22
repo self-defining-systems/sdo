@@ -30,7 +30,9 @@ outcome's `drift.<program>` finding and the program run's `binding_source=hint`.
 `--no-checkpoints` skips optional replay export, while preserving real outcomes,
 strict receipts, corpus validation and broker decisions.
 
-Routing capture now records actual `ProbeTCP` results for finding Services and up
+Routing capture now records actual `ProbeTCP` results for finding Services, then
+Services the snapshot shows as suspect (selector with no ready Pod, or an integer
+targetPort no selected Pod declares) even when no finding names them, then up
 to two ready peer Services, including direct selected-Pod probes at numeric target
 and declared candidate ports. Calls use captured Pod IPs in the existing isolated
 prober; no credentials or cluster mutation are added. Automatic capture is capped
@@ -46,8 +48,10 @@ incident capture; disabling synthetic workloads still leaves routing primitives
 available. Older builds silently skipped routing capture when that prober was
 absent. New captures record `routing-probe-note.json` in the incident corpus with
 `capability: routing_probe`, `status: unavailable`, `reason` (`prober_not_configured`,
-`read_view_not_live`, or `probe_failed`), the first affected `phase`, and optional
-error `detail`. The controller logs the same gap once per incident. A note is
+`read_view_not_live`, `probe_failed`, or `budget_exhausted` when the capture's time
+budget skipped targets), the first affected `phase`, and optional error `detail`.
+Probe deadlines are seconds, not milliseconds, so a slow prober is waited for rather
+than recorded as a closed port. The controller logs the same gap once per incident. A note is
 capability evidence, not a TCP result or a routing diagnosis; inspect the
 adjacent recordings for actual successes, refusals and read errors.
 

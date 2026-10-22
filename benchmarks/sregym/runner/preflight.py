@@ -238,6 +238,7 @@ class HostProbe(Protocol):
 
     home: Path
 
+    def ipv4_neighbor_limit(self) -> int | None: ...
     def free_bytes(self, path: Path) -> int | None: ...
     def docker_root(self) -> Path | None: ...
     def image(self, ref: str) -> ImageInfo | None: ...
@@ -269,6 +270,13 @@ class SystemHost:
         except (OSError, subprocess.SubprocessError):
             return None
         return completed.stdout if completed.returncode == 0 else None
+
+    def ipv4_neighbor_limit(self) -> int | None:
+        """Read the Linux host's global IPv4 neighbor allocation ceiling."""
+        try:
+            return int(Path("/proc/sys/net/ipv4/neigh/default/gc_thresh3").read_text().strip())
+        except (OSError, ValueError):
+            return None
 
     def free_bytes(self, path: Path) -> int | None:
         probe = path
@@ -600,6 +608,34 @@ class _Context:
     @property
     def agents(self) -> set[str]:
         return {config.agent for config in self.configs}
+
+
+# Shared kind hosts allocate neighbors across node network namespaces, including
+# loopback. A full global table can stall apiserver/etcd without interface drops.
+MIN_IPV4_NEIGHBOR_LIMIT = 65536
+
+
+def _check_neighbor_cache(ctx: _Context) -> PreflightCheck:
+    limit = ctx.host.ipv4_neighbor_limit()
+    ctx.facts["ipv4_neighbor_gc_thresh3"] = limit
+    if limit is None:
+        return PreflightCheck(
+            "neighbor-cache",
+            "unknown",
+            "IPv4 neighbor capacity is unavailable on this host",
+            "check net.ipv4.neigh.default.gc_thresh3 on the Linux Docker host",
+        )
+    if limit < MIN_IPV4_NEIGHBOR_LIMIT:
+        return PreflightCheck(
+            "neighbor-cache",
+            "fail",
+            f"host net.ipv4.neigh.default.gc_thresh3={limit}; shared kind hosts need at least "
+            f"{MIN_IPV4_NEIGHBOR_LIMIT} (exhaustion can stall localhost API/etcd traffic)",
+            "ask the host administrator to approve a runtime capacity increase: sysctl -w "
+            "net.ipv4.neigh.default.gc_thresh1=16384 net.ipv4.neigh.default.gc_thresh2=32768 "
+            "net.ipv4.neigh.default.gc_thresh3=65536",
+        )
+    return PreflightCheck("neighbor-cache", "pass", f"IPv4 neighbor capacity {limit} >= {MIN_IPV4_NEIGHBOR_LIMIT}")
 
 
 def _check_disk(ctx: _Context) -> PreflightCheck:
@@ -965,6 +1001,7 @@ def run_preflight(
         now=time.time() if now is None else now,
     )
     checks = [
+        _check_neighbor_cache(ctx),
         _check_disk(ctx),
         _check_application_sources(ctx),
         _check_codex_pins(ctx),

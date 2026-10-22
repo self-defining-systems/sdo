@@ -33,6 +33,7 @@ uv run pytest tests/ --cov=sdo
 (cd sdo/operator/core && go test ./...)
 (cd sdo/operator/runtime && go test ./...)
 (cd sdo/operator/contracts && go test ./...)
+(cd benchmarks/sregym/protocol/native_receipt_go && go test -race ./...)
 ```
 
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
@@ -275,3 +276,11 @@ and caches golangci-lint 2.11.4, runs only depguard/forbidigo on declared core
 packages, and checks structural purity plus application-owned transitive imports.
 The package registry lives in `scripts/go_pure_packages.txt`; negative fixtures
 prove the linter rules are active.
+
+Native receipt decisions have a hermetic Go suite in
+`benchmarks/sregym/protocol/native_receipt_go`. Its fixtures are hand-authored
+generated messages. Run `go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$'
+-fuzzminimizetime=1s -fuzztime=30s -parallel=2 -timeout=2m .` there to attack malformed wire values,
+round-trip acceptance, and rejection followed by a valid incident. The existing
+controller CI matrix includes this module and the bounded fuzz run. Python
+receipt tests exercise the real checker; transport-error tests mock subprocesses.
