@@ -121,6 +121,10 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
       uvicorn==0.40.0
 ENV PATH="/usr/local/go/bin:${PATH}" \
     PYTHONPATH=/opt/sdo \
+    GIT_AUTHOR_NAME="SDO Agent" \
+    GIT_AUTHOR_EMAIL="sdo-agent@sdo.dev" \
+    GIT_COMMITTER_NAME="SDO Agent" \
+    GIT_COMMITTER_EMAIL="sdo-agent@sdo.dev" \
     HOME=/tmp \
     GOCACHE=/tmp/go-cache \
     GOMODCACHE=/go/pkg/mod \

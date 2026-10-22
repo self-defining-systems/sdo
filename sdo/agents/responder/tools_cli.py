@@ -42,9 +42,13 @@ def _parser() -> argparse.ArgumentParser:
         epilog="Examples (replace names with incident resources):\n  " + "\n  ".join(CLI_EXAMPLES),
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("status")
+    commands.add_parser("status", help="read current findings and session state")
     for name in ("diagnose", "plan"):
-        command = commands.add_parser(name, epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2])
+        command = commands.add_parser(
+            name,
+            help="evaluate a bound program" if name == "diagnose" else "plan a bound program repair",
+            epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2],
+        )
         command.add_argument("program_id", nargs="?" if name == "diagnose" else None)
         command.add_argument(
             "--bind",
@@ -54,12 +58,13 @@ def _parser() -> argparse.ArgumentParser:
             metavar="NAME=Kind/namespace/name",
             help="named program parameter; repeat for each binding",
         )
-    commands.add_parser("apply").add_argument("plan_ids", nargs="+")
-    commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
-        "ref", metavar="Kind/namespace/name"
-    )
+    commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
+    commands.add_parser(
+        "source", help="inspect accepted source for one resource", epilog="Example: " + CLI_EXAMPLES[0]
+    ).add_argument("ref", metavar="Kind/namespace/name")
     act = commands.add_parser(
         "act",
+        help="run a live mutation and record its receipt",
         description=(
             "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
             "command line). The command's exit code is returned. Do not hand-write receipts."
@@ -77,8 +82,8 @@ def _parser() -> argparse.ArgumentParser:
     act.add_argument("--summary", help="one line describing the repair")
     act.add_argument("--irreversible", action="store_true", help="the mutation cannot be undone")
     act.add_argument("act_command", nargs=argparse.REMAINDER, metavar="-- COMMAND", help="the mutating command")
-    commands.add_parser("verify")
-    commands.add_parser("rollback").add_argument("application_id")
+    commands.add_parser("verify", help="verify health and retained drift findings")
+    commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
     return parser
 
 
