@@ -27,7 +27,7 @@ func TestMitigationMustRepairFaultedFixture(t *testing.T) {
 	}{
 		{"repairs port", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}}, ""},
 		{"keeps faulty port", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 9999}}, "program.mitigation-not-repaired"},
-		{"cannot simulate source", []program.Action{program.ReconcileFromSource{Ref: ref}}, "program.mitigation-unreplayable"},
+		{"source effect skips replay", []program.Action{program.ReconcileFromSource{Ref: ref}}, ""},
 		{"missing target", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[99].targetPort", Value: 8080}}, "program.mitigation-unreplayable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

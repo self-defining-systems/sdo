@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.48458dc65fa032ec"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.de79bb5f8de754b5"
 
 type repeatable []string
 

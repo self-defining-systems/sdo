@@ -87,4 +87,22 @@ Primitive recordings now carry optional `phase` metadata (`open`, `fixed`, or `h
 
 Program revision identity includes the accepted program directory and its transitive shared-library import closure. Unrelated libraries do not reset trust; changed imported helper sources do.
 
-The shared memory acceptance gate now applies replayable mitigation patches to the faulted fixture and requires a subsequent NoMatch, including after consistent renaming. Runtime and replay share SetField path semantics and JSON merge-patch behavior. `program.mitigation-not-repaired` rejects a plan that leaves the predicate matched; `program.mitigation-unreplayable` rejects effects requiring unavailable source, revision, or rollout evidence. A repaired corpus snapshot alone does not establish that the proposed mitigation produced it.
+Mitigator validation is best-effort for external effects. Diagnosis open/fixed,
+healthy-peer, generalization and rename replay remain mandatory. SetField-only
+plans must repair the open fixture to NoMatch; `program.mitigation-not-repaired`
+rejects a retained match, and unavailable post-plan observations remain
+`program.mitigation-unreplayable`. A plan containing any non-SetField effect passes
+plan validation with `skipped_unreplayable_effect`, without post-plan replay.
+`MemoryCheckReport.mitigation_replay_notes` carries typed `MitigationReplayNote`
+statuses `STATUS_REPLAYED` or `STATUS_SKIPPED_UNREPLAYABLE_EFFECT`, program/case IDs
+and effect types separately from rejecting diagnostics. These notes prove no
+external effect and are never trust authority.
+
+Skipped replay earns no origin credit. Default trust requires three independently
+verified live successes and zero failures for the unchanged revision. Equivalent
+ad-hoc repairs retain bound plan-equivalence receipts and post-repair NoMatch;
+unrelated repairs in the outcome do not suppress credit. Every planned resource
+needs a successful receipt, exact observed plan equivalence, and independent
+outcome success. A Match-to-NoMatch flip alone earns nothing. Summaries distinguish
+equivalence verification from program mutation. Each program earns at most one
+success per outcome; failed live fast paths roll back and block revision trust.

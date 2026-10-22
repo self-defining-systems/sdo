@@ -7,14 +7,15 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // ReportPrefix frames the trusted runner report separately from tool output.
 const ReportPrefix = "SDO_MEMORY_REPORT:"
 const MaxReportBytes = 1024 * 1024
 
-func WriteReport(out io.Writer, diagnostics []Diagnostic) error {
-	data, err := protojson.Marshal(&contracts.MemoryCheckReport{Diagnostics: ProtoDiagnostics(diagnostics)})
+func WriteReport(out io.Writer, diagnostics []Diagnostic, notes ...sdktest.MitigationReplayResult) error {
+	data, err := protojson.Marshal(&contracts.MemoryCheckReport{Diagnostics: ProtoDiagnostics(diagnostics), MitigationReplayNotes: ProtoMitigationReplayNotes(notes)})
 	if err != nil {
 		return err
 	}
@@ -46,4 +47,17 @@ func ParseReport(logs string) ([]Diagnostic, error) {
 		return ds, nil
 	}
 	return nil, fmt.Errorf("validator omitted structured memory report")
+}
+
+// ProtoMitigationReplayNotes keeps successful policy notes separate from failures.
+func ProtoMitigationReplayNotes(notes []sdktest.MitigationReplayResult) []*contracts.MitigationReplayNote {
+	result := make([]*contracts.MitigationReplayNote, 0, len(notes))
+	for _, note := range notes {
+		status := contracts.MitigationReplayNote_STATUS_REPLAYED
+		if note.Status == sdktest.MitigationReplaySkippedUnreplayableEffect {
+			status = contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT
+		}
+		result = append(result, &contracts.MitigationReplayNote{ProgramId: note.ProgramID, CaseId: note.CaseID, Status: status, Effects: append([]string(nil), note.Effects...)})
+	}
+	return result
 }

@@ -47,17 +47,33 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 			continue
 		}
 		diagnoser, ok := l.Programs.Diagnoser(run.ProgramID)
-		if !ok || program.RunDiagnose(ctx, diagnoser, view, run.Bindings, l.deadline()).Result != program.NoMatch {
+		if !ok {
+			continue
+		}
+		verdict := program.RunDiagnose(ctx, diagnoser, view, run.Bindings, l.deadline())
+		if verdict.Result != program.NoMatch {
 			continue
 		}
 		preview.Applied = true
 		preview.DryRun = false
 		preview.VerificationCompleted = true
 		preview.VerificationPassed = true
+		completed := time.Now().UTC()
+		applicationID := fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1)
+		planID := applicationID + "-plan"
 		l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{
-			ID: fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1), ProgramIDs: []string{run.ProgramID},
-			Result: preview, CompletedAt: time.Now().UTC(),
+			ID: applicationID, ProgramIDs: []string{run.ProgramID}, Result: preview, CompletedAt: completed,
 		})
+		verified := ProgramRun{ProgramID: run.ProgramID, ProgramRevision: run.ProgramRevision, Bindings: cloneProgramBindings(run.Bindings), Verdict: verdict}
+		l.runs = append(l.runs, verified)
+		// These controller receipts describe equivalence verification, not a live
+		// program apply. They preserve the same bound trust evidence as an apply.
+		planRequest, _ := json.Marshal(ToolRequest{Command: "plan", ProgramID: run.ProgramID, Bindings: run.Bindings})
+		planResponse, _ := json.Marshal(ToolResponse{Command: "plan", PlanID: planID})
+		applyRequest, _ := json.Marshal(ToolRequest{Command: "apply", PlanIDs: []string{planID}})
+		applyResponse, _ := json.Marshal(ToolResponse{Command: "apply", ApplicationID: applicationID, ProgramRuns: []ProgramRun{verified}})
+		summary := "controller-verified equivalent responder repair; no program mutation"
+		l.calls = append(l.calls, ToolCall{Command: "plan", At: completed, RequestJSON: string(planRequest), ResponseJSON: string(planResponse), Summary: summary}, ToolCall{Command: "apply", At: completed, RequestJSON: string(applyRequest), ResponseJSON: string(applyResponse), Summary: summary})
 		seen[run.ProgramID] = true
 	}
 }
@@ -79,10 +95,9 @@ func equivalentPlanResources(preview PlanApplicationResult, repairs []RepairActi
 			return false
 		}
 		for _, ref := range receipt.Resources {
-			if !planned[ref] {
-				return false
+			if planned[ref] {
+				touched[ref] = true
 			}
-			touched[ref] = true
 		}
 	}
 	return reflect.DeepEqual(planned, touched)

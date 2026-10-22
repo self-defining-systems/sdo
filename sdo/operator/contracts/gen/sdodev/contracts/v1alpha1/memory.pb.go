@@ -26,6 +26,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type MitigationReplayNote_Status int32
+
+const (
+	MitigationReplayNote_STATUS_UNSPECIFIED                 MitigationReplayNote_Status = 0
+	MitigationReplayNote_STATUS_REPLAYED                    MitigationReplayNote_Status = 1
+	MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT MitigationReplayNote_Status = 2
+)
+
+// Enum value maps for MitigationReplayNote_Status.
+var (
+	MitigationReplayNote_Status_name = map[int32]string{
+		0: "STATUS_UNSPECIFIED",
+		1: "STATUS_REPLAYED",
+		2: "STATUS_SKIPPED_UNREPLAYABLE_EFFECT",
+	}
+	MitigationReplayNote_Status_value = map[string]int32{
+		"STATUS_UNSPECIFIED":                 0,
+		"STATUS_REPLAYED":                    1,
+		"STATUS_SKIPPED_UNREPLAYABLE_EFFECT": 2,
+	}
+)
+
+func (x MitigationReplayNote_Status) Enum() *MitigationReplayNote_Status {
+	p := new(MitigationReplayNote_Status)
+	*p = x
+	return p
+}
+
+func (x MitigationReplayNote_Status) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (MitigationReplayNote_Status) Descriptor() protoreflect.EnumDescriptor {
+	return file_sdodev_contracts_v1alpha1_memory_proto_enumTypes[0].Descriptor()
+}
+
+func (MitigationReplayNote_Status) Type() protoreflect.EnumType {
+	return &file_sdodev_contracts_v1alpha1_memory_proto_enumTypes[0]
+}
+
+func (x MitigationReplayNote_Status) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use MitigationReplayNote_Status.Descriptor instead.
+func (MitigationReplayNote_Status) EnumDescriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{1, 0}
+}
+
 // One validation finding. `rule` is a stable rule ID; `path` is repository
 // relative; `line` is zero when the finding is not tied to a line.
 type MemoryDiagnostic struct {
@@ -104,21 +153,91 @@ func (x *MemoryDiagnostic) GetHint() string {
 	return ""
 }
 
-// Result of `memory check`.
-type MemoryCheckReport struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Diagnostics   []*MemoryDiagnostic    `protobuf:"bytes,1,rep,name=diagnostics,proto3" json:"diagnostics,omitempty"`
-	Root          string                 `protobuf:"bytes,2,opt,name=root,proto3" json:"root,omitempty"`
-	Actor         string                 `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`
-	Phase         string                 `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
-	Base          string                 `protobuf:"bytes,5,opt,name=base,proto3" json:"base,omitempty"`
+// Informational mitigation policy result, never a trust credit.
+type MitigationReplayNote struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	ProgramId     string                      `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	CaseId        string                      `protobuf:"bytes,2,opt,name=case_id,json=caseId,proto3" json:"case_id,omitempty"`
+	Status        MitigationReplayNote_Status `protobuf:"varint,3,opt,name=status,proto3,enum=sdodev.contracts.v1alpha1.MitigationReplayNote_Status" json:"status,omitempty"`
+	Effects       []string                    `protobuf:"bytes,4,rep,name=effects,proto3" json:"effects,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *MitigationReplayNote) Reset() {
+	*x = MitigationReplayNote{}
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MitigationReplayNote) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MitigationReplayNote) ProtoMessage() {}
+
+func (x *MitigationReplayNote) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MitigationReplayNote.ProtoReflect.Descriptor instead.
+func (*MitigationReplayNote) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *MitigationReplayNote) GetProgramId() string {
+	if x != nil {
+		return x.ProgramId
+	}
+	return ""
+}
+
+func (x *MitigationReplayNote) GetCaseId() string {
+	if x != nil {
+		return x.CaseId
+	}
+	return ""
+}
+
+func (x *MitigationReplayNote) GetStatus() MitigationReplayNote_Status {
+	if x != nil {
+		return x.Status
+	}
+	return MitigationReplayNote_STATUS_UNSPECIFIED
+}
+
+func (x *MitigationReplayNote) GetEffects() []string {
+	if x != nil {
+		return x.Effects
+	}
+	return nil
+}
+
+// Result of `memory check`.
+type MemoryCheckReport struct {
+	state                 protoimpl.MessageState  `protogen:"open.v1"`
+	Diagnostics           []*MemoryDiagnostic     `protobuf:"bytes,1,rep,name=diagnostics,proto3" json:"diagnostics,omitempty"`
+	Root                  string                  `protobuf:"bytes,2,opt,name=root,proto3" json:"root,omitempty"`
+	Actor                 string                  `protobuf:"bytes,3,opt,name=actor,proto3" json:"actor,omitempty"`
+	Phase                 string                  `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
+	Base                  string                  `protobuf:"bytes,5,opt,name=base,proto3" json:"base,omitempty"`
+	MitigationReplayNotes []*MitigationReplayNote `protobuf:"bytes,6,rep,name=mitigation_replay_notes,json=mitigationReplayNotes,proto3" json:"mitigation_replay_notes,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
 func (x *MemoryCheckReport) Reset() {
 	*x = MemoryCheckReport{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[1]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -130,7 +249,7 @@ func (x *MemoryCheckReport) String() string {
 func (*MemoryCheckReport) ProtoMessage() {}
 
 func (x *MemoryCheckReport) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[1]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -143,7 +262,7 @@ func (x *MemoryCheckReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryCheckReport.ProtoReflect.Descriptor instead.
 func (*MemoryCheckReport) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{1}
+	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *MemoryCheckReport) GetDiagnostics() []*MemoryDiagnostic {
@@ -181,6 +300,13 @@ func (x *MemoryCheckReport) GetBase() string {
 	return ""
 }
 
+func (x *MemoryCheckReport) GetMitigationReplayNotes() []*MitigationReplayNote {
+	if x != nil {
+		return x.MitigationReplayNotes
+	}
+	return nil
+}
+
 // One artifact of operational memory, identified by its logical ID.
 type MemoryArtifact struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -195,7 +321,7 @@ type MemoryArtifact struct {
 
 func (x *MemoryArtifact) Reset() {
 	*x = MemoryArtifact{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[2]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -207,7 +333,7 @@ func (x *MemoryArtifact) String() string {
 func (*MemoryArtifact) ProtoMessage() {}
 
 func (x *MemoryArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[2]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -220,7 +346,7 @@ func (x *MemoryArtifact) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryArtifact.ProtoReflect.Descriptor instead.
 func (*MemoryArtifact) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{2}
+	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *MemoryArtifact) GetKind() string {
@@ -261,7 +387,7 @@ type MemoryListing struct {
 
 func (x *MemoryListing) Reset() {
 	*x = MemoryListing{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[3]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -273,7 +399,7 @@ func (x *MemoryListing) String() string {
 func (*MemoryListing) ProtoMessage() {}
 
 func (x *MemoryListing) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[3]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -286,7 +412,7 @@ func (x *MemoryListing) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryListing.ProtoReflect.Descriptor instead.
 func (*MemoryListing) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{3}
+	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *MemoryListing) GetArtifacts() []*MemoryArtifact {
@@ -306,7 +432,7 @@ type MemoryOutcomes struct {
 
 func (x *MemoryOutcomes) Reset() {
 	*x = MemoryOutcomes{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -318,7 +444,7 @@ func (x *MemoryOutcomes) String() string {
 func (*MemoryOutcomes) ProtoMessage() {}
 
 func (x *MemoryOutcomes) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[4]
+	mi := &file_sdodev_contracts_v1alpha1_memory_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -331,7 +457,7 @@ func (x *MemoryOutcomes) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryOutcomes.ProtoReflect.Descriptor instead.
 func (*MemoryOutcomes) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{4}
+	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *MemoryOutcomes) GetOutcomes() []*OutcomeRecord {
@@ -351,13 +477,24 @@ const file_sdodev_contracts_v1alpha1_memory_proto_rawDesc = "" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x1b\n" +
 	"\x04line\x18\x03 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x04line\x12!\n" +
 	"\amessage\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\amessage\x12\x12\n" +
-	"\x04hint\x18\x05 \x01(\tR\x04hint\"\xb6\x01\n" +
+	"\x04hint\x18\x05 \x01(\tR\x04hint\"\x97\x02\n" +
+	"\x14MitigationReplayNote\x12\x1d\n" +
+	"\n" +
+	"program_id\x18\x01 \x01(\tR\tprogramId\x12\x17\n" +
+	"\acase_id\x18\x02 \x01(\tR\x06caseId\x12N\n" +
+	"\x06status\x18\x03 \x01(\x0e26.sdodev.contracts.v1alpha1.MitigationReplayNote.StatusR\x06status\x12\x18\n" +
+	"\aeffects\x18\x04 \x03(\tR\aeffects\"]\n" +
+	"\x06Status\x12\x16\n" +
+	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fSTATUS_REPLAYED\x10\x01\x12&\n" +
+	"\"STATUS_SKIPPED_UNREPLAYABLE_EFFECT\x10\x02\"\x9f\x02\n" +
 	"\x11MemoryCheckReport\x12M\n" +
 	"\vdiagnostics\x18\x01 \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\vdiagnostics\x12\x12\n" +
 	"\x04root\x18\x02 \x01(\tR\x04root\x12\x14\n" +
 	"\x05actor\x18\x03 \x01(\tR\x05actor\x12\x14\n" +
 	"\x05phase\x18\x04 \x01(\tR\x05phase\x12\x12\n" +
-	"\x04base\x18\x05 \x01(\tR\x04base\"\x81\x01\n" +
+	"\x04base\x18\x05 \x01(\tR\x04base\x12g\n" +
+	"\x17mitigation_replay_notes\x18\x06 \x03(\v2/.sdodev.contracts.v1alpha1.MitigationReplayNoteR\x15mitigationReplayNotes\"\x81\x01\n" +
 	"\x0eMemoryArtifact\x12\x1b\n" +
 	"\x04kind\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1b\n" +
@@ -381,24 +518,29 @@ func file_sdodev_contracts_v1alpha1_memory_proto_rawDescGZIP() []byte {
 	return file_sdodev_contracts_v1alpha1_memory_proto_rawDescData
 }
 
-var file_sdodev_contracts_v1alpha1_memory_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_sdodev_contracts_v1alpha1_memory_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_sdodev_contracts_v1alpha1_memory_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_sdodev_contracts_v1alpha1_memory_proto_goTypes = []any{
-	(*MemoryDiagnostic)(nil),  // 0: sdodev.contracts.v1alpha1.MemoryDiagnostic
-	(*MemoryCheckReport)(nil), // 1: sdodev.contracts.v1alpha1.MemoryCheckReport
-	(*MemoryArtifact)(nil),    // 2: sdodev.contracts.v1alpha1.MemoryArtifact
-	(*MemoryListing)(nil),     // 3: sdodev.contracts.v1alpha1.MemoryListing
-	(*MemoryOutcomes)(nil),    // 4: sdodev.contracts.v1alpha1.MemoryOutcomes
-	(*OutcomeRecord)(nil),     // 5: sdodev.contracts.v1alpha1.OutcomeRecord
+	(MitigationReplayNote_Status)(0), // 0: sdodev.contracts.v1alpha1.MitigationReplayNote.Status
+	(*MemoryDiagnostic)(nil),         // 1: sdodev.contracts.v1alpha1.MemoryDiagnostic
+	(*MitigationReplayNote)(nil),     // 2: sdodev.contracts.v1alpha1.MitigationReplayNote
+	(*MemoryCheckReport)(nil),        // 3: sdodev.contracts.v1alpha1.MemoryCheckReport
+	(*MemoryArtifact)(nil),           // 4: sdodev.contracts.v1alpha1.MemoryArtifact
+	(*MemoryListing)(nil),            // 5: sdodev.contracts.v1alpha1.MemoryListing
+	(*MemoryOutcomes)(nil),           // 6: sdodev.contracts.v1alpha1.MemoryOutcomes
+	(*OutcomeRecord)(nil),            // 7: sdodev.contracts.v1alpha1.OutcomeRecord
 }
 var file_sdodev_contracts_v1alpha1_memory_proto_depIdxs = []int32{
-	0, // 0: sdodev.contracts.v1alpha1.MemoryCheckReport.diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
-	2, // 1: sdodev.contracts.v1alpha1.MemoryListing.artifacts:type_name -> sdodev.contracts.v1alpha1.MemoryArtifact
-	5, // 2: sdodev.contracts.v1alpha1.MemoryOutcomes.outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0, // 0: sdodev.contracts.v1alpha1.MitigationReplayNote.status:type_name -> sdodev.contracts.v1alpha1.MitigationReplayNote.Status
+	1, // 1: sdodev.contracts.v1alpha1.MemoryCheckReport.diagnostics:type_name -> sdodev.contracts.v1alpha1.MemoryDiagnostic
+	2, // 2: sdodev.contracts.v1alpha1.MemoryCheckReport.mitigation_replay_notes:type_name -> sdodev.contracts.v1alpha1.MitigationReplayNote
+	4, // 3: sdodev.contracts.v1alpha1.MemoryListing.artifacts:type_name -> sdodev.contracts.v1alpha1.MemoryArtifact
+	7, // 4: sdodev.contracts.v1alpha1.MemoryOutcomes.outcomes:type_name -> sdodev.contracts.v1alpha1.OutcomeRecord
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_memory_proto_init() }
@@ -412,13 +554,14 @@ func file_sdodev_contracts_v1alpha1_memory_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_memory_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_memory_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   5,
+			NumEnums:      1,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_sdodev_contracts_v1alpha1_memory_proto_goTypes,
 		DependencyIndexes: file_sdodev_contracts_v1alpha1_memory_proto_depIdxs,
+		EnumInfos:         file_sdodev_contracts_v1alpha1_memory_proto_enumTypes,
 		MessageInfos:      file_sdodev_contracts_v1alpha1_memory_proto_msgTypes,
 	}.Build()
 	File_sdodev_contracts_v1alpha1_memory_proto = out.File

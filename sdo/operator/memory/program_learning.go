@@ -14,7 +14,9 @@ import (
 )
 
 // ProgramLearningEvidence links a newly introduced program to the captured
-// incident whose repair and mitigation replay the broker independently validated.
+// incident whose diagnosis corpus the broker independently validated. The trust
+// projection additionally requires successful mitigation replay for origin credit;
+// an external effect with skipped replay can earn only live repair credits.
 // It is derived from immutable accepted Git objects, never worker claims or a
 // mutable checkout. It does not claim the program performed the original repair.
 type ProgramLearningEvidence struct {

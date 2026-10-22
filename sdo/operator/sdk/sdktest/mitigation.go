@@ -11,16 +11,60 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// CheckMitigationRepairs proves effects on the faulted snapshot itself. It
-// neither copies the recorded repaired state nor assumes external effects.
-func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCase) error {
+type MitigationReplayStatus string
+
+const (
+	MitigationReplayPassed                    MitigationReplayStatus = "replayed"
+	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
+)
+
+// MitigationReplayResult is informational. A skipped effect proves no repair
+// and must never substitute for independently verified live trust credits.
+type MitigationReplayResult struct {
+	ProgramID string                 `json:"program_id"`
+	CaseID    string                 `json:"case_id,omitempty"`
+	Status    MitigationReplayStatus `json:"mitigation_replay"`
+	Effects   []string               `json:"effects,omitempty"`
+}
+
+// CheckMitigation validates every plan. SetField-only plans must repair the
+// faulted fixture; plans with external effects return an explicit skipped note.
+// Diagnosis corpus replay remains a separate mandatory gate.
+func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error) {
+	result := MitigationReplayResult{ProgramID: p.Spec().ID}
 	plan, err := m.Mitigate(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
 	if err != nil {
-		return fmt.Errorf("program.mitigation-unreplayable: Mitigate: %w", err)
+		return result, fmt.Errorf("program.mitigation-unreplayable: Mitigate: %w", err)
 	}
 	if err := plan.Validate(); err != nil {
-		return fmt.Errorf("program.mitigation-unreplayable: invalid plan: %w", err)
+		return result, fmt.Errorf("program.mitigation-unreplayable: invalid plan: %w", err)
 	}
+	for _, action := range plan.Actions {
+		switch action.(type) {
+		case program.SetField, *program.SetField:
+		default:
+			result.Effects = append(result.Effects, fmt.Sprintf("%T", action))
+		}
+	}
+	if len(result.Effects) > 0 {
+		result.Status = MitigationReplaySkippedUnreplayableEffect
+		return result, nil
+	}
+	if err := checkMitigationPlanRepairs(p, c, plan); err != nil {
+		return result, err
+	}
+	result.Status = MitigationReplayPassed
+	return result, nil
+}
+
+// CheckMitigationRepairs preserves the error-only policy entry point. Call
+// CheckMitigation when the typed replay status is needed on a validation report.
+func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCase) error {
+	_, err := CheckMitigation(p, m, c)
+	return err
+}
+
+func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.Plan) error {
 	raw, err := json.Marshal(c.Open)
 	if err != nil {
 		return err

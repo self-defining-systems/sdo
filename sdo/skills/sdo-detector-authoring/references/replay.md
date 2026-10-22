@@ -16,8 +16,9 @@ FUNCTIONS
 
 func CheckGeneralization(t testing.TB, p program.Diagnoser, c CorpusCase, peer program.Bindings)
 func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCase) error
-    CheckMitigationRepairs proves effects on the faulted snapshot itself.
-    It neither copies the recorded repaired state nor assumes external effects.
+    CheckMitigationRepairs preserves the error-only policy entry point.
+    Call CheckMitigation when the typed replay status is needed on a validation
+    report.
 
 func CheckMitigatorGeneralization(t testing.TB, p program.Mitigator, c CorpusCase)
 func CheckNoMatchCase(t testing.TB, p program.Diagnoser, c CorpusCase)
@@ -85,6 +86,26 @@ type CorpusProvenance struct {
 	FixedSHA256 string `json:"fixed_sha256"`
 }
 
+type MitigationReplayResult struct {
+	ProgramID string                 `json:"program_id"`
+	CaseID    string                 `json:"case_id,omitempty"`
+	Status    MitigationReplayStatus `json:"mitigation_replay"`
+	Effects   []string               `json:"effects,omitempty"`
+}
+    MitigationReplayResult is informational. A skipped effect proves no repair
+    and must never substitute for independently verified live trust credits.
+
+func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error)
+    CheckMitigation validates every plan. SetField-only plans must repair the
+    faulted fixture; plans with external effects return an explicit skipped
+    note. Diagnosis corpus replay remains a separate mandatory gate.
+
+type MitigationReplayStatus string
+
+const (
+	MitigationReplayPassed                    MitigationReplayStatus = "replayed"
+	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
+)
 type PrimitiveCall struct {
 	// Phase separates observations made before and after repair. Empty means open.
 	Phase     string          `json:"phase,omitempty"`
