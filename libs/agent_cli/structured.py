@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -235,6 +236,8 @@ def run_structured_turn(
                 event_handler=recorder,
                 check_timeout=_CLI_CHECK_TIMEOUT_S,
             )
+            if provider == "claude" and mcp_servers:
+                _exclude_claude_mcp_config(workspace)
             session = agent.start_session(cwd=str(workspace), timeout=timeout_seconds)
             if resume_session_id is not None and not session.adopt(resume_session_id):
                 raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
@@ -296,6 +299,27 @@ def run_structured_turn(
     )
     _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
     return turn
+
+
+def _exclude_claude_mcp_config(workspace: Path) -> None:
+    """Keep the ``.mcp.json`` Claude gets for the turn out of commits the agent makes in the checkout.
+
+    A responder may commit source during its turn, and the broker stages the checkout with ``add --all``.
+    """
+
+    probe = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/exclude"], cwd=workspace, capture_output=True, text=True, check=False
+    )
+    if probe.returncode != 0:
+        return
+    exclude = workspace / probe.stdout.strip()
+    entry = "/.mcp.json"
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if entry in existing.split():
+        return
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    exclude.write_text(f"{existing}{separator}{entry}\n", encoding="utf-8")
 
 
 def _append_turn_usage(

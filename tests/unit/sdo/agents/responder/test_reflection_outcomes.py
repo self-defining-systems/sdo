@@ -298,6 +298,7 @@ def test_current_outcome_keeps_match_runs_and_summarizes_the_rest_per_program_re
             "no_match": 4,
             "unknown": 1,
             "unknown_reasons": ["read unavailable"],
+            "unknown_bindings": ["Deployment/search"],
         },
         {
             "program_id": "image-pull",
@@ -305,6 +306,7 @@ def test_current_outcome_keeps_match_runs_and_summarizes_the_rest_per_program_re
             "no_match": 0,
             "unknown": 2,
             "unknown_reasons": ["read unavailable", "forbidden"],
+            "unknown_bindings": ["Deployment/search"],
         },
     ]
     assert view["repair_actions"]
@@ -370,3 +372,23 @@ def test_program_run_summary_caps_reasons_and_programs() -> None:
     assert summary[0]["unknown"] == 5
     assert summary[-1] == {"programs_omitted": 3}
     assert len(summary) == 31
+
+
+def test_program_run_summary_names_unknown_bindings_when_runs_give_no_reason() -> None:
+    def unknown(program: str, name: str) -> dict[str, object]:
+        binding = {"name": "deployment", "object": {"api_version": "apps/v1", "kind": "Deployment", "name": name}}
+        return {
+            "program_id": program,
+            "program_revision": "r",
+            "verdict": {"result": "RESULT_UNKNOWN"},
+            "bindings": [binding],
+        }
+
+    runs = [unknown("p0", f"svc{index}") for index in range(8)] + [unknown("p0", "svc1")]
+    runs.append({**unknown("p1", "x"), "verdict": {"result": "RESULT_NO_MATCH"}})
+
+    _, summary = split_quiet_program_runs(runs)
+
+    assert "unknown_reasons" not in summary[0]
+    assert summary[0]["unknown_bindings"] == [f"Deployment/svc{index}" for index in range(5)]
+    assert "unknown_bindings" not in summary[1]

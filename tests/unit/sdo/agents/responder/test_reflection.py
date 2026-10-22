@@ -189,6 +189,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
     assert "Edit the final files directly" in prompt
+    assert "in the `reflection` field and leave `incident_result` null" in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt
 

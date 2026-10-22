@@ -10,11 +10,23 @@ from agentshim import SessionResumeError
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_structured_turn, turn_usage
+from libs.agent_cli.structured import (
+    AgentProvider,
+    StructuredTurn,
+    StructuredTurnError,
+    run_structured_turn,
+    turn_usage,
+)
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
-from sdo.agents.responder.session_turn import session_turn_options, unwrap_branch
+from sdo.agents.responder.session_turn import (
+    WrongBranchError,
+    branch_correction,
+    branch_instruction,
+    session_turn_options,
+    unwrap_branch,
+)
 from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -196,7 +208,8 @@ def _logical_learning_request(
         "are already set; do not override them. The Go broker repeats the same check independently. "
         "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
         "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
-        "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content.\n\n"
+        "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content. "
+        f"{branch_instruction('reflection')}\n\n"
         "for each confirmed fault, compile or refine a program, reuse an accepted program and explain why, "
         "or report a typed sdk_gap with the missing primitive, reason, and scratch script that proved the check. "
         "Record each reused program ID in summary. A program directory contains diagnose.go, optional mitigate.go, "
@@ -404,10 +417,22 @@ class CodexSessionBackend:
         idempotency_key: str,
         session_id: str | None,
     ) -> ReflectionTurn:
+        turn = self._run(
+            worktree=worktree, prompt=f"Idempotency key: {idempotency_key}\n\n{prompt}", session_id=session_id
+        )
         try:
-            turn = run_structured_turn(
+            payload = unwrap_branch(turn.output_json, "reflection")
+        except WrongBranchError:
+            # One resumed turn moves the answer to the right branch; a second miss is the caller's error.
+            turn = self._run(worktree=worktree, prompt=branch_correction("reflection"), session_id=turn.session_id)
+            payload = unwrap_branch(turn.output_json, "reflection")
+        return ReflectionTurn.model_validate(payload).with_usage(turn_usage(turn))
+
+    def _run(self, *, worktree: Path, prompt: str, session_id: str | None) -> StructuredTurn:
+        try:
+            return run_structured_turn(
                 self.provider,
-                f"Idempotency key: {idempotency_key}\n\n{prompt}",
+                prompt,
                 cwd=worktree,
                 access="danger-full-access",
                 model=self.model,
@@ -433,7 +458,6 @@ class CodexSessionBackend:
                     f"{self.provider} cannot resume session {session_id!r}: {exc}"
                 ) from exc
             raise RuntimeError(f"{self.provider} reflection failed: {exc}") from exc
-        return ReflectionTurn.model_validate(unwrap_branch(turn.output_json, "reflection")).with_usage(turn_usage(turn))
 
 
 class ClaudeSessionBackend(CodexSessionBackend):

@@ -14,7 +14,13 @@ from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
-from sdo.agents.responder.session_turn import session_turn_options, unwrap_branch
+from sdo.agents.responder.session_turn import (
+    WrongBranchError,
+    branch_correction,
+    branch_instruction,
+    session_turn_options,
+    unwrap_branch,
+)
 from sdo.agents.responder.tools_cli import CLI_EXAMPLES
 from sdo.contracts import (
     ROOT_CAUSE_EVIDENCE_KINDS,
@@ -64,6 +70,7 @@ def execute_incident(
         raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
     prompt = _responder_prompt(request)
     resume_session_id: str | None = None
+    corrected_evidence = corrected_branch = False
     while True:
         try:
             completed = run_structured_turn(
@@ -85,11 +92,18 @@ def execute_incident(
             )
             break
         except EvidenceReferenceError as exc:
-            if resume_session_id is not None:
+            if corrected_evidence:
                 raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
             # One resumed turn lets the agent split a compound reference instead of losing the diagnosis.
+            corrected_evidence = True
             resume_session_id = completed.session_id
             prompt = _evidence_reference_feedback(str(exc))
+        except WrongBranchError as exc:
+            if corrected_branch:
+                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+            corrected_branch = True
+            resume_session_id = completed.session_id
+            prompt = branch_correction("incident_result")
         except (OSError, ValueError) as exc:
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
     if not result.HasField("responder_session_id"):
@@ -809,7 +823,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Use plain commands for one-off lookups. Keep interpretation and decisions in natural language. "
         "Never put scratch scripts in operational memory. "
         f"{memory_guard}Return only the IncidentResult JSON "
-        "required by the output schema.\n\n"
+        f"required by the output schema. {branch_instruction('incident_result')}\n\n"
         f"Repair evidence mode: {request.repair_policy}. For every live mutation, return a repair action receipt "
         "with its target, the Kubernetes objects it mutated (`resources`), timing, result, and reversibility. SDO "
         "confirms a root cause only when a successful action that started before health cleared mutated that "

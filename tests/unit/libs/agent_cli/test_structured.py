@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from agentshim import TokenUsage
+from agentshim import StdioMcpServer, TokenUsage
 from agentshim.providers.codex import BYPASS_FLAG, RULES_FILENAME, CodexSandboxConfig, parse_rules, parse_sandbox
 from agentshim.testing import FakeRun, scripted_turn
 
@@ -740,3 +740,48 @@ def test_usage_log_records_the_shell_commands_each_turn_ran(tmp_path: Path, monk
     assert lines[0] == "kubectl get pods"
     assert lines[1].startswith("echo xxx")
     assert len(lines[1]) < 3_000
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+
+def test_a_claude_turn_keeps_its_mcp_config_out_of_commits_made_during_the_turn(tmp_path: Path) -> None:
+    """Claude writes ``<cwd>/.mcp.json`` for the turn; a responder commit must not capture it."""
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    _git(checkout, "init", "-q")
+    _git(checkout, "config", "user.email", "t@example.com")
+    _git(checkout, "config", "user.name", "t")
+    (checkout / "base.txt").write_text("base\n", encoding="utf-8")
+    committed: list[str] = []
+
+    def respond(_request: CommandRequest) -> FakeRun:
+        assert (checkout / ".mcp.json").exists()
+        (checkout / "fix.txt").write_text("fix\n", encoding="utf-8")
+        _git(checkout, "add", "--all")
+        _git(checkout, "commit", "-q", "-m", "fix")
+        committed.extend(_git(checkout, "show", "--name-only", "--format=", "HEAD").split())
+        return reply("claude", {"answer": "ok"}, session_id="s-1")
+
+    run_structured_turn(
+        "claude",
+        "prompt",
+        output_schema=_SCHEMA,
+        cwd=checkout,
+        access="danger-full-access",
+        executor=ScriptedAgent(respond).executor,
+        mcp_servers=[StdioMcpServer(name="probe", command="probe")],
+    )
+
+    assert sorted(committed) == ["base.txt", "fix.txt"]
+    exclude = _git(checkout, "rev-parse", "--git-path", "info/exclude").strip()
+    assert (checkout / exclude).read_text(encoding="utf-8").split().count("/.mcp.json") == 1
+
+
+def test_a_claude_turn_outside_a_git_checkout_still_runs(tmp_path: Path) -> None:
+    turn, _ = _run(
+        "claude", tmp_path, access="danger-full-access", mcp_servers=[StdioMcpServer(name="probe", command="probe")]
+    )
+
+    assert json.loads(turn.output_json) == {"answer": "ok"}

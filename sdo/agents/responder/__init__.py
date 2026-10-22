@@ -34,7 +34,7 @@ from sdo.agents.responder.reflection import (
 )
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
 from sdo.agents.responder.reflection_worker import run_reflection_task
-from sdo.agents.responder.session_turn import session_output_schema, unwrap_branch
+from sdo.agents.responder.session_turn import WrongBranchError, session_output_schema, unwrap_branch
 from sdo.agents.responder.worker import run_worker_task
 
 __all__ = [
@@ -71,6 +71,7 @@ __all__ = [
     "run_reflection_task",
     "run_worker_task",
     "session_output_schema",
+    "WrongBranchError",
     "unwrap_branch",
     "write_application_kubeconfig",
 ]

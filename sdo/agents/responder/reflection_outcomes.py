@@ -131,20 +131,22 @@ _QUIET_RESULTS = {"RESULT_NO_MATCH": "no_match", "RESULT_UNKNOWN": "unknown"}
 _SUMMARY_MAX_PROGRAMS = 30
 _SUMMARY_MAX_REASONS = 3
 _SUMMARY_REASON_MAX_CHARS = 160
+_SUMMARY_MAX_BINDINGS = 5
 
 
 def split_quiet_program_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Keep runs with a signal; reduce NO_MATCH and UNKNOWN runs to one summary per program revision.
 
     ``runs`` are collapsed runs, each weighted by its ``evaluations`` count. The
-    summary names the program, its revision, the evaluation count per status and
-    the distinct reasons its UNKNOWN runs gave, so a reflection still sees which
-    programs ran and why some could not decide.
+    summary names the program, its revision, the evaluation count per status, the
+    distinct reasons its UNKNOWN runs gave and the objects (up to five) they were
+    bound to, so a reflection still sees which programs ran and why some could not decide.
     """
 
     kept: list[dict[str, Any]] = []
     summaries: dict[tuple[str, str], dict[str, Any]] = {}
     reasons: dict[tuple[str, str], list[str]] = {}
+    bindings: dict[tuple[str, str], list[str]] = {}
     for run in runs:
         status = _QUIET_RESULTS.get(run["verdict"]["result"])
         if status is None:
@@ -157,6 +159,12 @@ def split_quiet_program_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str,
         summary[status] += run.get("evaluations", 1)
         if status == "unknown" and run.get("error") and run["error"] not in reasons.setdefault(key, []):
             reasons[key].append(run["error"])
+        if status == "unknown":
+            names = bindings.setdefault(key, [])
+            for binding in run.get("bindings", []):
+                name = _binding_name(binding)
+                if name and name not in names and len(names) < _SUMMARY_MAX_BINDINGS:
+                    names.append(name)
     ordered = list(summaries.items())
     result = []
     for key, summary in ordered[:_SUMMARY_MAX_PROGRAMS]:
@@ -165,10 +173,19 @@ def split_quiet_program_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str,
             summary["unknown_reasons"] = [text[:_SUMMARY_REASON_MAX_CHARS] for text in distinct[:_SUMMARY_MAX_REASONS]]
             if len(distinct) > _SUMMARY_MAX_REASONS:
                 summary["unknown_reasons_omitted"] = len(distinct) - _SUMMARY_MAX_REASONS
+        if bindings.get(key):
+            summary["unknown_bindings"] = bindings[key]
         result.append(summary)
     if len(ordered) > _SUMMARY_MAX_PROGRAMS:
         result.append({"programs_omitted": len(ordered) - _SUMMARY_MAX_PROGRAMS})
     return kept, result
+
+
+def _binding_name(binding: dict[str, Any]) -> str:
+    """The bound object as ``Kind/name``; real UNKNOWN runs carry no error text, so this says where they ran."""
+
+    target = binding.get("object", {})
+    return f"{target['kind']}/{target['name']}" if target.get("kind") and target.get("name") else ""
 
 
 def _corpus_refs(value: Any) -> list[str]:

@@ -32,6 +32,29 @@ _BRANCH_DESCRIPTIONS: dict[TurnBranch, str] = {
 }
 
 
+class WrongBranchError(ValueError):
+    """The turn answered in the other branch of the wrapper, or left its own branch null."""
+
+
+def other_branch(branch: TurnBranch) -> TurnBranch:
+    return "reflection" if branch == "incident_result" else "incident_result"
+
+
+def branch_instruction(branch: TurnBranch) -> str:
+    """One line for a prompt's output instructions."""
+
+    return f"Answer in the `{branch}` field and leave `{other_branch(branch)}` null."
+
+
+def branch_correction(branch: TurnBranch) -> str:
+    """The resumed turn that asks for the same answer in the right branch."""
+
+    return (
+        f"Your answer was not in the `{branch}` field of the output object. "
+        f"Resubmit the same answer in `{branch}` and set `{other_branch(branch)}` to null. Change nothing else."
+    )
+
+
 def session_output_schema() -> dict[str, object]:
     """One strict root object whose nullable branches carry each turn's own result schema."""
 
@@ -88,7 +111,8 @@ def unwrap_branch(output_json: str, branch: TurnBranch) -> dict[str, Any]:
     """The caller's own branch of a turn's output.
 
     Raises:
-        ValueError: The output is not the wrapper, or the caller's branch is null.
+        WrongBranchError: The caller's branch is null or missing.
+        ValueError: The output is not the wrapper object.
     """
 
     document = json.loads(output_json)
@@ -98,5 +122,5 @@ def unwrap_branch(output_json: str, branch: TurnBranch) -> dict[str, Any]:
     if not isinstance(payload, dict):
         other = [name for name, value in document.items() if name != branch and value is not None]
         detail = f"; it filled {', '.join(other)} instead" if other else ""
-        raise ValueError(f"turn output has no {branch} object{detail}")
+        raise WrongBranchError(f"turn output has no {branch} object{detail}")
     return payload
