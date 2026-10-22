@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -175,51 +174,6 @@ func TestProxyRecordingFailureStillForwards(t *testing.T) {
 	b, _ := io.ReadAll(res.Body)
 	if string(b) != "unchanged" || res.StatusCode != 200 {
 		t.Fatalf("recording changed response: %s", b)
-	}
-}
-
-func TestProxyWarmAddedP95(t *testing.T) {
-	payload := `{"apiVersion":"v1","kind":"ConfigMap","metadata":{"namespace":"app","name":"settings","resourceVersion":"17"},"data":{"mode":"live"}}`
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, payload) }))
-	defer upstream.Close()
-	dir := t.TempDir()
-	store, err := apihistory.Open(dir, "latency", apihistory.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	u, _ := url.Parse(upstream.URL)
-	proxy := httptest.NewServer(New(u, http.DefaultTransport, http.DefaultTransport, store))
-	defer proxy.Close()
-	get := func(endpoint string) time.Duration {
-		start := time.Now()
-		res, err := http.Get(endpoint + "/api/v1/namespaces/app/configmaps/settings")
-		if err != nil {
-			t.Fatal(err)
-		}
-		io.Copy(io.Discard, res.Body)
-		res.Body.Close()
-		return time.Since(start)
-	}
-	for range 50 {
-		get(upstream.URL)
-		get(proxy.URL)
-	}
-	direct := make([]time.Duration, 500)
-	added := make([]time.Duration, 500)
-	for i := range direct {
-		direct[i] = get(upstream.URL)
-		added[i] = get(proxy.URL) - direct[i]
-	}
-	sort.Slice(direct, func(i, j int) bool { return direct[i] < direct[j] })
-	sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
-	store.Close()
-	history, _ := apihistory.Read(dir)
-	t.Logf("history envelopes=%d dropped=%d at unpaced loopback saturation", len(history.Events), history.Manifest.Dropped)
-	p95 := added[474]
-	t.Logf("500 alternating warm GETs: direct p95=%s added p95=%s target=10ms", direct[474], p95)
-	if p95 > 10*time.Millisecond {
-		t.Fatalf("added warm p95 %s exceeds 10ms", p95)
 	}
 }
 

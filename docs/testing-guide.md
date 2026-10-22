@@ -310,3 +310,10 @@ run `go test -run '^$' -fuzz '^FuzzLegacyOutcomeStream$' -fuzztime=180s` (cap 5
 minutes) in `sdo/operator/memory` to explore further. The Go and Python object-ref
 parsers share `tests/fixtures/sdo/contracts/object_ref_grammar.json`, and Hypothesis
 covers `sdo act` receipt recording in `test_recorded_actions.py`.
+
+Proxy latency acceptance runs in the operator CI job without race instrumentation:
+`GOMAXPROCS=2 go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95)$' -v ./kubeproxy ./operatorcli`.
+The `!race` tests use 50 warmup pairs and 200 measured pairs, balanced direct/proxy
+ordering, and 1 ms pacing outside the measured pair. The acceptance threshold is
+10 ms for the nearest-rank paired added p95. Redaction, exact forwarding, bounded
+admission and gap assertions continue to run under `-race`.
