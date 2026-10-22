@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -289,7 +291,7 @@ def test_calico_images_are_pulled_and_digest_verified_before_manifest_apply(
     assert events.index(verified) < events.index(apply)
 
 
-def test_platform_archive_saves_pulled_image_and_records_its_registry_digest(
+def test_platform_archive_saves_pulled_image_and_records_its_config_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _worker_infra()
@@ -299,10 +301,12 @@ def test_platform_archive_saves_pulled_image_and_records_its_registry_digest(
     def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         if command[:2] == ["docker", "save"]:
-            Path(command[command.index("--output") + 1]).write_bytes(b"archive")
+            manifest = json.dumps([{"Config": f"blobs/sha256/{digest.removeprefix('sha256:')}"}]).encode()
+            with tarfile.open(command[command.index("--output") + 1], "w") as saved:
+                info = tarfile.TarInfo("manifest.json")
+                info.size = len(manifest)
+                saved.addfile(info, io.BytesIO(manifest))
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(command, 0, f"calico/cni@{digest}\n", "")
         raise AssertionError(f"unexpected command: {command}")
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -310,7 +314,7 @@ def test_platform_archive_saves_pulled_image_and_records_its_registry_digest(
     archive, observed = module.platform_image_archive("calico/cni:test", "linux/arm64")
     try:
         assert observed == digest
-        assert Path(archive).read_bytes() == b"archive"
+        assert tarfile.is_tarfile(archive)
         assert ["docker", "save", "--output", archive, "calico/cni:test"] in calls
     finally:
         Path(archive).unlink()
