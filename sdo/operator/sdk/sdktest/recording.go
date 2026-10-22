@@ -155,6 +155,9 @@ type CorpusCase struct {
 	SyntheticNoMatchReason string
 }
 
+// CapturedFixedNoMatchPhase identifies observed negative evidence only.
+const CapturedFixedNoMatchPhase = "fixed"
+
 type CorpusProvenance struct {
 	IncidentID  string `json:"incident_id"`
 	OpenAt      string `json:"open_at,omitempty"`
@@ -208,6 +211,9 @@ func ValidateCorpusProvenance(dir string) error {
 		}
 		return errors.New("corpus case lacks captured incident provenance or synthetic NoMatch reason")
 	}
+	if c.Provenance.OpenAt == CapturedFixedNoMatchPhase && (len(c.RootCauseProgramIDs) > 0 || len(c.NoMatchProgramIDs) == 0) {
+		return errors.New("fixed capture is negative evidence only")
+	}
 	if c.SyntheticNoMatchReason != "" {
 		return errors.New("captured corpus cannot also be synthetic")
 	}
@@ -229,6 +235,9 @@ func ValidateCorpusProvenance(dir string) error {
 // PhaseRecordings selects actual observations for one corpus phase. Healthy
 // snapshots are the verified fixed snapshot, so they share its observations.
 func (c CorpusCase) PhaseRecordings(phase string) []PrimitiveCall {
+	if c.Provenance.OpenAt == CapturedFixedNoMatchPhase && phase == "open" {
+		phase = "fixed"
+	}
 	var result []PrimitiveCall
 	explicitHealthy := false
 	for _, call := range c.Recordings {

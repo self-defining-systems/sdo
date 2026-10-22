@@ -20,6 +20,11 @@ import (
 func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []RepairActionReceipt) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	for index := range l.applicationsLog {
+		if l.applicationsLog[index].Result.Applied {
+			l.applicationsLog[index].Result.FinalEquivalenceVerified = nil
+		}
+	}
 	if l.Executor.Client == nil || len(repairs) == 0 {
 		return
 	}
@@ -27,9 +32,33 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	if err != nil {
 		return
 	}
+	// Completion performs at most one final GET per distinct object, shared
+	// by direct applications and equivalent repair candidates. Errors are
+	// cached too; a later retry cannot silently change this completion proof.
+	objects := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	getFinal := func(ref sdk.ObjectRef) *unstructured.Unstructured {
+		if object, ok := objects[ref]; ok {
+			return object
+		}
+		object, err := l.Executor.Client.Get(ctx, ref)
+		if err != nil {
+			object = nil
+		}
+		objects[ref] = object
+		return object
+	}
+	// Final equivalence is separate from the historical application result.
+	// A later different-field repair is a question and earns no credit.
+	for index := range l.applicationsLog {
+		app := &l.applicationsLog[index]
+		if app.Result.Applied {
+			exact := finalPlanFieldsMatch(app.Result, getFinal)
+			app.Result.FinalEquivalenceVerified = &exact
+		}
+	}
 	seen := map[string]bool{}
 	for _, application := range l.applicationsLog {
-		if !application.Result.Applied || !application.Result.VerificationPassed {
+		if !application.Result.Applied || !application.Result.VerificationPassed || (application.Result.FinalEquivalenceVerified == nil || !*application.Result.FinalEquivalenceVerified) {
 			continue
 		}
 		for _, call := range l.calls {
@@ -52,7 +81,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		if !ok || !equivalentPlanResources(preview, repairs) {
 			continue
 		}
-		if !l.planFieldsMatch(ctx, preview) {
+		if !finalPlanFieldsMatch(preview, getFinal) {
 			continue
 		}
 		diagnoser, ok := l.Programs.Diagnoser(run.ProgramID)
@@ -67,6 +96,8 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		preview.DryRun = false
 		preview.VerificationCompleted = true
 		preview.VerificationPassed = true
+		exact := true
+		preview.FinalEquivalenceVerified = &exact
 		completed := time.Now().UTC()
 		applicationID := fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1)
 		planID := applicationID + "-plan"
@@ -112,7 +143,10 @@ func equivalentPlanResources(preview PlanApplicationResult, repairs []RepairActi
 	return reflect.DeepEqual(planned, touched)
 }
 
-func (l *ResponderLoop) planFieldsMatch(ctx context.Context, preview PlanApplicationResult) bool {
+func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured) bool {
+	if len(preview.PreImages) == 0 {
+		return false
+	}
 	for _, preImage := range preview.PreImages {
 		before, err := json.Marshal(preImage.Object.Object)
 		if err != nil {
@@ -131,8 +165,8 @@ func (l *ResponderLoop) planFieldsMatch(ctx context.Context, preview PlanApplica
 		if err := json.Unmarshal(expected, &want.Object); err != nil {
 			return false
 		}
-		current, err := l.Executor.Client.Get(ctx, preImage.Ref)
-		if err != nil || current == nil || !samePlanRef(current, preImage.Ref) {
+		current := getFinal(preImage.Ref)
+		if current == nil || !samePlanRef(current, preImage.Ref) {
 			return false
 		}
 		owner := preImage.Object

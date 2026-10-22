@@ -129,6 +129,8 @@ message PlanApplication {
   google.protobuf.Timestamp completed_at = 15;
   bool verification_completed = 16;
   bool verification_passed = 17;
+  // Final exact plan equivalence. False means no credit, not a program failure.
+  optional bool final_equivalence_verified = 18;
 }
 
 message ProgramToolCall {
@@ -147,4 +149,32 @@ message PlanPreImage {
 message PlanPatch {
   reserved 1, 2;
   reserved "ref", "patch_json";
+}
+
+// Go-owned per-cause work; grouping is exactly the responder's confirmed resources.
+message ReflectionCauseWork {
+  uint32 cause_index = 1;
+  repeated ObjectRef resources = 2;
+  repeated ReflectionWorkItem items = 3;
+}
+
+message ReflectionWorkItem {
+  string program_id = 1;
+  repeated Binding bindings = 2;
+  string disposition = 3 [(buf.validate.field).string = {in: ["covered", "false_match", "question"]}];
+  string question = 4;
+  string reason = 5 [(buf.validate.field).string = {in: ["verified_equivalent_repair", "fixed_capture_match", "binding_not_written", "repair_equivalence_question", "unbound_write", "uncertain", "evidence_gap"]}];
+  repeated ObjectRef resources = 6;
+  string evidence_phase = 7 [(buf.validate.field).string = {in: ["", "open", "fixed"]}];
+  string program_revision = 8;
+  string capture_open_phase = 9 [(buf.validate.field).string = {in: ["", "detect", "pre-apply"]}];
+}
+
+// Controller-settled learning evidence, persisted before the outcome commit.
+// Absence on historical outcomes is unproven and never supplies success credit.
+message ReflectionEligibility {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  repeated ReflectionCauseWork causes = 2;
+  repeated ReflectionWorkItem unassigned = 3;
+  optional uint32 evidence_gap_count = 4;
 }

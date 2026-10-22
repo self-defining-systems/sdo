@@ -17,6 +17,7 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from sdo.agents.responder.reflection_authoring import SdkGap, install_authoring_tools
+from sdo.agents.responder.reflection_evidence import install_evidence_tools
 
 # Codex forwards only a small default environment to MCP servers. Carry the
 # worker-pinned ownership and offline toolchain settings explicitly.
@@ -73,6 +74,7 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
         raise ValueError("validation root must be a checkout directory")
     server = FastMCP("sdo_reflection")
     install_authoring_tools(server, checkout)
+    install_evidence_tools(server)
 
     @server.tool()
     async def check_memory(
@@ -80,6 +82,7 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
         learning_decision: Literal["updated", "no_change", "sdk_gap"] | None = None,
         summary: str = "",
         no_change_reason: str = "",
+        decline_reason: Literal["", "evidence_gap"] = "",
         proposed_artifact_ids: list[str] | None = None,
         sdk_gaps: list[SdkGap] | None = None,
     ) -> ValidationResult:
@@ -102,6 +105,7 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
                             "summary": summary,
                             "learning_decision": learning_decision,
                             "no_change_reason": no_change_reason,
+                            "decline_reason": decline_reason,
                             "proposed_artifact_ids": proposed_artifact_ids or [],
                             "sdk_gaps": [gap.model_dump() for gap in sdk_gaps or []],
                         }

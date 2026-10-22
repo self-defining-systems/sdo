@@ -72,6 +72,17 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 1 || !state.Trusted {
 		t.Fatalf("equivalent source repair missing bound trust receipt: %+v", state)
 	}
+	// A subsequent repair can clear diagnosis while differing from the plan.
+	// Keep the historical receipt, but do not turn that evidence into trust.
+	repaired.Object["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["targetPort"] = float64(8081)
+	loop.CreditEquivalentRepairs(context.Background(), []RepairActionReceipt{{ActionID: "different-fields", Success: true, Resources: []sdk.ObjectRef{ref}}})
+	applications := loop.PlanApplications()
+	if len(applications) != 1 || applications[0].Result.FinalEquivalenceVerified == nil || *applications[0].Result.FinalEquivalenceVerified {
+		t.Fatalf("different fields retained exact credit: %+v", applications)
+	}
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
+		t.Fatalf("question received a trust judgment: %+v", state)
+	}
 }
 
 func equivalentRepairOutcome(t *testing.T, loop *ResponderLoop) *contracts.OutcomeRecord {
@@ -82,5 +93,15 @@ func equivalentRepairOutcome(t *testing.T, loop *ResponderLoop) *contracts.Outco
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &contracts.OutcomeRecord{IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit, Classification: "success", ProgramRuns: result.ProgramRuns, ProgramToolCalls: result.ProgramToolCalls, PlanApplications: result.PlanApplications}
+	o := &contracts.OutcomeRecord{IncidentId: loop.Request.IncidentID, SourceCommit: loop.Request.SourceCommit, Classification: "success", ProgramRuns: result.ProgramRuns, ProgramToolCalls: result.ProgramToolCalls, PlanApplications: result.PlanApplications}
+	for _, run := range o.GetProgramRuns() {
+		if run.GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
+			for _, binding := range run.GetBindings() {
+				o.ConfirmedRootCauses = append(o.ConfirmedRootCauses, &contracts.ConfirmedRootCause{Resources: []*contracts.ObjectRef{binding.GetObject()}})
+				o.RepairActions = append(o.RepairActions, &contracts.RepairActionReceipt{Success: true, Resources: []*contracts.ObjectRef{binding.GetObject()}})
+			}
+		}
+	}
+	settleTestOutcome(o)
+	return o
 }

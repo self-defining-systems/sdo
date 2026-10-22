@@ -31,9 +31,9 @@ const (
 )
 
 // simTrustModel restates the trust rules independently of ProgramTrustStats:
-// a streak of verified successes at one revision, broken by any failure,
-// inconclusive evidence or revision change; failures are remembered per
-// revision, and a program with any failure at its revision is never trusted.
+// Verified successes form a streak at one revision. Failures and revision
+// changes reset it; questions preserve prior credit without extending it.
+// Failures are remembered per revision and prevent trust at that revision.
 type simTrustModel struct {
 	revision string
 	streak   int
@@ -57,7 +57,6 @@ func (m *simTrustModel) apply(event simTrustEvent, revision, other string) {
 		m.streak = 0
 	case simInconclusive:
 		m.enter(revision)
-		m.streak = 0
 	case simEdited:
 		m.enter(revision)
 	case simInterrupted:
@@ -86,6 +85,7 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 	case simInconclusive:
 		outcome := verifiedTrustOutcome(t, id, revision)
 		outcome.ProgramToolCalls = nil
+		settleTestOutcome(outcome)
 		return outcome
 	case simInterrupted:
 		return &contracts.OutcomeRecord{SourceCommit: revision, ProgramFailureSignals: []string{"fast_path_failure:" + id}}
@@ -96,9 +96,8 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 }
 
 // TestSimProgramTrustFollowsOnlyVerifiedRepairs sweeps random outcome histories:
-// trust accrues only from verified repairs at one revision, any failure or
-// inconclusive record resets the streak, and the program is trusted exactly
-// at the threshold.
+// trust accrues only from verified repairs at one revision. Questions preserve
+// prior credit, and the program is trusted exactly at the threshold.
 func TestSimProgramTrustFollowsOnlyVerifiedRepairs(t *testing.T) {
 	sweepSimSeeds(t, func(t *testing.T, seed uint64) {
 		rng := newSimRNG(seed)

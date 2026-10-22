@@ -189,6 +189,7 @@ message ReflectionDecision {
   string error = 4;
   repeated SdkGap sdk_gaps = 5;
   UsageMetrics usage = 6;
+  string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the
@@ -280,6 +281,8 @@ message BrokerLedger {
   repeated ReflectionDecision reflection_results = 24;
   uint32 reflection_max_retries = 25;
   google.protobuf.Timestamp reflection_dispatch_at = 26;
+  // Distinct resource/phase observations absent from protected recordings.
+  optional uint32 reflection_evidence_gap_count = 27;
 }
 
 // Source field ownership adoption survives controller restarts.
