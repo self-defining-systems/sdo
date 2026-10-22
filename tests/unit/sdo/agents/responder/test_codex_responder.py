@@ -379,8 +379,8 @@ def test_prompt_requires_helper_objects_to_carry_the_cleanup_label() -> None:
 
     assert "sdo.dev/responder-helper=true" in prompt
     assert "deletes them when you finish" in prompt
-    assert "kubectl run --rm" in prompt
-    assert "delete any helper Pod you created before you submit" in prompt
+    assert "Clean up the temporary state changes you introduced while troubleshooting" in prompt
+    assert "kubectl run" not in prompt
 
 
 def test_prompt_requires_live_evidence_for_every_root_cause() -> None:

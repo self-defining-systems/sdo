@@ -537,12 +537,9 @@ def _verification_instructions() -> str:
         "manifests, ConfigMap bodies, source files, and architecture notes show what could go wrong, not what did: "
         "list them only in static_context. Name in explained_detectors the detectors whose findings the cause "
         "explains; they must clear after your fix, and SDO checks that they do.\n\n"
-        "Label every pod or Job you create only to investigate or check (debug, curl, DNS, or database-client "
-        "pods) with `sdo.dev/responder-helper=true`, for example `kubectl run ... --labels "
-        "sdo.dev/responder-helper=true`; the controller deletes them when you finish. Never put that label on "
-        "application workloads. Run probes with `kubectl run --rm -i --restart=Never ...` or `kubectl exec` into an "
-        "existing pod, and delete any helper Pod you created before you submit: a leftover Completed Pod in the "
-        "application namespace can fail the final check.\n\n"
+        "Label pods or Jobs you create only to investigate or check with `sdo.dev/responder-helper=true`; the "
+        "controller deletes them when you finish. Never label application workloads with it. "
+        "Clean up the temporary state changes you introduced while troubleshooting before you submit.\n\n"
     )
 
 
