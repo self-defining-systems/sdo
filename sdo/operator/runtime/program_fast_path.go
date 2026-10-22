@@ -262,6 +262,9 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if prepareErr == nil && l.BeforeFastPathApply != nil {
 		prepareErr = l.BeforeFastPathApply(ctx, selected)
 	}
+	if prepareErr == nil {
+		prepareErr = l.capturePreApply(ctx)
+	}
 	if prepareErr != nil {
 		attempt.Summary = fmt.Sprintf("trusted programs %s attempted; plan preparation failed: %v", strings.Join(attempt.Programs, ", "), prepareErr)
 		for _, id := range attempt.Programs {

@@ -313,6 +313,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
 		l.apply(ctx, request, &response)
+	case "pre-apply":
+		if err := l.capturePreApply(ctx); err != nil {
+			response.Error = err.Error()
+			break
+		}
+		response.Summary = "first-mutation snapshot captured"
 	case "verify":
 		l.verify(ctx, nil, &response)
 	case "rollback":
@@ -661,6 +667,10 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		}
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
+	}
+	if err := l.capturePreApply(ctx); err != nil {
+		response.Error = err.Error()
+		return
 	}
 	l.batches++
 	started := time.Now().UTC()

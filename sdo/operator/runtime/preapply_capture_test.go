@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	ktesting "k8s.io/client-go/testing"
 	"os"
 	"path/filepath"
 	"testing"
@@ -111,5 +114,58 @@ func TestPreApplyCaptureFailurePreventsMutation(t *testing.T) {
 	response := loop.Handle(context.Background(), ToolRequest{Command: "pre-apply"})
 	if response.Error == "" {
 		t.Fatal("capture acknowledged without a provider")
+	}
+}
+
+func TestTrustedFastPathCapturesBeforeMutation(t *testing.T) {
+	loop, client := trustedPortLoop(t, false, true, true)
+	loop.CorpusSessionRoot = t.TempDir()
+	dir, err := memory.IncidentCorpusDir(loop.CorpusSessionRoot, loop.Request.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.PrependReactor("patch", "services", func(ktesting.Action) (bool, kruntime.Object, error) {
+		if _, err := os.Stat(filepath.Join(dir, "open@pre-apply.json")); err != nil {
+			t.Fatalf("fast path mutation lacks pre-apply capture: %v", err)
+		}
+		return false, nil, nil
+	})
+	if attempt := loop.TryTrustedFastPath(context.Background(), 3); !attempt.Resolved {
+		t.Fatalf("fast path: %+v", attempt)
+	}
+}
+
+func BenchmarkFirstMutationCapture(b *testing.B) {
+	snapshot := sdktest.Snapshot{NamespaceName: "app"}
+	for i := 0; i < 20; i++ {
+		name := fmt.Sprintf("component-%d", i)
+		snapshot.PodList = append(snapshot.PodList, corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: name, Image: "toy:v1"}}}})
+		snapshot.ServiceList = append(snapshot.ServiceList, corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app"}, Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 80}}}})
+		snapshot.ConfigMapList = append(snapshot.ConfigMapList, corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "app"}, Data: map[string]string{"config": "stable"}})
+	}
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		loop := NewResponderLoop(IncidentRequest{IncidentID: "latency", Namespace: "app"}, nil, staticProvider{snapshot: snapshot}, nil, PlanExecutor{}, 1)
+		loop.CorpusSessionRoot = b.TempDir()
+		b.StartTimer()
+		if err := loop.capturePreApply(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestTypedApplyCaptureFailureLeavesPlanAndBudgetUnused(t *testing.T) {
+	ctx := context.Background()
+	loop, _ := trustedPortLoop(t, false, true, true)
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": ref}})
+	if planned.Error != "" {
+		t.Fatal(planned.Error)
+	}
+	loop.CorpusSessionRoot = t.TempDir()
+	loop.Provider = nil
+	response := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
+	if response.Error == "" || loop.LoopsUsed() != 0 || len(loop.PlanApplications()) != 0 {
+		t.Fatalf("failed capture consumed mutation authority: %+v", response)
 	}
 }

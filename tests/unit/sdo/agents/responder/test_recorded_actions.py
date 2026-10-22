@@ -9,6 +9,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from agentshim.testing import FakeRun
 
@@ -66,6 +67,7 @@ def _recorded(scratch: Path) -> list[dict[str, object]]:
 def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory = tmp_path / "scratch"
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(directory))
+    monkeypatch.setattr(tools_cli, "_exchange", lambda _request, _directory: {"summary": "captured"})
     return directory
 
 
@@ -394,7 +396,36 @@ def _stub(directory: Path, body: str) -> Path:
     return stub
 
 
-def test_three_parallel_acts_leave_three_receipts_that_all_reach_the_result(scratch: Path, tmp_path: Path) -> None:
+@pytest.fixture
+def controller_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    tools = tmp_path / "tools"
+    requests, responses = tools / "requests", tools / "responses"
+    requests.mkdir(parents=True)
+    responses.mkdir()
+    monkeypatch.setenv("SDO_TOOLS_DIR", str(tools))
+    stop = threading.Event()
+
+    def serve() -> None:
+        while not stop.wait(0.005):
+            for path in requests.glob("*.json"):
+                if path.name.startswith("."):
+                    continue
+                assert json.loads(path.read_text())["command"] == "pre-apply"
+                (responses / path.name).write_text(json.dumps({"summary": "captured"}))
+                path.unlink()
+
+    thread = threading.Thread(target=serve)
+    thread.start()
+    try:
+        yield tools
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+
+
+def test_three_parallel_acts_leave_three_receipts_that_all_reach_the_result(
+    scratch: Path, tmp_path: Path, controller_tools: Path
+) -> None:
     kubectl = _stub(tmp_path / "bin", "sleep 0.3")
     command = [sys.executable, "-I", "-m", "sdo.agents.responder.tools_cli"]
     env = {**os.environ, "SDO_SESSION_SCRATCH": str(scratch), "PYTHONPATH": str(Path(__file__).resolve().parents[5])}
@@ -434,7 +465,9 @@ def _is_dead(pid: int) -> bool:
         return True
 
 
-def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(scratch: Path, tmp_path: Path) -> None:
+def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(
+    scratch: Path, tmp_path: Path, controller_tools: Path
+) -> None:
     pid_file = tmp_path / "grandchild.pid"
     kubectl = _stub(tmp_path / "bin", f"sleep 30 &\necho $! > {pid_file}\nwait")
     env = {**os.environ, "SDO_SESSION_SCRATCH": str(scratch), "PYTHONPATH": str(Path(__file__).resolve().parents[5])}
@@ -564,7 +597,7 @@ def test_a_repair_and_verify_leave_one_receipt_and_run_the_stubbed_tools(
     )  # fmt: skip
     assert tools_cli.main(["verify"]) == 0
 
-    assert exchanges == ["verify"]
+    assert exchanges == ["pre-apply", "verify"]
     assert log.read_text(encoding="utf-8").splitlines() == [f"-n hotel patch service reservation -p {patch}"]
     (receipt,) = _recorded(scratch)
     assert receipt["kind"] == "kubectl-patch"

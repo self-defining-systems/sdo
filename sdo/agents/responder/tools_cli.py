@@ -137,10 +137,15 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
 def _act(args: argparse.Namespace) -> int:
     command = args.act_command[1:] if args.act_command[:1] == ["--"] else args.act_command
     try:
+        if not command:
+            raise ValueError("a command is required after --")
+        response = _exchange({"command": "pre-apply"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+        if response.get("error"):
+            raise ValueError(f"pre-apply capture: {response['error']}")
         return recorded_actions.run_and_record(
             command, args.resource, summary=args.summary, reversible=not args.irreversible
         )
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TimeoutError) as exc:
         print(f"sdo: {exc}", file=sys.stderr)
         return 2
 
