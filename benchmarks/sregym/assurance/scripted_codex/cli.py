@@ -172,7 +172,9 @@ def run(argv: list[str], *, stdin: str, store: Store | None = None) -> int:
     if stopped:
         record_extra["plan_error"] = stopped[0]
         print(f"scripted codex: {stopped[0]}", file=sys.stderr)
-    text = json.dumps(answer)
+    # The session wrapper schema (sdo.agents.responder.session_turn) carries both turns' results.
+    branch = "incident_result" if kind.startswith("responder") else "reflection"
+    text = json.dumps({"incident_result": None, "reflection": None, branch: answer})
     turn.finish(text)
     store.record_turn(
         f"{rollout.session_id}:{turn.started_at}",

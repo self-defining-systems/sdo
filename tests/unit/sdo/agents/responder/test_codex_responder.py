@@ -52,7 +52,10 @@ def _result() -> IncidentResult:
 
 
 def _reply(result: IncidentResult) -> dict[str, object]:
-    return json_format.MessageToDict(result, preserving_proto_field_name=True)
+    return {
+        "incident_result": json_format.MessageToDict(result, preserving_proto_field_name=True),
+        "reflection": None,
+    }
 
 
 def test_codex_responder_captures_resumable_session_id() -> None:
@@ -86,8 +89,8 @@ def test_codex_responder_captures_resumable_session_id() -> None:
     assert agent.requests[0].cwd == str(Path(request.repository_worktree).resolve())
 
 
-def test_claude_responder_captures_resumable_session_id() -> None:
-    request = _request()
+def test_claude_responder_captures_resumable_session_id(tmp_path: Path) -> None:
+    request = evolve(_request(), repository_worktree=str(tmp_path))
     result = evolve(_result(), responder_session_id=None)
     event = {
         "type": "result",

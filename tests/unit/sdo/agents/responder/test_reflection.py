@@ -106,6 +106,7 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
                 "playbook_ids": [],
             },
             session_id="session-1",
+            branch="reflection",
         )
 
     agent = ScriptedAgent(respond)
@@ -139,6 +140,7 @@ def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
                 "playbook_ids": [],
             },
             session_id="session-1",
+            branch="reflection",
         )
     )
     result = ClaudeSessionBackend(model="haiku", executor=agent.executor).resume(
@@ -187,6 +189,7 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert "DetectionContext exposes" not in prompt  # the SDK reference lives in the skill, not the prompt
     assert "Accepted architecture summary" in prompt
     assert "Edit the final files directly" in prompt
+    assert "in the `reflection` field and leave `incident_result` null" in prompt
     assert "sdo.operational_memory" not in prompt
     assert json.dumps({"incident_id": "inc-1"}) not in prompt
 

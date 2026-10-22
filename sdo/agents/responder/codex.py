@@ -5,7 +5,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import timezone
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
@@ -15,6 +15,13 @@ from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
+from sdo.agents.responder.session_turn import (
+    WrongBranchError,
+    branch_correction,
+    branch_instruction,
+    session_turn_options,
+    unwrap_branch,
+)
 from sdo.agents.responder.tools_cli import ACT_EXAMPLE, CLI_EXAMPLES
 from sdo.contracts import (
     ROOT_CAUSE_EVIDENCE_KINDS,
@@ -65,30 +72,40 @@ def execute_incident(
     prompt = _responder_prompt(request)
     recorded_actions.reset()
     resume_session_id: str | None = None
+    corrected_evidence = corrected_branch = False
     while True:
         try:
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]
                 prompt,
-                output_schema=_incident_result_schema(),
                 cwd=request.repository_worktree,
                 access="danger-full-access",
                 model=model or os.getenv("SDO_RESPONDER_MODEL") or None,
                 reasoning_effort=INCIDENT_REASONING_EFFORT,
                 resume_session_id=resume_session_id,
                 executor=executor,
+                **session_turn_options(selected_provider, Path(request.repository_worktree)),
             )
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
         try:
-            result = parse_incident_result(json.loads(completed.output_json), turn_usage(completed))
+            result = parse_incident_result(
+                unwrap_branch(completed.output_json, "incident_result"), turn_usage(completed)
+            )
             break
         except EvidenceReferenceError as exc:
-            if resume_session_id is not None:
+            if corrected_evidence:
                 raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
             # One resumed turn lets the agent split a compound reference instead of losing the diagnosis.
+            corrected_evidence = True
             resume_session_id = completed.session_id
             prompt = _evidence_reference_feedback(str(exc))
+        except WrongBranchError as exc:
+            if corrected_branch:
+                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+            corrected_branch = True
+            resume_session_id = completed.session_id
+            prompt = branch_correction("incident_result")
         except (OSError, ValueError) as exc:
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
     try:
@@ -811,7 +828,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Do not write helper scripts for repairs, receipts or verification; keep interpretation and decisions in "
         "natural language. Never put scratch files in operational memory. "
         f"{memory_guard}Return only the IncidentResult JSON "
-        "required by the output schema.\n\n"
+        f"required by the output schema. {branch_instruction('incident_result')}\n\n"
         f"Repair evidence mode: {request.repair_policy}. Run every live mutation as one `sdo act` call, for example "
         f"`{ACT_EXAMPLE}`; it runs the command and records the repair receipt. "
         "Do not return receipts for `sdo act` calls. SDO "

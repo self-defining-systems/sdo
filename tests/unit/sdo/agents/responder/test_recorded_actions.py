@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from agentshim.testing import FakeRun
 from google.protobuf import json_format
 
 from benchmarks.sregym.protocol import validate_production_receipt
@@ -23,10 +22,12 @@ from sdo.agents.responder.codex import ResponderExecutionError, _responder_promp
 from sdo.agents.responder.reflection_brief import responder_shell_commands
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
-from tests.structured_turns import ScriptedAgent
+from tests.structured_turns import ScriptedAgent, reply
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from agentshim.testing import FakeRun
 
 _FIXTURES = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
 _OBJECT_REF_GO = Path(__file__).resolve().parents[5] / "sdo" / "operator" / "sdk" / "object_ref.go"
@@ -305,11 +306,7 @@ def test_act_help_documents_the_mutation_form(capsys: pytest.CaptureFixture[str]
 
 
 def _scripted_reply(result: IncidentResult, *, during_turn: list[str], raw_lines: Sequence[str] = ()) -> ScriptedAgent:
-    message = {
-        "type": "agent_message",
-        "id": "msg",
-        "text": json.dumps(json_format.MessageToDict(result, preserving_proto_field_name=True)),
-    }
+    output = json_format.MessageToDict(result, preserving_proto_field_name=True)
 
     def run(_request: object) -> FakeRun:
         for line in during_turn:
@@ -318,14 +315,7 @@ def _scripted_reply(result: IncidentResult, *, during_turn: list[str], raw_lines
             recorded_actions.actions_path().parent.mkdir(parents=True, exist_ok=True)
             with recorded_actions.actions_path().open("a", encoding="utf-8") as stream:
                 stream.writelines(f"{raw}\n" for raw in raw_lines)
-        return FakeRun(
-            stdout=[
-                '{"type":"thread.started","thread_id":"s"}\n',
-                json.dumps({"type": "item.completed", "item": message}) + "\n",
-                '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,'
-                '"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}\n',
-            ]
-        )
+        return reply("codex", output, session_id="s", branch="incident_result")
 
     return ScriptedAgent(run)
 
