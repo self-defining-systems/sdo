@@ -1,0 +1,126 @@
+"""Required CI keeps all coverage while selecting only affected image builds."""
+
+from __future__ import annotations
+
+import fnmatch
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+import yaml
+
+ROOT = Path(__file__).resolve().parents[4]
+
+
+def workflow() -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+
+
+@pytest.mark.parametrize(
+    ("path", "images"),
+    [
+        ("docs/architecture.md", set()),
+        ("tests/unit/test_example.py", set()),
+        ("sdo/agents/responder/worker.py", {"responder", "benchmark"}),
+        ("libs/agent_cli/cli.py", {"responder", "benchmark"}),
+        ("sdo/operator/runtime/controller.go", {"controller", "validator", "responder", "benchmark"}),
+        ("sdo/agents/registrations/responder.yaml", {"controller", "responder", "benchmark"}),
+        ("benchmarks/sregym/adapter/submission.py", {"benchmark"}),
+        ("benchmarks/sregym/fastloop/recording_worker.py", {"benchmark"}),
+        ("benchmarks/sregym/analysis/report.py", set()),
+        ("scripts/build_sdo_images.sh", {"controller", "validator", "responder", "benchmark"}),
+    ],
+)
+def test_image_filters_follow_runtime_inputs(path: str, images: set[str]) -> None:
+    filters = yaml.safe_load(workflow()["jobs"]["changes"]["steps"][1]["with"]["filters"])
+    selected = {
+        image
+        for image in ("controller", "validator", "responder", "benchmark")
+        if any(fnmatch.fnmatchcase(path, pattern) for pattern in filters[f"image_{image}"])
+    }
+    assert selected == images
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+def test_merge_queue_forces_every_image_and_test_area(event: str, tmp_path: Path) -> None:
+    step = next(s for s in workflow()["jobs"]["changes"]["steps"] if s.get("id") == "resolve")
+    output = tmp_path / "output"
+    result = subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        env={**os.environ, **dict.fromkeys(step["env"], "false"), "EVENT": event, "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    resolved = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    for name in ("python", "go", "image_controller", "image_validator", "image_responder", "image_benchmark"):
+        assert resolved[name] == str(event == "merge_group").lower()
+
+
+def test_required_ci_still_accounts_for_every_job() -> None:
+    jobs = workflow()["jobs"]
+    aggregate = jobs["required-pr-ci"]
+    assert aggregate["name"] == "Required PR CI"
+    assert aggregate["if"] == "always()"
+    assert set(aggregate["needs"]) == jobs.keys() - {"required-pr-ci"}
+
+
+@pytest.mark.parametrize(
+    ("images", "expected"),
+    [
+        ("controller", {"sdo-controller"}),
+        ("validator", {"sdo-detector-validator"}),
+        ("responder", {"sdo-responder"}),
+        ("benchmark", {"sdo-responder", "sdo-sregym-responder"}),
+        ("responder benchmark", {"sdo-responder", "sdo-sregym-responder"}),
+    ],
+)
+def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expected: set[str]) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    for name, body in {
+        "docker": 'printf "%s\\n" "$*" >> "$SDO_TEST_CALLS"',
+        "go": 'printf "schema-test\\n"',
+    }.items():
+        command = bin_dir / name
+        command.write_text(f"#!/bin/sh\n{body}\n")
+        command.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/build_sdo_images.sh")],
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "SDO_TEST_CALLS": str(calls),
+            "SDO_IMAGES": images,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = calls.read_text().splitlines()
+    built = {line.split("--tag ")[1].split(":")[0] for line in lines if line.startswith("build ")}
+    assert built == expected
+    # The benchmark-only build needs its base but smokes only selected outputs.
+    smoked = {image for image in expected if any(f"{image}:v0.1.0 sdo-operator validate" in line for line in lines)}
+    assert smoked == expected - ({"sdo-responder"} if images == "benchmark" else set())
+
+
+@pytest.mark.parametrize(
+    ("result", "accepted"), [("success", True), ("skipped", True), ("failure", False), ("cancelled", False)]
+)
+def test_required_ci_rejects_any_applicable_unsuccessful_job(result: str, accepted: bool) -> None:
+    import json
+
+    step = workflow()["jobs"]["required-pr-ci"]["steps"][0]
+    completed = subprocess.run(
+        ["bash", "-e", "-c", step["run"]],
+        env={**os.environ, "JOB_RESULTS": json.dumps({"images": {"result": result}})},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (completed.returncode == 0) is accepted
