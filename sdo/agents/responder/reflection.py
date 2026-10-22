@@ -28,7 +28,7 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.contracts import OutcomeClassification
+from sdo.contracts import OutcomeClassification, ReflectionResult, model_output_schema, validate
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
@@ -72,6 +72,26 @@ class ReflectionTurn(BaseModel):
     def usage(self) -> dict[str, int | float]:
         return dict(self._usage)
 
+    @classmethod
+    def from_model_output(cls, payload: object) -> ReflectionTurn:
+        """Parse the model's reply as the ``ReflectionResult`` it was asked for, then view it as a turn."""
+
+        try:
+            result = json_format.ParseDict(payload, ReflectionResult())
+        except json_format.ParseError as exc:
+            raise ValueError(f"invalid reflection result: {exc}") from exc
+        validate(result)
+        return cls(
+            summary=result.summary,
+            learning_decision=cast("Literal['updated', 'no_change', 'sdk_gap']", result.learning_decision),
+            no_change_reason=result.no_change_reason or None,
+            playbook_ids=list(result.proposed_artifact_ids),
+            sdk_gaps=[
+                SdkGap.model_validate(json_format.MessageToDict(gap, preserving_proto_field_name=True))
+                for gap in result.sdk_gaps
+            ],
+        )
+
     def with_usage(self, usage: dict[str, int | float]) -> ReflectionTurn:
         self._usage = dict(usage)
         return self
@@ -102,31 +122,9 @@ class SdkGap(BaseModel):
 
 
 def reflection_output_schema() -> dict[str, object]:
-    """ReflectionTurn as a strict structured-output schema.
+    """The model-facing schema of ``ReflectionResult``, generated from the proto the Go decision loader reads."""
 
-    Strict provider schemas (Codex/OpenAI) require every property to be listed
-    in ``required``; optional fields are expressed as nullable instead.
-    """
-
-    schema = ReflectionTurn.model_json_schema()
-
-    def strict_object(node: object) -> None:
-        if isinstance(node, dict):
-            properties = node.get("properties")
-            if isinstance(properties, dict):
-                for prop in properties.values():
-                    if isinstance(prop, dict):
-                        prop.pop("default", None)
-                node["required"] = list(properties)
-                node["additionalProperties"] = False
-            for child in node.values():
-                strict_object(child)
-        elif isinstance(node, list):
-            for child in node:
-                strict_object(child)
-
-    strict_object(schema)
-    return schema
+    return model_output_schema(ReflectionResult.DESCRIPTOR)
 
 
 class StatefulResponderBackend(Protocol):
@@ -210,11 +208,11 @@ def _logical_learning_request(
         "After editing, run the memory check once with the installed sdo_reflection check_memory tool "
         "(`sdo-operator memory check`) and wait for its result; it takes about a minute, so do not poll or retry "
         "while it runs. "
-        "The decision file may be your returned result JSON as is; its summary is ignored. "
+        "The decision file is your returned result JSON as is. "
         "Fix named diagnostics and call it again only after correcting the files, "
         "until it exits zero, within your turn budget. SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT "
         "are already set; do not override them. The Go broker repeats the same check independently. "
-        "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
+        "Return learning_decision=updated only with a nonempty diff and proposed_artifact_ids listing every changed "
         "logical playbook ID. Return no_change or sdk_gap with a concrete no_change_reason and no authored "
         "diff when no safe learning is possible. Return decisions and logical IDs only; files carry all content. "
         f"{branch_instruction('reflection')}\n\n"
@@ -449,7 +447,7 @@ class CodexSessionBackend:
             # One resumed turn moves the answer to the right branch; a second miss is the caller's error.
             turn = self._run(worktree=worktree, prompt=branch_correction("reflection"), session_id=turn.session_id)
             payload = unwrap_branch(turn.output_json, "reflection")
-        return ReflectionTurn.model_validate(payload).with_usage(turn_usage(turn))
+        return ReflectionTurn.from_model_output(payload).with_usage(turn_usage(turn))
 
     def _run(self, *, worktree: Path, prompt: str, session_id: str | None) -> StructuredTurn:
         try:

@@ -72,7 +72,7 @@ def validation_server(root: Path, *, timeout_seconds: float = VALIDATION_TIMEOUT
         """Run the complete memory check and wait for final diagnostics (at most 300s).
 
         Write the decision JSON first (your returned result JSON works as is;
-        summary is ignored). Pass its filename as decision_path, or use the
+        it is the same ReflectionResult). Pass its filename as decision_path, or use the
         default .git/sdo-reflection-decision.json. One call waits for the final
         result; never poll.
         The broker independently repeats this same validation before acceptance.

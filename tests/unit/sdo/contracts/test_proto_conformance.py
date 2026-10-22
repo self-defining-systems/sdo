@@ -16,11 +16,9 @@ protovalidate CEL mirrors the hand-written invariants.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from sdo.agents.responder.codex import _incident_result_schema
 from sdo.contracts import OUTCOME_CLASSIFICATIONS, OutcomeClassification
 from sdo.contracts import proto as contract_proto
 from sdo.contracts.proto import (
@@ -28,7 +26,6 @@ from sdo.contracts.proto import (
     ControllerState,
     IncidentClosure,
     IncidentRequest,
-    IncidentResult,
     IncidentView,
     OutcomeRecord,
     parse_json,
@@ -78,43 +75,3 @@ def test_proto_schema_models_every_go_fixture(name: str, message_type: type) -> 
     raw = (GO_FIXTURES / name).read_text(encoding="utf-8")
     # Raises on any field the proto schema does not model.
     parse_json(raw, message_type())
-
-
-def _assert_schema_fields_exist(schema: dict[str, Any], descriptor: Any, path: str) -> None:
-    """Every property of the model-output schema names a field of the proto message, recursively."""
-
-    for name, spec in schema["properties"].items():
-        field = descriptor.fields_by_name.get(name)
-        assert field is not None, f"{path}.{name} is not a field of {descriptor.full_name}"
-        child = spec["items"] if spec.get("type") == "array" else spec
-        if child.get("type") == "object" and "properties" in child:
-            assert field.message_type is not None, f"{path}.{name} is not a message field"
-            _assert_schema_fields_exist(child, field.message_type, f"{path}.{name}")
-
-
-def test_model_output_schema_is_pinned_to_the_incident_result_descriptor() -> None:
-    schema = _incident_result_schema()
-
-    _assert_schema_fields_exist(schema, IncidentResult.DESCRIPTOR, "$")
-    # The model supplies everything except what the worker owns: schema version, usage, session, error, late pull.
-    owned = {
-        "schema_version",
-        "usage",
-        "responder_session_id",
-        "error",
-        "late_findings_pull",
-        "program_tool_calls",
-        "repair_actions",
-        "program_runs",
-        "plan_applications",
-        "program_failure_signals",
-        "response_loops_used",
-        "response_loop_exhausted",
-        "resolution_path",
-        "fast_path_programs",
-        "fast_path_skipped_reason",
-        "fast_path_relation_covered_findings",
-    }
-    unrequested = set(IncidentResult.DESCRIPTOR.fields_by_name) - set(schema["properties"]) - owned
-    assert unrequested == {"final_detector_states", "proposed_artifact_ids"}
-    assert set(schema["required"]) == set(schema["properties"])

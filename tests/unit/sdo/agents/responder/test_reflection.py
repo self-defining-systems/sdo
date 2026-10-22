@@ -103,7 +103,7 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "playbook_ids": [],
+                "proposed_artifact_ids": [],
             },
             session_id="session-1",
             branch="reflection",
@@ -137,7 +137,7 @@ def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
                 "summary": "already covered",
                 "learning_decision": "no_change",
                 "no_change_reason": "existing detector covers it",
-                "playbook_ids": [],
+                "proposed_artifact_ids": [],
             },
             session_id="session-1",
             branch="reflection",
@@ -233,7 +233,7 @@ def test_reflection_output_schema_is_strict_and_carries_only_decision_and_ids() 
     assert schema["additionalProperties"] is False
     assert "artifact_proposal" not in schema["properties"]
     assert "proposed_changes" not in schema["properties"]
-    assert "playbook_ids" in schema["properties"]
+    assert "proposed_artifact_ids" in schema["properties"]
     assert schema["required"] == list(schema["properties"])
 
 

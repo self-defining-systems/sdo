@@ -124,8 +124,8 @@ message ReflectionResult {
 }
 
 message SdkGap {
-  string fault_class = 1;
-  string primitive = 2;
-  string reason = 3;
-  string scratch_script = 4;
+  string fault_class = 1 [(buf.validate.field).string.min_len = 1];
+  string primitive = 2 [(buf.validate.field).string.min_len = 1];
+  string reason = 3 [(buf.validate.field).string.min_len = 1];
+  string scratch_script = 4 [(buf.validate.field).string.min_len = 1];
 }
