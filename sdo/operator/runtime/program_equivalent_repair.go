@@ -29,14 +29,23 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 	}
 	seen := map[string]bool{}
 	for _, application := range l.applicationsLog {
-		if application.Result.Applied {
-			for _, id := range application.ProgramIDs {
-				seen[id] = true
+		if !application.Result.Applied || !application.Result.VerificationPassed {
+			continue
+		}
+		for _, call := range l.calls {
+			var response ToolResponse
+			if call.Command != "apply" || json.Unmarshal([]byte(call.ResponseJSON), &response) != nil || response.ApplicationID != application.ID {
+				continue
+			}
+			for _, run := range response.ProgramRuns {
+				if run.Verdict.Result == program.NoMatch {
+					seen[matchedViewKey(run.ProgramID, run.Bindings)] = true
+				}
 			}
 		}
 	}
 	for _, run := range l.runs {
-		if run.Verdict.Result != program.Match || seen[run.ProgramID] {
+		if run.Verdict.Result != program.Match || seen[matchedViewKey(run.ProgramID, run.Bindings)] {
 			continue
 		}
 		preview, ok := l.matchedPlans[matchedViewKey(run.ProgramID, run.Bindings)]
@@ -74,7 +83,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		applyResponse, _ := json.Marshal(ToolResponse{Command: "apply", ApplicationID: applicationID, ProgramRuns: []ProgramRun{verified}})
 		summary := "controller-verified equivalent responder repair; no program mutation"
 		l.calls = append(l.calls, ToolCall{Command: "plan", At: completed, RequestJSON: string(planRequest), ResponseJSON: string(planResponse), Summary: summary}, ToolCall{Command: "apply", At: completed, RequestJSON: string(applyRequest), ResponseJSON: string(applyResponse), Summary: summary})
-		seen[run.ProgramID] = true
+		seen[matchedViewKey(run.ProgramID, run.Bindings)] = true
 	}
 }
 
