@@ -175,7 +175,8 @@ func (s *JSONStore) List(ctx context.Context) ([]Outcome, error) {
 
 // legacyOutcomes reads the retired JSONL stream without modifying the
 // repository, so readers of an accepted checkout see pre-migration history.
-// Playbook references are normalized to logical IDs.
+// Playbook references are normalized to logical IDs. An incident repeated with
+// identical content is one outcome; conflicting repeats are an error.
 func (s *JSONStore) legacyOutcomes(ctx context.Context) ([]Outcome, error) {
 	path := filepath.Join(s.root, layout.LegacyOutcomesFile)
 	file, err := os.Open(path)
@@ -198,7 +199,19 @@ func (s *JSONStore) legacyOutcomes(ctx context.Context) ([]Outcome, error) {
 			if err != nil {
 				return nil, fmt.Errorf("legacy outcome line %d: %w", line, err)
 			}
-			outcomes = append(outcomes, outcome)
+			duplicate := false
+			for _, earlier := range outcomes {
+				if earlier.IncidentID != outcome.IncidentID {
+					continue
+				}
+				if !bytes.Equal(earlier.document, outcome.document) {
+					return nil, fmt.Errorf("legacy outcome line %d: %w: %s", line, ErrConflict, outcome.IncidentID)
+				}
+				duplicate = true
+			}
+			if !duplicate {
+				outcomes = append(outcomes, outcome)
+			}
 		}
 		if readErr == io.EOF {
 			return outcomes, nil
