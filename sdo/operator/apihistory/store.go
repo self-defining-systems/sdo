@@ -66,15 +66,16 @@ type Event struct {
 }
 
 type Manifest struct {
-	Version  int       `json:"version"`
-	Incident string    `json:"incident"`
-	Epoch    uint64    `json:"epoch"`
-	Complete bool      `json:"complete"`
-	Open     bool      `json:"open"`
-	Dropped  uint64    `json:"dropped"`
-	Events   uint64    `json:"events"`
-	Bytes    int64     `json:"bytes"`
-	Updated  time.Time `json:"updated"`
+	Generation string    `json:"generation"`
+	Version    int       `json:"version"`
+	Incident   string    `json:"incident"`
+	Epoch      uint64    `json:"epoch"`
+	Complete   bool      `json:"complete"`
+	Open       bool      `json:"open"`
+	Dropped    uint64    `json:"dropped"`
+	Events     uint64    `json:"events"`
+	Bytes      int64     `json:"bytes"`
+	Updated    time.Time `json:"updated"`
 }
 type observation struct {
 	weight int64
@@ -100,6 +101,16 @@ type Store struct {
 func Open(directory, incident string, limits Limits) (*Store, error) {
 	if directory == "" || incident == "" {
 		return nil, errors.New("history directory and incident required")
+	}
+	expected, err := generation(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := BeginGeneration(directory); err != nil {
+			return nil, err
+		}
+		expected, err = generation(directory)
+	}
+	if err != nil {
+		return nil, err
 	}
 	// Invalidate the previous generation before any fallible initialization.
 	if err := os.MkdirAll(directory, 0700); err != nil {
@@ -130,6 +141,7 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	m.Generation = expected
 	m.Epoch++
 	m.Open = true
 	f, err := os.OpenFile(filepath.Join(directory, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -376,6 +388,11 @@ func Read(directory string) (History, error) {
 		h.Manifest.Complete = false
 	}
 	if _, err := os.Stat(filepath.Join(directory, "recording-disabled")); writerOpen || !errors.Is(err, os.ErrNotExist) {
+		h.Manifest.Complete = false
+		h.Manifest.Dropped++
+	}
+	expected, generationErr := generation(directory)
+	if generationErr != nil || expected != h.Manifest.Generation {
 		h.Manifest.Complete = false
 		h.Manifest.Dropped++
 	}

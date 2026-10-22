@@ -102,3 +102,51 @@ func TestWriterLivenessInvalidatesOldManifestWithoutAnyRecordingWrites(t *testin
 	}
 	lease.Close()
 }
+
+func TestFailedGenerationRemainsIncompleteAfterWriterExit(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(dir, "synthetic", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	if err := os.Mkdir(filepath.Join(dir, "disabled.tmp"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := BeginWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir, "synthetic", Limits{}); err == nil {
+		t.Fatal("expected marker failure")
+	}
+	lease.Close()
+	after, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Manifest.Complete || after.Manifest.Dropped == 0 {
+		t.Fatalf("failed generation accepted after exit: %+v", after.Manifest)
+	}
+}
+
+func TestTrustedAttemptInvalidatesHistoryWhenRecorderDirectoryIsUnavailable(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "history")
+	store, err := Open(dir, "synthetic", Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+	// This boundary is written by the controller before launching the sidecar,
+	// independently of whether the sidecar can write its mounted history directory.
+	if err := BeginGeneration(dir); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Manifest.Complete || after.Manifest.Dropped == 0 {
+		t.Fatal("old manifest certified a new attempt")
+	}
+}
