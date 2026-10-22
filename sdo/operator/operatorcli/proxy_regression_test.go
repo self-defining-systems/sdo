@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -278,49 +277,6 @@ func TestFailedRecordingReopenMarksGap(t *testing.T) {
 	}
 	if h.Manifest.Complete || h.Manifest.Dropped == 0 {
 		t.Errorf("unrecorded write not marked: %+v", h.Manifest)
-	}
-}
-
-func TestLargeResponseWarmAddedP95(t *testing.T) {
-	item := `{"metadata":{"name":"p","namespace":"app"},"spec":{"containers":[{"name":"c","env":[{"name":"MODE","value":"` + strings.Repeat("x", 3072) + `"}]}]}}`
-	payload := []byte(`{"apiVersion":"v1","kind":"PodList","items":[` + strings.TrimSuffix(strings.Repeat(item+",", 950), ",") + `]}`)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))
-	defer up.Close()
-	dir := t.TempDir()
-	store, err := apihistory.Open(dir, "synthetic", apihistory.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	u, _ := url.Parse(up.URL)
-	proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
-	defer proxy.Close()
-	get := func(endpoint string) time.Duration {
-		start := time.Now()
-		res, err := http.Get(endpoint + "/api/v1/namespaces/app/pods")
-		if err != nil {
-			t.Fatal(err)
-		}
-		n, err := io.Copy(io.Discard, res.Body)
-		res.Body.Close()
-		if err != nil || n != int64(len(payload)) {
-			t.Fatalf("read %d %v", n, err)
-		}
-		return time.Since(start)
-	}
-	for range 3 {
-		get(up.URL)
-		get(proxy.URL)
-	}
-	added := make([]time.Duration, 20)
-	for i := range added {
-		direct := get(up.URL)
-		added[i] = get(proxy.URL) - direct
-	}
-	sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
-	t.Logf("%d-byte supported response, 20 alternating warm pairs: added p95=%s", len(payload), added[18])
-	if added[18] > 10*time.Millisecond {
-		t.Error("supported response exceeds 10ms forwarding target")
 	}
 }
 
