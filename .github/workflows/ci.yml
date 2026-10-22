@@ -186,6 +186,15 @@ jobs:
       - run: go test -race -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...
         working-directory: ${{ matrix.directory }}
 
+      # Wall-clock latency is meaningful only without race instrumentation.
+      # Retain all pass-through, redaction and gap contracts in the race suite.
+      - name: Normal-build proxy latency acceptance
+        if: matrix.module == 'operator'
+        env:
+          GOMAXPROCS: "2"
+        run: go test -p 1 -count=3 -run '^(TestProxyWarmAddedP95|TestLargeResponseWarmAddedP95)$' -v ./kubeproxy ./operatorcli
+        working-directory: sdo/operator
+
       - name: Fuzz object reference boundary (bounded)
         if: matrix.module == 'sdk'
         run: |

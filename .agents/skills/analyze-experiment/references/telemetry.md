@@ -50,3 +50,15 @@ A failed controller generation write prevents launching the attempt. Runtime sto
 with the existing incident session lifecycle; there is no multi-session retention
 policy. History cannot prove unobserved state or replace controller captures,
 pre-apply checkpoints, action receipts, or independent recovery verification.
+
+`evidence history` paginates envelopes; `evidence show --event N` prints the
+projected JSON or capped log tail; `evidence state Kind/ns/name --at CUT` reports
+last-observed state, observation time, staleness and Unknown. CUT is RFC3339,
+`before-first-mutation`, or `after-fix`. The first cut uses potentially mutating
+request start times (including opaque exec), excludes dry-run writes, and cannot
+be determined from incomplete history. `after-fix` requires a controller-written
+`recovery.json` and compatible observations beginning after its verified time;
+the last write response is never a recovery marker. Filtered/paginated lists,
+unknown representations, crossing requests and metadata-only watches cannot
+establish absence or continuity. A named GET 404 or complete scoped list can
+record absence at the observation time only.
