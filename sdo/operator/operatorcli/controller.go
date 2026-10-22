@@ -68,7 +68,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "repeat drift responder token budget per hour")
+	driftTokensPerHour := registerDriftTokenBudget(flags)
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	programMinDuration := flags.Duration("program-min-duration", 10*time.Second, "minimum sustained learned-program firing and clearing duration")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "delay before retrying inconclusive initial diagnoses")
@@ -101,8 +101,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *programMinDuration < 0 {
 		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
 	}
-	if *driftTokensPerHour <= 0 {
-		return builder.RunConfig{}, false, errors.New("drift responder token budget must be positive")
+	if err := validateDriftTokenBudget(*driftTokensPerHour); err != nil {
+		return builder.RunConfig{}, false, err
 	}
 	if *programFastPath && *repairPolicy != "recorded-actions" {
 		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
