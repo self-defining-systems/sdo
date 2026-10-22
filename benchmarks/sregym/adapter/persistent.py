@@ -547,9 +547,7 @@ def run_persistent_stage(
         ops.set_maintenance(control, paused=True, generation=paused_generation)
         wait_for_maintenance_ack(ops, control, paused_generation, clock)
     paused_ready = clock.monotonic()
-    ops.export_controller_logs(control, inputs.receipt_dir)
-    stage_evidence: dict[str, Any] = dict(ops.export_runtime_artifacts(config, inputs.receipt_dir))
-    stage_evidence["scope"] = STAGE_END_EVIDENCE_SCOPE
+    stage_evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
     raw_result = closure.get("result")
     result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
@@ -635,6 +633,33 @@ def run_persistent_stage(
     return resolution
 
 
+def _export_stage_end_evidence(
+    ops: ClusterOps, control: str, config: RuntimeConfig, receipt_dir: Path, clock: Clock
+) -> dict[str, Any]:
+    """Export the stage-end snapshot and record how long each part took.
+
+    Both exports are cumulative over the persistent controller's lifetime (its whole log, every retained
+    runtime stream), so their cost grows with the incident index; the timings make that visible per stage.
+    """
+
+    started = clock.monotonic()
+    ops.export_controller_logs(control, receipt_dir)
+    logs_done = clock.monotonic()
+    evidence: dict[str, Any] = dict(ops.export_runtime_artifacts(config, receipt_dir))
+    artifacts_done = clock.monotonic()
+    evidence["scope"] = STAGE_END_EVIDENCE_SCOPE
+    evidence["export_seconds"] = {
+        "controller_logs": round(logs_done - started, 3),
+        "runtime_artifacts": round(artifacts_done - logs_done, 3),
+    }
+    logger.info(
+        "stage-end evidence export: controller logs %.1fs, runtime artifacts %.1fs",
+        logs_done - started,
+        artifacts_done - logs_done,
+    )
+    return evidence
+
+
 def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock | None = None) -> None:
     """Pause the controller and wait for its acknowledgement (used when a composition ends)."""
 
@@ -676,9 +701,7 @@ def collect_followup_incident(
     except PersistentControllerError:
         return None
     config = replace(inputs.runtime_config, persistent=True, wait_for_completion=False)
-    ops.export_controller_logs(control, inputs.receipt_dir)
-    evidence: dict[str, Any] = dict(ops.export_runtime_artifacts(config, inputs.receipt_dir))
-    evidence["scope"] = STAGE_END_EVIDENCE_SCOPE
+    evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
     raw_result = closure.get("result")
     result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
