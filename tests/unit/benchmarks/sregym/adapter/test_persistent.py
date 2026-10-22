@@ -679,6 +679,50 @@ def test_teardown_drains_the_last_incident_and_stops_every_controller(tmp_path: 
     assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers == {}
 
 
+def test_a_controller_lost_with_its_cluster_records_the_undrained_incident_and_the_next_stage_runs(
+    tmp_path: Path,
+) -> None:
+    ops = FakeOps()
+    lifecycle_calls: list[str] = []
+    _run(tmp_path, ops, "s0", lifecycle_calls)
+    # The harness recreated the cluster between stages: the controller, its namespace and its state are gone.
+    ops.pods.clear()
+    ops.states.clear()
+
+    second = _run(tmp_path, ops, "s1", lifecycle_calls)
+
+    assert lifecycle_calls == ["s0", "s1"]
+    assert second["persistent_controller"]["installed_this_stage"] is True
+    rejected = json.loads((tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert rejected["failure"]["incident_id"] == "incident-1"
+    assert "controller pod" in rejected["failure"]["message"]
+    assert "lost" in rejected["failure"]["message"]
+
+
+def test_a_replaced_controller_pod_records_the_undrained_incident_instead_of_blocking_the_stage(tmp_path: Path) -> None:
+    ops = FakeOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.pods["hotel-sdo"] = ControllerPod(name="sdo-controller-run-other", uid="uid-other")
+
+    _run(tmp_path, ops, "s1", [])
+
+    rejected = json.loads((tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert "uid-other" in rejected["failure"]["message"]
+
+
+def test_teardown_records_an_incident_whose_controller_was_lost_and_still_stops_the_rest(tmp_path: Path) -> None:
+    ops = FakeOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.pods.clear()
+
+    errors = teardown(tmp_path / "sdo_persistent_controller.json", ops=ops, clock=_clock(ops))
+
+    assert errors == []
+    rejected = json.loads((tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert rejected["failure"]["incident_id"] == "incident-1"
+    assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers == {}
+
+
 def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_path: Path) -> None:
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -1425,3 +1469,26 @@ def test_unrepresentable_rejected_receipt_stays_one_incidents_typed_failure(tmp_
     assert rejection["failure"]["incident_id"] == "incident-1"
     _run(tmp_path, ops, "s1", [])
     assert ("fault", "s1") in ops.events
+
+
+def test_teardown_preserves_pending_state_when_controller_inventory_fails(tmp_path: Path) -> None:
+    class UnavailableOps(FakeOps):
+        unavailable = False
+
+        def controller_pod(self, control_namespace: str) -> ControllerPod | None:
+            if self.unavailable:
+                raise PersistentControllerError("cannot inspect controller: connection refused")
+            return super().controller_pod(control_namespace)
+
+    ops = UnavailableOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.events.clear()
+    ops.unavailable = True
+
+    errors = teardown(tmp_path / "sdo_persistent_controller.json", ops=ops, clock=_clock(ops))
+
+    assert len(errors) == 1
+    assert "connection refused" in errors[0]
+    assert not any(event[0] == "delete" for event in ops.events)
+    assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending is not None
+    assert not (tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).exists()

@@ -99,5 +99,10 @@ infrastructure evidence, distinct from rejected incident evidence; run validity
 classifies it as `invalid_infra`, while evidence rejections remain `agent_failure`. Do not count
 either as a verified mitigation. The drain returns a typed failure for that one
 incident; receipt rejection alone does not stop the next injection. Closure
-failure and drain scheduling are separate, unchanged controller-state paths.
+failure and drain scheduling are separate controller-state paths. If a persistent
+controller is absent or its pod UID changed before drain, the adapter writes a
+rejected receipt on the previous incident and permits the next stage to install
+a controller; this rejection does not prove reflection completed. Correlate the
+loss with the harness cluster-reuse log before attributing it to a controller
+crash. Pod inventory command failures remain errors, not evidence of pod loss.
 Flat reflection usage follows ProtoJSON: int64 token counts may be strings.
