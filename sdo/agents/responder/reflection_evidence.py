@@ -7,16 +7,18 @@ import json
 import os
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import BaseModel, Field
+
+from sdo.agents.responder.reflection_authoring import OpenPhase
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from sdo.contracts import OperationalMemorySnapshot
 
-CapturePhase = Literal["detect", "fixed"]
+CapturePhase = OpenPhase | Literal["fixed"]
 CaptureSection = Literal[
     "configMaps",
     "services",
@@ -58,6 +60,7 @@ class CaptureInventory(BaseModel):
 
 class RecordingEntry(BaseModel):
     index: int
+    phase_index: int
     phase: str
     method: str
     bound_object: dict[str, str] | None = None
@@ -86,7 +89,10 @@ class CapturePage(BaseModel):
 
 def capture_inventory(captures: Path) -> dict[str, Any]:
     summaries = []
-    for filename in sorted(("open@detect.json", "fixed.json", "open@detect-recordings.json")):
+    filenames = ["fixed.json"]
+    for phase in get_args(OpenPhase):
+        filenames.extend((f"open@{phase}.json", f"open@{phase}-recordings.json"))
+    for filename in sorted(filenames):
         file = captures / filename
         if not file.is_file():
             continue
@@ -120,25 +126,35 @@ def capture_inventory(captures: Path) -> dict[str, Any]:
 
 
 def recording_index(
-    captures: Path, *, method: str | None = None, phase: str | None = None, offset: int = 0, limit: int = 64
+    captures: Path,
+    *,
+    open_phase: OpenPhase = "detect",
+    method: str | None = None,
+    phase: str | None = None,
+    offset: int = 0,
+    limit: int = 64,
 ) -> dict[str, Any]:
     """Index metadata across the entire recording; never load result bodies into context."""
     if offset < 0 or not 1 <= limit <= 100:
         raise ValueError("recording pages require a nonnegative offset and limit between 1 and 100")
-    raw = (captures / "open@detect-recordings.json").read_bytes()
-    calls = [
-        (index, call)
-        for index, call in enumerate(json.loads(raw))
-        if (method is None or call["method"] == method) and (phase is None or (call.get("phase") or "open") == phase)
-    ]
+    raw = (captures / f"open@{open_phase}-recordings.json").read_bytes()
+    calls = []
+    phase_counts: dict[str, int] = {}
+    for index, call in enumerate(json.loads(raw)):
+        recorded_phase = call.get("phase") or "open"
+        phase_index = phase_counts.get(recorded_phase, 0)
+        phase_counts[recorded_phase] = phase_index + 1
+        if (method is None or call["method"] == method) and (phase is None or recorded_phase == phase):
+            calls.append((index, phase_index, call))
     entries = []
-    for index, call in calls[offset : offset + limit]:
+    for index, phase_index, call in calls[offset : offset + limit]:
         arguments = call.get("arguments") or []
         ref = arguments[0] if arguments and isinstance(arguments[0], dict) else None
         error = call.get("error") or ""
         entries.append(
             RecordingEntry(
                 index=index,
+                phase_index=phase_index,
                 phase=call.get("phase") or "open",
                 method=call["method"],
                 bound_object={key: str(ref[key]) for key in ("api_version", "kind", "namespace", "name") if key in ref}
@@ -179,21 +195,22 @@ def read_capture(
     name: str | None = None,
     namespace: str | None = None,
     fields: list[str] | None = None,
+    open_phase: OpenPhase = "detect",
     offset: int = 0,
     limit: int = 8,
 ) -> dict[str, Any]:
     if not 1 <= limit <= 20 or offset < 0:
         raise ValueError("capture pages require a nonnegative offset and limit between 1 and 20")
     filename = (
-        "open@detect-recordings.json"
+        f"open@{open_phase if phase == 'fixed' else phase}-recordings.json"
         if section == "recordings"
-        else ("open@detect.json" if phase == "detect" else "fixed.json")
+        else ("fixed.json" if phase == "fixed" else f"open@{phase}.json")
     )
     raw = (captures / filename).read_bytes()
     snapshot = json.loads(raw)
     items = snapshot if section == "recordings" else snapshot.get(section) or []
     if section == "recordings":
-        items = [item for item in items if (item.get("phase") or "open") == ("open" if phase == "detect" else "fixed")]
+        items = [item for item in items if (item.get("phase") or "open") == ("fixed" if phase == "fixed" else "open")]
     if name is not None:
         items = [item for item in items if item.get("metadata", {}).get("name") == name]
     if namespace is not None:
@@ -266,6 +283,7 @@ def install_evidence_tools(server: FastMCP) -> None:
         name: str | None = None,
         namespace: str | None = None,
         fields: list[str] | None = None,
+        open_phase: OpenPhase = "detect",
         offset: int = 0,
         limit: int = 8,
     ) -> CapturePage:
@@ -278,12 +296,21 @@ def install_evidence_tools(server: FastMCP) -> None:
         """
         return CapturePage.model_validate(
             read_capture(
-                directory(), phase, section, name=name, namespace=namespace, fields=fields, offset=offset, limit=limit
+                directory(),
+                phase,
+                section,
+                name=name,
+                namespace=namespace,
+                fields=fields,
+                open_phase=open_phase,
+                offset=offset,
+                limit=limit,
             )
         )
 
     @server.tool()
     def recordings_index(
+        open_phase: OpenPhase = "detect",
         method: str | None = None,
         phase: str | None = None,
         offset: int = 0,
@@ -293,9 +320,11 @@ def install_evidence_tools(server: FastMCP) -> None:
 
         Filters search the entire recording. next_offset marks incomplete pages;
         a truncated page does not establish that a primitive was unrecorded.
-        Empty recorded phases mean open. Error excerpts report omitted characters.
+        Empty recorded phases mean open. phase_index locates the call within that
+        phase's capture_fields page. Error excerpts report omitted characters.
+        open_phase selects the protected recording file, including its fixed observations.
         Result payloads remain available through capture_fields.
         """
         return RecordingIndex.model_validate(
-            recording_index(directory(), method=method, phase=phase, offset=offset, limit=limit)
+            recording_index(directory(), open_phase=open_phase, method=method, phase=phase, offset=offset, limit=limit)
         )
