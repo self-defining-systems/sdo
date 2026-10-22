@@ -85,6 +85,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 	rejected := false
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(ctx context.Context, root string, paths []string) error {
 		validations++
+
 		for _, path := range paths {
 			if rejectFirst && !rejected && strings.HasPrefix(path, ".sdo/corpus/repeat-") {
 				rejected = true
@@ -191,6 +192,9 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 	}
 	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {
 		t.Fatalf("model=%d paths=%v ledger=%v checks=%d", modelCalls, paths, ledger, validations)
+	}
+	if ledger.ReflectionEvidenceGapCount == nil || ledger.GetReflectionEvidenceGapCount() != 2 {
+		t.Fatalf("incident did not persist its missing open/fixed observations: %v", ledger)
 	}
 	for _, path := range paths {
 		if !strings.HasPrefix(path, ".sdo/corpus/repeat-") {

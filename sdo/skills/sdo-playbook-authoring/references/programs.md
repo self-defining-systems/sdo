@@ -56,3 +56,9 @@ Fix diagnostics in the final proposal files; the broker checks the same files in
 The supplied work list preserves the responder's confirmed resource groups. Covered repairs and their corpus cases are already settled; address only typed questions. Unwritten bindings, unproven plan equivalence, and writes without a matched binding earn no credit. Unassigned observations remain ungrouped questions. Do not infer merge/split decisions.
 
 A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
+
+Go flags missing resource/phase observations as `evidence_gap` work items after scanning complete protected
+recordings. Only those flags permit a decline for missing recordings: use the typed `decline_reason` and the
+canonical "evidence gap" reason, with details in the summary. A truncated read or a recorded error does not
+establish absence. The per-incident ledger records the number of distinct missing resource/phase observations;
+a flag alone does not prove that learning is blocked.

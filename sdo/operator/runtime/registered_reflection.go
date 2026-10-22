@@ -252,7 +252,7 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	if response.GetArtifactProposal() != nil {
 		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
 	}
-	decision := ReflectionDecision{LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...), SDKGaps: response.GetSdkGaps()}
+	decision := ReflectionDecision{DeclineReason: response.GetDeclineReason(), LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...), SDKGaps: response.GetSdkGaps()}
 	return w.withUsage(decision, workspace.IncidentID)
 }
 

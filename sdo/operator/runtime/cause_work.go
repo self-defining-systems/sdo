@@ -175,7 +175,7 @@ func causeWorkNeedsModel(work []*contracts.ReflectionCauseWork) bool {
 	}
 	for _, cause := range work {
 		for _, item := range cause.GetItems() {
-			if item.GetDisposition() != "covered" {
+			if item.GetDisposition() != "covered" && item.GetReason() != "evidence_gap" {
 				return true
 			}
 		}

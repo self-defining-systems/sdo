@@ -92,7 +92,7 @@ func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.
 		return nil, fmt.Errorf("reflection decision: %w", err)
 	}
 	return &contracts.ReflectionDecision{
-		LearningDecision: result.GetLearningDecision(), NoChangeReason: result.GetNoChangeReason(),
+		DeclineReason: result.GetDeclineReason(), LearningDecision: result.GetLearningDecision(), NoChangeReason: result.GetNoChangeReason(),
 		PlaybookIds: result.GetProposedArtifactIds(), SdkGaps: result.GetSdkGaps(),
 	}, nil
 }
@@ -184,6 +184,12 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 	}
 	if d == nil {
 		return fail("reflection requires an explicit learning decision")
+	}
+	if d.GetDeclineReason() == "evidence_gap" && d.GetLearningDecision() == "no_change" && d.GetNoChangeReason() != "evidence gap" {
+		return fail("an evidence gap no_change uses the canonical evidence gap reason")
+	}
+	if d.GetNoChangeReason() == "evidence gap" && d.GetDeclineReason() != "evidence_gap" {
+		return fail("an evidence gap decline requires its typed decline_reason")
 	}
 	switch d.GetLearningDecision() {
 	case "updated":

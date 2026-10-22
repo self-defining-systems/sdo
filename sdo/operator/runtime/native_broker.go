@@ -64,6 +64,7 @@ type ReflectionFeedback struct {
 type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
+	DeclineReason    string
 	PlaybookIDs      []string
 	Error            string
 	SDKGaps          []*contracts.SdkGap
@@ -422,6 +423,10 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		if n.SessionRoot != "" {
 			capture, _ = memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
 		}
+		gapCount := appendEvidenceGaps(work, capture)
+		if err := update(lifecyclecore.ReflectionEvent{Kind: lifecyclecore.ReflectionEvidenceIndexed, EffectID: effect.ID, EvidenceGapCount: gapCount}); err != nil {
+			return nil, err
+		}
 		prepared := false
 		if len(positive) > 0 {
 			if capture != "" {
@@ -461,7 +466,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 				return nil, err
 			}
 		}
-		result := &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+		result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
 		if decision.Usage != nil {
 			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
 		}

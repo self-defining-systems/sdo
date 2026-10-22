@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import tempfile
 from pathlib import Path
@@ -36,7 +37,7 @@ async def render_contract() -> str:
     ]
     with tempfile.TemporaryDirectory() as directory:
         tools = await validation_server(Path(directory)).list_tools()
-    sections.extend(f"## {tool.name}\n\n{tool.description or ''}" for tool in tools)
+    sections.extend(f"## {tool.name}\n\n{inspect.cleandoc(tool.description or '').rstrip()}" for tool in tools)
     return "\n\n".join(sections) + "\n"
 
 
