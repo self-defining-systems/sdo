@@ -20,6 +20,9 @@ type PrimitiveRequest struct {
 	To    sdk.ObjectRef      `json:"to"`
 	Port  int32              `json:"port"`
 	HTTP  *program.HTTPProbe `json:"http,omitempty"`
+	// Timeout bounds the probe in nanoseconds, excluding HTTP transport time.
+	// Zero preserves the default five-second bound for older callers.
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 func (p *Prober) Primitive(ctx context.Context, request PrimitiveRequest) (program.ProbeResult, error) {
@@ -34,7 +37,14 @@ func (p *Prober) Primitive(ctx context.Context, request PrimitiveRequest) (progr
 	} else if request.PodIP != "" {
 		return program.ProbeResult{}, fmt.Errorf("Service primitive cannot override its address")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	if request.Timeout < 0 {
+		return program.ProbeResult{}, fmt.Errorf("primitive probe timeout must not be negative")
+	}
+	timeout := 5 * time.Second
+	if request.Timeout > 0 {
+		timeout = min(timeout, request.Timeout)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if request.HTTP == nil {
 		address := p.config.LinkAddress(traffic.Link{To: request.To.Name, Port: int(request.Port)})

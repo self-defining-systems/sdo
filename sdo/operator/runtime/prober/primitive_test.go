@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
@@ -83,5 +85,39 @@ func TestPodTCPPrimitiveUsesControllerCapturedAddress(t *testing.T) {
 	request.HTTP = &program.HTTPProbe{Method: "GET", Path: "/"}
 	if _, err := p.Primitive(context.Background(), request); err == nil {
 		t.Fatal("Pod HTTP probe allowed")
+	}
+}
+
+func TestPrimitiveProbeEnforcesRequestedTimeoutAndDefaultCap(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{"caller-bound", 50 * time.Millisecond, 50 * time.Millisecond},
+		{"legacy-default", 0, 5 * time.Second},
+		{"capped", time.Hour, 5 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				p, err := prober.New(prober.Config{Namespace: "app", DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				start := time.Now()
+				request := prober.PrimitiveRequest{To: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}, Port: 80, Timeout: test.timeout}
+				result, err := p.Primitive(context.Background(), request)
+				if err != nil || result.Success || result.Detail == "" || time.Since(start) != test.want {
+					t.Fatalf("timeout observation: %+v %v after %s, want %s", result, err, time.Since(start), test.want)
+				}
+				request.Timeout = -time.Second
+				if _, err := p.Primitive(context.Background(), request); err == nil {
+					t.Fatal("negative probe timeout accepted")
+				}
+			})
+		})
 	}
 }
