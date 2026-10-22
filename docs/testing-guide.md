@@ -82,7 +82,8 @@ fast CLI and result-row check with the scripted worker and fake application API.
 The gate also deploys a synthetic workload at commit A, publishes a `.sdo/`-only
 commit B, resets the configuration baseline for maintenance, and checks that
 accepted manifests still use the deployed regular and init-container images.
-A later Service targetPort change must produce unexplained drift. Separate
+Both annotated deployments and legacy deployments bound to the configured
+deployed commit are covered. A later Service targetPort change must produce unexplained drift. Separate
 coverage checks retain Service adoption and responder admission when another
 workload cannot render, with the render gap recorded for retry; application
 source changes must never reuse the old deployment images.
