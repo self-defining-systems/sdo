@@ -686,10 +686,10 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
 
     class RestartOps(FakeOps):
         def install(self, config: RuntimeConfig) -> bool:
-            durable = self.states.get(config.control_namespace, {}).get("drift_verdicts")
+            durable = self.states.get(config.control_namespace, {}).get("drift_events")
             installed = super().install(config)
             if durable is not None:
-                self.states[config.control_namespace]["drift_verdicts"] = durable
+                self.states[config.control_namespace]["drift_events"] = durable
             return installed
 
     class ResetCluster:
@@ -717,7 +717,9 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
     ops = RestartOps()
     _run(tmp_path, ops, "s0", [])
     ops.existing_namespaces.add("hotel-sdo")
-    ops.states["hotel-sdo"]["drift_verdicts"] = {"service": "bug"}
+    ops.states["hotel-sdo"]["drift_events"] = [
+        {"ref": {"kind": "Service", "name": "api"}, "investigation_verdict": "bug"}
+    ]
     environment = FastloopEnvironment(
         run_dir=tmp_path,
         cluster="kind-test",
@@ -744,7 +746,9 @@ def test_fail_soft_reset_restarts_controller_without_losing_drift_verdicts(tmp_p
 
     assert calls == []
     assert ("delete", "hotel-sdo") not in ops.events
-    assert ops.states["hotel-sdo"]["drift_verdicts"] == {"service": "bug"}
+    assert ops.states["hotel-sdo"]["drift_events"] == [
+        {"ref": {"kind": "Service", "name": "api"}, "investigation_verdict": "bug"}
+    ]
     assert resolution["persistent_controller"]["installed_this_stage"]
 
 
@@ -951,7 +955,7 @@ def test_a_permanently_failed_closure_ends_the_drain_with_the_broker_error(tmp_p
     ops = FakeOps()
     _run(tmp_path, ops, "s0", [])
     state = ops.states["hotel-sdo"]
-    state["closure_state"] = "failed"
+    state["closure_state"] = "CLOSURE_STATE_FAILED"
     state["closure_failure"] = {
         "incident_id": "incident-1",
         "attempts": 8,
@@ -1063,8 +1067,8 @@ class _ClosureFailedOps(FakeOps):
         inject()
         self.states[control_namespace].update(
             {
-                "dispatch_state": "idle",
-                "closure_state": "failed",
+                "dispatch_state": "DISPATCH_STATE_IDLE",
+                "closure_state": "CLOSURE_STATE_FAILED",
                 "closure_failure": {"incident_id": "incident-0", "permanent": True, "last_error": "broker exited 1"},
             }
         )

@@ -172,6 +172,7 @@ class FakeOps:
     logs: dict[str, list[str]] = field(default_factory=dict)
     reject_receipts: bool = False
     controller_result_override: dict[str, Any] = field(default_factory=dict)
+    seen_closures: set[tuple[str, str]] = field(default_factory=set)
     #: Replaces the synthetic receipt, for a test that needs one that passes strict validation.
     receipt_override: dict[str, Any] | None = None
     #: Reflection finishes before the driver's first poll sees the verified closure.
@@ -201,6 +202,7 @@ class FakeOps:
         self.installs += 1
         self.pods[control] = ControllerPod(name=f"pod-{self.installs}", uid=f"uid-{self.installs}")
         self.states[control] = {}
+        self.seen_closures = {key for key in self.seen_closures if key[0] != control}
         self.logs[control] = []
         return False
 
@@ -225,10 +227,12 @@ class FakeOps:
     def runtime_state(self, control_namespace: str) -> dict[str, Any]:
         state = self.states[control_namespace]
         closure = state.get("pending_closure")
-        if isinstance(closure, dict) and closure.get("reflect_on_next_poll"):
-            self._reflect(control_namespace, closure["request"]["incident_id"])
-        elif isinstance(closure, dict):
-            closure["reflect_on_next_poll"] = True
+        if isinstance(closure, dict):
+            incident_id = closure["request"]["incident_id"]
+            if (control_namespace, incident_id) in self.seen_closures:
+                self._reflect(control_namespace, incident_id)
+            else:
+                self.seen_closures.add((control_namespace, incident_id))
         return state
 
     def controller_logs(self, control_namespace: str) -> str:

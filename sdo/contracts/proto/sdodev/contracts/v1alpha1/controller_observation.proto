@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "sdodev/contracts/v1alpha1/controller_state.proto";
+import "sdodev/contracts/v1alpha1/messages.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// A read-only observation of controller-owned state. Publication validation
+// remains with the controller; this API interprets persisted facts, not writes.
+message ControllerObservationRequest {
+  ControllerState state = 1 [(buf.validate.field).required = true];
+  repeated string known_incident_ids = 2;
+  string incident_id = 3;
+  bool stop_on_review = 4;
+}
+
+message ControllerObservationFailure {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CODE_INVALID_SNAPSHOT = 1;
+    CODE_CLOSURE_FAILED = 2;
+    CODE_DETECTOR_REVIEW_REQUIRED = 3;
+  }
+  Code code = 1 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  string incident_id = 2;
+  string message = 3 [(buf.validate.field).string.min_len = 1];
+}
+
+message ControllerObservation {
+  repeated string known_incident_ids = 1;
+  bool new_incident_opened = 2;
+  string verified_incident_id = 3;
+  IncidentClosure verified_closure = 4;
+  bool acknowledged = 5;
+  string open_incident_summary = 6;
+  ControllerObservationFailure failure = 7;
+}

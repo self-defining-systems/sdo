@@ -296,3 +296,9 @@ that completion polls never post, and that malformed facts yield typed failures.
 Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the existing
 controller CI matrix runs the same bounded target. Image scope tests verify
 separate Go compilation and binary-only copying into the benchmark worker.
+Read-only controller observations are tested in `outcome_derivation` and
+`operatorcli/controller_observation_test.go`. `FuzzControllerObservationBoundary`
+checks malformed snapshots, closed lifecycle enums, incident correlation and a
+rejected snapshot followed by a good one. Run it with `-fuzztime=30s
+-fuzzminimizetime=1s -parallel=2 -timeout=2m`; the operator CI leg runs the bounded
+target. Fake controller bookkeeping stays outside the generated snapshot shape.

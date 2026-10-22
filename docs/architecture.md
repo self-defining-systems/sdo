@@ -45,7 +45,7 @@ The controller captures the application namespace's detection view at detection,
 | `sdo/contracts/proto/sdodev/contracts/v1alpha1/`, `sdo/contracts/`, `sdo/operator/contracts/` | Shared protobuf schema and generated Python/Go messages |
 | `sdo/operator/worker_registry/` | Strict registration, capability lookup, and implementation-neutral Kubernetes execution |
 | `sdo/operator/lifecycle/`, `deployment/`, `artifacts/` | Go lifecycle decisions, trusted deployment/readiness strategies, and physical bootstrap-artifact writes |
-| `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority, logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, and controller-derived typed outcomes |
+| `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority, logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, controller-derived typed outcomes, and read-only controller observations |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift admission to responders, revision-bound trusted plans, controller state and its typed projection, builder/supervisor, and Kubernetes installation |
 | `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, protocol, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
@@ -76,6 +76,7 @@ The host uses `SDO_NATIVE_RECEIPT_BIN` (absolute path), an installed
 directory from the local module. Source mode requires Go. Benchmark workers do
 not need this host-side checker. The checker imports the public generated
 contracts only; production Go packages do not import the benchmark module.
+
 The benchmark submission bridge transports conductor status and acknowledgments
 to `protocol/submission_go`. `benchmark_submission.proto` defines those facts,
 phases, terminal-stage spellings, and the Go guard's typed decisions. The guard
@@ -87,6 +88,17 @@ binary; production images contain no benchmark guard. Hosts may select
 `SDO_SUBMISSION_GUARD_BIN`, an installed binary, or build once from source.
 The upstream untyped `/submit` still has a status-read/POST race: phase checking
 cannot make those separate upstream operations atomic.
+
+Controller-state readers use `sdo-operator observe-controller` and
+`controller_observation.proto`. The transport-neutral Go projection interprets
+incident identity, verified closure, acknowledgment, detector review and permanent
+closure failure using R1's generated `DispatchState`/`ClosureState` values.
+Python polls and consumes the typed observation; it does not compare lifecycle
+strings or rebuild these decisions from dictionaries. The endpoint opens no
+Kubernetes client and never writes state. Controller publication validation
+remains at the controller's storage edge; this read projection strictly decodes
+field types and rejects undefined lifecycle enums. Source-mode operator launches
+use a cached build, so observation polling does not repeatedly use `go run`.
 
 ## Controller
 
@@ -260,6 +272,7 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema versions 1 and 2 to 3: it rewrites detector manifests, moves packages, and rewrites playbook paths in detector source to logical IDs, and the broker rejects any other detector change in the same commit. |
 | Benchmark strict/rejected receipts (outside `.sdo/`) | Benchmark Go checker derives and accepts/rejects evidence | Python adapter transports and persists generated results | `NativeProductionReceipt` and `ReceiptFailure` define the decision; rejected raw evidence grants no memory or mitigation authority. |
 | Benchmark submission decisions (outside `.sdo/`) | Benchmark Go guard | Python only transports the decision and opaque upstream reply | Generated `SubmissionGuardDecision`; only the matching observed phase authorizes POST; completion polls never authorize POST. |
+| Runtime-state ConfigMap (outside `.sdo/`) | Go controller | Go controller | `ControllerState` is publication-validated by its storage edge; `ControllerObservation` is a read-only Go interpretation, never a second writer or persistence schema. |
 
 
 Source-absent drift admission also covers reviewed foreign NetworkPolicy creates and spec edits with no controller owner. A successful accepted-source lookup must positively establish absence (`program.Diff.SourceAbsent`); a source error is not absence. Metadata-only edits, informer initial listings and ordinary controller churn do not enter this path. Learned findings clear only after an explicit NoMatch for every active binding, including a retained binding whose policy was deleted. Unexplained drift uses the ordinary responder, with its existing write grants and evidence-before-action policy. Successful source comparison clears restored or adopted affected fields; learned bindings, including deleted objects, each require explicit NoMatch. Unknown, missing bindings and source errors remain unresolved. Reset cancels and awaits controller and worker Jobs before deleting their referenced captures or checkouts. Drift reasoning uses the ordinary responder task; controller and worker images must be upgraded together after draining active work.
@@ -271,7 +284,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `sdo/agents/` | Production agent implementations with direct reflection and judge file authoring; contract types are generated protobuf messages; built-in agents may use Codex or Claude internally. |
 | `sdo/contracts/proto/`, `sdo/contracts/_gen/` | Canonical language-neutral task/result and outcome schemas, with generated Python messages. |
 | `sdo/operator/worker_registry/`, `lifecycle/`, `deployment/`, `artifacts/` | Production Go interfaces and implementation. |
-| `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority, physical storage and explicit generic-health preparation, the single operational-memory validator, outcome derivation, and installer. |
+| `sdo/operator/broker/`, `memory/` (including `layout/` and `validate/`), `outcome_derivation/`, `install/` | Production Go authority, physical storage and explicit generic-health preparation, the single operational-memory validator, outcome derivation and read-only controller observation, and installer. |
 | `sdo/operator/sdk/`, `core/`, `runtime/`, `builder/`, `contracts/` | Production Go detector/program SDK with canonical object-ref parsing, deterministic controller, typed plan execution and rollback, accepted-revision trust, and generated contracts. |
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
 | `libs/agent_cli/` | Production-neutral agent turn runner. |

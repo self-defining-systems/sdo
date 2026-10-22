@@ -41,6 +41,7 @@ from sdodev.contracts.v1alpha1 import (
     benchmark_submission_pb2,
     common_pb2,
     controller_config_pb2,
+    controller_observation_pb2,
     controller_state_pb2,
     late_findings_pb2,
     lifecycle_pb2,
@@ -73,6 +74,9 @@ SubmissionPhaseStatus = benchmark_submission_pb2.SubmissionPhaseStatus
 SubmissionBridgeResponse = benchmark_submission_pb2.SubmissionBridgeResponse
 SubmissionGuardFailure = benchmark_submission_pb2.SubmissionGuardFailure
 SubmissionGuardDecision = benchmark_submission_pb2.SubmissionGuardDecision
+ControllerObservationRequest = controller_observation_pb2.ControllerObservationRequest
+ControllerObservationFailure = controller_observation_pb2.ControllerObservationFailure
+ControllerObservation = controller_observation_pb2.ControllerObservation
 
 
 ProgramSpec = program_pb2.ProgramSpec
@@ -194,6 +198,9 @@ __all__ = [
     "SubmissionBridgeResponse",
     "SubmissionGuardFailure",
     "SubmissionGuardDecision",
+    "ControllerObservationRequest",
+    "ControllerObservationFailure",
+    "ControllerObservation",
     "Action",
     "AgentCapability",
     "AgentRegistration",
