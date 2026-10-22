@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from sregym_fake_host import CODEX_PIN, FakeHost
 from benchmarks.sregym.runner.experiment import ExperimentConfig, RunnerEnv, load_experiment_config
 from benchmarks.sregym.runner.preflight import (
     GB,
+    SNAPSHOT_AGE_ENV,
     ImageVersions,
     LaunchAssurance,
     ModelPolicy,
@@ -72,7 +74,9 @@ def _write_agents_yaml(sregym_dir: Path, version: str | None) -> None:
     (sregym_dir / "agents.yaml").write_text(yaml.safe_dump(agents), encoding="utf-8")
 
 
-def _write_rollout(home: Path, *, used: float, observed: float, resets: float) -> None:
+def _write_rollout(
+    home: Path, *, used: float, observed: float, resets: float, name: str = "rollout-2026-09-28T07-48-49-x.jsonl"
+) -> Path:
     sessions = home / ".codex" / "sessions" / "2026" / "09" / "28"
     sessions.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(observed))
@@ -84,7 +88,9 @@ def _write_rollout(home: Path, *, used: float, observed: float, resets: float) -
             "rate_limits": {"primary": {"used_percent": used, "window_minutes": 10080, "resets_at": resets}},
         },
     }
-    (sessions / "rollout-2026-09-28T07-48-49-x.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+    path = sessions / name
+    path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    return path
 
 
 def _preflight(configs: list[ExperimentConfig], host: FakeHost, sregym_dir: Path, **env: str):
@@ -390,20 +396,66 @@ def test_quota_at_the_limit_aborts_and_names_the_reset(fake_host: FakeHost, sreg
     assert "90% used" in check.detail
 
 
-@pytest.mark.parametrize(
-    ("observed", "resets"),
-    [(NOW - 7 * 3600, NOW + 86_400), (NOW - 60, NOW - 30)],
-    ids=["stale", "past-reset"],
-)
-def test_an_old_quota_snapshot_is_unknown_not_a_failure(
-    fake_host: FakeHost, sregym_dir: Path, observed: float, resets: float
-) -> None:
-    _write_rollout(fake_host.home, used=99, observed=observed, resets=resets)
+def test_a_quota_snapshot_past_its_reset_is_unknown(fake_host: FakeHost, sregym_dir: Path) -> None:
+    _write_rollout(fake_host.home, used=99, observed=NOW - 60, resets=NOW - 30)
 
     report = _preflight([_luna()], fake_host, sregym_dir)
 
     assert _check(report, "codex-quota").status == "unknown"
     assert report.facts["codex_quota"]["status"] == "unknown"
+
+
+def test_a_stale_quota_snapshot_fails_and_reports_its_age(fake_host: FakeHost, sregym_dir: Path) -> None:
+    _write_rollout(fake_host.home, used=87, observed=NOW - 3.6 * 3600, resets=NOW + 86_400)
+
+    report = _preflight([_luna()], fake_host, sregym_dir)
+
+    check = _check(report, "codex-quota")
+    assert check.status == "fail"
+    assert "3.6 h old" in check.detail
+    assert "30 min" in check.detail
+    assert "Codex" in check.remedy
+    assert report.facts["codex_quota"]["status"] == "stale"
+    assert report.facts["codex_quota"]["age_seconds"] == 3.6 * 3600
+
+
+def test_the_snapshot_age_bound_is_configurable_from_the_environment(fake_host: FakeHost, sregym_dir: Path) -> None:
+    _write_rollout(fake_host.home, used=40, observed=NOW - 3600, resets=NOW + 86_400)
+    settings = PreflightSettings.from_env({SNAPSHOT_AGE_ENV: "7200"})
+
+    report = run_preflight(
+        [_luna()], project_root=REPO_ROOT, sregym_dir=sregym_dir, env={}, host=fake_host, settings=settings, now=NOW
+    )
+
+    assert settings.quota_snapshot_max_age_seconds == 7200
+    assert _check(report, "codex-quota").status == "pass"
+
+
+def test_the_quota_snapshot_is_the_newest_observed_across_session_files(fake_host: FakeHost, sregym_dir: Path) -> None:
+    recent = _write_rollout(
+        fake_host.home, used=60, observed=NOW - 120, resets=NOW + 86_400, name="rollout-2026-09-28T09-00-00-a.jsonl"
+    )
+    stale = _write_rollout(
+        fake_host.home,
+        used=95,
+        observed=NOW - 3 * 3600,
+        resets=NOW + 86_400,
+        name="rollout-2026-09-28T06-00-00-b.jsonl",
+    )
+    os.utime(recent, (NOW - 7200, NOW - 7200))
+    os.utime(stale, (NOW, NOW))
+
+    report = _preflight([_luna()], fake_host, sregym_dir)
+
+    assert _check(report, "codex-quota").status == "pass"
+    assert report.facts["codex_quota"]["windows"]["primary"]["used_percent"] == 60
+    assert report.facts["codex_quota"]["source"] == str(recent)
+
+
+@pytest.mark.parametrize("seconds", [0, -1])
+def test_a_non_positive_snapshot_age_bound_is_rejected(seconds: float) -> None:
+    with pytest.raises(ValueError, match="quota_snapshot_max_age_seconds"):
+        PreflightSettings(quota_snapshot_max_age_seconds=seconds)
 
 
 def test_no_codex_sessions_leaves_the_quota_unknown(tmp_path: Path) -> None:
