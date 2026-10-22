@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from google.protobuf import json_format
 
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
+from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
@@ -21,7 +22,7 @@ from sdo.agents.responder.session_turn import (
     session_turn_options,
     unwrap_branch,
 )
-from sdo.agents.responder.tools_cli import CLI_EXAMPLES
+from sdo.agents.responder.tools_cli import ACT_EXAMPLE, CLI_EXAMPLES
 from sdo.contracts import (
     ROOT_CAUSE_EVIDENCE_KINDS,
     DetectorEvaluation,
@@ -69,6 +70,7 @@ def execute_incident(
     if selected_provider not in AGENT_PROVIDERS:
         raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
     prompt = _responder_prompt(request)
+    recorded_actions.reset()
     resume_session_id: str | None = None
     corrected_evidence = corrected_branch = False
     while True:
@@ -106,6 +108,10 @@ def execute_incident(
             prompt = branch_correction("incident_result")
         except (OSError, ValueError) as exc:
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+    try:
+        recorded_actions.merge_into(result)
+    except recorded_actions.RecordedActionsError as exc:
+        raise ResponderExecutionError(f"invalid recorded repair actions: {exc}") from exc
     if not result.HasField("responder_session_id"):
         result.responder_session_id = completed.session_id
     if result.incident_id != request.incident_id:
@@ -641,10 +647,11 @@ def _verification_instructions() -> str:
         "`kubectl wait --for=condition=Ready pod -l <SELECTOR> --timeout=60s`) rather than starting it in the "
         "background and returning in a later turn to check on it; each check-in is a separate model turn that "
         "resends the whole conversation so far.\n\n"
-        "Verify before you submit or return: after the repair, run "
-        "`python3 -m sdo.agents.responder.status_cli` (exit 0 "
-        "healthy, 1 unhealthy, 3 unavailable; about 3-5 seconds). It runs the health judge's verify burst through "
-        "SDO's isolated prober, the same synthetic traffic the controller requires before it closes this incident. "
+        "Verify before you submit or return: after the repair, run one `sdo verify` and "
+        "`python3 -m sdo.agents.responder.status_cli` in a single shell call, with no verification script of your "
+        "own (exit 0 healthy, 1 unhealthy, 3 unavailable; about 3-5 seconds). It runs the health judge's verify "
+        "burst through SDO's isolated prober, the same synthetic traffic the controller requires before it closes "
+        "this incident. "
         "It also reports unhealthy while the controller's other health detectors still fire (a fault traffic "
         "cannot see yet), and it lists configuration that changed after this request was taken, which the "
         "request's state diff lacks. "
@@ -652,8 +659,8 @@ def _verification_instructions() -> str:
         "healthy. When it reports unhealthy, its failing scenarios, status codes, and request paths are live "
         "evidence: a change that leaves them failing did not fix the incident, however plausible the artifact it "
         "addressed, so keep investigating along those request paths. Only when it reports unavailable, rely on "
-        "your own verification of the health objective. Record its final output as a verification_evidence entry "
-        "named `sdo-incident-status`.\n\n"
+        "`sdo verify` and plain `kubectl get`/`rollout status` checks. Record its final output as a "
+        "verification_evidence entry named `sdo-incident-status`.\n\n"
         "Every confirmed root cause needs live evidence: a detector finding (source: its detector ID or "
         "finding fingerprint), a failing "
         "synthetic scenario (source: its scenario ID), a change listed since the last healthy state (source: its "
@@ -780,7 +787,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Diagnosis-only programs have no mitigator: use their evidence, then repair from accepted source. "
         "An unknown capability is not evidence of a mitigator; check sdo diagnose for current metadata. "
         "Investigate NeedsJudgement or Unknown with kubectl or sdo diagnose. "
-        "Use a session-only bash fix when no program fits. Always finish with sdo verify. "
+        "When no program fits, make the fix with plain commands, each live mutation through `sdo act`. "
+        "Always finish with sdo verify. "
         "Concrete CLI examples (replace the program, namespace, resource and binding name with those in the verdict): "
         + "; ".join(f"`{example}`" for example in CLI_EXAMPLES)
         + ". Repeat --bind for each named parameter. "
@@ -816,20 +824,18 @@ def _responder_prompt(request: IncidentRequest) -> str:
         f"{_no_action_instructions()}"
         f"{_verification_instructions()}"
         f"{_cause_admissibility_guidance()}"
-        "During this response, "
-        "Write any multi-step or repeated check as a parameterized script in the session scratch directory "
-        "($SDO_SESSION_SCRATCH, or /tmp/sdo-session-scratch if unset). "
-        "Pass affected resources as arguments; use no hard-coded resource names. "
-        "Use plain commands for one-off lookups. Keep interpretation and decisions in natural language. "
-        "Never put scratch scripts in operational memory. "
+        "During this response, use plain commands and chain independent ones in one shell call. "
+        "Do not write helper scripts for repairs, receipts or verification; keep interpretation and decisions in "
+        "natural language. Never put scratch files in operational memory. "
         f"{memory_guard}Return only the IncidentResult JSON "
         f"required by the output schema. {branch_instruction('incident_result')}\n\n"
-        f"Repair evidence mode: {request.repair_policy}. For every live mutation, return a repair action receipt "
-        "with its target, the Kubernetes objects it mutated (`resources`), timing, result, and reversibility. SDO "
+        f"Repair evidence mode: {request.repair_policy}. Run every live mutation as one `sdo act` call, for example "
+        f"`{ACT_EXAMPLE}`; it runs the command and records the repair receipt. "
+        "Do not return receipts for `sdo act` calls. SDO "
         "confirms a root cause only when a successful action that started before health cleared mutated that "
-        "cause's resources, so list every object each action changed. In recorded-actions mode, a successful "
-        "live-only repair must have at least one successful receipt; repository changes are still committed when "
-        "present.\n\n"
+        "cause's resources, so pass a `--resource` for every object the command changes. In recorded-actions "
+        "mode, a successful live-only repair needs at least one successful `sdo act`; repository changes are "
+        "still committed when present.\n\n"
         f"{late_findings_guidance(request)}"
         f"{follow_up_guidance(request)}"
         f"{additional_context}\n"

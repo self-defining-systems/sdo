@@ -10,11 +10,21 @@ import time
 import uuid
 from pathlib import Path
 
+from sdo.agents.responder import recorded_actions
+
 CLI_EXAMPLES = (
     "sdo source Deployment/app/api",
     "sdo diagnose targetport --bind service=Service/app/api",
     "sdo plan targetport --bind service=Service/app/api",
 )
+ACT_EXAMPLE = "sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2"
+
+
+def _resource(value: str) -> dict[str, str]:
+    try:
+        return recorded_actions.resource_ref(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _binding(value: str) -> tuple[str, str]:
@@ -48,6 +58,25 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("source", epilog="Example: " + CLI_EXAMPLES[0]).add_argument(
         "ref", metavar="Kind/namespace/name"
     )
+    act = commands.add_parser(
+        "act",
+        description=(
+            "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
+            "command line). The command's exit code is returned. Do not hand-write receipts."
+        ),
+        epilog="Example: " + ACT_EXAMPLE,
+    )
+    act.add_argument(
+        "--resource",
+        action="append",
+        type=_resource,
+        required=True,
+        metavar="Kind/namespace/name",
+        help="object the command mutates (Kind/name when cluster-scoped); repeat for each one",
+    )
+    act.add_argument("--summary", help="one line describing the repair")
+    act.add_argument("--irreversible", action="store_true", help="the mutation cannot be undone")
+    act.add_argument("act_command", nargs=argparse.REMAINDER, metavar="-- COMMAND", help="the mutating command")
     commands.add_parser("verify")
     commands.add_parser("rollback").add_argument("application_id")
     return parser
@@ -100,8 +129,21 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
     raise TimeoutError("SDO tool response timed out")
 
 
+def _act(args: argparse.Namespace) -> int:
+    command = args.act_command[1:] if args.act_command[:1] == ["--"] else args.act_command
+    try:
+        return recorded_actions.run_and_record(
+            command, args.resource, summary=args.summary, reversible=not args.irreversible
+        )
+    except (OSError, ValueError) as exc:
+        print(f"sdo: {exc}", file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "act":
+        return _act(args)
     try:
         response = _exchange(_request(args), Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
     except (OSError, ValueError, TimeoutError) as exc:

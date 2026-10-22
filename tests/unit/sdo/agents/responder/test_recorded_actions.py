@@ -1,0 +1,571 @@
+from __future__ import annotations
+
+import contextlib
+import json
+import logging
+import os
+import re
+import shlex
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+from google.protobuf import json_format
+
+from benchmarks.sregym.protocol import validate_production_receipt
+from sdo.agents.responder import recorded_actions, tools_cli
+from sdo.agents.responder.codex import ResponderExecutionError, _responder_prompt, execute_incident
+from sdo.agents.responder.reflection_brief import responder_shell_commands
+from sdo.contracts import IncidentRequest, IncidentResult
+from tests.proto_messages import evolve
+from tests.structured_turns import ScriptedAgent, reply
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from agentshim.testing import FakeRun
+
+_FIXTURES = Path(__file__).resolve().parents[4] / "fixtures" / "sdo" / "contracts"
+_OBJECT_REF_GO = Path(__file__).resolve().parents[5] / "sdo" / "operator" / "sdk" / "object_ref.go"
+
+
+def _request() -> IncidentRequest:
+    document = json.loads((_FIXTURES / "incident_request.json").read_text(encoding="utf-8"))
+    document["memory_snapshot"] = {
+        "accepted_commit": document["repository_base_commit"],
+        "goal_markdown": "Stay healthy.",
+        "architecture_markdown": "# Architecture\nSource-grounded system.",
+    }
+    document["max_response_loops"] = 3
+    document["repair_policy"] = "recorded-actions"
+    return json_format.Parse(json.dumps(document), IncidentRequest())
+
+
+def _records(scratch: Path) -> list[dict[str, object]]:
+    path = scratch / "repair-actions.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _recorded(scratch: Path) -> list[dict[str, object]]:
+    """The final receipt of each recorded action, in order."""
+
+    last: dict[str, dict[str, object]] = {}
+    for record in _records(scratch):
+        last[record["receipt"]["action_id"]] = record["receipt"]  # type: ignore[index]
+    return list(last.values())
+
+
+@pytest.fixture
+def scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    directory = tmp_path / "scratch"
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(directory))
+    return directory
+
+
+def test_act_runs_one_mutation_and_records_its_receipt(scratch: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    code = tools_cli.main(
+        [
+            "act",
+            "--resource",
+            "Deployment/app/rate",
+            "--resource",
+            "ConfigMap/app/rate-config",
+            "--summary",
+            "Restored the accepted rate image",
+            "--",
+            "echo",
+            "deployment.apps/rate image updated",
+        ]
+    )
+
+    assert code == 0
+    assert "deployment.apps/rate image updated" in capsys.readouterr().out
+    (receipt,) = _recorded(scratch)
+    assert str(receipt["action_id"]).startswith("sdo-act-")
+    assert receipt["kind"] == "command-echo"
+    assert receipt["target"] == "Deployment/app/rate"
+    assert receipt["resources"] == [
+        {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "rate"},
+        {"api_version": "v1", "kind": "ConfigMap", "namespace": "app", "name": "rate-config"},
+    ]
+    assert receipt["summary"] == "Restored the accepted rate image"
+    assert receipt["success"] is True
+    assert receipt["reversible"] is True
+    assert "$ echo 'deployment.apps/rate image updated'" in str(receipt["details"])
+    assert receipt["started_at"] <= receipt["completed_at"]
+
+
+def test_act_names_kubectl_verbs_and_gives_each_action_its_own_id(scratch: Path, tmp_path: Path) -> None:
+    kubectl = tmp_path / "bin" / "kubectl"
+    kubectl.parent.mkdir()
+    kubectl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    kubectl.chmod(0o755)
+
+    for argv in (["-n", "app", "set", "image", "deployment/rate", "rate=img"], ["-n", "app", "apply", "-f", "x.yaml"]):
+        assert tools_cli.main(["act", "--resource", "Deployment/app/rate", "--", str(kubectl), *argv]) == 0
+
+    first, second = _recorded(scratch)
+    assert (first["kind"], second["kind"]) == ("kubectl-set-image", "kubectl-apply")
+    assert first["action_id"] != second["action_id"]
+
+
+def test_act_records_a_failed_mutation_and_propagates_its_exit_code(scratch: Path) -> None:
+    code = tools_cli.main(["act", "--resource", "Service/app/api", "--", "sh", "-c", "echo boom >&2; exit 3"])
+
+    assert code == 3
+    (receipt,) = _recorded(scratch)
+    assert receipt["success"] is False
+    assert "boom" in str(receipt["details"])
+
+
+def test_act_rejects_a_malformed_resource_before_running_anything(scratch: Path) -> None:
+    marker = scratch / "ran"
+    with pytest.raises(SystemExit) as exit_info:
+        tools_cli.main(["act", "--resource", "not-a-ref", "--", "touch", str(marker)])
+
+    assert exit_info.value.code == 2
+    assert not marker.exists()
+    assert not (scratch / "repair-actions.jsonl").exists()
+
+
+def test_act_accepts_a_cluster_scoped_kind_the_go_table_does_not_know(scratch: Path) -> None:
+    assert tools_cli.main(["act", "--resource", "PersistentVolume/data", "--", "true"]) == 0
+
+    (receipt,) = _recorded(scratch)
+    assert receipt["resources"] == [{"api_version": "", "kind": "persistentvolume", "namespace": "", "name": "data"}]
+    assert receipt["target"] == "persistentvolume/data"
+
+
+def test_act_warns_about_a_kubectl_object_no_resource_covers(
+    scratch: Path, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    kubectl = tmp_path / "bin" / "kubectl"
+    kubectl.parent.mkdir()
+    kubectl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    kubectl.chmod(0o755)
+
+    code = tools_cli.main(
+        ["act", "--resource", "Deployment/app/api", "--", str(kubectl), "-n", "app", "delete", "svc/geo", "deploy/api"]
+    )
+
+    assert code == 0  # a warning, not a refusal
+    stderr = capsys.readouterr().err
+    assert "svc/geo" in stderr
+    assert "deploy/api" not in stderr
+    assert len(_recorded(scratch)) == 1
+
+
+def test_act_withholds_the_command_line_when_a_secret_is_involved(scratch: Path) -> None:
+    assert tools_cli.main(["act", "--resource", "Secret/app/db", "--", "echo", "hunter2"]) == 0
+
+    (receipt,) = _recorded(scratch)
+    assert "hunter2" not in str(receipt["details"])
+    assert receipt["details"]
+
+
+@pytest.mark.parametrize(
+    ("resource", "command", "summary"),
+    [
+        ("Deployment/app/api", ["echo", "create", "secret", "generic", "db", "--from-literal=pw=hunter2"], None),
+        ("Deployment/app/api", ["echo", "get", "secret/db", "hunter2"], None),
+        ("Deployment/app/api", ["echo", "create", "configmap", "c", "--from-file=pw=hunter2"], None),
+        ("Deployment/app/api", ["echo", "-n", "app", "set", "env", "deployment/api", "DB_PASSWORD=hunter2"], None),
+        (
+            "Deployment/app/api",
+            [
+                "echo",
+                "patch",
+                "deployment",
+                "api",
+                "-p",
+                '{"spec":{"template":{"spec":{"containers":[{"env":[{"name":"X","value":"hunter2"}]}]}}}}',
+            ],
+            None,
+        ),
+        ("Deployment/app/api", ["echo", "ok"], "set DB_PASSWORD=hunter2 on api"),
+        (
+            "Deployment/app/api",
+            [
+                "echo",
+                "patch",
+                "deployment",
+                "api",
+                "--type=json",
+                "-p",
+                '[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"X","value":"hunter2"}}]',
+            ],
+            None,
+        ),  # fmt: skip
+        ("ConfigMap/app/c", ["echo", "patch", "configmap", "c", "-p", '{"data":{"DB_PASSWORD":"hunter2"}}'], None),
+        ("ConfigMap/app/c", ["echo", "patch", "configmap", "c", "-p", '{"data":{"api_key": "hunter2"}}'], None),
+        ("ServiceAccount/app/sa", ["echo", "-n", "app", "create", "token", "sa", "hunter2"], None),
+        ("Pod/app/api", ["echo", "exec", "api", "--", "printenv", "hunter2"], None),
+        ("Pod/app/api", ["echo", "exec", "api", "--", "env", "hunter2"], None),
+    ],
+)
+def test_act_withholds_command_and_output_that_may_carry_secret_values(
+    scratch: Path, resource: str, command: list[str], summary: str | None
+) -> None:
+    arguments = ["act", "--resource", resource, *(["--summary", summary] if summary else []), "--", *command]
+
+    assert tools_cli.main(arguments) == 0
+
+    (receipt,) = _recorded(scratch)
+    assert "hunter2" not in json.dumps(receipt)
+    assert "withheld" in str(receipt["details"])
+
+
+def test_act_keeps_the_command_line_of_an_ordinary_mutation(scratch: Path) -> None:
+    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "echo", "scale", "--replicas=2"]) == 0
+
+    (receipt,) = _recorded(scratch)
+    assert "--replicas=2" in str(receipt["details"])
+
+
+def test_reflection_shell_commands_withhold_sensitive_sdo_act_lines(tmp_path: Path) -> None:
+    log = tmp_path / "usage.jsonl"
+    lines = [
+        "python tools_cli.py act --resource Pod/app/api -- kubectl exec api -- printenv X=hunter2",
+        "uv run python sdo/agents/responder/tools_cli.py act --resource Pod/app/api -- kubectl exec api -- env hunter2",
+        "sdo act --resource Deployment/app/api -- kubectl -n app set env deployment/api DB_PASSWORD=hunter2",
+        "sdo act --resource Deployment/app/api -- kubectl -n app scale deployment/api --replicas=2",
+        "kubectl get secret db -o yaml",
+    ]
+    log.write_text(json.dumps({"session_id": "s", "shell_command_lines": lines}) + "\n", encoding="utf-8")
+
+    commands = responder_shell_commands(log, "s")
+
+    assert commands is not None
+    assert "hunter2" not in json.dumps(commands)
+    assert commands[0].startswith("sdo act [command withheld")
+    assert commands[1].startswith("sdo act [command withheld")
+    assert commands[3] == lines[3]
+    assert commands[4] == lines[4]  # only recorded `sdo act` lines are scrubbed
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Deployment/app/api", {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"}),
+        ("deploy/app/api", {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"}),
+        (
+            "Role/app/reader",
+            {"api_version": "rbac.authorization.k8s.io/v1", "kind": "Role", "namespace": "app", "name": "reader"},
+        ),
+        ("PersistentVolume/data", {"api_version": "", "kind": "persistentvolume", "namespace": "", "name": "data"}),
+        ("Node/worker-1", {"api_version": "", "kind": "node", "namespace": "", "name": "worker-1"}),
+        (
+            "deployments.apps/app/api",
+            {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"},
+        ),
+        ("app/Deployment/api", {"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "api"}),
+    ],
+)
+def test_resource_refs_follow_the_go_object_ref_grammar(value: str, expected: dict[str, str]) -> None:
+    assert recorded_actions.resource_ref(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value", ["", "Deployment", "a/b/c/d", "Deployment/app/", "Deployment/a b/api", "Deployment/app/x;y"]
+)
+def test_malformed_resource_refs_are_rejected(value: str) -> None:
+    with pytest.raises(ValueError, match="Kind/name"):
+        recorded_actions.resource_ref(value)
+
+
+def _go_tables() -> tuple[dict[str, str], dict[str, str]]:
+    source = _OBJECT_REF_GO.read_text(encoding="utf-8")
+    kinds_block = source[source.index("var objectKinds") : source.index("// CanonicalObjectKind")]
+    kinds = dict(re.findall(r'"([a-z]+)": "([A-Za-z]+)"', kinds_block))
+    # Every `"alias": "Kind"` pair must match the strict pattern, or an odd alias would vanish from the comparison.
+    assert len(kinds) == len(re.findall(r'"[^"]*"\s*:\s*"[^"]*"', kinds_block))
+    versions_block = source[source.index("func objectAPIVersion") : source.index("func refComponent")]
+    versions: dict[str, str] = {}
+    for names, version in re.findall(r'case ((?:"[A-Za-z]+",? ?)+):\s*return "([^"]+)"', versions_block):
+        versions.update(dict.fromkeys(re.findall(r'"([A-Za-z]+)"', names), version))
+    return kinds, versions
+
+
+def test_the_python_ref_tables_equal_the_go_object_ref_tables() -> None:
+    kinds, versions = _go_tables()
+
+    assert kinds
+    assert kinds == recorded_actions.OBJECT_KINDS
+    assert versions == recorded_actions.API_VERSIONS
+
+
+def test_act_help_documents_the_mutation_form(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        tools_cli.main(["act", "--help"])
+
+    assert "sdo act --resource" in capsys.readouterr().out
+
+
+def _scripted_reply(result: IncidentResult, *, during_turn: list[str], raw_lines: Sequence[str] = ()) -> ScriptedAgent:
+    output = json_format.MessageToDict(result, preserving_proto_field_name=True)
+
+    def run(_request: object) -> FakeRun:
+        for line in during_turn:
+            assert tools_cli.main(["act", "--resource", line, "--", "true"]) == 0
+        if raw_lines:
+            recorded_actions.actions_path().parent.mkdir(parents=True, exist_ok=True)
+            with recorded_actions.actions_path().open("a", encoding="utf-8") as stream:
+                stream.writelines(f"{raw}\n" for raw in raw_lines)
+        return reply("codex", output, session_id="s", branch="incident_result")
+
+    return ScriptedAgent(run)
+
+
+def _bare_result() -> IncidentResult:
+    document = json.loads((_FIXTURES / "incident_result.json").read_text(encoding="utf-8"))
+    document["repair_actions"] = []
+    document.pop("responder_session_id", None)
+    return json_format.ParseDict(document, IncidentResult())
+
+
+def test_recorded_actions_become_the_result_repair_actions(scratch: Path) -> None:
+    request = _request()
+    result = evolve(_bare_result(), incident_id=request.incident_id)
+    agent = _scripted_reply(result, during_turn=["Service/app/geo", "Deployment/app/rate"])
+
+    completed = execute_incident(request, model="m", executor=agent.executor)
+
+    assert [action.target for action in completed.repair_actions] == ["Service/app/geo", "Deployment/app/rate"]
+    assert [action.success for action in completed.repair_actions] == [True, True]
+    assert completed.repair_actions[0].resources[0].api_version == "v1"
+
+
+def test_stale_actions_from_an_earlier_session_are_dropped(scratch: Path) -> None:
+    request = _request()
+    scratch.mkdir(parents=True)
+    (scratch / "repair-actions.jsonl").write_text('{"action_id": "stale"}\n', encoding="utf-8")
+    result = evolve(_bare_result(), incident_id=request.incident_id)
+
+    completed = execute_incident(request, model="m", executor=_scripted_reply(result, during_turn=[]).executor)
+
+    assert list(completed.repair_actions) == []
+
+
+def test_a_receipt_the_model_returns_never_replaces_a_recorded_one(scratch: Path) -> None:
+    request = _request()
+    fixture = json.loads((_FIXTURES / "incident_result.json").read_text(encoding="utf-8"))
+    fixture.pop("responder_session_id", None)
+    fixture["incident_id"] = request.incident_id
+    result = json_format.ParseDict(fixture, IncidentResult())
+    model_ids = [action.action_id for action in result.repair_actions]
+    agent = _scripted_reply(result, during_turn=["Service/app/geo"])
+
+    completed = execute_incident(request, model="m", executor=agent.executor)
+
+    recorded = [action for action in completed.repair_actions if action.action_id not in model_ids]
+    assert [action.target for action in recorded] == ["Service/app/geo"]
+    assert [action.action_id for action in completed.repair_actions][: len(model_ids)] == model_ids
+
+
+def test_prompt_routes_mutations_through_act_and_leaves_receipts_to_it() -> None:
+    prompt = _responder_prompt(_request())
+
+    assert "sdo act" in prompt
+    assert "Do not return receipts for `sdo act` calls" in prompt
+    assert "repair-actions" not in prompt
+    assert "parameterized script" not in prompt
+
+
+def test_the_prompt_example_is_a_command_the_cli_accepts() -> None:
+    parsed = tools_cli._parser().parse_args(shlex.split(tools_cli.ACT_EXAMPLE)[1:])
+
+    assert parsed.command == "act"
+    assert parsed.resource == [recorded_actions.resource_ref("Deployment/app/api")]
+    assert parsed.act_command[0] == "--"
+
+
+def _stub(directory: Path, body: str) -> Path:
+    directory.mkdir(exist_ok=True)
+    stub = directory / "kubectl"
+    stub.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    stub.chmod(0o755)
+    return stub
+
+
+def test_three_parallel_acts_leave_three_receipts_that_all_reach_the_result(scratch: Path, tmp_path: Path) -> None:
+    kubectl = _stub(tmp_path / "bin", "sleep 0.3")
+    command = [sys.executable, "-I", "-m", "sdo.agents.responder.tools_cli"]
+    env = {**os.environ, "SDO_SESSION_SCRATCH": str(scratch), "PYTHONPATH": str(Path(__file__).resolve().parents[5])}
+
+    processes = [
+        subprocess.Popen(
+            [*command, "act", "--resource", f"Service/app/s{index}", "--", str(kubectl), "-n", "app", "get", "svc"],
+            env=env,
+        )
+        for index in range(3)
+    ]
+    assert [process.wait(timeout=30) for process in processes] == [0, 0, 0]
+
+    result = evolve(_bare_result())
+    recorded_actions.merge_into(result)
+    assert sorted(action.target for action in result.repair_actions) == [
+        "Service/app/s0",
+        "Service/app/s1",
+        "Service/app/s2",
+    ]
+    assert len({action.action_id for action in result.repair_actions}) == 3
+
+
+def _wait_for(predicate: object, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():  # type: ignore[operator]
+            return
+        time.sleep(0.05)
+    raise AssertionError("timed out waiting for the condition")
+
+
+def _is_dead(pid: int) -> bool:
+    try:
+        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0] == "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return True
+
+
+def test_a_sigterm_mid_command_leaves_a_finished_receipt_and_no_orphans(scratch: Path, tmp_path: Path) -> None:
+    pid_file = tmp_path / "grandchild.pid"
+    kubectl = _stub(tmp_path / "bin", f"sleep 30 &\necho $! > {pid_file}\nwait")
+    env = {**os.environ, "SDO_SESSION_SCRATCH": str(scratch), "PYTHONPATH": str(Path(__file__).resolve().parents[5])}
+    process = subprocess.Popen(
+        [
+            sys.executable, "-I", "-m", "sdo.agents.responder.tools_cli",
+            "act", "--resource", "Deployment/app/api", "--",
+            str(kubectl), "-n", "app", "rollout", "restart", "deploy/api",
+        ],
+        env=env,
+        start_new_session=True,
+    )  # fmt: skip
+    path = scratch / "repair-actions.jsonl"
+    _wait_for(lambda: pid_file.exists() and pid_file.read_text(encoding="utf-8").strip())
+    grandchild = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=20)
+
+        _wait_for(lambda: _is_dead(grandchild), timeout=5.0)  # the command's own children died too
+        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        assert records[-1]["state"] == "finished"
+        result = evolve(_bare_result())
+        recorded_actions.merge_into(result)
+        (action,) = result.repair_actions
+        assert action.success is False
+        assert "interrupted" in action.details
+        assert action.kind == "kubectl-rollout-restart"
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(grandchild, signal.SIGKILL)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+
+
+def test_a_started_only_entry_is_a_recorded_unfinished_mutation(scratch: Path) -> None:
+    started = {
+        "action_id": "sdo-act-x",
+        "kind": "kubectl-patch",
+        "target": "Service/app/api",
+        "resources": [{"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"}],
+        "summary": "patched",
+        "details": "$ kubectl patch\ninterrupted before the command finished",
+        "started_at": "2026-10-22T10:00:00.000Z",
+        "completed_at": "2026-10-22T10:00:00.000Z",
+        "success": False,
+        "reversible": True,
+    }
+    scratch.mkdir(parents=True)
+    (scratch / "repair-actions.jsonl").write_text(
+        json.dumps({"state": "started", "receipt": started}) + "\n", encoding="utf-8"
+    )
+    result = evolve(_bare_result())
+
+    recorded_actions.merge_into(result)
+
+    (action,) = result.repair_actions
+    assert (action.action_id, action.success) == ("sdo-act-x", False)
+    assert "interrupted" in action.details
+
+
+def test_a_torn_line_is_skipped_with_a_warning(scratch: Path, caplog: pytest.LogCaptureFixture) -> None:
+    assert tools_cli.main(["act", "--resource", "Service/app/api", "--", "true"]) == 0
+    with (scratch / "repair-actions.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write('{"state": "started", "receipt": {"action_id": "sdo-act-to')
+    result = evolve(_bare_result())
+
+    with caplog.at_level(logging.WARNING):
+        recorded_actions.merge_into(result)
+
+    assert [action.target for action in result.repair_actions] == ["Service/app/api"]
+    assert "torn line" in caplog.text
+
+
+def test_an_invalid_recorded_receipt_fails_the_incident_with_a_typed_error(scratch: Path) -> None:
+    request = _request()
+    bad = json.dumps({"state": "finished", "receipt": {"action_id": "sdo-act-bad", "success": "yes"}})
+    agent = _scripted_reply(evolve(_bare_result(), incident_id=request.incident_id), during_turn=[], raw_lines=[bad])
+
+    with pytest.raises(ResponderExecutionError, match="sdo-act-bad"):
+        execute_incident(request, model="m", executor=agent.executor)
+
+
+def test_an_sdo_act_receipt_passes_the_strict_production_receipt_validation(scratch: Path, tmp_path: Path) -> None:
+    kubectl = _stub(tmp_path / "bin", "exit 0")
+    assert (
+        tools_cli.main(["act", "--resource", "Service/app/api", "--", str(kubectl), "-n", "app", "patch", "svc", "api"])
+        == 0
+    )
+    result = evolve(_bare_result())
+    recorded_actions.merge_into(result)
+    actions = [json_format.MessageToDict(action, preserving_proto_field_name=True) for action in result.repair_actions]
+    fixture = json.loads(
+        (_FIXTURES.parents[1] / "sregym" / "phase1_rejected_receipts" / "b2.json").read_text(encoding="utf-8")
+    )["receipt"]
+    receipt = {
+        **fixture,
+        "recovery_attribution": "responder",
+        "repair_actions": actions,
+        "same_session_reflection": True,
+        "reflection_commit": "reflection",
+        "validator_evidence_commit": "reflection",
+    }
+
+    validate_production_receipt(receipt)
+
+
+def test_a_repair_and_verify_leave_one_receipt_and_run_the_stubbed_tools(
+    scratch: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "kubectl.log"
+    kubectl = _stub(tmp_path / "bin", f'printf "%s\\n" "$*" >> {log}')
+    exchanges: list[str] = []
+    monkeypatch.setattr(
+        tools_cli,
+        "_exchange",
+        lambda request, _directory: exchanges.append(str(request["command"])) or {"healthy": True, "summary": "ok"},
+    )
+    patch = '{"spec":{"ports":[{"port":8087,"targetPort":8087}]}}'
+
+    assert (
+        tools_cli.main(
+            ["act", "--resource", "Service/hotel/reservation", "--", str(kubectl), "-n", "hotel", "patch", "service",
+             "reservation", "-p", patch]
+        )
+        == 0
+    )  # fmt: skip
+    assert tools_cli.main(["verify"]) == 0
+
+    assert exchanges == ["verify"]
+    assert log.read_text(encoding="utf-8").splitlines() == [f"-n hotel patch service reservation -p {patch}"]
+    (receipt,) = _recorded(scratch)
+    assert receipt["kind"] == "kubectl-patch"
+    assert receipt["resources"] == [
+        {"api_version": "v1", "kind": "Service", "namespace": "hotel", "name": "reservation"}
+    ]
+    assert "targetPort" in str(receipt["details"])
