@@ -142,6 +142,31 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if l.batches > 0 {
 		return skip(FastPathSkipResponseStarted)
 	}
+	// Only immutable capability and trust can rule out a future settled match.
+	// An initial NoMatch may be transient while the workload is rolling out.
+	reason := FastPathSkipNoSelectedProgram
+	for _, spec := range l.Programs.List() {
+		if _, ok := l.Programs.Mitigator(spec.ID); !ok {
+			if reason == FastPathSkipNoSelectedProgram {
+				reason = FastPathSkipMitigatorMissing
+			}
+			continue
+		}
+		reason = FastPathSkipUntrustedProgram
+		state := l.Trust[spec.ID]
+		if !state.Trusted || state.Failures != 0 || state.VerifiedSuccesses < minSuccesses {
+			continue
+		}
+		runs := []ProgramRun{{ProgramID: spec.ID}}
+		fillProgramRevisions(ctx, runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
+		if runs[0].ProgramRevision != "" && state.LastChange == runs[0].ProgramRevision {
+			reason = ""
+			break
+		}
+	}
+	if reason != "" {
+		return skip(reason)
+	}
 	delay := l.DiagnosisSettleDelay
 	if delay <= 0 {
 		delay = DefaultDiagnosisSettleDelay

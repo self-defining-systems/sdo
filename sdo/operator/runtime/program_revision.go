@@ -73,6 +73,9 @@ func programDependencyRevision(ctx context.Context, repository, commit, id strin
 			if !ok || len(fields) != 3 || fields[1] != "blob" {
 				return "", fmt.Errorf("invalid dependency entry %q", entry)
 			}
+			if ext := strings.ToLower(path.Ext(file)); ext == ".md" || ext == ".markdown" {
+				continue
+			}
 			sources[file] = fields[2]
 			if !strings.HasSuffix(file, ".go") {
 				continue

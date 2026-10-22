@@ -5,6 +5,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -152,6 +153,87 @@ func TestTrustedProgramFastPathResolvesWithoutResponder(t *testing.T) {
 	if len(loop.PlanApplications()) != 1 || len(loop.ProgramRuns()) < 2 {
 		t.Fatalf("missing durable program evidence: applications=%+v runs=%+v", loop.PlanApplications(), loop.ProgramRuns())
 	}
+}
+
+func TestFastPathSkipsSettleWithoutTrustedMitigator(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		trust        ProgramTrust
+		noPrograms   bool
+		diagnoseOnly bool
+		want         FastPathSkipReason
+	}{
+		{name: "empty catalog", noPrograms: true, want: FastPathSkipNoSelectedProgram},
+		{name: "diagnosis only", diagnoseOnly: true, trust: ProgramTrust{Trusted: true, VerifiedSuccesses: 3, LastChange: "tree-a"}, want: FastPathSkipMitigatorMissing},
+		{name: "cold", want: FastPathSkipUntrustedProgram},
+		{name: "below threshold", trust: ProgramTrust{Trusted: true, VerifiedSuccesses: 2, LastChange: "tree-a"}, want: FastPathSkipUntrustedProgram},
+		{name: "failed", trust: ProgramTrust{Trusted: true, VerifiedSuccesses: 3, Failures: 1, LastChange: "tree-a"}, want: FastPathSkipUntrustedProgram},
+		{name: "stale revision", trust: ProgramTrust{Trusted: true, VerifiedSuccesses: 3, LastChange: "tree-old"}, want: FastPathSkipUntrustedProgram},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				loop, _ := trustedPortLoop(t, false, false, true)
+				if tc.noPrograms || tc.diagnoseOnly {
+					var diagnosers []program.Diagnoser
+					if tc.diagnoseOnly {
+						diagnosers = []program.Diagnoser{fastloopPortProgram{}}
+					}
+					registry, err := program.NewRegistry(diagnosers, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					loop.Programs = registry
+				}
+				loop.Trust = map[string]ProgramTrust{"service-targetport-mismatch": tc.trust}
+				loop.DiagnosisSettleDelay = DefaultDiagnosisSettleDelay
+				started := time.Now()
+				attempt := loop.TryTrustedFastPath(context.Background(), 3)
+				if elapsed := time.Since(started); elapsed != 0 {
+					t.Fatalf("ineligible fast path delayed responder by %s", elapsed)
+				}
+				if attempt.Attempted || attempt.SkippedReason != tc.want {
+					t.Fatalf("ineligible fast path: %+v, want %q", attempt, tc.want)
+				}
+			})
+		})
+	}
+}
+
+func TestTrustedFastPathStillSettlesAfterInitialNoMatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		loop, client := trustedPortLoop(t, false, true, true)
+		service, err := client.CoreV1().Services("app").Get(context.Background(), "api", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+		if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		loop.runs = nil
+		runs := loop.InitialDiagnose(context.Background())
+		if len(runs) == 0 {
+			t.Fatal("missing initial diagnosis")
+		}
+		for _, run := range runs {
+			if run.Verdict.Result != program.NoMatch {
+				t.Fatalf("initial verdict: %+v", run)
+			}
+		}
+		service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+		if _, err := client.CoreV1().Services("app").Update(context.Background(), service, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		loop.DiagnosisSettleDelay = DefaultDiagnosisSettleDelay
+		started := time.Now()
+		attempt := loop.TryTrustedFastPath(context.Background(), 3)
+		if elapsed := time.Since(started); elapsed != DefaultDiagnosisSettleDelay {
+			t.Fatalf("trusted repair settled for %s, want %s", elapsed, DefaultDiagnosisSettleDelay)
+		}
+		if !attempt.Attempted || !attempt.Resolved {
+			t.Fatalf("transient NoMatch prevented trusted repair: %+v", attempt)
+		}
+	})
 }
 
 func TestTrustedFastPathPlansFromTheSettledMatchSnapshot(t *testing.T) {

@@ -32,6 +32,19 @@ func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
 	runs := []ProgramRun{{ProgramID: "targetport"}}
 	fillProgramRevisions(context.Background(), runs, root, commit("program and libraries"))
 	before := runs[0].ProgramRevision
+	for _, file := range []string{".sdo/playbooks/targetport/README.md", ".sdo/playbooks/targetport/notes.markdown", ".sdo/lib/transitive/README.md"} {
+		write(file, "Updated program guidance.\n")
+	}
+	fillProgramRevisions(context.Background(), runs, root, commit("update markdown prose"))
+	if before != runs[0].ProgramRevision {
+		t.Fatal("markdown prose reset program trust")
+	}
+	write(".sdo/playbooks/targetport/ports.json", `{"port":8080}`)
+	fillProgramRevisions(context.Background(), runs, root, commit("add behavior data"))
+	if before == runs[0].ProgramRevision {
+		t.Fatal("behavior data did not change program revision")
+	}
+	before = runs[0].ProgramRevision
 	write(".sdo/lib/unrelated/other.go", "package unrelated\nconst Port=2\n")
 	fillProgramRevisions(context.Background(), runs, root, commit("unrelated helper"))
 	if before != runs[0].ProgramRevision {
