@@ -251,3 +251,50 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 		t.Fatalf("rejected reflection left credit: %+v", state)
 	}
 }
+
+func TestSettlementUsesMatchedRevisionInsteadOfALaterRun(t *testing.T) {
+	ctx := context.Background()
+	root := nativeRepository(t)
+	path := filepath.Join(root, ".sdo/playbooks", repeatProgram, "diagnose.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package accepted\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", ".")
+	nativeGit(t, root, "commit", "-qm", "accepted revision")
+	base := nativeGit(t, root, "rev-parse", "HEAD")
+	revision, err := programDependencyRevision(ctx, root, base, repeatProgram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := verifiedRepeat(t)
+	o.IncidentId = "changed-program"
+	o.ProgramRuns[0].ProgramRevision = "previous-program-revision"
+	o.ProgramRuns[1].ProgramId = repeatProgram
+	o.ProgramRuns[1].ProgramRevision = revision
+	session := t.TempDir()
+	capture, err := memory.IncidentCorpusDir(session, o.IncidentId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(capture, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"fixed.json": "{}", "open@detect-recordings.json": "[]"} {
+		if err := os.WriteFile(filepath.Join(capture, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: fastloopPortProgram{}.Spec(), run: func(context.Context, program.Bindings) program.Verdict { return program.Verdict{Result: program.Match} }}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := NativeIncidentBroker{Programs: registry, SessionRoot: session}
+	eligible := native.prepareCauseWork(ctx, o, IncidentWorkspace{IncidentID: o.IncidentId, Worktree: root, BaseCommit: base})
+	item := eligible.GetCauses()[0].GetItems()[0]
+	if item.GetDisposition() != "question" || item.GetProgramRevision() != "previous-program-revision" {
+		t.Fatalf("later run replaced the matched revision: %v", item)
+	}
+}
