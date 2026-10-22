@@ -50,19 +50,20 @@ type ReflectionEvent struct {
 }
 
 type ReflectionEffect struct {
-	IncidentID     string
-	ProposalCommit string
-	OutcomeCommit  string
-	Kind           ReflectionEffectKind
-	ID             string
-	Workspace      *contracts.ProposalWorkspace
-	Closure        *contracts.IncidentClosure
-	Outcome        *contracts.OutcomeRecord
-	Decision       *contracts.ReflectionDecision
-	Attempt        uint32
-	Diagnostics    []*contracts.MemoryDiagnostic
-	Paths          []string
-	DispatchAt     *timestamppb.Timestamp
+	IncidentID       string
+	ProposalCommit   string
+	OutcomeCommit    string
+	Kind             ReflectionEffectKind
+	ID               string
+	Workspace        *contracts.ProposalWorkspace
+	Closure          *contracts.IncidentClosure
+	Outcome          *contracts.OutcomeRecord
+	Decision         *contracts.ReflectionDecision
+	Attempt          uint32
+	Diagnostics      []*contracts.MemoryDiagnostic
+	Paths            []string
+	DispatchAt       *timestamppb.Timestamp
+	EvidenceGapCount uint32
 }
 
 func ReflectionFeedback(ledger *contracts.BrokerLedger) (uint32, []*contracts.MemoryDiagnostic) {
@@ -92,6 +93,12 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 		next = proto.Clone(state).(*contracts.BrokerLedger)
 	}
 	if event.Kind == ReflectionBegin {
+		eligibility := next.GetOutcomeDocument().GetReflectionEligibility()
+		if next.ReflectionEvidenceGapCount == nil && eligibility != nil && eligibility.EvidenceGapCount != nil {
+			count := eligibility.GetEvidenceGapCount()
+			next.ReflectionEvidenceGapCount = &count
+		}
+
 		if next.ReflectionCommit != "" {
 			next.ReflectionPhase = contracts.ReflectionPhase_REFLECTION_PHASE_DONE
 			return next, nil
@@ -126,7 +133,7 @@ func StepReflection(state *contracts.BrokerLedger, event ReflectionEvent) (*cont
 	identity := reflectionIdentity(next, kind)
 	if event.Kind == ReflectionDrive {
 		attempt, diagnostics := ReflectionFeedback(next)
-		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths)}
+		effect := ReflectionEffect{IncidentID: next.GetIncidentId(), ProposalCommit: next.GetProposalCommit(), OutcomeCommit: next.GetOutcomeCommit(), Kind: kind, ID: identity, Attempt: attempt, Diagnostics: diagnostics, Paths: slices.Clone(next.ReflectionPaths), EvidenceGapCount: next.GetReflectionEvidenceGapCount()}
 		if next.ReflectionWorkspace != nil {
 			effect.Workspace = proto.Clone(next.ReflectionWorkspace).(*contracts.ProposalWorkspace)
 		}
@@ -239,4 +246,12 @@ func ReflectionTaskID(incident, outcomeCommit string, attempt uint32) string {
 
 func ReflectionDeadline(at time.Time, timeout time.Duration) *timestamppb.Timestamp {
 	return timestamppb.New(at.Add(timeout))
+}
+
+// EvidenceGapDiagnostics binds a typed decline to the controller's full index.
+func EvidenceGapDiagnostics(decision *contracts.ReflectionDecision, count uint32) []*contracts.MemoryDiagnostic {
+	if (decision.GetDeclineReason() == "evidence_gap" || decision.GetNoChangeReason() == "evidence gap") && count == 0 {
+		return []*contracts.MemoryDiagnostic{{Rule: "reflection.evidence_gap", Message: "evidence gap decline requires a Go-flagged missing resource/phase observation"}}
+	}
+	return nil
 }

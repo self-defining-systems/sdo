@@ -63,7 +63,7 @@ func TestProxyWarmAddedP95(t *testing.T) {
 	sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
 	store.Close()
 	history, _ := apihistory.Read(dir)
-	t.Logf("history envelopes=%d dropped=%d at unpaced loopback saturation", len(history.Events), history.Manifest.Dropped)
+	t.Logf("history envelopes=%d dropped=%d with paced loopback requests", len(history.Events), history.Manifest.Dropped)
 	p95 := added[189]
 	t.Logf("200 balanced warm GETs: direct p95=%s added p95=%s target=10ms", direct[189], p95)
 	if p95 > 10*time.Millisecond {

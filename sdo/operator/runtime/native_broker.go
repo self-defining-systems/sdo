@@ -23,6 +23,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/program"
 )
 
 // DerivedOutcome is produced from controller facts, not from a worker claim.
@@ -53,14 +54,17 @@ type ReflectionWorker interface {
 // is 1-based; after a broker rejection Diagnostics are that rejection's typed
 // validator findings.
 type ReflectionFeedback struct {
-	DispatchAt  time.Time
-	Attempt     uint32
-	Diagnostics []*contracts.MemoryDiagnostic
+	DispatchAt     time.Time
+	Attempt        uint32
+	Diagnostics    []*contracts.MemoryDiagnostic
+	CauseWork      []*contracts.ReflectionCauseWork
+	UnassignedWork []*contracts.ReflectionWorkItem
 }
 
 type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
+	DeclineReason    string
 	PlaybookIDs      []string
 	Error            string
 	SDKGaps          []*contracts.SdkGap
@@ -87,8 +91,8 @@ type NativeIncidentBroker struct {
 	SessionRoot          string
 	SessionRetention     time.Duration
 	PhaseLog             io.Writer
-	PriorOutcomes        memory.Reader
 	ForceReflection      bool
+	Programs             program.ProgramRegistry
 	LateFindingsVerifier interface {
 		VerifyPull(context.Context, string, uint32, string, []string, []string) error
 	}
@@ -261,19 +265,11 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.RequiresReflection = derived.RequiresReflection
-			if derived.Record.GetResolutionPath() == "fast_path" {
-				ledger.RequiresReflection = false
-				ledger.ReflectionSkippedReason = "trusted program fast path"
-			}
-			if ledger.RequiresReflection && !n.ForceReflection && n.PriorOutcomes != nil {
-				prior, err := n.PriorOutcomes.List(ctx)
-				if err != nil {
-					return fmt.Errorf("read accepted repair outcomes: %w", err)
-				}
-				ledger.ReflectionSkippedReason = reflectionSkipReason(derived.Record, prior)
-				if ledger.ReflectionSkippedReason != "" {
-					ledger.RequiresReflection = false
-				}
+			// Every verified closure settles current evidence before committing its
+			// authoritative outcome. Prior repair text is never an eligibility proof.
+			if derived.Record.GetClassification() == "success" {
+				ledger.OutcomeDocument.ReflectionEligibility = n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
+				ledger.RequiresReflection = true
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
@@ -298,9 +294,6 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 
 		// The persisted decision prevents a restart from changing learning policy.
 		if ledger.RequiresReflection && !ledger.ReflectionProcessed {
-			if n.Reflector == nil {
-				return errors.New("verified success requires a registered reflection worker")
-			}
 			reflectionPaths, err := n.processReflection(ctx, ledger)
 			if err != nil {
 				return err
@@ -329,73 +322,6 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 	return receipt, err
 }
 
-func reflectionSkipReason(current *contracts.OutcomeRecord, prior []memory.Outcome) string {
-	if current == nil || current.GetClassification() != "success" || len(current.GetRepairActions()) == 0 || len(current.GetConfirmedRootCauses()) == 0 || len(current.GetProgramFailureSignals()) != 0 {
-		return ""
-	}
-	records := make([]*contracts.OutcomeRecord, 0, len(prior))
-	for _, stored := range prior {
-		if stored.Record != nil && stored.IncidentID != current.GetIncidentId() && stored.Record.GetClassification() == "success" {
-			records = append(records, stored.Record)
-		}
-	}
-	if allTrustedProgramRepairs(current, records) {
-		return "trusted accepted programs resolved every repair"
-	}
-	for _, record := range records {
-		if current.GetSourceCommit() == "" || record.GetSourceCommit() != current.GetSourceCommit() || len(record.GetRepairActions()) != len(current.GetRepairActions()) || len(record.GetConfirmedRootCauses()) != len(current.GetConfirmedRootCauses()) {
-			continue
-		}
-		match := true
-		for index, cause := range current.GetConfirmedRootCauses() {
-			if !proto.Equal(cause, record.GetConfirmedRootCauses()[index]) {
-				match = false
-			}
-		}
-		for index, action := range current.GetRepairActions() {
-			previous := record.GetRepairActions()[index]
-			if !action.GetSuccess() || !previous.GetSuccess() || action.GetKind() != previous.GetKind() || action.GetTarget() != previous.GetTarget() || action.GetSummary() != previous.GetSummary() || action.GetDetails() != previous.GetDetails() || len(action.GetResources()) != len(previous.GetResources()) {
-				match = false
-				break
-			}
-			for resource := range action.GetResources() {
-				if !proto.Equal(action.GetResources()[resource], previous.GetResources()[resource]) {
-					match = false
-				}
-			}
-		}
-		if match {
-			return "exact replay of accepted repairs"
-		}
-	}
-	return ""
-}
-
-func allTrustedProgramRepairs(current *contracts.OutcomeRecord, prior []*contracts.OutcomeRecord) bool {
-	if len(current.GetPlanApplications()) == 0 || len(prior) == 0 {
-		return false
-	}
-	for _, action := range current.GetRepairActions() {
-		if !action.GetSuccess() || action.GetKind() != "program-plan" {
-			return false
-		}
-	}
-	trust := ProgramTrustStats(prior)
-	revisions := programRunRevisions(current)
-	for _, application := range current.GetPlanApplications() {
-		if !application.GetApplied() || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH || len(application.GetProgramIds()) == 0 {
-			return false
-		}
-		for _, id := range application.GetProgramIds() {
-			state := trust[id]
-			if !state.Trusted || revisions[id] == "" || revisions[id] != state.LastChange {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // processReflection is a driver: durable pure transitions choose every effect,
 // and the private adapter performs repository/worker/validator I/O.
 func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *contracts.BrokerLedger) ([]string, error) {
@@ -413,28 +339,62 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
-		if effect.Attempt == 1 && !n.ForceReflection && n.SessionRoot != "" {
-			bindings := verifiedRepeatBindings(effect.Outcome)
-			current := len(bindings) > 0
-			revisions := programRunRevisions(effect.Outcome)
-			for id := range bindings {
-				revision, err := programDependencyRevision(ctx, workspace.Worktree, workspace.BaseCommit, id)
-				current = current && err == nil && revision == revisions[id]
+		eligibility := &contracts.ReflectionEligibility{}
+		if effect.Outcome.GetReflectionEligibility() != nil {
+			proto.Merge(eligibility, effect.Outcome.GetReflectionEligibility())
+		}
+		work, unassigned := eligibility.GetCauses(), eligibility.GetUnassigned()
+		positive, negative := settledProgramCases(eligibility)
+		origins := settledCaptureOrigins(eligibility)
+		capture := ""
+		if n.SessionRoot != "" {
+			capture, _ = memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
+		}
+		prepared := false
+		negativePrepared := false
+		if len(positive) > 0 {
+			if capture != "" {
+				paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins)
+				prepared = err == nil && len(paths) > 0
 			}
-			if current {
-				capture, err := memory.IncidentCorpusDir(n.SessionRoot, effect.IncidentID)
-				if err == nil {
-					if paths, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, bindings); err == nil && len(paths) > 0 {
-						return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+			if !prepared {
+				for _, cause := range work {
+					for _, item := range cause.Items {
+						if item.Disposition == "covered" {
+							item.Disposition, item.Reason, item.Question = "question", "uncertain", "The exact repair is covered, but captured peer evidence could not be recorded. Review the case preparation failure."
+						}
 					}
 				}
 			}
 		}
-		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt)})
+		if capture != "" && len(negative) > 0 {
+			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
+				return nil, err
+			}
+			negativePrepared = true
+		}
+		if effect.Attempt == 1 && !n.ForceReflection && (prepared || negativePrepared) && !causeWorkNeedsModel(work) && !reflectionItemsNeedModel(unassigned) {
+			return &contracts.ReflectionDecision{LearningDecision: "updated"}, nil
+		}
+		if n.Reflector == nil {
+			return nil, errors.New("unsettled learning requires a registered reflection worker")
+		}
+		decision, err := n.Reflector.Reflect(ctx, incidentClosureState(effect.Closure), workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), CauseWork: work, UnassignedWork: unassigned})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
 		}
-		result := &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+		if prepared {
+			if _, err := memory.RecordRepeatCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins); err != nil {
+				return nil, err
+			}
+		}
+		// Keep Go-owned negative evidence even if the agent deleted or relabeled it.
+		if capture != "" && len(negative) > 0 {
+			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
+				return nil, err
+			}
+		}
+		result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
 		if decision.Usage != nil {
 			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
 		}

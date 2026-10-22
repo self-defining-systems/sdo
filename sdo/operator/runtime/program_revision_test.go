@@ -70,17 +70,27 @@ func TestSharedLibraryChangeResetsProgramRevisionAndTrust(t *testing.T) {
 }
 
 func TestProgramRevisionIgnoresTestOnlyChanges(t *testing.T) {
-    root := nativeRepository(t)
-    directory := filepath.Join(root, ".sdo/playbooks/targetport")
-    if err := os.MkdirAll(directory,0755); err != nil { t.Fatal(err) }
-    if err := os.WriteFile(filepath.Join(directory,"diagnose.go"), []byte("package targetport\n"),0644); err != nil { t.Fatal(err) }
-    nativeGit(t,root,"add",".")
-    nativeGit(t,root,"commit","-qm","program")
-    before,err := programDependencyRevision(context.Background(),root,nativeGit(t,root,"rev-parse","HEAD"),"targetport")
-    if err != nil { t.Fatal(err) }
-    if err := os.WriteFile(filepath.Join(directory,"diagnose_test.go"), []byte("package targetport\n"),0644); err != nil { t.Fatal(err) }
-    nativeGit(t,root,"add",".")
-    nativeGit(t,root,"commit","-qm","more tests")
-    after,err := programDependencyRevision(context.Background(),root,nativeGit(t,root,"rev-parse","HEAD"),"targetport")
-    if err != nil || before != after { t.Fatalf("tests reset executable trust: %s -> %s (%v)",before,after,err) }
+	root := nativeRepository(t)
+	directory := filepath.Join(root, ".sdo/playbooks/targetport")
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "diagnose.go"), []byte("package targetport\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", ".")
+	nativeGit(t, root, "commit", "-qm", "program")
+	before, err := programDependencyRevision(context.Background(), root, nativeGit(t, root, "rev-parse", "HEAD"), "targetport")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "diagnose_test.go"), []byte("package targetport\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", ".")
+	nativeGit(t, root, "commit", "-qm", "more tests")
+	after, err := programDependencyRevision(context.Background(), root, nativeGit(t, root, "rev-parse", "HEAD"), "targetport")
+	if err != nil || before != after {
+		t.Fatalf("tests reset executable trust: %s -> %s (%v)", before, after, err)
+	}
 }

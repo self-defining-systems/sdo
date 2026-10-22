@@ -71,6 +71,7 @@ class AgentOutcome:
     binding_sources: tuple[str, ...] = ()
     reflection_attempts: int | None = None
     reflection_skipped_reason: str | None = None
+    reflection_evidence_gap_count: int | None = None
     resolution_path: str | None = None
     fast_path_programs: tuple[str, ...] = ()
     fast_path_relation_covered_findings: tuple[dict[str, Any], ...] = ()
@@ -430,6 +431,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "binding_sources": list(outcome.binding_sources),
         "reflection_attempts": outcome.reflection_attempts,
         "reflection_skipped_reason": outcome.reflection_skipped_reason,
+        "reflection_evidence_gap_count": outcome.reflection_evidence_gap_count,
         "resolution_path": outcome.resolution_path,
         "fast_path_programs": list(outcome.fast_path_programs),
         "fast_path_relation_covered_findings": list(outcome.fast_path_relation_covered_findings),

@@ -4,7 +4,7 @@ Fastloop runs write `results/<run-id>/incidents.jsonl` and `incidents.csv`, one 
 
 New native broker ledgers expose `closure_phase_timestamps` as UTC instants and `reflection_skipped_reason`; fastloop rows expose `closure_phase_seconds`, the elapsed seconds since each preceding observed closure phase. Missing phases mean that path did not execute or that the run predates instrumentation. The immutable outcome document is committed before reflection, so join later phases from the broker ledger using the incident ID and outcome commit.
 
-Native `OutcomeRecord.resolution_path` is `fast_path` or `responder`; `fast_path_programs` lists the programs attempted, including a failed attempt handed to the responder. `plan_applications` records each plan's verification plus `rolled_back` and `rollback_error`, and `program_failure_signals` breaks a failed program's trust streak. A fully resolved fast path has `reflection_skipped_reason: trusted program fast path`, no responder Job, and zero responder usage. The strict native receipt accepts an empty `responder_job_evidence` only for that verified outcome path. Fastloop rows carry `resolution_path` and `fast_path_programs`; composite rows use `fast_path` only when every component receipt used it and combine distinct program IDs. Older outcomes and rows omit these fields.
+Native `OutcomeRecord.resolution_path` is `fast_path` or `responder`; `fast_path_programs` lists the programs attempted, including a failed attempt handed to the responder. `plan_applications` records each plan's verification plus `rolled_back` and `rollback_error`, and `program_failure_signals` breaks a failed program's trust streak. A fully resolved fast path has no responder Job and zero responder usage. Current closures still settle per-cause learning evidence; older versions skipped reflection for fast paths. The strict native receipt accepts an empty `responder_job_evidence` only for that verified outcome path. Fastloop rows carry `resolution_path` and `fast_path_programs`; composite rows use `fast_path` only when every component receipt used it and combine distinct program IDs. Older outcomes and rows omit these fields.
 
 When a configured fast path does not attempt a plan, `fast_path_skipped_reason` records the typed eligibility gate in the native ledger, outcome, and fastloop row. The controller log prints the same reason. `uncovered_finding` means at least one active finding had neither its own trusted match nor a direct snapshot relation to a selected trusted run. `fast_path_relation_covered_findings` is a list of finding fingerprints paired with the covering `program_id` and its named `bindings`; it appears in the fast-path result, native ledger, outcome, and fastloop row. A relation-covered finding must clear during verification or the attempt rolls back, hands off to the responder, and records `fast_path_failure` for the program. Fastloop `match_reasons` includes program verdict evidence facts and `binding_sources` lists the sources of matching runs (`hint`, `finding`, or `sweep`); duplicate reasons and sources are collapsed in each row. Older records omit these fields.
 
@@ -42,38 +42,32 @@ For a confirmed watch-time program match, `DriftEvent.source` is `watch event pr
 
 `runtime/program_trust.go` derives trust from accepted outcomes in completion order.
 The default threshold is three verified successes; `--program-trust-threshold=1`
-changes eligibility, not the evidence required. An application earns credit only
-when all of the following hold:
+changes eligibility, not the evidence required. The broker persists
+`reflection_eligibility` version 1 before committing the authoritative outcome.
+Its cause groups exactly preserve `confirmed_root_causes` resources; observations
+outside those groups remain unassigned. Only `covered` items for the same program
+revision and named bindings supply success credit. They require affirmative
+`final_equivalence_verified`, a successful application with bound post-apply
+NoMatch, and an explicit NoMatch on the independently verified fixed capture.
+Missing proof, unavailable captures, different-field repairs and unbound writes
+remain questions, with no success or failure judgment. A definite fixed Match
+is a false match: Go records a negative case, revokes trust for that revision,
+and gives no credit, even if reflection is rejected.
 
-- The independently derived outcome classification is `success`, and the
-  application was neither a dry run nor rolled back. Application errors,
-  rollback errors and program-scoped failure signals disqualify it.
-- The application's health verification is `NO_MATCH`. This field alone is a
-  health-only verdict and does not prove the program diagnosed the repair.
-- Successful controller-recorded `plan` and `apply` tool calls connect the plan
-  IDs to the application ID and its selected program and named bindings. The
-  apply call is at or after `completed_at`; its response contains explicit
-  post-apply `NoMatch` for every selected binding of that program. Compare full
-  object refs, including API version, namespace and name, and the accepted
-  dependency revision. Missing/truncated history, wrong bindings or revisions,
-  diagnosis errors, `Unknown`, `NeedsJudgement` and `Match` earn no credit.
+Corpus publication and reflection dispatch consume that same settled result.
+Exact positive and negative cases use ordinary broker validation; the model is
+needed for questions or rejected cases. Old repair-text and trusted-program
+whole-incident skip shortcuts no longer exist. Forced model reflection retains
+all typed work and any Go-authored files.
 
-Ordinary unapplied applications are ignored; fast-path records are also inspected
-when unapplied so attempted failures can revoke trust. At most one success per
-program is credited from an outcome. These evidence rules apply
-to ordinary, fast-path and equivalent-repair applications; an application ID
-prefix or a flat `program_runs` list supplies no exception. Current fast paths
-record controller-authored plan/apply calls. An `equivalent-repair-*` record
-without the required bound tool evidence earns no credit. Failed, partial,
-cancelled, external-recovery, unclassified and unverified outcomes cannot earn
-successes even when an immediate health check passed.
-
-Trust is bound to `program_runs.program_revision`: the digest of accepted program
-Git objects and their transitive shared-library imports. A revision change starts
-a new success streak. Failed applications reset successes and retain suspicion
-for that dependency revision. Missing or inconclusive bound evidence also resets
-the success streak. The counters are derived values, exposed by `sdo status`;
-they are not a separately authoritative durable trust record.
+At most one success per program is credited per incident. Program revisions
+fingerprint executable Git objects and imported helpers, excluding Markdown and
+Go tests. A new revision starts a new streak; explicit execution failures and
+false matches retain suspicion for their revision. Historical outcomes without
+settled eligibility earn no new success credit and are not rewritten. Questions
+do not add credit or manufacture failures. Inspect the accepted outcome and
+broker reflection ledger separately; publication failure cannot change the
+already committed eligibility facts.
 
 `program_failure_signals` can contain
 `fast_path_failure:<program_id>@<accepted_dependency_revision>`. The fast-path
@@ -93,26 +87,13 @@ counts the signal with the failed application once, or on its own after restart
 discards application history; a successful retry in that incident leaves zero
 successes and one failure for the affected revision.
 
-### Learning credit
+### Historical learning credit
 
-A newly introduced program may earn one credit from its original independently
-successful incident, although it did not perform that repair. The memory reader
-joins the immutable outcome by incident ID to captured root-cause labels in the
-introducing accepted reflection commit. It requires the broker's incident,
-actor, phase and passed-validation trailers, matching open/fixed capture hashes,
-and newly introduced diagnosis and mitigation sources. Synthetic cases and later
-revalidation of an existing program do not supply new learning credit.
-
-The dispatcher additionally checks that the current accepted program/dependency
-revision equals the introducing revision, loads immutable accepted captures and
-phase recordings, validates bindings and capture hashes, and executes diagnosis:
-open must be `Match`, fixed must be `NoMatch` on the same binding. Inconclusive
-replay or an unsuccessful original outcome earns nothing. The dispatcher makes a
-transient `learned-repair-*` application and plan/apply-shaped replay receipt for
-the trust calculation. It never rewrites the original outcome or publishes those
-receipts as live tool calls. Audit the outcome, introducing commit, corpus
-provenance and replay together; do not look for a live learned-program application
-in the original outcome. Program-scoped failures still invalidate this credit.
+Earlier dispatchers could synthesize one origin credit from an accepted program's
+introducing corpus replay. Current dispatchers derive credit only from persisted
+covered instances. Newly authored or unmatched programs must earn their first
+credit on a later exact covered repair; corpus acceptance alone creates no credit.
+Do not reinterpret archived counters under the new policy.
 
 After a controller restart, fast-path closure requires fresh bound NoMatch
 results plus independent verification. Markers never replay a cached success or

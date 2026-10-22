@@ -416,6 +416,8 @@ class SdoStage:
     reflection_summary: UsageSummary | None = None
     #: The problem run's results directory (what the validity checker classifies).
     source: str = ""
+    reflection_evidence_gap_count: int | None = None
+    evidence_gap_declined: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -968,6 +970,17 @@ def _stage_end_record(results: Path) -> dict[str, Any]:
     return {key: record[key] for key in keys if key in record} if isinstance(record, dict) else {}
 
 
+def _evidence_gap_metrics(receipt: dict[str, Any]) -> tuple[int | None, bool | None]:
+    ledger = receipt.get("native_ledger")
+    if not isinstance(ledger, dict):
+        return None, None
+    count = ledger.get("reflection_evidence_gap_count")
+    if type(count) is not int or count < 0:
+        return None, None
+    decision = ledger.get("reflection_decision")
+    return count, isinstance(decision, dict) and decision.get("decline_reason") == "evidence_gap"
+
+
 def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
     stages: list[SdoStage] = []
     for index, name, stage_dir in pipeline_stage_dirs(pipeline_dir):
@@ -1008,6 +1021,8 @@ def load_sdo_pipeline(pipeline_dir: Path) -> list[SdoStage]:
                     reflection=_reflection_usage(receipt, own_responder_rollouts, reflection_rollouts),
                     reflection_attempts=receipt.get("reflection_attempts"),
                     reflection_skipped_reason=receipt.get("reflection_skipped_reason"),
+                    reflection_evidence_gap_count=_evidence_gap_metrics(receipt)[0],
+                    evidence_gap_declined=_evidence_gap_metrics(receipt)[1],
                     learning_seconds=_float(phases.get("post_recovery_learning_and_receipt")),
                     reflection_turn_seconds=reflection_seconds,
                     warm_path=reuse.get("warm_path") if reuse else None,
@@ -1472,6 +1487,8 @@ def render(report: Report) -> str:
                 _fmt_num(stage.responder.total(uncached=uncached)),
                 _fmt_num(stage.reflection.total(uncached=uncached)),
                 "skipped" if stage.reflection_skipped_reason else _fmt_num(stage.reflection_attempts),
+                _fmt_num(stage.reflection_evidence_gap_count),
+                _fmt_bool(stage.evidence_gap_declined),
                 _fmt_num(stage.learning_seconds, 1),
                 _fmt_num(stage.reflection_turn_seconds, 1),
                 _fmt_bool(stage.warm_path),
@@ -1499,6 +1516,8 @@ def render(report: Report) -> str:
                 "responder_tok",
                 "reflection_tok",
                 "refl",
+                "evidence_gaps",
+                "gap_declined",
                 "learning_s",
                 "refl_turn_s",
                 "warm_path",

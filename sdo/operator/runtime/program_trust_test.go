@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -19,19 +20,19 @@ func TestProgramTrustResetsOnFailureOrProgramRevisionChange(t *testing.T) {
 	for _, revision := range []string{"tree-a", "tree-a", "tree-a", "tree-b", "tree-b"} {
 		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", revision))
 	}
-	stats := ProgramTrustStats(outcomes)["targetport"]
+	stats := settledTrustStats(outcomes)["targetport"]
 	if stats.VerifiedSuccesses != 2 || stats.Trusted || stats.LastChange != "tree-b" {
 		t.Fatalf("revision reset: %+v", stats)
 	}
 	outcomes = append(outcomes, &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: "tree-c"}}})
-	stats = ProgramTrustStats(outcomes)["targetport"]
+	stats = settledTrustStats(outcomes)["targetport"]
 	if stats.VerifiedSuccesses != 0 || stats.Failures != 0 || stats.LastChange != "tree-c" {
 		t.Fatalf("edit without application did not reset: %+v", stats)
 	}
 	failed := verifiedTrustOutcome(t, "targetport", "tree-c")
 	failed.PlanApplications[0].Verification.Result = contracts.Verdict_RESULT_MATCH
 	outcomes = append(outcomes, failed)
-	stats = ProgramTrustStats(outcomes)["targetport"]
+	stats = settledTrustStats(outcomes)["targetport"]
 	if stats.VerifiedSuccesses != 0 || stats.Failures != 1 || stats.Trusted {
 		t.Fatalf("failure reset: %+v", stats)
 	}
@@ -39,7 +40,7 @@ func TestProgramTrustResetsOnFailureOrProgramRevisionChange(t *testing.T) {
 
 func TestProgramTrustUsesConfiguredSuccessThreshold(t *testing.T) {
 	outcomes := []*contracts.OutcomeRecord{verifiedTrustOutcome(t, "targetport", "tree-a"), verifiedTrustOutcome(t, "targetport", "tree-a")}
-	if ProgramTrustStats(outcomes)["targetport"].Trusted || !ProgramTrustStats(outcomes, 2)["targetport"].Trusted {
+	if settledTrustStats(outcomes)["targetport"].Trusted || !settledTrustStats(outcomes, 2)["targetport"].Trusted {
 		t.Fatal("configured trust threshold was ignored")
 	}
 }
@@ -50,7 +51,7 @@ func TestInterruptedFastPathFailureBreaksTrustWithoutApplication(t *testing.T) {
 		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "tree-a"))
 	}
 	outcomes = append(outcomes, &contracts.OutcomeRecord{SourceCommit: "tree-a", ProgramFailureSignals: []string{"fast_path_failure:targetport"}})
-	state := ProgramTrustStats(outcomes)["targetport"]
+	state := settledTrustStats(outcomes)["targetport"]
 	if state.Trusted || state.Failures != 1 || state.VerifiedSuccesses != 0 {
 		t.Fatalf("interrupted attempt did not break trust: %+v", state)
 	}
@@ -58,11 +59,11 @@ func TestInterruptedFastPathFailureBreaksTrustWithoutApplication(t *testing.T) {
 
 func TestEquivalentResponderRepairEarnsTrustOnlyAfterIndependentSuccess(t *testing.T) {
 	outcome := boundTrustOutcome(t, "equivalent-repair-1", "failed", program.NoMatch)
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; state.VerifiedSuccesses != 0 {
+	if state := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; state.VerifiedSuccesses != 0 {
 		t.Fatalf("unverified incident earned trust: %+v", state)
 	}
 	outcome.Classification = "success"
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; state.VerifiedSuccesses != 1 || !state.Trusted {
+	if state := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; state.VerifiedSuccesses != 1 || !state.Trusted {
 		t.Fatalf("verified equivalent repair earned no trust: %+v", state)
 	}
 }
@@ -77,6 +78,7 @@ func verifiedTrustOutcome(t *testing.T, id, revision string) *contracts.OutcomeR
 		call.RequestJson = strings.ReplaceAll(call.RequestJson, "targetport", id)
 		call.ResponseJson = strings.ReplaceAll(strings.ReplaceAll(call.ResponseJson, "targetport", id), "revision-a", revision)
 	}
+	settleTestOutcome(outcome)
 	return outcome
 }
 
@@ -96,8 +98,10 @@ func boundTrustOutcome(t *testing.T, kind, classification string, result program
 	}
 	return &contracts.OutcomeRecord{
 		Classification: classification, SourceCommit: "tree-a",
-		ProgramRuns:      []*contracts.ProgramRun{programRunContract(ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}})},
-		PlanApplications: []*contracts.PlanApplication{{ApplicationId: kind, Applied: true, ProgramIds: []string{"targetport"}, CompletedAt: timestamppb.New(completed), Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
+		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{objectRefContract(bindings["service"])}}},
+		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{objectRefContract(bindings["service"])}}},
+		ProgramRuns:         []*contracts.ProgramRun{programRunContract(ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}})},
+		PlanApplications:    []*contracts.PlanApplication{{ApplicationId: kind, Applied: true, VerificationCompleted: true, VerificationPassed: true, FinalEquivalenceVerified: proto.Bool(true), ProgramIds: []string{"targetport"}, CompletedAt: timestamppb.New(completed), Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
 		ProgramToolCalls: []*contracts.ProgramToolCall{
 			{Command: "plan", At: timestamppb.New(completed.Add(-time.Second)), RequestJson: encode(ToolRequest{Command: "plan", ProgramID: "targetport", Bindings: bindings}), ResponseJson: encode(ToolResponse{Command: "plan", PlanID: "plan-1"})},
 			{Command: "apply", At: timestamppb.New(completed.Add(time.Second)), RequestJson: encode(ToolRequest{Command: "apply", PlanIDs: []string{"plan-1"}}), ResponseJson: encode(ToolResponse{Command: "apply", ApplicationID: kind, Healthy: true, ProgramRuns: []ProgramRun{{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: result}}}})},
@@ -110,7 +114,7 @@ func TestProgramTrustRequiresIndependentSuccessForEveryApplicationKind(t *testin
 		for _, classification := range []string{"failed", "cleared_without_action", ""} {
 			t.Run(kind+"/"+classification, func(t *testing.T) {
 				outcome := boundTrustOutcome(t, kind, classification, program.NoMatch)
-				if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.VerifiedSuccesses != 0 || got.Trusted {
+				if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.VerifiedSuccesses != 0 || got.Trusted {
 					t.Fatalf("locally green apply in unsuccessful outcome earned trust: %+v", got)
 				}
 			})
@@ -122,7 +126,7 @@ func TestProgramTrustRequiresBoundPostApplyNoMatch(t *testing.T) {
 	for _, result := range []program.Result{program.Unknown, program.NeedsJudgement, program.Match} {
 		t.Run(string(result), func(t *testing.T) {
 			outcome := boundTrustOutcome(t, "application-1", "success", result)
-			if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.VerifiedSuccesses != 0 || got.Trusted {
+			if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.VerifiedSuccesses != 0 || got.Trusted {
 				t.Fatalf("inconclusive or failed post-apply diagnosis earned trust: %+v", got)
 			}
 		})
@@ -146,29 +150,29 @@ func TestProgramTrustRequiresBoundPostApplyNoMatch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			outcome := boundTrustOutcome(t, "application-1", "success", program.NoMatch)
 			tc.mutate(outcome)
-			if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+			if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
 				t.Fatalf("unbound evidence earned trust: %+v", got)
 			}
 		})
 	}
 	outcome := boundTrustOutcome(t, "application-1", "success", program.NoMatch)
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("independently successful bound repair earned no trust: %+v", got)
 	}
 }
 
-func TestInconclusivePostApplyDiagnosisBreaksEarlierTrustStreak(t *testing.T) {
+func TestInconclusivePostApplyDiagnosisCannotExtendEarlierTrustStreak(t *testing.T) {
 	outcomes := []*contracts.OutcomeRecord{verifiedTrustOutcome(t, "targetport", "revision-a")}
 	outcomes = append(outcomes, boundTrustOutcome(t, "application-1", "success", program.Unknown))
-	if got := ProgramTrustStats(outcomes, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
-		t.Fatalf("inconclusive apply preserved earlier trust: %+v", got)
+	if got := settledTrustStats(outcomes, 2)["targetport"]; got.Trusted || got.VerifiedSuccesses != 1 {
+		t.Fatalf("inconclusive apply changed prior credit: %+v", got)
 	}
 }
 
 func TestProgramTrustCreditsAnOutcomeAtMostOnce(t *testing.T) {
 	outcome := verifiedTrustOutcome(t, "targetport", "revision-a")
 	outcome.PlanApplications = append(outcome.PlanApplications, outcome.PlanApplications[0])
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 2)["targetport"]; got.Trusted || got.VerifiedSuccesses != 1 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 2)["targetport"]; got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("one outcome supplied multiple success credits: %+v", got)
 	}
 }
@@ -195,7 +199,7 @@ func TestDurableFastPathFailureSignalRevokesSameRevisionAfterRestart(t *testing.
 			for i := 0; i < 3; i++ {
 				outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
 			}
-			if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures == 0 {
+			if got := settledTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures == 0 {
 				t.Fatalf("restarted failure evidence lost suspicion: %+v", got)
 			}
 		})
@@ -209,7 +213,7 @@ func TestFailedProgramRevisionStaysSuspiciousAfterReversion(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", "revision-a"))
 	}
-	if got := ProgramTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures == 0 {
+	if got := settledTrustStats(outcomes)["targetport"]; got.Trusted || got.Failures == 0 {
 		t.Fatalf("reverting to failed revision restored eligibility: %+v", got)
 	}
 }
@@ -232,7 +236,7 @@ func TestFastPathTrustFailureInputRestoresProgramsAndSignals(t *testing.T) {
 		t.Fatalf("lost or duplicated trust input: programs=%v signals=%v", restarted.fastPathPrograms, restarted.FailureSignals())
 	}
 	outcomes := []*contracts.OutcomeRecord{verifiedTrustOutcome(t, "targetport", "revision-a"), {SourceCommit: restarted.Request.SourceCommit, ProgramFailureSignals: restarted.FailureSignals()}}
-	if got := ProgramTrustStats(outcomes, 1)["targetport"]; got.Trusted || got.Failures != 1 {
+	if got := settledTrustStats(outcomes, 1)["targetport"]; got.Trusted || got.Failures != 1 {
 		t.Fatalf("restored trust input did not revoke eligibility: %+v", got)
 	}
 	empty := NewResponderLoop(IncidentRequest{}, nil, nil, nil, PlanExecutor{}, 1)
@@ -244,7 +248,7 @@ func TestFastPathTrustFailureInputRestoresProgramsAndSignals(t *testing.T) {
 func TestProgramTrustRejectsDiagnosisFromDifferentAPIGroup(t *testing.T) {
 	outcome := boundTrustOutcome(t, "application-1", "success", program.NoMatch)
 	outcome.ProgramToolCalls[1].ResponseJson = strings.ReplaceAll(outcome.ProgramToolCalls[1].ResponseJson, `"api_version":"v1"`, `"api_version":"other.example/v1"`)
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("different API group earned binding trust: %+v", got)
 	}
 }
@@ -270,17 +274,20 @@ func TestProgramTrustConsumesRealResponderApplyEvidence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		application.FinalEquivalenceVerified = proto.Bool(true)
 		application.ApplicationId, application.ProgramIds, application.CompletedAt = entry.ID, entry.ProgramIDs, timestamppb.New(entry.CompletedAt)
 		outcome.PlanApplications = append(outcome.PlanApplications, application)
 	}
 	for _, call := range loop.ToolCalls() {
 		outcome.ProgramToolCalls = append(outcome.ProgramToolCalls, toolCallContract(call))
 	}
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; !got.Trusted || got.VerifiedSuccesses != 1 {
+	outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{objectRefContract(run.Bindings["service"])}}}
+	outcome.RepairActions = []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{objectRefContract(run.Bindings["service"])}}}
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; !got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("real successful apply earned no trust: %+v", got)
 	}
 	outcome.Classification = "failed"
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; got.Trusted || got.VerifiedSuccesses != 0 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("real locally green apply in controller-failed outcome earned trust: %+v", got)
 	}
 }
@@ -334,14 +341,14 @@ func oversizedTrustOutcome(t *testing.T, runs int) *contracts.OutcomeRecord {
 
 func TestProgramTrustSurvivesOversizedPlanAndApplyRecords(t *testing.T) {
 	outcome := oversizedTrustOutcome(t, 0)
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("truncated plan/apply records earned no trust: %+v", got)
 	}
 }
 
 func TestProgramTrustCountsRepairWhenApplyResponseListsManyPrograms(t *testing.T) {
 	outcome := oversizedTrustOutcome(t, 40)
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; !got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("unrelated programs' runs cost the applied program its trust: %+v", got)
 	}
 	var recorded struct {
@@ -376,7 +383,7 @@ func TestProgramTrustFailsClosedWhenRelevantRunsOverflow(t *testing.T) {
 		t.Fatalf("dropped relevant runs are not marked: %v %+v", err, parsed)
 	}
 	outcome.ProgramToolCalls[1].ResponseJson = string(recorded)
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("a dropped relevant run earned trust: %+v", got)
 	}
 }
@@ -390,7 +397,26 @@ func TestTruncatedRecordKeepsDiagnosisError(t *testing.T) {
 	apply.ProgramRuns[0].Verdict.Evidence = append(apply.ProgramRuns[0].Verdict.Evidence, program.Evidence{Observed: "diagnosis crashed"})
 	apply.Summary = strings.Repeat("x", 3000)
 	outcome.ProgramToolCalls[1].ResponseJson = string(recordedToolResponseJSON(apply, []selectedPlan{{programID: "targetport", bindings: apply.ProgramRuns[0].Bindings}}))
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
+	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["targetport"]; got.Trusted || got.VerifiedSuccesses != 0 {
 		t.Fatalf("diagnosis error was dropped by truncation: %+v", got)
 	}
+}
+
+// Fixtures model the controller settlement before the durable trust projection.
+func settleTestOutcome(outcome *contracts.OutcomeRecord) {
+	fixed := map[string]program.Result{}
+	for _, run := range outcome.GetProgramRuns() {
+		bindings := program.Bindings{}
+		for _, binding := range run.GetBindings() {
+			bindings[binding.GetName()] = objectRefState(binding.GetObject())
+		}
+		fixed[matchedViewKey(run.GetProgramId(), bindings)] = program.NoMatch
+	}
+	outcome.ReflectionEligibility = &contracts.ReflectionEligibility{Version: 1, Causes: classifyCauseWork(outcome, fixed), Unassigned: unassignedReflectionQuestions(outcome, fixed)}
+}
+func settledTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) map[string]ProgramTrust {
+	for _, outcome := range outcomes {
+		settleTestOutcome(outcome)
+	}
+	return ProgramTrustStats(outcomes, threshold...)
 }

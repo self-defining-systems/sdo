@@ -128,7 +128,9 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 			return fmt.Errorf("corpus %s references another captured incident", entry.Name())
 		}
 		openName := "open.json"
-		if label.Provenance.OpenAt != "" {
+		if label.Provenance.OpenAt == sdktest.CapturedFixedNoMatchPhase && len(label.RootCauseProgramIDs) == 0 && len(label.NoMatchProgramIDs) > 0 {
+			openName = "fixed.json"
+		} else if label.Provenance.OpenAt != "" {
 			if label.Provenance.OpenAt != "detect" && label.Provenance.OpenAt != "settle" && label.Provenance.OpenAt != "pre-apply" {
 				return fmt.Errorf("invalid captured open phase %q", label.Provenance.OpenAt)
 			}
@@ -149,6 +151,24 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 			}
 			if name == "recordings.json" && openName != "open.json" {
 				trustedName = strings.TrimSuffix(openName, ".json") + "-recordings.json"
+				if openName == "fixed.json" {
+					trustedName = "open@detect-recordings.json"
+				}
+			}
+			if name == "recordings.json" && openName == "fixed.json" {
+				got, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					return err
+				}
+				exact := false
+				for _, phase := range []string{"detect", "pre-apply"} {
+					want, err := os.ReadFile(filepath.Join(trusted, "open@"+phase+"-recordings.json"))
+					exact = exact || (err == nil && string(got) == string(want))
+				}
+				if !exact {
+					return fmt.Errorf("corpus %s recordings differ from captured incident observations", entry.Name())
+				}
+				continue
 			}
 			want, err := os.ReadFile(filepath.Join(trusted, trustedName))
 			if err != nil {

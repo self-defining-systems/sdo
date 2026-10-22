@@ -404,13 +404,15 @@ func TestSuccessfulFastPathAddsBoundTrustCredit(t *testing.T) {
 	if !attempt.Resolved {
 		t.Fatalf("fast path failed: %+v", attempt)
 	}
+	loop.CreditEquivalentRepairs(context.Background(), ProgramRepairReceipts(loop.PlanApplications(), nil))
 	result := fastPathResult(loop.Request, loop, attempt, time.Now())
 	fillProgramRevisions(context.Background(), result.ProgramRuns, loop.Request.RepositoryWorktree, loop.Request.SourceCommit)
 	message, err := incidentResultContract(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	outcome := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "tree-a", ProgramRuns: message.ProgramRuns, PlanApplications: message.PlanApplications, ProgramToolCalls: message.ProgramToolCalls}
+	outcome := &contracts.OutcomeRecord{Classification: "success", SourceCommit: "tree-a", ProgramRuns: message.ProgramRuns, PlanApplications: message.PlanApplications, ProgramToolCalls: message.ProgramToolCalls, RepairActions: message.RepairActions, ConfirmedRootCauses: message.ConfirmedRootCauses}
+	settleTestOutcome(outcome)
 	state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]
 	if state.VerifiedSuccesses != 1 || !state.Trusted {
 		t.Fatalf("successful fast path lost bound evidence: %+v calls=%+v", state, message.ProgramToolCalls)
