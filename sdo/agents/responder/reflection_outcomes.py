@@ -289,7 +289,13 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
     }
 
 
-def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
-    """Prior incidents only: the current incident is already shown separately."""
+#: Prior incidents carried in the reflection request. Each costs about 5k
+#: characters on every request of the session, so only the latest are kept.
+MAX_HISTORY_INCIDENTS = 2
 
-    return [prior_outcome_view(record) for record in history if record.incident_id != current_incident_id]
+
+def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
+    """The latest prior incidents only: the current incident is already shown separately."""
+
+    prior = [record for record in history if record.incident_id != current_incident_id]
+    return [prior_outcome_view(record) for record in prior[-MAX_HISTORY_INCIDENTS:]]

@@ -416,3 +416,24 @@ func RequiresControllerRollout(changedPaths []string) bool {
 	}
 	return false
 }
+
+// RequiresValidatorJob reports whether validating the changed paths needs the
+// isolated validator Job, which compiles the detector workspace and replays
+// the corpus. Only paths known to be inert prose, scripts or outcome records
+// skip it; every unclassified, executable or corpus path (the Job is the only
+// place a new corpus case is replayed) keeps it, so this is a strict superset
+// of RequiresControllerRollout.
+func RequiresValidatorJob(changedPaths []string) bool {
+	for _, p := range changedPaths {
+		kind, _, ok := Classify(p)
+		if !ok {
+			return true
+		}
+		switch kind {
+		case KindGoal, KindArchitecture, KindLifecycleProvenance, KindPlaybookIndex, KindPlaybook, KindPlaybookScript, KindOutcome, KindLegacyOutcomes:
+		default:
+			return true
+		}
+	}
+	return false
+}

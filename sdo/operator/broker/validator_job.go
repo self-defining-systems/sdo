@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+
+	"sdo.dev/operator/memory/layout"
 )
 
 // ValidationJobRequest is the contract for an isolated validator. A job
@@ -36,11 +39,17 @@ type ValidationJobClient interface {
 }
 
 // JobValidator adapts an isolated job launcher to the broker validation gate.
-// A nil launcher or incomplete receipt never authorizes a commit.
+// A nil launcher or incomplete receipt never authorizes a commit. Candidates
+// that change only inert prose, scripts or outcome records skip the Job: the
+// static layers already ran in the broker and nothing there is compiled.
 func JobValidator(client ValidationJobClient) Validator {
 	return func(ctx context.Context, candidate string, paths []string) error {
 		if client == nil {
 			return errors.New("isolated validator job is not configured")
+		}
+		if !layout.RequiresValidatorJob(paths) {
+			slog.Info("validator_job_skipped", "reason", "no executable or corpus change", "changed_paths", len(paths))
+			return nil
 		}
 		if _, err := runGit(ctx, candidate, "add", "--all", "--", "."); err != nil {
 			return err

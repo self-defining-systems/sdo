@@ -50,6 +50,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),
 		OnPhase:         recordClosurePhase,
+		IsolationProof:  &broker.IsolationProof{},
 	}
 	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
 	if err != nil {
