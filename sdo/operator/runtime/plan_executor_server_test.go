@@ -26,8 +26,6 @@ type serverPlanClient struct {
 	*planFakeClient
 	version    int
 	afterPatch func(*unstructured.Unstructured)
-	// afterDryRun runs after each server dry-run, as a writer racing the executor would.
-	afterDryRun func()
 	// raceBeforePatch controller updates land between the caller's read and its next patch.
 	raceBeforePatch int
 	// raceEdit also changes the object on each raceBeforePatch update.
@@ -138,19 +136,6 @@ func (c *serverPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind ty
 	return nil
 }
 
-// DryRunPatch returns what Patch would store, without persisting it.
-func (c *serverPlanClient) DryRunPatch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) (*unstructured.Unstructured, error) {
-	scratch := &serverPlanClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: c.objects[ref].DeepCopy()}}, version: c.version}
-	err := scratch.Patch(ctx, ref, kind, patch)
-	if c.afterDryRun != nil {
-		c.afterDryRun()
-	}
-	if err != nil {
-		return nil, err
-	}
-	return scratch.objects[ref], nil
-}
-
 func deploymentWithDrift(image string) *unstructured.Unstructured {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "rate"}
 	return planObject(ref, map[string]any{
@@ -181,30 +166,18 @@ func TestPlanExecutorToleratesServerDefaultingAndControllerUpdates(t *testing.T)
 	}
 }
 
-func TestPlanExecutorStillReportsThirdPartyEditOfOwnedField(t *testing.T) {
-	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
-	client.afterPatch = func(object *unstructured.Unstructured) {
-		_ = program.ApplySetField(object.Object, "spec.template.spec.containers[0].image", "registry.invalid/rate:other")
-	}
-	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if err == nil || !strings.Contains(err.Error(), "concurrent change after action 0") {
-		t.Fatalf("third-party edit not reported: %v", err)
-	}
-}
-
-func TestPlanExecutorCompensationRetriesAfterResourceVersionBump(t *testing.T) {
+func TestPlanExecutorRollbackRetriesAfterResourceVersionBump(t *testing.T) {
 	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
 	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
-	rollout := callbackRollout{wait: func() error {
-		client.raceBeforePatch = 2 // the deployment controller writes status before each restore attempt
-		return errors.New("rollout did not become ready")
-	}}
+	rollout := callbackRollout{wait: func() error { return errors.New("rollout did not become ready") }}
 	executor := PlanExecutor{Client: client, Source: source, Rollouts: rollout, Verifier: planFakeVerifier{passed: true}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if err == nil || !result.RolledBack || result.RollbackError != "" {
-		t.Fatalf("compensation did not recover: %+v, %v", result, err)
+	if err == nil || !result.Applied || result.RolledBack {
+		t.Fatalf("a failed rollout wait must leave the applied plan in place: %+v, %v", result, err)
+	}
+	client.raceBeforePatch = 2 // the deployment controller writes status before each restore attempt
+	if err := executor.rollback(context.Background(), &result); err != nil || !result.RolledBack || result.RollbackError != "" {
+		t.Fatalf("rollback did not recover: %+v, %v", result, err)
 	}
 	image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
 	if image != "registry.invalid/rate:missing" {
@@ -212,17 +185,18 @@ func TestPlanExecutorCompensationRetriesAfterResourceVersionBump(t *testing.T) {
 	}
 }
 
-func TestPlanExecutorCompensationRetriesAreBounded(t *testing.T) {
+func TestPlanExecutorRollbackRetriesAreBounded(t *testing.T) {
 	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
 	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
-	rollout := callbackRollout{wait: func() error {
-		client.raceBeforePatch = 1000
-		return errors.New("rollout did not become ready")
-	}}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: rollout, Verifier: planFakeVerifier{passed: true}}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if err == nil || result.RolledBack || !strings.Contains(result.RollbackError, "the object has been modified") {
-		t.Fatalf("unbounded or silent compensation: %+v, %v", result, err)
+	if err != nil || !result.Applied {
+		t.Fatalf("apply: %+v, %v", result, err)
+	}
+	client.raceBeforePatch = 1000
+	err = executor.rollback(context.Background(), &result)
+	if err == nil || result.RolledBack || !strings.Contains(err.Error(), "the object has been modified") {
+		t.Fatalf("unbounded or silent rollback: %+v, %v", result, err)
 	}
 }
 
@@ -286,20 +260,6 @@ func TestPlanExecutorToleratesServerNormalizedQuantities(t *testing.T) {
 	}
 }
 
-func TestPlanExecutorNamesTheFieldOfAThirdPartyEdit(t *testing.T) {
-	client, ref := newServerPlanClient(frontendDeployment("app-image:latest"))
-	client.afterPatch = func(object *unstructured.Unstructured) {
-		_ = program.ApplySetField(object.Object, "spec.template.spec.containers[0].resources.limits.cpu", "2")
-	}
-	source := planFakeSource{source: frontendDeployment("registry.invalid/frontend:good")}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	want := `concurrent change after action 0: spec.template.spec.containers[0].resources.limits.cpu wrote "1" but live is "2"`
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("error = %v, want %q", err, want)
-	}
-}
-
 // emptyDirDeployment carries a memory-backed emptyDir whose size limit is not
 // written in canonical form, plus a readiness probe the server fills defaults into.
 func emptyDirDeployment(image, sizeLimit string) *unstructured.Unstructured {
@@ -332,88 +292,6 @@ func TestPlanExecutorToleratesFieldsWithoutHandWrittenCanonicalization(t *testin
 	}
 }
 
-func TestPlanExecutorAfterImageComesFromServerDryRun(t *testing.T) {
-	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
-	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
-	before := client.objects[ref].DeepCopy()
-	result, err := PlanExecutor{Client: client, Source: source}.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	limit, _ := testField(result.Patches[0].After, "spec.template.spec.volumes.0.emptyDir.sizeLimit")
-	period, _ := testField(result.Patches[0].After, "spec.template.spec.containers.0.readinessProbe.periodSeconds")
-	if limit != "1Gi" || period != float64(10) {
-		t.Fatalf("after-image is not the server's: sizeLimit=%v periodSeconds=%v", limit, period)
-	}
-	if !planValuesEqual(before.Object, client.objects[ref].Object) {
-		t.Fatal("server dry-run persisted the change")
-	}
-}
-
-func TestPlanExecutorStillReportsThirdPartyEditOfNormalizedField(t *testing.T) {
-	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
-	client.afterPatch = func(object *unstructured.Unstructured) {
-		_ = program.ApplySetField(object.Object, "spec.template.spec.volumes[0].emptyDir.sizeLimit", "2Gi")
-	}
-	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	want := `spec.template.spec.volumes[0].emptyDir.sizeLimit wrote "1Gi" but live is "2Gi"`
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("error = %v, want %q", err, want)
-	}
-}
-
-func TestPlanExecutorRetriesStatusChurnBetweenDryRunAndApply(t *testing.T) {
-	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
-	client.afterDryRun = func() { client.bump(client.objects[ref]) }
-	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Sleep: noSleep}
-	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if err != nil || !result.Applied || !result.VerificationPassed {
-		t.Fatalf("status churn after dry-run failed the application: %+v, %v", result, err)
-	}
-	image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
-	if image != "cache:new" {
-		t.Fatalf("image = %v", image)
-	}
-}
-
-func TestPlanExecutorDetectsOwnedEditBetweenDryRunAndApply(t *testing.T) {
-	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
-	client.afterDryRun = func() {
-		client.bump(client.objects[ref])
-		_ = program.ApplySetField(client.objects[ref].Object, "spec.template.spec.containers[0].image", "cache:other")
-	}
-	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
-	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Sleep: noSleep}
-	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
-	if err == nil || !strings.Contains(err.Error(), "concurrent change before action 0: spec.template.spec.containers[0].image") {
-		t.Fatalf("owned edit after dry-run not reported: %v", err)
-	}
-	if result.Applied {
-		t.Fatalf("write landed over a concurrent edit: %+v", result)
-	}
-}
-
-func TestPlanExecutorReconcilesPendingWriteWithServerNormalizedField(t *testing.T) {
-	client, ref := newServerPlanClient(emptyDirDeployment("cache:old", "1Gi"))
-	source := planFakeSource{source: emptyDirDeployment("cache:new", "1024Mi")}
-	dry, err := PlanExecutor{Client: client, Source: source}.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Patch(context.Background(), ref, types.MergePatchType, dry.Patches[0].Patch); err != nil {
-		t.Fatal(err)
-	}
-	pending := 0
-	dry.PendingAction = &pending
-	reconciled, err := PlanExecutor{Client: client}.Reconcile(context.Background(), dry)
-	if err != nil || !reconciled.Applied || len(reconciled.ActionsApplied) != 1 {
-		t.Fatalf("pending write not recognized: %+v, %v", reconciled, err)
-	}
-}
-
 // withoutDryRun hides the server dry-run, as a client with no PatchOptions transport does.
 type withoutDryRun struct{ PlanObjectClient }
 
@@ -424,5 +302,41 @@ func TestPlanExecutorFallsBackToCanonicalizationWithoutServerDryRun(t *testing.T
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
 	if err != nil || !result.Applied || result.RolledBack || !result.VerificationPassed {
 		t.Fatalf("fallback canonicalization reported quantity as failure: %+v, %v", result, err)
+	}
+}
+
+func TestPlanExecutorReturnsWriteConflictWithoutRetry(t *testing.T) {
+	client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
+	client.raceBeforePatch = 1
+	source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
+	executor := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
+	if err == nil || !apierrors.IsConflict(errors.Unwrap(err)) || result.Applied {
+		t.Fatalf("a write conflict must be returned, not retried: %+v, %v", result, err)
+	}
+	image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
+	if image != "registry.invalid/rate:missing" {
+		t.Fatalf("image = %v", image)
+	}
+}
+
+func TestPlanExecutorKeepsAppliedPlanWhenRolloutOrHealthFails(t *testing.T) {
+	for name, executor := range map[string]func(*serverPlanClient, planFakeSource) PlanExecutor{
+		"rollout": func(c *serverPlanClient, s planFakeSource) PlanExecutor {
+			return PlanExecutor{Client: c, Source: s, Rollouts: callbackRollout{wait: func() error { return errors.New("not ready") }}, Verifier: planFakeVerifier{passed: true}}
+		},
+		"health": func(c *serverPlanClient, s planFakeSource) PlanExecutor {
+			return PlanExecutor{Client: c, Source: s, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: false}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client, ref := newServerPlanClient(deploymentWithDrift("registry.invalid/rate:missing"))
+			source := planFakeSource{source: deploymentWithDrift("registry.invalid/rate:good")}
+			result, _ := executor(client, source).Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, reconcilePlan(ref), false)
+			image, _ := testField(client.objects[ref], "spec.template.spec.containers.0.image")
+			if !result.Applied || result.RolledBack || result.VerificationPassed || image != "registry.invalid/rate:good" {
+				t.Fatalf("the executor reports and leaves the decision to the caller: %+v image=%v", result, image)
+			}
+		})
 	}
 }

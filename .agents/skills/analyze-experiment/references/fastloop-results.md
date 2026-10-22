@@ -88,7 +88,7 @@ when an outcome has not yet been committed.
 
 Responder applications record the same revision-bound trust failure as
 `application_verification_failure:<program_id>@<accepted_dependency_revision>`.
-The tool state saves it before rollback, regardless of rollback's result. Trust
+`apply` does not roll back: the signal marks an unverified application that stays applied until the responder issues `rollback` or retries. The tool state saves it so it survives a restart. Trust
 counts the signal with the failed application once, or on its own after restart
 discards application history; a successful retry in that incident leaves zero
 successes and one failure for the affected revision.

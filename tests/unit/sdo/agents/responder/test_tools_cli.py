@@ -1,5 +1,7 @@
 import json
 import shlex
+import subprocess
+import sys
 import threading
 import time
 
@@ -124,3 +126,25 @@ def test_cli_passes_agent_ref_text_to_go_without_parsing(raw, monkeypatch):
     assert seen == [{"command": "source", "ref": raw}]
     assert tools_cli.main(["plan", "toy", "--bind", "resource=" + raw]) == 0
     assert seen[-1]["bindings"] == {"resource": raw}
+
+
+def test_sdo_cli_start_does_not_import_the_responder_stack():
+    code = (
+        "import sys\n"
+        "from sdo.agents.responder import tools_cli\n"
+        "tools_cli._parser()\n"
+        "heavy = ('sdo.agents.responder.codex', 'sdo.agents.responder.reflection', 'sdo.agents.responder.job',\n"
+        "         'sdo.agents.responder.incident_status', 'pydantic', 'kubernetes', 'google.protobuf')\n"
+        "print(','.join(name for name in heavy if name in sys.modules))\n"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == ""
+
+
+def test_responder_package_exports_resolve_lazily():
+    from sdo.agents import responder
+
+    assert responder.run_worker_task.__module__ == "sdo.agents.responder.worker"
+    assert responder.IncidentStatusReport.__module__ == "sdo.agents.responder.incident_status"
+    assert "run_worker_task" in dir(responder)
+    assert not hasattr(responder, "not_an_export")

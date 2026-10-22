@@ -14,8 +14,6 @@ The Go `sdo-operator host` command owns production lifecycle orchestration. It a
 
 `--max-follow-ups N` and `--follow-up-cooldown DURATION` control bounded responder follow-ups when health findings remain active. The default `N=0` disables follow-ups. Attempt identity and the remaining budget survive controller restarts.
 
-`SDO_CAUSE_ADMISSIBILITY=on` is an optional responder-side filter for unsupported narrative causes. It may remove a proposed cause but cannot override the Go outcome verifier. The default is `off`.
-
 ## Healthy detector baseline
 
 `--healthy-baseline` is an opt-in detector gate. A benchmark adapter captures healthy Kubernetes snapshots before injecting a fault and publishes them to a controller-owned directory outside the accepted repository using `sdo-operator baseline-write`. When a proposal changes incident detector source, the isolated validator mounts only that snapshot directory read-only and replays the proposed detector against it. A detector that fires on a healthy snapshot fails validation. The gate does not read benchmark verdicts. If the recorded baseline is missing when an incident detector is validated, validation fails closed.

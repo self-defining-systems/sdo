@@ -75,13 +75,15 @@ type PlanExecutor struct {
 	Rollouts PlanRollouts
 	Verifier PlanVerifier
 	Now      func() time.Time
-	// Sleep waits between version-conflict retries; nil waits on the real clock.
-	Sleep func(context.Context, time.Duration) error
 }
 
+// Apply writes the plan once and reports. A write that fails part-way through a
+// multi-action plan is compensated; once every write has landed, a failed
+// rollout wait or health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	started := time.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
+	writesLanded := false
 	defer func() {
 		result.Duration = time.Since(started)
 		if err != nil && result.PendingAction != nil {
@@ -94,7 +96,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 				return
 			}
 		}
-		if err != nil && result.Applied {
+		if err != nil && result.Applied && !writesLanded {
 			recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
 			if rollbackErr := e.rollback(recoveryCtx, &result); rollbackErr != nil {
@@ -149,8 +151,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
 	}
-	prepared := make([]*unstructured.Unstructured, 0, len(plan.Actions))
-	cumulative := make([][]byte, 0, len(plan.Actions))
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
 		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
@@ -173,63 +173,45 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		if patchErr != nil {
 			return result, patchErr
 		}
-		// The server dry-run starts from the live object, which has none of the
-		// earlier actions, so it needs the change from the pre-image to this action.
-		original, marshalErr := json.Marshal(originals[ref].Object)
-		if marshalErr != nil {
-			return result, fmt.Errorf("encode pre-image of %s/%s: %w", ref.Kind, ref.Name, marshalErr)
-		}
-		total, patchErr := jsonpatch.CreateMergePatch(original, after)
-		if patchErr != nil {
-			return result, fmt.Errorf("patch %s/%s: %w", ref.Kind, ref.Name, patchErr)
-		}
-		prepared = append(prepared, next.DeepCopy())
-		cumulative = append(cumulative, total)
 		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
 		current[ref] = next
 	}
-	if err := e.normalizeAfterImages(ctx, result.Patches, cumulative); err != nil {
-		return result, err
+	// Rollback and write reconciliation compare after-images with live values, so
+	// the plan's values take the form the API server stores.
+	for i := range result.Patches {
+		canonicalizePlanObject(result.Patches[i].After)
 	}
 	if dryRun {
 		return result, nil
 	}
-	// versions holds each object as last observed after one of our writes; objects
-	// not yet written are still at their pre-image.
-	versions := originals
+	// The first write to an object is conditional on its pre-image; later writes to the same
+	// object are conditional only on its identity, because the object's own controllers bump
+	// resourceVersion between our writes.
+	written := make(map[sdk.ObjectRef]bool)
 	for index, patch := range result.Patches {
-		if previous := versions[patch.Ref]; previous != nil {
+		if written[patch.Ref] {
 			var patchErr error
-			patch.Patch, patchErr = conditionalPlanPatch(patch.Patch, previous)
+			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
 			if patchErr != nil {
 				return result, patchErr
 			}
-			result.Patches[index].Patch = patch.Patch
 		}
 		pending := index
 		result.PendingAction = &pending
-		if err := e.patchWithRetry(ctx, index, &result.Patches[index], versions[patch.Ref]); err != nil {
-			return result, err
+		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, result.Patches[index].Patch); err != nil {
+			return result, fmt.Errorf("apply action %d to %s/%s: %w", index, patch.Ref.Kind, patch.Ref.Name, err)
 		}
+		written[patch.Ref] = true
 		result.Applied = true
 		result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index])
 		result.PendingAction = nil
-		observed, getErr := e.Client.Get(ctx, patch.Ref)
-		if getErr != nil {
-			return result, fmt.Errorf("read applied version: %w", getErr)
+		// Rollback compares against the version our write produced; if the read fails the
+		// after-image keeps its predicted version and rollback retries on a conflict.
+		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
+			result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		}
-		if observed.GetUID() != patch.Before.GetUID() {
-			return result, errors.New("applied object was recreated")
-		}
-		for _, field := range []string{"spec", "data", "binaryData"} {
-			written := projectPlanOwned(patch.After.Object[field], prepared[index].Object[field])
-			if mismatch, found := findPlanOwnedFieldMismatch(field, observed.Object[field], written); found {
-				return result, fmt.Errorf("concurrent change after action %d: %s", index, mismatch)
-			}
-		}
-		result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
-		versions[patch.Ref] = observed
 	}
+	writesLanded = true
 	result.Applied = true
 	if err := e.Rollouts.Wait(ctx, refs); err != nil {
 		return result, fmt.Errorf("wait for plan rollouts: %w", err)
@@ -347,6 +329,19 @@ func conditionalPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]
 	return json.Marshal(fields)
 }
 
+func uidOnlyPlanPatch(patch []byte, observed *unstructured.Unstructured) ([]byte, error) {
+	var fields map[string]any
+	if err := json.Unmarshal(patch, &fields); err != nil {
+		return nil, err
+	}
+	if observed.GetUID() == "" {
+		delete(fields, "metadata")
+	} else {
+		fields["metadata"] = map[string]any{"uid": string(observed.GetUID())}
+	}
+	return json.Marshal(fields)
+}
+
 // Descend into equal-length arrays so a probe repair cannot roll back an image update.
 // Array shape changes and changed named-item identities conservatively conflict.
 func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok bool) (any, bool, error) {
@@ -406,10 +401,40 @@ func restorePlanFields(before any, bok bool, after any, aok bool, live any, lok 
 		}
 		return result, true, nil
 	}
-	if aok != lok || !planValuesEqual(after, live) {
+	if aok != lok || !planValueContains(live, after) {
 		return nil, false, errors.New("field no longer holds application value")
 	}
 	return before, bok, nil
+}
+
+// planValueContains reports whether live equals applied, ignoring keys the API server added to
+// applied objects (defaults such as a probe's scheme or a port's protocol).
+func planValueContains(live, applied any) bool {
+	switch a := applied.(type) {
+	case map[string]any:
+		l, ok := live.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range a {
+			if lv, exists := l[key]; !exists || !planValueContains(lv, value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		l, ok := live.([]any)
+		if !ok || len(l) != len(a) {
+			return false
+		}
+		for i := range a {
+			if !planValueContains(l[i], a[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return planValuesEqual(applied, live)
 }
 
 func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (*unstructured.Unstructured, error) {
