@@ -818,6 +818,110 @@ def test_a_rejected_receipt_does_not_stop_the_next_stage_from_injecting(tmp_path
     assert (tmp_path / "s1" / "agent" / STRICT_RECEIPT_FILENAME).is_file()
 
 
+@dataclass
+class NativeReceiptOps(FakeOps):
+    classification: str = "partial"
+
+    def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+        # Preserve the same exports as the real collector, then exercise the
+        # native constructor that validates before returning to the drain.
+        super().collect_receipt(config, incident_id, artifacts_dir)
+        from benchmarks.sregym.protocol.native_receipt import native_production_receipt
+        from tests.unit.benchmarks.sregym.protocol.test_native_receipt import _ledger
+
+        ledger = _ledger()
+        ledger["closure"]["request"]["namespace"] = "hotel"
+        ledger["outcome_document"]["classification"] = self.classification
+        return native_production_receipt(
+            ledger,
+            namespace=config.namespace,
+            control_namespace=config.control_namespace,
+            controller_image=config.controller_image,
+            responder_image=config.responder_image,
+            validator_image=config.validator_image,
+            controller_pod_uid="uid-1",
+            responder_job_evidence=[
+                {"incident_id": incident_id, "job_name": "responder-1", "job_uid": "worker-1", "succeeded": True}
+            ],
+        )
+
+
+@pytest.mark.parametrize("classification", ["partial", "success"])
+def test_native_prior_receipt_is_published_before_the_next_injection(tmp_path: Path, classification: str) -> None:
+    staging = tmp_path / ".runtime" / "sdo_codex" / "anon_abc"
+    ops = NativeReceiptOps(classification=classification)
+    _run(tmp_path, ops, "s0", [], receipt_dir=staging)
+    run_dir = tmp_path / "pipeline" / "stage_0" / "results" / "sdo_codex" / "problem-1" / "run_1"
+    run_dir.parent.mkdir(parents=True)
+    staging.rename(run_dir)
+    ops.reflectable.add("incident-1")
+    filename = REJECTED_RECEIPT_FILENAME if classification == "partial" else STRICT_RECEIPT_FILENAME
+
+    def inject() -> None:
+        # The previous stage's evidence must be published before this fault.
+        assert (run_dir / filename).is_file()
+        assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending is None
+        ops.events.append(("fault", "s1"))
+
+    resolution = run_persistent_stage(
+        _inputs(tmp_path, "s1"), ops=ops, run_lifecycle=lambda: None, inject=inject, clock=_clock(ops)
+    )
+
+    assert resolution["incident_id"] == "incident-2"
+    assert ("fault", "s1") in ops.events
+    document = json.loads((run_dir / filename).read_text(encoding="utf-8"))
+    if classification == "partial":
+        assert "verified closure classification" in document["validation_error"]
+        receipt = document["receipt"]
+        assert not (run_dir / STRICT_RECEIPT_FILENAME).exists()
+        assert not (tmp_path / "s1" / "agent" / REJECTED_RECEIPT_FILENAME).exists()
+    else:
+        receipt = document
+        assert not (run_dir / REJECTED_RECEIPT_FILENAME).exists()
+    assert receipt["incident_id"] == "incident-1"
+    assert receipt["native_ledger"]["outcome_document"]["classification"] == classification
+    assert (run_dir / "sdo_runtime" / "controller_logs" / "sdo-controller-run-1.log").is_file()
+    pending = PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending
+    assert pending is not None
+    assert pending.incident_id == "incident-2"
+
+
+def test_native_partial_receipt_is_recorded_without_failing_teardown(tmp_path: Path) -> None:
+    ops = NativeReceiptOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.reflectable.add("incident-1")
+    state_path = tmp_path / "sdo_persistent_controller.json"
+
+    assert teardown(state_path, ops=ops, clock=_clock(ops)) == []
+
+    receipt_dir = tmp_path / "s0" / "agent"
+    rejected = json.loads((receipt_dir / REJECTED_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert "verified closure classification" in rejected["validation_error"]
+    assert rejected["receipt"]["native_ledger"]["outcome_document"]["classification"] == "partial"
+    assert not (receipt_dir / STRICT_RECEIPT_FILENAME).exists()
+    assert ("delete", "hotel-sdo") in ops.events
+    assert PersistentState.load(state_path).controllers == {}
+
+
+def test_native_collection_transport_error_still_blocks_injection(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.native_operator import NativeOperatorError
+
+    class UnavailableOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            raise NativeOperatorError("cannot read broker ledger: transport unavailable")
+
+    ops = UnavailableOps()
+    _run(tmp_path, ops, "s0", [])
+    ops.reflectable.add("incident-1")
+    with pytest.raises(NativeOperatorError, match="transport unavailable"):
+        _run(tmp_path, ops, "s1", [])
+    assert ("fault", "s1") not in ops.events
+    assert not (tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).exists()
+    pending = PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending
+    assert pending is not None
+    assert pending.incident_id == "incident-1"
+
+
 def test_a_rejected_receipt_is_still_reported_to_a_caller_that_drains_one_incident(tmp_path: Path) -> None:
     ops = FakeOps()
     _run(tmp_path, ops, "s0", [])

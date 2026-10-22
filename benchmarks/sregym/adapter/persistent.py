@@ -55,8 +55,9 @@ from benchmarks.sregym.adapter.runtime import (
     RuntimeConfig,
     collect_production_receipt,
     export_controller_logs,
-    validate_production_receipt,
 )
+from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -841,38 +842,42 @@ def drain_pending_incident(
     # The native Go broker releases abandoned proposals and acknowledged
     # incident worktrees; the benchmark must not mutate its workspace.
     del drained_state
-    receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
-    phases["collect_settled_receipt"] = clock.monotonic() - started - phases["wait_for_ack"]
-    phase_timestamps["receipt_collected"] = clock.now().isoformat()
-    # The reflection-drain cost includes the wait for close-out to settle; neither
-    # is resolution time (both are excluded below).
-    waited = clock.monotonic() - started
-    receipt.update(pending.stage_receipt)
-    recovery = receipt.get("phase_timings_seconds", {}).get("operational_recovery")
-    if "incident_resolution_seconds" not in receipt and isinstance(recovery, (int, float)):
-        receipt["incident_resolution_seconds"] = float(recovery)
-        receipt["incident_resolution_scope"] = "detected_to_independently_verified_health"
-    # Resolution ends at verified health. Setup before injection and learning
-    # after verification (including this drain) are reported, never included.
-    receipt["excluded_from_incident_resolution_seconds"] = {
-        **pending.stage_receipt.get("pre_injection_costs_seconds", {}),
-        "post_recovery_learning_and_receipt": receipt.get("phase_timings_seconds", {}).get(
-            "post_recovery_learning_and_receipt"
-        ),
-    }
-    receipt["reflection_drain"] = {
-        "drained_by": drained_by,
-        "waited_seconds": waited,
-        "phase_seconds": phases,
-        "phase_timestamps": phase_timestamps,
-    }
-    # The controller log covering reflection is evidence whether or not the receipt validates.
-    ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
+    receipt: dict[str, Any] = {}
     try:
+        receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
+        phases["collect_settled_receipt"] = clock.monotonic() - started - phases["wait_for_ack"]
+        phase_timestamps["receipt_collected"] = clock.now().isoformat()
+        # The reflection-drain cost includes the wait for close-out to settle; neither
+        # is resolution time (both are excluded below).
+        waited = clock.monotonic() - started
+        receipt.update(pending.stage_receipt)
+        recovery = receipt.get("phase_timings_seconds", {}).get("operational_recovery")
+        if "incident_resolution_seconds" not in receipt and isinstance(recovery, (int, float)):
+            receipt["incident_resolution_seconds"] = float(recovery)
+            receipt["incident_resolution_scope"] = "detected_to_independently_verified_health"
+        # Resolution ends at verified health. Setup before injection and learning
+        # after verification (including this drain) are reported, never included.
+        receipt["excluded_from_incident_resolution_seconds"] = {
+            **pending.stage_receipt.get("pre_injection_costs_seconds", {}),
+            "post_recovery_learning_and_receipt": receipt.get("phase_timings_seconds", {}).get(
+                "post_recovery_learning_and_receipt"
+            ),
+        }
+        receipt["reflection_drain"] = {
+            "drained_by": drained_by,
+            "waited_seconds": waited,
+            "phase_seconds": phases,
+            "phase_timestamps": phase_timestamps,
+        }
         validate_production_receipt(receipt, allow_test_lifecycle=config.allow_test_lifecycle)
-    except ControllerInstallError as exc:
+    except ProductionReceiptValidationError as exc:
+        if isinstance(exc, NativeReceiptValidationError):
+            receipt = exc.receipt
+        ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
         _write_json({"validation_error": str(exc), "receipt": receipt}, pending.receipt_dir / REJECTED_RECEIPT_FILENAME)
         raise ReceiptRejectedError(str(exc)) from exc
+    # The controller log covering reflection is evidence whether or not the receipt validates.
+    ops.export_controller_logs(record.control_namespace, pending.receipt_dir)
     persist_strict_receipt(receipt, pending.receipt_dir)
     return waited
 

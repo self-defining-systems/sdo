@@ -289,7 +289,7 @@ def test_a_recorded_agent_failure_stage_ends_its_pipeline_normally(tmp_path: Pat
     assert not any("deferred strict receipt" in reason for reason in result.reasons)
 
 
-def test_a_stage_whose_pipeline_stopped_before_its_receipt_was_published_is_invalid_infra(tmp_path: Path) -> None:
+def test_a_stage_waiting_for_its_deferred_receipt_reports_pending(tmp_path: Path) -> None:
     pipeline = _pipeline(
         tmp_path / "p",
         [
@@ -308,4 +308,6 @@ def test_a_stage_whose_pipeline_stopped_before_its_receipt_was_published_is_inva
     assert [Path(result.experiment_dir).name for result in results] == ["stage_0_one", "stage_1_two"]
     assert results[0].classification == "invalid_infra"
     assert "deferred strict receipt" in results[0].reasons[0]
+    assert "pending" in results[0].reasons[0]
+    assert "pipeline stopped" not in results[0].reasons[0]
     assert results[1].reasons == ("no problem run was recorded",)

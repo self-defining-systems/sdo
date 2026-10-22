@@ -508,7 +508,7 @@ def _check_receipt(experiment_dir: Path, results: Path) -> tuple[Check, dict[str
     if any(results.rglob(RESOLUTION_NAME)) and not _pipeline_finished(experiment_dir):
         # A persistent controller's receipt is published by the next stage's drain or by teardown.
         return Check(
-            "receipt", "fail", "the pipeline stopped before this stage's deferred strict receipt was published"
+            "receipt", "fail", "this stage's deferred strict receipt is pending while the pipeline is still live"
         ), None
     return Check("receipt", "fail", "SDO produced no strict receipt", blame="agent"), None
 
