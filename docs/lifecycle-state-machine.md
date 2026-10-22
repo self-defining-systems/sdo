@@ -8,9 +8,8 @@ breaking format change; old phase strings require an operational cutover.
 
 ## States, events and effects
 
-Responder dispatch phases: unspecified/idle, admission deferred, workspace
-pending/running, pending/running, completed. Admission holds the incident's
-identity and findings. Workspace preparation and responder dispatch are separate
+Responder dispatch phases: unspecified/idle, workspace
+pending/running, pending/running, completed. Workspace preparation and responder dispatch are separate
 effects. Completion retains results for independent verification; timeout is a
 typed worker outcome, while API/transport failure rejoins the same worker.
 Successful verification freezes the closure.
@@ -22,7 +21,7 @@ reflection. Validation rejection may dispatch a bounded correction;
 infrastructure failure retries the same work. A committed closure waits for any
 required controller rollout before acknowledgment and worktree release.
 
-Events: incident opened, admission reassessed, workspace prepared/rejected,
+Events: incident opened, workspace prepared/rejected,
 responder completed/timed out, detector observation, verification elapsed,
 closure frozen, reflection result, format result, validator accepted/rejected,
 broker accepted/rejected, acknowledgment result, API fault, leadership loss,

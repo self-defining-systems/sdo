@@ -68,7 +68,6 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
             deployed_manifest_paths=("kubernetes",),
             program_fast_path=True,
             program_trust_threshold=4,
-            drift_tokens_per_hour=250000,
         )
     )
 
@@ -84,7 +83,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
     assert "--program-fast-path" in calls[0]
     assert calls[0][calls[0].index("--program-trust-threshold") + 1] == "4"
-    assert calls[0][calls[0].index("--drift-tokens-per-hour") + 1] == "250000"
+    assert "--drift-tokens-per-hour" not in calls[0]
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"
     assert "-m" not in calls[0]

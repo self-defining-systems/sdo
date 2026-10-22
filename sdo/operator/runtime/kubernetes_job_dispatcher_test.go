@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -399,47 +398,6 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	}
 	cancel()
 	<-finished
-}
-
-func TestResponderJobStartsBeforeSettleCapture(t *testing.T) {
-	root := t.TempDir()
-	client := fake.NewSimpleClientset()
-	request := goldenRequest(t)
-	request.RepositoryWorktree = filepath.Join(root, "proposals", "incident")
-	dispatcher := KubernetesJobDispatcher{
-		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
-		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root,
-		Catalog: fixedMemoryCatalog{commit: request.RepositoryBaseCommit}, RequireMemorySnapshot: true,
-		PollInterval: time.Millisecond,
-		LoopFactory: func(request IncidentRequest) *ResponderLoop {
-			loop := NewResponderLoop(request, nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: request.Namespace}}, nil, PlanExecutor{}, 5)
-			loop.CorpusSessionRoot = root
-			loop.DiagnosisSettleDelay = time.Second
-			loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
-				return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
-			}
-			return loop
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _, _ = dispatcher.Dispatch(ctx, request) }()
-	_ = awaitJob(t, client, IncidentJobName(request.IncidentID))
-	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "open@settle.json")); !os.IsNotExist(err) {
-		t.Fatalf("settle capture preceded responder Job: %v", err)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(filepath.Join(dir, "open@settle.json")); err == nil {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("settle capture did not arrive while responder Job was active")
 }
 
 func TestColdFastPathDispatchesResponderWithoutSettling(t *testing.T) {

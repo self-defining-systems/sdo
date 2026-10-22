@@ -49,7 +49,6 @@ def test_persistent_install_calls_go_reuse_with_typed_settings(tmp_path: Path, m
     assert native.repair_policy == "recorded-actions"
     assert native.late_findings == "pull"
     assert native.response_timeout_seconds == 90
-    assert native.drift_tokens_per_hour == 1_000_000
 
 
 def test_persistent_receipt_reads_native_go_evidence(

@@ -51,7 +51,6 @@ class RuntimeConfig:
     force_reflection: bool = False
     program_fast_path: bool = False
     program_trust_threshold: int = 3
-    drift_tokens_per_hour: int = 1_000_000
     late_findings: str = "off"
     max_follow_ups: int = 0
     max_response_loops: int = 5
@@ -104,8 +103,6 @@ class RuntimeConfig:
             raise ValueError("max_deployment_attempts must be positive")
         if self.program_trust_threshold <= 0:
             raise ValueError("program_trust_threshold must be positive")
-        if self.drift_tokens_per_hour <= 0:
-            raise ValueError("drift_tokens_per_hour must be positive")
         if self.program_fast_path and self.repair_policy != "recorded-actions":
             raise ValueError("program fast path requires recorded-actions repair policy")
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
@@ -150,7 +147,6 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         force_reflection=config.force_reflection,
         program_fast_path=config.program_fast_path,
         program_trust_threshold=config.program_trust_threshold,
-        drift_tokens_per_hour=config.drift_tokens_per_hour,
         healthy_baseline=config.healthy_baseline,
         max_follow_ups=config.max_follow_ups,
         max_response_loops=config.max_response_loops,

@@ -263,9 +263,6 @@ type LifecycleEvent struct {
 	HealthClearedAt        *timestamppb.Timestamp `protobuf:"bytes,20,opt,name=health_cleared_at,json=healthClearedAt,proto3" json:"health_cleared_at,omitempty"`
 	DetectorReviewRequired bool                   `protobuf:"varint,21,opt,name=detector_review_required,json=detectorReviewRequired,proto3" json:"detector_review_required,omitempty"`
 	DispatchError          bool                   `protobuf:"varint,22,opt,name=dispatch_error,json=dispatchError,proto3" json:"dispatch_error,omitempty"`
-	LoadPressure           float64                `protobuf:"fixed64,23,opt,name=load_pressure,json=loadPressure,proto3" json:"load_pressure,omitempty"`
-	LoadThreshold          float64                `protobuf:"fixed64,24,opt,name=load_threshold,json=loadThreshold,proto3" json:"load_threshold,omitempty"`
-	ReleaseBacklog         int32                  `protobuf:"varint,25,opt,name=release_backlog,json=releaseBacklog,proto3" json:"release_backlog,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -454,27 +451,6 @@ func (x *LifecycleEvent) GetDispatchError() bool {
 	return false
 }
 
-func (x *LifecycleEvent) GetLoadPressure() float64 {
-	if x != nil {
-		return x.LoadPressure
-	}
-	return 0
-}
-
-func (x *LifecycleEvent) GetLoadThreshold() float64 {
-	if x != nil {
-		return x.LoadThreshold
-	}
-	return 0
-}
-
-func (x *LifecycleEvent) GetReleaseBacklog() int32 {
-	if x != nil {
-		return x.ReleaseBacklog
-	}
-	return 0
-}
-
 var File_sdodev_contracts_v1alpha1_telemetry_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
@@ -510,12 +486,13 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11dispatch_relation\x18\x15 \x01(\tB3\xbaH0r.R\x0fbefore_dispatchR\x0eafter_dispatchR\vno_incidentR\x10dispatchRelation\x1aj\n" +
 	"\x16ParameterBindingsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12:\n" +
-	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\x84\v\n" +
+	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01\"\x81\n" +
+	"\n" +
 	"\x0eLifecycleEvent\x12D\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x1d\xbaH\x1ar\x18\n" +
 	"\x16sdo.lifecycle-event/v1R\rschemaVersion\x12\"\n" +
-	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\x92\x02\n" +
-	"\x05event\x18\x03 \x01(\tB\xfb\x01\xbaH\xf7\x01r\xf4\x01R\x0fincident_openedR\x12admission_deferredR\x11admission_resumedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x13incident_supersededR\x11worktree_releasedR\x18detector_review_requiredR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
+	"\bevent_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aeventId\x12\xeb\x01\n" +
+	"\x05event\x18\x03 \x01(\tB\xd4\x01\xbaH\xd0\x01r\xcd\x01R\x0fincident_openedR\x12workspace_preparedR\x14responder_dispatchedR\x13responder_completedR\x13incident_supersededR\x11worktree_releasedR\x18detector_review_requiredR\x0fincident_closedR\x11closure_committedR\x15incident_acknowledgedR\x05event\x12C\n" +
 	"\vrecorded_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"recordedAt\x12:\n" +
 	"\x14evaluation_iteration\x18\x05 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x13evaluationIteration\x12 \n" +
@@ -538,10 +515,7 @@ const file_sdodev_contracts_v1alpha1_telemetry_proto_rawDesc = "" +
 	"\x11reflection_commit\x18\x13 \x01(\tR\x10reflectionCommit\x12F\n" +
 	"\x11health_cleared_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\x0fhealthClearedAt\x128\n" +
 	"\x18detector_review_required\x18\x15 \x01(\bR\x16detectorReviewRequired\x12%\n" +
-	"\x0edispatch_error\x18\x16 \x01(\bR\rdispatchError\x123\n" +
-	"\rload_pressure\x18\x17 \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00R\floadPressure\x125\n" +
-	"\x0eload_threshold\x18\x18 \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00R\rloadThreshold\x120\n" +
-	"\x0frelease_backlog\x18\x19 \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x0ereleaseBacklogB\x81\x02\n" +
+	"\x0edispatch_error\x18\x16 \x01(\bR\rdispatchErrorJ\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1aR\rload_pressureR\x0eload_thresholdR\x0frelease_backlogB\x81\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0eTelemetryProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (

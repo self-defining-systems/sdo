@@ -68,10 +68,9 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
-	driftTokensPerHour := registerDriftTokenBudget(flags)
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	programMinDuration := flags.Duration("program-min-duration", 10*time.Second, "minimum sustained learned-program firing and clearing duration")
-	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "delay before retrying inconclusive initial diagnoses")
+	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "settle delay before a trusted-program fast-path attempt")
 	followUpCooldown := flags.Duration("follow-up-cooldown", 30*time.Second, "follow-up responder cooldown")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
@@ -101,9 +100,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *programMinDuration < 0 {
 		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
 	}
-	if err := validateDriftTokenBudget(*driftTokensPerHour); err != nil {
-		return builder.RunConfig{}, false, err
-	}
 	if *programFastPath && *repairPolicy != "recorded-actions" {
 		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
 	}
@@ -132,7 +128,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
-		DriftTokensPerHour: *driftTokensPerHour,
 		ProgramMinDuration: durationpb.New(*programMinDuration),
 	}
 	if *duration > 0 {

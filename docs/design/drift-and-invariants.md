@@ -82,7 +82,7 @@ The program sweep runs **on change** for the affected bindings, with a periodic 
 
 **D1 — full merge (accepted):** unexplained drift opens an ordinary latent `drift.unexplained` incident carrying the existing event and capture. The responder first asks “is this a fault?”, then diagnoses and repairs in one session. Learned matches retain `drift.<program>` and the trusted-program path. Delete the investigator task, Job and queue.
 
-Go retains feed/admission, classifier, dedupe, batching, budget and learned sweeps. Use ordinary drift-only admission with the existing bounds: 20 s / 8 events, 12 dispatches/hour and 1,000,000 tokens/hour for repeat work; never-seen keys retain priority and bypass spent retry budgets. Charge responder usage once. Health dispatch and evidence attachment never wait for this budget; delete its investigator-specific execution/state path.
+Go retains feed/admission, classifier, dedupe, batching and learned sweeps. Drift-only batches coalesce for 20 s / 8 events and are otherwise admitted like health findings; the per-hour dispatch and token budgets were removed (S1 PR 1). Charge responder usage once. Delete the investigator-specific execution/state path.
 
 During an open incident, append drift to its evidence/findings instead of dispatching again. Extend existing incident-view, late-findings and `status`/`diagnose`/`verify` reads to expose it after launch; preserve Job-request idempotence. Existing locking and closure recheck must include late drift. No new generation protocol is needed.
 
@@ -97,7 +97,7 @@ During an open incident, append drift to its evidence/findings instead of dispat
 
 Reuse `driftEventKey` and current/source-value comparison, including manager, sorted fields and relevant source content; exclude timestamps, old values and unrelated outcome commits. Only benign suppresses exact observations; changed facts or contrary health/program evidence can dispatch. Read accepted outcomes through `memory.Reader` after restart/reset; seed rollback discards labels too. Never suppress fault/unsure: dedupe pending/open work only. Repair clears the finding normally, so an identical recurrence opens even without a learned program. No episode state machine is needed.
 
-Capture directly in the ordinary incident session (`open@detect`, settle, pre-apply); late evidence uses existing capture references. Reflection learns from the cause's original capture and verified fixed/healthy cases. Reset drains or cancels/awaits workers **before** deleting sessions/checkouts. Ordinary terminal `ResponderJobFailedError` handling replaces investigator retries until the 1 h TTL; unresolved failure is never healthy closure.
+Capture directly in the ordinary incident session (`open@detect`; the settle and pre-apply captures were removed); late evidence uses existing capture references. Reflection learns from the cause's original capture and verified fixed/healthy cases. Reset drains or cancels/awaits workers **before** deleting sessions/checkouts. Ordinary terminal `ResponderJobFailedError` handling replaces investigator retries until the 1 h TTL; unresolved failure is never healthy closure.
 
 ### 4. Autonomous labeller (deterministic)
 
@@ -164,7 +164,7 @@ Each label, with captured before and after snapshots, is stored as a drift corpu
 | Source write-back and structural proposals | Unbuilt |
 | Additional foreign kinds and relation-scoped admission | Unbuilt; explicit extensions require churn evidence |
 
-The deployed admission flags are `--drift-batch-window`, `--drift-dispatches-per-hour` and `--drift-tokens-per-hour`. Removed investigator config tags 59–61 and state tag 32 are reserved; coordinated controller/worker images use the ordinary IncidentResult assessments. Synthetic detector IDs use dots to obey the mainline grammar. New run metadata declares `token_accounting_version: responder-drift/v2`; `drift_tokens` is legacy zero and merged reasoning is charged once to responder usage. Historical costs remain readable.
+The deployed drift flag is `--drift-batch-window`. Removed investigator config tags 59–61, state tag 32, the drift budget config tags 67–68 and state tag 33 are reserved; coordinated controller/worker images use the ordinary IncidentResult assessments. Synthetic detector IDs use dots to obey the mainline grammar. New run metadata declares `token_accounting_version: responder-drift/v2`; `drift_tokens` is legacy zero and merged reasoning is charged once to responder usage. Historical costs remain readable.
 
 ### Hermetic coverage and churn
 

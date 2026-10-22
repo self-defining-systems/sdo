@@ -253,7 +253,7 @@ def _reflection_namespace() -> str:
 
 
 def _captured_pair(capture: Path) -> tuple[str, str]:
-    opened = json.loads((capture / "open@pre-apply.json").read_text(encoding="utf-8"))
+    opened = json.loads((capture / "open@detect.json").read_text(encoding="utf-8"))
     fixed = json.loads((capture / "fixed.json").read_text(encoding="utf-8"))
     after = {item["metadata"]["name"]: item for item in fixed.get("services", [])}
     for item in opened.get("services", []):
@@ -298,13 +298,13 @@ def reflect_program(turn: Turn, prompt: str, worktree: Path, incident_id: str) -
     (target / "diagnose_test.go").unlink(missing_ok=True)
     case = worktree / ".sdo/corpus" / f"{PROGRAM_ID}-{hashlib.sha256(incident_id.encode()).hexdigest()[:8]}"
     case.mkdir(parents=True)
-    opened = (CAPTURE_DIR / "open@pre-apply.json").read_bytes()
+    opened = (CAPTURE_DIR / "open@detect.json").read_bytes()
     fixed = (CAPTURE_DIR / "fixed.json").read_bytes()
     for name, data in {
         "open.json": opened,
         "fixed.json": fixed,
         "healthy.json": fixed,
-        "recordings.json": (CAPTURE_DIR / "open@pre-apply-recordings.json").read_bytes(),
+        "recordings.json": (CAPTURE_DIR / "open@detect-recordings.json").read_bytes(),
     }.items():
         (case / name).write_bytes(data)
 
@@ -319,7 +319,7 @@ def reflect_program(turn: Turn, prompt: str, worktree: Path, incident_id: str) -
                 "peer_bindings": {"service": ref(peer)},
                 "provenance": {
                     "incident_id": incident_id,
-                    "open_at": "pre-apply",
+                    "open_at": "detect",
                     "open_sha256": hashlib.sha256(opened).hexdigest(),
                     "fixed_sha256": hashlib.sha256(fixed).hexdigest(),
                 },

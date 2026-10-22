@@ -301,11 +301,6 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 			}
 			fastloopPodWaiting(t, ctx, client, "api-pod", "ErrImagePull")
 			fastloopPodWaiting(t, ctx, client, "api-pod", "ImagePullBackOff")
-			loop.DiagnosisSettleDelay = time.Millisecond
-			loop.RetryInitialDiagnose(ctx)
-			if got := loop.ProgramRuns(); len(got) != 2 || got[1].Verdict.Result != program.Match {
-				t.Fatalf("settled diagnosis: %+v", got)
-			}
 		}
 		tools := filepath.Join(t.TempDir(), "tools")
 		server := SessionToolServer{Directory: tools, Handle: loop.Handle, PollInterval: time.Millisecond}
@@ -326,6 +321,9 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		}
 		fastloopTool(t, tools, "diagnose")
 		if incident == 1 {
+			if got := loop.ProgramRuns(); got[len(got)-1].Verdict.Result != program.Match {
+				t.Fatalf("diagnosis after the pull failure settled: %+v", got)
+			}
 			for _, ref := range []sdk.ObjectRef{port, image} {
 				patch := []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)
 				if ref.Kind == "Deployment" {
@@ -385,21 +383,20 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		names := []string{"open@detect.json", "open@pre-apply.json", "fixed.json"}
-		if incident == 1 {
-			names = append(names, "open@settle.json")
-		}
-		for _, name := range names {
+		for _, name := range []string{"open@detect.json", "fixed.json"} {
 			if _, err := os.Stat(filepath.Join(captureDir, name)); err != nil {
 				t.Fatalf("missing %s: %v", name, err)
 			}
 		}
+		for _, name := range []string{"open@settle.json", "open@pre-apply.json"} {
+			if _, err := os.Stat(filepath.Join(captureDir, name)); !os.IsNotExist(err) {
+				t.Fatalf("%s must no longer be captured: %v", name, err)
+			}
+		}
 		if incident == 1 {
-			for name, want := range map[string]string{"open@detect.json": "ContainerCreating", "open@settle.json": "ImagePullBackOff", "open@pre-apply.json": "ImagePullBackOff"} {
-				wire, err := os.ReadFile(filepath.Join(captureDir, name))
-				if err != nil || !strings.Contains(string(wire), want) {
-					t.Fatalf("%s was captured at the wrong phase: %v", name, err)
-				}
+			wire, err := os.ReadFile(filepath.Join(captureDir, "open@detect.json"))
+			if err != nil || !strings.Contains(string(wire), "ContainerCreating") {
+				t.Fatalf("open@detect was captured at the wrong phase: %v", err)
 			}
 		}
 	}

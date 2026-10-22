@@ -22,10 +22,6 @@ The Go `sdo-operator host` command owns production lifecycle orchestration. It a
 
 The Go builder also accepts a `HealthyBaseline` directory for local detector tests. The directory contains one `*.json` file per `sdktest.Snapshot`; an empty directory or malformed snapshot is rejected.
 
-## Controller admission
-
-The runtime has load and release-backlog admission watermarks that can defer dispatch under resource pressure. Its gauge and clock are deterministic test seams. These lower-level runtime flags are not part of the typed `sdo-operator host` launch contract yet, so they are not production host options.
-
 ## SREGym experiment configuration
 
 SREGym options remain under `benchmarks/sregym/runner/` and its experiment configurations. Benchmark adapters may call the Go host, controller inspection, maintenance, and evidence commands; production code does not import benchmark packages.

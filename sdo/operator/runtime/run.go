@@ -176,37 +176,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
 	programMinDuration := flags.Duration("program-min-duration", DefaultProgramMinDuration, "minimum sustained duration for learned-program firing and clearing")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
-	driftDispatchesPerHour := flags.Int("drift-dispatches-per-hour", 12, "maximum repeat drift responder dispatches per hour")
-	driftTokensPerHour := flags.Int64("drift-tokens-per-hour", 1000000, "maximum responder tokens per hour for repeat drift")
-	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "delay before retrying inconclusive initial diagnoses")
+	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "settle delay before a trusted-program fast-path attempt")
 	followUpCooldown := flags.Duration(
 		"follow-up-cooldown",
 		30*time.Second,
 		"wait after a response completes before its still-active health findings get a follow-up responder",
-	)
-	admissionLoadHigh := flags.Float64(
-		"admission-load-high", 0,
-		"load-aware admission: host-load pressure (PSI some avg10, 0-100) at or above which a ready incident is held; zero disables the load term",
-	)
-	admissionLoadLow := flags.Float64(
-		"admission-load-low", 0,
-		"load-aware admission: host-load pressure below which a held incident resumes (hysteresis); must not exceed --admission-load-high",
-	)
-	admissionBacklogHigh := flags.Int(
-		"admission-release-backlog-high", 0,
-		"load-aware admission: stranded-worktree release backlog at or above which a ready incident is held; zero disables the backlog term",
-	)
-	admissionBacklogLow := flags.Int(
-		"admission-release-backlog-low", 0,
-		"load-aware admission: release backlog below which a held incident resumes (hysteresis); must not exceed --admission-release-backlog-high",
-	)
-	admissionRecheckInterval := flags.Duration(
-		"admission-recheck-interval", 2*time.Second,
-		"load-aware admission: how often a held incident re-evaluates admission against a fresh load sample",
-	)
-	admissionPressurePath := flags.String(
-		"admission-pressure-path", "",
-		"load-aware admission: Linux PSI pressure file for the host-load gauge; defaults to /proc/pressure/cpu when the load term is enabled",
 	)
 	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy: commit or recorded-actions")
 	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
@@ -263,8 +237,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *programMinDuration < 0 {
 		return errors.New("program minimum duration must be nonnegative")
 	}
-	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *driftDispatchesPerHour < 0 || *driftTokensPerHour < 0 || *programTrustThreshold < 1 {
-		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows, and program trust threshold must be positive; drift budgets must be nonnegative")
+	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *programTrustThreshold < 1 {
+		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows, and program trust threshold must be positive")
 	}
 	if *programFastPath && *repairPolicy != "recorded-actions" {
 		return errors.New("program fast path requires recorded-actions repair policy")
@@ -497,14 +471,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
-	admission := AdmissionConfig{
-		Enabled:                     *admissionLoadHigh > 0 || *admissionBacklogHigh > 0,
-		HighWatermark:               *admissionLoadHigh,
-		LowWatermark:                *admissionLoadLow,
-		ReleaseBacklogHighWatermark: *admissionBacklogHigh,
-		ReleaseBacklogLowWatermark:  *admissionBacklogLow,
-		RecheckInterval:             *admissionRecheckInterval,
-	}
 	start := time.Now().UTC()
 	corpusSessionRoot := ""
 	if options.NativeBroker != nil {
@@ -524,22 +490,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		// over at least 2 s instead of waiting for the detector's interval;
 		// closure keeps the health judge's clear persistence.
 		GateConfirmation: GateConfirmationPolicy{Evaluations: 3, Window: scaledDuration(2*time.Second, timeScale), Interval: scaledDuration(time.Second, timeScale)},
-		Admission:        admission,
 	}, detectors, snapshotProvider, dispatcher, start)
 	if err != nil {
 		return err
 	}
-	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: *programMinDuration}, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, BatchWindow: *driftBatchWindow, DispatchesPerHour: *driftDispatchesPerHour, TokensPerHour: *driftTokensPerHour,
+	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: *programMinDuration}, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, BatchWindow: *driftBatchWindow,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
 			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
 				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker}
 		},
 	})
-	// The load term reads host pressure from a Linux PSI file; the backlog term
-	// needs no gauge. A gauge is attached only when the load term is enabled.
-	if admission.Enabled && admission.HighWatermark > 0 {
-		controller.SetLoadGauge(ProcPressureGauge{Path: *admissionPressurePath})
-	}
 	if options.NativeBroker != nil {
 		if err := controller.SetIncidentBroker(*options.NativeBroker); err != nil {
 			return err

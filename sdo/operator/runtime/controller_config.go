@@ -105,12 +105,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	dur("--drift-sweep-interval", config.GetDriftSweepInterval())
 	dur("--program-min-duration", config.GetProgramMinDuration())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
-	if config.GetDriftDispatchesPerHour() > 0 {
-		args = append(args, "--drift-dispatches-per-hour", strconv.Itoa(int(config.GetDriftDispatchesPerHour())))
-	}
-	if config.GetDriftTokensPerHour() > 0 {
-		args = append(args, "--drift-tokens-per-hour", strconv.FormatInt(config.GetDriftTokensPerHour(), 10))
-	}
 	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
 	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())

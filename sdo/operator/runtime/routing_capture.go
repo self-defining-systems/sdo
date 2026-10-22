@@ -108,7 +108,7 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 	if phase == "fixed" {
 		observationPhase = "fixed"
 		destinations = nil
-		for _, open := range []string{"open@detect", "open@settle", "open@pre-apply"} {
+		for _, open := range []string{"open@detect"} {
 			if _, err := os.Stat(filepath.Join(dir, open+"-recordings.json")); err == nil {
 				destinations = append(destinations, open)
 			} else if !os.IsNotExist(err) {
@@ -173,6 +173,10 @@ func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string,
 				recorded[destination][string(args)] = true
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		// A cancelled sweep is truncated; leave no marker so it is not final.
+		return err
 	}
 	return os.WriteFile(marker, []byte("sampled\n"), 0444)
 }

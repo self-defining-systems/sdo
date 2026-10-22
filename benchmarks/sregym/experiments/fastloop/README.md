@@ -133,7 +133,7 @@ mode until its two composite specs are present.
 
 Unexplained drift opens an ordinary responder incident. The responder must establish a source contradiction and an observed violated relation or impact before repair; quiet health and missing port declarations alone are insufficient. An unsure result remains unresolved. Only an exact checked benign label, stored in accepted outcomes, suppresses a repeated observation. Fail-soft reset preserves accepted outcomes; a seed rollback discards their labels. Reset first cancels and awaits all Jobs, then cleans captures and checkouts with a temporary Pod.
 
-`fastloop run --drift-tokens-per-hour N` bounds repeat drift-only responder reasoning (default 1,000,000). New drift keys bypass spent retry budgets; health dispatch and attachment to an open incident do not wait. New `run_metadata.json` files declare accounting version `responder-drift/v2`: merged reasoning appears once in `responder_tokens`; `drift_tokens` remains a legacy zero field. Old result rows retain their recorded investigator costs.
+New `run_metadata.json` files declare accounting version `responder-drift/v2`: merged reasoning appears once in `responder_tokens`; `drift_tokens` remains a legacy zero field. Old result rows retain their recorded investigator costs.
 
 ## Offline stage replay
 

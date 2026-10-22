@@ -115,8 +115,8 @@ message ControllerConfig {
   reserved 59, 60, 61;
   reserved "drift_investigation_window", "drift_investigation_dispatches_per_hour", "drift_investigation_tokens_per_hour";
   google.protobuf.Duration drift_batch_window = 66;
-  int32 drift_dispatches_per_hour = 67;
-  int64 drift_tokens_per_hour = 68;
+  reserved 67, 68;
+  reserved "drift_dispatches_per_hour", "drift_tokens_per_hour";
   bool force_reflection = 62;
   repeated string deployed_manifest_paths = 63;
   bool program_fast_path = 64;

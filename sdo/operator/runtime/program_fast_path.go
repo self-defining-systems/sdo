@@ -178,9 +178,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		return skip(FastPathSkipSettleCancelled)
 	case <-timer.C:
 	}
-	l.capturePhase = "open@settle"
 	findings, runs, refreshError := l.refresh(ctx)
-	l.capturePhase = ""
 	if refreshError != "" {
 		return skip(FastPathSkipRefreshFailed)
 	}

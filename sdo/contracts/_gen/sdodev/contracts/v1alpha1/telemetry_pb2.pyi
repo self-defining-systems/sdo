@@ -65,7 +65,7 @@ class FiringRecord(_message.Message):
     def __init__(self, schema_version: _Optional[str] = ..., event_id: _Optional[str] = ..., event: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., evaluation_iteration: _Optional[int] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., severity: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., firing_count: _Optional[int] = ..., firing_threshold: _Optional[int] = ..., clear_count: _Optional[int] = ..., clear_threshold: _Optional[int] = ..., incident_id: _Optional[str] = ..., dispatch_relation: _Optional[str] = ...) -> None: ...
 
 class LifecycleEvent(_message.Message):
-    __slots__ = ("schema_version", "event_id", "event", "recorded_at", "evaluation_iteration", "application", "namespace", "incident_id", "parent_incident_id", "follow_up_attempt", "superseded_by", "reason", "finding_keys", "surfaced_playbooks", "worktree", "base_commit", "proposal_commit", "outcome_commit", "reflection_commit", "health_cleared_at", "detector_review_required", "dispatch_error", "load_pressure", "load_threshold", "release_backlog")
+    __slots__ = ("schema_version", "event_id", "event", "recorded_at", "evaluation_iteration", "application", "namespace", "incident_id", "parent_incident_id", "follow_up_attempt", "superseded_by", "reason", "finding_keys", "surfaced_playbooks", "worktree", "base_commit", "proposal_commit", "outcome_commit", "reflection_commit", "health_cleared_at", "detector_review_required", "dispatch_error")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     EVENT_ID_FIELD_NUMBER: _ClassVar[int]
     EVENT_FIELD_NUMBER: _ClassVar[int]
@@ -88,9 +88,6 @@ class LifecycleEvent(_message.Message):
     HEALTH_CLEARED_AT_FIELD_NUMBER: _ClassVar[int]
     DETECTOR_REVIEW_REQUIRED_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
-    LOAD_PRESSURE_FIELD_NUMBER: _ClassVar[int]
-    LOAD_THRESHOLD_FIELD_NUMBER: _ClassVar[int]
-    RELEASE_BACKLOG_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     event_id: str
     event: str
@@ -113,7 +110,4 @@ class LifecycleEvent(_message.Message):
     health_cleared_at: _timestamp_pb2.Timestamp
     detector_review_required: bool
     dispatch_error: bool
-    load_pressure: float
-    load_threshold: float
-    release_backlog: int
-    def __init__(self, schema_version: _Optional[str] = ..., event_id: _Optional[str] = ..., event: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., evaluation_iteration: _Optional[int] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., parent_incident_id: _Optional[str] = ..., follow_up_attempt: _Optional[int] = ..., superseded_by: _Optional[str] = ..., reason: _Optional[str] = ..., finding_keys: _Optional[_Iterable[str]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., worktree: _Optional[str] = ..., base_commit: _Optional[str] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., dispatch_error: _Optional[bool] = ..., load_pressure: _Optional[float] = ..., load_threshold: _Optional[float] = ..., release_backlog: _Optional[int] = ...) -> None: ...
+    def __init__(self, schema_version: _Optional[str] = ..., event_id: _Optional[str] = ..., event: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., evaluation_iteration: _Optional[int] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., parent_incident_id: _Optional[str] = ..., follow_up_attempt: _Optional[int] = ..., superseded_by: _Optional[str] = ..., reason: _Optional[str] = ..., finding_keys: _Optional[_Iterable[str]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., worktree: _Optional[str] = ..., base_commit: _Optional[str] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., detector_review_required: _Optional[bool] = ..., dispatch_error: _Optional[bool] = ...) -> None: ...

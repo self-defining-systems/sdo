@@ -22,7 +22,8 @@ enum DispatchState {
   DISPATCH_STATE_PENDING = 4;
   DISPATCH_STATE_RUNNING = 5;
   DISPATCH_STATE_COMPLETED = 6;
-  DISPATCH_STATE_ADMISSION_DEFERRED = 7;
+  reserved 7;
+  reserved "DISPATCH_STATE_ADMISSION_DEFERRED";
 }
 
 // ClosureState is the lifecycle of an incident's durable memory commit.
@@ -173,7 +174,6 @@ message ControllerState {
   IncidentView incident_view = 29;
   repeated DriftEvent drift_events = 30;
   OwnershipAdoptionStatus ownership_adoption = 31;
-  DriftAdmissionState drift_admission = 33;
   // Next namespace assignment per learned program, preserved across restarts.
   map<string, string> program_sweep_cursors = 34;
   // Incident-scoped attempt counts, limits and failure outcomes. Never stores
@@ -182,8 +182,8 @@ message ControllerState {
   // An outbox of failures not yet confirmed in the per-incident archive. The
   // ConfigMap edge archives these before the main CAS and omits them there.
   repeated FailedIncidentClosure failed_closures = 36;
-  reserved 32;
-  reserved "drift_investigation";
+  reserved 32, 33;
+  reserved "drift_investigation", "drift_admission";
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -300,14 +300,3 @@ message OwnershipAdoptionStatus {
   int32 failures = 8;
 }
 
-// Admission accounting for ordinary drift-only responder incidents. No worker
-// requests or verdicts are stored here; pending work is the normal batcher.
-message DriftAdmissionState {
-  repeated string seen_keys = 1;
-  repeated google.protobuf.Timestamp dispatch_at = 2;
-  repeated DriftAdmissionUse token_usage = 3;
-}
-message DriftAdmissionUse {
-  google.protobuf.Timestamp at = 1;
-  int64 tokens = 2;
-}

@@ -20,7 +20,7 @@ func optionalLaunchConfig() install.Config {
 		TimeoutSeconds: 180, VerificationTimeoutSeconds: 45, RepairPolicy: "recorded-actions",
 		ReflectionSession: "fresh", ReflectionGuidance: "generalize-spec", ForceReflection: true,
 		MaxFollowUps: 2, FollowUpCooldownSeconds: 25, MaxResponseLoops: 7,
-		ProgramFastPath: true, ProgramTrustThreshold: 4, DriftTokensPerHour: 250000,
+		ProgramFastPath: true, ProgramTrustThreshold: 4,
 		HealthyBaseline: true, LateFindings: "pull", ControllerDurationSeconds: 90, ExitAfterClosure: true, WaitForCompletion: true,
 		ResponderEnv:          []string{"EXAMPLE_MODE=contract", "EXAMPLE_URL=http://example:8000"},
 		RegistrationConfigMap: "sdo-agents", RegistrationDirectory: "/sdo/custom-registrations",
@@ -123,7 +123,6 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		"response loops":          {launch.GetMaxResponseLoops(), int32(cfg.MaxResponseLoops)},
 		"program fast path":       {launch.GetProgramFastPath(), cfg.ProgramFastPath},
 		"program trust threshold": {launch.GetProgramTrustThreshold(), int32(cfg.ProgramTrustThreshold)},
-		"drift tokens per hour":   {launch.GetDriftTokensPerHour(), cfg.DriftTokensPerHour},
 		"healthy baseline":        {launch.GetHealthyBaseline(), cfg.HealthyBaseline},
 		"duration":                {launch.GetDuration().AsDuration(), time.Duration(cfg.ControllerDurationSeconds) * time.Second},
 		"exit after closure":      {launch.GetExitAfterClosure(), cfg.ExitAfterClosure},
@@ -163,41 +162,5 @@ func TestInstallerOperateLateFindingsOffAddsNoResponderSetting(t *testing.T) {
 		}
 		cfg.LateFindings = "off"
 		assertControllerLaunchRoundTrip(t, cfg, controller.Controller)
-	}
-}
-
-func TestOperateDriftBudgetDefaultsAndValidation(t *testing.T) {
-	cfg := optionalLaunchConfig()
-	cfg.DriftTokensPerHour = 0 // Omission selects the same default at both CLI edges.
-	job, err := install.OperateJob(cfg, "requests succeed", "operation-default", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := job.Spec.Template.Spec.Containers[0].Args
-	launch, err := operatorcli.ParseOperateLaunch(args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plan, err := install.Resources(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	controllerArgs := plan.Job.Spec.Template.Spec.Containers[0].Args
-	controller, _, err := operatorcli.ParseControllerLaunch(controllerArgs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if launch.Install.DriftTokensPerHour != 1000000 || launch.Install.DriftTokensPerHour != controller.Controller.GetDriftTokensPerHour() {
-		t.Fatalf("drift defaults disagree: operate=%d, controller=%d", launch.Install.DriftTokensPerHour, controller.Controller.GetDriftTokensPerHour())
-	}
-	for _, value := range []string{"0", "-1", "9223372036854775808"} {
-		t.Run(value, func(t *testing.T) {
-			if _, err := operatorcli.ParseOperateLaunch(append(append([]string{}, args...), "--drift-tokens-per-hour", value)); err == nil {
-				t.Fatal("operate accepted invalid drift token budget")
-			}
-			if _, _, err := operatorcli.ParseControllerLaunch(append(append([]string{}, controllerArgs...), "--drift-tokens-per-hour", value)); err == nil {
-				t.Fatal("controller accepted invalid drift token budget")
-			}
-		})
 	}
 }
