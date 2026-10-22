@@ -93,7 +93,9 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			item := &contracts.ReflectionWorkItem{ProgramId: run.GetProgramId(), Bindings: programRunContract(ProgramRun{Bindings: bindings}).Bindings, Disposition: "question", Reason: "uncertain", Question: "What reusable relation, if any, does the evidence support for this cause?"}
 			switch fixed[key] {
 			case program.Match:
-                if outcome.GetClassification() != "success" { break }
+				if outcome.GetClassification() != "success" {
+					break
+				}
 				item.Disposition, item.Reason = "false_match", "fixed_capture_match"
 				item.Question = "The accepted program still matches the verified fixed capture. Refine it to pass the captured NoMatch regression."
 			case "", program.NoMatch:

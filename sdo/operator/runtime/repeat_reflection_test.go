@@ -48,6 +48,15 @@ func TestRepeatReflectionNeedsVerifiedEquivalentCoverage(t *testing.T) {
 }
 
 func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
+	testHermeticRepeatBroker(t, false)
+}
+
+func TestRejectedRepeatCorpusFallsBackToReflectionWorker(t *testing.T) {
+	testHermeticRepeatBroker(t, true)
+}
+
+func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
+	t.Helper()
 	ctx := context.Background()
 	target := nativeRepository(t)
 	fixture := "../../../tests/fixtures/sdo/playbook_program_app/.sdo"
@@ -73,8 +82,15 @@ func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
 	nativeGit(t, target, "commit", "-qm", "accepted program")
 	operatorRoot, _ := filepath.Abs("..")
 	validations := 0
-	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(ctx context.Context, root string, _ []string) error {
+	rejected := false
+	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(ctx context.Context, root string, paths []string) error {
 		validations++
+		for _, path := range paths {
+			if rejectFirst && !rejected && strings.HasPrefix(path, ".sdo/corpus/repeat-") {
+				rejected = true
+				return validate.Err([]validate.Diagnostic{{Path: path, Rule: "corpus.replay", Message: "repeat regression requires worker review"}})
+			}
+		}
 		diagnostics, err := validate.CompileCandidate(ctx, validate.Request{Root: root, OperatorRoot: operatorRoot})
 		if err != nil {
 			return err
@@ -157,15 +173,23 @@ func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
 	native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), SessionRoot: session,
 		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 			modelCalls++
-			return ReflectionDecision{}, nil
+			return ReflectionDecision{LearningDecision: "updated"}, nil
 		}),
 	}
-	ledger := &contracts.BrokerLedger{IncidentId: outcome.IncidentId, OutcomeCommit: accepted.Commit, OutcomeDocument: outcome}
+	closure, err := incidentClosureContract(nativeClosure(IncidentWorkspace{IncidentID: outcome.IncidentId, Worktree: target, BaseCommit: outcome.SourceCommit}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := &contracts.BrokerLedger{IncidentId: outcome.IncidentId, Closure: closure, OutcomeCommit: accepted.Commit, OutcomeDocument: outcome}
 	paths, err := native.processReflection(ctx, ledger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if modelCalls != 0 || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {
+	expectedCalls := 0
+	if rejectFirst {
+		expectedCalls = 1
+	}
+	if rejected != rejectFirst || modelCalls != expectedCalls || ledger.ReflectionCommit == "" || len(paths) != 5 || validations == 0 {
 		t.Fatalf("model=%d paths=%v ledger=%v checks=%d", modelCalls, paths, ledger, validations)
 	}
 	for _, path := range paths {
@@ -177,7 +201,7 @@ func TestHermeticRepeatCorpusUsesBrokerWithoutReflectionModel(t *testing.T) {
 		t.Fatalf("verified repeat earned no trust: %+v", state)
 	}
 	again, err := native.processReflection(ctx, ledger)
-	if err != nil || len(again) != 5 || modelCalls != 0 {
+	if err != nil || len(again) != 5 || modelCalls != expectedCalls {
 		t.Fatalf("restart duplicated work: %v %v calls=%d", again, err, modelCalls)
 	}
 }

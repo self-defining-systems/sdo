@@ -29,8 +29,8 @@ func TestCauseWorkKeepsConfirmedGroupsAndNeverCreditsUncertainRepairs(t *testing
 			o.RepairActions[0].Kind = "manual"
 		}, program.NoMatch, "question", "repair_equivalence_question"},
 		{"unknown", func(*contracts.OutcomeRecord) {}, program.Unknown, "question", "uncertain"},
-        {"unverified fixed match", func(o *contracts.OutcomeRecord) { o.Classification = "failure" }, program.Match, "question", "uncertain"},
-        {"unrecorded unwritten binding", func(o *contracts.OutcomeRecord) { o.RepairActions = nil; o.PlanApplications = nil }, "", "question", "uncertain"},
+		{"unverified fixed match", func(o *contracts.OutcomeRecord) { o.Classification = "failure" }, program.Match, "question", "uncertain"},
+		{"unrecorded unwritten binding", func(o *contracts.OutcomeRecord) { o.RepairActions = nil; o.PlanApplications = nil }, "", "question", "uncertain"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			outcome := proto.Clone(original).(*contracts.OutcomeRecord)
@@ -72,13 +72,13 @@ func TestUnprovenFinalEquivalenceEarnsNeitherSuccessNorFailure(t *testing.T) {
 }
 
 func TestUnboundWritesKeepTheExactConfirmedResource(t *testing.T) {
-    outcome := verifiedRepeat(t)
-    outcome.ProgramRuns = nil
-    outcome.PlanApplications = nil
-    outcome.RepairActions[0].Resources = []*contracts.ObjectRef{repeatService}
-    work := classifyCauseWork(outcome, nil)
-    if len(work) != 1 || len(work[0].Items) != 1 || work[0].Items[0].Reason != "unbound_write" ||
-        !proto.Equal(work[0].Items[0].Resources[0], repeatService) {
-        t.Fatalf("unbound write lost its resource: %v", work)
-    }
+	outcome := verifiedRepeat(t)
+	outcome.ProgramRuns = nil
+	outcome.PlanApplications = nil
+	outcome.RepairActions[0].Resources = []*contracts.ObjectRef{repeatService}
+	work := classifyCauseWork(outcome, nil)
+	if len(work) != 1 || len(work[0].Items) != 1 || work[0].Items[0].Reason != "unbound_write" ||
+		!proto.Equal(work[0].Items[0].Resources[0], repeatService) {
+		t.Fatalf("unbound write lost its resource: %v", work)
+	}
 }

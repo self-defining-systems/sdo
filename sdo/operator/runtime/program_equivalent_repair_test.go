@@ -72,17 +72,17 @@ func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *te
 	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 1 || !state.Trusted {
 		t.Fatalf("equivalent source repair missing bound trust receipt: %+v", state)
 	}
-    // A subsequent repair can clear diagnosis while differing from the plan.
-    // Keep the historical receipt, but do not turn that evidence into trust.
-    repaired.Object["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["targetPort"] = float64(8081)
-    loop.CreditEquivalentRepairs(context.Background(), []RepairActionReceipt{{ActionID: "different-fields", Success: true, Resources: []sdk.ObjectRef{ref}}})
-    applications := loop.PlanApplications()
-    if len(applications) != 1 || applications[0].Result.FinalEquivalenceVerified == nil || *applications[0].Result.FinalEquivalenceVerified {
-        t.Fatalf("different fields retained exact credit: %+v", applications)
-    }
-    if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
-        t.Fatalf("question received a trust judgment: %+v", state)
-    }
+	// A subsequent repair can clear diagnosis while differing from the plan.
+	// Keep the historical receipt, but do not turn that evidence into trust.
+	repaired.Object["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["targetPort"] = float64(8081)
+	loop.CreditEquivalentRepairs(context.Background(), []RepairActionReceipt{{ActionID: "different-fields", Success: true, Resources: []sdk.ObjectRef{ref}}})
+	applications := loop.PlanApplications()
+	if len(applications) != 1 || applications[0].Result.FinalEquivalenceVerified == nil || *applications[0].Result.FinalEquivalenceVerified {
+		t.Fatalf("different fields retained exact credit: %+v", applications)
+	}
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{equivalentRepairOutcome(t, loop)}, 1)["source-repair"]; state.VerifiedSuccesses != 0 || state.Failures != 0 {
+		t.Fatalf("question received a trust judgment: %+v", state)
+	}
 }
 
 func equivalentRepairOutcome(t *testing.T, loop *ResponderLoop) *contracts.OutcomeRecord {
