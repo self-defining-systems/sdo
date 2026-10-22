@@ -30,7 +30,9 @@ outcome's `drift.<program>` finding and the program run's `binding_source=hint`.
 `--no-checkpoints` skips optional replay export, while preserving real outcomes,
 strict receipts, corpus validation and broker decisions.
 
-Routing capture now records actual `ProbeTCP` results for finding Services and up
+Routing capture now records actual `ProbeTCP` results for finding Services, then
+Services the snapshot shows as suspect (selector with no ready Pod, or an integer
+targetPort no selected Pod declares) even when no finding names them, then up
 to two ready peer Services, including direct selected-Pod probes at numeric target
 and declared candidate ports. Calls use captured Pod IPs in the existing isolated
 prober; no credentials or cluster mutation are added. Automatic capture is capped
