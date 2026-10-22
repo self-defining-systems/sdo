@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"google.golang.org/protobuf/proto"
+	"log/slog"
 	"maps"
 	"math/rand/v2"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -1140,6 +1141,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	finalChanges := c.finalStateChangesLocked(now)
 	c.observeStateChangesLocked(finalChanges, now)
+	logIncidentVerified(c.currentIncidentRequest.IncidentID, c.healthClearedAtLocked(finalStates), c.responderCompletedAt, verifiedAt)
 	closure := IncidentClosure{
 		Request: *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
@@ -1194,6 +1196,17 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)
 	}
+}
+
+// logIncidentVerified records the verification wait: how long after the
+// responder completed the health detectors cleared and the incident verified.
+func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responderCompletedAt, verifiedAt time.Time) {
+	attrs := []any{"incident_id", incidentID, "responder_completed_at", responderCompletedAt, "verified_at", verifiedAt,
+		"responder_completed_to_verified_ms", verifiedAt.Sub(responderCompletedAt).Milliseconds()}
+	if healthClearedAt != nil {
+		attrs = append(attrs, "health_cleared_at", *healthClearedAt, "responder_completed_to_health_cleared_ms", healthClearedAt.Sub(responderCompletedAt).Milliseconds())
+	}
+	slog.Info("incident_verified", attrs...)
 }
 
 // followUpAttemptLocked returns how many follow-ups the open incident chain has

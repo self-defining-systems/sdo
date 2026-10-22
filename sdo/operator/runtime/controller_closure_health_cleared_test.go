@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // detector that flaps clear and fires again has not cleared; the closure
 // records the start of the final streak of clear evaluations.
 func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) {
+	logs := captureSlog(t)
 	interval := time.Second
 	cause := controllerDetector(
 		"cause", interval, stateFinding("cause"), stateFinding("cause"),
@@ -74,6 +76,11 @@ func TestIncidentClosureRecordsWhenHealthBeganItsFinalClearStreak(t *testing.T) 
 	}
 	if closure.HealthClearedAt.After(closure.VerifiedAt) {
 		t.Fatalf("health cannot clear after verification: %v > %v", closure.HealthClearedAt, closure.VerifiedAt)
+	}
+	for _, want := range []string{"incident_verified", "incident_id=" + closure.Request.IncidentID, "health_cleared_at=", "responder_completed_to_verified_ms="} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("verification log lacks %q:\n%s", want, logs.String())
+		}
 	}
 }
 

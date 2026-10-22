@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"reflect"
@@ -110,7 +111,7 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 	}
 	job := k.validationJob(name, subPath, request.CandidateTree, useBaseline)
 	if k.OnPhase != nil {
-		if err := k.OnPhase(validationCtx, "gofmt"); err != nil {
+		if err := k.OnPhase(validationCtx, "network_canaries_passed"); err != nil {
 			return ValidationJobReceipt{}, err
 		}
 	}
@@ -208,18 +209,18 @@ func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string)
 		}
 		if job.Status.Succeeded > 0 && job.Status.CompletionTime != nil {
 			if track {
-				for _, phase := range []string{"program_build_compile", "corpus_replay_validation", "validator_job_finished"} {
-					if err := k.OnPhase(ctx, phase); err != nil {
-						return err
-					}
+				k.logStages(name)
+				if err := k.OnPhase(ctx, "validator_job_finished"); err != nil {
+					return err
 				}
 			}
 			return nil
 		}
 		if job.Status.Failed > 0 {
 			failure := fmt.Errorf("Job %s failed", name)
-			if logs := k.failedJobLogs(name); logs != "" {
+			if logs := k.jobLogs(name); logs != "" {
 				if !strings.HasSuffix(name, "-allow") && !strings.HasSuffix(name, "-deny") {
+					logStages(name, logs)
 					if ds, err := validate.ParseReport(logs); err == nil && len(ds) > 0 {
 						return validate.Err(ds)
 					}
@@ -239,7 +240,19 @@ func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string)
 	}
 }
 
-func (k KubernetesValidationJobClient) failedJobLogs(name string) string {
+// logStages reports where the validator Job's wall time went: the Go
+// toolchain stages (the "test" stage includes corpus replay) it ran.
+func (k KubernetesValidationJobClient) logStages(name string) {
+	logStages(name, k.jobLogs(name))
+}
+
+func logStages(name, logs string) {
+	for _, timing := range validate.ParseStageTimings(logs) {
+		slog.Info("validator_stage", "job", name, "stage", timing.Stage, "duration_ms", timing.Duration.Milliseconds())
+	}
+}
+
+func (k KubernetesValidationJobClient) jobLogs(name string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	pods, err := k.Client.CoreV1().Pods(k.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + name})

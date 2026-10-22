@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/lifecyclecore"
 )
@@ -159,6 +160,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return fmt.Errorf("closure effect changed before execution: %v", stepErr)
 	}
 	c.mu.Unlock()
+	slog.Info("closure_handoff", "incident_id", effect.Closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(effect.Closure.VerifiedAt).Milliseconds())
 	go func() {
 		defer cancel()
 		receipt, processErr := broker.ProcessClosure(actionCtx, effect.Closure)

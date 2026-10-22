@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/memory/validate"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -66,8 +70,28 @@ func TestKubernetesValidatorReportsCompletedJobPhases(t *testing.T) {
 	if err := launcher.waitJob(context.Background(), "sdo-validator-complete"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(phases, ",") != "validator_job_started,program_build_compile,corpus_replay_validation,validator_job_finished" {
+	if strings.Join(phases, ",") != "validator_job_started,validator_job_finished" {
 		t.Fatalf("validator completion phases: %v", phases)
+	}
+}
+
+func TestKubernetesValidatorLogsToolchainStageTimings(t *testing.T) {
+	var out bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&out, nil)))
+	defer slog.SetDefault(previous)
+	logs := "noise\n" + validate.StageReportPrefix + "build ./...\t4200\n" + validate.StageReportPrefix + "test ./...\t31000\n" + validate.StageReportPrefix + "malformed\n"
+	logStages("sdo-validator-x", logs)
+	for _, want := range []string{
+		"msg=validator_stage job=sdo-validator-x stage=\"build ./...\" duration_ms=4200",
+		"msg=validator_stage job=sdo-validator-x stage=\"test ./...\" duration_ms=31000",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("stage log lacks %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Count(out.String(), "validator_stage") != 2 {
+		t.Fatalf("malformed stage line was logged:\n%s", out.String())
 	}
 }
 

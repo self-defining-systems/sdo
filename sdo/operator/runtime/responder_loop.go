@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -222,10 +223,14 @@ func (l *ResponderLoop) Exhausted() bool {
 }
 
 func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	started := time.Now()
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	defer func() {
+		slog.Info("responder_tool", "incident_id", l.Request.IncidentID, "command", request.Command, "duration_ms", time.Since(started).Milliseconds(), "error", response.Error)
+	}()
 	defer func() { l.capturePhase = "" }()
 	if l.CurrentEvidence != nil {
 		if current := l.CurrentEvidence(); current != nil && current.IncidentID == l.Request.IncidentID {

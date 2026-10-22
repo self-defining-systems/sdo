@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -66,6 +67,8 @@ const (
 type Request struct {
 	// MitigationReplayNotes optionally receives informational corpus replay results.
 	MitigationReplayNotes *[]sdktest.MitigationReplayResult
+	// StageTimings optionally receives the Go toolchain stage durations of the compile layer.
+	StageTimings *[]builder.StageTiming
 	// Root is the checkout to validate.
 	Root string
 	// Publication is broker-derived context. CLI callers load its provisioned

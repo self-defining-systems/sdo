@@ -58,6 +58,7 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 	}
+	logs := captureSlog(t)
 	active = true
 	status := loop.Handle(context.Background(), ToolRequest{Command: "status"})
 	if len(status.Findings) != 1 || len(status.ProgramRuns) != 1 || status.ProgramRuns[0].Verdict.Result != program.Match {
@@ -67,6 +68,11 @@ func TestResponderLoopStatusAndDiagnoseUseFreshFindings(t *testing.T) {
 	diagnosis := loop.Handle(context.Background(), ToolRequest{Command: "diagnose"})
 	if len(diagnosis.Findings) != 0 || len(diagnosis.ProgramRuns) != 0 {
 		t.Fatalf("stale diagnosis: %+v", diagnosis)
+	}
+	for _, command := range []string{"status", "diagnose"} {
+		if !strings.Contains(logs.String(), "msg=responder_tool incident_id=i command="+command+" duration_ms=") {
+			t.Fatalf("handler duration for %s is not logged:\n%s", command, logs.String())
+		}
 	}
 }
 

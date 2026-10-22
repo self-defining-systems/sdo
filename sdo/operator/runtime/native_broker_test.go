@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -235,6 +236,7 @@ func TestNativeBrokerRecoversCommittedPhasesAndRequiresReflection(t *testing.T) 
 func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	target := nativeRepository(t)
 	validations := 0
+	var phaseLog bytes.Buffer
 	repository, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), func(context.Context, string, []string) error {
 		validations++
 		return nil
@@ -250,7 +252,7 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 		Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 			return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already accepted"}, nil
 		}),
-		ResponderBackend: "test", ResponderModel: "test",
+		ResponderBackend: "test", ResponderModel: "test", PhaseLog: &phaseLog,
 	}
 	workspace, err := native.PrepareIncident(context.Background(), "timed")
 	if err != nil {
@@ -260,7 +262,11 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	closure.Request.RepairPolicy = "recorded-actions"
 	closure.Result.FastPathSkippedReason = FastPathSkipUncoveredFinding
 	closure.Result.FastPathRelationCoveredFindings = []RelationCoveredFinding{{FindingFingerprint: "health/service/api", ProgramID: "repair", Bindings: program.Bindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}}
-	if _, err := native.ProcessClosure(context.Background(), closure); err != nil {
+	receipt, err := native.ProcessClosure(context.Background(), closure)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := native.AcknowledgeClosure(context.Background(), receipt); err != nil {
 		t.Fatal(err)
 	}
 	if validations != 0 {
@@ -277,12 +283,15 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 		t.Fatalf("relation coverage missing from native ledger: %+v", ledger)
 	}
 	var previous time.Time
-	for _, phase := range []string{"closure_start", "outcome_write", "broker_commit", "reflection_dispatch", "worker_result_picked_up"} {
+	for _, phase := range []string{"closure_start", "outcome_write", "broker_commit", "reflection_dispatch", "worker_result_picked_up", "closure_ack"} {
 		at := controllerTime(ledger.ClosurePhaseTimestamps[phase])
 		if at.IsZero() || (!previous.IsZero() && at.Before(previous)) {
 			t.Fatalf("phase %s is missing or out of order: %+v", phase, ledger.ClosurePhaseTimestamps)
 		}
 		previous = at
+		if !strings.Contains(phaseLog.String(), `"closure_phase":"`+phase+`"`) {
+			t.Fatalf("phase %s missing from the phase log: %s", phase, phaseLog.String())
+		}
 	}
 }
 
