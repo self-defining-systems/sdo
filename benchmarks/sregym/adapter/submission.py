@@ -16,12 +16,19 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any, Literal
 
-from benchmarks.sregym.protocol.schema import TERMINAL_STAGES
+from google.protobuf import json_format
+
+from benchmarks.sregym.protocol._submission_guard import SubmissionGuardError, evaluate_submission
 from sdo.agents.responder import IncidentStatusReport, IncidentStatusState, live_incident_status
+from sdo.contracts import SUBMISSION_PHASES, ConductorSolution, SubmissionGuardDecision, SubmissionGuardFailure
 
 
 class SubmissionBridgeError(RuntimeError):
-    """Raised when the benchmark is not ready to receive a submission."""
+    """Keep the Go rejection attached to this one submission attempt."""
+
+    def __init__(self, message: str, failure: SubmissionGuardFailure | None = None) -> None:
+        super().__init__(message)
+        self.failure = failure
 
 
 SUBMISSION_TIMEOUT_SECONDS = 300
@@ -31,36 +38,34 @@ STAGE_POLL_INTERVAL_SECONDS = 1.0
 Opener = Callable[..., Any]
 
 
-def _wait_for_stage(
-    api_base: str,
-    expected: set[str],
-    *,
-    opener: Opener,
-) -> str:
+def _guard(
+    phase: str, payload: object, *, timeout: float, acknowledgement: bool = False, submission_sent: bool = False
+) -> SubmissionGuardDecision:
+    try:
+        decision = evaluate_submission(
+            phase, payload, acknowledgement=acknowledgement, submission_sent=submission_sent, timeout=timeout
+        )
+    except SubmissionGuardError as exc:
+        raise SubmissionBridgeError(str(exc)) from exc
+    if decision.HasField("failure"):
+        raise SubmissionBridgeError(decision.failure.message, decision.failure)
+    return decision
+
+
+def _wait_for_decision(
+    api_base: str, phase: str, *, opener: Opener, submission_sent: bool = False
+) -> SubmissionGuardDecision:
     deadline = time.monotonic() + SUBMISSION_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         request = urllib.request.Request(f"{api_base.rstrip('/')}/status", method="GET")
         with opener(request, timeout=SUBMISSION_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read())
-        stage = payload.get("stage") if isinstance(payload, dict) else None
-        if stage in expected:
-            return str(stage)
+        remaining = max(0.001, deadline - time.monotonic())
+        decision = _guard(phase, payload, timeout=min(30.0, remaining), submission_sent=submission_sent)
+        if decision.action != SubmissionGuardDecision.ACTION_WAIT:
+            return decision
         time.sleep(STAGE_POLL_INTERVAL_SECONDS)
-    raise SubmissionBridgeError(f"SREGym did not reach one of {sorted(expected)}")
-
-
-#: Stages after a phase's own stage, where the harness no longer awaits that phase.
-_LATER_STAGES: dict[str, frozenset[str]] = {"diagnosis": frozenset({"mitigation"}), "mitigation": frozenset()}
-
-
-def _diagnosis_not_submitted(stage: str, reason: str) -> dict[str, Any]:
-    return {
-        "diagnosis": {
-            "status": "already_submitted",
-            "stage": stage,
-            "message": f"diagnosis not submitted: harness stage is {stage!r}; {reason}",
-        }
-    }
+    raise SubmissionBridgeError(f"SREGym did not reach the required stage for {phase}")
 
 
 def submit_solution(
@@ -71,26 +76,14 @@ def submit_solution(
     opener: Opener = urllib.request.urlopen,
 ) -> dict[str, Any]:
     base = api_base.rstrip("/")
-    # /submit is untyped: the conductor grades whatever arrives as the phase it
-    # is in. So the bridge, not the caller, must ensure the harness is awaiting
-    # this phase before posting. The conductor also drops (while acknowledging)
-    # any submit that arrives while diagnosis is still being graded, so a
-    # mitigation waits for its stage to open.
-    stage = _wait_for_stage(base, {phase, *_LATER_STAGES[phase], *TERMINAL_STAGES}, opener=opener)
-    if stage in TERMINAL_STAGES:
-        # A problem that already ended accepted its submissions; a repeated call
-        # returns at once instead of waiting for a stage that never reopens.
-        if phase == "mitigation":
-            return {"mitigation": {"status": "already_submitted"}, "done": {"status": stage}}
-        return _diagnosis_not_submitted(stage, "the problem has already ended; nothing more can be submitted.")
-    if stage != phase:
-        return _diagnosis_not_submitted(
-            stage,
-            "the diagnosis was already submitted and the harness is awaiting mitigation. Keep repairing and "
-            "verifying; run the mitigation submission once when done. Never resubmit a diagnosis: it would be "
-            "graded as your mitigation.",
-        )
-    payload = json.dumps({"solution": solution}).encode()
+    decision = _wait_for_decision(base, phase, opener=opener)
+    if decision.action == SubmissionGuardDecision.ACTION_RETURN:
+        return json_format.MessageToDict(decision.response, preserving_proto_field_name=True)
+    payload = json_format.MessageToJson(
+        ConductorSolution(solution=solution),
+        preserving_proto_field_name=True,
+        always_print_fields_with_no_presence=True,
+    ).encode()
     phase_request = urllib.request.Request(
         f"{base}/submit",
         data=payload,
@@ -99,19 +92,11 @@ def submit_solution(
     )
     with opener(phase_request, timeout=SUBMISSION_TIMEOUT_SECONDS) as response:
         result = json.loads(response.read())
-    if not isinstance(result, dict):
-        raise SubmissionBridgeError("SREGym submission response is not a JSON object")
-    status = result.get("status")
-    if status == "done":
+    decision = _guard(phase, result, timeout=30.0, acknowledgement=True)
+    if decision.action == SubmissionGuardDecision.ACTION_RETURN:
         return result
-    if status not in {"200", "ok", "acknowledged"}:
-        raise SubmissionBridgeError(f"SREGym {phase} submission was not acknowledged")
-    if phase == "diagnosis":
-        # Like any SREGym agent, proceed on acknowledgement; grading runs
-        # asynchronously while the responder repairs.
-        return result
-    terminal_stage = _wait_for_stage(base, set(TERMINAL_STAGES), opener=opener)
-    done = {"status": terminal_stage}
+    completed = _wait_for_decision(base, phase, opener=opener, submission_sent=True)
+    done = json_format.MessageToDict(completed.response.done, preserving_proto_field_name=True)
     return {"mitigation": result, "done": done}
 
 
@@ -121,7 +106,7 @@ EXIT_VERIFICATION_FAILED = 4
 
 def main(argv: list[str] | None = None, *, status_check: Callable[[], IncidentStatusReport] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("diagnosis", "mitigation"))
+    parser.add_argument("phase", choices=SUBMISSION_PHASES)
     parser.add_argument("solution")
     args = parser.parse_args(argv)
     api_base = os.getenv("SDO_SREGYM_API_BASE", "").strip()

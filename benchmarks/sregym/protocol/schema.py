@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from sdo.contracts import CONDUCTOR_TERMINAL_STAGES, SUBMISSION_PHASES
+
 # --- Env vars ---------------------------------------------------------------
 
 API_HOSTNAME_ENV: Final = "API_HOSTNAME"
@@ -30,8 +32,8 @@ CLEANUP_ENDPOINT: Final = "/cleanup"
 # "Terminal" stages signal the conductor is done with this problem and the
 # agent should stop polling.
 
-READY_STAGES: Final[frozenset[str]] = frozenset({"diagnosis", "mitigation"})
-TERMINAL_STAGES: Final[frozenset[str]] = frozenset({"done", "completed", "finished", "awaiting_cleanup"})
+READY_STAGES: Final[frozenset[str]] = frozenset(SUBMISSION_PHASES)
+TERMINAL_STAGES: Final[frozenset[str]] = frozenset(CONDUCTOR_TERMINAL_STAGES)
 
 # --- Submission limits ------------------------------------------------------
 # Mirrors the cap in third_party/sregym/sregym/conductor/constants.py — kept in

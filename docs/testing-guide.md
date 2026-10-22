@@ -34,6 +34,7 @@ uv run pytest tests/ --cov=sdo
 (cd sdo/operator/runtime && go test ./...)
 (cd sdo/operator/contracts && go test ./...)
 (cd benchmarks/sregym/protocol/native_receipt_go && go test -race ./...)
+(cd benchmarks/sregym/protocol/submission_go && go test -race ./...)
 ```
 
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
@@ -284,3 +285,10 @@ generated messages. Run `go test -run '^$' -fuzz '^FuzzNativeReceiptBoundary$'
 round-trip acceptance, and rejection followed by a valid incident. The existing
 controller CI matrix includes this module and the bounded fuzz run. Python
 receipt tests exercise the real checker; transport-error tests mock subprocesses.
+Submission phase tests live in `protocol/submission_go` (benchmark module) and
+`tests/unit/benchmarks/sregym/adapter/test_submission.py`. The Go fuzz target
+`FuzzSubmissionPhaseBoundary` checks that a POST requires matching observed phase,
+that completion polls never post, and that malformed facts yield typed failures.
+Run it with `-fuzztime=30s -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the existing
+controller CI matrix runs the same bounded target. Image scope tests verify
+separate Go compilation and binary-only copying into the benchmark worker.
