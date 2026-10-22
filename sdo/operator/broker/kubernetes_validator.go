@@ -209,10 +209,10 @@ func (k KubernetesValidationJobClient) waitJob(ctx context.Context, name string)
 		}
 		if job.Status.Succeeded > 0 && job.Status.CompletionTime != nil {
 			if track {
-				k.logStages(name)
 				if err := k.OnPhase(ctx, "validator_job_finished"); err != nil {
 					return err
 				}
+				k.logStages(name)
 			}
 			return nil
 		}

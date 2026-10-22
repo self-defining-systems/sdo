@@ -1141,14 +1141,15 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	finalChanges := c.finalStateChangesLocked(now)
 	c.observeStateChangesLocked(finalChanges, now)
-	logIncidentVerified(c.currentIncidentRequest.IncidentID, c.healthClearedAtLocked(finalStates), c.responderCompletedAt, verifiedAt)
+	healthClearedAt := c.healthClearedAtLocked(finalStates)
+	logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	closure := IncidentClosure{
 		Request: *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
 		IncidentDetectorStates: c.incidentDetectorStates(),
 		FinalStateChanges:      finalChanges,
 		ObservedStateChanges:   c.observedStateChangesLocked(),
-		HealthClearedAt:        c.healthClearedAtLocked(finalStates),
+		HealthClearedAt:        healthClearedAt,
 		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers:       append([]string(nil), c.cleanedHelpers...),
