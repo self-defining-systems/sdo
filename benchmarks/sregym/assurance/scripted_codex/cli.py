@@ -10,6 +10,7 @@ Stdlib-only: this runs inside the controller and responder images.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .directive import Binding
+from .programs import PROGRAM_FAULT, reflect_program, respond_program
 from .reflection import ReflectionCrash, idempotency, reflect
 from .responder import respond, warm_playbooks
 from .store import Store, StoreError, default_store
@@ -40,6 +42,8 @@ class Invocation:
         if not argv or argv[0] != "exec":
             raise ValueError(f"unsupported codex invocation: {argv[:3]}")
         rest = argv[1:]
+        self.argv = list(argv)
+        self.schema_path: str | None = None
         self.resume: str | None = None
         if rest[:1] == ["resume"]:
             if len(rest) < 2:
@@ -55,6 +59,8 @@ class Invocation:
             if token in takes_value:
                 if token in {"--model", "-m"} and index + 1 < len(rest):
                     self.model = rest[index + 1]
+                if token == "--output-schema" and index + 1 < len(rest):
+                    self.schema_path = rest[index + 1]
                 index += 2
                 continue
             if not token.startswith("-"):
@@ -88,6 +94,31 @@ def _request(prompt: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("incident request must be a JSON object")
     return payload
+
+
+def _task_depth() -> str | None:
+    """The ``depth`` the controller put in the mounted reflection task, if this is one."""
+
+    path = Path(os.environ.get("SDO_REQUEST_PATH", str(REQUEST_PATH)))
+    if not path.is_file():
+        return None
+    packed = json.loads(path.read_text(encoding="utf-8")).get("request")
+    depth = packed.get("depth") if isinstance(packed, dict) else None
+    return str(depth) if depth else "full"
+
+
+def _invocation_evidence(invocation: Invocation) -> dict[str, object]:
+    """What the CLI was launched with: the argv, the output schema's bytes and the MCP server definitions."""
+
+    evidence: dict[str, object] = {"argv": invocation.argv}
+    if invocation.schema_path and Path(invocation.schema_path).is_file():
+        schema = Path(invocation.schema_path).read_bytes()
+        evidence["output_schema_sha256"] = hashlib.sha256(schema).hexdigest()
+        evidence["output_schema_bytes"] = len(schema)
+    evidence["mcp_config"] = sorted(
+        token for token in invocation.argv if token.startswith("mcp_servers.") or "mcp_servers" in token
+    )
+    return evidence
 
 
 def _binding(store: Store, incident_id: str) -> Binding:
@@ -158,12 +189,24 @@ def run(argv: list[str], *, stdin: str, store: Store | None = None) -> int:
         "scenario": binding.directive.scenario,
         "resumed": invocation.resume is not None,
         "model": invocation.model,
+        **_invocation_evidence(invocation),
     }
+    if not kind.startswith("responder"):
+        record_extra["task_depth"] = _task_depth()
+    program_plan = binding.directive.fault == PROGRAM_FAULT
     try:
         if kind.startswith("responder"):
-            answer = respond(turn, binding.directive, request, prompt, cwd)
+            answer = (
+                respond_program(turn, request, cwd)
+                if program_plan
+                else respond(turn, binding.directive, request, prompt, cwd)
+            )
         else:
-            answer = reflect(turn, binding, prompt, cwd, store)
+            answer = (
+                reflect_program(turn, prompt, cwd, incident_id)
+                if program_plan
+                else reflect(turn, binding, prompt, cwd, store)
+            )
     except ReflectionCrash as exc:
         store.record_turn(f"{rollout.session_id}:{turn.started_at}", turn.record(outcome="crashed", **record_extra))
         print(f"scripted codex: {exc}", file=sys.stderr)
