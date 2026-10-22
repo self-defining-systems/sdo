@@ -64,6 +64,7 @@ type ReflectionFeedback struct {
 type ReflectionDecision struct {
 	LearningDecision string
 	NoChangeReason   string
+	DeclineReason    string
 	PlaybookIDs      []string
 	Error            string
 	SDKGaps          []*contracts.SdkGap
@@ -393,7 +394,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 				return nil, err
 			}
 		}
-		result := &contracts.ReflectionDecision{LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
+		result := &contracts.ReflectionDecision{DeclineReason: decision.DeclineReason, LearningDecision: decision.LearningDecision, NoChangeReason: decision.NoChangeReason, Error: decision.Error, SdkGaps: decision.SDKGaps, PlaybookIds: decision.PlaybookIDs}
 		if decision.Usage != nil {
 			result.Usage = proto.Clone(decision.Usage).(*contracts.UsageMetrics)
 		}

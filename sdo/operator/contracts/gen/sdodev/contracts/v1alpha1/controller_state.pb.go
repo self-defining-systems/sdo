@@ -1011,6 +1011,7 @@ type ReflectionDecision struct {
 	Error            string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
 	SdkGaps          []*SdkGap              `protobuf:"bytes,5,rep,name=sdk_gaps,json=sdkGaps,proto3" json:"sdk_gaps,omitempty"`
 	Usage            *UsageMetrics          `protobuf:"bytes,6,opt,name=usage,proto3" json:"usage,omitempty"`
+	DeclineReason    string                 `protobuf:"bytes,7,opt,name=decline_reason,json=declineReason,proto3" json:"decline_reason,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1085,6 +1086,13 @@ func (x *ReflectionDecision) GetUsage() *UsageMetrics {
 		return x.Usage
 	}
 	return nil
+}
+
+func (x *ReflectionDecision) GetDeclineReason() string {
+	if x != nil {
+		return x.DeclineReason
+	}
+	return ""
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the
@@ -1402,8 +1410,10 @@ type BrokerLedger struct {
 	ReflectionResults    []*ReflectionDecision  `protobuf:"bytes,24,rep,name=reflection_results,json=reflectionResults,proto3" json:"reflection_results,omitempty"`
 	ReflectionMaxRetries uint32                 `protobuf:"varint,25,opt,name=reflection_max_retries,json=reflectionMaxRetries,proto3" json:"reflection_max_retries,omitempty"`
 	ReflectionDispatchAt *timestamppb.Timestamp `protobuf:"bytes,26,opt,name=reflection_dispatch_at,json=reflectionDispatchAt,proto3" json:"reflection_dispatch_at,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Distinct resource/phase observations absent from protected recordings.
+	ReflectionEvidenceGapCount *uint32 `protobuf:"varint,27,opt,name=reflection_evidence_gap_count,json=reflectionEvidenceGapCount,proto3,oneof" json:"reflection_evidence_gap_count,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *BrokerLedger) Reset() {
@@ -1618,6 +1628,13 @@ func (x *BrokerLedger) GetReflectionDispatchAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *BrokerLedger) GetReflectionEvidenceGapCount() uint32 {
+	if x != nil && x.ReflectionEvidenceGapCount != nil {
+		return *x.ReflectionEvidenceGapCount
+	}
+	return 0
+}
+
 // Source field ownership adoption survives controller restarts.
 type OwnershipAdoptionStatus struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
@@ -1821,14 +1838,15 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admission\"\xcd\x02\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admission\"\x8b\x03\n" +
 	"\x12ReflectionDecision\x12W\n" +
 	"\x11learning_decision\x18\x01 \x01(\tB*\xbaH'r%R\aupdatedR\tno_changeR\asdk_gapR\x06failedR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\x12!\n" +
 	"\fplaybook_ids\x18\x03 \x03(\tR\vplaybookIds\x12\x14\n" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12<\n" +
 	"\bsdk_gaps\x18\x05 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12=\n" +
-	"\x05usage\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\"\xcc\x01\n" +
+	"\x05usage\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\x12<\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason\"\xcc\x01\n" +
 	"\x11ProposalRejection\x12!\n" +
 	"\aattempt\x18\x01 \x01(\rB\a\xbaH\x04*\x02(\x01R\aattempt\x12W\n" +
 	"\vdiagnostics\x18\x02 \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticB\b\xbaH\x05\x92\x01\x02\b\x01R\vdiagnostics\x12;\n" +
@@ -1854,7 +1872,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\xba\x11\n" +
+	"verifiedAt\"\xa4\x12\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -1883,11 +1901,13 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x10reflection_paths\x18\x17 \x03(\tR\x0freflectionPaths\x12\\\n" +
 	"\x12reflection_results\x18\x18 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionDecisionR\x11reflectionResults\x124\n" +
 	"\x16reflection_max_retries\x18\x19 \x01(\rR\x14reflectionMaxRetries\x12P\n" +
-	"\x16reflection_dispatch_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x14reflectionDispatchAt\x1ae\n" +
+	"\x16reflection_dispatch_at\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\x14reflectionDispatchAt\x12F\n" +
+	"\x1dreflection_evidence_gap_count\x18\x1b \x01(\rH\x00R\x1areflectionEvidenceGapCount\x88\x01\x01\x1ae\n" +
 	"\x1bClosurePhaseTimestampsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +
-	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')\"\xd7\x02\n" +
+	"+broker_ledger.terminal_rejection_has_record\x12Va terminal reflection rejection requires a recorded rejection and no reflection commit\x1ac!this.reflection_rejected || (size(this.reflection_rejections) > 0 && this.reflection_commit == '')B \n" +
+	"\x1e_reflection_evidence_gap_count\"\xd7\x02\n" +
 	"\x17OwnershipAdoptionStatus\x12#\n" +
 	"\rsource_commit\x18\x01 \x01(\tR\fsourceCommit\x12'\n" +
 	"\x0fadopted_objects\x18\x02 \x01(\x05R\x0eadoptedObjects\x120\n" +
@@ -2064,6 +2084,7 @@ func file_sdodev_contracts_v1alpha1_controller_state_proto_init() {
 	file_sdodev_contracts_v1alpha1_outcome_proto_init()
 	file_sdodev_contracts_v1alpha1_worker_proto_init()
 	file_sdodev_contracts_v1alpha1_program_proto_init()
+	file_sdodev_contracts_v1alpha1_controller_state_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

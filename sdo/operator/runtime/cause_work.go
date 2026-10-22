@@ -214,7 +214,7 @@ func causeWorkNeedsModel(work []*contracts.ReflectionCauseWork) bool {
 	}
 	for _, cause := range work {
 		for _, item := range cause.GetItems() {
-			if item.GetDisposition() == "question" {
+			if item.GetDisposition() == "question" && item.GetReason() != "evidence_gap" {
 				return true
 			}
 		}
@@ -250,7 +250,8 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 			continue
 		}
 	}
-	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned}
+	count := appendEvidenceGaps(work, capture)
+	return &contracts.ReflectionEligibility{Version: 1, Causes: work, Unassigned: unassigned, EvidenceGapCount: &count}
 }
 
 // Corpus publication and trust consume the same settled dispositions.
@@ -331,7 +332,7 @@ func unassignedReflectionQuestions(outcome *contracts.OutcomeRecord, fixed map[s
 
 func reflectionItemsNeedModel(items []*contracts.ReflectionWorkItem) bool {
 	for _, item := range items {
-		if item.GetDisposition() == "question" {
+		if item.GetDisposition() == "question" && item.GetReason() != "evidence_gap" {
 			return true
 		}
 	}

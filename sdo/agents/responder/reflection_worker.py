@@ -156,6 +156,7 @@ def run_reflection_task(
         summary=turn.summary,
         learning_decision=turn.learning_decision,
         no_change_reason=turn.no_change_reason or "",
+        decline_reason=turn.decline_reason,
         proposed_artifact_ids=turn.playbook_ids,
         sdk_gaps=[json_format.ParseDict(gap.model_dump(), SdkGap()) for gap in turn.sdk_gaps],
     )

@@ -1309,16 +1309,16 @@ func (x *ReflectionCauseWork) GetItems() []*ReflectionWorkItem {
 }
 
 type ReflectionWorkItem struct {
-	state       protoimpl.MessageState `protogen:"open.v1"`
-	ProgramId   string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
-	Bindings    []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
-	Disposition string                 `protobuf:"bytes,3,opt,name=disposition,proto3" json:"disposition,omitempty"`
-	Question    string                 `protobuf:"bytes,4,opt,name=question,proto3" json:"question,omitempty"`
-	Reason      string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
-	Resources   []*ObjectRef           `protobuf:"bytes,6,rep,name=resources,proto3" json:"resources,omitempty"`
-	// Reserved for evidence_phase in the evidence-gap layer.
-	ProgramRevision  string `protobuf:"bytes,8,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
-	CaptureOpenPhase string `protobuf:"bytes,9,opt,name=capture_open_phase,json=captureOpenPhase,proto3" json:"capture_open_phase,omitempty"`
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	ProgramId        string                 `protobuf:"bytes,1,opt,name=program_id,json=programId,proto3" json:"program_id,omitempty"`
+	Bindings         []*Binding             `protobuf:"bytes,2,rep,name=bindings,proto3" json:"bindings,omitempty"`
+	Disposition      string                 `protobuf:"bytes,3,opt,name=disposition,proto3" json:"disposition,omitempty"`
+	Question         string                 `protobuf:"bytes,4,opt,name=question,proto3" json:"question,omitempty"`
+	Reason           string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	Resources        []*ObjectRef           `protobuf:"bytes,6,rep,name=resources,proto3" json:"resources,omitempty"`
+	EvidencePhase    string                 `protobuf:"bytes,7,opt,name=evidence_phase,json=evidencePhase,proto3" json:"evidence_phase,omitempty"`
+	ProgramRevision  string                 `protobuf:"bytes,8,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
+	CaptureOpenPhase string                 `protobuf:"bytes,9,opt,name=capture_open_phase,json=captureOpenPhase,proto3" json:"capture_open_phase,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1395,6 +1395,13 @@ func (x *ReflectionWorkItem) GetResources() []*ObjectRef {
 	return nil
 }
 
+func (x *ReflectionWorkItem) GetEvidencePhase() string {
+	if x != nil {
+		return x.EvidencePhase
+	}
+	return ""
+}
+
 func (x *ReflectionWorkItem) GetProgramRevision() string {
 	if x != nil {
 		return x.ProgramRevision
@@ -1412,12 +1419,13 @@ func (x *ReflectionWorkItem) GetCaptureOpenPhase() string {
 // Controller-settled learning evidence, persisted before the outcome commit.
 // Absence on historical outcomes is unproven and never supplies success credit.
 type ReflectionEligibility struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
-	Causes        []*ReflectionCauseWork `protobuf:"bytes,2,rep,name=causes,proto3" json:"causes,omitempty"`
-	Unassigned    []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=unassigned,proto3" json:"unassigned,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Version          uint32                 `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Causes           []*ReflectionCauseWork `protobuf:"bytes,2,rep,name=causes,proto3" json:"causes,omitempty"`
+	Unassigned       []*ReflectionWorkItem  `protobuf:"bytes,3,rep,name=unassigned,proto3" json:"unassigned,omitempty"`
+	EvidenceGapCount *uint32                `protobuf:"varint,4,opt,name=evidence_gap_count,json=evidenceGapCount,proto3,oneof" json:"evidence_gap_count,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ReflectionEligibility) Reset() {
@@ -1469,6 +1477,13 @@ func (x *ReflectionEligibility) GetUnassigned() []*ReflectionWorkItem {
 		return x.Unassigned
 	}
 	return nil
+}
+
+func (x *ReflectionEligibility) GetEvidenceGapCount() uint32 {
+	if x != nil && x.EvidenceGapCount != nil {
+		return *x.EvidenceGapCount
+	}
+	return 0
 }
 
 var File_sdodev_contracts_v1alpha1_program_proto protoreflect.FileDescriptor
@@ -1581,23 +1596,26 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\vcause_index\x18\x01 \x01(\rR\n" +
 	"causeIndex\x12B\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12C\n" +
-	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\"\xaf\x04\n" +
+	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\"\xfc\x04\n" +
 	"\x12ReflectionWorkItem\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +
 	"\bbindings\x18\x02 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12G\n" +
 	"\vdisposition\x18\x03 \x01(\tB%\xbaH\"r R\acoveredR\vfalse_matchR\bquestionR\vdisposition\x12\x1a\n" +
-	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\x9b\x01\n" +
-	"\x06reason\x18\x05 \x01(\tB\x82\x01\xbaH\x7fr}R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\x06reason\x12B\n" +
-	"\tresources\x18\x06 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12)\n" +
+	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\xab\x01\n" +
+	"\x06reason\x18\x05 \x01(\tB\x92\x01\xbaH\x8e\x01r\x8b\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\fevidence_gapR\x06reason\x12B\n" +
+	"\tresources\x18\x06 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12;\n" +
+	"\x0eevidence_phase\x18\a \x01(\tB\x14\xbaH\x11r\x0fR\x00R\x04openR\x05fixedR\revidencePhase\x12)\n" +
 	"\x10program_revision\x18\b \x01(\tR\x0fprogramRevision\x12H\n" +
-	"\x12capture_open_phase\x18\t \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x06detectR\tpre-applyR\x10captureOpenPhase\"\xd1\x01\n" +
+	"\x12capture_open_phase\x18\t \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x06detectR\tpre-applyR\x10captureOpenPhase\"\x9b\x02\n" +
 	"\x15ReflectionEligibility\x12!\n" +
 	"\aversion\x18\x01 \x01(\rB\a\xbaH\x04*\x02\b\x01R\aversion\x12F\n" +
 	"\x06causes\x18\x02 \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\x06causes\x12M\n" +
 	"\n" +
 	"unassigned\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\n" +
-	"unassignedB\xff\x01\n" +
+	"unassigned\x121\n" +
+	"\x12evidence_gap_count\x18\x04 \x01(\rH\x00R\x10evidenceGapCount\x88\x01\x01B\x15\n" +
+	"\x13_evidence_gap_countB\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fProgramProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -1695,6 +1713,7 @@ func file_sdodev_contracts_v1alpha1_program_proto_init() {
 	}
 	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[12].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[13].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_program_proto_msgTypes[19].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

@@ -60,6 +60,13 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
         ],
         "additionalProperties": false
       }
+    },
+    "decline_reason": {
+      "type": "string",
+      "enum": [
+        "",
+        "evidence_gap"
+      ]
     }
   },
   "required": [
@@ -67,7 +74,8 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
     "learning_decision",
     "no_change_reason",
     "proposed_artifact_ids",
-    "sdk_gaps"
+    "sdk_gaps",
+    "decline_reason"
   ],
   "additionalProperties": false
 }
