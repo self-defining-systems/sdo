@@ -189,6 +189,8 @@ type Snapshot struct {
 
 func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, error)
     CaptureSnapshot copies the namespace-local detection view for corpus replay.
+    ConfigMap data and binaryData retain key names only; live read views are
+    unchanged.
 
 func LoadSnapshots(dir string) ([]Snapshot, error)
     LoadSnapshots reads a recorded cluster state from dir: every *.json file is

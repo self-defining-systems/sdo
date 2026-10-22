@@ -26,6 +26,17 @@ Native worker task/result payloads use logical `playbook_id`, `script_names`, an
 
 Fastloop stage checkpoints live under `results/<run-id>/checkpoints/<incident-number>/<stage>/`. `request.json` and `result.json` are the exact worker ProtoJSON; `checkpoint.json` holds capture digests, a digest of the direct file-edit bundle, and the settled native broker ledger. `file_edits.json` is recorded beside each exported worker request/result before publication and stored content-addressed by the checkpoint. Its version-1 edits carry repository-relative paths, base64 file bytes (null for deletion), and executable modes, bounded to 48 MiB encoded. Replay applies them to a fresh checkout and runs the real Go broker. Old proposal-only recordings fail with an explicit error; no proposal shim is kept. Corpus files live under `checkpoints/blobs/<sha256>` and are joined by digest, not by their original session path. A checkpoint is replay evidence, not an accepted commit or a benchmark oracle verdict. Default Codex fastloop registrations record provider CLI turns under the exported incident session's `model_io/<request-digest>/<prompt-digest>.json`; those are model I/O for deterministic plumbing replay, not additional agent decisions. Compare replay's broker acceptance with the recorded ledger and accepted commit before attributing a learning change.
 
+## ConfigMap capture values
+
+New controller corpus snapshots retain ConfigMap `data` and `binaryData` keys
+with empty values, marked by `sdo.dev/configmap-values-redacted: "true"`.
+These are key-existence observations; empty captured values do not establish
+that the live ConfigMap was empty. Live detector read views are unchanged.
+Previously accepted immutable corpus cases keep their original trusted bytes;
+this policy does not retroactively sanitize old captures. Check programs that
+read ConfigMap values before migrating their corpus or relying on new replay
+cases. A value-dependent diagnosis needs a different supported observation.
+
 ## Responder Kubernetes API history (stage 1)
 
 Per-incident session `api-history/` contains version-1 `manifest.json`, append-only

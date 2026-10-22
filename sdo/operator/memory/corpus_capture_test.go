@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,5 +59,39 @@ func TestCaptureIncidentCorpusKeepsSeparateOpenMoments(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, phase+".json")); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestIncidentCaptureNeverPersistsConfigMapValues(t *testing.T) {
+	const canary = "CORPUS_SYNTHETIC_CONFIGMAP_CREDENTIAL_CANARY"
+	root := t.TempDir()
+	view := sdktest.Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{{ObjectMeta: metav1.ObjectMeta{Name: "kube-root-ca.crt", Namespace: "app"}, Data: map[string]string{"ca.crt": canary}, BinaryData: map[string][]byte{"binary": []byte(canary)}}}}
+	for _, phase := range []string{"open@detect", "open@settle", "open@pre-apply", "fixed"} {
+		if err := CaptureIncidentSnapshot(root, "synthetic", phase, view, "app"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(canary))
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), canary) || strings.Contains(string(data), encoded) {
+			t.Errorf("ConfigMap credential persisted in %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.ConfigMapList[0].Data["ca.crt"] != canary {
+		t.Fatal("live ConfigMap changed")
 	}
 }
