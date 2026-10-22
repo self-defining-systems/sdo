@@ -158,12 +158,13 @@ class PreflightSettings:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> PreflightSettings:
-        overrides: dict[str, float] = {}
-        if raw := env.get(MAX_QUOTA_USED_ENV, "").strip():
-            overrides["max_quota_used_percent"] = float(raw)
-        if raw := env.get(SNAPSHOT_AGE_ENV, "").strip():
-            overrides["quota_snapshot_max_age_seconds"] = float(raw)
-        return cls(**overrides)
+        defaults = cls()
+        max_used = env.get(MAX_QUOTA_USED_ENV, "").strip()
+        max_age = env.get(SNAPSHOT_AGE_ENV, "").strip()
+        return cls(
+            max_quota_used_percent=float(max_used) if max_used else defaults.max_quota_used_percent,
+            quota_snapshot_max_age_seconds=float(max_age) if max_age else defaults.quota_snapshot_max_age_seconds,
+        )
 
 
 # --------------------------------------------------------------------------- report

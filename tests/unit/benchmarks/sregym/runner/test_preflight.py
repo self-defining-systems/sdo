@@ -21,6 +21,7 @@ from sregym_fake_host import CODEX_PIN, FakeHost
 from benchmarks.sregym.runner.experiment import ExperimentConfig, RunnerEnv, load_experiment_config
 from benchmarks.sregym.runner.preflight import (
     GB,
+    MAX_QUOTA_USED_ENV,
     SNAPSHOT_AGE_ENV,
     ImageVersions,
     LaunchAssurance,
@@ -429,6 +430,18 @@ def test_the_snapshot_age_bound_is_configurable_from_the_environment(fake_host: 
 
     assert settings.quota_snapshot_max_age_seconds == 7200
     assert _check(report, "codex-quota").status == "pass"
+
+
+def test_environment_overrides_set_only_their_fields() -> None:
+    defaults = PreflightSettings()
+
+    settings = PreflightSettings.from_env({MAX_QUOTA_USED_ENV: "70", SNAPSHOT_AGE_ENV: "900"})
+
+    assert settings == PreflightSettings(max_quota_used_percent=70.0, quota_snapshot_max_age_seconds=900.0)
+    assert settings.min_free_bytes == defaults.min_free_bytes
+    assert settings.policy == defaults.policy
+    assert PreflightSettings.from_env({}) == defaults
+    assert PreflightSettings.from_env({MAX_QUOTA_USED_ENV: "  "}) == defaults
 
 
 def test_the_quota_snapshot_is_the_newest_observed_across_session_files(fake_host: FakeHost, sregym_dir: Path) -> None:
