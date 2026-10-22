@@ -23,6 +23,14 @@ const DefaultMaxResponseLoops = 5
 const DefaultDiagnosisSettleDelay = 15 * time.Second
 const maxRecordedToolResponse = 2048
 
+// maxRecordedApplyResponse bounds an apply record that lists the runs of the
+// applied plans. Each incident records at most MaxBatches (5) applies, so they
+// cost at most 5 x 8 KiB = 40 KiB; the other tool calls are 2 KiB each, well
+// under 100 of them (200 KiB). Together they stay far inside the 768 KiB state
+// ConfigMap budget. A compact run is about 250 B, so 8 KiB holds about 30 runs,
+// several per applied plan.
+const maxRecordedApplyResponse = 8192
+
 type ToolRequest struct {
 	Command       string           `json:"command"`
 	Ref           *sdk.ObjectRef   `json:"ref,omitempty"`
@@ -33,22 +41,28 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	Command        string                  `json:"command"`
-	Source         map[string]any          `json:"source,omitempty"`
-	Error          string                  `json:"error,omitempty"`
-	Summary        string                  `json:"summary"`
-	PlanID         string                  `json:"plan_id,omitempty"`
-	ApplicationID  string                  `json:"application_id,omitempty"`
-	Patches        []PlanPatch             `json:"patches,omitempty"`
-	ProgramRuns    []ProgramRun            `json:"program_runs,omitempty"`
-	Findings       []sdk.Finding           `json:"findings,omitempty"`
-	DriftEvents    []sdk.DriftEvent        `json:"drift_events,omitempty"`
-	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
-	LoopsUsed      int                     `json:"loops_used"`
-	LoopsAllowed   int                     `json:"loops_allowed"`
-	Healthy        bool                    `json:"healthy"`
-	Unresolved     bool                    `json:"unresolved"`
-	Trust          map[string]ProgramTrust `json:"trust,omitempty"`
+	Command       string         `json:"command"`
+	Source        map[string]any `json:"source,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	Summary       string         `json:"summary"`
+	PlanID        string         `json:"plan_id,omitempty"`
+	ApplicationID string         `json:"application_id,omitempty"`
+	Patches       []PlanPatch    `json:"patches,omitempty"`
+	ProgramRuns   []ProgramRun   `json:"program_runs,omitempty"`
+	// ProgramRunsOmitted counts runs a truncated record could not list; the
+	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
+	// runs of programs or bindings the applied plans do not name, which the
+	// reader never consults.
+	ProgramRunsOmitted          int                     `json:"program_runs_omitted,omitempty"`
+	ProgramRunsUnrelatedOmitted int                     `json:"program_runs_unrelated_omitted,omitempty"`
+	Findings                    []sdk.Finding           `json:"findings,omitempty"`
+	DriftEvents                 []sdk.DriftEvent        `json:"drift_events,omitempty"`
+	DetectorStates              []DetectorEvaluation    `json:"detector_states,omitempty"`
+	LoopsUsed                   int                     `json:"loops_used"`
+	LoopsAllowed                int                     `json:"loops_allowed"`
+	Healthy                     bool                    `json:"healthy"`
+	Unresolved                  bool                    `json:"unresolved"`
+	Trust                       map[string]ProgramTrust `json:"trust,omitempty"`
 }
 
 type ToolCall struct {
@@ -226,10 +240,15 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 		requestJSON, _ := json.Marshal(request)
 		response = logicalToolResponse(response)
-		responseJSON, _ := json.Marshal(response)
-		if len(responseJSON) > maxRecordedToolResponse {
-			responseJSON, _ = json.Marshal(map[string]any{"command": response.Command, "summary": boundedToolText(response.Summary), "error": boundedToolText(response.Error), "healthy": response.Healthy, "unresolved": response.Unresolved, "loops_used": response.LoopsUsed, "loops_allowed": response.LoopsAllowed, "findings_count": len(response.Findings), "program_runs_count": len(response.ProgramRuns), "detector_states_count": len(response.DetectorStates), "patches_count": len(response.Patches), "truncated": true})
+		var applied []selectedPlan
+		if request.Command == "apply" {
+			for _, id := range request.PlanIDs {
+				if plan, ok := l.plans[id]; ok {
+					applied = append(applied, plan)
+				}
+			}
 		}
+		responseJSON := recordedToolResponseJSON(response, applied)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: time.Now().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
 		if err := l.persistToolState(ctx); err != nil {
 			response.Error = err.Error()
@@ -367,6 +386,77 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	}
 	response.LoopsUsed = l.batches
 	return response
+}
+
+// truncatedToolResponse is the over-cap record shape. It embeds ToolResponse so
+// the identifiers and compact program runs that program trust reads share the
+// writer's definition; everything bulky is reduced to a count.
+type truncatedToolResponse struct {
+	ToolResponse
+	Truncated           bool `json:"truncated"`
+	FindingsCount       int  `json:"findings_count"`
+	ProgramRunsCount    int  `json:"program_runs_count"`
+	DetectorStatesCount int  `json:"detector_states_count"`
+	PatchesCount        int  `json:"patches_count"`
+}
+
+// recordedToolResponseJSON caps the stored response. An apply record keeps every
+// run of the applied plans' (program, bindings) — all program trust reads — and
+// counts the runs of other programs separately, since a real apply response
+// carries a run for every installed program. Other commands drop runs from the
+// end; the reader fails closed on any such omission.
+func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []byte {
+	responseJSON, _ := json.Marshal(response)
+	if len(responseJSON) <= maxRecordedToolResponse {
+		return responseJSON
+	}
+	record := truncatedToolResponse{
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved},
+		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
+	}
+	limit := maxRecordedToolResponse
+	isApply := response.Command == "apply"
+	if isApply {
+		limit = maxRecordedApplyResponse
+	}
+	for _, run := range response.ProgramRuns {
+		if isApply && !runOfAppliedPlan(run, applied) {
+			record.ProgramRunsUnrelatedOmitted++
+			continue
+		}
+		record.ProgramRuns = append(record.ProgramRuns, compactProgramRun(run))
+	}
+	for {
+		responseJSON, _ = json.Marshal(record)
+		if len(responseJSON) <= limit || len(record.ProgramRuns) == 0 {
+			return responseJSON
+		}
+		record.ProgramRuns = record.ProgramRuns[:len(record.ProgramRuns)-1]
+		record.ProgramRunsOmitted++
+	}
+}
+
+func runOfAppliedPlan(run ProgramRun, applied []selectedPlan) bool {
+	for _, plan := range applied {
+		if run.ProgramID == plan.programID && maps.Equal(run.Bindings, plan.bindings) {
+			return true
+		}
+	}
+	return false
+}
+
+// compactProgramRun keeps what program trust binds to: identity, revision,
+// bindings, result and the diagnosis error (the evidence entry without a
+// resource kind).
+func compactProgramRun(run ProgramRun) ProgramRun {
+	compact := ProgramRun{ProgramID: run.ProgramID, ProgramRevision: run.ProgramRevision, Bindings: run.Bindings, Verdict: program.Verdict{Result: run.Verdict.Result}}
+	for _, evidence := range run.Verdict.Evidence {
+		if evidence.Resource.Kind == "" {
+			compact.Verdict.Evidence = []program.Evidence{{Observed: boundedToolText(evidence.Observed)}}
+			break
+		}
+	}
+	return compact
 }
 
 func boundedToolText(value string) string {
