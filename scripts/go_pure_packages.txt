@@ -1,0 +1,3 @@
+# Module directory and package pattern, relative to the repository root.
+# Keep production core paths in .golangci.yml synchronized with this registry.
+sdo/operator/contracts ./outcome

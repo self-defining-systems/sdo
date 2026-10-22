@@ -34,3 +34,6 @@ if command -v buf >/dev/null 2>&1; then
 else
     echo "==> proto contracts: skipped (buf not installed; enforced by the proto CI job)"
 fi
+
+# Functional Go core: dependency/API lint plus structural purity checks.
+"$SCRIPT_DIR/check_go_core.sh"
