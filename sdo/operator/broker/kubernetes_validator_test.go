@@ -20,6 +20,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -479,5 +480,48 @@ func TestKubernetesValidatorDoesNotRecordAFailedProof(t *testing.T) {
 	}
 	if proof.valid("validator:test", time.Hour, time.Now()) {
 		t.Fatal("a failed canary was recorded as proof")
+	}
+}
+
+func TestKubernetesValidatorRepairsADriftedPolicyInPlaceAndFailsClosedWithoutOne(t *testing.T) {
+	root := repository(t)
+	client := fake.NewSimpleClientset()
+	created := succeedingJobs(t, client)
+	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", RepositoryPVC: "repository", RepositoryMountPath: filepath.Dir(root), SchemaIdentity: "schema", PollInterval: time.Millisecond}
+	drifted := validatorPolicy("sdo")
+	drifted.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}
+	if _, err := client.NetworkingV1().NetworkPolicies("sdo").Create(context.Background(), drifted, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	deletes := 0
+	client.PrependReactor("delete", "networkpolicies", func(ktesting.Action) (bool, runtime.Object, error) {
+		deletes++
+		return false, nil, nil
+	})
+	if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := client.NetworkingV1().NetworkPolicies("sdo").Get(context.Background(), validatorIsolationPolicy, metav1.GetOptions{})
+	if err != nil || len(current.Spec.PolicyTypes) != 2 || deletes != 0 {
+		t.Fatalf("drifted policy was not updated in place: %+v err=%v deletes=%d", current, err, deletes)
+	}
+	if len(*created) != 3 {
+		t.Fatalf("jobs = %v", *created)
+	}
+
+	// The validator never starts when the policy disappears after the proof.
+	removed := fake.NewSimpleClientset()
+	succeedingJobs(t, removed)
+	proof := &IsolationProof{}
+	proof.record("validator:test", time.Now())
+	launcher.Client, launcher.IsolationProof = removed, proof
+	if err := JobValidator(launcher)(context.Background(), root, []string{"app.txt"}); err != nil {
+		t.Fatalf("missing policy should be re-proven, not accepted blindly: %v", err)
+	}
+	removed.PrependReactor("get", "networkpolicies", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewNotFound(networkingv1.Resource("networkpolicies"), validatorIsolationPolicy)
+	})
+	if err := launcher.requirePolicy(context.Background()); err == nil {
+		t.Fatal("validator may start without the default-deny policy")
 	}
 }

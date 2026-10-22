@@ -135,6 +135,9 @@ func (k KubernetesValidationJobClient) Validate(ctx context.Context, request Val
 			return ValidationJobReceipt{}, err
 		}
 	}
+	if err := k.requirePolicy(validationCtx); err != nil {
+		return ValidationJobReceipt{}, err
+	}
 	if err := k.createJob(validationCtx, job); err != nil {
 		return ValidationJobReceipt{}, err
 	}
@@ -207,9 +210,16 @@ func (k KubernetesValidationJobClient) ensurePolicy(ctx context.Context) error {
 	case err == nil && reflect.DeepEqual(current.Spec, policy.Spec):
 		return nil
 	case err == nil:
-		if err := policies.Delete(ctx, validatorIsolationPolicy, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("replace validator NetworkPolicy: %w", err)
+		// Update in place: a delete and create would leave a window with no policy.
+		current.Spec = policy.Spec
+		updated, err := policies.Update(ctx, current, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("update default-deny validator NetworkPolicy: %w", err)
 		}
+		if !reflect.DeepEqual(updated.Spec, policy.Spec) {
+			return errors.New("validator NetworkPolicy changed at admission")
+		}
+		return nil
 	case !apierrors.IsNotFound(err):
 		return fmt.Errorf("inspect validator NetworkPolicy: %w", err)
 	}
@@ -219,6 +229,19 @@ func (k KubernetesValidationJobClient) ensurePolicy(ctx context.Context) error {
 	}
 	if !reflect.DeepEqual(created.Spec, policy.Spec) {
 		return errors.New("validator NetworkPolicy changed at admission")
+	}
+	return nil
+}
+
+// requirePolicy fails closed unless the default-deny policy is in force right
+// now; the validator pod must never start without it.
+func (k KubernetesValidationJobClient) requirePolicy(ctx context.Context) error {
+	current, err := k.Client.NetworkingV1().NetworkPolicies(k.Namespace).Get(ctx, validatorIsolationPolicy, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("validator default-deny NetworkPolicy is not in force: %w", err)
+	}
+	if !reflect.DeepEqual(current.Spec, validatorPolicy(k.Namespace).Spec) {
+		return errors.New("validator default-deny NetworkPolicy changed before the validator started")
 	}
 	return nil
 }
