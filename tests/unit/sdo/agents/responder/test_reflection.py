@@ -325,7 +325,7 @@ def test_reflection_prompt_orients_in_one_read_and_waits_once_for_the_check(tmp_
     assert "/sdo/session/corpus" in prompt
     assert "one command" in prompt
     assert "yield_time_ms" in prompt
-    assert "never poll" in prompt
+    assert "never poll or retry while it runs" in prompt
 
 
 def test_reflection_prompt_accepts_any_open_capture_phase_as_evidence(tmp_path: Path) -> None:

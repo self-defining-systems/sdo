@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,8 @@ func TestLoadReflectionDecisionStillRejectsUnknownFields(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"learning_decision":"updated","playbook_id":["base"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadReflectionDecision(context.Background(), t.TempDir(), path); err == nil {
-		t.Fatal("misspelled field accepted")
+	_, err := LoadReflectionDecision(context.Background(), t.TempDir(), path)
+	if err == nil || !strings.Contains(err.Error(), "playbook_id") {
+		t.Fatalf("misspelled field accepted or misreported: %v", err)
 	}
 }
