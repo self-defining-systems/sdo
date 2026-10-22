@@ -22,7 +22,7 @@ import (
 
 // A real deployment render and healthy informer snapshot, followed by a memory
 // commit and maintenance reset: neither may change the deployed image identity.
-func acceptedSourceDeployment(t *testing.T) (GitPlanSource, *StateTracker, string, *appsv1.Deployment, *corev1.Service) {
+func acceptedSourceDeployment(t *testing.T, withTree bool) (GitPlanSource, *StateTracker, string, *appsv1.Deployment, *corev1.Service) {
 	t.Helper()
 	source, _ := foreignSource(t)
 	manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: consul\nspec:\n  template:\n    spec:\n      initContainers:\n      - name: setup\n        image: example/setup:latest\n      containers:\n      - name: consul\n        image: consul:1.15\n"
@@ -33,6 +33,10 @@ func acceptedSourceDeployment(t *testing.T) (GitPlanSource, *StateTracker, strin
 	nativeGit(t, source.Repository, "commit", "-qm", "deploy A")
 	commit := nativeGit(t, source.Repository, "rev-parse", "HEAD")
 	tree := nativeGit(t, source.Repository, "rev-parse", "HEAD^{tree}")
+	if !withTree {
+		tree = ""
+	}
+	source.DeployedCommit = commit
 	source.ManifestPaths = []string{"app.yaml", "consul.yaml"}
 	// Read raw accepted bytes, then exercise the same renderer as deployment.
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"}
@@ -66,7 +70,17 @@ func acceptedSourceDeployment(t *testing.T) (GitPlanSource, *StateTracker, strin
 }
 
 func TestHermeticAcceptedSourceAfterMemoryCommit(t *testing.T) {
-	source, tracker, _, deployed, service := acceptedSourceDeployment(t)
+	for _, withTree := range []bool{true, false} {
+		name := "annotated deployment"
+		if !withTree {
+			name = "legacy deployment"
+		}
+		t.Run(name, func(t *testing.T) { testAcceptedSourceAfterMemoryCommit(t, withTree) })
+	}
+}
+
+func testAcceptedSourceAfterMemoryCommit(t *testing.T, withTree bool) {
+	source, tracker, _, deployed, service := acceptedSourceDeployment(t, withTree)
 	if err := os.MkdirAll(filepath.Join(source.Repository, ".sdo"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +100,11 @@ func TestHermeticAcceptedSourceAfterMemoryCommit(t *testing.T) {
 		objects, err := source.AcceptedManifests(context.Background(), commit, "app")
 		if err != nil || len(objects) != 2 {
 			t.Fatalf("memory commit/reset=%v: objects=%d error=%v", reset, len(objects), err)
+		}
+		for _, object := range objects {
+			if object.GetKind() == "Deployment" && object.GetAnnotations()["sdo.dev/source-tree"] != deployed.GetAnnotations()["sdo.dev/source-tree"] {
+				t.Fatal("render changed deployed revision annotations")
+			}
 		}
 		view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*deployed}, ServiceList: []corev1.Service{*service}}, Source: source, SourceCommit: commit}
 		if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
@@ -110,7 +129,7 @@ func TestHermeticAcceptedSourceAfterMemoryCommit(t *testing.T) {
 }
 
 func TestAcceptedSourceRenderFailureIsObjectScoped(t *testing.T) {
-	source, _, commit, _, service := acceptedSourceDeployment(t)
+	source, _, commit, _, service := acceptedSourceDeployment(t, true)
 	source.Images = nil
 	objects, err := source.AcceptedManifests(context.Background(), commit, "app")
 	if err == nil || len(objects) != 1 || objects[0].GetKind() != "Service" {
@@ -139,7 +158,7 @@ func TestAcceptedSourceRenderFailureIsObjectScoped(t *testing.T) {
 func TestAcceptedSourceDoesNotReuseImagesAcrossSourceChange(t *testing.T) {
 	for _, path := range []string{"consul.yaml", "main.go"} {
 		t.Run(path, func(t *testing.T) {
-			source, _, _, _, _ := acceptedSourceDeployment(t)
+			source, _, _, _, _ := acceptedSourceDeployment(t, true)
 			data := []byte("package main\n")
 			if path == "consul.yaml" {
 				var err error

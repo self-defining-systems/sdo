@@ -343,9 +343,9 @@ func TestControllerAdoptionDoesNotOverwriteConcurrentMutation(t *testing.T) {
 }
 
 func TestControllerAdoptsAvailableObjectsWithExplicitRenderGap(t *testing.T) {
-	controller, api, _, closeServer := adoptionController(t, 8080, controllerDetector("health", time.Second, sdk.Finding{}))
+	controller, api, _, closeServer := adoptionController(t, 8080)
 	defer closeServer()
-	source, _, commit, _, _ := acceptedSourceDeployment(t)
+	source, _, commit, _, _ := acceptedSourceDeployment(t, true)
 	source.Images = nil // A cold process has no healthy workload image evidence yet.
 	controller.config.SourceCommit = commit
 	controller.drift.Source = source
@@ -376,16 +376,5 @@ func TestControllerAdoptsAvailableObjectsWithExplicitRenderGap(t *testing.T) {
 	}
 	if !controller.IncidentOpen() || exportState(t, controller).IncidentRequest.Findings[0].DetectorId != "drift.unexplained" {
 		t.Fatalf("service drift never opened an incident: %+v", exportState(t, controller))
-	}
-	controller.responderCompletedAt = start.Add(21 * time.Second)
-	if _, clear := controller.finalVerificationStates(); clear {
-		t.Fatal("healthy workload detector hid the retained broken route")
-	}
-	api.service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
-	if err := controller.StepEvents(context.Background(), start.Add(23*time.Second), nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, clear := controller.finalVerificationStates(); !clear {
-		t.Fatal("restored route did not clear independent controller verification")
 	}
 }

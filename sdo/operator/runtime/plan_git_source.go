@@ -34,6 +34,10 @@ type GitPlanSource struct {
 	Repository    string
 	Images        SourceImages
 	ManifestPaths []string
+	// DeployedCommit binds healthy image evidence for legacy deployments that
+	// predate source-tree annotations. It is the trusted deployed revision,
+	// never the advancing operational-memory head.
+	DeployedCommit string
 }
 
 // AcceptedManifests returns rendered, namespace-scoped source objects that
@@ -141,7 +145,18 @@ func (s GitPlanSource) renderDocument(ctx context.Context, document map[string]a
 	renderTree := ""
 	useImages := s.Images != nil
 	if useImages {
-		deployedTree := s.Images.BaselineTree(ref)
+		observedTree := s.Images.BaselineTree(ref)
+		deployedTree := observedTree
+		if deployedTree == "" && s.DeployedCommit != "" {
+			if !gitRevision.MatchString(s.DeployedCommit) {
+				return nil, fmt.Errorf("full deployed commit revision is required")
+			}
+			var err error
+			deployedTree, err = s.sourceTree(ctx, s.DeployedCommit)
+			if err != nil {
+				return nil, err
+			}
+		}
 		useImages = deployedTree != ""
 		if useImages {
 			same, err := s.sameImageSource(ctx, deployedTree, tree)
@@ -150,7 +165,7 @@ func (s GitPlanSource) renderDocument(ctx context.Context, document map[string]a
 			}
 			useImages = same
 			if same {
-				renderTree = deployedTree
+				renderTree = observedTree
 			}
 		}
 	}
