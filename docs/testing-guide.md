@@ -266,3 +266,12 @@ bash scripts/run_sdo_example_kind.sh
 It requires Docker, Kind, `kubectl`, `jq`, and Go. Typed fixture workers exercise the Go-owned broker without model credentials. The smoke verifies accepted lifecycle commits, a deployed workload, and clear detector evaluations. Incident response and outcome commits remain a separate live validation gate.
 
 A green unit suite establishes repository contracts. It does not establish that every target application deploys successfully or that an agent repairs every incident.
+
+## Go core architecture
+
+Run `bash scripts/check_go_core.sh` to enforce the [functional-core boundary](go-purity.md).
+It is included in the existing static-analysis and architecture gates. It installs
+and caches golangci-lint 2.11.4, runs only depguard/forbidigo on declared core
+packages, and checks structural purity plus application-owned transitive imports.
+The package registry lives in `scripts/go_pure_packages.txt`; negative fixtures
+prove the linter rules are active.

@@ -1,0 +1,57 @@
+version: "2"
+run:
+  timeout: 45s
+  tests: false
+  relative-path-mode: gomod
+linters:
+  default: none
+  enable: [depguard, forbidigo]
+  settings:
+    depguard:
+      rules:
+        functional-core:
+          list-mode: original
+          files:
+            - "**/outcome/*.go"
+            - "**/lifecyclecore/*.go"
+            - "!**/*_test.go"
+          deny:
+            - pkg: k8s.io/client-go
+              desc: Kubernetes belongs at the subsystem edge.
+            - pkg: net
+              desc: Network I/O belongs at the subsystem edge.
+            - pkg: os
+              desc: Process, environment and file I/O belong at the subsystem edge.
+            - pkg: math/rand
+              desc: Randomness must arrive on events.
+            - pkg: crypto/rand
+              desc: Randomness must arrive on events.
+            - pkg: io$
+              desc: I/O interfaces belong at the subsystem edge.
+            - pkg: io/fs
+              desc: Filesystems belong at the subsystem edge.
+            - pkg: io/ioutil
+              desc: File I/O belongs at the subsystem edge.
+            - pkg: context
+              desc: Core functions accept plain events, not context/transport interfaces.
+            - pkg: sdo.dev/operator/runtime/internal
+              desc: The lifecycle core must not import its own private I/O edge.
+            - pkg: sdo.dev/operator/internal
+              desc: Core packages must not import operator implementation edges.
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^time\.(Now|Since|Until|Sleep|After|AfterFunc|Tick|NewTimer|NewTicker)$'
+          msg: Time must arrive on events; timers belong at the edge.
+        - pattern: '^os\.(Getenv|LookupEnv)$'
+          msg: Configuration must arrive as plain data.
+        - pattern: '^rand\..*$'
+          msg: Randomness must arrive on events.
+  exclusions:
+    presets: []
+    rules:
+      - linters: [forbidigo]
+        path-except: '(^|/)(outcome|lifecyclecore)/.*\.go$'
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
