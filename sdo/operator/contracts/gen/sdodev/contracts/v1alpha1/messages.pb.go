@@ -3520,11 +3520,12 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12max_response_loops\x18\x16 \x01(\x05R\x10maxResponseLoops\x12H\n" +
 	"\fdrift_events\x18\x17 \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12*\n" +
 	"\x11fast_path_summary\x18\x18 \x01(\tR\x0ffastPathSummary\x12.\n" +
-	"\x13prepared_agent_task\x18\x19 \x01(\tR\x11preparedAgentTaskJ\x04\b\v\x10\fJ\x04\b\f\x10\rR\x19architecture_summary_pathR\x15health_objective_path\"\xbf\x01\n" +
+	"\x13prepared_agent_task\x18\x19 \x01(\tR\x11preparedAgentTaskJ\x04\b\v\x10\fJ\x04\b\f\x10\rR\x19architecture_summary_pathR\x15health_objective_path\"\xa0\x04\n" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +
-	"\vobservation\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vobservation\"\xcb\x02\n" +
+	"\vobservation\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vobservation:\xde\x02\xbaH\xda\x02\x1a\xd7\x02\n" +
+	".root_cause_evidence.state_change_single_object\x12\xb5\x01a state-change evidence source must be exactly one object reference, Kind/name or Kind/namespace/name, with no spaces, ';' or ','; cite each changed object as its own evidence entry\x1amthis.kind != 'state-change' || this.source.matches('^[^[:space:];,/]+/([^[:space:];,/]+/)?[^[:space:];,/]+$')\"\xcb\x02\n" +
 	"\x12ConfirmedRootCause\x12!\n" +
 	"\asummary\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\asummary\x12L\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\b\xbaH\x05\x92\x01\x02\b\x01R\tresources\x12H\n" +

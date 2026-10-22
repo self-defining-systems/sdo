@@ -13,7 +13,7 @@ from google.protobuf import json_format
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
-from sdo.agents.responder.result_output import parse_incident_result
+from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
 from sdo.agents.responder.tools_cli import CLI_EXAMPLES
 from sdo.contracts import (
     ROOT_CAUSE_EVIDENCE_KINDS,
@@ -61,23 +61,34 @@ def execute_incident(
     selected_provider = (provider or os.getenv("SDO_AGENT_PROVIDER") or "codex").strip().lower()
     if selected_provider not in AGENT_PROVIDERS:
         raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
-    try:
-        completed = run_structured_turn(
-            selected_provider,  # type: ignore[arg-type]
-            _responder_prompt(request),
-            output_schema=_incident_result_schema(),
-            cwd=request.repository_worktree,
-            access="danger-full-access",
-            model=model or os.getenv("SDO_RESPONDER_MODEL") or None,
-            reasoning_effort=INCIDENT_REASONING_EFFORT,
-            executor=executor,
-        )
-    except StructuredTurnError as exc:
-        raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
-    try:
-        result = parse_incident_result(json.loads(completed.output_json), turn_usage(completed))
-    except (OSError, ValueError) as exc:
-        raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+    prompt = _responder_prompt(request)
+    resume_session_id: str | None = None
+    while True:
+        try:
+            completed = run_structured_turn(
+                selected_provider,  # type: ignore[arg-type]
+                prompt,
+                output_schema=_incident_result_schema(),
+                cwd=request.repository_worktree,
+                access="danger-full-access",
+                model=model or os.getenv("SDO_RESPONDER_MODEL") or None,
+                reasoning_effort=INCIDENT_REASONING_EFFORT,
+                resume_session_id=resume_session_id,
+                executor=executor,
+            )
+        except StructuredTurnError as exc:
+            raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
+        try:
+            result = parse_incident_result(json.loads(completed.output_json), turn_usage(completed))
+            break
+        except EvidenceReferenceError as exc:
+            if resume_session_id is not None:
+                raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+            # One resumed turn lets the agent split a compound reference instead of losing the diagnosis.
+            resume_session_id = completed.session_id
+            prompt = _evidence_reference_feedback(str(exc))
+        except (OSError, ValueError) as exc:
+            raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
     if not result.HasField("responder_session_id"):
         result.responder_session_id = completed.session_id
     if result.incident_id != request.incident_id:
@@ -85,6 +96,17 @@ def execute_incident(
     # Withhold weakly-evidenced causes before the result reaches the broker;
     # this is upstream of and independent from the fenced diagnosis verifier.
     return apply_cause_admissibility(result, request)
+
+
+def _evidence_reference_feedback(problems: str) -> str:
+    return (
+        "Your result was not accepted: a state-change evidence source must name exactly one object. "
+        f"Problems: {problems}\n"
+        "Resubmit the same result with each changed object as its own evidence entry, for example "
+        '{"kind": "state-change", "source": "Service/geo", ...} and '
+        '{"kind": "state-change", "source": "Service/recommendation", ...}. '
+        "Change nothing else unless it is wrong."
+    )
 
 
 def _incident_result_schema() -> dict[str, object]:
@@ -618,9 +640,10 @@ def _verification_instructions() -> str:
         "Every confirmed root cause needs live evidence: a detector finding (source: its detector ID or "
         "finding fingerprint), a failing "
         "synthetic scenario (source: its scenario ID), a change listed since the last healthy state (source: its "
-        "`Kind/name`; a change your own repair made is not evidence of the cause, and SDO checks that the change "
-        "predates your repair of that object), or a live observation (source: the command; observation: what its "
-        "output showed). Scripts, "
+        "exactly one `Kind/name` or `Kind/namespace/name`, never a list or a compound like `Service/a; Service/b`: "
+        "when one cause changed two objects, give one state-change entry per object; a change your own repair "
+        "made is not evidence of the cause, and SDO checks that the change predates your repair of that object), "
+        "or a live observation (source: the command; observation: what its output showed). Scripts, "
         "manifests, ConfigMap bodies, source files, and architecture notes show what could go wrong, not what did: "
         "list them only in static_context. Name in explained_detectors the detectors whose findings the cause "
         "explains; they must clear after your fix, and SDO checks that they do.\n\n"

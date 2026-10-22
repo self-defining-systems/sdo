@@ -255,6 +255,13 @@ message IncidentRequest {
 }
 
 message RootCauseEvidence {
+  // A state-change source names exactly one object, so the controller can look
+  // it up: Kind/name or Kind/namespace/name, with no whitespace, ';' or ','.
+  option (buf.validate.message).cel = {
+    id: "root_cause_evidence.state_change_single_object"
+    message: "a state-change evidence source must be exactly one object reference, Kind/name or Kind/namespace/name, with no spaces, ';' or ','; cite each changed object as its own evidence entry"
+    expression: "this.kind != 'state-change' || this.source.matches('^[^[:space:];,/]+/([^[:space:];,/]+/)?[^[:space:];,/]+$')"
+  };
   string kind = 1 [(buf.validate.field).string = {
     in: ["detector-finding", "synthetic-traffic", "state-change", "live-observation"]
   }];

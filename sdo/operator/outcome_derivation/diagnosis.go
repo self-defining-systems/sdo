@@ -311,6 +311,11 @@ func keyOf(ref *contractsv1alpha1.ObjectRef) objectKey {
 	return objectKey{canonicalKind(ref.GetKind()), ref.GetName(), ref.GetNamespace(), ref.GetKind() + "/" + ref.GetName()}
 }
 func parseKey(source string) (objectKey, bool) {
+	// A compound citation such as "Service/a; Service/b" names several objects,
+	// so it is no object reference rather than a namespace containing punctuation.
+	if strings.ContainsAny(source, ";,") || len(strings.Fields(source)) > 1 {
+		return objectKey{}, false
+	}
 	parts := []string{}
 	for _, part := range strings.Split(strings.TrimSpace(source), "/") {
 		if part != "" {
