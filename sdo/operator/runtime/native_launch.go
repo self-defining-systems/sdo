@@ -40,6 +40,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 			return nil, nil, fmt.Errorf("native broker Kubernetes client: %w", err)
 		}
 	}
+	if _, err := AgentWorkerEnvironment(config); err != nil {
+		return nil, nil, err
+	}
 	controlNamespace := config.GetControlNamespace()
 	if controlNamespace == "" {
 		controlNamespace = config.GetNamespace()
@@ -90,11 +93,15 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	if namespace == "" {
 		namespace = config.GetNamespace()
 	}
+	agentEnvironment, err := AgentWorkerEnvironment(config)
+	if err != nil {
+		return err
+	}
 	freshExecutor := worker_registry.KubernetesExecutor{
 		Client: client, Namespace: namespace, Registry: registry,
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(),
-		Environment: map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"},
+		Environment: mergeEnvironment(agentEnvironment, map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"}),
 		OnPhase:     recordClosurePhase,
 	}
 	sessionExecutor := func(incidentID string, resume bool) (ReflectionTaskExecutor, error) {
@@ -105,7 +112,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		executor := freshExecutor
 		executor.SessionPVCSubPath = subPath
 		executor.CapturedCorpusReadOnly = true
-		executor.Environment = map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude", "SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"}
+		executor.Environment = mergeEnvironment(agentEnvironment, map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude", "SDO_TURN_USAGE_LOG": "/sdo/session/reflection-usage.jsonl"})
 		if resume {
 			executor.Environment["CODEX_HOME"] = "/sdo/session/codex"
 			executor.Environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
@@ -130,4 +137,48 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		},
 	}
 	return nil
+}
+
+// AgentWorkerEnvironment is the provider and model the controller was configured
+// with, as the environment every agent worker Job reads. Workers default to Codex
+// when SDO_AGENT_PROVIDER is absent, so a configured provider must always travel
+// with the Job. An unconfigured provider adds nothing; an unknown one is an error.
+func AgentWorkerEnvironment(config *contracts.ControllerConfig) (map[string]string, error) {
+	provider := config.GetResponderBackend()
+	if provider == "" {
+		return map[string]string{}, nil
+	}
+	if provider != "codex" && provider != "claude" {
+		return nil, fmt.Errorf("unsupported responder backend %q: must be codex or claude", provider)
+	}
+	environment := map[string]string{"SDO_AGENT_PROVIDER": provider}
+	if model := config.GetResponderModel(); model != "" {
+		for _, name := range []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", "SDO_LIFECYCLE_MODEL", "SDO_DEPLOYMENT_MODEL"} {
+			environment[name] = model
+		}
+	}
+	return environment, nil
+}
+
+// withAgentEnvironment makes the launch config authoritative for provider and
+// model over any hand-written responder environment entries.
+func withAgentEnvironment(environment map[string]string, config *contracts.ControllerConfig) (map[string]string, error) {
+	if config == nil {
+		return environment, nil
+	}
+	agent, err := AgentWorkerEnvironment(config)
+	if err != nil {
+		return nil, err
+	}
+	return mergeEnvironment(environment, agent), nil
+}
+
+func mergeEnvironment(layers ...map[string]string) map[string]string {
+	merged := map[string]string{}
+	for _, layer := range layers {
+		for name, value := range layer {
+			merged[name] = value
+		}
+	}
+	return merged
 }

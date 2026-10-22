@@ -6,6 +6,10 @@ Generic CLI benchmark agents may emit JSON or JSONL trajectories under run-speci
 
 Use trajectories to explain hypotheses, commands, tool failures, and detours. Do not use them as substitutes for controller outcomes, broker commits, independent verification, or strict receipts.
 
+## Worker provider resolution
+
+Each SDO worker Job logs `sdo-agent-resolved role=<role> provider=<p> model=<m>` to its stderr and, where an incident session is mounted, appends the same record to `sdo_runtime/sessions/<digest>/agent-resolved.jsonl`. `run_validity` fails a run (`agent-provider`, `invalid_infra`) when a record differs from the manifest's configured provider/model for that role; runs without records report `not_recorded`.
+
 ## Detector firing telemetry stream
 
 For native `diagnosis_verification`, a `detector-finding` source can cite either a detector ID or the exact finding fingerprint shown by `sdo status` and `sdo diagnose` (for example `health-objective/deployment-unavailable/hotel-reservation/search`). A source absent from dispatch findings and detector history has `verified: null`; it is unverifiable, not contradicted. A known clear finding can be contradicted. Native `success` requires at least one confirmed diagnosis and no contradicted diagnoses; the strict receipt enforces the same rule.

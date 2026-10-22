@@ -17,6 +17,7 @@ from sdo.agents.lifecycle import (
     DeployerAssessment,
     TopologyResourceDTO,
 )
+from sdo.agents.provider import resolve_agent
 from sdo.agents.responder import AGENT_SKILLS, KubernetesResultPublisher, prepare_claude_home, prepare_codex_home
 from sdo.contracts import (
     SCHEMA_VERSION,
@@ -63,12 +64,7 @@ class SourceProposalDraft(BaseModel):
 
 
 def _provider() -> Literal["codex", "claude"]:
-    provider = os.environ.get("SDO_AGENT_PROVIDER", "codex").strip().lower()
-    if provider == "codex":
-        return "codex"
-    if provider == "claude":
-        return "claude"
-    raise ValueError(f"unsupported deployment provider {provider!r}")
+    return "claude" if resolve_agent("deployer", "SDO_DEPLOYMENT_MODEL").provider == "claude" else "codex"
 
 
 def _source_path(value: str) -> str:

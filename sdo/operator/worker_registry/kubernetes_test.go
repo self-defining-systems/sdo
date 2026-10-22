@@ -272,6 +272,15 @@ func TestWorkerJobKeepsToolAccessWithReadOnlySource(t *testing.T) {
 		for _, mount := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
 			mounts[mount.MountPath] = mount
 		}
+		sessionDir := ""
+		for _, variable := range job.Spec.Template.Spec.Containers[0].Env {
+			if variable.Name == "SDO_SESSION_DIR" {
+				sessionDir = variable.Value
+			}
+		}
+		if sessionDir != "/sdo/session" {
+			t.Errorf("%s Job does not tell the worker where the incident session is mounted: %q", tc.name, sessionDir)
+		}
 		for _, surface := range []struct {
 			name     string
 			readOnly bool
