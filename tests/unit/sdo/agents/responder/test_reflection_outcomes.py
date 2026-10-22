@@ -13,6 +13,7 @@ from sdo.agents.responder.reflection_outcomes import (
     current_outcome_view,
     history_view,
     prior_outcome_view,
+    split_quiet_program_runs,
 )
 from sdo.contracts.proto import (
     Binding,
@@ -259,18 +260,20 @@ def _program_outcome(*, sweeps: int = 52) -> OutcomeRecord:
     return outcome
 
 
-def test_current_outcome_collapses_program_sweeps_without_mutating_durable_evidence() -> None:
+def test_current_outcome_summarizes_no_match_sweeps_without_mutating_durable_evidence() -> None:
     outcome = _program_outcome()
     before = outcome.SerializeToString()
     view = current_outcome_view(outcome)
-    assert len(view["program_runs"]) == 3
-    assert [run["evaluations"] for run in view["program_runs"]] == [52] * 3
+    assert view["program_runs"] == []
+    assert view["program_run_summary"] == [
+        {"program_id": "image-pull", "program_revision": "revision-a", "no_match": 156, "unknown": 0}
+    ]
     assert view["reflection_compaction"]["program_runs_omitted_duplicates"] == 153
     assert view["program_failure_signals"] == list(outcome.program_failure_signals)
     assert outcome.SerializeToString() == before
 
 
-def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -> None:
+def test_current_outcome_keeps_match_runs_and_summarizes_the_rest_per_program_revision() -> None:
     outcome = _program_outcome(sweeps=1)
     run = outcome.program_runs[1]
     for verdict, revision, error in [
@@ -278,6 +281,7 @@ def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -
         (Verdict.RESULT_NO_MATCH, "revision-a", ""),
         (Verdict.RESULT_UNKNOWN, "revision-a", "read unavailable"),
         (Verdict.RESULT_UNKNOWN, "revision-b", "read unavailable"),
+        (Verdict.RESULT_UNKNOWN, "revision-b", "forbidden"),
     ]:
         updated = ProgramRun()
         updated.CopyFrom(run)
@@ -286,9 +290,23 @@ def test_current_outcome_keeps_program_transitions_and_new_failed_signatures() -
         updated.error = error
         outcome.program_runs.append(updated)
     view = current_outcome_view(outcome)
-    assert len(view["program_runs"]) == 7
-    assert any(run["error"] == "read unavailable" for run in view["program_runs"])
-    assert any(run["program_revision"] == "revision-b" for run in view["program_runs"])
+    assert [kept["verdict"]["result"] for kept in view["program_runs"]] == ["RESULT_MATCH"]
+    assert view["program_run_summary"] == [
+        {
+            "program_id": "image-pull",
+            "program_revision": "revision-a",
+            "no_match": 4,
+            "unknown": 1,
+            "unknown_reasons": ["read unavailable"],
+        },
+        {
+            "program_id": "image-pull",
+            "program_revision": "revision-b",
+            "no_match": 0,
+            "unknown": 2,
+            "unknown_reasons": ["read unavailable", "forbidden"],
+        },
+    ]
     assert view["repair_actions"]
     assert view["confirmed_root_causes"]
     assert view["findings"][0]["evidence"] == _EVIDENCE
@@ -334,3 +352,21 @@ def test_reflection_prompt_size_reduction_on_synthetic_fixture(tmp_path: Path, m
         json.dumps({"before_chars": len(before), "after_chars": len(after), "reduction_percent": round(reduction, 2)})
     )
     assert reduction > 85
+
+
+def test_program_run_summary_caps_reasons_and_programs() -> None:
+    def unknown(program: str, error: str) -> dict[str, object]:
+        return {"program_id": program, "program_revision": "r", "verdict": {"result": "RESULT_UNKNOWN"}, "error": error}
+
+    runs = [unknown("p0", f"reason {index} " + "x" * 400) for index in range(5)]
+    runs += [unknown(f"p{index}", "") for index in range(1, 33)]
+
+    kept, summary = split_quiet_program_runs(runs)
+
+    assert kept == []
+    assert len(summary[0]["unknown_reasons"]) == 3
+    assert all(len(reason) <= 160 for reason in summary[0]["unknown_reasons"])
+    assert summary[0]["unknown_reasons_omitted"] == 2
+    assert summary[0]["unknown"] == 5
+    assert summary[-1] == {"programs_omitted": 3}
+    assert len(summary) == 31

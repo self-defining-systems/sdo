@@ -5,7 +5,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import timezone
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
@@ -14,6 +14,7 @@ from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_
 from sdo.agents.responder.cause_admissibility import CauseAdmissibilityPolicy, apply_cause_admissibility
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
+from sdo.agents.responder.session_turn import session_turn_options, unwrap_branch
 from sdo.agents.responder.tools_cli import CLI_EXAMPLES
 from sdo.contracts import (
     ROOT_CAUSE_EVIDENCE_KINDS,
@@ -68,18 +69,20 @@ def execute_incident(
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]
                 prompt,
-                output_schema=_incident_result_schema(),
                 cwd=request.repository_worktree,
                 access="danger-full-access",
                 model=model or os.getenv("SDO_RESPONDER_MODEL") or None,
                 reasoning_effort=INCIDENT_REASONING_EFFORT,
                 resume_session_id=resume_session_id,
                 executor=executor,
+                **session_turn_options(selected_provider, Path(request.repository_worktree)),
             )
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
         try:
-            result = parse_incident_result(json.loads(completed.output_json), turn_usage(completed))
+            result = parse_incident_result(
+                unwrap_branch(completed.output_json, "incident_result"), turn_usage(completed)
+            )
             break
         except EvidenceReferenceError as exc:
             if resume_session_id is not None:

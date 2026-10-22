@@ -134,6 +134,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
             provider,
             {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered", "playbook_ids": []},
             session_id="session-1",
+            branch="reflection",
         )
 
     agent = ScriptedAgent(respond)

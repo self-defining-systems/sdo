@@ -6,7 +6,7 @@ import re
 import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
-from agentshim import SessionResumeError, StdioMcpServer
+from agentshim import SessionResumeError
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
@@ -14,7 +14,7 @@ from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_st
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
-from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
+from sdo.agents.responder.session_turn import session_turn_options, unwrap_branch
 from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -408,7 +408,6 @@ class CodexSessionBackend:
             turn = run_structured_turn(
                 self.provider,
                 f"Idempotency key: {idempotency_key}\n\n{prompt}",
-                output_schema=reflection_output_schema(),
                 cwd=worktree,
                 access="danger-full-access",
                 model=self.model,
@@ -416,18 +415,7 @@ class CodexSessionBackend:
                 timeout_seconds=self.timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
-                mcp_servers=[
-                    StdioMcpServer(
-                        name="sdo_reflection",
-                        command=sys.executable,
-                        args=["-m", "sdo.agents.responder.reflection_validation", "--root", str(worktree.resolve())],
-                        env={key: os.environ[key] for key in VALIDATION_ENVIRONMENT if key in os.environ},
-                        tool_timeout_s=VALIDATION_TOOL_TIMEOUT_SECONDS if self.provider == "codex" else None,
-                    )
-                ],
-                environment={"MCP_TOOL_TIMEOUT": str(VALIDATION_TOOL_TIMEOUT_SECONDS * 1000)}
-                if self.provider == "claude"
-                else None,
+                **session_turn_options(self.provider, worktree),
             )
         except StructuredTurnError as exc:
             if session_id is not None and (
@@ -445,7 +433,7 @@ class CodexSessionBackend:
                     f"{self.provider} cannot resume session {session_id!r}: {exc}"
                 ) from exc
             raise RuntimeError(f"{self.provider} reflection failed: {exc}") from exc
-        return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
+        return ReflectionTurn.model_validate(unwrap_branch(turn.output_json, "reflection")).with_usage(turn_usage(turn))
 
 
 class ClaudeSessionBackend(CodexSessionBackend):

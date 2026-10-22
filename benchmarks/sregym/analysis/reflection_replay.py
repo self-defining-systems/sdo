@@ -34,7 +34,8 @@ from sdo.agents.responder import (
     CodexSessionBackend,
     ReflectionTurn,
     SessionReflector,
-    reflection_output_schema,
+    session_output_schema,
+    unwrap_branch,
 )
 from sdo.contracts import IncidentClosure
 
@@ -46,7 +47,7 @@ class _ScopedBackend(CodexSessionBackend):
         turn = run_structured_turn(
             self.provider,
             f"Idempotency key: {idempotency_key}\n\n{prompt}",
-            output_schema=reflection_output_schema(),
+            output_schema=session_output_schema(),
             cwd=worktree,
             access="workspace-write",
             model=self.model,
@@ -55,7 +56,7 @@ class _ScopedBackend(CodexSessionBackend):
             resume_session_id=session_id,
             executor=self.executor,
         )
-        return ReflectionTurn.model_validate_json(turn.output_json).with_usage(turn_usage(turn))
+        return ReflectionTurn.model_validate(unwrap_branch(turn.output_json, "reflection")).with_usage(turn_usage(turn))
 
 
 def _git(cwd: Path, *args: str) -> str:

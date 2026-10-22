@@ -80,8 +80,9 @@ def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
     compaction = {}
     if view["program_runs"]:
         original = view["program_runs"]
-        view["program_runs"] = _collapse_program_runs(original)
-        compaction["program_runs_omitted_duplicates"] = len(original) - len(view["program_runs"])
+        collapsed = _collapse_program_runs(original)
+        compaction["program_runs_omitted_duplicates"] = len(original) - len(collapsed)
+        view["program_runs"], view["program_run_summary"] = split_quiet_program_runs(collapsed)
     if view["program_tool_calls"]:
         original = view["program_tool_calls"]
         calls = _collapse_tool_calls(original)
@@ -123,6 +124,51 @@ def _collapse_program_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         retained.append(entry)
         latest[identity] = (signature, entry)
     return retained
+
+
+#: Verdicts that carry no per-binding signal worth replaying: the program did not fire, or could not tell.
+_QUIET_RESULTS = {"RESULT_NO_MATCH": "no_match", "RESULT_UNKNOWN": "unknown"}
+_SUMMARY_MAX_PROGRAMS = 30
+_SUMMARY_MAX_REASONS = 3
+_SUMMARY_REASON_MAX_CHARS = 160
+
+
+def split_quiet_program_runs(runs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep runs with a signal; reduce NO_MATCH and UNKNOWN runs to one summary per program revision.
+
+    ``runs`` are collapsed runs, each weighted by its ``evaluations`` count. The
+    summary names the program, its revision, the evaluation count per status and
+    the distinct reasons its UNKNOWN runs gave, so a reflection still sees which
+    programs ran and why some could not decide.
+    """
+
+    kept: list[dict[str, Any]] = []
+    summaries: dict[tuple[str, str], dict[str, Any]] = {}
+    reasons: dict[tuple[str, str], list[str]] = {}
+    for run in runs:
+        status = _QUIET_RESULTS.get(run["verdict"]["result"])
+        if status is None:
+            kept.append(run)
+            continue
+        key = (run["program_id"], run.get("program_revision", ""))
+        summary = summaries.setdefault(
+            key, {"program_id": key[0], "program_revision": key[1], "no_match": 0, "unknown": 0}
+        )
+        summary[status] += run.get("evaluations", 1)
+        if status == "unknown" and run.get("error") and run["error"] not in reasons.setdefault(key, []):
+            reasons[key].append(run["error"])
+    ordered = list(summaries.items())
+    result = []
+    for key, summary in ordered[:_SUMMARY_MAX_PROGRAMS]:
+        distinct = reasons.get(key, [])
+        if distinct:
+            summary["unknown_reasons"] = [text[:_SUMMARY_REASON_MAX_CHARS] for text in distinct[:_SUMMARY_MAX_REASONS]]
+            if len(distinct) > _SUMMARY_MAX_REASONS:
+                summary["unknown_reasons_omitted"] = len(distinct) - _SUMMARY_MAX_REASONS
+        result.append(summary)
+    if len(ordered) > _SUMMARY_MAX_PROGRAMS:
+        result.append({"programs_omitted": len(ordered) - _SUMMARY_MAX_PROGRAMS})
+    return kept, result
 
 
 def _corpus_refs(value: Any) -> list[str]:

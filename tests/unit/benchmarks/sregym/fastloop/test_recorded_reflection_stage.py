@@ -103,7 +103,10 @@ func main() {
     run_dir = tmp_path / "results/run"
     session = hashlib.sha256(closure.request.incident_id.encode()).hexdigest()[:32]
     model_dir = run_dir / "000_fault/sdo_runtime/sessions" / session / "model_io"
-    runs = iter(reply("codex", output, session_id=f"recorded-{index}") for index, output in enumerate(outputs))
+    runs = iter(
+        reply("codex", output, session_id=f"recorded-{index}", branch="reflection")
+        for index, output in enumerate(outputs)
+    )
 
     def author(_request: object):
         authored = files if files is not None else readme_files()
