@@ -26,6 +26,8 @@ type PrimitiveCall struct {
 	Error     string          `json:"error,omitempty"`
 }
 
+// RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
+// must support concurrent reads; inspect Calls only after all readers finish.
 type RecordingReadView struct {
 	program.ReadView
 	Calls    []PrimitiveCall
@@ -74,10 +76,13 @@ func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff
 	return result, err
 }
 
+// ReplayReadView consumes each recorded call at most once, including when
+// diagnoses share the view. Snapshot and Calls must remain immutable during use.
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
 	used  map[int]bool
+	mu    sync.Mutex
 }
 
 func (v *ReplayReadView) replay(method string, arguments any, result any) error {
@@ -85,6 +90,8 @@ func (v *ReplayReadView) replay(method string, arguments any, result any) error 
 	if err != nil {
 		return err
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	for index, call := range v.Calls {
 		if v.used[index] || call.Method != method || !sameJSON(call.Arguments, args) {
 			continue

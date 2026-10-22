@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,7 +22,10 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type fakePrimitiveProber struct{ calls []string }
+type fakePrimitiveProber struct {
+	mu    sync.Mutex
+	calls []string
+}
 
 type changingBaseline struct{ changes *StateChanges }
 
@@ -29,6 +33,8 @@ func (b *changingBaseline) Observe(time.Time, bool)         {}
 func (b *changingBaseline) Changes(time.Time) *StateChanges { return b.changes }
 
 func (p *fakePrimitiveProber) Probe(_ context.Context, ref sdk.ObjectRef, port int32, request *program.HTTPProbe) (program.ProbeResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if request == nil {
 		p.calls = append(p.calls, "tcp")
 	} else {

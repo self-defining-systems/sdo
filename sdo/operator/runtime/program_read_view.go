@@ -20,6 +20,8 @@ import (
 )
 
 // PrimitiveProber performs one-off probes in the isolated prober process.
+// Implementations must support concurrent calls from shared diagnosis views.
+// A diagnosis may also finish its reads after RunDiagnose returns on timeout.
 type PrimitiveProber interface {
 	Probe(context.Context, sdk.ObjectRef, int32, *program.HTTPProbe) (program.ProbeResult, error)
 }

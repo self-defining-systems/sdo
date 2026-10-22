@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -23,11 +24,14 @@ import (
 )
 
 type routingTestProber struct {
+	mu        sync.Mutex
 	calls     []string
 	deadlines []time.Duration
 }
 
 func (p *routingTestProber) Probe(ctx context.Context, ref sdk.ObjectRef, port int32, _ *program.HTTPProbe) (program.ProbeResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls = append(p.calls, fmt.Sprintf("%s/%s:%d", ref.Kind, ref.Name, port))
 	if deadline, ok := ctx.Deadline(); ok {
 		p.deadlines = append(p.deadlines, time.Until(deadline))
@@ -46,6 +50,28 @@ func (p *routingTestProber) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip 
 	result.Success = port == 8080
 	return result, err
 }
+func TestLiveReadViewConcurrentPodTCPProbes(t *testing.T) {
+	probe := &routingTestProber{}
+	view := LiveReadView{DetectionContext: routingCaptureSnapshot(), Prober: probe}
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for range 32 {
+		workers.Go(func() {
+			<-start
+			result, err := view.ProbeTCP(ref, 8080)
+			if err != nil || !result.Success {
+				t.Errorf("concurrent Pod probe: %+v %v", result, err)
+			}
+		})
+	}
+	close(start)
+	workers.Wait()
+	if len(probe.calls) != 32 || len(probe.deadlines) != 32 {
+		t.Fatalf("lost probe observations: calls=%d deadlines=%d", len(probe.calls), len(probe.deadlines))
+	}
+}
+
 func routingCaptureSnapshot() sdktest.Snapshot {
 	return sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt32(9999)}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", Labels: map[string]string{"app": "api"}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}}}}, Status: corev1.PodStatus{PodIP: "10.0.0.5", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}}}
 }
@@ -147,12 +173,15 @@ func TestRoutingCaptureHasCountAndTimeBudgets(t *testing.T) {
 }
 
 type boundedRoutingProber struct {
+	mu      sync.Mutex
 	blocked bool
 	calls   int
 }
 
 func (p *boundedRoutingProber) Probe(ctx context.Context, _ sdk.ObjectRef, _ int32, _ *program.HTTPProbe) (program.ProbeResult, error) {
+	p.mu.Lock()
 	p.calls++
+	p.mu.Unlock()
 	if p.blocked {
 		<-ctx.Done()
 		return program.ProbeResult{}, ctx.Err()
