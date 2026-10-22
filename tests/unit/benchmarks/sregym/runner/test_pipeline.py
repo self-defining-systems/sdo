@@ -151,6 +151,34 @@ def test_stage_results_error_accepts_current_parallel_runner_layout_with_strict_
 
 
 @pytest.mark.parametrize(
+    ("receipts", "expected"),
+    [
+        ([], "produced no strict receipt"),
+        (
+            ["sdo_production_receipt_strict.json", "sdo_production_receipt_old.json"],
+            "exactly one standalone strict receipt, found sdo_production_receipt_old.json, ",
+        ),
+    ],
+)
+def test_stage_results_error_distinguishes_zero_from_multiple_receipts(
+    tmp_path: Path, receipts: list[str], expected: str
+) -> None:
+    run = tmp_path / "runs" / "000000_problem" / "worker_0" / "results" / "sdo_codex" / "problem" / "run_1"
+    run.mkdir(parents=True)
+    (run / "problem_results.csv").write_text(
+        '"Diagnosis.success","Mitigation.success","problem_id"\nTrue,True,"problem"\n',
+        encoding="utf-8",
+    )
+    for name in receipts:
+        (run / name).write_text(json.dumps(_valid_strict_receipt()) + "\n", encoding="utf-8")
+
+    error = _stage_results_error(tmp_path, require_strict_receipt=True)
+
+    assert error is not None
+    assert expected in error
+
+
+@pytest.mark.parametrize(
     ("header", "values", "expected"),
     [
         ('"problem_id"', '"problem"', "Diagnosis.success"),

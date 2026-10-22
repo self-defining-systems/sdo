@@ -58,6 +58,7 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.detector_review import DETECTOR_REVIEW_FILENAME, DetectorReviewRecord
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import ReceiptDrainResult, ReceiptFailure, RejectedProductionReceipt
 
@@ -538,15 +539,19 @@ def run_persistent_stage(
     ops.set_maintenance(control, paused=False, generation=generation)
     gate_timings = ops.inject_after_resume(control, generation, inject)
     injected = clock.monotonic()
-    verified = _wait_for_verified_incident(
-        ops,
-        control,
-        known,
-        inputs.verification_timeout_seconds,
-        clock,
-        inputs.detection_timeout_seconds,
-        stop_on_review=inputs.stop_on_detector_review,
-    )
+    try:
+        verified = _wait_for_verified_incident(
+            ops,
+            control,
+            known,
+            inputs.verification_timeout_seconds,
+            clock,
+            inputs.detection_timeout_seconds,
+            stop_on_review=inputs.stop_on_detector_review,
+        )
+    except DetectorReviewRequiredError as review:
+        _publish_detector_review(review, inputs=inputs, config=config, ops=ops, control=control, state=state)
+        raise
     verified_ready = clock.monotonic()
     if pause_after_verified:
         paused_generation = f"{generation}-paused"
@@ -639,6 +644,60 @@ def run_persistent_stage(
     state.save(inputs.state_path)
     persist_resolution(resolution, inputs.receipt_dir)
     return resolution
+
+
+def _publish_detector_review(
+    review: DetectorReviewRequiredError,
+    *,
+    inputs: StageInputs,
+    config: RuntimeConfig,
+    ops: ClusterOps,
+    control: str,
+    state: PersistentState,
+) -> None:
+    """Keep a detector-review stop's evidence: controller log, runtime artifacts, usage and the reason.
+
+    There is no strict receipt to drain (the incident never verified, so reflection never ran),
+    so a typed record stands in for it. Failing to write it must not hide the review stop itself.
+    """
+
+    try:
+        raw_result = review.state.get("incident_result")
+        result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
+        raw_view = review.state.get("incident_view")
+        view: dict[str, Any] = raw_view if isinstance(raw_view, dict) else {}
+        usage = result.get("usage")
+        record = DetectorReviewRecord(
+            incident_id=review.incident_id,
+            reason=review.reason,
+            blocking_detectors=[str(detector) for detector in view.get("blocking_detectors") or []],
+            usage=usage if isinstance(usage, dict) else None,
+        )
+        ops.export_controller_logs(control, inputs.receipt_dir)
+        stage_evidence: dict[str, Any] = dict(ops.export_runtime_artifacts(config, inputs.receipt_dir))
+        stage_evidence["scope"] = STAGE_END_EVIDENCE_SCOPE
+        _write_json(record.model_dump(mode="json"), inputs.receipt_dir / DETECTOR_REVIEW_FILENAME)
+        persist_resolution(
+            {
+                "schema_version": "sdo.sregym-incident-resolution/v1",
+                "incident_id": record.incident_id,
+                "namespace": inputs.namespace,
+                "confirmed_root_causes": result.get("confirmed_root_causes", []),
+                "repair_actions": result.get("repair_actions", []),
+                "usage": record.usage,
+                "detector_review": record.model_dump(mode="json", exclude={"usage"}),
+                "stage_end_runtime_artifacts": stage_evidence,
+            },
+            inputs.receipt_dir,
+        )
+        state.deferred_receipts.append(
+            DeferredReceipt(
+                incident_id=record.incident_id, stage_label=inputs.stage_label, staging_dir=inputs.receipt_dir
+            )
+        )
+        state.save(inputs.state_path)
+    except Exception:
+        logger.exception("could not publish the evidence of the detector review stop for %s", review.incident_id)
 
 
 def pause_controller(ops: ClusterOps, control: str, *, label: str, clock: Clock | None = None) -> None:
@@ -959,7 +1018,11 @@ def publish_deferred_receipts(state_path: Path, results_root: Path) -> list[Path
         entry = deferred.get(incident_id) if isinstance(incident_id, str) else None
         if entry is None or entry.staging_dir.resolve() == run_dir.resolve() or not entry.staging_dir.is_dir():
             continue
-        sources = [entry.staging_dir / STRICT_RECEIPT_FILENAME, entry.staging_dir / REJECTED_RECEIPT_FILENAME]
+        sources = [
+            entry.staging_dir / STRICT_RECEIPT_FILENAME,
+            entry.staging_dir / REJECTED_RECEIPT_FILENAME,
+            entry.staging_dir / DETECTOR_REVIEW_FILENAME,
+        ]
         logs_dir = entry.staging_dir / CONTROLLER_LOGS_SUBDIR
         if logs_dir.is_dir():
             sources.extend(sorted(path for path in logs_dir.iterdir() if path.is_file()))
