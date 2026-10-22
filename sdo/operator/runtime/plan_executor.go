@@ -74,6 +74,9 @@ type PlanExecutor struct {
 	Source   PlanSource
 	Rollouts PlanRollouts
 	Verifier PlanVerifier
+	// Observer, when set, is the cache the verifier reads; Apply waits for it to
+	// show the application's writes before verifying.
+	Observer WriteObserver
 	Now      func() time.Time
 }
 
@@ -213,6 +216,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 	}
 	writesLanded = true
 	result.Applied = true
+	if err := e.awaitObserved(ctx, result.Patches); err != nil {
+		return result, err
+	}
 	if err := e.Rollouts.Wait(ctx, refs); err != nil {
 		return result, fmt.Errorf("wait for plan rollouts: %w", err)
 	}
