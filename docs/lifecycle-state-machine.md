@@ -62,9 +62,9 @@ inputs must remain unchanged. The checks cover stable retry identities/payloads,
 completed-result retention, bounded correction, reset only after typed rejection,
 and a path to terminal outcomes from every reachable state under bounded faults.
 Mutation helpers demonstrate rejection of time-dependent retry payloads,
-non-determinism, lost results and failure that blocks the next incident. Each
-explorer has a two-minute wall cap; the existing chaos CI job runs them with a
-five-minute process timeout.
+non-determinism, lost results and failure that blocks the next incident. The closure explorer has a two-minute wall cap and reflection a four-minute cap
+(to accommodate race instrumentation); the existing chaos CI job runs them with
+a five-minute process timeout.
 
 Publication remains one trusted broker effect containing gofmt, independent
 validator Jobs and commit. The explorer does not prove that effect's internal
