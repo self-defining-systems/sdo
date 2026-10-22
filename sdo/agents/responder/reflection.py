@@ -14,6 +14,7 @@ from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_st
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
+from sdo.agents.responder.reflection_refine import refine_learning_request
 from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
 from sdo.contracts import OutcomeClassification
 
@@ -21,6 +22,8 @@ ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
 ReflectionSessionMode = Literal["resume", "fresh"]
 REFLECTION_GUIDANCE_MODES: tuple[ReflectionGuidance, ...] = ("baseline", "generalize", "generalize-spec")
 REFLECTION_SESSION_MODES: tuple[ReflectionSessionMode, ...] = ("resume", "fresh")
+ReflectionDepth = Literal["full", "refine"]
+REFLECTION_DEPTHS: tuple[ReflectionDepth, ...] = ("full", "refine")
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -281,9 +284,12 @@ class SessionReflector:
         closure: IncidentClosure | None = None,
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
+        depth: ReflectionDepth = "full",
     ) -> ReflectionTurn:
         if session_mode not in REFLECTION_SESSION_MODES:
             raise ValueError(f"unsupported reflection session mode: {session_mode!r}")
+        if depth not in REFLECTION_DEPTHS:
+            raise ValueError(f"unsupported reflection depth: {depth!r}")
         if closure is None or not closure.request.HasField("memory_snapshot"):
             raise ValueError("reflection requires a logical memory snapshot")
         request = _logical_learning_request(
@@ -308,6 +314,11 @@ class SessionReflector:
                 f"Original reflection request:\n{request}"
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
+        if depth == "refine" and session_mode == "resume":
+            # Verified repeat: the programs already in memory did the work, so
+            # the session only confirms them. A fresh session has no transcript
+            # to confirm against, so it always gets the full request.
+            request = refine_learning_request(outcome=outcome, closure=closure, outcome_commit=outcome_commit)
         if session_mode == "fresh":
             if closure is None:
                 raise ValueError("a fresh first reflection attempt requires the verified closure for its brief")
@@ -350,6 +361,7 @@ class SessionReflector:
                 outcome_commit=outcome_commit,
                 session_mode="fresh",
                 closure=closure,
+                depth="full",
             )
 
 

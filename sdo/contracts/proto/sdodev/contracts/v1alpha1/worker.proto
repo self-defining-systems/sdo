@@ -101,6 +101,11 @@ message ReflectionRequest {
   // carry that rejection's diagnostics.
   uint32 validation_attempt = 11;
   repeated MemoryDiagnostic previous_diagnostics = 12;
+  // Go-owned depth, chosen from typed outcome facts. Empty or "full" authors
+  // memory as usual. "refine" means accepted programs already diagnosed,
+  // repaired and verified this incident: confirm them and edit only on contrary
+  // evidence.
+  string depth = 13 [(buf.validate.field).string = {in: ["", "full", "refine"]}];
 }
 
 message ReflectionResult {

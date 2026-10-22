@@ -143,6 +143,26 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 	return stats
 }
 
+// parseProgramToolCall decodes one recorded program tool call, rejecting
+// errored or self-inconsistent records.
+func parseProgramToolCall(call *contracts.ProgramToolCall) (ToolRequest, ToolResponse, bool) {
+	var request ToolRequest
+	var response ToolResponse
+	if call.GetError() != "" || json.Unmarshal([]byte(call.GetRequestJson()), &request) != nil || json.Unmarshal([]byte(call.GetResponseJson()), &response) != nil || response.Error != "" || request.Command != call.GetCommand() || response.Command != call.GetCommand() {
+		return ToolRequest{}, ToolResponse{}, false
+	}
+	return request, response, true
+}
+
+// programRunRevisions is the revision each program ran at; a later run wins.
+func programRunRevisions(outcome *contracts.OutcomeRecord) map[string]string {
+	revisions := make(map[string]string)
+	for _, run := range outcome.GetProgramRuns() {
+		revisions[run.GetProgramId()] = run.GetProgramRevision()
+	}
+	return revisions
+}
+
 // boundPostApplyNoMatch requires controller-recorded tool evidence. The plan
 // request supplies the applied binding; the matching apply response supplies
 // its post-write diagnosis. Flat ProgramRuns and application.Verification alone
@@ -166,9 +186,8 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 	}
 	plans := map[string]ToolRequest{}
 	for _, call := range outcome.GetProgramToolCalls() {
-		var request ToolRequest
-		var response ToolResponse
-		if call.GetError() != "" || json.Unmarshal([]byte(call.GetRequestJson()), &request) != nil || json.Unmarshal([]byte(call.GetResponseJson()), &response) != nil || response.Error != "" || request.Command != call.GetCommand() || response.Command != call.GetCommand() {
+		request, response, ok := parseProgramToolCall(call)
+		if !ok {
 			continue
 		}
 		if call.GetCommand() == "plan" && response.PlanID != "" {

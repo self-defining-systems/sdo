@@ -13,9 +13,11 @@ from google.protobuf import json_format
 from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher
 from sdo.agents.responder.reflection import (
+    REFLECTION_DEPTHS,
     REFLECTION_GUIDANCE_MODES,
     ClaudeSessionBackend,
     CodexSessionBackend,
+    ReflectionDepth,
     ReflectionGuidance,
     ReflectionSessionMode,
     ReflectionTurn,
@@ -63,6 +65,7 @@ class Reflector(Protocol):
         closure: IncidentClosure | None = None,
         validation_attempt: int = 1,
         diagnostics: Sequence[MemoryDiagnostic] = (),
+        depth: ReflectionDepth = "full",
     ) -> ReflectionTurn: ...
 
 
@@ -117,6 +120,9 @@ def run_reflection_task(
     guidance = request.guidance or "baseline"
     if guidance not in REFLECTION_GUIDANCE_MODES:
         raise ValueError(f"invalid reflection guidance {guidance!r}")
+    depth = request.depth or "full"
+    if depth not in REFLECTION_DEPTHS:
+        raise ValueError(f"invalid reflection depth {depth!r}")
     # The task, rather than inherited launcher environment, pins check ownership.
     environment = {
         "SDO_ACTOR": "responder",
@@ -140,6 +146,7 @@ def run_reflection_task(
             closure=closure,
             validation_attempt=request.validation_attempt or 1,
             diagnostics=list(request.previous_diagnostics),
+            depth=cast("ReflectionDepth", depth),
         )
     finally:
         for key, value in previous.items():
