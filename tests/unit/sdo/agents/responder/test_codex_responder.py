@@ -743,3 +743,54 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
     assert "sdo source Deployment/app/api" in prompt
     assert "sdo plan targetport --bind service=Service/app/api" in prompt
     assert "Do not print the tool-description catalog" in prompt
+
+
+def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
+    message = {"type": "agent_message", "id": "msg", "text": json.dumps(_reply(result))}
+    return FakeRun(
+        stdout=[
+            json.dumps({"type": "thread.started", "thread_id": session}) + "\n",
+            json.dumps({"type": "item.completed", "item": message}) + "\n",
+            '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,'
+            '"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":1}}\n',
+        ]
+    )
+
+
+def _with_state_change_source(source: str) -> IncidentResult:
+    result = _result()
+    cause = result.confirmed_root_causes[0]
+    evidence = [RootCauseEvidence(kind="state-change", source=source, observation="targetPort changed")]
+    return evolve(result, confirmed_root_causes=[evolve(cause, evidence=evidence)])
+
+
+def test_prompt_requires_one_object_per_state_change_entry() -> None:
+    prompt = _responder_prompt(_request())
+
+    assert "exactly one `Kind/name` or `Kind/namespace/name`" in prompt
+    assert "one state-change entry per object" in prompt
+
+
+def test_compound_state_change_source_gets_one_targeted_retry() -> None:
+    bad = _with_state_change_source("Service/geo; Service/recommendation")
+    good = _with_state_change_source("Service/geo")
+    replies = iter([_scripted_reply(bad, "session-1"), _scripted_reply(good, "session-1")])
+    agent = ScriptedAgent(lambda _request: next(replies))
+
+    completed = execute_incident(_request(), executor=agent.executor)
+
+    assert completed.confirmed_root_causes[0].evidence[0].source == "Service/geo"
+    assert len(agent.requests) == 2
+    retry = agent.prompts[1]
+    assert "Service/geo; Service/recommendation" in retry
+    assert "own evidence entry" in retry
+    assert "session-1" in " ".join(agent.argvs[1])
+
+
+def test_compound_state_change_source_still_malformed_after_retry_fails() -> None:
+    bad = _with_state_change_source("Service/geo, Service/recommendation")
+    agent = ScriptedAgent(lambda _request: _scripted_reply(bad, "session-1"))
+
+    with pytest.raises(ResponderExecutionError, match="exactly one object reference"):
+        execute_incident(_request(), executor=agent.executor)
+    assert len(agent.requests) == 2

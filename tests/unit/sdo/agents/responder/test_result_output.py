@@ -187,3 +187,31 @@ def test_incident_request_carries_optional_follow_up_context() -> None:
 
     assert request.follow_up.attempt == 2
     assert parse_json(to_canonical_json(request), IncidentRequest()) == request
+
+
+def test_state_change_source_must_name_exactly_one_object() -> None:
+    reply = _model_reply()
+    reply["confirmed_root_causes"][0]["evidence"] = [
+        {"kind": "state-change", "source": "Service/geo; Service/recommendation", "observation": "ports changed"}
+    ]
+    with pytest.raises(ValueError, match=r"exactly one object reference.*own evidence entry"):
+        parse_incident_result(reply, USAGE)
+
+
+@pytest.mark.parametrize("source", ["Service/geo", "Service/hotel/geo"])
+def test_state_change_source_accepts_one_object_reference(source: str) -> None:
+    reply = _model_reply()
+    reply["confirmed_root_causes"][0]["evidence"] = [
+        {"kind": "state-change", "source": source, "observation": "port changed"}
+    ]
+    assert parse_incident_result(reply, USAGE).confirmed_root_causes[0].evidence[0].source == source
+
+
+def test_two_object_cause_cites_each_object_in_its_own_entry() -> None:
+    reply = _model_reply()
+    reply["confirmed_root_causes"][0]["evidence"] = [
+        {"kind": "state-change", "source": "Service/geo", "observation": "targetPort changed"},
+        {"kind": "state-change", "source": "Service/recommendation", "observation": "targetPort changed"},
+    ]
+    sources = [e.source for e in parse_incident_result(reply, USAGE).confirmed_root_causes[0].evidence]
+    assert sources == ["Service/geo", "Service/recommendation"]
