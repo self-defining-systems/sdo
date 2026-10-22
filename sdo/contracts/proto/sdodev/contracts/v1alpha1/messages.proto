@@ -60,7 +60,7 @@ message DriftEvent {
   string program_id = 8;
   google.protobuf.Timestamp manager_at = 9;
   string investigation_status = 10;
-  string investigation_verdict = 11;
+  string investigation_verdict = 11 [(buf.validate.field).string = {in: ["", "bug", "benign", "unsure"]}];
   string investigation_reason = 12;
   repeated DriftEvidence investigation_evidence = 13;
   string investigation_capture_id = 14;

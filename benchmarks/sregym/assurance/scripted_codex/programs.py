@@ -243,7 +243,12 @@ def respond_program(turn: Turn, request: dict[str, Any], worktree: Path) -> dict
 
 
 def _no_change(reason: str) -> dict[str, Any]:
-    return {"summary": reason, "learning_decision": "no_change", "no_change_reason": reason, "playbook_ids": []}
+    return {
+        "summary": reason,
+        "learning_decision": "no_change",
+        "no_change_reason": reason,
+        "proposed_artifact_ids": [],
+    }
 
 
 def _reflection_namespace() -> str:
@@ -334,7 +339,9 @@ def reflect_program(turn: Turn, prompt: str, worktree: Path, incident_id: str) -
         encoding="utf-8",
     )
     decision = worktree.parent / f"scripted-decision-{os.getpid()}.json"
-    decision.write_text(json.dumps({"learning_decision": "updated", "playbook_ids": [PROGRAM_ID]}), encoding="utf-8")
+    decision.write_text(
+        json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [PROGRAM_ID]}), encoding="utf-8"
+    )
     try:
         code, output = turn.run(
             f"sdo-operator memory check --root {shlex.quote(str(worktree))} --decision {shlex.quote(str(decision))}",
@@ -348,5 +355,5 @@ def reflect_program(turn: Turn, prompt: str, worktree: Path, incident_id: str) -
         "summary": f"Compiled {PROGRAM_ID} from the captured repair of Service {repaired}",
         "learning_decision": "updated",
         "no_change_reason": None,
-        "playbook_ids": [PROGRAM_ID],
+        "proposed_artifact_ids": [PROGRAM_ID],
     }

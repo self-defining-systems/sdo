@@ -67,8 +67,10 @@ func LoadPublicationContext(ctx context.Context, root string) (*PublicationConte
 	return &publication, nil
 }
 
-// LoadReflectionDecision reads the intended result (the returned result JSON; a
-// summary is ignored) without adding authored metadata to the candidate tree. The worker's actual result is supplied
+// LoadReflectionDecision reads the intended decision without adding authored
+// metadata to the candidate tree. The file is the ReflectionResult the worker
+// returns (the message its model-output schema is generated from), so the
+// agent copies its returned result as is. The worker's actual result is supplied
 // independently to publication and checked by the same rule.
 func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.ReflectionDecision, error) {
 	if path == "" {
@@ -85,21 +87,14 @@ func LoadReflectionDecision(ctx context.Context, root, path string) (*contracts.
 	if err != nil {
 		return nil, err
 	}
-	// Reflection copies its returned result, whose only extra field is the
-	// free-text summary; every other unknown field stays an error.
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	result := &contracts.ReflectionResult{}
+	if err := protojson.Unmarshal(data, result); err != nil {
 		return nil, fmt.Errorf("reflection decision: %w", err)
 	}
-	delete(fields, "summary")
-	if data, err = json.Marshal(fields); err != nil {
-		return nil, err
-	}
-	decision := &contracts.ReflectionDecision{}
-	if err := protojson.Unmarshal(data, decision); err != nil {
-		return nil, fmt.Errorf("reflection decision: %w", err)
-	}
-	return decision, nil
+	return &contracts.ReflectionDecision{
+		LearningDecision: result.GetLearningDecision(), NoChangeReason: result.GetNoChangeReason(),
+		PlaybookIds: result.GetProposedArtifactIds(), SdkGaps: result.GetSdkGaps(),
+	}, nil
 }
 
 func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnostic, error) {

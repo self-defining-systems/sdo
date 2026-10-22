@@ -50,7 +50,7 @@ def _no_change(reason: str) -> dict[str, Any]:
         "summary": reason,
         "learning_decision": "no_change",
         "no_change_reason": reason,
-        "playbook_ids": [],
+        "proposed_artifact_ids": [],
     }
 
 
@@ -104,5 +104,5 @@ def reflect(turn: Turn, binding: Binding, prompt: str, worktree: Path, store: St
         + (" (claimed cause)" if claimed else ""),
         "learning_decision": "updated",
         "no_change_reason": None,
-        "playbook_ids": [proposal.playbook_id],
+        "proposed_artifact_ids": [proposal.playbook_id],
     }

@@ -305,7 +305,7 @@ func TestReflectionInfrastructureFailureDoesNotSpendLearningRetries(t *testing.T
 
 func writeReflectionCheckDecision(t *testing.T, root string, response *contracts.ReflectionResult) {
 	t.Helper()
-	data, err := protojson.Marshal(&contracts.ReflectionDecision{LearningDecision: response.LearningDecision, NoChangeReason: response.NoChangeReason, PlaybookIds: response.ProposedArtifactIds})
+	data, err := protojson.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}

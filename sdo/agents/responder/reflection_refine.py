@@ -48,7 +48,7 @@ def refine_learning_request(*, outcome: OutcomeRecord, closure: IncidentClosure,
         "smallest change to the existing program: run `sdo-operator memory ls`, read the installed "
         "sdo-playbook-authoring and sdo-memory skills, edit the final files in `.sdo/` of this checkout, call the "
         "sdo_reflection check_memory tool until it exits zero, and return learning_decision=updated with "
-        "playbook_ids listing every changed logical playbook ID. Use logical IDs only, never physical memory "
+        "proposed_artifact_ids listing every changed logical playbook ID. Use logical IDs only, never physical memory "
         "paths. Source edits are not part of reflection; outcomes, goal and architecture are protected. "
         "Return decisions and logical IDs only.\n"
     )

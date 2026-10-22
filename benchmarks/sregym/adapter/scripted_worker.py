@@ -577,7 +577,7 @@ class ScriptedReflector:
         with tempfile.TemporaryDirectory(prefix="sdo-scripted-decision-") as directory:
             decision = Path(directory) / "decision.json"
             decision.write_text(
-                json.dumps({"learning_decision": "updated", "playbook_ids": [program_id]}), encoding="utf-8"
+                json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [program_id]}), encoding="utf-8"
             )
             _command(
                 ["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180
