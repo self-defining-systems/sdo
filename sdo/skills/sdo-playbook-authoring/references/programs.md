@@ -1,89 +1,52 @@
 # Direct program authoring
 
-1. Create the final program directory with `sdo-operator program scaffold --fault-class <id> --param name=Kind [--mitigate] --out .sdo/playbooks/<id>`. Keep responder ownership and incident provenance in README front matter and register the logical ID in the playbook index.
-2. Implement `diagnose.go`, optional `mitigate.go`, and Go tests against `sdo.dev/operator/sdk/program`. Use bound resources and the ReadView for names, ports and images. Shared helpers live in the diagnostics module's `lib/` packages. Diagnose only reads; mitigation returns a typed plan. Consult the installed playbook-program example for the current SDK.
-3. Copy the selected controller open capture, fixed capture and phase-specific primitive recordings byte-for-byte from the read-only incident capture mount into a corpus directory as `open.json`, `fixed.json` and `recordings.json`. Use the fixed bytes for `healthy.json`. Choose the earliest pre-mitigation phase (`open@detect`, `open@settle` or `open@pre-apply`) whose capture shows the cause; detect time is not required, and the validator accepts any of them.
-4. Author `labels.json` with `root_cause_program_ids`, `bindings`, `peer_bindings`, and `provenance` (`incident_id`, `open_at`, `open_sha256`, `fixed_sha256`). Bind a healthy same-kind peer from the fixed snapshot. Synthetic tightening cases use `no_match_program_ids` and `synthetic_no_match_reason`; they cannot replace captured positive evidence for a new program.
-5. Keep README prose to judgement and role placeholders. Do not persist shell commands or physical memory paths in authored content. Format changed Go files with gofmt.
-6. Run `sdo-operator memory check` and fix diagnostics in the same checkout until green. It checks source/import/library/README/corpus policy, provenance, compilation, vet, ordinary tests and generated open/fixed/healthy, rename and mitigation replay tests. Return a decision and changed logical playbook IDs; the broker independently checks the same final bytes.
+Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a bound resource view;
+mitigation returns typed actions. Shared read helpers come from the diagnostics module's library packages.
+Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
-There is no `program propose` command or scratch projection. A failed local check never authorizes publication.
+A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
+fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
+The worker's authoring reference tool supplies the current worked routing example alongside this guide.
 
-## Keep source-restoration mitigators
+## Evidence and corpus
 
-Keep `mitigate.go` for image, readiness and ConfigMap restoration from accepted
-source. Never delete a mitigator merely because its effect cannot be simulated.
-The shared validator first validates its plan. A plan containing any effect other
-than `SetField` is accepted with an informational `skipped_unreplayable_effect`
-note; no post-plan effect is replayed for that plan. `SetField`-only plans still
-must repair the open fixture and return NoMatch on the projected state.
+Use the captures actually present in the incident evidence inventory. The current controller captures the
+incident-open boundary and the independently verified fixed boundary; it does not promise intermediate
+snapshots. A symptom observed later in the responder session cannot be backfilled into the open capture.
+An unsupported positive case is an evidence gap.
 
-Diagnosis replay stays mandatory: open Match, fixed/healthy-peer NoMatch,
-generalization and rename invariance all still run. Missing diagnosis primitives
-remain Unknown; a mitigation skip cannot supply missing diagnosis evidence.
+The [generated runtime contract](../../sdo-memory/references/runtime.md) distinguishes capture filenames
+from provenance phase values. The corpus creation tool copies open, fixed and primitive recordings exactly,
+uses fixed bytes for the healthy snapshot, and derives digests and incident provenance. Supply the confirmed
+program IDs, affected bindings and a healthy same-kind peer from fixed evidence. Accepted cases are immutable;
+new observations get a new case ID. Synthetic tightening cases need a concrete negative reason and negative
+program labels; they cannot replace captured positive evidence.
 
-This minimal source-restoration pattern uses a source contradiction already
-established by the diagnosis. Narrow Match to the observed mechanism, such as a
-source image difference plus a selected Pod's ImagePullBackOff, or an incorrect
-readiness probe. Source/baseline differences used in diagnosis need recorded
-primitive answers in every required corpus phase.
+Diagnosis replay requires Match at open and NoMatch at fixed and healthy peers, including consistently renamed
+resources, labels, ports and images. Prove matching and near-miss cases. Unknown or failed primitive reads stay
+Unknown; empty or absent observations never prove success or refusal.
 
-```go
-func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
-    verdict, err := p.Diagnose(ctx, v, b)
-    if err != nil || verdict.Result != program.Match { return program.Plan{}, err }
-    return program.Plan{Actions: []program.Action{
-        program.ReconcileFromSource{Ref: b["workload"]},
-    }}, nil
-}
-```
+## Source restoration
 
-Skipped replay proves no repair and earns no origin learning credit. The default
-fast path requires three independently verified live successes and zero failures
-for the unchanged accepted revision. Use a matching program's plan/apply tools
-when available. An ad-hoc repair can also earn a live credit when the controller
-has a pre-repair matching plan, successful receipts covering every planned
-resource, exact observed plan equivalence, a bound post-repair NoMatch and an
-independently successful outcome. Merely flipping Match to NoMatch is insufficient.
-The live executor's object/rollout checks still apply; a skipped replay does not
-authorize an unsupported mutation such as recreating a missing target.
+Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
+ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
+produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
+replay remains mandatory. SetField-only plans must replay to NoMatch after applying their patches.
+Never delete a valid mitigator merely to eliminate a skipped-effect note.
 
-## Routing: observe listeners before SetField repair
+## Routing
 
-Declared container ports select probe candidates; they never prove a listener.
-For a numeric targetPort mismatch, require selected ready Pods with a successful
-recorded `ProbeTCP(pod, candidatePort)` and a refused
-`ProbeTCP(pod, faultyTargetPort)`. An unrecorded call or read error remains Unknown.
-A target that also accepts connections, an unready Pod, multiple candidate ports,
-or other ambiguity should remain Unknown or NeedsJudgement.
+Declared container ports identify probe candidates; they do not prove listeners. A numeric targetPort repair
+requires captured successful TCP probes at the candidate port and refused probes at the faulty port for the
+selected ready Pods. An unready Pod, a second working target, multiple candidates or absent probes leave the
+relation ambiguous. Choose healthy peers with recorded observations.
 
-The controller records real TCP results even before a program exists, for finding
-Services and up to two healthy peers. It uses the phase snapshot's Pod IP through
-the isolated prober. Sampling is limited to 24 probes, two Pods per Service, four
-backend ports per Pod, 200 ms per probe and two seconds per phase. Capped or
-unavailable observations are not negative evidence. Copy the phase recordings
-byte-for-byte, including fixed observations; choose a peer with recorded evidence.
+Keep a SetField mitigator when these observations prove the replacement and replay clears the diagnosis.
+Replay may retain direct-Pod probe observations across a Service-only patch when the complete Pod snapshot is
+unchanged. It never treats a Service probe or a fixed-phase answer as proof of a projected repair.
 
-The installed `service-targetport-mismatch` example now includes this diagnosis,
-its SetField mitigator, ready-Pod snapshots and phase-specific TCP recordings.
-Its narrow worked plan derives the replacement from the unique common declared
-port **after** confirming it accepts connections on all selected ready Pods:
+## Acceptance
 
-```go
-func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
-    verdict, err := p.Diagnose(ctx, v, b) // positive listener + refused target TCP observations
-    if err != nil || verdict.Result != program.Match { return program.Plan{}, err }
-    _, _, port, ok := replacement(v, b) // same unique candidate verified by Diagnose
-    if !ok { return program.Plan{}, nil }
-    return program.Plan{Actions: []program.Action{program.SetField{
-        Ref: b["service"], Path: "spec.ports[0].targetPort", Value: port,
-        Reason: "use observed selected-Pod listener",
-    }}}, nil
-}
-```
-
-SetField replay still requires post-plan NoMatch. For Service-targetPort-only edits,
-replay can retain already observed direct-Pod TCP inputs when the complete Pod
-snapshot is unchanged. It never reuses a Service probe as proof that routing was
-repaired, copies a fixed answer, or invents a successful connection. Other edits
-retain the ordinary no-external-observations post-plan policy.
+The complete memory check compiles, vets and tests the authored sources, validates imports, ownership,
+provenance, captured bytes and README policy, and runs generated corpus, rename and mitigation replay.
+Fix diagnostics in the final proposal files; the broker checks the same files independently.

@@ -1,36 +1,29 @@
 ---
 name: sdo-playbook-authoring
-description: Use when writing or refining an SDO playbook - judgement prose, deterministic Go programs, shared helpers and captured replay cases for a fault class. Gives the memory new workflow, validator rules, and a complete example.
+description: Learn or refine reusable playbooks and deterministic Go programs from independently verified incident outcomes. Covers source grounding, captured evidence, parameterized diagnosis and replay.
 ---
 
 # Authoring a playbook
 
-A playbook generalizes one verified repair into instructions for the same failure mechanism on different
-resources. Read the `sdo-memory` skill first for artifact IDs and the `memory` commands.
+A playbook captures a verified failure mechanism and repair for reuse on different resources.
+The installed `sdo-memory` skill defines ownership, logical IDs and the generated decision/tool contract.
 
-## Workflow
+1. Compare the confirmed mechanism and repair with accepted playbooks. Refine one when only identity or a
+   parameter differs; create one only for a different mechanism or repair.
+2. For deterministic programs, read [program authoring](references/programs.md) before editing and the
+   [generated program SDK](references/program-sdk.md) before choosing API types. The
+   [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
+   shipped references without searching installation directories.
+3. Ground positive cases in controller captures. Use
+   [create_corpus](../sdo-memory/references/runtime.md#create_corpus) to preserve captured bytes and supply
+   provenance. Inspect available evidence before deciding a cause is learnable; later live observations do
+   not establish what an earlier capture contained.
+4. Author final files in the proposal checkout and register every playbook in its index. Keep program README
+   prose to judgement and context; keep scripts out of program directories. Prose-only playbooks may use
+   named, executable scripts for repeatable diagnosis or repair. The
+   [restart-loop example](assets/restart-loop/README.md) illustrates a prose playbook.
+5. Validate with the typed memory check, then return the same learning decision and every changed logical ID.
+   Report an evidence or SDK gap when no captured case supports a safe reusable relation.
 
-1. Look before you add: `sdo-operator memory ls --kind playbook`. Refine an existing playbook when the mechanism
-   and repair are the same; create a new one only for a different mechanism or repair.
-2. Scaffold: `sdo-operator memory new playbook <id> --incident <incident-id>`. The ID is lowercase letters,
-   digits, `-` and `_`, starting with a letter. The command writes the playbook and registers it in the index; do
-   not omit the index entry. For a program, use `program scaffold --fault-class <id> --param name=Kind
-   [--mitigate] --out .sdo/playbooks/<id>` to create final files directly, then add its logical index entry.
-3. Fill in the playbook ([restart-loop example](assets/restart-loop/README.md) is a complete example): front matter unchanged except
-   what the scaffold set, then symptoms, diagnosis, repair, and verification.
-4. For deterministic programs, read [program authoring](references/programs.md) and keep the README to judgement
-   prose with no shell commands or persisted scripts. For prose-only playbooks, add scripts only when they make diagnosis or verification repeatable. Put them in the playbook's `scripts/`
-   directory as executable `.sh` files, name each one in the playbook text, and keep them read-only unless the
-   playbook explicitly repairs with them.
-5. If a detector should surface the playbook, add its ID to that detector's `possiblePlaybooks` and `Playbooks`
-   (see `sdo-detector-authoring`).
-6. Run `sdo-operator memory check` until it exits 0.
-
-## Principles
-
-- Write only what was confirmed by evidence in the incident, never a guess.
-- Describe resources by role with placeholders such as `<TARGET_RESOURCE>`; no concrete names from the incident.
-- Diagnosis first: say how to confirm the fault on the live object before repairing.
-- Repairs change the source of truth (source manifests, then redeploy), not only live objects.
-- Refer to other playbooks and scripts by logical ID, never by file path.
-- Read [validator rules](references/rules.md) when a diagnostic names a `playbook.*`, `script.*`, or `text.*` rule.
+Use role placeholders in prose, bound resources in Go, and accepted source for desired state.
+Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.

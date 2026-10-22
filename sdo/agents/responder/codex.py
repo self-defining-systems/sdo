@@ -13,6 +13,7 @@ from google.protobuf import json_format
 from libs.agent_cli.structured import AGENT_PROVIDERS, StructuredTurnError, run_structured_turn, turn_usage
 from sdo.agents.provider import MODEL_ENV, resolve_agent
 from sdo.agents.responder import recorded_actions
+from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import EvidenceReferenceError, parse_incident_result
 from sdo.agents.responder.session_turn import (
@@ -656,6 +657,7 @@ def _responder_prompt(request: IncidentRequest) -> str:
     request_json = json.dumps(_prompt_request(request), indent=2)
     return (
         f"You are the SDO incident responder for incident {request.incident_id}.\n\n"
+        f"Skill index: {SKILLS_ROOT}/sdo-memory/SKILL.md. Read relevant guidance once. "
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
         f"{strategy}"
         f"{program_guidance}"
