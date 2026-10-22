@@ -105,3 +105,33 @@ func TestStateStoreStillFencesAForeignWriterAfterALostReply(t *testing.T) {
 		t.Fatalf("foreign writer was adopted: %v", err)
 	}
 }
+
+// A later write that fails before landing must not make the store forget the
+// earlier one that did land.
+func TestStateStoreAdoptsALostReplyAcrossALaterFailedWrite(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	store := lifecycleio.NewConfigMapStateStore(client, "demo", "state")
+	revision, err := store.Save(ctx, stateAt(1), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loseNextReply(client)
+	if _, err := store.Save(ctx, stateAt(2), revision); err == nil {
+		t.Fatal("lost reply was not reported")
+	}
+	refuse := true
+	client.PrependReactor("update", "configmaps", func(ktesting.Action) (bool, k8sruntime.Object, error) {
+		if refuse {
+			refuse = false
+			return true, nil, errors.New("simulated: connection refused")
+		}
+		return false, nil, nil
+	})
+	if _, err := store.Save(ctx, stateAt(3), revision); err == nil {
+		t.Fatal("refused write was not reported")
+	}
+	if _, err := store.Save(ctx, stateAt(4), revision); err != nil {
+		t.Fatalf("save after a lost reply and a refused write: %v", err)
+	}
+}

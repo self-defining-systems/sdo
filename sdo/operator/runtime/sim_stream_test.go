@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -405,50 +406,131 @@ func (w *simWorld) idle() bool {
 	return !closing
 }
 
+// simInjection breaks one Service at a virtual tick.
+type simInjection struct{ tick, service int }
+
+// simStreamSchedule is the fault schedule of one stream run: when Services
+// break, and how often the controller process restarts (per half-tick).
+type simStreamSchedule struct {
+	injections []simInjection
+	restartP   float64
+}
+
+// drawSimStreamSchedule is the seed's default schedule.
+func drawSimStreamSchedule(rng *rand.Rand) simStreamSchedule {
+	sched := simStreamSchedule{injections: make([]simInjection, 3+rng.IntN(4))}
+	for i := range sched.injections {
+		sched.injections[i] = simInjection{tick: 2 + rng.IntN(600), service: rng.IntN(simStreamServices)}
+	}
+	sched.restartP = 0.02 * rng.Float64()
+	return sched
+}
+
+// decodeSimStreamSchedule reads a schedule from fuzz bytes: one byte of restart
+// probability, then three bytes per injection (tick high, tick low, service).
+func decodeSimStreamSchedule(raw []byte) simStreamSchedule {
+	sched := simStreamSchedule{}
+	if len(raw) > 0 {
+		sched.restartP = 0.02 * float64(raw[0]) / 255
+		raw = raw[1:]
+	}
+	for ; len(raw) >= 3 && len(sched.injections) < 8; raw = raw[3:] {
+		sched.injections = append(sched.injections, simInjection{
+			tick:    2 + (int(raw[0])<<8|int(raw[1]))%600,
+			service: int(raw[2]) % simStreamServices,
+		})
+	}
+	return sched
+}
+
+// simStreamRun drives one incident stream; a nil schedule draws the seed's.
+func simStreamRun(t *testing.T, seed uint64, sched *simStreamSchedule) {
+	t.Helper()
+	w := newSimWorld(t, seed)
+	if sched == nil {
+		drawn := drawSimStreamSchedule(w.rng)
+		sched = &drawn
+	}
+	for tick := 0; tick < simStreamMaxTicks; tick++ {
+		w.clock.now = w.clock.now.Add(time.Second + time.Duration(w.rng.IntN(400))*time.Millisecond)
+		for _, injection := range sched.injections {
+			if injection.tick == tick {
+				w.setPort(simServiceName(injection.service), 9999)
+			}
+		}
+		if w.rng.Float64() < sched.restartP {
+			w.restart()
+		}
+		w.step()
+		if w.rng.Float64() < sched.restartP {
+			w.restart()
+		}
+		w.drain()
+		if tick > 650 {
+			if review, _ := w.controller.DetectorReviewStatus(); review || w.idle() {
+				break
+			}
+		}
+	}
+	// A responder that never repairs exhausts the follow-ups and leaves the incident in
+	// detector review, which by design waits for health to clear (docs/architecture.md).
+	// Any other non-idle end is a stall.
+	review, reason := w.controller.DetectorReviewStatus()
+	if !w.idle() && !review {
+		w.violate("stalled: incident open=%t faulty=%v after %d ticks", w.controller.IncidentOpen(), w.faulty(), simStreamMaxTicks)
+	}
+	if review {
+		t.Logf("ended in detector review: %s", reason)
+	}
+	t.Logf("injections=%d closures=%d dispatches=%d restarts=%d storeFaults=%d", len(sched.injections), len(w.closed), w.responder.calls, w.restarts, w.storeFails)
+	if len(w.violations) > 0 {
+		t.Fatalf("invariants violated (replay with SDO_SIM_SEED=%d):\n%v", seed, w.violations)
+	}
+}
+
 func TestSimIncidentStream(t *testing.T) {
-	sweepSimSeedsN(t, simStreamDefaultRuns, func(t *testing.T, seed uint64) {
-		w := newSimWorld(t, seed)
-		injections := 3 + w.rng.IntN(4)
-		injectAt := make([]int, injections)
-		for i := range injectAt {
-			injectAt[i] = 2 + w.rng.IntN(600)
-		}
-		restartP := 0.02 * w.rng.Float64()
-		for tick := 0; tick < simStreamMaxTicks; tick++ {
-			w.clock.now = w.clock.now.Add(time.Second + time.Duration(w.rng.IntN(400))*time.Millisecond)
-			for _, at := range injectAt {
-				if at == tick {
-					name := simServiceName(w.rng.IntN(simStreamServices))
-					w.setPort(name, 9999)
-				}
-			}
-			if w.rng.Float64() < restartP {
-				w.restart()
-			}
-			w.step()
-			if w.rng.Float64() < restartP {
-				w.restart()
-			}
-			w.drain()
-			if tick > 650 {
-				if review, _ := w.controller.DetectorReviewStatus(); review || w.idle() {
-					break
-				}
-			}
-		}
-		// A responder that never repairs exhausts the follow-ups and leaves the incident in
-		// detector review, which by design waits for health to clear (docs/architecture.md).
-		// Any other non-idle end is a stall.
-		review, reason := w.controller.DetectorReviewStatus()
-		if !w.idle() && !review {
-			w.violate("stalled: incident open=%t faulty=%v after %d ticks", w.controller.IncidentOpen(), w.faulty(), simStreamMaxTicks)
-		}
-		if review {
-			t.Logf("ended in detector review: %s", reason)
-		}
-		t.Logf("injections=%d closures=%d dispatches=%d restarts=%d storeFaults=%d", injections, len(w.closed), w.responder.calls, w.restarts, w.storeFails)
-		if len(w.violations) > 0 {
-			t.Fatalf("invariants violated (replay with SDO_SIM_SEED=%d):\n%v", seed, w.violations)
-		}
+	sweepSimSeedsN(t, simStreamDefaultRuns, func(t *testing.T, seed uint64) { simStreamRun(t, seed, nil) })
+}
+
+// FuzzSimIncidentStream lets the Go fuzzer search seeds and fault schedules:
+//
+//	go test ./sdo/operator/runtime -run '^$' -fuzz FuzzSimIncidentStream -fuzztime 4m
+//
+// A crashing input is saved under testdata/fuzz and replays as a normal test.
+func FuzzSimIncidentStream(f *testing.F) {
+	f.Add(uint64(1), []byte{40, 0, 10, 1, 0, 200, 2, 1, 90, 0})
+	f.Add(uint64(9), []byte{200, 0, 5, 0, 0, 5, 1, 0, 5, 2})
+	f.Add(uint64(21), []byte{}) // no injections: the stream stays idle
+	f.Fuzz(func(t *testing.T, seed uint64, raw []byte) {
+		sched := decodeSimStreamSchedule(raw)
+		simStreamRun(t, seed, &sched)
 	})
 }
+
+// TestSimSoak runs seeded plan and stream sweeps until SDO_SIM_SOAK (a Go
+// duration, capped at five minutes) elapses, and reports the first failing seed.
+//
+//	SDO_SIM_SOAK=4m go test ./sdo/operator/runtime -run TestSimSoak
+func TestSimSoak(t *testing.T) {
+	raw := os.Getenv("SDO_SIM_SOAK")
+	if raw == "" {
+		t.Skip("set SDO_SIM_SOAK=<duration> to run the soak")
+	}
+	budget, err := time.ParseDuration(raw)
+	if err != nil || budget <= 0 {
+		t.Fatalf("invalid SDO_SIM_SOAK %q", raw)
+	}
+	budget = min(budget, simSoakCap)
+	deadline := time.Now().Add(budget)
+	runs := 0
+	for seed := uint64(1_000_000); time.Now().Before(deadline); seed++ {
+		runs++
+		if !t.Run(fmt.Sprintf("stream/seed=%d", seed), func(t *testing.T) { simStreamRun(t, seed, nil) }) {
+			t.Fatalf("soak failed at seed %d (replay: SDO_SIM_SEED=%d go test -run TestSimIncidentStream)", seed, seed)
+		}
+	}
+	t.Logf("soak ran %d stream seeds in %s", runs, budget)
+}
+
+// simSoakCap is the project's wall-clock cap for fuzz and property runs.
+const simSoakCap = 5 * time.Minute
