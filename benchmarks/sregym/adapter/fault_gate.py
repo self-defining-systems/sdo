@@ -9,6 +9,7 @@ controller has evaluated its detectors once with no active finding.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -22,8 +23,12 @@ if TYPE_CHECKING:
 INJECT_FAULT_ENDPOINT = "/inject_fault"
 AWAITING_FAULT_INJECTION = "awaiting_fault_injection"
 BASELINE_TIMEOUT_SECONDS = 1800
+# Reuse needs an informer resync and a fresh evaluation, not lifecycle setup.
+RESUMED_BASELINE_TIMEOUT_SECONDS = 300
 BASELINE_POLL_SECONDS = 1.0
 PERSISTENT_LOG_TAIL = 2000
+BASELINE_PROGRESS_SECONDS = 30.0
+logger = logging.getLogger(__name__)
 
 
 class FaultGateError(RuntimeError):
@@ -157,13 +162,14 @@ def inject_fault_after_resumed_baseline(
     kubectl_runner: KubectlRunner,
     monotonic: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
-    timeout_seconds: float = BASELINE_TIMEOUT_SECONDS,
+    timeout_seconds: float = RESUMED_BASELINE_TIMEOUT_SECONDS,
     poll_seconds: float = BASELINE_POLL_SECONDS,
 ) -> dict[str, float]:
     """Inject once the persistent controller reports all-clear after resuming ``generation``."""
 
     started = monotonic()
     deadline = started + timeout_seconds
+    next_progress = started
     last_error = f"controller has not resumed maintenance generation {generation!r}"
     while monotonic() < deadline:
         completed = kubectl_runner(
@@ -185,5 +191,31 @@ def inject_fault_after_resumed_baseline(
             }
         if completed.returncode != 0:
             last_error = (completed.stderr or completed.stdout or "").strip() or last_error
-        sleep(poll_seconds)
-    raise FaultGateError(f"controller did not report an all-clear baseline within {timeout_seconds:.0f}s: {last_error}")
+        elif active is None:
+            # Informer authorization failures precede the resume record: the
+            # controller emits it only after its namespace cache has synced.
+            # Keep waiting for recovery, but expose the actual readiness error.
+            forbidden = next(
+                (line.strip() for line in reversed(completed.stdout.splitlines()) if " is forbidden:" in line), None
+            )
+            if forbidden:
+                last_error = (
+                    f"check namespace-scoped Role/RoleBinding grants for the controller ServiceAccount: {forbidden}"
+                )
+        now = monotonic()
+        if now >= next_progress:
+            logger.info(
+                "waiting for controller baseline in %s, generation %s (%.0f/%.0fs): %s",
+                control_namespace,
+                generation,
+                now - started,
+                timeout_seconds,
+                last_error,
+            )
+            next_progress = now + BASELINE_PROGRESS_SECONDS
+        sleep(min(poll_seconds, max(0.0, deadline - now)))
+    raise FaultGateError(
+        f"controller in {control_namespace!r}, generation {generation!r}, did not report an all-clear baseline "
+        f"within {timeout_seconds:.0f}s: {last_error}; inspect "
+        f"kubectl -n {control_namespace} logs job/sdo-controller-run --container=controller"
+    )

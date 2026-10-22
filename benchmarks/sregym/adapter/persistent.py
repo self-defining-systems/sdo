@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.cluster_resources import kubectl
-from benchmarks.sregym.adapter.fault_gate import BASELINE_TIMEOUT_SECONDS, inject_fault_after_resumed_baseline
+from benchmarks.sregym.adapter.fault_gate import RESUMED_BASELINE_TIMEOUT_SECONDS, inject_fault_after_resumed_baseline
 from benchmarks.sregym.adapter.native_operator import (
     NativeOperatorError,
 )
@@ -361,7 +361,7 @@ class KubectlClusterOps:
             generation,
             inject=inject,
             kubectl_runner=kubectl,
-            timeout_seconds=BASELINE_TIMEOUT_SECONDS * scale,
+            timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS * scale,
             poll_seconds=min(1.0, scale),
         )
 
@@ -508,10 +508,15 @@ def run_persistent_stage(
             pod = _wait_for_controller_pod(ops, control, clock)
             install_inspected = True
     else:
-        # The saved fingerprint and the live Pod UID already establish this
-        # controller's identity; another install inspection costs a full Go
-        # process startup on every incident in the same application lane.
+        # Recreating the app namespace deletes its grants even when the
+        # controller Pod and accepted repository survive. The Go inspector
+        # owns restoring those grants; identity alone cannot establish access.
         assert pod is not None
+        if not ops.install(replace(config, reuse_existing=True)):
+            raise PersistentControllerError(
+                "the running controller was not reused during application access restoration"
+            )
+        install_inspected = True
     install_inspection_ready = clock.monotonic()
     if restart_after_reset:
         assert record is not None

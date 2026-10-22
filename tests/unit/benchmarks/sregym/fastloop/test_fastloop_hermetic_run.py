@@ -582,10 +582,10 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     assert all("responder_tokens" in row and "reflection_tokens" in row for row in rows)
     assert all(Path(str(row.artifacts_dir), "sdo_production_receipt_strict.json").is_file() for row in records)
     assert controller.installs == 1
-    assert controller.registrations == [REGISTRATIONS]
+    assert controller.registrations == [REGISTRATIONS, REGISTRATIONS]
     assert records[0].run_prelude_phase_seconds["total_before_first_incident"] >= 0
     assert records[1].run_prelude_phase_seconds == {}
-    assert records[1].driver_phase_timings_seconds["controller_install_inspection"] == 0
+    assert records[1].driver_phase_timings_seconds["controller_install_inspection"] >= 0
     assert records[1].fault_gate_timings_seconds["controller_baseline_wait"] >= 0
     assert (workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
     corpus = next((workspace / ".sdo/corpus").iterdir())

@@ -151,21 +151,18 @@ an estimate of Kubernetes speed from the fake API.
 | Reflection and drain | 271.1 s | 71.3 s |
 | Incident wall time | 426.4 s | 143.1 s |
 
-The install inspection is now skipped after a fresh lifecycle has already
-created a controller Pod, and on later stages when the stored lifecycle
-fingerprint and the live Pod UID still match. A before/after run of the
-persistent-stage function against the same hermetic fake operations and fake
-clock, with each install inspection charged a deterministic 35 s, measured:
+The install inspection is skipped after a fresh lifecycle has already
+created a controller Pod. Reused stages must still call the Go installer
+inspection: it restores the application namespace's Role/RoleBinding grants
+after SREGym recreates that namespace. A saved lifecycle fingerprint and
+unchanged Pod UID prove continuity, but do not prove namespace access.
+The regression test recreates the namespace at the ClusterOps boundary and
+requires grants before resume and fault injection; it also accounts for
+that inspection under `controller_install_inspection`. The persistent
+baseline gate fails after five minutes, logs progress every 30 seconds,
+and includes forbidden informer errors in its readiness failure.
 
-| Hermetic phase | First before | First after | Second before | Second after |
-| --- | ---: | ---: | ---: | ---: |
-| Inventory and lifecycle | 35.0 s | 35.0 s | 0.0 s | 0.0 s |
-| Controller install or reuse inspection | 35.0 s | 0.0 s | 35.0 s | 0.0 s |
-| Controller baseline gate | 3.0 s | 3.0 s | 3.0 s | 3.0 s |
-
-The full fake API gate reports `controller_install_inspection=0.0 s` on its
-reused stage; its baseline gate takes about 0.001 s and therefore does not
-predict the real cluster's 1.1 s. A host-side Go build of `sdk/program` with
+A host-side Go build of `sdk/program` with
 `CGO_ENABLED=0`, `GOMAXPROCS=2`, and `GOFLAGS="-mod=mod -p=2"` took 21 s with
 an empty cache and under 1 s with the same cache warmed or copied into a
 new cache directory. Image build time and in-Pod cache-copy time remain
