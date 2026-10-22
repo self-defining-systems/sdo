@@ -528,7 +528,7 @@ func TestKubernetesJobDispatcherCrashReplayReattachesExactlyOnce(t *testing.T) {
 	if !containsEnvironment(container.Env, "SDO_SREGYM_API_BASE", "http://host.docker.internal:8123") {
 		t.Fatalf("responder bridge environment was not propagated: %#v", container.Env)
 	}
-	if got := container.VolumeMounts[1]; got.MountPath != request.RepositoryWorktree || got.SubPath != "shared/"+request.RepositoryWorktree[len("/workspace/"):] {
+	if got := container.VolumeMounts[0]; got.MountPath != request.RepositoryWorktree || got.SubPath != "shared/"+request.RepositoryWorktree[len("/workspace/"):] {
 		t.Fatalf("only the proposal checkout should be mounted: %#v", got)
 	}
 	if container.SecurityContext == nil || container.SecurityContext.AllowPrivilegeEscalation == nil ||

@@ -99,6 +99,9 @@ def run_reflection_task(
     history = list(request.prior_outcomes)
     closure = IncidentClosure()
     closure.CopyFrom(request.closure)
+    if closure.HasField("result") and not closure.result.program_runs:
+        # The request carries the responder's program runs once, in the outcome derived from them.
+        closure.result.program_runs.extend(outcome.program_runs)
     if (
         request.memory_snapshot.accepted_commit != request.outcome_commit
         or task.workspace.base_commit != request.outcome_commit
