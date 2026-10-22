@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from typing import TYPE_CHECKING
+from urllib.request import urlopen
 
 from benchmarks.sregym.fastloop.fake_kube import FakeKubernetesAPIServer
 
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_kubectl_reads_captured_snapshot_without_a_cluster(tmp_path: Path) -> None:
+def test_http_reads_captured_snapshot_without_a_cluster(tmp_path: Path) -> None:
     snapshot = {
         "namespace": "hotel",
         "services": [
@@ -19,15 +19,17 @@ def test_kubectl_reads_captured_snapshot_without_a_cluster(tmp_path: Path) -> No
     }
     with FakeKubernetesAPIServer(snapshot) as server:
         kubeconfig = server.write_kubeconfig(tmp_path / "kubeconfig")
-        result = subprocess.run(
-            ["kubectl", "--kubeconfig", str(kubeconfig), "-n", "hotel", "get", "service", "front", "-o", "json"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        )
+        config = json.loads(kubeconfig.read_text())
+        endpoint = config["clusters"][0]["cluster"]["server"]
+        assert config["contexts"][0]["context"]["namespace"] == "hotel"
+        for path in ("/api", "/apis", "/api/v1"):
+            with urlopen(endpoint + path, timeout=5) as response:
+                assert json.load(response)["kind"] in {"APIVersions", "APIGroupList", "APIResourceList"}
+        with urlopen(endpoint + "/api/v1/namespaces/hotel/services/front", timeout=5) as response:
+            service = json.load(response)
 
-    assert json.loads(result.stdout)["spec"]["ports"][0]["targetPort"] == 9999
+    assert service["kind"] == "Service"
+    assert service["spec"]["ports"][0]["targetPort"] == 9999
 
 
 def test_fake_api_accepts_go_snapshot_null_collections() -> None:
