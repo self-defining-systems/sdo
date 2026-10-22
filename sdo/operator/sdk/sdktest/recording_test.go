@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,4 +115,39 @@ func TestMitigatorGeneralization(t *testing.T) {
 		t.Fatal(err)
 	}
 	CheckMitigatorGeneralization(t, exampleMitigator{}, c)
+}
+
+func TestConcurrentRecordingAndReplay(t *testing.T) {
+	ref := sdk.ObjectRef{Kind: "Pod", Name: "app", Namespace: "demo"}
+	var callbacks int
+	recording := &RecordingReadView{
+		ReadView: liveReadView{Snapshot{NamespaceName: "live"}},
+		OnRecord: func(PrimitiveCall) { callbacks++ },
+	}
+	concurrentProbes := func(view program.ReadView) {
+		t.Helper()
+		start := make(chan struct{})
+		var workers sync.WaitGroup
+		for range 32 {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				<-start
+				if got, err := view.ProbeTCP(ref, 8080); err != nil || !got.Success {
+					t.Errorf("concurrent TCP probe: %+v %v", got, err)
+				}
+			}()
+		}
+		close(start)
+		workers.Wait()
+	}
+	concurrentProbes(recording)
+	if len(recording.Calls) != 32 || callbacks != 32 {
+		t.Fatalf("lost observations: calls=%d callbacks=%d", len(recording.Calls), callbacks)
+	}
+	replay := &ReplayReadView{Calls: recording.Calls}
+	concurrentProbes(replay)
+	if _, err := replay.ProbeTCP(ref, 8080); err == nil {
+		t.Fatal("concurrent replay did not consume every recorded call exactly once")
+	}
 }

@@ -29,3 +29,21 @@ acceptance. The toy tier therefore uses Calico. For reuse, inspect the later
 outcome's `drift.<program>` finding and the program run's `binding_source=hint`.
 `--no-checkpoints` skips optional replay export, while preserving real outcomes,
 strict receipts, corpus validation and broker decisions.
+
+Routing capture now records actual `ProbeTCP` results for finding Services and up
+to two ready peer Services, including direct selected-Pod probes at numeric target
+and declared candidate ports. Calls use captured Pod IPs in the existing isolated
+prober; no credentials or cluster mutation are added. Automatic capture is capped
+at 24 probes per phase, two Pods per Service, four backend ports per Pod, 200 ms
+per probe and two seconds total. Open recordings live in the existing protected
+`open@<phase>-recordings.json`; fixed observations carry `phase: fixed`. Per-phase
+`*-routing.done` files prevent resampling an immutable capture. Missing, capped,
+or failed reads remain Unknown, not a refused connection.
+
+A routing Match needs a successful candidate-port TCP result and refused faulty
+numeric target on selected ready Pods; declarations alone prove no listener.
+Healthy-peer replay also needs recorded evidence. Service-targetPort-only
+SetField replay retains original direct-Pod TCP observations only when the full
+captured Pod object is unchanged. It never reuses Service probes or fixed answers
+to prove an effect. The installed routing example exercises this stricter
+predicate and complete repair-to-NoMatch replay through the shared compiler gate.

@@ -419,3 +419,11 @@ func (c trafficContext) TrafficWindow(workload string) (traffic.Window, bool) {
 	window, ok := c.windows[workload]
 	return window, ok
 }
+
+// ProbePod carries only the address already observed in the namespace snapshot.
+// The credential-free prober uses its existing application-only network policy.
+func (c HTTPProberClient) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip string, port int32) (program.ProbeResult, error) {
+	var result program.ProbeResult
+	err := c.do(ctx, http.MethodPost, prober.PathPrimitive, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip}, &result)
+	return result, err
+}

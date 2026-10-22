@@ -126,6 +126,8 @@ type RecordingReadView struct {
 	OnRecord func(PrimitiveCall)
 	// Has unexported fields.
 }
+    RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
+    must support concurrent reads; inspect Calls only after all readers finish.
 
 func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
@@ -140,8 +142,12 @@ func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.Pro
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
+
 	// Has unexported fields.
 }
+    ReplayReadView consumes each recorded call at most once, including when
+    diagnoses share the view. Snapshot and Calls must remain immutable during
+    use.
 
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 

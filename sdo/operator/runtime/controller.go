@@ -629,6 +629,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace); err != nil {
 			return requeue(fmt.Errorf("capture incident open snapshot: %w", err))
 		}
+		if c.drift != nil && c.drift.View != nil {
+			if err := captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, request.IncidentID, "open@detect", request.Findings, c.drift.View(snapshot)); err != nil {
+				return requeue(fmt.Errorf("capture incident routing evidence: %w", err))
+			}
+		}
+
 	}
 	if c.Baseline != nil {
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
@@ -1097,8 +1103,12 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		if c.drift != nil && c.drift.View != nil {
 			incidentID := c.currentIncidentRequest.IncidentID
+			findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 			c.mu.Unlock()
 			err := memory.CaptureRepairedProgramReads(c.config.CorpusSessionRoot, incidentID, c.drift.View)
+			if err == nil {
+				err = captureRoutingEvidence(ctx, c.config.CorpusSessionRoot, incidentID, "fixed", findings, c.drift.View(snapshot))
+			}
 			c.mu.Lock()
 			if err != nil {
 				c.mu.Unlock()

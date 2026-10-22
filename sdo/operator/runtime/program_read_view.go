@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,6 +20,8 @@ import (
 )
 
 // PrimitiveProber performs one-off probes in the isolated prober process.
+// Implementations must support concurrent calls from shared diagnosis views.
+// A diagnosis may also finish its reads after RunDiagnose returns on timeout.
 type PrimitiveProber interface {
 	Probe(context.Context, sdk.ObjectRef, int32, *program.HTTPProbe) (program.ProbeResult, error)
 }
@@ -69,6 +72,28 @@ func (v LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Durat
 func int64ptr(value int64) *int64 { return &value }
 
 func (v LiveReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error) {
+	if ref.Kind == "Pod" {
+		if ref.Namespace != v.Namespace() || ref.Name == "" || port < 1 || port > 65535 {
+			return program.ProbeResult{}, errors.New("Pod TCP probe requires a namespaced Pod and valid port")
+		}
+		prober, ok := v.Prober.(interface {
+			ProbePod(context.Context, sdk.ObjectRef, string, int32) (program.ProbeResult, error)
+		})
+		if !ok {
+			return program.ProbeResult{}, errors.New("Pod TCP prober is unavailable")
+		}
+		for _, pod := range v.Pods() {
+			if pod.Namespace == ref.Namespace && pod.Name == ref.Name {
+				if pod.Spec.HostNetwork || net.ParseIP(pod.Status.PodIP) == nil {
+					return program.ProbeResult{}, errors.New("Pod TCP probe requires a captured application Pod IP without host networking")
+				}
+				ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
+				defer cancel()
+				return prober.ProbePod(ctx, ref, pod.Status.PodIP, port)
+			}
+		}
+		return program.ProbeResult{}, errors.New("Pod TCP target is absent from snapshot")
+	}
 	return v.probe(ref, port, nil)
 }
 

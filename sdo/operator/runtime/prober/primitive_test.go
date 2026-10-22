@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,5 +51,37 @@ func TestPrimitiveProbeStaysInConfiguredNamespaceAndUsesProberNetwork(t *testing
 	ref.Namespace = "app"
 	if _, err := p.Primitive(context.Background(), prober.PrimitiveRequest{To: ref, Port: 80, HTTP: &program.HTTPProbe{Method: "POST", Path: "/"}}); err == nil {
 		t.Fatal("mutating HTTP method was allowed")
+	}
+}
+
+func TestPodTCPPrimitiveUsesControllerCapturedAddress(t *testing.T) {
+	var address string
+	p, err := prober.New(prober.Config{Namespace: "app", Catalog: catalog(), DialContext: func(_ context.Context, _ string, target string) (net.Conn, error) {
+		address = target
+		left, right := net.Pipe()
+		_ = right.Close()
+		return left, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := prober.PrimitiveRequest{To: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}, Port: 8080, PodIP: "10.0.0.5"}
+	result, err := p.Primitive(context.Background(), request)
+	if err != nil || !result.Success || address != "10.0.0.5:8080" {
+		t.Fatalf("pod primitive %+v %v %s", result, err, address)
+	}
+	request.To.Namespace = "other"
+	if _, err := p.Primitive(context.Background(), request); err == nil {
+		t.Fatal("cross namespace Pod probe allowed")
+	}
+	request.To.Namespace = "app"
+	request.PodIP = "not-an-IP"
+	if _, err := p.Primitive(context.Background(), request); err == nil {
+		t.Fatal("unvalidated Pod address allowed")
+	}
+	request.PodIP = "10.0.0.5"
+	request.HTTP = &program.HTTPProbe{Method: "GET", Path: "/"}
+	if _, err := p.Primitive(context.Background(), request); err == nil {
+		t.Fatal("Pod HTTP probe allowed")
 	}
 }

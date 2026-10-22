@@ -282,6 +282,8 @@ def test_reflection_prompt_requires_program_authoring_and_direct_corpus_checks(
         "ReconcileFromSource or Rollback",
         "Keep mitigate.go",
         "skipped_unreplayable_effect",
+        "declared ports alone never establish a listener",
+        "captured ProbeTCP",
         "three independently verified live successes",
         "container status reasons",
         "sdo.dev/operator/sdk/program",

@@ -47,3 +47,43 @@ resource, exact observed plan equivalence, a bound post-repair NoMatch and an
 independently successful outcome. Merely flipping Match to NoMatch is insufficient.
 The live executor's object/rollout checks still apply; a skipped replay does not
 authorize an unsupported mutation such as recreating a missing target.
+
+## Routing: observe listeners before SetField repair
+
+Declared container ports select probe candidates; they never prove a listener.
+For a numeric targetPort mismatch, require selected ready Pods with a successful
+recorded `ProbeTCP(pod, candidatePort)` and a refused
+`ProbeTCP(pod, faultyTargetPort)`. An unrecorded call or read error remains Unknown.
+A target that also accepts connections, an unready Pod, multiple candidate ports,
+or other ambiguity should remain Unknown or NeedsJudgement.
+
+The controller records real TCP results even before a program exists, for finding
+Services and up to two healthy peers. It uses the phase snapshot's Pod IP through
+the isolated prober. Sampling is limited to 24 probes, two Pods per Service, four
+backend ports per Pod, 200 ms per probe and two seconds per phase. Capped or
+unavailable observations are not negative evidence. Copy the phase recordings
+byte-for-byte, including fixed observations; choose a peer with recorded evidence.
+
+The installed `service-targetport-mismatch` example now includes this diagnosis,
+its SetField mitigator, ready-Pod snapshots and phase-specific TCP recordings.
+Its narrow worked plan derives the replacement from the unique common declared
+port **after** confirming it accepts connections on all selected ready Pods:
+
+```go
+func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
+    verdict, err := p.Diagnose(ctx, v, b) // positive listener + refused target TCP observations
+    if err != nil || verdict.Result != program.Match { return program.Plan{}, err }
+    _, _, port, ok := replacement(v, b) // same unique candidate verified by Diagnose
+    if !ok { return program.Plan{}, nil }
+    return program.Plan{Actions: []program.Action{program.SetField{
+        Ref: b["service"], Path: "spec.ports[0].targetPort", Value: port,
+        Reason: "use observed selected-Pod listener",
+    }}}, nil
+}
+```
+
+SetField replay still requires post-plan NoMatch. For Service-targetPort-only edits,
+replay can retain already observed direct-Pod TCP inputs when the complete Pod
+snapshot is unchanged. It never reuses a Service probe as proof that routing was
+repaired, copies a fixed answer, or invents a successful connection. Other edits
+retain the ordinary no-external-observations post-plan policy.
