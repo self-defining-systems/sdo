@@ -231,7 +231,6 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 	fixed := fixedCaptureVerdicts(ctx, outcome, n.Programs, capture, origins)
 	work := classifyCauseWork(outcome, fixed)
 	unassigned := unassignedReflectionQuestions(outcome, fixed)
-	revisions := programRunRevisions(outcome)
 	allItems := append([]*contracts.ReflectionWorkItem{}, unassigned...)
 	for _, cause := range work {
 		allItems = append(allItems, cause.Items...)
@@ -246,7 +245,7 @@ func (n NativeIncidentBroker) prepareCauseWork(ctx context.Context, outcome *con
 			continue
 		}
 		revision, err := programDependencyRevision(ctx, workspace.Worktree, workspace.BaseCommit, item.ProgramId)
-		if err != nil || revision != revisions[item.ProgramId] {
+		if err != nil || revision != item.GetProgramRevision() {
 			item.Disposition, item.Reason, item.Question = "question", "uncertain", "The accepted program revision differs from the incident evidence. Evaluate this cause without credit."
 			continue
 		}
