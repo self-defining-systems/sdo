@@ -162,22 +162,28 @@ func TestUpgradePayloadNeverStored(t *testing.T) {
 	}
 }
 
-func TestProjectionTailLatency(t *testing.T) {
+func TestLargeResponseAdmissionMarksGap(t *testing.T) {
 	// 3 MiB, below the supported 4 MiB cap. No actual credentials.
 	item := `{"metadata":{"name":"p","namespace":"app"},"spec":{"containers":[{"name":"c","env":[{"name":"MODE","value":"` + strings.Repeat("x", 3072) + `"}]}]}}`
 	payload := []byte(`{"apiVersion":"v1","kind":"PodList","items":[` + strings.TrimSuffix(strings.Repeat(item+",", 950), ",") + `]}`)
 	dir := t.TempDir()
 	store, _ := apihistory.Open(dir, "synthetic", apihistory.Limits{Queue: 1})
 	defer store.Close()
-	var total time.Duration
 	for range 5 {
-		start := time.Now()
 		store.Record(apihistory.Event{Phase: "end", Verb: "list"}, payload)
-		total += time.Since(start)
 	}
-	t.Logf("nonblocking Record mean for %d-byte PodList: %s", len(payload), total/5)
-	if total/5 > 10*time.Millisecond {
-		t.Fatal("large response projection blocked admission")
+	store.Close()
+	history, err := apihistory.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if history.Manifest.Complete || history.Manifest.Dropped == 0 || len(history.Events) == 0 {
+		t.Fatalf("missing bounded-admission gap: %+v", history.Manifest)
+	}
+	for _, event := range history.Events {
+		if event.BodyHash != "" || !event.Partial || event.Omission != "redacted_projection_budget" {
+			t.Fatalf("oversized body admitted: %+v", event)
+		}
 	}
 }
 

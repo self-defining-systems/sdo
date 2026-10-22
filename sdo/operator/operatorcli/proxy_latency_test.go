@@ -70,3 +70,29 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 		t.Error("supported response exceeds 10ms forwarding target")
 	}
 }
+
+func TestProjectionTailLatency(t *testing.T) {
+	oldProcs := runtime.GOMAXPROCS(2)
+	defer runtime.GOMAXPROCS(oldProcs)
+	// 3 MiB, below the supported 4 MiB cap. No actual credentials.
+	item := `{"metadata":{"name":"p","namespace":"app"},"spec":{"containers":[{"name":"c","env":[{"name":"MODE","value":"` + strings.Repeat("x", 3072) + `"}]}]}}`
+	payload := []byte(`{"apiVersion":"v1","kind":"PodList","items":[` + strings.TrimSuffix(strings.Repeat(item+",", 950), ",") + `]}`)
+	dir := t.TempDir()
+	store, _ := apihistory.Open(dir, "synthetic", apihistory.Limits{Queue: 1})
+	defer store.Close()
+	for range 50 {
+		store.Record(apihistory.Event{Phase: "end", Verb: "list"}, payload)
+	}
+	samples := make([]time.Duration, 200)
+	for i := range samples {
+		start := time.Now()
+		store.Record(apihistory.Event{Phase: "end", Verb: "list"}, payload)
+		samples[i] = time.Since(start)
+		time.Sleep(time.Millisecond)
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	t.Logf("200 paced admissions for %d-byte PodList: p95=%s", len(payload), samples[189])
+	if samples[189] > 10*time.Millisecond {
+		t.Fatal("large response projection blocked admission")
+	}
+}
