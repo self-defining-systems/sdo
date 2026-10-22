@@ -29,7 +29,6 @@ class _Publisher:
         self.payloads.append(payload)
 
 
-@pytest.mark.parametrize("depth", ["full", "refine"])
 @pytest.mark.parametrize(
     ("disposition", "reason", "unassigned"),
     [
@@ -44,9 +43,7 @@ class _Publisher:
         ("question", "unbound_write", True),
     ],
 )
-def test_t1_work_reaches_scripted_session(
-    tmp_path: Path, depth: str, disposition: str, reason: str, unassigned: bool
-) -> None:
+def test_t1_work_reaches_scripted_session(tmp_path: Path, disposition: str, reason: str, unassigned: bool) -> None:
     # This pre-existing transport fixture predates typed cause work. The new
     # expectations and cause items are hand-written independently of R6 tests.
     fixture = Path(__file__).resolve().parents[4] / "fixtures/sdo/contracts/go/closure_repaired.json"
@@ -58,7 +55,6 @@ def test_t1_work_reaches_scripted_session(
         outcome=OutcomeRecord(schema_version=1, incident_id=incident, classification="success"),
         outcome_commit="accepted-outcome",
         session_mode="resume",
-        depth=depth,
     )
     request.memory_snapshot.accepted_commit = "accepted-outcome"
     request.memory_snapshot.goal_markdown = "Keep the service available."
@@ -70,7 +66,7 @@ def test_t1_work_reaches_scripted_session(
         item.question = f"{marker}: resolve this Go-owned question from protected evidence."
     else:
         # A forced reflection has Go's positive corpus edit already present.
-        # A short prompt must still carry the settled item to the session.
+        # The single session prompt must still carry the settled item.
         corpus = tmp_path / ".sdo/corpus/repeat-t1/labels.json"
         corpus.parent.mkdir(parents=True)
         corpus.write_text('{"root_cause_program_ids":["contract-repair"]}', encoding="utf-8")
@@ -108,7 +104,7 @@ def test_t1_work_reaches_scripted_session(
     assert decision.learning_decision == "no_change"
     assert len(publisher.payloads) == 1
     (prompt,) = agent.prompts
-    assert marker in prompt, f"{depth} discarded controller-owned {disposition}/{reason} work"
+    assert marker in prompt, f"session discarded controller-owned {disposition}/{reason} work"
     if disposition != "covered":
         assert item.question in prompt
     assert result.proposal_id == "t1-proposal"

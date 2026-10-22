@@ -434,6 +434,9 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 		if err := task.Request.UnmarshalTo(request); err != nil {
 			return nil, err
 		}
+		if c.prior && (len(request.PriorOutcomes) != 1 || request.PriorOutcomes[0].IncidentId != "earlier") {
+			t.Errorf("prior accepted repair missing from reflection history: %v", request.PriorOutcomes)
+		}
 		run.work = request.CauseWork
 		if request.ValidationAttempt > 1 && len(request.PreviousDiagnostics) == 0 {
 			t.Error("retry lost typed rejection")
@@ -458,9 +461,6 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 	native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), SessionRoot: session, Programs: registry, Reflector: worker, ResponderBackend: "scripted", ResponderModel: "scripted", Deriver: OutcomeDeriverFunc(func(context.Context, IncidentClosure, string, string, string) (DerivedOutcome, error) {
 		return DerivedOutcome{Record: o, RequiresReflection: true}, nil
 	})}
-	if c.prior {
-		native.PriorOutcomes = memory.OpenReader(root)
-	}
 	workspace, err := native.PrepareIncident(ctx, o.IncidentId)
 	if err != nil {
 		t.Fatal(err)
