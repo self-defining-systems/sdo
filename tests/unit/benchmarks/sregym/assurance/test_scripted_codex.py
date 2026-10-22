@@ -182,7 +182,7 @@ def test_scripted_responder_repairs_through_the_real_structured_turn(
     assert [action.success for action in result.repair_actions] == [True]
     # The repair names what it mutated, so SDO can attribute the confirmed cause to it.
     assert ("NetworkPolicy", POLICY) in {(ref.kind, ref.name) for ref in result.repair_actions[0].resources}
-    assert result.verification_evidence[0].name == "sdo-incident-status"
+    assert result.verification_evidence[0].name == "deployments-available"
     assert result.verification_evidence[0].passed is True
     (turn,) = _turn_records(scripted["store"])
     assert turn["session_id"] == result.responder_session_id

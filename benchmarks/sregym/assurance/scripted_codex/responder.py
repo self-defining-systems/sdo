@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
     from .directive import Directive
 
-#: Unit tests outside a cluster point this at a stub; in a pod it is SDO's real status check.
-STATUS_COMMAND = os.environ.get("SDO_SCRIPTED_STATUS_COMMAND", "python3 -m sdo.agents.responder.status_cli")
+#: Unit tests outside a cluster point this at a stub; in a pod the check is kubectl's own availability wait.
+_STATUS_OVERRIDE = os.environ.get("SDO_SCRIPTED_STATUS_COMMAND")
 STATUS_POLL_SECONDS = float(os.environ.get("SDO_SCRIPTED_STATUS_POLL_SECONDS", "5"))
 WARM_MARKER = "Warm path: validated incident memory matches this incident."
 _WARM_PLAYBOOK = re.compile(r"--- Playbook `([^`]+)` \(inlined")
@@ -31,10 +31,17 @@ def warm_playbooks(prompt: str) -> list[str]:
     return _WARM_PLAYBOOK.findall(prompt) if WARM_MARKER in prompt else []
 
 
-def _poll_status(turn: Turn, attempts: int) -> tuple[bool, str]:
+def status_command(namespace: str) -> str:
+    """The shell command that exits 0 once every Deployment in the incident namespace is available."""
+
+    return _STATUS_OVERRIDE or f"kubectl -n {namespace} wait --for=condition=Available deployment --all --timeout=60s"
+
+
+def _poll_status(turn: Turn, namespace: str, attempts: int) -> tuple[bool, str]:
     output = ""
+    status = status_command(namespace)
     for attempt in range(attempts):
-        command = STATUS_COMMAND if attempt == 0 else f"sleep {STATUS_POLL_SECONDS}; {STATUS_COMMAND}"
+        command = status if attempt == 0 else f"sleep {STATUS_POLL_SECONDS}; {status}"
         code, output = turn.run(command, timeout=120)
         if code == 0:
             return True, output
@@ -69,7 +76,7 @@ def _verification(healthy: bool, output: str, *, claimed: bool = False) -> dict[
     details = output.strip()[:2000] or ("healthy" if healthy else "unhealthy")
     if claimed:
         details = "responder believed the restart fixed the incident; last status output: " + details
-    return {"name": "sdo-incident-status", "passed": healthy or claimed, "details": details, "observed_at": utc_now()}
+    return {"name": "deployments-available", "passed": healthy or claimed, "details": details, "observed_at": utc_now()}
 
 
 def respond(turn: Turn, directive: Directive, request: dict[str, Any], prompt: str, worktree: Path) -> dict[str, Any]:
@@ -88,7 +95,7 @@ def respond(turn: Turn, directive: Directive, request: dict[str, Any], prompt: s
     warm = [playbook_id for playbook_id in warm_playbooks(prompt) if playbook_id == plan.playbook_id]
     try:
         if directive.mitigation == "healed_noop":
-            _healed_noop(turn, directive, result)
+            _healed_noop(turn, directive, namespace, result)
         elif warm and directive.mitigation == "correct":
             _warm(turn, directive, plan, request, namespace, worktree, result, warm[0])
         else:
@@ -102,14 +109,14 @@ def respond(turn: Turn, directive: Directive, request: dict[str, Any], prompt: s
     return result
 
 
-def _healed_noop(turn: Turn, directive: Directive, result: dict[str, Any]) -> None:
+def _healed_noop(turn: Turn, directive: Directive, namespace: str, result: dict[str, Any]) -> None:
     """Wait for the finding to heal without touching anything, then claim ``completed`` with no action.
 
     This is the shape a real responder gives a stray that self-healed: nothing
     was repaired and nothing is blamed. SDO must close it as cancelled.
     """
 
-    healthy, status_output = _poll_status(turn, directive.status_attempts)
+    healthy, status_output = _poll_status(turn, namespace, directive.status_attempts)
     result["verification_evidence"].append(_verification(healthy, status_output))
     if healthy:
         result["status"] = "completed"
@@ -181,7 +188,7 @@ def _cold(
     result: dict[str, Any],
 ) -> None:
     facts = plan.diagnose(turn.run, namespace, directive.target, request, worktree)
-    turn.run(STATUS_COMMAND, timeout=120)
+    turn.run(status_command(namespace), timeout=120)
     if directive.pause_before_repair_seconds:
         time.sleep(directive.pause_before_repair_seconds)
     mode = directive.mitigation
@@ -190,7 +197,7 @@ def _cold(
         command, summary = plan.wrong_repair(facts)
         action_started = utc_now()
         code, output = turn.run(command)
-        healthy, status_output = _poll_status(turn, 3)
+        healthy, status_output = _poll_status(turn, namespace, 3)
         claimed = mode == "wrong_only_claimed"
         result["repair_actions"].append(
             _action(
@@ -219,7 +226,7 @@ def _cold(
         result["repair_actions"].append(
             _action(f"repair-{index + 1}", facts.target, summary, action_started, code == 0, output, repaired)
         )
-    healthy, status_output = _poll_status(turn, directive.status_attempts)
+    healthy, status_output = _poll_status(turn, namespace, directive.status_attempts)
     result["verification_evidence"].append(_verification(healthy, status_output))
     if healthy:
         result["status"] = "completed"

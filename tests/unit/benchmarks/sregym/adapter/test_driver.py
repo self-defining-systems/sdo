@@ -72,6 +72,31 @@ def test_native_result_submission_reads_go_ledger_only() -> None:
     assert submitted == [("diagnosis", "selector changed"), ("mitigation", "restored selector")]
 
 
+def test_native_result_submission_falls_back_to_repair_changes_without_recorded_actions() -> None:
+    receipt = {
+        "schema_version": "sdo.production-receipt/v2",
+        "native_ledger": {
+            "closure": {
+                "result": {
+                    "confirmed_root_causes": [{"summary": "selector changed"}],
+                    "repair_actions": [],
+                    "repair_changes": ["restored selector", " ", "scaled web to 2"],
+                }
+            }
+        },
+    }
+    submitted: list[tuple[str, str]] = []
+
+    def submit(text: str, *, phase: str, api_base: str) -> dict[str, object]:
+        submitted.append((phase, text))
+        return {}
+
+    driver._submit_recorded_result(
+        receipt, "http://localhost:8000", current_stage=lambda _base: "mitigation", submitter=submit
+    )
+    assert submitted == [("mitigation", "restored selector; scaled web to 2")]
+
+
 def test_native_result_submission_rejects_missing_responder_result() -> None:
     with pytest.raises(RuntimeError, match="responder result"):
         driver._submit_recorded_result(

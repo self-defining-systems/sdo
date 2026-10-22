@@ -19,7 +19,6 @@ from typing import Any, Literal
 from google.protobuf import json_format
 
 from benchmarks.sregym.protocol.submission_guard import SubmissionGuardError, evaluate_submission
-from sdo.agents.responder import IncidentStatusReport, IncidentStatusState, live_incident_status
 from sdo.contracts import SUBMISSION_PHASES, ConductorSolution, SubmissionGuardDecision, SubmissionGuardFailure
 
 
@@ -100,11 +99,7 @@ def submit_solution(
     return {"mitigation": result, "done": done}
 
 
-#: Exit status when mitigation is withheld because verification failed.
-EXIT_VERIFICATION_FAILED = 4
-
-
-def main(argv: list[str] | None = None, *, status_check: Callable[[], IncidentStatusReport] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=SUBMISSION_PHASES)
     parser.add_argument("solution")
@@ -113,17 +108,6 @@ def main(argv: list[str] | None = None, *, status_check: Callable[[], IncidentSt
     if not api_base:
         print("SDO_SREGYM_API_BASE is required", file=sys.stderr)
         return 2
-    if args.phase == "mitigation":
-        # Verify before submit: mitigation ends the problem, so it waits for
-        # the same synthetic traffic the controller's closure gate requires.
-        status = (status_check or live_incident_status)()
-        if status.state == IncidentStatusState.UNHEALTHY:
-            print(
-                "mitigation not submitted: `python3 -m sdo.agents.responder.status_cli` "
-                "reports the application unhealthy.\n" + status.render(),
-                file=sys.stderr,
-            )
-            return EXIT_VERIFICATION_FAILED
     try:
         result = submit_solution(args.solution, phase=args.phase, api_base=api_base)
     except (OSError, ValueError, SubmissionBridgeError, urllib.error.URLError) as exc:
