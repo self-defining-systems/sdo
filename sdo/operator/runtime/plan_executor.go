@@ -8,6 +8,7 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -205,7 +206,7 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 			return result, errors.New("applied object was recreated")
 		}
 		for _, field := range []string{"spec", "data", "binaryData"} {
-			if !planValuesEqual(observed.Object[field], patch.After.Object[field]) {
+			if !planOwnedFieldsHold(observed.Object[field], patch.After.Object[field]) {
 				return result, fmt.Errorf("concurrent change after action %d", index)
 			}
 		}
@@ -247,50 +248,73 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		if patch.Before == nil || patch.After == nil {
 			return errors.New("rollback requires before and after images")
 		}
-		current, err := e.Client.Get(ctx, patch.Ref)
-		if err != nil {
+		if err := e.restoreAction(ctx, patch); err != nil {
 			return err
-		}
-		if current.GetUID() != patch.Before.GetUID() {
-			return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
-		}
-		restored := current.DeepCopy()
-		for _, field := range []string{"spec", "data", "binaryData"} {
-			before, bok := patch.Before.Object[field]
-			after, aok := patch.After.Object[field]
-			live, lok := current.Object[field]
-			value, exists, err := restorePlanFields(before, bok, after, aok, live, lok)
-			if err != nil {
-				return fmt.Errorf("rollback conflict on %s/%s %s: %w", patch.Ref.Kind, patch.Ref.Name, field, err)
-			}
-			if exists {
-				restored.Object[field] = value
-			} else {
-				delete(restored.Object, field)
-			}
-		}
-		from, _ := json.Marshal(current.Object)
-		to, _ := json.Marshal(restored.Object)
-		delta, err := jsonpatch.CreateMergePatch(from, to)
-		if err != nil {
-			return err
-		}
-		if string(delta) == "{}" {
-			application.RollbackCompleted++
-			continue
-		}
-		delta, err = conditionalPlanPatch(delta, current)
-		if err != nil {
-			return err
-		}
-		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
-			return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
 		}
 		application.RollbackCompleted++
 	}
 	application.RollingBack = false
 	application.RolledBack = true
 	application.RollbackError = ""
+	return nil
+}
+
+// maxRestoreAttempts bounds retries when a controller bumps resourceVersion
+// between the restore's read and its conditional patch.
+const maxRestoreAttempts = 5
+
+// restoreAction reverts one applied write. Each attempt re-reads the object, so
+// a version conflict from an unrelated writer is retried with the fresh version
+// while a changed owned field still fails.
+func (e PlanExecutor) restoreAction(ctx context.Context, patch PlanPatch) error {
+	var err error
+	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
+		if err = e.restoreActionOnce(ctx, patch); !apierrors.IsConflict(err) {
+			return err
+		}
+	}
+	return err
+}
+
+func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) error {
+	current, err := e.Client.Get(ctx, patch.Ref)
+	if err != nil {
+		return err
+	}
+	if current.GetUID() != patch.Before.GetUID() {
+		return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
+	}
+	restored := current.DeepCopy()
+	for _, field := range []string{"spec", "data", "binaryData"} {
+		before, bok := patch.Before.Object[field]
+		after, aok := patch.After.Object[field]
+		live, lok := current.Object[field]
+		value, exists, err := restorePlanFields(before, bok, after, aok, live, lok)
+		if err != nil {
+			return fmt.Errorf("rollback conflict on %s/%s %s: %w", patch.Ref.Kind, patch.Ref.Name, field, err)
+		}
+		if exists {
+			restored.Object[field] = value
+		} else {
+			delete(restored.Object, field)
+		}
+	}
+	from, _ := json.Marshal(current.Object)
+	to, _ := json.Marshal(restored.Object)
+	delta, err := jsonpatch.CreateMergePatch(from, to)
+	if err != nil {
+		return err
+	}
+	if string(delta) == "{}" {
+		return nil
+	}
+	delta, err = conditionalPlanPatch(delta, current)
+	if err != nil {
+		return err
+	}
+	if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
+		return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
+	}
 	return nil
 }
 
@@ -537,4 +561,36 @@ func planValuesEqual(left, right any) bool {
 	}
 	b, err := json.Marshal(right)
 	return err == nil && string(a) == string(b)
+}
+
+// planOwnedFieldsHold reports whether live still carries every value the plan
+// wrote. Keys the plan did not write are ignored: the API server re-defaults
+// the fields a source manifest omits, and controllers own the rest.
+func planOwnedFieldsHold(live, written any) bool {
+	switch w := written.(type) {
+	case map[string]any:
+		l, ok := live.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range w {
+			if !planOwnedFieldsHold(l[key], value) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		l, ok := live.([]any)
+		if !ok || len(l) != len(w) {
+			return false
+		}
+		for i := range w {
+			if !planOwnedFieldsHold(l[i], w[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return planValuesEqual(live, written)
+	}
 }
