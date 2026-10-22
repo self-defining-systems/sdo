@@ -33,37 +33,49 @@ Per-incident session `api-history/` contains version-1 `manifest.json`, append-o
 store is outside `.sdo/`; it is neither accepted memory nor replay evidence.
 Envelopes identify epoch, request, start/end time, verb, GVR, namespace, name,
 subresource, status, opaque resourceVersion and optional body hash. Hashes cover
-projected bytes. Known object projections reuse controller corpus capture;
-Secrets retain data/stringData key names with empty values. Unknown response
-representations carry metadata only. Request bodies and headers are never stored.
+projected bytes. A proxy-specific strict projection retains reviewed object
+identity, pagination presence, and Secret/ConfigMap key names with empty values.
+All other values, specs, statuses, labels, annotations and diagnostic text are
+opaque with explicit redaction markers. Controller snapshot projection is
+independent. Unknown representations, log bodies and streaming payloads retain
+envelopes only. Request bodies and headers are never stored; upstream error
+logger text is discarded.
 
 Default incident limits are 64 MiB and 10,000 envelopes, with a queue bounded by 1,024 entries / 8 MiB
-and 4 MiB response limit. Deduplicated bodies count once toward the byte limit;
+and a 256 KiB projection budget. Up to eight transient workers project admitted
+responses after forwarding; larger bodies or busy workers retain metadata and
+mark a gap. Raw responses never enter the recording queue or storage. Deduplicated bodies count once toward the byte limit;
 envelopes count per occurrence. `complete=false`, nonzero `dropped`, an open
 writer, missing files, or a new epoch after restart prevent continuity claims.
 Disk/queue/cap failures do not block forwarding. A missing manifest is Unknown,
-including when the store itself could not initialize. Runtime storage is removed
+including when the store itself could not initialize. A recording-disabled
+marker invalidates failed initialization. A directory lock exposes the live
+forwarding generation even when writes fail and an old closed manifest survives. Runtime storage is removed
 with the existing incident session lifecycle; there is no multi-session retention
 policy. History cannot prove unobserved state or replace controller captures,
 pre-apply checkpoints, action receipts, or independent recovery verification.
 
 `evidence history` paginates envelopes; `evidence show --event N` prints the
-projected JSON or capped log tail; `evidence state Kind/ns/name --at CUT` reports
+redacted projected JSON or metadata; `evidence state Kind/ns/name --at CUT` reports
 last-observed state, observation time, staleness and Unknown. CUT is RFC3339,
 `before-first-mutation`, or `after-fix`. The first cut uses potentially mutating
-request start times (including opaque exec), excludes dry-run writes, and cannot
+request start times (including exec/attach/port-forward despite dryRun queries),
+excludes only recognized supported dry-run writes, and cannot
 be determined from incomplete history. `after-fix` requires a controller-written
 `recovery.json` and compatible observations beginning after its verified time;
 the last write response is never a recovery marker. Filtered/paginated lists,
 unknown representations, crossing requests and metadata-only watches cannot
 establish absence or continuity. A named GET 404 or complete scoped list can
-record absence at the observation time only.
+record absence at the observation time only. Match the explicit GroupResource;
+`Kind.group/ns/name` can qualify built-in kinds, while unsupported groups stay
+Unknown. Cluster-wide list positives use item namespaces; they do not imply
+broader absence.
 
 Native responder Jobs run the proxy as a loopback native sidecar with the Pod's
 existing service account. The proxy alone writes its incident history directory;
 workers and fresh/resumed reflection mount it read-only. Exec, attach,
-port-forward and watches retain metadata only; non-follow logs keep at most a
-64 KiB tail marked partial when capped, without truncating caller output. The
+port-forward, watches and all logs retain redacted metadata only, without
+truncating caller output. The
 Go memory edge writes the verified recovery marker before reflection. Only
 requests using the generated localhost kubeconfig are visible: direct network,
 alternate endpoints and controller SDK observations are outside this history.

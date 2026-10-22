@@ -244,30 +244,42 @@ fresh/resumed reflection mount it read-only. The sidecar gets no model-provider
 credential mounts or environment. It appends request start/end envelopes with
 UTC times, verb, GVR, namespace, name, subresource, status and opaque
 resourceVersion. Sanitized response bodies are SHA-256-addressed and deduplicated.
-Known objects reuse `sdk/sdktest` controller capture projections; Secrets retain
-only data/stringData key names. Unknown encodings/objects are metadata-only.
-Headers and request bodies are never recorded. This preserves the existing
-capture projection rather than introducing a stronger general sanitization
-policy for arbitrary ConfigMap, annotation or diagnostic values.
+The proxy uses its own strict projection, independent of controller snapshots.
+Only reviewed object identity fields, pagination presence, and Secret/ConfigMap
+key names survive. Values, labels, annotations, specs, statuses and diagnostic
+text are opaque, with explicit `redacted` markers. Unsupported representations,
+all log bodies, watches and connection payloads retain envelopes only. Headers
+and request bodies are never recorded; the reverse proxy discards upstream error
+logger text, including body-copy errors.
 
-The default incident budget is 64 MiB / 10,000 envelopes, a queue bounded by 1,024 entries and 8 MiB of projected envelopes/bodies, and a 4 MiB response capture ceiling.
+The default incident budget is 64 MiB / 10,000 envelopes, with a recording queue
+bounded by 1,024 entries / 8 MiB of already-projected envelopes and bodies.
+After forwarding returns, up to eight transient workers project responses no
+larger than 256 KiB. Larger bodies or saturated projection workers retain
+metadata and a marked gap; raw bytes never enter the recording queue or storage.
 A reserved manifest reports completeness, dropped counts, bytes, writer status
 and restart epoch. Unfinished requests and restarted writers invalidate
-continuity. Disk, queue and cap failures leave forwarding active and mark gaps;
-missing manifests are Unknown. Upstream failure returns a Kubernetes-shaped 502;
-write connections are fresh and never automatically retried. Watches, exec,
-attach and port-forward record metadata only; non-follow logs retain a marked
-64 KiB tail in the runtime store. Every stream reaches the caller unchanged.
-History follows existing incident-session cleanup, with no additional retention
-policy, and adds no durable `.sdo/` artifact class.
+continuity. Every initialization attempt first leaves a recording-disabled
+marker until successful open. A directory lock exposes the live forwarding
+generation to read-only readers even when recording writes fail and a previous
+closed manifest survives. Disk, queue and cap failures leave forwarding active
+and mark gaps; unavailable storage is Unknown. Upstream failure returns a
+Kubernetes-shaped 502; write connections are fresh and never automatically
+retried. Every response and stream reaches the caller unchanged. History follows
+existing incident-session cleanup, with no additional retention policy, and adds
+no durable `.sdo/` artifact class.
 
 Reflection can run `sdo-operator evidence history`, `show --event N`, and
 `state Kind/namespace/name --at RFC3339|before-first-mutation|after-fix` using
 `SDO_API_HISTORY_DIR`. These commands read files only. State is explicitly last
 observed, stale and Unknown at the requested instant because metadata-only
 watches provide no continuity. Complete unfiltered scoped lists or named GET
-404s can observe absence only at their observation times. The first mutation
-boundary includes opaque exec and excludes dry-run writes; crossing requests,
+404s can observe absence only at their observation times. Lookups match an
+explicit GroupResource; `Kind.group/namespace/name` can qualify built-in kinds,
+and unsupported groups stay Unknown. Cluster-wide lists retain positive matches
+using item namespaces, with no inference of broader absence. The first mutation
+boundary includes opaque exec/attach/port-forward regardless of query parameters
+and excludes only recognized supported dry-run writes; crossing requests,
 partial history and filtered/paginated lists cannot establish broader facts.
 The controller writes `recovery.json` only for independently verified successful
 or cleared closures; `after-fix` requires compatible observations beginning after

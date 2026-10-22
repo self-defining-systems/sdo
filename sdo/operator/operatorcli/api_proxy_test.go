@@ -72,7 +72,9 @@ func TestHermeticAPIProxyPodIdentityFreshWritesAndOfflineReflection(t *testing.T
 	store.Close()
 	var out strings.Builder
 	err = RunEvidence([]string{"state", "ConfigMap/app/settings", "--at", "before-first-mutation"}, func(string) string { return dir }, &out)
-	if err != nil || !strings.Contains(out.String(), "broken") || !strings.Contains(out.String(), `"unknown":true`) {
+	if err != nil || !strings.Contains(out.String(), `"last_observed"`) ||
+		!strings.Contains(out.String(), `"mode":""`) || strings.Contains(out.String(), "broken") ||
+		!strings.Contains(out.String(), `"redacted":true`) || !strings.Contains(out.String(), `"unknown":true`) {
 		t.Fatalf("reflection view: %s %v", out.String(), err)
 	}
 }
