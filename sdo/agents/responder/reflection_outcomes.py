@@ -12,6 +12,9 @@ raw evidence.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
@@ -63,13 +66,121 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
 
 
 def current_outcome_view(outcome: OutcomeRecord) -> dict[str, Any]:
-    """The incident being reflected on: every field verbatim except the collapsed detector history."""
+    """Learning evidence with repeated sweeps and large tool transcripts compacted.
+
+    This is a model-facing projection only. The committed OutcomeRecord remains
+    authoritative, including timings and full tool responses. Distinct program
+    verdict/evidence/error transitions and all action receipts remain here.
+    """
 
     view = json_format.MessageToDict(
         outcome, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
     )
     view["detector_history"] = collapse_detector_history(outcome.detector_history)
+    compaction = {}
+    if view["program_runs"]:
+        original = view["program_runs"]
+        view["program_runs"] = _collapse_program_runs(original)
+        compaction["program_runs_omitted_duplicates"] = len(original) - len(view["program_runs"])
+    if view["program_tool_calls"]:
+        original = view["program_tool_calls"]
+        calls = _collapse_tool_calls(original)
+        compaction["program_tool_calls_omitted_duplicates"] = len(original) - len(calls)
+        view["program_tool_calls"] = calls
+    if compaction:
+        view["reflection_compaction"] = compaction
     return view
+
+
+# Keep head and tail so command failures and final status remain visible. Full
+# responses can be retrieved from the committed outcome, rather than replayed
+# into every reflection model request.
+_TOOL_RESPONSE_MAX_CHARS = 4000
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _collapse_program_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    retained: list[dict[str, Any]] = []
+    latest: dict[str, tuple[str, dict[str, Any]]] = {}
+    for run in runs:
+        identity = _canonical([run["program_id"], sorted(run["bindings"], key=_canonical)])
+        # Duration is sweep noise; everything else (including revision, evidence,
+        # fingerprint and binding source) can distinguish a learning signal.
+        signature = _canonical(
+            {
+                **{key: value for key, value in run.items() if key != "duration"},
+                "bindings": sorted(run["bindings"], key=_canonical),
+            }
+        )
+        previous = latest.get(identity)
+        if previous is not None and previous[0] == signature:
+            previous[1]["evaluations"] += 1
+            continue
+        entry = {**run, "evaluations": 1}
+        retained.append(entry)
+        latest[identity] = (signature, entry)
+    return retained
+
+
+def _corpus_refs(value: Any) -> list[str]:
+    refs: set[str] = set()
+
+    def visit(item: Any, key: str = "") -> None:
+        if isinstance(item, dict):
+            for name, child in item.items():
+                visit(child, name)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child, key)
+        elif isinstance(item, str):
+            if ("corpus" in key or "capture" in key) and len(item) <= 512:
+                refs.add(item)
+            refs.update(re.findall(r"(?:[.\w/-]*/)?corpus/[^\s\"'<>]+", item))
+
+    visit(value)
+    return sorted(refs)
+
+
+def _collapse_tool_calls(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    retained: list[dict[str, Any]] = []
+    latest: dict[str, tuple[str, dict[str, Any]]] = {}
+    for index, call in enumerate(calls):
+        request, response = call["request_json"], call["response_json"]
+        try:
+            request = _canonical(json.loads(request))
+        except ValueError:
+            pass
+        try:
+            parsed_response = json.loads(response)
+            response = _canonical(parsed_response)
+        except ValueError:
+            parsed_response = None
+        identity = _canonical([call["command"], request])
+        signature = _canonical([response, call["error"], call["summary"]])
+        previous = latest.get(identity)
+        if previous is not None and previous[0] == signature:
+            previous[1]["evaluations"] += 1
+            previous[1]["last_at"] = call.get("at")
+            continue
+        entry = {**call, "evaluations": 1, "last_at": call.get("at"), "outcome_call_index": index}
+        if len(response) > _TOOL_RESPONSE_MAX_CHARS:
+            half = _TOOL_RESPONSE_MAX_CHARS // 2
+            entry["response_json"] = response[:half] + "\n[... omitted ...]\n" + response[-half:]
+            entry["response_json_omitted_chars"] = len(response) - _TOOL_RESPONSE_MAX_CHARS
+            entry["response_json_sha256"] = hashlib.sha256(call["response_json"].encode()).hexdigest()
+            entry["corpus_refs"] = _corpus_refs(parsed_response if parsed_response is not None else response)
+            if isinstance(parsed_response, dict):
+                entry["response_status"] = {
+                    key: parsed_response[key]
+                    for key in ("error", "summary", "application_id", "plan_id", "healthy", "unresolved")
+                    if key in parsed_response
+                }
+        retained.append(entry)
+        latest[identity] = (signature, entry)
+    return retained
 
 
 def _resource(ref: ObjectRef) -> str:
@@ -116,6 +227,6 @@ def prior_outcome_view(record: OutcomeRecord) -> dict[str, Any]:
 
 
 def history_view(history: Sequence[OutcomeRecord], *, current_incident_id: str) -> list[dict[str, Any]]:
-    """Prior incidents only: the current incident is already shown in full."""
+    """Prior incidents only: the current incident is already shown separately."""
 
     return [prior_outcome_view(record) for record in history if record.incident_id != current_incident_id]

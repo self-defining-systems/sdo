@@ -6,7 +6,7 @@ import re
 import sys
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, cast
 
-from agentshim import SessionResumeError
+from agentshim import SessionResumeError, StdioMcpServer
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
@@ -14,6 +14,7 @@ from libs.agent_cli.structured import AgentProvider, StructuredTurnError, run_st
 from sdo.agents.memory_diagnostics import render_validation_feedback
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.reflection_outcomes import current_outcome_view, history_view
+from sdo.agents.responder.reflection_validation import VALIDATION_ENVIRONMENT, VALIDATION_TOOL_TIMEOUT_SECONDS
 from sdo.contracts import OutcomeClassification
 
 ReflectionGuidance = Literal["baseline", "generalize", "generalize-spec"]
@@ -187,7 +188,10 @@ def _logical_learning_request(
         "Source edits are not part of reflection; outcomes, goal and architecture are protected. "
         "Preserve accepted provenance. Use logical IDs in narrative and authored Go, never physical memory paths. "
         "Run `sdo-operator memory ls` to inspect existing artifacts. "
-        "After editing, run `sdo-operator memory check` and fix its named diagnostics in this same checkout "
+        "After editing, call the installed sdo_reflection check_memory tool once to run "
+        "`sdo-operator memory check` and wait for its final result (bounded to 300 seconds). "
+        "Do not launch validation through a background shell or poll a process. "
+        "Fix named diagnostics and call it again only after correcting the files, "
         "until it exits zero, within your turn budget. SDO_ACTOR, SDO_PHASE and SDO_BASE_COMMIT "
         "are already set; do not override them. The Go broker repeats the same check independently. "
         "Return learning_decision=updated only with a nonempty diff and playbook_ids listing every changed "
@@ -217,7 +221,7 @@ def _logical_learning_request(
         "need synthetic_no_match_reason and no_match_program_ids. Update the playbook index README. "
         f"See {example_dir}/playbooks/service-targetport-mismatch/diagnose.go and "
         f"{example_dir}/corpus/targetport-mismatch/ for a complete example. "
-        "Run memory check, read every failure, fix the files and rerun until it passes.\n\n"
+        "Call check_memory, read every failure, fix the files and rerun check_memory until it passes.\n\n"
         f"{_logical_guidance(guidance)}"
         f"For this {classification} outcome, "
         f"{_classification_directive(classification, guidance)}\n\n"
@@ -225,6 +229,9 @@ def _logical_learning_request(
         "The trusted detector SDK reference is references/sdk.md of the sdo-detector-authoring skill.\n"
         f"Outcome commit: {outcome_commit}\n"
         f"Operational memory snapshot:\n{json_format.MessageToJson(snapshot, preserving_proto_field_name=True)}\n\n"
+        "Repeated program evaluations and tool calls below carry counts. Large tool responses are excerpted; "
+        "outcome_call_index and response_json_sha256 identify the full response in the committed outcome. "
+        "Root causes, findings, action receipts and program transitions are retained.\n"
         f"Current outcome:\n{json.dumps(current_outcome_view(outcome), indent=2)}\n\n"
         f"{_history_section(outcome, history)}"
     )
@@ -288,7 +295,7 @@ class SessionReflector:
                 "session transcript is intentionally not available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
                 "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
-                "Author corrected final files here, then run memory check until green.\n\n"
+                "Author corrected final files here, then call check_memory until green.\n\n"
                 f"Original reflection request:\n{request}"
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
@@ -400,6 +407,18 @@ class CodexSessionBackend:
                 timeout_seconds=self.timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
+                mcp_servers=[
+                    StdioMcpServer(
+                        name="sdo_reflection",
+                        command=sys.executable,
+                        args=["-m", "sdo.agents.responder.reflection_validation", "--root", str(worktree.resolve())],
+                        env={key: os.environ[key] for key in VALIDATION_ENVIRONMENT if key in os.environ},
+                        tool_timeout_s=VALIDATION_TOOL_TIMEOUT_SECONDS if self.provider == "codex" else None,
+                    )
+                ],
+                environment={"MCP_TOOL_TIMEOUT": str(VALIDATION_TOOL_TIMEOUT_SECONDS * 1000)}
+                if self.provider == "claude"
+                else None,
             )
         except StructuredTurnError as exc:
             if session_id is not None and (
