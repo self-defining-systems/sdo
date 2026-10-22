@@ -682,19 +682,6 @@ func successfulRollout(receipts []ControllerRolloutReceipt) bool {
 	return false
 }
 
-func (n NativeIncidentBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	return n.withLock(func() error {
-		ledger, err := n.readLedger(incidentID)
-		if err != nil {
-			return err
-		}
-		if ledger.Closure != nil {
-			return nil
-		}
-		return n.Repository.ReleaseProposal(incidentID, broker.ProposalPhase)
-	})
-}
-
 func (n NativeIncidentBroker) withLock(fn func() error) error {
 	if n.Repository == nil || n.LedgerRoot == "" {
 		return errors.New("native broker repository and ledger root are required")

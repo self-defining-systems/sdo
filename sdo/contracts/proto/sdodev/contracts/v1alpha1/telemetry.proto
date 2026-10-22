@@ -50,8 +50,7 @@ message LifecycleEvent {
   string event = 3 [(buf.validate.field).string = {
     in: [
       "incident_opened", "workspace_prepared",
-      "responder_dispatched", "responder_completed", "incident_superseded", "worktree_released",
-      "detector_review_required", "incident_closed", "closure_committed", "incident_acknowledged"
+      "responder_dispatched", "responder_completed", "incident_closed", "closure_committed", "incident_acknowledged"
     ]
   }];
   google.protobuf.Timestamp recorded_at = 4 [(buf.validate.field).required = true];
@@ -59,10 +58,8 @@ message LifecycleEvent {
   string application = 6;
   string namespace = 7;
   string incident_id = 8;
-  // Follow-up chain: parent on incident_opened, child on incident_superseded.
-  string parent_incident_id = 9;
-  int32 follow_up_attempt = 10 [(buf.validate.field).int32.gte = 0];
-  string superseded_by = 11;
+  reserved 9, 10, 11;
+  reserved "parent_incident_id", "follow_up_attempt", "superseded_by";
   string reason = 12;
   repeated string finding_keys = 13;
   repeated string surfaced_playbooks = 14 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
@@ -72,7 +69,8 @@ message LifecycleEvent {
   string outcome_commit = 18;
   string reflection_commit = 19;
   google.protobuf.Timestamp health_cleared_at = 20;
-  bool detector_review_required = 21;
+  reserved 21;
+  reserved "detector_review_required";
   bool dispatch_error = 22;
   reserved 23, 24, 25;
   reserved "load_pressure", "load_threshold", "release_backlog";

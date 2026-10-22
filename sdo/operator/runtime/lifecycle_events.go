@@ -41,7 +41,7 @@ const (
 // pair occurs at most once per incident, so an event id built from them is
 // stable and a replay after a crash re-derives the identical id.
 const (
-	// PhaseOpened: a batch of findings opened a new incident (or follow-up).
+	// PhaseOpened: a batch of findings opened a new incident.
 	PhaseOpened = "incident_opened"
 	// PhaseWorkspacePrepared: the broker prepared the incident's isolated worktree.
 	PhaseWorkspacePrepared = "workspace_prepared"
@@ -49,13 +49,7 @@ const (
 	PhaseDispatched = "responder_dispatched"
 	// PhaseResponderCompleted: the responder finished (successfully or as a terminal Job failure).
 	PhaseResponderCompleted = "responder_completed"
-	// PhaseSuperseded: a follow-up incident replaced this one before it closed.
-	PhaseSuperseded = "incident_superseded"
-	// PhaseWorktreeReleased: a stranded, superseded worktree was reaped by the broker.
-	PhaseWorktreeReleased = "worktree_released"
-	// PhaseDetectorReviewRequired: health did not clear within the verification window.
-	PhaseDetectorReviewRequired = "detector_review_required"
-	// PhaseClosed: the controller cut the incident closure after verifying health.
+	// PhaseClosed: the controller cut the incident closure after verifying health or timing out.
 	PhaseClosed = "incident_closed"
 	// PhaseClosureCommitted: the broker committed the authoritative outcome for the closure.
 	PhaseClosureCommitted = "closure_committed"
@@ -75,20 +69,14 @@ func phaseRank(p string) int {
 		return 4
 	case PhaseResponderCompleted:
 		return 5
-	case PhaseSuperseded:
-		return 6
-	case PhaseWorktreeReleased:
-		return 7
-	case PhaseDetectorReviewRequired:
-		return 8
 	case PhaseClosed:
-		return 9
+		return 6
 	case PhaseClosureCommitted:
-		return 10
+		return 7
 	case PhaseAcknowledged:
-		return 11
+		return 8
 	default:
-		return 12
+		return 9
 	}
 }
 

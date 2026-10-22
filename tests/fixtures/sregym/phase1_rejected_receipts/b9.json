@@ -72,7 +72,6 @@
     "status": "clear"
    }
   ],
-  "detector_review_required_at": null,
   "diagnosis_verification": [
    {
     "detectors": [

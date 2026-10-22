@@ -52,8 +52,8 @@ message ControllerConfig {
   google.protobuf.Duration duration = 20;
   google.protobuf.Duration response_timeout = 21;
   google.protobuf.Duration verification_timeout = 22;
-  int32 max_follow_ups = 23 [(buf.validate.field).int32.gte = 0];
-  google.protobuf.Duration follow_up_cooldown = 24;
+  reserved 23, 24;
+  reserved "max_follow_ups", "follow_up_cooldown";
   string repair_policy = 25 [(buf.validate.field).string = {in: ["commit", "recorded-actions"]}];
 
   // Leader election.

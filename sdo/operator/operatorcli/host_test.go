@@ -17,13 +17,13 @@ func TestHostLaunchBuildsNativeInstallerContract(t *testing.T) {
 		"--buildkit-image", "moby/buildkit@sha256:" + strings.Repeat("a", 64), "--repository-pvc", "repository",
 		"--credentials-secret", "agent-credentials", "--registry-push-secret", "registry-push", "--registry-host", "registry.example:5000",
 		"--model", "model", "--agent-provider", "codex", "--max-attempts", "2",
-		"--responder-env", "SDO_SREGYM_API_BASE=http://relay", "--registry-insecure", "--healthy-baseline", "--late-findings", "pull", "--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--max-follow-ups", "2", "--follow-up-cooldown", "25s", "--response-timeout", "31m", "--verification-timeout", "3m",
+		"--responder-env", "SDO_SREGYM_API_BASE=http://relay", "--registry-insecure", "--healthy-baseline", "--late-findings", "pull", "--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--response-timeout", "31m", "--verification-timeout", "3m",
 	}
 	config, err := ParseHostLaunch(args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Repository != "/tmp/app" || config.Install.RegistryPushSecret != "registry-push" || config.Install.RegistryHost != "registry.example:5000" || config.MaxAttempts != 2 || config.Install.ControlNamespace != "demo-sdo" || !config.Install.RegistryInsecure || !config.Install.HealthyBaseline || len(config.Install.ResponderEnv) != 1 || config.Install.LateFindings != "pull" || config.Install.RepairPolicy != "recorded-actions" || config.Install.ReflectionSession != "resume" || config.Install.ReflectionGuidance != "generalize-spec" || config.Install.MaxFollowUps != 2 || config.Install.FollowUpCooldownSeconds != 25 || config.Install.TimeoutSeconds != 1860 || config.Install.VerificationTimeoutSeconds != 180 {
+	if config.Repository != "/tmp/app" || config.Install.RegistryPushSecret != "registry-push" || config.Install.RegistryHost != "registry.example:5000" || config.MaxAttempts != 2 || config.Install.ControlNamespace != "demo-sdo" || !config.Install.RegistryInsecure || !config.Install.HealthyBaseline || len(config.Install.ResponderEnv) != 1 || config.Install.LateFindings != "pull" || config.Install.RepairPolicy != "recorded-actions" || config.Install.ReflectionSession != "resume" || config.Install.ReflectionGuidance != "generalize-spec" || config.Install.TimeoutSeconds != 1860 || config.Install.VerificationTimeoutSeconds != 180 {
 		t.Fatalf("incomplete host launch: %+v", config)
 	}
 	bounded, err := ParseHostLaunch(append(append([]string{}, args...), "--controller-duration", "30s"))

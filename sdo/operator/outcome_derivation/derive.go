@@ -41,7 +41,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			return Result{}, fmt.Errorf("%s is required", label)
 		}
 	}
-	healthVerified := closure.GetDetectorReviewRequiredAt() == nil && len(closure.GetFinalDetectorStates()) > 0
+	healthVerified := len(closure.GetFinalDetectorStates()) > 0
 	for _, evaluation := range closure.GetFinalDetectorStates() {
 		if evaluation.GetStatus() != "clear" {
 			healthVerified = false
@@ -187,10 +187,7 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 		return outcomeclass.Failed
 	}
 	if !healthVerified {
-		if result.GetStatus() == "cancelled" {
-			return outcomeclass.Cancelled
-		}
-		return outcomeclass.Partial
+		return outcomeclass.Failed
 	}
 	if repairCommit == "" && (result.GetStatus() == "completed" || result.GetStatus() == "cancelled") {
 		hadSuccessfulAction := false

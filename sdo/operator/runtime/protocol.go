@@ -70,30 +70,12 @@ type IncidentRequest struct {
 	RepairPolicy         string
 	// StateChanges is the application's configuration diff against its last
 	// healthy baseline when the incident opened; nil without a baseline.
-	StateChanges *StateChanges
-	// FollowUp is set only on a follow-up incident dispatched for findings that
-	// stayed active after an earlier responder completed.
-	FollowUp           *FollowUpContext
+	StateChanges       *StateChanges
 	InitialProgramRuns []ProgramRun
 	FastPathSummary    string
 	MaxResponseLoops   int
 	// PreparedAgentTask is the exact ProtoJSON task persisted before a Job may be created.
 	PreparedAgentTask string
-}
-
-// FollowUpContext links a follow-up responder request to the incident it
-// continues. The request's Findings are the residual findings; PriorSummary
-// is a bounded, factual digest of what the earlier responders reported.
-type FollowUpContext struct {
-	OriginalIncidentID string
-	ParentIncidentID   string
-	// Attempt is the 1-based follow-up ordinal; MaxFollowUps is the bound.
-	Attempt      int
-	MaxFollowUps int
-	PriorSummary string
-	// DriftLabelsOnly marks a follow-up whose only job is to return the
-	// structured labels for the unexplained drift in the request.
-	DriftLabelsOnly bool
 }
 
 // RootCauseEvidence is one live observation supporting a root cause: a
@@ -241,11 +223,6 @@ type IncidentClosure struct {
 	// started; otherwise it is that repair's edit. Omitted without a
 	// baseline, when state changes cannot be checked at all.
 	ObservedStateChanges []ObservedStateChange
-	// DetectorReviewRequiredAt is set when health did not clear within the
-	// verification window after the responder completed. Health that
-	// clears later was not verifiably restored by the responder.
-	DetectorReviewRequiredAt *time.Time
-	DetectorReviewReason     string
 	// CleanedHelpers are the responder helper objects the controller
 	// deleted after the responder completed, as Kind/namespace/name.
 	CleanedHelpers []string

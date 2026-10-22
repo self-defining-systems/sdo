@@ -53,9 +53,7 @@ class NativeInstallConfig:
     force_reflection: bool = False
     program_fast_path: bool = False
     program_trust_threshold: int = 3
-    max_follow_ups: int = 0
     max_response_loops: int = 5
-    follow_up_cooldown_seconds: int = 30
     response_timeout_seconds: int = 1800
     verification_timeout_seconds: int = 120
     duration_seconds: int | None = None
@@ -97,8 +95,8 @@ class NativeInstallConfig:
             raise ValueError("reflection_session must be fresh or resume")
         if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
             raise ValueError("reflection_guidance must be baseline, generalize, or generalize-spec")
-        if self.max_follow_ups < 0 or self.follow_up_cooldown_seconds <= 0 or self.max_response_loops <= 0:
-            raise ValueError("follow-up count must be nonnegative and cooldown positive")
+        if self.max_response_loops <= 0:
+            raise ValueError("max_response_loops must be positive")
         if self.response_timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
             raise ValueError("controller timeouts must be positive")
         if self.duration_seconds is not None and self.duration_seconds <= 0:
@@ -244,12 +242,9 @@ def observe_controller_state(
     *,
     known: set[str] | None = None,
     incident_id: str = "",
-    stop_on_review: bool = False,
     timeout: float = 30.0,
 ) -> ControllerObservation:
-    request = ControllerObservationRequest(
-        known_incident_ids=sorted(known or ()), incident_id=incident_id, stop_on_review=stop_on_review
-    )
+    request = ControllerObservationRequest(known_incident_ids=sorted(known or ()), incident_id=incident_id)
     payload = json_format.MessageToDict(request, preserving_proto_field_name=True)
     payload["state"] = state
     stdout = execute_operator("observe-controller", [], timeout=timeout, input_text=json.dumps(payload))
@@ -454,9 +449,7 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     if config.program_fast_path:
         args.append("--program-fast-path")
     args.extend(("--program-trust-threshold", str(config.program_trust_threshold)))
-    args.extend(("--max-follow-ups", str(config.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.max_response_loops)))
-    args.extend(("--follow-up-cooldown", f"{config.follow_up_cooldown_seconds}s"))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.verification_timeout_seconds}s"))
     if config.duration_seconds is not None:
@@ -513,9 +506,7 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     if config.install.program_fast_path:
         args.append("--program-fast-path")
     args.extend(("--program-trust-threshold", str(config.install.program_trust_threshold)))
-    args.extend(("--max-follow-ups", str(config.install.max_follow_ups)))
     args.extend(("--max-response-loops", str(config.install.max_response_loops)))
-    args.extend(("--follow-up-cooldown", f"{config.install.follow_up_cooldown_seconds}s"))
     args.extend(("--repair-policy", config.install.repair_policy))
     args.extend(("--response-timeout", f"{config.install.response_timeout_seconds}s"))
     args.extend(("--verification-timeout", f"{config.install.verification_timeout_seconds}s"))

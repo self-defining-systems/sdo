@@ -195,7 +195,7 @@ func bindingsTouchCause(bindings []*contractsv1alpha1.Binding, cause *contractsv
 }
 
 func allFinalDetectorsClear(closure *contractsv1alpha1.IncidentClosure) bool {
-	if len(closure.GetFinalDetectorStates()) == 0 || closure.GetDetectorReviewRequiredAt() != nil {
+	if len(closure.GetFinalDetectorStates()) == 0 {
 		return false
 	}
 	for _, evaluation := range closure.GetFinalDetectorStates() {

@@ -301,19 +301,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=config.get("late_findings", "off"),
         help="let the responder pull findings that activated after dispatch (off by default)",
     )
-    parser.add_argument(
-        "--max-follow-ups",
-        type=int,
-        default=int(config.get("max_follow_ups", 0)),
-        help="follow-up responders for health findings left active after a response (0 = off)",
-    )
     parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 5)))
-    parser.add_argument(
-        "--follow-up-cooldown-seconds",
-        type=int,
-        default=int(config.get("follow_up_cooldown_seconds", 30)),
-        help="wait after a response before its still-active health findings get a follow-up responder",
-    )
     parser.add_argument(
         "--healthy-baseline",
         action=argparse.BooleanOptionalAction,
@@ -634,9 +622,7 @@ def _launch_native_lifecycle(
         program_fast_path=args.program_fast_path,
         program_trust_threshold=args.program_trust_threshold,
         healthy_baseline=args.healthy_baseline,
-        max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
         duration_seconds=None if persistent else args.timeout_sec,
@@ -739,9 +725,7 @@ def _native_install_for_run(
         deployed_manifest_paths=args.deployed_manifest_paths,
         program_fast_path=args.program_fast_path,
         program_trust_threshold=args.program_trust_threshold,
-        max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
         duration_seconds=args.timeout_sec,
@@ -934,9 +918,7 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         program_trust_threshold=args.program_trust_threshold,
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
-        max_follow_ups=args.max_follow_ups,
         max_response_loops=args.max_response_loops,
-        follow_up_cooldown_seconds=args.follow_up_cooldown_seconds,
         submission_api_base=_in_cluster_api_base(api_base),
         submission_relay_target_base=_relay_target_api_base(api_base),
         artifacts_dir=receipt_dir,

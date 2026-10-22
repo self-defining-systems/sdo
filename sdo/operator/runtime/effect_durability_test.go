@@ -256,19 +256,6 @@ func (b *stateCheckingBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 	return nil
 }
 
-func (b *stateCheckingBroker) ReleaseIncident(_ context.Context, incidentID string) error {
-	state, err := durableState(b.client)
-	recorded := false
-	for _, id := range state.PendingReleases {
-		if id == incidentID {
-			recorded = true
-			break
-		}
-	}
-	b.report("release", err == nil && recorded, state, err)
-	return nil
-}
-
 func awaitObservation(t *testing.T, observed <-chan string, want string) {
 	t.Helper()
 	select {

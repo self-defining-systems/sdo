@@ -234,7 +234,7 @@ func dispatchScenario(t *testing.T, c *Controller) {
 	executePendingEffect(t, c)
 }
 
-func TestTerminalDriftResponderFailureDoesNotWaitForTTLOrCloseHealthy(t *testing.T) {
+func TestTerminalDriftResponderFailureDoesNotWaitForTTL(t *testing.T) {
 	c, client, cache, _, start := newDriftScenario(t, false)
 	dispatcher := &failedJobDispatcher{}
 	c.dispatcher = dispatcher
@@ -245,15 +245,12 @@ func TestTerminalDriftResponderFailureDoesNotWaitForTTLOrCloseHealthy(t *testing
 	awaitDispatchCompletionQueued(t, c)
 	stepScenario(t, c, cache, start.Add(3*time.Second))
 	state := exportState(t, c)
-	if !state.ResponderDone || state.DispatchError == "" || state.IncidentResult != nil || !state.IncidentOpen || state.DispatchState != contracts.DispatchState_DISPATCH_STATE_COMPLETED {
-		t.Fatalf("terminal failure was not immediate and unresolved: %+v", state)
+	closure := state.PendingClosure
+	if closure == nil || closure.GetDispatchError() == "" || closure.Result != nil || state.DispatchState != contracts.DispatchState_DISPATCH_STATE_IDLE {
+		t.Fatalf("terminal failure was not immediate: %+v", state)
 	}
 	if _, ok := c.PendingDispatchEffect(); ok {
 		t.Fatal("terminal drift worker was retried")
-	}
-	stepScenario(t, c, cache, start.Add(time.Minute))
-	if _, ok := c.PendingIncidentClosure(); ok {
-		t.Fatal("quiet health closed an unresolved terminal drift failure")
 	}
 	if dispatcher.calls != 1 {
 		t.Fatalf("failed responder dispatches=%d", dispatcher.calls)

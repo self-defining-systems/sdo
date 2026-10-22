@@ -35,7 +35,6 @@
     "status": "clear"
    }
   ],
-  "detector_review_required_at": null,
   "diagnosis_verification": [],
   "driver_phase_timings_seconds": {
    "controller_install_or_reuse": 1.046892168931663,

@@ -230,7 +230,7 @@ func runForeignPolicyIncident(t *testing.T) (string, string, GitPlanSource, stri
 	config := testControllerConfig()
 	config.Namespace, config.SourceCommit, config.CorpusSessionRoot, config.FiringThreshold, config.ClearThreshold = "app", commit, root, 1, 1
 	dispatcher := &fixedResultDispatcher{requests: make(chan IncidentRequest, 1), result: func(request IncidentRequest) IncidentResult { return completedResult(request.IncidentID) }}
-	controller, err := NewController(config, nil, provider, dispatcher, start)
+	controller, err := NewController(config, []sdk.Detector{quietHealthDetector()}, provider, dispatcher, start)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,4 +307,15 @@ func TestForeignNonPolicyWithStaleDeployerOwnershipIsIgnored(t *testing.T) {
 	if err != nil || event != nil {
 		t.Fatalf("unlisted foreign kind admitted using stale ownership: %+v %v", event, err)
 	}
+}
+
+// quietHealthDetector is a health detector that never fires, so closure waits
+// only on health and drift findings never gate it.
+func quietHealthDetector() *sequenceDetector {
+	detector := controllerDetector("health", time.Second, sdk.Finding{})
+	detector.spec.Class, detector.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+	detector.spec.OriginatingCommit = "source"
+	return detector
 }

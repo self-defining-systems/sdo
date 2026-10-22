@@ -101,7 +101,7 @@ def test_job_cleanup_uses_native_control_namespace_and_correlated_job() -> None:
     assert "job/sdo-responder-a" in commands[0]
 
 
-def test_agent_settings_keep_native_reflection_and_followup_options(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_settings_keep_native_reflection_options(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "SREGYM_EXPERIMENT_AGENT_CONFIG",
         json.dumps(
@@ -109,8 +109,6 @@ def test_agent_settings_keep_native_reflection_and_followup_options(monkeypatch:
                 "reflection_session": "resume",
                 "reflection_guidance": "generalize-spec",
                 "late_findings": "pull",
-                "max_follow_ups": 2,
-                "follow_up_cooldown_seconds": 12,
             }
         ),
     )
@@ -118,8 +116,6 @@ def test_agent_settings_keep_native_reflection_and_followup_options(monkeypatch:
     assert args.reflection_session == "resume"
     assert args.reflection_guidance == "generalize-spec"
     assert args.late_findings == "pull"
-    assert args.max_follow_ups == 2
-    assert args.follow_up_cooldown_seconds == 12
 
 
 def test_reflection_defaults_to_resume_and_fresh_remains_selectable(monkeypatch: pytest.MonkeyPatch) -> None:

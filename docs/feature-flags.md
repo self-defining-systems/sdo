@@ -12,8 +12,6 @@ The Go `sdo-operator host` command owns production lifecycle orchestration. It a
 
 `--late-findings {off,pull}` defaults to `off`. In `pull`, the controller publishes a bounded, incident-specific report through a read-only worker projection. A responder uses `sdo-operator late-findings --incident-id ID` to fetch logical detector and playbook IDs. The Go broker checks the worker's pull claim against the controller-owned report before recording it in the outcome. Workers do not mount the accepted repository or controller telemetry.
 
-`--max-follow-ups N` and `--follow-up-cooldown DURATION` control bounded responder follow-ups when health findings remain active. The default `N=0` disables follow-ups. Attempt identity and the remaining budget survive controller restarts.
-
 `SDO_CAUSE_ADMISSIBILITY=on` is an optional responder-side filter for unsupported narrative causes. It may remove a proposed cause but cannot override the Go outcome verifier. The default is `off`.
 
 ## Healthy detector baseline

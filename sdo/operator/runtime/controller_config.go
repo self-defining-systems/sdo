@@ -91,9 +91,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	dur("--duration", config.GetDuration())
 	dur("--response-timeout", config.GetResponseTimeout())
 	dur("--verification-timeout", config.GetVerificationTimeout())
-	if config.GetMaxFollowUps() > 0 {
-		args = append(args, "--max-follow-ups", strconv.Itoa(int(config.GetMaxFollowUps())))
-	}
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
 	}
@@ -106,7 +103,6 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	dur("--program-min-duration", config.GetProgramMinDuration())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
 	dur("--diagnosis-settle-delay", config.GetDiagnosisSettleDelay())
-	dur("--follow-up-cooldown", config.GetFollowUpCooldown())
 	str("--repair-policy", config.GetRepairPolicy())
 
 	str("--lease-name", config.GetLeaseName())

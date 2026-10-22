@@ -358,8 +358,7 @@ class ScriptedAgent:
         incident_id = record.incident_id or self._abandoned_incident_id(state)
         record.incident_id = incident_id
         record.metrics["controller_state_after_settle"] = {
-            key: state.get(key)
-            for key in ("incident_open", "closure_state", "last_acknowledged_incident_id", "detector_review_required")
+            key: state.get(key) for key in ("incident_open", "closure_state", "last_acknowledged_incident_id")
         }
         settled = not state.get("incident_open") and not state.get("pending_closure")
         record.checks.append(
@@ -721,5 +720,5 @@ def _open_summary(state: dict[str, Any]) -> str:
     result = state.get("incident_result") or {}
     return (
         f"incident {request.get('incident_id')!r}, responder {result.get('status')!r}, "
-        f"review {state.get('detector_review_reason')!r}, closure {state.get('closure_state')!r}"
+        f"closure {state.get('closure_state')!r}"
     )

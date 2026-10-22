@@ -27,7 +27,7 @@ The logical outcome schema is `OutcomeRecord` in `sdo/contracts/proto/sdodev/con
 
 Tool responses expose logical playbook IDs. The outcome keeps a structured summary with `truncated: true` when a full tool response would exceed 2 KiB. A clean `verify` omits the unrelated namespace sweep. For verified repairs, `timestamps.mitigated_at` is the last successful repair completion no later than the final health-clear streak, falling back to that clear time when no completed repair receipt exists.
 
-The controller runtime ConfigMap can also contain `detector_review_required`, `detector_review_required_at`, and `detector_review_reason`. These fields mean a responder completed but independent health findings did not clear within the bounded verification window; do not interpret that state as a verified incident closure.
+When a responder completes but the health detectors do not clear within the controller's verification window, the controller closes the incident with empty `final_detector_states`; the outcome is classified `failed`. Do not read that closure as verified health.
 
 Useful queries for the active per-incident outcome documents:
 

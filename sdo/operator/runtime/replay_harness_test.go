@@ -435,8 +435,8 @@ func replayLifecycleStreamDurable(t *testing.T, fx replayFixture) {
 }
 
 // replayLifecycleEventIDAttribution re-derives every lifecycle event's id from
-// its own durable content -- the incident id, the phase, and (for a supersede)
-// the superseding child -- and asserts it equals the recorded id and is unique
+// its own durable content -- the incident id and the phase -- and asserts it
+// equals the recorded id and is unique
 // across the stream. The id is content-addressed, so a crashed controller
 // re-emitting a transition reproduces the identical id and the sink drops it.
 func replayLifecycleEventIDAttribution(t *testing.T, fx replayFixture) {
@@ -444,9 +444,6 @@ func replayLifecycleEventIDAttribution(t *testing.T, fx replayFixture) {
 	seen := map[string]*contracts.LifecycleEvent{}
 	for _, event := range fx.lifecycle {
 		want := lifecycleEventID(event.IncidentId, event.Event)
-		if event.Event == PhaseSuperseded {
-			want = lifecycleEventID(event.IncidentId, event.Event, event.SupersededBy)
-		}
 		if want != event.EventId {
 			t.Fatalf("lifecycle id for %s/%s mismatch: recorded %s, re-derived %s",
 				event.IncidentId, event.Event, event.EventId, want)
@@ -514,8 +511,8 @@ func assertLifecycleEventsEqual(t *testing.T, want []*contracts.LifecycleEvent, 
 // TestReplayLifecycleContract exercises the lifecycle replay dimensions
 // directly. No stored run exposes a frozen lifecycle stream yet, so no golden
 // fixture lights these dimensions up today; this self-test pins them against a
-// representative incident (open through acknowledgment, plus a superseded
-// parent) so the shipped path is covered. When a real lifecycle stream is ever
+// representative incident (open through acknowledgment) so the shipped path is
+// covered. When a real lifecycle stream is ever
 // captured, dropping it in as lifecycle-events.jsonl replays here unchanged.
 func TestReplayLifecycleContract(t *testing.T) {
 	at := func(sec int64) time.Time { return time.Unix(1_790_931_114+sec, 0).UTC() }
@@ -525,19 +522,14 @@ func TestReplayLifecycleContract(t *testing.T) {
 			IncidentId: incident, Application: "demo", Namespace: "demo", RecordedAt: contractTimestamp(at(second)),
 		}
 	}
-	superseded := envelope(PhaseSuperseded, "demo-1", 1)
-	superseded.EventId = lifecycleEventID("demo-1", PhaseSuperseded, "demo-1-f1")
-	superseded.SupersededBy, superseded.Reason = "demo-1-f1", "follow_up"
-	followUp := envelope(PhaseOpened, "demo-1-f1", 1)
-	followUp.ParentIncidentId, followUp.FollowUpAttempt = "demo-1", 1
-	acknowledged := envelope(PhaseAcknowledged, "demo-1-f1", 3)
+	acknowledged := envelope(PhaseAcknowledged, "demo-1", 3)
 	acknowledged.OutcomeCommit = "outcome-sha"
 	lifecycle := []*contracts.LifecycleEvent{
-		envelope(PhaseOpened, "demo-1", 0), superseded, envelope(PhaseWorktreeReleased, "demo-1", 2), followUp, acknowledged,
+		envelope(PhaseOpened, "demo-1", 0), envelope(PhaseClosed, "demo-1", 2), acknowledged,
 	}
 	firings := []*contracts.FiringRecord{
-		{SchemaVersion: FiringSchemaVersion, EventId: firingEventID("demo-1-f1", "health", "fp", string(FiringBatched)),
-			Event: string(FiringBatched), IncidentId: "demo-1-f1", DetectorId: "health", RecordedAt: contractTimestamp(at(1)),
+		{SchemaVersion: FiringSchemaVersion, EventId: firingEventID("demo-1", "health", "fp", string(FiringBatched)),
+			Event: string(FiringBatched), IncidentId: "demo-1", DetectorId: "health", RecordedAt: contractTimestamp(at(1)),
 			DispatchRelation: string(RelationBeforeDispatch)},
 	}
 	fx := replayFixture{name: "lifecycle-contract", lifecycle: lifecycle, firings: firings}

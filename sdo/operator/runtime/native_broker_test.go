@@ -522,29 +522,6 @@ func TestNativeBrokerCompletesAfterDeterministicReflectionRejectionAndRunsNextIn
 	}
 }
 
-func TestNativeBrokerReleasesSupersededProposal(t *testing.T) {
-	t.Parallel()
-	target := nativeRepository(t)
-	repositoryBroker, err := broker.New(target, filepath.Join(t.TempDir(), "proposals"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	native := NativeIncidentBroker{Repository: repositoryBroker, LedgerRoot: filepath.Join(t.TempDir(), "ledger")}
-	w, err := native.PrepareIncident(context.Background(), "inc-superseded")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := native.ReleaseIncident(context.Background(), "inc-superseded"); err != nil {
-		t.Fatal(err)
-	}
-	if err := native.ReleaseIncident(context.Background(), "inc-superseded"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(w.Worktree); !os.IsNotExist(err) {
-		t.Fatalf("superseded checkout remains: %v", err)
-	}
-}
-
 func TestNativeBrokerRecordedActionsDoNotCreateEmptyProposalCommit(t *testing.T) {
 	t.Parallel()
 	target := nativeRepository(t)

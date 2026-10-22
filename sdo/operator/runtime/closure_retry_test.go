@@ -41,10 +41,6 @@ func (b *rejectingIncidentBroker) AcknowledgeClosure(context.Context, ClosureRec
 	return nil
 }
 
-func (b *rejectingIncidentBroker) ReleaseIncident(context.Context, string) error {
-	return nil
-}
-
 func (b *rejectingIncidentBroker) processCalls() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()

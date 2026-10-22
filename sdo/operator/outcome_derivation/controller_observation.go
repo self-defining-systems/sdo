@@ -76,16 +76,6 @@ func ObserveController(data []byte) *c.ControllerObservation {
 		result.VerifiedIncidentId = id
 		return result
 	}
-	if request.GetStopOnReview() && state.GetDetectorReviewRequired() {
-		id = state.GetIncidentRequest().GetIncidentId()
-		if id == "" {
-			id = "unknown"
-		}
-		result.Failure = &c.ControllerObservationFailure{Code: c.ControllerObservationFailure_CODE_DETECTOR_REVIEW_REQUIRED, IncidentId: id, Message: state.GetDetectorReviewReason()}
-		if result.Failure.Message == "" {
-			result.Failure.Message = "no reason recorded"
-		}
-	}
 	return result
 }
 
@@ -127,13 +117,6 @@ func controllerSummary(state *c.ControllerState) string {
 		parts = append(parts, "dispatch error: "+state.GetDispatchError())
 	} else {
 		parts = append(parts, fmt.Sprintf("responder not done (dispatch state '%s')", dispatch))
-	}
-	if state.GetDetectorReviewRequired() {
-		reason := state.GetDetectorReviewReason()
-		if reason == "" {
-			reason = "no reason recorded"
-		}
-		parts = append(parts, "detector review required: "+reason)
 	}
 	return strings.Join(parts, ", ")
 }

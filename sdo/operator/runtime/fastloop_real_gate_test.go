@@ -528,10 +528,10 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatal(err)
 	}
 	closure := fastloopGateClose(t, ctx, first, firstDispatch, firstResult, start)
-	if closure.HealthClearedAt == nil {
+	if len(closure.FinalDetectorStates) == 0 {
 		t.Fatal("controller did not verify the first repair")
 	}
-	if closure.HealthClearedAt.Before(closure.DispatchedAt) {
+	if closure.HealthClearedAt != nil && closure.HealthClearedAt.Before(closure.DispatchedAt) {
 		t.Fatalf("latent repair cutoff preceded dispatch: %s < %s", closure.HealthClearedAt, closure.DispatchedAt)
 	}
 	receipt := fastloopGateProcessClosure(t, ctx, first, firstRequest.IncidentID)

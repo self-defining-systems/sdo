@@ -98,7 +98,53 @@ func lifecycleController(
 }
 
 func lifecycleHealthDetector(id string, samples ...bool) *sequenceDetector {
-	return followUpHealthDetector(id, samples...)
+	findings := make([]sdk.Finding, 0, len(samples))
+	for _, active := range samples {
+		if !active {
+			findings = append(findings, sdk.Finding{})
+			continue
+		}
+		finding := stateFinding(id)
+		finding.Severity = sdk.SeverityCritical
+		findings = append(findings, finding)
+	}
+	detector := controllerDetector(id, time.Second, findings...)
+	detector.spec.Class = sdk.DetectorClassHealth
+	detector.spec.Owner = sdk.DetectorOwnerHealthJudge
+	detector.spec.Persistence = sdk.PersistencePolicy{Firing: 2, Clearing: 2}
+	detector.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityCritical}
+	detector.spec.OriginatingCommit = "health-objective"
+	return detector
+}
+
+// summarizingDispatcher completes every incident with a confirmed root cause.
+type summarizingDispatcher struct {
+	requests chan IncidentRequest
+}
+
+func (d *summarizingDispatcher) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
+	d.requests <- request
+	result := completedResult(request.IncidentID)
+	result.ConfirmedRootCauses = []ConfirmedRootCause{{
+		Summary:   "fixed " + request.Findings[0].DetectorID,
+		Resources: []sdk.ObjectRef{{Kind: "Deployment", Name: "x"}},
+	}}
+	return result, nil
+}
+
+// drainWorkspace executes the pending workspace preparation and processes its
+// completion, so the prepared worktree is recorded on the open incident.
+func drainWorkspace(t *testing.T, controller *Controller) {
+	t.Helper()
+	effect, ok := controller.PendingWorkspaceEffect()
+	if !ok {
+		t.Fatal("expected a pending workspace effect")
+	}
+	if err := controller.ExecuteWorkspaceEffect(context.Background(), effect); err != nil {
+		t.Fatalf("execute workspace effect: %v", err)
+	}
+	awaitBrokerResult(t, controller.workspaceResults)
+	controller.processBrokerCompletions()
 }
 
 // TestLifecycleStreamEmitsEveryTransitionOnce drives one incident through the
@@ -189,56 +235,6 @@ func TestLifecycleStreamEmitsEveryTransitionOnce(t *testing.T) {
 	}
 	if last := timeline[len(timeline)-1]; last.Kind != string(PhaseAcknowledged) {
 		t.Fatalf("reconstructed timeline does not end at incident_acknowledged: %#v", last)
-	}
-	assertLifecycleTransportNeutral(t, lifecycle.events)
-}
-
-// TestLifecycleStreamRecordsSupersedeAndRelease drives a follow-up that
-// supersedes an open incident in place and strands the parent worktree, and
-// asserts the stranded-worktree lifecycle -- the exact class of bug (a worktree
-// leak on supersede) this stream exists to make diagnosable in seconds -- is
-// fully observable: the parent is superseded once, the follow-up opens once with
-// its parent linked, and the stranded worktree is released once.
-func TestLifecycleStreamRecordsSupersedeAndRelease(t *testing.T) {
-	controller, dispatcher := newFollowUpController(t, 2, healthBPersistent())
-	broker := &recordingIncidentBroker{workspace: IncidentWorkspace{Worktree: "/worktrees/incident", BaseCommit: "base"}}
-	if err := controller.SetIncidentBroker(broker); err != nil {
-		t.Fatalf("set broker: %v", err)
-	}
-	lifecycle := &memoryLifecycleSink{}
-	controller.SetLifecycleSink(lifecycle)
-
-	first := completeFirstResponderWithBroker(t, controller, dispatcher)
-	stepAt(t, controller, 3) // the residual health finding supersedes the parent
-	drainRelease(t, controller)
-
-	superseded := lifecycle.byPhase(PhaseSuperseded)
-	if len(superseded) != 1 || superseded[0].IncidentId != first.IncidentID || superseded[0].SupersededBy == "" {
-		t.Fatalf("parent supersede not recorded exactly once: %#v", lifecycle.events)
-	}
-	childID := superseded[0].SupersededBy
-	if superseded[0].EventId != lifecycleEventID(first.IncidentID, string(PhaseSuperseded), childID) {
-		t.Fatalf("supersede id is not content-addressed over the parent and child: %#v", superseded[0])
-	}
-	released := lifecycle.byPhase(PhaseWorktreeReleased)
-	if len(released) != 1 || released[0].IncidentId != first.IncidentID {
-		t.Fatalf("stranded parent worktree release not recorded exactly once: %#v", lifecycle.events)
-	}
-	var childOpened *contracts.LifecycleEvent
-	for index := range lifecycle.events {
-		event := lifecycle.events[index]
-		if event.Event == PhaseOpened && event.IncidentId == childID {
-			childOpened = event
-		}
-	}
-	if childOpened == nil || childOpened.ParentIncidentId != first.IncidentID || childOpened.FollowUpAttempt != 1 {
-		t.Fatalf("follow-up open did not link its superseded parent: %#v", lifecycle.events)
-	}
-	// The parent's timeline reconstructs through its supersede; the child's is a
-	// separate incident id reachable via ParentIncidentID / SupersededBy.
-	parentTimeline := ReconstructIncidentTimeline(first.IncidentID, lifecycle.events, nil)
-	if last := parentTimeline[len(parentTimeline)-1]; last.Kind != string(PhaseWorktreeReleased) {
-		t.Fatalf("parent timeline does not end at worktree_released: %#v", last)
 	}
 	assertLifecycleTransportNeutral(t, lifecycle.events)
 }

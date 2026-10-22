@@ -11,16 +11,14 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class ControllerObservationRequest(_message.Message):
-    __slots__ = ("state", "known_incident_ids", "incident_id", "stop_on_review")
+    __slots__ = ("state", "known_incident_ids", "incident_id")
     STATE_FIELD_NUMBER: _ClassVar[int]
     KNOWN_INCIDENT_IDS_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
-    STOP_ON_REVIEW_FIELD_NUMBER: _ClassVar[int]
     state: _controller_state_pb2.ControllerState
     known_incident_ids: _containers.RepeatedScalarFieldContainer[str]
     incident_id: str
-    stop_on_review: bool
-    def __init__(self, state: _Optional[_Union[_controller_state_pb2.ControllerState, _Mapping]] = ..., known_incident_ids: _Optional[_Iterable[str]] = ..., incident_id: _Optional[str] = ..., stop_on_review: _Optional[bool] = ...) -> None: ...
+    def __init__(self, state: _Optional[_Union[_controller_state_pb2.ControllerState, _Mapping]] = ..., known_incident_ids: _Optional[_Iterable[str]] = ..., incident_id: _Optional[str] = ...) -> None: ...
 
 class ControllerObservationFailure(_message.Message):
     __slots__ = ("code", "incident_id", "message")
@@ -29,11 +27,9 @@ class ControllerObservationFailure(_message.Message):
         CODE_UNSPECIFIED: _ClassVar[ControllerObservationFailure.Code]
         CODE_INVALID_SNAPSHOT: _ClassVar[ControllerObservationFailure.Code]
         CODE_CLOSURE_FAILED: _ClassVar[ControllerObservationFailure.Code]
-        CODE_DETECTOR_REVIEW_REQUIRED: _ClassVar[ControllerObservationFailure.Code]
     CODE_UNSPECIFIED: ControllerObservationFailure.Code
     CODE_INVALID_SNAPSHOT: ControllerObservationFailure.Code
     CODE_CLOSURE_FAILED: ControllerObservationFailure.Code
-    CODE_DETECTOR_REVIEW_REQUIRED: ControllerObservationFailure.Code
     CODE_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     MESSAGE_FIELD_NUMBER: _ClassVar[int]

@@ -38,25 +38,6 @@ func TestVerifyRetainsDriftWithHealthyDetectors(t *testing.T) {
 	}
 }
 
-func TestClosureRetainsDriftWithHealthyDetectors(t *testing.T) {
-	start := time.Unix(100, 0).UTC()
-	c, err := NewController(testControllerConfig(), []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := unexplainedFinding()
-	c.currentIncidentRequest = &IncidentRequest{IncidentID: "incident", Findings: []sdk.Finding{f}}
-	c.incidentOpen = true
-	c.incidentFindingKeys = findingKeys([]sdk.Finding{f})
-	c.responderCompletedAt = start
-	c.healthDetectorIDs = []string{"health"}
-	c.recordEvaluation("health", start.Add(time.Second), nil)
-	c.recordEvaluation(f.DetectorID, start.Add(time.Second), []sdk.Finding{f})
-	if _, clear := c.finalVerificationStates(); clear {
-		t.Fatal("quiet health closed retained drift")
-	}
-}
-
 func TestRepairedDriftRecursWithoutProgram(t *testing.T) {
 	start := time.Unix(100, 0).UTC()
 	before, broken := driftService(8080), driftService(9999)
@@ -339,18 +320,5 @@ func TestPendingDriftAloneStillWaitsForBatchWindow(t *testing.T) {
 	}
 	if !c.IncidentOpen() {
 		t.Fatal("drift-only batch never opened after the batch window")
-	}
-}
-
-func TestClearedPendingDriftIsNotCoalesced(t *testing.T) {
-	start := time.Unix(100, 0).UTC()
-	changed := true
-	c, _, _ := pendingDriftController(t, start, []sdk.Finding{{}, stateFinding("health")}, &changed)
-	changed = false
-	stepHealthIncident(t, c, start)
-	state := exportState(t, c)
-	request := state.IncidentRequest
-	if request == nil || len(request.Findings) != 1 || request.Findings[0].DetectorId != "health" || len(request.DriftEvents) != 0 || len(state.PendingBatch.Findings) != 0 {
-		t.Fatalf("cleared drift was pulled into the incident: request=%+v pending=%+v", request, state.PendingBatch)
 	}
 }
