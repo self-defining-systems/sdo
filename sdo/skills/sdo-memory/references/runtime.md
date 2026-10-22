@@ -116,7 +116,9 @@ Index primitive calls by original position, phase, method, bound object and erro
 
 Filters search the entire recording. next_offset marks incomplete pages;
 a truncated page does not establish that a primitive was unrecorded.
-Empty recorded phases mean open. Error excerpts report omitted characters.
+Empty recorded phases mean open. phase_index locates the call within that
+phase's capture_fields page. Error excerpts report omitted characters.
+open_phase selects the protected recording file, including its fixed observations.
 Result payloads remain available through capture_fields.
 
 ## check_memory

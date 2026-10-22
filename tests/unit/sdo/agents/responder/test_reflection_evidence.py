@@ -93,12 +93,17 @@ def test_recording_index_finds_late_primitive_without_dumping_results(tmp_path: 
     assert page["next_offset"] is None
     assert page["items"][27] == {
         "index": 27,
+        "phase_index": 0,
         "phase": "fixed",
         "method": "DiffAgainstSource",
         "bound_object": ref,
         "error": "source unavailable",
         "error_omitted_characters": 0,
     }
+    selected = read_capture(
+        tmp_path, "fixed", "recordings", offset=page["items"][27]["phase_index"], limit=1, fields=["method", "error"]
+    )
+    assert selected["items"] == [{"method": "DiffAgainstSource", "error": "source unavailable"}]
     assert page["items"][0]["phase"] == "open"
     assert "large-result" not in json.dumps(page)
     assert len(json.dumps(page)) < 8000
@@ -121,3 +126,20 @@ def test_recording_index_pagination_is_explicit_and_filters_whole_file(tmp_path:
     assert filtered["items"][0]["index"] == 65
     assert filtered["total"] == 1
     assert filtered["next_offset"] is None
+
+
+def test_available_preapply_capture_and_recordings_remain_distinct(tmp_path: Path) -> None:
+    from sdo.agents.responder.reflection_evidence import recording_index
+
+    (tmp_path / "open@pre-apply.json").write_text('{"pods":[{"metadata":{"name":"later-fault"}}]}')
+    (tmp_path / "fixed.json").write_text('{"pods":[]}')
+    (tmp_path / "open@pre-apply-recordings.json").write_text(
+        '[{"method":"Logs","arguments":[],"result":"before"},'
+        '{"method":"Logs","phase":"fixed","arguments":[],"result":"after"}]'
+    )
+    names = {item["file"] for item in capture_inventory(tmp_path)["captures"]}
+    assert "open@pre-apply.json" in names
+    assert read_capture(tmp_path, "pre-apply", "pods")["items"][0]["metadata"]["name"] == "later-fault"
+    assert recording_index(tmp_path, open_phase="pre-apply")["total"] == 2
+    assert read_capture(tmp_path, "pre-apply", "recordings")["items"][0]["result"] == "before"
+    assert read_capture(tmp_path, "fixed", "recordings", open_phase="pre-apply")["items"][0]["result"] == "after"
