@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/program/testdata/routingport"
@@ -413,5 +416,129 @@ func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRoutingCaptureRecordsHangingDialAsFailedObservation(t *testing.T) {
+	for _, kind := range []string{"Service", "Pod"} {
+		t.Run(kind, func(t *testing.T) {
+			p, err := prober.New(prober.Config{Namespace: "app", DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
+				if strings.HasSuffix(address, ":9999") {
+					if (kind == "Pod") == strings.HasPrefix(address, "10.0.0.5:") {
+						<-ctx.Done()
+						return nil, &net.OpError{Op: "dial", Net: "tcp", Err: ctx.Err()}
+					}
+					return nil, errors.New("connection refused")
+				}
+				left, right := net.Pipe()
+				_ = right.Close()
+				return left, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			api := httptest.NewServer(prober.Handler(p))
+			defer api.Close()
+			snapshot := routingCaptureSnapshot()
+			root := t.TempDir()
+			const incident = "hanging-dial"
+			if err := memory.CaptureIncidentSnapshot(root, incident, "open@detect", snapshot, "app"); err != nil {
+				t.Fatal(err)
+			}
+			service := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+			findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: service}}
+			view := LiveReadView{DetectionContext: snapshot, Prober: HTTPProberClient{BaseURL: StaticProberURL(api.URL)}}
+			if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, view); err != nil {
+				t.Fatal(err)
+			}
+			dir, err := memory.IncidentCorpusDir(root, incident)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var calls []sdktest.PrimitiveCall
+			if err := json.Unmarshal(raw, &calls); err != nil {
+				t.Fatal(err)
+			}
+			if len(calls) != 4 {
+				t.Fatalf("lost other routing results: %+v", calls)
+			}
+			replay := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
+			pod := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "api-pod"}
+			for _, ref := range []sdk.ObjectRef{pod, service} {
+				result, err := replay.ProbeTCP(ref, 9999)
+				if err != nil || result.Success || result.Detail == "" {
+					t.Fatalf("failed dial must replay as an observation: %+v %v", result, err)
+				}
+				if ref.Kind == kind && !strings.Contains(result.Detail, "deadline exceeded") {
+					t.Fatalf("missing dial timeout detail: %+v", result)
+				}
+			}
+			if result, err := replay.ProbeTCP(pod, 8080); err != nil || !result.Success {
+				t.Fatalf("lost successful peer probe: %+v %v", result, err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "routing-probe-note.json")); !os.IsNotExist(err) {
+				t.Fatalf("dial timeout marked routing unavailable: %v", err)
+			}
+		})
+	}
+}
+
+func TestRoutingCaptureContinuesAfterProberTransportFailure(t *testing.T) {
+	p, err := prober.New(prober.Config{Namespace: "app", DialContext: func(context.Context, string, string) (net.Conn, error) {
+		left, right := net.Pipe()
+		_ = right.Close()
+		return left, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(prober.Handler(p))
+	defer api.Close()
+	resolutions := 0
+	client := HTTPProberClient{BaseURL: func(context.Context, bool) (string, error) {
+		resolutions++
+		if resolutions <= 2 { // Both attempts for the first probe fail.
+			return "", errors.New("prober unreachable")
+		}
+		return api.URL, nil
+	}}
+	snapshot := routingCaptureSnapshot()
+	root := t.TempDir()
+	const incident = "transport-failure"
+	if err := memory.CaptureIncidentSnapshot(root, incident, "open@detect", snapshot, "app"); err != nil {
+		t.Fatal(err)
+	}
+	findings := []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "api"}}}
+	if err := captureRoutingEvidence(context.Background(), root, incident, "open@detect", findings, LiveReadView{DetectionContext: snapshot, Prober: client}); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := memory.IncidentCorpusDir(root, incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "open@detect-recordings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []sdktest.PrimitiveCall
+	if err := json.Unmarshal(raw, &calls); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 4 || !strings.Contains(calls[0].Error, "prober unreachable") {
+		t.Fatalf("missing transport failure: %+v", calls)
+	}
+	for _, call := range calls[1:] {
+		var result program.ProbeResult
+		if err := json.Unmarshal(call.Result, &result); err != nil || call.Error != "" || !result.Success {
+			t.Fatalf("transport failure lost later result: %+v %v", call, err)
+		}
+	}
+	raw, err = os.ReadFile(filepath.Join(dir, "routing-probe-note.json"))
+	if err != nil || !bytes.Contains(raw, []byte("prober unreachable")) {
+		t.Fatalf("missing transport capability note: %s %v", raw, err)
 	}
 }

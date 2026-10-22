@@ -149,8 +149,29 @@ func (c HTTPProberClient) Burst(ctx context.Context, request prober.BurstRequest
 }
 
 func (c HTTPProberClient) Probe(ctx context.Context, ref sdk.ObjectRef, port int32, request *program.HTTPProbe) (program.ProbeResult, error) {
+	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, HTTP: request})
+}
+
+func (c HTTPProberClient) primitive(ctx context.Context, request prober.PrimitiveRequest) (program.ProbeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return program.ProbeResult{}, err
+	}
+	// Leave half the caller's remaining time for locating the prober and the
+	// HTTP round trip, so a hanging probe returns an observation before the
+	// client cancels its request. HTTP does not carry context deadlines.
+	timeout := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = min(timeout, time.Until(deadline)/2)
+	}
+	if c.Client != nil && c.Client.Timeout > 0 {
+		timeout = min(timeout, c.Client.Timeout/2)
+	}
+	if timeout <= 0 {
+		return program.ProbeResult{}, context.DeadlineExceeded
+	}
+	request.Timeout = timeout
 	var result program.ProbeResult
-	err := c.do(ctx, http.MethodPost, prober.PathPrimitive, prober.PrimitiveRequest{To: ref, Port: port, HTTP: request}, &result)
+	err := c.do(ctx, http.MethodPost, prober.PathPrimitive, request, &result)
 	return result, err
 }
 
@@ -423,7 +444,5 @@ func (c trafficContext) TrafficWindow(workload string) (traffic.Window, bool) {
 // ProbePod carries only the address already observed in the namespace snapshot.
 // The credential-free prober uses its existing application-only network policy.
 func (c HTTPProberClient) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip string, port int32) (program.ProbeResult, error) {
-	var result program.ProbeResult
-	err := c.do(ctx, http.MethodPost, prober.PathPrimitive, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip}, &result)
-	return result, err
+	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip})
 }
