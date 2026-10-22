@@ -12,6 +12,7 @@ RUN npm uninstall --global @openai/codex @anthropic-ai/claude-code >/dev/null 2>
     rm -f /usr/local/bin/codex /usr/local/bin/claude \
     && ! command -v claude
 COPY benchmarks/sregym/assurance/scripted_codex /opt/sdo-scripted/scripted_codex
+COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo-scripted/targetport
 RUN printf '#!/bin/sh\nPYTHONPATH=/opt/sdo-scripted:/opt/sdo exec python3 -m scripted_codex "$@"\n' \
       > /usr/local/bin/codex \
     && chmod 0755 /usr/local/bin/codex \

@@ -18,6 +18,8 @@ from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 ROOT = Path(__file__).resolve().parents[3]
 APP = ROOT / "apps/toy"
 NAMESPACE = "sdo-toy"
+#: The kind cluster name; a scratch run sets ``SDO_TOY_CLUSTER`` to avoid the shared default.
+CLUSTER = os.environ.get("SDO_TOY_CLUSTER", "sdo-toy")
 
 
 class ToyWorker:
@@ -94,8 +96,8 @@ def up(args: Any) -> int:
     clusters = subprocess.run(
         ["kind", "get", "clusters"], check=True, capture_output=True, text=True
     ).stdout.splitlines()
-    if "sdo-toy" in clusters:
-        raise ValueError("sdo-toy already exists without this run directory; refusing to adopt it")
+    if CLUSTER in clusters:
+        raise ValueError(f"{CLUSTER} already exists without this run directory; refusing to adopt it")
     config = prepare_dev_mount(worktree, None, run_dir)
     build = run_dir / "image"
     build.mkdir(exist_ok=True)
@@ -114,7 +116,7 @@ def up(args: Any) -> int:
             "create",
             "cluster",
             "--name",
-            "sdo-toy",
+            CLUSTER,
             "--image",
             args.toy_node_image,
             "--config",
@@ -130,7 +132,7 @@ def up(args: Any) -> int:
     images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
     from benchmarks.sregym.fastloop.toy_images import load_images
 
-    load_images("sdo-toy", [IMAGE, images.controller, images.responder, images.validator, *CALICO_IMAGES])
+    load_images(CLUSTER, [IMAGE, images.controller, images.responder, images.validator, *CALICO_IMAGES])
     images_loaded = time.monotonic()
     install_calico(kubeconfig, run_dir / "calico.yaml")
     loaded = time.monotonic()
@@ -180,7 +182,7 @@ def up(args: Any) -> int:
     env = FastloopEnvironment(
         run_dir=run_dir,
         app="toy",
-        cluster="sdo-toy",
+        cluster=CLUSTER,
         kubeconfig=kubeconfig,
         namespace=NAMESPACE,
         application="toy",
@@ -273,7 +275,7 @@ def install_controller(environment: FastloopEnvironment, config: Any = None) -> 
         capture_output=True,
     )
     publish_agent_registrations(
-        ROOT / "benchmarks/sregym/adapter/scripted_registrations",
+        config.agent_registrations or ROOT / "benchmarks/sregym/adapter/scripted_registrations",
         install.control_namespace,
         environment.kubeconfig,
         environment.images.responder,

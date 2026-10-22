@@ -25,7 +25,7 @@ TURN_KEY = "turn.json"
 
 MITIGATION_MODES = ("correct", "wrong_then_correct", "wrong_only_honest", "wrong_only_claimed", "healed_noop")
 REFLECTION_MODES = ("learn", "no_change", "crash_once", "crash_always", "invalid_then_learn")
-FAULTS = ("network_policy_block", "missing_configmap")
+FAULTS = ("network_policy_block", "missing_configmap", "service_target_port")
 
 
 class DirectiveError(ValueError):
