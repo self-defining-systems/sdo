@@ -42,7 +42,11 @@ and 4 MiB response limit. Deduplicated bodies count once toward the byte limit;
 envelopes count per occurrence. `complete=false`, nonzero `dropped`, an open
 writer, missing files, or a new epoch after restart prevent continuity claims.
 Disk/queue/cap failures do not block forwarding. A missing manifest is Unknown,
-including when the store itself could not initialize. Runtime storage is removed
+including when the store itself could not initialize. The controller durably rotates
+a sibling `api-history.generation` before each forwarding Job; manifests must match
+that token. The sidecar also rotates it before recorder initialization. Missing,
+unreadable, malformed or mismatched tokens remain incomplete after writer exit.
+A failed controller generation write prevents launching the attempt. Runtime storage is removed
 with the existing incident session lifecycle; there is no multi-session retention
 policy. History cannot prove unobserved state or replace controller captures,
 pre-apply checkpoints, action receipts, or independent recovery verification.
