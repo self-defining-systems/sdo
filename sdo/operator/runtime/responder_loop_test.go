@@ -340,7 +340,7 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 	if len(loop.ToolCalls()) != 4 || len(loop.PlanApplications()) != 1 || len(loop.ProgramRuns()) == 0 {
 		t.Fatalf("outcome evidence missing: calls=%d apps=%d runs=%d", len(loop.ToolCalls()), len(loop.PlanApplications()), len(loop.ProgramRuns()))
 	}
-	if signals := loop.FailureSignals(); len(signals) != 1 || signals[0] != "applied_diagnosis_still_match:targetport" {
+	if signals := loop.FailureSignals(); len(signals) != 2 || !contains(signals, "applied_diagnosis_still_match:targetport") || !contains(signals, "application_verification_failure:targetport") {
 		t.Fatalf("failure signal: %v", signals)
 	}
 }

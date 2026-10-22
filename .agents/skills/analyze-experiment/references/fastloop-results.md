@@ -86,6 +86,13 @@ signals such as `adhoc_coverage_gap` are not a failure of every program. Inspect
 the attempt facts and live recheck evidence described in [native broker evidence](native-broker.md)
 when an outcome has not yet been committed.
 
+Responder applications record the same revision-bound trust failure as
+`application_verification_failure:<program_id>@<accepted_dependency_revision>`.
+The tool state saves it before rollback, regardless of rollback's result. Trust
+counts the signal with the failed application once, or on its own after restart
+discards application history; a successful retry in that incident leaves zero
+successes and one failure for the affected revision.
+
 ### Learning credit
 
 A newly introduced program may earn one credit from its original independently

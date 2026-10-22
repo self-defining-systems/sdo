@@ -42,6 +42,12 @@ mutation records are ignored. A restart cannot restore an old handle or increase
 the saved response budget. The responder continues or redispatches against live
 state and prepares a fresh plan when needed.
 
+Failed responder verification adds
+`application_verification_failure:<program_id>@<accepted_dependency_revision>` to
+`FailureSignals` and saves it before rollback. It survives successful or failed
+rollback and restarts without retaining executable application state. A successful
+retry does not erase the earlier revision's failure or restore its trust.
+
 `<IncidentJobName(incident_id)>-fast-path` stores `state` (`attempting`, `failed`,
 `resolved`), bound `program_runs`, revision-bound `trust_failure_signals`, and a
 failure `summary`. The controller freezes the diagnoses and failure suspicion

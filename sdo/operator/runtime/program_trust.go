@@ -77,6 +77,11 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 				state = stateForRevision(id, revision)
 				failed := outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH
 				for _, signal := range outcome.GetProgramFailureSignals() {
+					// Count durable responder failures after applications, so the
+					// same failure does not also count against a successful retry.
+					if strings.HasPrefix(signal, "application_verification_failure:") {
+						continue
+					}
 					failedID, failedRevision, fastFailure := parseFastPathTrustFailureSignal(signal)
 					if strings.HasSuffix(signal, ":"+id) || (fastFailure && failedID == id && (failedRevision == "" || failedRevision == revision)) {
 						failed = true
@@ -101,7 +106,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		}
 		seenFailures := map[string]bool{}
 		for _, signal := range outcome.GetProgramFailureSignals() {
-			id, revision, ok := parseFastPathTrustFailureSignal(signal)
+			id, revision, ok := parseProgramTrustFailureSignal(signal)
 			if !ok {
 				continue
 			}
@@ -256,7 +261,18 @@ func (l *ResponderLoop) restoreFastPathTrustFailureSignals(encoded string) error
 }
 
 func parseFastPathTrustFailureSignal(signal string) (id, revision string, ok bool) {
-	payload, ok := strings.CutPrefix(signal, "fast_path_failure:")
+	return parseTrustFailureSignal(signal, "fast_path_failure:")
+}
+
+func parseProgramTrustFailureSignal(signal string) (id, revision string, ok bool) {
+	if id, revision, ok = parseFastPathTrustFailureSignal(signal); ok {
+		return id, revision, true
+	}
+	return parseTrustFailureSignal(signal, "application_verification_failure:")
+}
+
+func parseTrustFailureSignal(signal, prefix string) (id, revision string, ok bool) {
+	payload, ok := strings.CutPrefix(signal, prefix)
 	if !ok {
 		return "", "", false
 	}

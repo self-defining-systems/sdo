@@ -640,6 +640,23 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 			response.Error = "plan verification failed"
 		}
 		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		// Preserve the failed revision independently of the in-process application
+		// log, including when rollback succeeds or the process stops during it.
+		failedRuns := make([]ProgramRun, 0, len(programIDs))
+		for _, programID := range programIDs {
+			failedRuns = append(failedRuns, ProgramRun{ProgramID: programID})
+		}
+		fillProgramRevisions(recoveryCtx, failedRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
+		for _, run := range failedRuns {
+			signal := "application_verification_failure:" + run.ProgramID
+			if run.ProgramRevision != "" {
+				signal += "@" + run.ProgramRevision
+			}
+			l.addFailureSignal(signal)
+		}
+		if persistErr := l.persistToolState(recoveryCtx); persistErr != nil {
+			response.Error += ": " + persistErr.Error()
+		}
 		rollbackErr := executor.rollback(recoveryCtx, &result)
 		cancel()
 		if rollbackErr != nil {
