@@ -46,6 +46,24 @@ type BatchingPolicy struct {
 	Debounce time.Duration
 }
 
+type ConfigMapKeyReference struct {
+	Name     string `json:"name"`
+	Key      string `json:"key"`
+	Optional bool   `json:"optional"`
+}
+    ConfigMapKeyReference identifies an explicitly selected ConfigMap key.
+    Optional follows Kubernetes semantics: a missing optional key is not a
+    fault.
+
+func ConfigMapKeyReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapKeyReference
+    ConfigMapKeyReferencesForDeployment returns explicit keys consumed through
+    container/init-container env, ConfigMap volumes, and projected volumes.
+    EnvFrom and volumes without Items consume all available keys and therefore
+    impose no individual key requirement. Secret references are never returned.
+    Results are sorted by name/key; required references win over optional ones.
+    This is reference metadata only, not a credential-safety assertion about
+    data.
+
 type ConfigMapReference struct {
 	Name     string `json:"name"`
 	Optional bool   `json:"optional"`
