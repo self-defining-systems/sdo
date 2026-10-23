@@ -233,6 +233,11 @@ Responder traffic: responders own incident-scoped traffic (`traffic/generators/i
 
 `schema-version` and `lifecycle-provenance.yaml` are validation metadata. They do not change the six ownership classes. Lifecycle provenance may attest an exact diagnostics-tree digest against an immutable validator image identity; only that exact pair can reuse a prior successful compilation, while any detector or validator change forces isolated validation again.
 
+Go broker seeds may omit the historical Python lifecycle-provenance file. The
+benchmark adapter recognizes a current-schema goal, architecture and health
+bundle for seeded installation; the Go installer still independently validates
+that memory before starting the controller.
+
 ### Detector firing telemetry
 
 The controller records, per finding, whether and when each detector fired. The runtime appends `activated`, `cleared`, `not_persisted` (flagged but gone before the detector's firing threshold) and `batched` (the activated finding joined a dispatched incident) records to a JSONL stream, `detector-firings.jsonl`, in the controller's durable runtime area on the repository PVC (`/workspace/.sdo-runtime/telemetry/`, `--firing-telemetry-path`, default on in job mode). It is operational telemetry, not operational memory: it is outside `.sdo/`, changes none of the six artifact classes or their ownership, carries no benchmark labels or verdicts, and is derived only from the controller's deterministic finding state. Each record has the detector id, class, owner, rule id, fingerprint, severity, parameter bindings, surfaced playbooks, firing/clear counts against the persistence policy, the evaluation iteration, the open incident id (empty if none), and `dispatch_relation`: `before_dispatch` (part of the dispatched batch), `after_dispatch` (activated while the responder was in flight) or `no_incident`. Because the batcher debounces, an activation usually records `no_incident` and a later `batched` record settles `before_dispatch`.

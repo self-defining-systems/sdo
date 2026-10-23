@@ -19,3 +19,8 @@ for each pass. A second-pass failure stops reuse even with continue-on-error;
 `full_cleanup_verified` is false for any recovery failure. Require two passes on
 credential slots, followed by a healthy start of the next slot. Legacy records
 default the count to zero and do not establish repeated-cleanup evidence.
+
+Native Go broker seeds may lack the historical Python lifecycle-provenance file.
+The adapter routes a current-schema goal, architecture and health bundle through
+the Go seeded installer, which independently validates it. Do not add fabricated
+legacy provenance to make a native seed look like a historical lifecycle run.

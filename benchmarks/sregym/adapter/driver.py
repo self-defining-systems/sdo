@@ -516,10 +516,23 @@ def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seco
 
 
 def _has_accepted_lifecycle(repository: Path) -> bool:
-    """Whether *repository* already holds an accepted SDO lifecycle (a seeded workspace)."""
+    """Select seeded installation; the Go installer independently validates memory.
+
+    Native broker seeds carry current goal, architecture and health artifacts
+    without the historical Python lifecycle-provenance file.
+    """
 
     sdo = repository / ".sdo"
-    if not (sdo / "lifecycle-provenance.yaml").is_file():
+    native = False
+    try:
+        native = (
+            (sdo / "schema-version").read_text(encoding="utf-8").strip() == "3"
+            and (sdo / "goal.md").is_file()
+            and (sdo / "arch.md").is_file()
+        )
+    except (OSError, UnicodeError):
+        pass
+    if not native and not (sdo / "lifecycle-provenance.yaml").is_file():
         return False
     diagnostics = sdo / "diagnostics"
     return (diagnostics / "manifest.yaml").is_file() or any(
