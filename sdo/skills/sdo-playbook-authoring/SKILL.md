@@ -29,5 +29,7 @@ The installed `sdo-memory` skill defines ownership, logical IDs and the generate
 5. Validate with the typed memory check, then return the same learning decision and every changed logical ID.
    Report an evidence or SDK gap when no captured case supports a safe reusable relation.
 
-Use role placeholders in prose, bound resources in Go, and accepted source for desired state.
+Use role placeholders in prose and bound resources in Go. Mitigation returns to accepted or observed state;
+intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
+and justifies.
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
