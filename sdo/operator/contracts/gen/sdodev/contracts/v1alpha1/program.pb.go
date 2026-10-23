@@ -1319,8 +1319,11 @@ type ReflectionWorkItem struct {
 	EvidencePhase    string                 `protobuf:"bytes,7,opt,name=evidence_phase,json=evidencePhase,proto3" json:"evidence_phase,omitempty"`
 	ProgramRevision  string                 `protobuf:"bytes,8,opt,name=program_revision,json=programRevision,proto3" json:"program_revision,omitempty"`
 	CaptureOpenPhase string                 `protobuf:"bytes,9,opt,name=capture_open_phase,json=captureOpenPhase,proto3" json:"capture_open_phase,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The observed abstention motivating a program_refinement question. This is
+	// evidence for review, not a settled positive corpus case or success credit.
+	Evaluation    *ProgramRun `protobuf:"bytes,10,opt,name=evaluation,proto3" json:"evaluation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReflectionWorkItem) Reset() {
@@ -1414,6 +1417,13 @@ func (x *ReflectionWorkItem) GetCaptureOpenPhase() string {
 		return x.CaptureOpenPhase
 	}
 	return ""
+}
+
+func (x *ReflectionWorkItem) GetEvaluation() *ProgramRun {
+	if x != nil {
+		return x.Evaluation
+	}
+	return nil
 }
 
 // Controller-settled learning evidence, persisted before the outcome commit.
@@ -1596,18 +1606,22 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\vcause_index\x18\x01 \x01(\rR\n" +
 	"causeIndex\x12B\n" +
 	"\tresources\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12C\n" +
-	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\"\xfc\x04\n" +
+	"\x05items\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\x05items\"\xd7\x05\n" +
 	"\x12ReflectionWorkItem\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +
 	"\bbindings\x18\x02 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12G\n" +
 	"\vdisposition\x18\x03 \x01(\tB%\xbaH\"r R\acoveredR\vfalse_matchR\bquestionR\vdisposition\x12\x1a\n" +
-	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\xab\x01\n" +
-	"\x06reason\x18\x05 \x01(\tB\x92\x01\xbaH\x8e\x01r\x8b\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\fevidence_gapR\x06reason\x12B\n" +
+	"\bquestion\x18\x04 \x01(\tR\bquestion\x12\xbf\x01\n" +
+	"\x06reason\x18\x05 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x1averified_equivalent_repairR\x13fixed_capture_matchR\x13binding_not_writtenR\x1brepair_equivalence_questionR\runbound_writeR\tuncertainR\fevidence_gapR\x12program_refinementR\x06reason\x12B\n" +
 	"\tresources\x18\x06 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresources\x12;\n" +
 	"\x0eevidence_phase\x18\a \x01(\tB\x14\xbaH\x11r\x0fR\x00R\x04openR\x05fixedR\revidencePhase\x12)\n" +
 	"\x10program_revision\x18\b \x01(\tR\x0fprogramRevision\x12H\n" +
-	"\x12capture_open_phase\x18\t \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x06detectR\tpre-applyR\x10captureOpenPhase\"\x9b\x02\n" +
+	"\x12capture_open_phase\x18\t \x01(\tB\x1a\xbaH\x17r\x15R\x00R\x06detectR\tpre-applyR\x10captureOpenPhase\x12E\n" +
+	"\n" +
+	"evaluation\x18\n" +
+	" \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\n" +
+	"evaluation\"\x9b\x02\n" +
 	"\x15ReflectionEligibility\x12!\n" +
 	"\aversion\x18\x01 \x01(\rB\a\xbaH\x04*\x02\b\x01R\aversion\x12F\n" +
 	"\x06causes\x18\x02 \x03(\v2..sdodev.contracts.v1alpha1.ReflectionCauseWorkR\x06causes\x12M\n" +
@@ -1690,13 +1704,14 @@ var file_sdodev_contracts_v1alpha1_program_proto_depIdxs = []int32{
 	19, // 27: sdodev.contracts.v1alpha1.ReflectionCauseWork.items:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
 	3,  // 28: sdodev.contracts.v1alpha1.ReflectionWorkItem.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
 	21, // 29: sdodev.contracts.v1alpha1.ReflectionWorkItem.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18, // 30: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
-	19, // 31: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
-	32, // [32:32] is the sub-list for method output_type
-	32, // [32:32] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	13, // 30: sdodev.contracts.v1alpha1.ReflectionWorkItem.evaluation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	18, // 31: sdodev.contracts.v1alpha1.ReflectionEligibility.causes:type_name -> sdodev.contracts.v1alpha1.ReflectionCauseWork
+	19, // 32: sdodev.contracts.v1alpha1.ReflectionEligibility.unassigned:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
+	33, // [33:33] is the sub-list for method output_type
+	33, // [33:33] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_program_proto_init() }
