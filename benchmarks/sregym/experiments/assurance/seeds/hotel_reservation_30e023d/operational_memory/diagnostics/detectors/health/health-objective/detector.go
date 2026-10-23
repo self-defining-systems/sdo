@@ -15,47 +15,47 @@ const deterministicHealthDetectorVersion = "v3"
 const healthObjectiveDigest = "6931b8e687702ada46cc03b5a9c6cb35ccf044dc1e41415b54e2e5092fec9a24"
 
 var requiredDeployments = map[string]struct{}{
-	"consul": {},
-	"frontend": {},
-	"geo": {},
-	"jaeger": {},
-	"memcached-profile": {},
-	"memcached-rate": {},
-	"memcached-reserve": {},
-	"mongodb-geo": {},
-	"mongodb-profile": {},
-	"mongodb-rate": {},
+	"consul":                 {},
+	"frontend":               {},
+	"geo":                    {},
+	"jaeger":                 {},
+	"memcached-profile":      {},
+	"memcached-rate":         {},
+	"memcached-reserve":      {},
+	"mongodb-geo":            {},
+	"mongodb-profile":        {},
+	"mongodb-rate":           {},
 	"mongodb-recommendation": {},
-	"mongodb-reservation": {},
-	"mongodb-user": {},
-	"profile": {},
-	"rate": {},
-	"recommendation": {},
-	"reservation": {},
-	"search": {},
-	"user": {},
+	"mongodb-reservation":    {},
+	"mongodb-user":           {},
+	"profile":                {},
+	"rate":                   {},
+	"recommendation":         {},
+	"reservation":            {},
+	"search":                 {},
+	"user":                   {},
 }
 
 var requiredServices = map[string]struct{}{
-	"consul": {},
-	"frontend": {},
-	"geo": {},
-	"jaeger-out": {},
-	"memcached-profile": {},
-	"memcached-rate": {},
-	"memcached-reserve": {},
-	"mongodb-geo": {},
-	"mongodb-profile": {},
-	"mongodb-rate": {},
+	"consul":                 {},
+	"frontend":               {},
+	"geo":                    {},
+	"jaeger-out":             {},
+	"memcached-profile":      {},
+	"memcached-rate":         {},
+	"memcached-reserve":      {},
+	"mongodb-geo":            {},
+	"mongodb-profile":        {},
+	"mongodb-rate":           {},
 	"mongodb-recommendation": {},
-	"mongodb-reservation": {},
-	"mongodb-user": {},
-	"profile": {},
-	"rate": {},
-	"recommendation": {},
-	"reservation": {},
-	"search": {},
-	"user": {},
+	"mongodb-reservation":    {},
+	"mongodb-user":           {},
+	"profile":                {},
+	"rate":                   {},
+	"recommendation":         {},
+	"reservation":            {},
+	"search":                 {},
+	"user":                   {},
 }
 
 var requiredWorkloadLabels = []map[string]string{
@@ -142,9 +142,9 @@ func (Detector) Spec() sdk.DetectorSpec {
 			{APIVersion: "v1", Kind: "Endpoints"},
 			{APIVersion: "discovery.k8s.io/v1", Kind: "EndpointSlice"},
 		},
-		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
-		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
-		Playbooks: []string{"health-objective"},
+		Persistence:       sdk.PersistencePolicy{Firing: 2, Clearing: 2},
+		Batching:          sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
+		Playbooks:         []string{"health-objective"},
 		OriginatingCommit: "lifecycle-bootstrap",
 	}
 }
@@ -210,12 +210,14 @@ func (Detector) Detect(_ context.Context, snapshot sdk.DetectionContext) ([]sdk.
 	}
 	for _, name := range sortedNames(requiredDeployments) {
 		if _, ok := deployments[name]; !ok {
-			findings = append(findings, healthFinding("deployment-missing", "A required deployment is missing", fmt.Sprintf("deployment %s/%s is absent", snapshot.Namespace(), name), sdk.ObjectRef{APIVersion:"apps/v1", Kind:"Deployment", Namespace:snapshot.Namespace(), Name:name}))
+			findings = append(findings, healthFinding("deployment-missing", "A required deployment is missing", fmt.Sprintf("deployment %s/%s is absent", snapshot.Namespace(), name), sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: snapshot.Namespace(), Name: name}))
 		}
 	}
 	services := make(map[string]struct{})
 	for _, service := range snapshot.Services() {
-		if service.Namespace == snapshot.Namespace() { services[service.Name] = struct{}{} }
+		if service.Namespace == snapshot.Namespace() {
+			services[service.Name] = struct{}{}
+		}
 		if !isRequiredService(service.Name) {
 			continue
 		}
@@ -233,7 +235,7 @@ func (Detector) Detect(_ context.Context, snapshot sdk.DetectionContext) ([]sdk.
 	}
 	for _, name := range sortedNames(requiredServices) {
 		if _, ok := services[name]; !ok {
-			findings = append(findings, healthFinding("service-missing", "A required service is missing", fmt.Sprintf("service %s/%s is absent", snapshot.Namespace(), name), sdk.ObjectRef{APIVersion:"v1", Kind:"Service", Namespace:snapshot.Namespace(), Name:name}))
+			findings = append(findings, healthFinding("service-missing", "A required service is missing", fmt.Sprintf("service %s/%s is absent", snapshot.Namespace(), name), sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: snapshot.Namespace(), Name: name}))
 		}
 	}
 	for _, policy := range snapshot.NetworkPolicies() {
@@ -271,13 +273,19 @@ func selectorMatchesLabels(selector, labels map[string]string) bool {
 }
 
 func hasConfigMap(configMaps []corev1.ConfigMap, namespace, name string) bool {
-	for _, cm := range configMaps { if cm.Namespace == namespace && cm.Name == name { return true } }
+	for _, cm := range configMaps {
+		if cm.Namespace == namespace && cm.Name == name {
+			return true
+		}
+	}
 	return false
 }
 
 func sortedNames(values map[string]struct{}) []string {
 	names := make([]string, 0, len(values))
-	for name := range values { names = append(names, name) }
+	for name := range values {
+		names = append(names, name)
+	}
 	sort.Strings(names)
 	return names
 }
@@ -287,7 +295,7 @@ func healthFinding(ruleID string, summary string, evidence string, resource sdk.
 		DetectorID: "health-objective", RuleID: ruleID, Status: sdk.FindingActive,
 		Severity: sdk.SeverityCritical, Summary: summary, Evidence: evidence,
 		PrimaryResource: resource,
-		Playbooks: []string{"health-objective"},
-		Fingerprint: "health-objective/" + ruleID + "/" + resource.Namespace + "/" + resource.Name,
+		Playbooks:       []string{"health-objective"},
+		Fingerprint:     "health-objective/" + ruleID + "/" + resource.Namespace + "/" + resource.Name,
 	}
 }
