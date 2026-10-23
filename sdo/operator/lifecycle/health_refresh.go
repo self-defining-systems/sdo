@@ -20,7 +20,11 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 		return broker.Receipt{Commit: revision.Commit}, nil
 	}
 	cfg.HealthObjective = revision.Objective
-	receipt, ready, feedback, err := c.judge(ctx, revision.RefreshID(), cfg, 1, revision.Commit, revision.Commit, "")
+	// The logical input ID ignores operational-memory commits. The concrete
+	// proposal/task must also bind its immutable accepted base: a retained Job
+	// must never receive a different request or write into a recreated checkout.
+	publicationID := revision.RefreshID() + "-base-" + revision.Commit
+	receipt, ready, feedback, err := c.judge(ctx, publicationID, cfg, 1, revision.Commit, revision.Commit, "")
 	if err != nil {
 		return broker.Receipt{}, fmt.Errorf("refresh health requirements: %w", err)
 	}
