@@ -49,6 +49,15 @@ class Tools:
         return 0, "{}"
 
 
+@pytest.mark.parametrize(("slot", "passes"), [(1, 2), (4, 2), (2, 1)])
+def test_credential_rehearsals_require_two_cleanup_passes(tmp_path: Path, slot: int, passes: int) -> None:
+    from benchmarks.sregym.assurance.mixed10_rehearsal import runner_arguments
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    args = build_parser().parse_args(runner_arguments(slot, tmp_path, tmp_path / "output"))
+    assert args.cleanup_passes == passes
+
+
 def test_exact_stream_directives() -> None:
     assert len(SLOTS) == 10
     assert [slot.problem_id.split("__")[3] for slot in SLOTS] == [
@@ -299,7 +308,9 @@ def test_phase_b_rejects_zero_gap_lock_from_before_source_repair(
     monkeypatch.setattr(
         mixed10_rehearsal,
         "load_records",
-        lambda _: [SimpleNamespace(error=None, full_cleanup_verified=True, oracle=SimpleNamespace(success=True))],
+        lambda _: [
+            SimpleNamespace(index=2, error=None, full_cleanup_verified=True, oracle=SimpleNamespace(success=True))
+        ],
     )
     monkeypatch.setattr(mixed10_rehearsal, "validate_native_production_receipt", lambda _: None)
     with pytest.raises(ValueError, match="source repair"):

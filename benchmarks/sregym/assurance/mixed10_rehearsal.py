@@ -49,6 +49,8 @@ def runner_arguments(slot: int, run_dir: Path, output: Path) -> list[str]:
         "recorded-actions",
         "--inject-before-resume",
         "--require-full-cleanup",
+        "--cleanup-passes",
+        "2" if slot in (1, 4) else "1",
         "--require-faulty-oracle",
         "--healthy-baseline",
         "--timeout",
@@ -102,6 +104,8 @@ def verify_results(output: Path, environment: FastloopEnvironment) -> None:
     records = load_records(output / "incidents.jsonl")
     if len(records) != 1 or records[0].error or not records[0].full_cleanup_verified:
         raise ValueError("slot failed or full seed recovery was not verified; inspect incidents.jsonl")
+    if records[0].index in (1, 4) and records[0].cleanup_passes_verified != 2:
+        raise ValueError("credential slots require two verified full cleanup passes")
     if records[0].oracle is None or not records[0].oracle.success:
         raise ValueError("official mitigation oracle did not pass")
     receipts = list(output.rglob("sdo_production_receipt_strict.json"))

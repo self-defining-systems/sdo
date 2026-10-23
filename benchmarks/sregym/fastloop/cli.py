@@ -509,6 +509,7 @@ def _run(args: argparse.Namespace) -> int:
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         slot_offset=args.slot_offset,
+        cleanup_passes=args.cleanup_passes,
     )
     write_loop_manifest(config)
     with _worker(environment) as worker:
@@ -918,6 +919,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-faulty-oracle", action="store_true", help="require a faulty official oracle before resuming repair"
     )
     run.add_argument("--require-full-cleanup", action="store_true", help="require v2 recovery and application baseline")
+    run.add_argument(
+        "--cleanup-passes",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="verify full cleanup and the official recovery oracle twice when set to 2",
+    )
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
