@@ -75,7 +75,7 @@ Every SetField, ReconcileFromSource and Rollback compares credential channels in
 
 Compensation attempts every reversible write even when a plan also deleted an object or another restore failed. The delete remains explicitly irreversible and not restored; it never triggers recreation.
 
-Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse.
+Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse. A named webhook RBAC grant alone supplies no plan authorization.
 
 Write verification and compensation compare plan-owned fields and current UID, while checking the full live credential predicate. API defaults and the Deployment revision annotation do not invalidate an otherwise approved effect.
 
