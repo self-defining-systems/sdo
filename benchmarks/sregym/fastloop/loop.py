@@ -28,6 +28,7 @@ from benchmarks.sregym.fastloop.records import (
     append_record,
     write_records,
 )
+from benchmarks.sregym.faults.description import SuiteCapabilities
 from benchmarks.sregym.protocol.injection import InvalidInjectionError
 
 if TYPE_CHECKING:
@@ -143,6 +144,9 @@ class LoopConfig:
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
     run_prelude_phase_seconds: dict[str, float] = field(default_factory=dict)
+    capability_evidence: SuiteCapabilities = field(default_factory=SuiteCapabilities)
+    permissive_responder: bool = False
+    responder_namespaces: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.run_id:
@@ -157,6 +161,25 @@ class LoopConfig:
 
 def _describe(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
+
+
+def write_loop_manifest(config: LoopConfig) -> None:
+    """Persist benchmark capability policy before a worker or agent starts."""
+    config.results_path.parent.mkdir(parents=True, exist_ok=True)
+    config.results_path.with_name("run_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "sdo.fastloop-run/v1",
+                "run_id": config.run_id,
+                "fault_capabilities": config.capability_evidence.model_dump(mode="json"),
+                "permissive_responder": config.permissive_responder,
+                "responder_namespaces": list(config.responder_namespaces),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def run_incidents(
@@ -178,7 +201,7 @@ def run_incidents(
         raise ValueError("diagnosis_grading must be off, deferred, or inline")
     if diagnosis_grading != "off" and grader is None:
         raise ValueError("diagnosis grader is required when grading is enabled")
-    config.results_path.parent.mkdir(parents=True, exist_ok=True)
+    write_loop_manifest(config)
     config.results_path.with_name("run_metadata.json").write_text(
         json.dumps(
             {
@@ -224,6 +247,8 @@ def run_incidents(
                     logger.exception("reset failed after incident %d", index)
                     record.error = f"{record.error}; reset failed: {_describe(exc)}"
                     baseline_ready = False
+            record.capability_mode = config.capability_evidence.mode
+            record.fault_capabilities = [f for f in config.capability_evidence.faults if f.problem_id in ids]
             append_record(config.results_path, record)
             records.append(record)
             if pool is not None and grader is not None:

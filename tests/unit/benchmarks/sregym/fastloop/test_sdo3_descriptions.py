@@ -150,3 +150,56 @@ def test_unsupported_requested_tracking_fails_before_worker_deployment(tmp_path,
         arguments += ["--problems", problem_id]
     with pytest.raises(ValueError, match="tracking unsupported"):
         cli.main(arguments)
+
+
+def test_real_astronomy_discovery_cannot_run_commands_or_call_the_cluster():
+    import os
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[5]
+    script = """
+import json, socket, subprocess
+from pathlib import Path
+from unittest.mock import patch
+from benchmarks.sregym.faults.description import ProblemDescription, validate_suite
+from benchmarks.sregym.faults.worker import describe
+from sregym.service.kubectl import KubeCtl
+from kubernetes.client.rest import RESTClientObject
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("offline discovery attempted a command or network/API call")
+
+with (
+    patch.object(subprocess, "Popen", forbidden),
+    patch.object(socket.socket, "connect", forbidden),
+    patch.object(KubeCtl, "exec_command", forbidden),
+    patch.object(KubeCtl, "exec_command_checked", forbidden),
+    patch.object(RESTClientObject, "request", forbidden),
+):
+    result = describe(["mf__astronomy_shop__n3__s1416840650__reliable__v_"])
+    faults = next(iter(result.values()))["faults"]
+    assert [f["class_name"] for f in faults] == [
+        "LoadGeneratorFloodHomepage", "ResourceRequestTooLarge", "AdmissionWebhookTLSMismatch",
+    ]
+    assert [f["declared_index"] for f in faults] == [0, 1, 2]
+    ids = json.loads(Path("../../tests/fixtures/sregym/fastloop/sdo3_permissive.json").read_text())["incidents"]
+    catalog = {key: ProblemDescription.model_validate(value) for key, value in describe(ids).items()}
+    evidence = validate_suite(catalog, capability_mode="permissive")
+    assert len(catalog) == 10 and len(evidence.faults) == 31
+    strict_failures = 0
+    for key, item in catalog.items():
+        try:
+            validate_suite({key: item})
+        except ValueError:
+            strict_failures += 1
+    assert strict_failures == 9
+"""
+    reply = subprocess.run(
+        ["uv", "run", "--directory", str(root / "third_party/sregym"), "python", "-c", script],
+        env={**os.environ, "PYTHONPATH": str(root), "LITELLM_LOCAL_MODEL_COST_MAP": "True"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert reply.returncode == 0, (reply.stdout + reply.stderr)[-4000:]

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from benchmarks.sregym.faults.description import CapabilityMode, FaultCapability  # noqa: TC001
 from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
 
 if TYPE_CHECKING:
@@ -104,6 +105,8 @@ class IncidentRecord(_PersistedModel):
     recovery_error: str | None = None
     injection_evidence: dict[str, Any] = Field(default_factory=dict)
     fault_components: list[FaultComponent] = Field(default_factory=list)
+    capability_mode: CapabilityMode | None = None
+    fault_capabilities: list[FaultCapability] = Field(default_factory=list)
     run_id: str = Field(min_length=1)
     index: int = Field(ge=0)
     agent: AgentName

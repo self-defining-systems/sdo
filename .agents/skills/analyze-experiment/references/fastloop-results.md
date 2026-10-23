@@ -106,6 +106,20 @@ limits and revision-bound failure signals, not mutation history.
 
 ## sdo3 fault discovery and tracking
 
+The default capability gate is `strict`. An explicitly permissive benchmark
+suite attempts unreviewed or unsupported faults without asserting support.
+Fastloop `run_manifest.json` (`sdo.fastloop-run/v1`) records
+`fault_capabilities.mode` and one entry per fault in injection order. Incident
+JSONL/CSV rows retain `capability_mode` and `fault_capabilities`, including failed
+attempts and invalid injections. Join by `problem_id` and `declared_index`; each
+entry retains class/key, required and missing capabilities, and `supported`,
+`unreviewed`, or `unsupported` status. Never interpret permissive acceptance as a
+reviewed capability, successful repair, or attributable timing probe. Tracking
+requirements and independent grading remain separate gates. Runner manifests
+also retain this evidence per checked suite under `fault_capabilities` (and in
+their preflight facts). Older rows without this evidence have unknown review
+status. The permissions opt-in is separate from capability policy.
+
 New runs record `fault_descriptions.json` beside `incidents.jsonl`, keyed by
 problem ID. Each `sdo.sregym-fault-description/v1` document preserves fault class,
 key, parameters, declared index and actual `injection_order`; catalog decoys are

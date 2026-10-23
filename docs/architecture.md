@@ -226,6 +226,23 @@ The incident request is immutable once the responder launches, so a detector tha
 
 Incident responders never merge directly into the operational branch. The broker creates isolated worktrees, checks path ownership and append-only rules, runs repository and detector validation, and accepts only attributable commits. Two repair-evidence policies are supported. `commit` retains a proposal commit for every response, including an empty attribution commit. `recorded-actions` permits a live-only repair without a proposal commit when the responder returns a structured, successful action receipt; any repository changes are still validated and committed. In both modes the controller commits the authoritative outcome and reflection, and independently owned health detectors must verify recovery. The source deployer separately authors attributable deployment commits during the initial lifecycle. Health detectors remain judge-owned; responders may change responder-owned playbooks and incident detectors after closure.
 
+## Permissive responder installation
+
+The installer defaults to its existing namespaced grants. Disposable benchmark
+lanes can explicitly select `--permissive-responder`, with repeatable
+`--responder-namespace policy-system` for fault backends. The Go installer
+enumerates namespaced API resources, including custom resources, and grants the
+responder broad access in those namespaces plus mutating/validating webhook
+configuration access. It requires a separate control namespace. Secret APIs,
+ServiceAccount token creation, impersonation, and RBAC bind/escalate remain
+excluded; there is no cluster-admin binding or subtractive wildcard rule.
+Workload restarts can consume already rotated Secrets. The controller and other
+worker grants retain their existing scope. Settings are bound to the installed
+Job, restored with namespace grants on reuse, and revoked on downgrade. New API
+resources require another install/inspection to refresh discovery. Benchmark
+capability policy and per-fault evidence stay under `benchmarks/sregym/`; they
+do not enter production worker tasks or prompts.
+
 ## Controller/responder interaction
 
 The controller batches persistent findings into an incident request. The request includes the health objective path, architecture path, findings, surfaced playbooks, detector history, an isolated repository worktree, and the selected repair-evidence policy. A responder returns a structured result with diagnosis, applied playbooks, repository changes, and per-action receipts recording the target, timing, success, and reversibility of live mutations. Independent health detectors must clear after the response before closure. The controller also rechecks admitted owned-field drift on source-declared objects in the incident namespace against the current accepted source; a remaining live/source mismatch or a failed comparison keeps verification waiting. Restoring the admitted fields to source clears this gate even if unrelated, unadmitted fields differ. Unowned or undeclared changes do not acquire a closure blocker. If health or admitted source drift remains unresolved at the configured verification timeout, the controller closes the incident as `failed`, retaining the drift findings and events in the outcome. Late drift still attaches to the running responder through `attachDrift`, its moving incident view and the late-findings report. Terminal responder failures retain their existing failed closure path without treating unresolved drift as verified recovery.

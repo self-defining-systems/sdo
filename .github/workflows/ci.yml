@@ -111,7 +111,9 @@ jobs:
           git submodule update --init --depth 1 third_party/sregym
       - name: Check out application sources for SREGym boundary tests
         if: matrix.name == 'unit tests'
-        run: git -C third_party/sregym submodule update --init --depth 1 SREGym-applications
+        run: |
+          git -C third_party/sregym submodule update --init --depth 1 SREGym-applications
+          git -C third_party/sregym/SREGym-applications submodule update --init --depth 1 astronomy-shop
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
           version: "0.9.24"
