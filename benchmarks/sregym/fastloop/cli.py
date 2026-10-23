@@ -322,6 +322,20 @@ def _scaled_clock(scale: float) -> Clock:
     return Clock(sleep=lambda seconds: time.sleep(seconds * scale))
 
 
+def _accepted_manifest_paths(workspace: Path) -> tuple[str, ...]:
+    lock_path = workspace / ".sdo/rendered/lock.json"
+    if not lock_path.exists():
+        return ("kubernetes",)
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        paths = lock["manifest_paths"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"cannot read accepted deployment selection from {lock_path}") from exc
+    if not isinstance(paths, list) or any(not isinstance(path, str) or not path for path in paths):
+        raise ValueError(f"invalid accepted deployment selection in {lock_path}")
+    return tuple(paths)
+
+
 def _sdo_agent(
     args: argparse.Namespace,
     environment: FastloopEnvironment,
@@ -353,7 +367,7 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
-        deployed_manifest_paths=("kubernetes",),
+        deployed_manifest_paths=_accepted_manifest_paths(environment.workspace),
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
         model=args.model,
