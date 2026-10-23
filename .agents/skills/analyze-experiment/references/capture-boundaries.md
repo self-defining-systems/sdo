@@ -29,3 +29,24 @@ empty; only actual primitive reads may supply replay answers. A late ConfigMap
 failure can be diagnosed from the Deployment reference, missing ConfigMap and
 current Pod state in the snapshot. A pre-apply capture is later open evidence,
 not proof of a fault type, listener behavior, or successful repair by itself.
+
+## Cold developer source revisions
+
+A harness `developer_source_receipt.json` records a pre-controller source patch:
+`parent`, `commit`, `patch_sha256`, and, for a newly created commit, `memory_tree`.
+Resolve both Git commits and require the patch commit to preserve the `.sdo`
+tree. The idempotent replay receipt can omit `memory_tree`; derive it from the
+recorded commit. This is setup provenance, not a broker acceptance, live
+operator update, incident outcome, or trust credit. A later stage may inherit
+accepted learning as well as developer commits; compare actual artifact hashes
+before attributing a verdict to the original memory.
+
+Scripted artifact probes can compile unchanged learned programs against a
+current SDK and feed synthetic or real cluster observations. Require the
+artifact hashes, source revision, observation/probe provenance and binding.
+Distinguish hermetic fakes from live reads. Such captures demonstrate artifact
+behavior, not model recovery or full controller execution. A proposed action
+is not an applied action. Require strict receipts and proxy history for writes,
+verification and accepted learning; retain missing evidence as unknown. A
+healthy-source negative with stale health alarms is a false alarm even if the
+normal fault gate blocks. Do not bypass that gate or invent an injected fault.
