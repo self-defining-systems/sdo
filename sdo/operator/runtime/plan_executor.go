@@ -41,10 +41,12 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
-	Ref    sdk.ObjectRef
-	Patch  json.RawMessage
-	Before *unstructured.Unstructured
-	After  *unstructured.Unstructured
+	Structured   bool
+	SourceCommit string
+	Ref          sdk.ObjectRef
+	Patch        json.RawMessage
+	Before       *unstructured.Unstructured
+	After        *unstructured.Unstructured
 }
 
 type PlanPreImage struct {
@@ -75,6 +77,8 @@ type PlanApplicationResult struct {
 type PlanExecutor struct {
 	Client PlanObjectClient
 	Source PlanSource
+	// Safety is trusted controller-owned provenance for structured actions.
+	Safety *PlanSafetyPolicy
 	// AcceptedRevision reads the controller-owned accepted head, never the agent checkout.
 	AcceptedRevision func() string
 	Rollouts         PlanRollouts
@@ -160,12 +164,28 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if _, exists := current[ref]; exists {
 			continue
 		}
+		if structuredPlanRef(plan, ref) {
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return result, err
+			}
+			if err := e.Safety.authorizeRead(ref, incident.SourceCommit, e.safetyNow()); err != nil {
+				return result, err
+			}
+		}
 		object, getErr := e.Client.Get(ctx, ref)
 		if getErr != nil {
 			return result, fmt.Errorf("read pre-image of %s/%s: %w", ref.Kind, ref.Name, getErr)
 		}
 		if object == nil || !samePlanRef(object, ref) {
 			return result, fmt.Errorf("pre-image does not match %s/%s", ref.Kind, ref.Name)
+		}
+		if structuredPlanRef(plan, ref) {
+			if object.GetUID() == "" {
+				return result, fmt.Errorf("plan safety: live UID is required")
+			}
+			if err := e.Safety.checkObject(object, ref); err != nil {
+				return result, err
+			}
 		}
 		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
 		current[ref] = object.DeepCopy()
@@ -175,9 +195,14 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	guarded := false
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
-		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
+		next, actionErr := e.prepareAction(ctx, incident, action, current[ref], structuredPlanRef(plan, ref))
 		if actionErr != nil {
 			return result, fmt.Errorf("prepare learned repair: %w; investigate accepted source and intended application behavior", actionErr)
+		}
+		if structuredPlanRef(plan, ref) {
+			if err := e.Safety.checkObject(next, ref); err != nil {
+				return result, err
+			}
 		}
 		checked, guardErr := e.validateSourceRepair(ctx, incident, ref, originals[ref], current[ref], next)
 		guarded = guarded || checked
@@ -200,7 +225,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if patchErr != nil {
 			return result, patchErr
 		}
-		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
+		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
 		current[ref] = next
 	}
 	// Rollback and write reconciliation compare after-images with live values, so
@@ -221,6 +246,17 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
 			if patchErr != nil {
 				return result, patchErr
+			}
+		}
+		if patch.Structured {
+			if err := e.Safety.authorizeRead(patch.Ref, incident.SourceCommit, e.safetyNow()); err != nil {
+				return result, err
+			}
+			if err := e.Safety.checkObject(patch.After, patch.Ref); err != nil {
+				return result, err
+			}
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return result, err
 			}
 		}
 		if guarded {
@@ -244,6 +280,9 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		}
 	}
 	writesLanded = true
+	if err := e.verifyStructuredWrites(ctx, result); err != nil {
+		return result, err
+	}
 	result.Applied = true
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
@@ -311,9 +350,19 @@ func (e PlanExecutor) restoreAction(ctx context.Context, patch PlanPatch) error 
 }
 
 func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) error {
+	if patch.Structured {
+		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
+			return err
+		}
+	}
 	current, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil {
 		return err
+	}
+	if patch.Structured {
+		if err := e.Safety.checkObject(current, patch.Ref); err != nil {
+			return err
+		}
 	}
 	if current.GetUID() != patch.Before.GetUID() {
 		return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
@@ -333,6 +382,11 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			delete(restored.Object, field)
 		}
 	}
+	if patch.Structured {
+		if err := e.Safety.checkObject(restored, patch.Ref); err != nil {
+			return err
+		}
+	}
 	from, _ := json.Marshal(current.Object)
 	to, _ := json.Marshal(restored.Object)
 	delta, err := jsonpatch.CreateMergePatch(from, to)
@@ -346,8 +400,40 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 	if err != nil {
 		return err
 	}
+	if patch.Structured {
+		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
+			return err
+		}
+		if err := e.validateAcceptedRevision(IncidentRequest{SourceCommit: patch.SourceCommit}); err != nil {
+			return err
+		}
+		previous, _, _ := unstructured.NestedString(current.Object, "spec", "template", "spec", "serviceAccountName")
+		next, _, _ := unstructured.NestedString(restored.Object, "spec", "template", "spec", "serviceAccountName")
+		if previous != next {
+			if err := e.validateServiceAccount(ctx, patch.Ref, restored); err != nil {
+				return err
+			}
+		}
+	}
 	if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
 		return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
+	}
+	if patch.Structured {
+		observed, err := e.Client.Get(ctx, patch.Ref)
+		if err != nil {
+			return fmt.Errorf("compensation observation unknown")
+		}
+		if err := e.Safety.checkObject(observed, patch.Ref); err != nil {
+			return err
+		}
+		if observed.GetUID() != current.GetUID() {
+			return fmt.Errorf("compensation observation unknown: UID changed")
+		}
+		for _, field := range []string{"spec", "data", "binaryData"} {
+			if !planValuesEqual(observed.Object[field], restored.Object[field]) {
+				return fmt.Errorf("compensation observation unknown: restored fields differ")
+			}
+		}
 	}
 	return nil
 }
@@ -551,7 +637,7 @@ func (e PlanExecutor) validateAcceptedRevision(incident IncidentRequest) error {
 	return nil
 }
 
-func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured, safe bool) (*unstructured.Unstructured, error) {
 	next := current.DeepCopy()
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
@@ -562,6 +648,11 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
+		if safe {
+			if err := e.Safety.checkObject(source, a.Ref); err != nil {
+				return nil, err
+			}
+		}
 		return sourceFields(next, source, a.Ref)
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {
@@ -571,19 +662,40 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
+		if safe {
+			if err := e.Safety.checkObject(previous, a.Ref); err != nil {
+				return nil, err
+			}
+		}
 		return sourceFields(next, previous, a.Ref)
 	case program.SetField:
-		encoded, err := json.Marshal(a.Value)
+		var source map[string]any
+		if a.ValueFromSource {
+			if e.Source == nil || incident.SourceCommit == "" {
+				return nil, errors.New("accepted source is required")
+			}
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return nil, err
+			}
+			accepted, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, a.Ref)
+			if err != nil {
+				return nil, errors.New("accepted source lookup failed")
+			}
+			if err := e.Safety.checkObject(accepted, a.Ref); err != nil {
+				return nil, err
+			}
+			source = accepted.Object
+		}
+		err := program.ApplySetFieldAction(next.Object, a, source)
 		if err != nil {
 			return nil, err
 		}
-		var value any
-		if err := json.Unmarshal(encoded, &value); err != nil {
-			return nil, err
+		if a.Path == "spec.template.spec.serviceAccountName" {
+			if err := e.validateServiceAccount(ctx, a.Ref, next); err != nil {
+				return nil, err
+			}
 		}
-		if err := program.ApplySetField(next.Object, a.Path, value); err != nil {
-			return nil, err
-		}
+
 	case program.RestartRollout:
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
 			return nil, errors.New("RestartRollout requires an apps/v1 Deployment")
@@ -599,22 +711,22 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if a == nil {
 			return nil, errors.New("nil reconcile action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	case *program.Rollback:
 		if a == nil {
 			return nil, errors.New("nil rollback action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	case *program.SetField:
 		if a == nil {
 			return nil, errors.New("nil SetField action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	case *program.RestartRollout:
 		if a == nil {
 			return nil, errors.New("nil restart action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	default:
 		return nil, fmt.Errorf("unsupported plan action %T", action)
 	}

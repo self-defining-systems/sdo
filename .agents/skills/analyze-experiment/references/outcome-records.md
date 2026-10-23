@@ -53,3 +53,6 @@ identifies an actual no-change decline; Go rejects it when no gap was flagged. A
 alone does not establish blocked learning, and already-proven covered repairs still skip the model.
 
 Evidence-gap items and the distinct resource/phase count are part of the same pre-commit `reflection_eligibility` result. The native ledger projects that saved count for receipts; it does not reclassify recordings during reflection retries. Historical outcomes without an indexed count remain unknown, rather than zero.
+
+
+Structured plan effects (XV1): `SetField.value_from_source` resolves at the incident-bound accepted revision; `document_format` and `document_path` identify one JSON/YAML entry within a bracketed ConfigMap data key. These are action intent, not proof of health. Structured executor effects require expiring controller-owned nonsecret provenance, a hard Secret-reference predicate, direct current field/UID checks, and strict informer barriers. Missing provenance, unwatched kinds and stalled observations remain refusal/unknown, never success. Safety authorization and preimages stay process-local; durable protobuf applications do not acquire mutation journals or replay authority.

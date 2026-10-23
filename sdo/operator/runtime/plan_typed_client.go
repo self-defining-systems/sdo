@@ -29,6 +29,12 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 		object, err = c.Client.CoreV1().ConfigMaps(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "apps/v1/Deployment":
 		object, err = c.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "networking.k8s.io/v1/NetworkPolicy":
+		object, err = c.Client.NetworkingV1().NetworkPolicies(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "autoscaling/v2/HorizontalPodAutoscaler":
+		object, err = c.Client.AutoscalingV2().HorizontalPodAutoscalers(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "policy/v1/PodDisruptionBudget":
+		object, err = c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	default:
 		return nil, fmt.Errorf("plan object kind %s/%s is unsupported", ref.APIVersion, ref.Kind)
 	}
@@ -52,6 +58,15 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 	case "apps/v1/Deployment":
 		_, err := c.Client.AppsV1().Deployments(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
 		return err
+	case "networking.k8s.io/v1/NetworkPolicy":
+		_, err := c.Client.NetworkingV1().NetworkPolicies(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "autoscaling/v2/HorizontalPodAutoscaler":
+		_, err := c.Client.AutoscalingV2().HorizontalPodAutoscalers(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
+	case "policy/v1/PodDisruptionBudget":
+		_, err := c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
 	default:
 		return fmt.Errorf("plan object kind %s/%s is unsupported", ref.APIVersion, ref.Kind)
 	}
@@ -66,4 +81,20 @@ func planUnstructured(object any, ref sdk.ObjectRef) (*unstructured.Unstructured
 	result.SetAPIVersion(ref.APIVersion)
 	result.SetKind(ref.Kind)
 	return result, nil
+}
+
+// TokenlessServiceAccount returns only identity metadata after rejecting token
+// references and implicit automount. It never reads a referenced Secret.
+func (c TypedPlanClient) TokenlessServiceAccount(ctx context.Context, ref sdk.ObjectRef) (string, error) {
+	if c.Client == nil || ref.APIVersion != "v1" || ref.Kind != "ServiceAccount" {
+		return "", fmt.Errorf("existing service account reader is unavailable")
+	}
+	account, err := c.Client.CoreV1().ServiceAccounts(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("existing service account is unavailable")
+	}
+	if account.UID == "" || account.AutomountServiceAccountToken == nil || *account.AutomountServiceAccountToken || len(account.Secrets) > 0 || len(account.ImagePullSecrets) > 0 {
+		return "", fmt.Errorf("service account is token-bearing or unproven")
+	}
+	return string(account.UID), nil
 }

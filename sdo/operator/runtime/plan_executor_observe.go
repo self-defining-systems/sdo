@@ -15,6 +15,7 @@ import (
 type ObservedWrite struct {
 	Ref             sdk.ObjectRef
 	ResourceVersion string
+	Strict          bool
 }
 
 // WriteObserver is implemented by snapshot providers that serve reads from a
@@ -33,8 +34,11 @@ func (e PlanExecutor) awaitObserved(ctx context.Context, patches []PlanPatch) er
 	}
 	writes := make([]ObservedWrite, 0, len(patches))
 	for _, patch := range patches {
+		if patch.Structured && patch.After.GetResourceVersion() == "" {
+			return fmt.Errorf("write observation unknown: resource version is absent")
+		}
 		if version := patch.After.GetResourceVersion(); version != "" {
-			writes = append(writes, ObservedWrite{Ref: patch.Ref, ResourceVersion: version})
+			writes = append(writes, ObservedWrite{Ref: patch.Ref, ResourceVersion: version, Strict: patch.Structured})
 		}
 	}
 	if err := e.Observer.AwaitWrites(ctx, writes); err != nil {
@@ -48,9 +52,8 @@ func (e PlanExecutor) awaitObserved(ctx context.Context, patches []PlanPatch) er
 const cacheObservationLimit = 5 * time.Second
 
 // AwaitWrites implements WriteObserver over the informer stores. Kinds the cache
-// does not watch are skipped, and a cache that does not catch up within
-// cacheObservationLimit is read as it is: verification then judges the state the
-// cache shows, as it did before this wait existed.
+// does not watch or cannot observe fail closed for structured actions. Legacy
+// writes retain their existing best-effort cache behavior.
 func (c *KubernetesCache) AwaitWrites(ctx context.Context, writes []ObservedWrite) error {
 	ctx, cancel := context.WithTimeout(ctx, cacheObservationLimit)
 	defer cancel()
@@ -59,6 +62,11 @@ func (c *KubernetesCache) AwaitWrites(ctx context.Context, writes []ObservedWrit
 	for !c.observed(writes) {
 		select {
 		case <-ctx.Done():
+			for _, write := range writes {
+				if write.Strict {
+					return fmt.Errorf("write observation unknown: %w", ctx.Err())
+				}
+			}
 			return nil
 		case <-ticker.C:
 		}
@@ -72,6 +80,9 @@ func (c *KubernetesCache) observed(writes []ObservedWrite) bool {
 	for _, write := range writes {
 		informer, watched := c.informers[write.Ref.APIVersion+"/"+write.Ref.Kind]
 		if !watched {
+			if write.Strict {
+				return false
+			}
 			continue
 		}
 		stored, exists, err := informer.GetStore().GetByKey(write.Ref.Namespace + "/" + write.Ref.Name)
