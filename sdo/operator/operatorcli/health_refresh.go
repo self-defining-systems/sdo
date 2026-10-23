@@ -3,6 +3,7 @@ package operatorcli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -16,6 +17,32 @@ import (
 // Refresh runs before the builder projects diagnostics. Failure prevents launch
 // of a controller compiled from stale requirements, including seeded startup.
 func refreshControllerHealth(ctx context.Context, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
+	return withHealthRefreshDeadline(ctx, config.GetDuration().AsDuration(), func(ctx context.Context) error {
+		return refreshControllerHealthOnce(ctx, config, repository)
+	})
+}
+
+// All refresh work, including an unschedulable Job, consumes the install budget.
+// Unbounded installations still have a finite judge budget. A timed-out Job and
+// its proposal are retained so a restart can attach to the identical task.
+const defaultHealthRefreshTimeout = 15 * time.Minute
+
+func withHealthRefreshDeadline(ctx context.Context, budget time.Duration, refresh func(context.Context) error) error {
+	if budget <= 0 || budget > defaultHealthRefreshTimeout {
+		budget = defaultHealthRefreshTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	if err := refresh(ctx); err != nil {
+		return fmt.Errorf("health unverified: refresh judge failed within %s: %w", budget, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("health unverified: refresh judge exceeded %s: %w", budget, err)
+	}
+	return nil
+}
+
+func refreshControllerHealthOnce(ctx context.Context, config *contracts.ControllerConfig, repository lifecycle.ProposalBroker) error {
 	revision, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot())
 	if err != nil {
 		return err

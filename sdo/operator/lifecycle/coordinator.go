@@ -497,10 +497,15 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 	}
 	response := &contracts.HealthJudgeResult{}
 	if err := c.execute(ctx, task, response); err != nil {
-		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
+		// Cancellation does not mean the remote Job stopped. Keep its checkout
+		// and immutable task identity for a later bounded reattachment.
 		if ctx.Err() != nil {
 			return broker.Receipt{}, false, "", nil, ctx.Err()
 		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return broker.Receipt{}, false, "", nil, err
+		}
+		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail(err.Error())
 	}
 	expectedDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(cfg.HealthObjective))))

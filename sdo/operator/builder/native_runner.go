@@ -45,13 +45,16 @@ func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(contex
 	var deadline time.Time
 	if config.Controller != nil && config.Controller.GetDuration().AsDuration() > 0 {
 		deadline = time.Now().Add(config.Controller.GetDuration().AsDuration())
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
 		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
 	}
 	for {
 		if !deadline.IsZero() {
 			remaining := time.Until(deadline)
 			if remaining <= 0 {
-				return nil
+				return fmt.Errorf("health unverified: installation budget exhausted before controller launch: %w", context.DeadlineExceeded)
 			}
 			config.Controller.Duration = durationpb.New(remaining)
 		}
