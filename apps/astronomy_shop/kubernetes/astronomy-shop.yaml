@@ -8326,6 +8326,8 @@ spec:
         resources:
           limits:
             memory: 448Mi
+          requests:
+            memory: 200Mi
         volumeMounts:
         - mountPath: /conf
           name: opentelemetry-collector-configmap
@@ -8417,6 +8419,8 @@ spec:
           limits:
             cpu: 100m
             memory: 256Mi
+          requests:
+            memory: 100Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -8457,6 +8461,8 @@ spec:
           limits:
             cpu: 100m
             memory: 192Mi
+          requests:
+            memory: 100Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -8497,6 +8503,8 @@ spec:
           limits:
             cpu: 100m
             memory: 192Mi
+          requests:
+            memory: 100Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -8596,6 +8604,8 @@ spec:
         resources:
           limits:
             memory: 384Mi
+          requests:
+            memory: 175Mi
       volumes:
       - name: config
         configMap:
@@ -8722,6 +8732,8 @@ spec:
         resources:
           limits:
             memory: 600Mi
+          requests:
+            memory: 600Mi
         volumeMounts:
         - name: user-config
           mountPath: /etc/jaeger
@@ -8790,6 +8802,8 @@ spec:
         resources:
           limits:
             memory: 384Mi
+          requests:
+            memory: 256Mi
         volumeMounts: null
       initContainers:
       - command:
@@ -8801,6 +8815,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -8863,6 +8879,8 @@ spec:
         resources:
           limits:
             memory: 576Mi
+          requests:
+            memory: 300Mi
         volumeMounts: null
       volumes: null
 ---
@@ -8928,6 +8946,8 @@ spec:
         resources:
           limits:
             memory: 160Mi
+          requests:
+            memory: 160Mi
         volumeMounts: null
       initContainers:
       - command:
@@ -8940,6 +8960,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -9016,6 +9038,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 20Mi
         volumeMounts: null
       initContainers:
       - command:
@@ -9027,6 +9051,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -9087,6 +9113,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 20Mi
         volumeMounts: null
       volumes: null
 ---
@@ -9150,6 +9178,8 @@ spec:
         resources:
           limits:
             memory: 192Mi
+          requests:
+            memory: 100Mi
         volumeMounts: null
       volumes: null
 ---
@@ -9216,6 +9246,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 75Mi
         volumeMounts:
         - name: config-rw
           mountPath: /etc/flagd
@@ -9248,6 +9280,8 @@ spec:
         resources:
           limits:
             memory: 512Mi
+          requests:
+            memory: 512Mi
         volumeMounts:
         - mountPath: /app/data
           name: config-rw
@@ -9266,6 +9300,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: '0'
       volumes:
       - name: config-rw
         emptyDir: {}
@@ -9332,6 +9368,8 @@ spec:
         resources:
           limits:
             memory: 576Mi
+          requests:
+            memory: 300Mi
         volumeMounts: null
       initContainers:
       - command:
@@ -9343,6 +9381,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -9431,6 +9471,8 @@ spec:
         resources:
           limits:
             memory: 256Mi
+          requests:
+            memory: 250Mi
         securityContext:
           runAsGroup: 1001
           runAsNonRoot: true
@@ -9532,6 +9574,8 @@ spec:
         resources:
           limits:
             memory: 192Mi
+          requests:
+            memory: 65Mi
         securityContext:
           runAsGroup: 101
           runAsNonRoot: true
@@ -9604,6 +9648,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 50Mi
         volumeMounts: null
       volumes: null
 ---
@@ -9671,6 +9717,8 @@ spec:
         resources:
           limits:
             memory: 1152Mi
+          requests:
+            memory: 600Mi
         securityContext:
           runAsGroup: 1000
           runAsNonRoot: true
@@ -9732,6 +9780,8 @@ spec:
         resources:
           limits:
             memory: 192Mi
+          requests:
+            memory: '0'
         volumeMounts: null
       volumes: null
 ---
@@ -9808,6 +9858,8 @@ spec:
           value: http://$(OTEL_COLLECTOR_NAME):4317
         resources:
           limits:
+            memory: 1500Mi
+          requests:
             memory: 1500Mi
         volumeMounts: null
       - name: locust-exporter
@@ -9888,6 +9940,8 @@ spec:
         resources:
           limits:
             memory: 256Mi
+          requests:
+            memory: 140Mi
         securityContext:
           runAsGroup: 1000
           runAsNonRoot: true
@@ -9950,6 +10004,8 @@ spec:
         resources:
           limits:
             memory: 256Mi
+          requests:
+            memory: 100Mi
         volumeMounts:
         - name: postgresql-init
           mountPath: /docker-entrypoint-initdb.d
@@ -10022,6 +10078,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 20Mi
         volumeMounts: null
       volumes: null
 ---
@@ -10103,6 +10161,8 @@ spec:
         resources:
           limits:
             memory: 192Mi
+          requests:
+            memory: 100Mi
         volumeMounts: null
       volumes: null
 ---
@@ -10166,6 +10226,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 40Mi
         securityContext:
           runAsGroup: 33
           runAsNonRoot: true
@@ -10237,6 +10299,8 @@ spec:
         resources:
           limits:
             memory: 500Mi
+          requests:
+            memory: 500Mi
         volumeMounts: null
       volumes: null
 ---
@@ -10298,6 +10362,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 128Mi
         volumeMounts: null
       volumes: null
 ---
@@ -10349,6 +10415,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: 20Mi
         securityContext:
           runAsGroup: 1000
           runAsNonRoot: true
@@ -10442,6 +10510,8 @@ spec:
         resources:
           limits:
             memory: 128Mi
+          requests:
+            memory: '0'
         volumeMounts:
         - mountPath: /tmp/config/
           name: config-emptydir

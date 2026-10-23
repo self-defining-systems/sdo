@@ -19,7 +19,8 @@
       "container": "opentelemetry-collector",
       "init": false,
       "stock_limit_mib": 200,
-      "observed_peak_bytes": 209436672
+      "observed_peak_bytes": 209436672,
+      "effective_request_memory": "200Mi"
     },
     {
       "kind": "Deployment",
@@ -27,7 +28,8 @@
       "container": "grafana-sc-alerts",
       "init": false,
       "stock_limit_mib": 100,
-      "observed_peak_bytes": 101232640
+      "observed_peak_bytes": 101232640,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "Deployment",
@@ -35,7 +37,8 @@
       "container": "grafana-sc-dashboard",
       "init": false,
       "stock_limit_mib": 100,
-      "observed_peak_bytes": 99418112
+      "observed_peak_bytes": 99418112,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "Deployment",
@@ -43,7 +46,8 @@
       "container": "grafana-sc-datasources",
       "init": false,
       "stock_limit_mib": 100,
-      "observed_peak_bytes": 99459072
+      "observed_peak_bytes": 99459072,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "Deployment",
@@ -51,7 +55,8 @@
       "container": "grafana",
       "init": false,
       "stock_limit_mib": 175,
-      "observed_peak_bytes": 185171968
+      "observed_peak_bytes": 185171968,
+      "effective_request_memory": "175Mi"
     },
     {
       "kind": "Deployment",
@@ -59,7 +64,8 @@
       "container": "jaeger",
       "init": false,
       "stock_limit_mib": 600,
-      "observed_peak_bytes": 21368832
+      "observed_peak_bytes": 21368832,
+      "effective_request_memory": "600Mi"
     },
     {
       "kind": "Deployment",
@@ -67,7 +73,8 @@
       "container": "accounting",
       "init": false,
       "stock_limit_mib": 120,
-      "observed_peak_bytes": 189509632
+      "observed_peak_bytes": 189509632,
+      "effective_request_memory": "256Mi"
     },
     {
       "kind": "Deployment",
@@ -75,7 +82,8 @@
       "container": "wait-for-kafka",
       "init": true,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 0
+      "observed_peak_bytes": 0,
+      "effective_request_memory": "0"
     },
     {
       "kind": "Deployment",
@@ -83,7 +91,8 @@
       "container": "ad",
       "init": false,
       "stock_limit_mib": 300,
-      "observed_peak_bytes": 277868544
+      "observed_peak_bytes": 277868544,
+      "effective_request_memory": "300Mi"
     },
     {
       "kind": "Deployment",
@@ -91,7 +100,8 @@
       "container": "cart",
       "init": false,
       "stock_limit_mib": 160,
-      "observed_peak_bytes": 66457600
+      "observed_peak_bytes": 66457600,
+      "effective_request_memory": "160Mi"
     },
     {
       "kind": "Deployment",
@@ -99,7 +109,8 @@
       "container": "wait-for-valkey-cart",
       "init": true,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 0
+      "observed_peak_bytes": 0,
+      "effective_request_memory": "0"
     },
     {
       "kind": "Deployment",
@@ -107,7 +118,8 @@
       "container": "checkout",
       "init": false,
       "stock_limit_mib": 20,
-      "observed_peak_bytes": 21008384
+      "observed_peak_bytes": 21008384,
+      "effective_request_memory": "20Mi"
     },
     {
       "kind": "Deployment",
@@ -115,7 +127,8 @@
       "container": "wait-for-kafka",
       "init": true,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 0
+      "observed_peak_bytes": 0,
+      "effective_request_memory": "0"
     },
     {
       "kind": "Deployment",
@@ -123,7 +136,8 @@
       "container": "currency",
       "init": false,
       "stock_limit_mib": 20,
-      "observed_peak_bytes": 6791168
+      "observed_peak_bytes": 6791168,
+      "effective_request_memory": "20Mi"
     },
     {
       "kind": "Deployment",
@@ -131,7 +145,8 @@
       "container": "email",
       "init": false,
       "stock_limit_mib": 100,
-      "observed_peak_bytes": 67526656
+      "observed_peak_bytes": 67526656,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "Deployment",
@@ -139,7 +154,8 @@
       "container": "flagd",
       "init": false,
       "stock_limit_mib": 75,
-      "observed_peak_bytes": 58318848
+      "observed_peak_bytes": 58318848,
+      "effective_request_memory": "75Mi"
     },
     {
       "kind": "Deployment",
@@ -147,7 +163,8 @@
       "container": "flagd-ui",
       "init": false,
       "stock_limit_mib": 250,
-      "observed_peak_bytes": 251977728
+      "observed_peak_bytes": 251977728,
+      "effective_request_memory": "512Mi"
     },
     {
       "kind": "Deployment",
@@ -155,7 +172,8 @@
       "container": "init-config",
       "init": true,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 0
+      "observed_peak_bytes": 0,
+      "effective_request_memory": "0"
     },
     {
       "kind": "Deployment",
@@ -163,7 +181,8 @@
       "container": "fraud-detection",
       "init": false,
       "stock_limit_mib": 300,
-      "observed_peak_bytes": 296206336
+      "observed_peak_bytes": 296206336,
+      "effective_request_memory": "300Mi"
     },
     {
       "kind": "Deployment",
@@ -171,7 +190,8 @@
       "container": "wait-for-kafka",
       "init": true,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 0
+      "observed_peak_bytes": 0,
+      "effective_request_memory": "0"
     },
     {
       "kind": "Deployment",
@@ -179,7 +199,8 @@
       "container": "frontend",
       "init": false,
       "stock_limit_mib": 250,
-      "observed_peak_bytes": 110575616
+      "observed_peak_bytes": 110575616,
+      "effective_request_memory": "250Mi"
     },
     {
       "kind": "Deployment",
@@ -187,7 +208,8 @@
       "container": "frontend-proxy",
       "init": false,
       "stock_limit_mib": 65,
-      "observed_peak_bytes": 67964928
+      "observed_peak_bytes": 67964928,
+      "effective_request_memory": "65Mi"
     },
     {
       "kind": "Deployment",
@@ -195,7 +217,8 @@
       "container": "image-provider",
       "init": false,
       "stock_limit_mib": 50,
-      "observed_peak_bytes": 8523776
+      "observed_peak_bytes": 8523776,
+      "effective_request_memory": "50Mi"
     },
     {
       "kind": "Deployment",
@@ -203,7 +226,8 @@
       "container": "kafka",
       "init": false,
       "stock_limit_mib": 600,
-      "observed_peak_bytes": 580599808
+      "observed_peak_bytes": 580599808,
+      "effective_request_memory": "600Mi"
     },
     {
       "kind": "Deployment",
@@ -211,7 +235,8 @@
       "container": "llm",
       "init": false,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 81944576
+      "observed_peak_bytes": 81944576,
+      "effective_request_memory": "0"
     },
     {
       "kind": "Deployment",
@@ -219,7 +244,8 @@
       "container": "load-generator",
       "init": false,
       "stock_limit_mib": 1500,
-      "observed_peak_bytes": 90128384
+      "observed_peak_bytes": 90128384,
+      "effective_request_memory": "1500Mi"
     },
     {
       "kind": "Deployment",
@@ -227,7 +253,8 @@
       "container": "locust-exporter",
       "init": false,
       "stock_limit_mib": 64,
-      "observed_peak_bytes": 27291648
+      "observed_peak_bytes": 27291648,
+      "effective_request_memory": "32Mi"
     },
     {
       "kind": "Deployment",
@@ -235,7 +262,8 @@
       "container": "payment",
       "init": false,
       "stock_limit_mib": 140,
-      "observed_peak_bytes": 109518848
+      "observed_peak_bytes": 109518848,
+      "effective_request_memory": "140Mi"
     },
     {
       "kind": "Deployment",
@@ -243,7 +271,8 @@
       "container": "postgresql",
       "init": false,
       "stock_limit_mib": 100,
-      "observed_peak_bytes": 103563264
+      "observed_peak_bytes": 103563264,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "Deployment",
@@ -251,7 +280,8 @@
       "container": "product-catalog",
       "init": false,
       "stock_limit_mib": 20,
-      "observed_peak_bytes": 20971520
+      "observed_peak_bytes": 20971520,
+      "effective_request_memory": "20Mi"
     },
     {
       "kind": "Deployment",
@@ -259,7 +289,8 @@
       "container": "product-reviews",
       "init": false,
       "stock_limit_mib": 100,
-      "observed_peak_bytes": 90091520
+      "observed_peak_bytes": 90091520,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "Deployment",
@@ -267,7 +298,8 @@
       "container": "quote",
       "init": false,
       "stock_limit_mib": 40,
-      "observed_peak_bytes": 25899008
+      "observed_peak_bytes": 25899008,
+      "effective_request_memory": "40Mi"
     },
     {
       "kind": "Deployment",
@@ -275,7 +307,8 @@
       "container": "recommendation",
       "init": false,
       "stock_limit_mib": 500,
-      "observed_peak_bytes": 58785792
+      "observed_peak_bytes": 58785792,
+      "effective_request_memory": "500Mi"
     },
     {
       "kind": "Deployment",
@@ -283,7 +316,8 @@
       "container": "shipping",
       "init": false,
       "stock_limit_mib": 20,
-      "observed_peak_bytes": 30273536
+      "observed_peak_bytes": 30273536,
+      "effective_request_memory": "128Mi"
     },
     {
       "kind": "Deployment",
@@ -291,7 +325,8 @@
       "container": "valkey-cart",
       "init": false,
       "stock_limit_mib": 20,
-      "observed_peak_bytes": 19718144
+      "observed_peak_bytes": 19718144,
+      "effective_request_memory": "20Mi"
     },
     {
       "kind": "StatefulSet",
@@ -299,7 +334,8 @@
       "container": "opensearch",
       "init": false,
       "stock_limit_mib": 1100,
-      "observed_peak_bytes": 1153433600
+      "observed_peak_bytes": 1153433600,
+      "effective_request_memory": "100Mi"
     },
     {
       "kind": "StatefulSet",
@@ -307,7 +343,8 @@
       "container": "configfile",
       "init": true,
       "stock_limit_mib": 0,
-      "observed_peak_bytes": 0
+      "observed_peak_bytes": 0,
+      "effective_request_memory": "0"
     }
   ]
 }

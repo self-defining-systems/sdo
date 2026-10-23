@@ -10,6 +10,8 @@ import yaml
 
 
 MEMORY_BASELINE = json.loads((Path(__file__).resolve().parent / "memory-baseline.json").read_text())
+MEMORY_REQUESTS = {(r["kind"], r["workload"], r["container"], r["init"]): r["effective_request_memory"]
+                   for r in MEMORY_BASELINE["containers"]}
 MEMORY_PEAKS = {(r["kind"], r["workload"], r["container"], r["init"]): r["observed_peak_bytes"]
                 for r in MEMORY_BASELINE["containers"]}
 
@@ -25,6 +27,7 @@ def prepare_baseline(obj: dict[str, Any]) -> None:
                     raise ValueError(f"memory baseline measurement required for {key}")
                 resources = container.get("resources") or {}
                 container["resources"] = resources
+                resources.setdefault("requests", {}).setdefault("memory", MEMORY_REQUESTS[key])
                 limits = resources.setdefault("limits", {})
                 stock = limits.get("memory", "0Mi")
                 if not stock.endswith("Mi"):

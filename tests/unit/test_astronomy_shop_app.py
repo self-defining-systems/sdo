@@ -167,6 +167,7 @@ def test_astronomy_memory_rule_covers_every_container_and_preserves_requests() -
                 row = measurements[key]
                 seen.add(key)
                 resources = c.setdefault("resources", {})
+                resources.setdefault("requests", {}).pop("memory", None)
                 if row["stock_limit_mib"]:
                     resources.setdefault("limits", {})["memory"] = f"{row['stock_limit_mib']}Mi"
                 else:
@@ -184,7 +185,8 @@ def test_astronomy_memory_rule_covers_every_container_and_preserves_requests() -
                 )
                 assert c["resources"]["limits"]["memory"] == f"{expected}Mi", (obj["metadata"]["name"], c["name"])
                 assert checked["resources"]["limits"]["memory"] == f"{expected}Mi"
-                assert c["resources"].get("requests") == prior["resources"].get("requests")
+                assert c["resources"]["requests"]["memory"] == row["effective_request_memory"]
+                assert c["resources"]["requests"].get("cpu") == prior["resources"].get("requests", {}).get("cpu")
                 assert c["resources"]["limits"].get("cpu") == prior["resources"].get("limits", {}).get("cpu")
     assert seen == set(measurements)
     assert len(seen) == 37

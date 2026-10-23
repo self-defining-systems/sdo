@@ -19,8 +19,10 @@ The pinned observations and policy constants are in `memory-baseline.json`. Peak
 combine 90 minutes of Prometheus total usage/working set with live cgroup v2
 `memory.peak` on luna-pilot-52 under ten Locust users, browser traffic disabled.
 Completed init containers have no retained samples and receive the 128 MiB floor.
-A new container requires a baseline entry before rendering. Requests and CPU
-limits are preserved. Existing limits larger than the rule are never lowered.
+A new container requires a baseline entry before rendering. Effective memory
+requests are preserved explicitly: Kubernetes otherwise defaults an omitted request
+to the increased limit. Containers previously without a memory request or limit
+retain a zero request. Existing CPU requests and limits are preserved. Existing limits larger than the rule are never lowered.
 
 The stock limits leave little headroom on this cgroup v2 lane: frontend-proxy
 repeatedly OOMKilled at 65 MiB; Kafka, Grafana, collector and OpenSearch approach
