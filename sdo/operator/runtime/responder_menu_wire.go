@@ -83,6 +83,10 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	menu, err = menuParameterJSON(menu, r.MenuParameters)
+	if err != nil {
+		return nil, err
+	}
 	report, err := toolContractJSON(r.Report)
 	if err != nil {
 		return nil, err
@@ -116,5 +120,38 @@ func (r truncatedToolResponse) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	}
+	return json.Marshal(fields)
+}
+
+func menuParameterJSON(menu json.RawMessage, parameters map[string][]MenuParameter) (json.RawMessage, error) {
+	if len(menu) == 0 || parameters == nil {
+		return menu, nil
+	}
+	var envelope struct {
+		Options []map[string]json.RawMessage `json:"options"`
+	}
+	if err := json.Unmarshal(menu, &envelope); err != nil {
+		return nil, err
+	}
+	for _, option := range envelope.Options {
+		var id string
+		if err := json.Unmarshal(option["option_id"], &id); err != nil {
+			return nil, err
+		}
+		schema, err := json.Marshal(parameters[id])
+		if err != nil {
+			return nil, err
+		}
+		option["parameters"] = schema
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(menu, &fields); err != nil {
+		return nil, err
+	}
+	options, err := json.Marshal(envelope.Options)
+	if err != nil {
+		return nil, err
+	}
+	fields["options"] = options
 	return json.Marshal(fields)
 }

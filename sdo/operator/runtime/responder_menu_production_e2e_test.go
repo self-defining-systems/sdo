@@ -65,9 +65,8 @@ func (productionMenuHealth) Detect(_ context.Context, view sdk.DetectionContext)
 	return []sdk.Finding{{DetectorID: "production-menu-health", RuleID: "routing", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: menuService, Summary: "synthetic route is unhealthy", Evidence: "independent route port check", Playbooks: []string{"base"}, ParameterBindings: map[string]sdk.ObjectRef{"service": menuService}}}, nil
 }
 
-// Starts RunWithOptions with its real job dispatcher and LoopFactory. Synthetic
-// trusted capabilities are explicit embedded configuration; they are not
-// claimed as provenance for a standalone controller or the live stream.
+// Starts RunWithOptions with its real job dispatcher and LoopFactory,
+// the ordinary executor and broker; only the Kubernetes API is synthetic.
 func TestProductionResponderMenuScriptedFactoryStrictReceipt(t *testing.T) {
 	testProductionResponderMenuFactory(t, true)
 }
@@ -302,7 +301,7 @@ def select(program):
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","menu"]))
  assert code==0,text
  menu=json.loads(text.splitlines()[0])["menu"]
- option=next(o["option_id"] for o in menu["options"] if o["program_id"]==program)
+ option=next(o["option_id"] for o in menu["options"] if o.get("program_id")==program)
  code,text=turn.run(shlex.join([sys.executable,"-m","sdo.agents.responder.tools_cli","mitigate",option,"--rounds","1"]))
  assert code==0,text
  return json.loads(text.splitlines()[0])["report"]

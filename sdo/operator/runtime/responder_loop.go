@@ -32,6 +32,7 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	Parameters    map[string]string                      `json:"parameters,omitempty"`
 	Selection     *contracts.MitigationSelection         `json:"-"`
 	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
 	Checkpoint    *contracts.MitigationSessionCheckpoint `json:"-"`
@@ -44,17 +45,18 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	Menu          *contracts.MitigationMenu    `json:"-"`
-	Report        *contracts.MitigationReport  `json:"-"`
-	Session       *contracts.MitigationSession `json:"-"`
-	Command       string                       `json:"command"`
-	Source        map[string]any               `json:"source,omitempty"`
-	Error         string                       `json:"error,omitempty"`
-	Summary       string                       `json:"summary"`
-	PlanID        string                       `json:"plan_id,omitempty"`
-	ApplicationID string                       `json:"application_id,omitempty"`
-	Patches       []PlanPatch                  `json:"patches,omitempty"`
-	ProgramRuns   []ProgramRun                 `json:"program_runs,omitempty"`
+	MenuParameters map[string][]MenuParameter   `json:"-"`
+	Menu           *contracts.MitigationMenu    `json:"-"`
+	Report         *contracts.MitigationReport  `json:"-"`
+	Session        *contracts.MitigationSession `json:"-"`
+	Command        string                       `json:"command"`
+	Source         map[string]any               `json:"source,omitempty"`
+	Error          string                       `json:"error,omitempty"`
+	Summary        string                       `json:"summary"`
+	PlanID         string                       `json:"plan_id,omitempty"`
+	ApplicationID  string                       `json:"application_id,omitempty"`
+	Patches        []PlanPatch                  `json:"patches,omitempty"`
+	ProgramRuns    []ProgramRun                 `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -258,7 +260,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "menu":
 		l.listMenu(ctx, request, &response)
 	case "mitigate":
-		l.mitigateMenu(ctx, request.Selection, &response)
+		l.mitigateMenu(ctx, request.Selection, request.Parameters, &response)
 	case "session-open":
 		l.openMenuSession(ctx, &response)
 	case "session-checkpoint":

@@ -28,7 +28,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		return
 	}
 	l.openDirectMenuSession(response)
-	entries := map[string]menuEntry{}
+	entries := rawMenuActions()
 	if l.Programs != nil {
 		for _, spec := range l.Programs.List() {
 			if request.ProgramID != "" && request.ProgramID != spec.ID {
@@ -50,7 +50,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 			}
 			for _, binding := range bindings {
 				id := "program-" + menuDigest([]any{spec.ID, binding})
-				entries[id] = menuEntry{programID: spec.ID, bindings: cloneProgramBindings(binding)}
+				entries[id] = menuEntry{spec: spec, programID: spec.ID, bindings: cloneProgramBindings(binding)}
 			}
 		}
 	}
@@ -64,8 +64,14 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	response.MenuParameters = map[string][]MenuParameter{}
 	for _, id := range ids {
 		entry := entries[id]
+		if entry.action != nil {
+			response.MenuParameters[id] = menuActionParameters(entry.action)
+		} else {
+			response.MenuParameters[id] = menuProgramParameters(entry.spec)
+		}
 		menu.Options = append(menu.Options, &contracts.MitigationOption{OptionId: id, ProgramId: entry.programID, ProgramRevision: l.Request.SourceCommit, DependencyRevision: l.Request.SourceCommit, Effects: []contracts.MitigationOption_Effect{contracts.MitigationOption_EFFECT_SDK_PLAN_ACTION}, MaxActionsPerRound: 32, Bindings: menuBindings(entry.bindings)})
 	}
 	menu.MenuId = "menu-" + menuDigest(menu)
@@ -77,7 +83,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 
 // Invoke the ordinary plan executor, under its existing credentials. Selection
 // metadata is descriptive; no ledger, fencing, provenance or menu preflight runs.
-func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, response *ToolResponse) {
+func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, parameters map[string]string, response *ToolResponse) {
 	if l.MenuConfig == nil {
 		response.Error = "mitigation menu is disabled"
 		return
@@ -110,7 +116,9 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		l.batches++
 		plan := program.Plan{}
 		var err error
-		if entry.plan != nil {
+		if entry.action != nil {
+			plan, err = menuRawPlan(entry.action, parameters)
+		} else if entry.plan != nil {
 			plan = *entry.plan
 		} else {
 			mitigator, found := l.Programs.Mitigator(entry.programID)
@@ -169,6 +177,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		if result.VerificationPassed {
 			rr.Verification = verdictContract(program.Verdict{Result: program.NoMatch})
 			report.Status = contracts.MitigationReport_STATUS_SUCCESS
+			l.findings = nil
 			break
 		}
 		report.FailedPhase = "verification"

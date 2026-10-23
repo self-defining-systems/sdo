@@ -4,12 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
 type menuEntry struct {
+	spec      program.ProgramSpec
+	action    protoreflect.FieldDescriptor
 	programID string
 	bindings  program.Bindings
 	plan      *program.Plan
