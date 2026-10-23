@@ -165,6 +165,7 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 				t.Fatalf("%s: %v", output, err)
 			}
 		}
+		seedRenderedLock(t, GitPlanSource{Repository: repository, ManifestPaths: []string{"app.json"}}, nativeGit(t, repository, "rev-parse", "HEAD"), hotel)
 		runArgs = append(runArgs, "--deployed-manifest-path", "app.json")
 	}
 	go func() {
