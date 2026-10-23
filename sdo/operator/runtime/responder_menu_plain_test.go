@@ -36,3 +36,22 @@ func TestResponderMenuPlainFiveRoundsAcrossOptions(t *testing.T) {
 		t.Fatal("sixth round executed")
 	}
 }
+
+func TestResponderMenuRepairEvidenceSatisfiesIncidentContract(t *testing.T) {
+	loop, _ := menuB3Loop(t)
+	loop.Request.RepairPolicy = "recorded-actions"
+	loop.Executor.Verifier = planFakeVerifier{true}
+	menu := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	executed := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: menu.Menu.Options[1].OptionId, RoundLimit: 1}})
+	if executed.Report == nil || executed.Report.Status != contracts.MitigationReport_STATUS_SUCCESS {
+		t.Fatalf("executor did not succeed: %v", executed)
+	}
+	result := completedResult(loop.Request.IncidentID)
+	result.RepairActions = loop.MenuRepairActions()
+	if len(result.RepairActions) != 1 {
+		t.Fatal("missing controller repair evidence")
+	}
+	if err := validateIncidentResultFor(result, loop.Request); err != nil {
+		t.Fatalf("menu evidence rejected before broker closure: %v", err)
+	}
+}

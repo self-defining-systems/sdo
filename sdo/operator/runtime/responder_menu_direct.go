@@ -160,7 +160,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			}
 			rr.Actions = append(rr.Actions, receipt)
 			if receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {
-				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: []sdk.ObjectRef{patch.Ref}, Summary: "responder executed SDK plan action", Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
+				l.menuRepairs = append(l.menuRepairs, RepairActionReceipt{ActionID: receipt.ActionId, Kind: "mitigation-menu", Target: patch.Ref.Kind + "/" + patch.Ref.Name, Resources: []sdk.ObjectRef{patch.Ref}, Summary: "responder executed SDK plan action", Details: fmt.Sprintf("attempt %s round %d action %d via ordinary PlanExecutor", attempt, round, index+1), Success: !result.RolledBack, StartedAt: started, CompletedAt: completed})
 			}
 		}
 		rr.IndependentlyHealthy = result.VerificationPassed
