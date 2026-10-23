@@ -674,12 +674,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	stopState := func() {
 		if stateTracker != nil {
-			// Redeploy maintenance adopts new state. An observation barrier
-			// retains the prior baseline so changes remain visible on resume.
+			// A redeploy replaces the application's configuration baseline.
 			stateTracker.Stop()
-			if !desired.PreserveBaseline {
-				stateTracker.Reset()
-			}
+			stateTracker.Reset()
 		}
 	}
 	if options.NativeBroker != nil {
@@ -729,10 +726,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// fresh informer generation and evaluates every detector once. The mode
 	// record precedes that evaluation so observers can correlate it.
 	resume := func() error {
+		preserved := applied.Paused && applied.PreserveBaseline
 		syncCtx, cancelSync := context.WithTimeout(runCtx, *resumeSyncTimeout)
 		defer cancelSync()
 		var syncErr error
-		if cacheStarted {
+		if preserved {
+			// Observation continued while evaluation was paused. Keep watch
+			// changes and the healthy baseline for the first resumed step.
+			syncErr = kubernetesCache.WaitForSync(syncCtx)
+		} else if cacheStarted {
 			syncErr = kubernetesCache.Resync(syncCtx)
 		} else {
 			kubernetesCache.Start(runCtx)
@@ -746,11 +748,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			fmt.Fprintf(stderr, "resume observation of namespace %s: %v\n", *namespace, syncErr)
 			return nil
 		}
-		waitState := startState()
+		waitState := func() {}
+		if !preserved {
+			waitState = startState()
+		}
 		startTraffic()
 		waitState()
 		kubernetesCache.TakeEvents()
-		kubernetesCache.TakeObjectChanges()
+		if !preserved {
+			kubernetesCache.TakeObjectChanges()
+		}
 		applied = desired
 		if err := encoder.Encode(applied.Record()); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -809,10 +816,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				// A redeploying application would fail synthetic requests;
 				// resume starts again from empty windows.
 				stopTraffic()
-				stopState()
-				kubernetesCache.Stop()
-				kubernetesCache.TakeEvents()
-				kubernetesCache.TakeObjectChanges()
+				if !desired.PreserveBaseline {
+					stopState()
+					kubernetesCache.Stop()
+					kubernetesCache.TakeEvents()
+					kubernetesCache.TakeObjectChanges()
+				}
 				applied = desired
 				if err := encoder.Encode(applied.Record()); err != nil {
 					fmt.Fprintln(stderr, err)
@@ -828,7 +837,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			if applied.Paused {
 				kubernetesCache.TakeEvents()
-				kubernetesCache.TakeObjectChanges()
+				if !applied.PreserveBaseline {
+					kubernetesCache.TakeObjectChanges()
+				}
 				continue
 			}
 			if err := controller.StepEvents(runCtx, time.Now().UTC(), kubernetesCache.TakeEvents()); err != nil {

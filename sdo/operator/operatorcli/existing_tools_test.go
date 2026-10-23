@@ -30,5 +30,7 @@ func TestParseMaintenanceRequiresExplicitGeneration(t *testing.T) {
 
 func TestParseMaintenanceObservationBarrier(t *testing.T) {
 	config, err := ParseMaintenanceLaunch([]string{"maintenance", "--control-namespace", "sdo", "--paused", "--preserve-baseline", "--generation", "barrier"})
-	if err != nil || !config.Paused || !config.PreserveBaseline { t.Fatalf("lost observation barrier: %+v %v", config, err) }
+	if err != nil || !config.Paused || !config.PreserveBaseline {
+		t.Fatalf("lost observation barrier: %+v %v", config, err)
+	}
 }

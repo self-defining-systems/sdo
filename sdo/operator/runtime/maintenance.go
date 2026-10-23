@@ -25,10 +25,11 @@ const (
 // MaintenanceState is the operator's declared observation mode. While paused
 // (for example during a planned application redeploy), the controller keeps
 // finishing its in-flight incident lifecycle (closure, reflection,
-// acknowledgment) but stops evaluating detectors and stops observing the
-// application namespace, so an application that is intentionally absent is
+// acknowledgment) but stops evaluating detectors. By default it also stops
+// observing the application namespace, so an application that is intentionally absent is
 // never treated as an incident. A new generation marks each resume so external
 // observers can correlate the first evaluation after it.
+// PreserveBaseline instead retains informers and their pending changes until resume.
 type MaintenanceState struct {
 	Paused     bool
 	Generation string
