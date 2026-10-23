@@ -92,29 +92,11 @@ func documentKind(v any) string {
 	}
 }
 
-// ApplySetFieldAction resolves an optional accepted-source value and updates one
-// typed field or document entry. The caller owns source trust and write safety.
-func ApplySetFieldAction(current map[string]any, a SetField, source map[string]any) error {
-	if err := ValidateSetField(a); err != nil {
+// ApplySetFieldAction applies an already resolved value. The controller owns
+// resolution and provenance; this helper owns field and document schema checks.
+func ApplySetFieldAction(current map[string]any, a SetField, value any) error {
+	if err := ValidateResolvedSetField(a, value); err != nil {
 		return err
-	}
-	value := a.Value
-	if a.ValueFromSource {
-		var err error
-		value, err = FieldValue(source, a.Path)
-		if err != nil {
-			return fmt.Errorf("accepted-source field is absent")
-		}
-		if a.DocumentFormat != "" {
-			document, err := planDocument(value, a.DocumentFormat)
-			if err != nil {
-				return err
-			}
-			value, err = documentEntry(document, a.DocumentPath)
-			if err != nil {
-				return err
-			}
-		}
 	}
 	// Normalize numbers/maps from both Go programs and YAML, without string coercion.
 	encoded, err := json.Marshal(value)
@@ -127,12 +109,6 @@ func ApplySetFieldAction(current map[string]any, a SetField, source map[string]a
 	}
 	if err = decoder.Decode(&value); err != nil {
 		return fmt.Errorf("invalid field value")
-	}
-	resolved := a
-	resolved.ValueFromSource = false
-	resolved.Value = value
-	if err := ValidateSetField(resolved); err != nil {
-		return err
 	}
 	if a.DocumentFormat != "" {
 		raw, err := FieldValue(current, a.Path)

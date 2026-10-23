@@ -42,11 +42,11 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
 	for _, action := range plan.Actions {
 		switch a := action.(type) {
 		case program.SetField:
-			if a.ValueFromSource {
+			if a.Value.Origin() == program.SourceValue {
 				result.Effects = append(result.Effects, "accepted-source SetField")
 			}
 		case *program.SetField:
-			if a != nil && a.ValueFromSource {
+			if a != nil && a.Value.Origin() == program.SourceValue {
 				result.Effects = append(result.Effects, "accepted-source SetField")
 			}
 		default:
@@ -80,6 +80,10 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		return err
 	}
+	var observedFixture map[string]any
+	if err := json.Unmarshal(raw, &observedFixture); err != nil {
+		return err
+	}
 	for _, action := range plan.Actions {
 		var field program.SetField
 		switch a := action.(type) {
@@ -101,7 +105,11 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 		if err != nil {
 			return err
 		}
-		if err := program.ApplySetFieldAction(object, field, nil); err != nil {
+		value, _, resolveErr := program.ResolveSetFieldValue(field, program.ValueInputs{Spec: p.Spec(), Bindings: c.Bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) { return fixtureObject(observedFixture, ref) }})
+		if resolveErr != nil {
+			return fmt.Errorf("program.mitigation-unreplayable: %w", resolveErr)
+		}
+		if err := program.ApplySetFieldAction(object, field, value); err != nil {
 			return fmt.Errorf("program.mitigation-unreplayable: %w", err)
 		}
 		after, err := json.Marshal(object)

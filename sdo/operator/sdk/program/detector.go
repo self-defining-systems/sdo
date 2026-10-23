@@ -34,7 +34,7 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 		var primary sdk.ObjectRef
 		for _, param := range d.program.Spec().Params {
 			if param.Required {
-				primary = bindings[param.Name]
+				primary = bindings.Objects[param.Name]
 				break
 			}
 		}
@@ -46,7 +46,7 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 			DetectorID: d.spec.ID, RuleID: d.spec.ID, Status: sdk.FindingActive,
 			Severity: d.spec.Batching.Severity, Summary: d.program.Spec().ID,
 			Evidence: strings.Join(parts, "; "), PrimaryResource: primary,
-			Playbooks: []string{d.spec.ID}, ParameterBindings: bindings,
+			Playbooks: []string{d.spec.ID}, ParameterBindings: bindings.Objects,
 		})
 	}
 	return findings, nil

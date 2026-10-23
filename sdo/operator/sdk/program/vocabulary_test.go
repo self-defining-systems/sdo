@@ -31,10 +31,10 @@ func TestStructuredSetFieldSchema(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.kind+"/"+c.path, func(t *testing.T) {
 			ref := sdk.ObjectRef{APIVersion: c.api, Kind: c.kind, Namespace: "app", Name: "app"}
-			if err := (program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: c.path, Value: c.good}}}).Validate(); err != nil {
+			if err := (program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: c.path, Value: testPlanValue(c.good)}}}).Validate(); err != nil {
 				t.Fatalf("valid value: %v", err)
 			}
-			if err := (program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: c.path, Value: c.bad}}}).Validate(); err == nil {
+			if err := program.ValidateResolvedSetField(program.SetField{Ref: ref, Path: c.path, Value: testPlanValue(c.bad)}, c.bad); err == nil {
 				t.Fatal("accepted wrong schema kind")
 			}
 		})
@@ -59,15 +59,15 @@ func TestStructuredSetFieldNamedIdentity(t *testing.T) {
 
 func TestApplySetFieldActionDocument(t *testing.T) {
 	object := map[string]any{"data": map[string]any{"flags": `{"enabled":true,"unrelated":7}`}}
-	action := program.SetField{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap"}, Path: "data[flags]", DocumentFormat: "json", DocumentPath: []string{"enabled"}, Value: false}
-	if err := program.ApplySetFieldAction(object, action, nil); err != nil {
+	action := program.SetField{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap"}, Path: "data[flags]", DocumentFormat: "json", DocumentPath: []string{"enabled"}, Value: testPlanValue(false)}
+	if err := program.ApplySetFieldAction(object, action, testResolvedValue(t, action.Value)); err != nil {
 		t.Fatal(err)
 	}
 	if object["data"].(map[string]any)["flags"] != `{"enabled":false,"unrelated":7}` {
 		t.Fatal("unrelated flags changed")
 	}
-	action.Value = "wrong kind"
-	if err := program.ApplySetFieldAction(object, action, nil); err == nil {
+	action.Value = testPlanValue("wrong kind")
+	if err := program.ApplySetFieldAction(object, action, testResolvedValue(t, action.Value)); err == nil {
 		t.Fatal("document schema kind mismatch accepted")
 	}
 }

@@ -13,10 +13,10 @@ FUNCTIONS
 func ApplySetField(object map[string]any, path string, value any) error
     ApplySetField mutates one field. Named list selectors must resolve uniquely.
 
-func ApplySetFieldAction(current map[string]any, a SetField, source map[string]any) error
-    ApplySetFieldAction resolves an optional accepted-source value and updates
-    one typed field or document entry. The caller owns source trust and write
-    safety.
+func ApplySetFieldAction(current map[string]any, a SetField, value any) error
+    ApplySetFieldAction applies an already resolved value. The controller
+    owns resolution and provenance; this helper owns field and document schema
+    checks.
 
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector
     DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
@@ -29,6 +29,10 @@ func FieldValue(object map[string]any, path string) (any, error)
     bracketed ConfigMap keys. It does not invent missing intermediate objects.
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error
+func ValidateResolvedSetField(f SetField, value any) error
+    ValidateResolvedSetField checks the resolved schema without changing
+    provenance.
+
 func ValidateSetField(f SetField) error
     ValidateSetField checks the explicit path allowlist and Kubernetes schema
     kind. An absent API version retains legacy program validation; executors
@@ -46,7 +50,22 @@ type Action interface {
 	// Has unexported methods.
 }
 
-type Bindings map[string]sdk.ObjectRef
+type Bindings struct {
+	Objects ObjectBindings `json:"objects,omitempty"`
+	Values  map[string]any `json:"values,omitempty"`
+}
+    Bindings contains object identities and separately typed scalar parameters.
+
+func (b Bindings) Clone() Bindings
+
+func (b Bindings) Equal(other Bindings) bool
+
+func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)
+    Parameter resolves one declared value, including a validated default.
+
+func (b *Bindings) UnmarshalJSON(raw []byte) error
+    UnmarshalJSON imports object-only corpus bindings from existing recordings.
+    New recordings always use explicit objects and values maps.
 
 type CreateFromSource struct {
 	Ref    sdk.ObjectRef
@@ -61,6 +80,9 @@ type DeleteObject struct {
     DeleteObject irreversibly deletes a named object absent from accepted
     source. Its receipt retains a nonsecret preimage; compensation never
     recreates it.
+
+type DeletePod struct{ Ref sdk.ObjectRef }
+    DeletePod removes one named pod with UID/version preconditions.
 
 type Diagnoser interface {
 	Spec() ProgramSpec
@@ -81,6 +103,14 @@ type Evidence struct {
 	Expected string        `json:"expected"`
 }
 
+type Exec struct {
+	Pod       sdk.ObjectRef
+	Container string
+	Command   []Value
+}
+    Exec executes a provenance-derived command. Only its exit code is reported.
+    The Kubernetes API enforces the controller's existing pods/exec RBAC grant.
+
 type HTTPProbe struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
@@ -96,6 +126,10 @@ type Mitigator interface {
 	Mitigate(context.Context, ReadView, Bindings) (Plan, error)
 }
 
+type ObjectBindings map[string]sdk.ObjectRef
+    ObjectBindings binds declared object parameters to named Kubernetes
+    resources.
+
 type ParamSpec struct {
 	Name     string
 	Kind     Kind
@@ -110,6 +144,11 @@ type Plan struct {
 	Actions   []Action
 	Rationale string
 }
+
+func BindPlanValues(plan Plan, in ValueInputs) Plan
+    BindPlanValues pins each value to its own program invocation. This survives
+    batching plans with different parameter names or observation snapshots. The
+    controller calls this after Mitigate returns, replacing any program binding.
 
 func (p Plan) Validate() error
 
@@ -161,13 +200,18 @@ type Rollback struct {
 	ToRevision string
 }
 
+type ScaleWorkload struct {
+	Ref      sdk.ObjectRef
+	Replicas Value
+}
+    ScaleWorkload restores replicas from accepted source, observations or a
+    parameter.
+
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string
-	Value  any
+	Value  Value
 	Reason string
-	// ValueFromSource resolves the field against the incident-bound accepted manifest.
-	ValueFromSource bool
 	// DocumentFormat and DocumentPath select a JSON/YAML entry in one ConfigMap key.
 	// JSON edits preserve untouched number tokens; serialization may normalize formatting.
 	DocumentFormat string
@@ -200,6 +244,17 @@ func (v *Value) UnmarshalJSON(raw []byte) error
 
 func (v Value) Validate() error
 
+type ValueInputs struct {
+	SourceCommit string
+	Source       func(sdk.ObjectRef) (map[string]any, error)
+	Observed     func(sdk.ObjectRef) (map[string]any, error)
+	Spec         ProgramSpec
+	Bindings     Bindings
+}
+    ValueInputs is supplied by the controller, never read from a durable
+    receipt. Observed must read the same immutable ReadView snapshot used by
+    Mitigate.
+
 type ValueKind string
     ValueKind is the schema of a declared scalar value parameter.
 
@@ -218,6 +273,22 @@ const (
 	ObservedValue  ValueOrigin = "observed"
 	ParameterValue ValueOrigin = "parameter"
 )
+type ValueProvenance struct {
+	Origin          ValueOrigin   `json:"origin"`
+	Ref             sdk.ObjectRef `json:"ref,omitempty"`
+	Path            string        `json:"path,omitempty"`
+	SourceCommit    string        `json:"source_commit,omitempty"`
+	ResourceVersion string        `json:"resource_version,omitempty"`
+	Parameter       string        `json:"parameter,omitempty"`
+}
+    ValueProvenance records authority without copying a resolved value.
+
+func ResolveSetFieldValue(a SetField, in ValueInputs) (any, ValueProvenance, error)
+    ResolveSetFieldValue selects a document entry only for object-derived
+    values; declared parameters already describe the entry's schema value.
+
+func ResolveValue(v Value, in ValueInputs) (any, ValueProvenance, error)
+
 type Verdict struct {
 	Result   Result     `json:"result"`
 	Evidence []Evidence `json:"evidence,omitempty"`

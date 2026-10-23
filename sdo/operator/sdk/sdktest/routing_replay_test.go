@@ -15,6 +15,7 @@ func routingCorpus(t *testing.T) CorpusCase {
 	c := renameFixture(t)
 	for _, snapshot := range []*Snapshot{&c.Open, &c.Fixed, &c.Healthy} {
 		for i := range snapshot.PodList {
+			snapshot.PodList[i].ResourceVersion = "fixture"
 			snapshot.PodList[i].Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 		}
 	}
@@ -82,8 +83,8 @@ func TestRoutingMitigatorCannotInferListenerFromDeclaration(t *testing.T) {
 
 func TestRoutingReplayDoesNotReusePodReadsForOtherEdits(t *testing.T) {
 	c := routingCorpus(t)
-	ref := c.Bindings["service"]
-	m := fixtureMitigator{actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}, program.SetField{Ref: ref, Path: "spec.selector", Value: map[string]any{"app": "front"}}}}
+	ref := c.Bindings.Objects["service"]
+	m := fixtureMitigator{actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, program.SetField{Ref: ref, Path: "spec.selector", Value: testPlanValue(map[string]any{"app": "front"})}}}
 	if _, err := CheckMitigation(routingport.Program{}, m, c); err == nil {
 		t.Fatal("Pod TCP observation survived non-targetPort edit")
 	}

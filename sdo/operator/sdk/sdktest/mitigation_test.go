@@ -28,7 +28,7 @@ func TestScopedReadsSurviveProjectedLocalRepair(t *testing.T) {
 	c := renameFixture(t)
 	target := sdk.ObservationTarget{APIVersion: "v1", Kind: "Service", Namespace: "foreign"}
 	c.Open.ScopedSnapshot = sdk.ScopedSnapshot{Version: 1, Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}, Services: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "foreign"}}}}
-	m := fixtureMitigator{actions: []program.Action{program.SetField{Ref: c.Bindings["service"], Path: "spec.ports[0].targetPort", Value: 8080}}}
+	m := fixtureMitigator{actions: []program.Action{program.SetField{Ref: c.Bindings.Objects["service"], Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}}}
 	if err := CheckMitigationRepairs(scopedRepairDiagnoser{}, m, c); err != nil {
 		t.Fatal(err)
 	}
@@ -46,16 +46,16 @@ func (m fixtureMitigator) Mitigate(context.Context, program.ReadView, program.Bi
 }
 func TestMitigationMustRepairFaultedFixture(t *testing.T) {
 	c := renameFixture(t)
-	ref := c.Bindings["service"]
+	ref := c.Bindings.Objects["service"]
 	for _, test := range []struct {
 		name    string
 		actions []program.Action
 		want    string
 	}{
-		{"repairs port", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}}, ""},
-		{"keeps faulty port", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 9999}}, "program.mitigation-not-repaired"},
+		{"repairs port", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}}, ""},
+		{"keeps faulty port", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(9999)}}, "program.mitigation-not-repaired"},
 		{"source effect skips replay", []program.Action{program.ReconcileFromSource{Ref: ref}}, ""},
-		{"missing target", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[99].targetPort", Value: 8080}}, "program.mitigation-unreplayable"},
+		{"missing target", []program.Action{program.SetField{Ref: ref, Path: "spec.ports[99].targetPort", Value: testPlanValue(8080)}}, "program.mitigation-unreplayable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := c.Open.Services()
@@ -72,9 +72,9 @@ func TestMitigationMustRepairFaultedFixture(t *testing.T) {
 
 func TestMitigationDoesNotReusePrimitiveAnswersAfterPatching(t *testing.T) {
 	c := renameFixture(t)
-	args, _ := json.Marshal([]any{c.Bindings["service"]})
+	args, _ := json.Marshal([]any{c.Bindings.Objects["service"]})
 	c.Recordings = []PrimitiveCall{{Method: "DiffAgainstSource", Arguments: args, Result: json.RawMessage(`{"changed":true}`)}, {Phase: "fixed", Method: "DiffAgainstSource", Arguments: args, Result: json.RawMessage(`{"changed":false}`)}}
-	m := fixtureMitigator{actions: []program.Action{program.SetField{Ref: c.Bindings["service"], Path: "spec.ports[0].targetPort", Value: 8080}}}
+	m := fixtureMitigator{actions: []program.Action{program.SetField{Ref: c.Bindings.Objects["service"], Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}}}
 	err := CheckMitigationRepairs(sourcePhaseProgram{}, m, c)
 	if err == nil || !strings.Contains(err.Error(), "program.mitigation-unreplayable") {
 		t.Fatalf("post-plan primitive effects were invented: %v", err)

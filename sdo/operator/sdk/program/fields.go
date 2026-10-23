@@ -30,7 +30,7 @@ var allowedFieldPaths = []*regexp.Regexp{
 
 // ExpandedSetField reports whether an action uses the structured vocabulary.
 func ExpandedSetField(f SetField) bool {
-	return f.ValueFromSource || f.DocumentFormat != "" || strings.HasPrefix(f.Path, "data[") || strings.Contains(f.Path, "[name=") || f.Path == "spec" || strings.HasSuffix(f.Path, ".command") || strings.HasSuffix(f.Path, ".args") || strings.HasSuffix(f.Path, ".volumeMounts") || strings.HasSuffix(f.Path, ".nodeSelector") || strings.HasSuffix(f.Path, ".tolerations") || strings.HasSuffix(f.Path, ".affinity") || strings.HasSuffix(f.Path, ".serviceAccountName") || f.Ref.Kind == "HorizontalPodAutoscaler" || f.Ref.Kind == "PodDisruptionBudget"
+	return f.Value.Origin() == SourceValue || f.DocumentFormat != "" || strings.HasPrefix(f.Path, "data[") || strings.Contains(f.Path, "[name=") || f.Path == "spec" || strings.HasSuffix(f.Path, ".command") || strings.HasSuffix(f.Path, ".args") || strings.HasSuffix(f.Path, ".volumeMounts") || strings.HasSuffix(f.Path, ".nodeSelector") || strings.HasSuffix(f.Path, ".tolerations") || strings.HasSuffix(f.Path, ".affinity") || strings.HasSuffix(f.Path, ".serviceAccountName") || f.Ref.Kind == "HorizontalPodAutoscaler" || f.Ref.Kind == "PodDisruptionBudget"
 }
 
 // ValidateSetField checks the explicit path allowlist and Kubernetes schema kind.
@@ -43,9 +43,10 @@ func ValidateSetField(f SetField) error {
 	if !allowed {
 		return fmt.Errorf("SetField path %q is not allowed", f.Path)
 	}
-	if f.ValueFromSource && f.Value != nil {
-		return fmt.Errorf("SetField accepts a literal or accepted-source value, never both")
+	if err := f.Value.Validate(); err != nil {
+		return err
 	}
+
 	if f.DocumentFormat != "" || len(f.DocumentPath) > 0 {
 		if f.Ref.Kind != "ConfigMap" || !strings.HasPrefix(f.Path, "data[") || (f.DocumentFormat != "json" && f.DocumentFormat != "yaml") || len(f.DocumentPath) == 0 {
 			return fmt.Errorf("document entry requires a ConfigMap data key, json/yaml format and nonempty document path")
@@ -55,11 +56,7 @@ func ValidateSetField(f SetField) error {
 				return fmt.Errorf("empty document path key")
 			}
 		}
-		if !f.ValueFromSource {
-			if _, err := json.Marshal(f.Value); err != nil {
-				return fmt.Errorf("invalid document value")
-			}
-		}
+
 		return nil
 	}
 	if f.Ref.APIVersion == "" {
@@ -72,12 +69,8 @@ func ValidateSetField(f SetField) error {
 	if err != nil {
 		return err
 	}
-	if f.ValueFromSource {
-		return nil
-	}
-	if err := validateSchemaValue(f.Value, typ); err != nil {
-		return fmt.Errorf("SetField %s: invalid schema kind: %w", f.Path, err)
-	}
+	_ = typ // Schema values are validated after apply-time resolution.
+
 	return nil
 }
 
@@ -88,6 +81,8 @@ func fieldSchema(api, kind, path string) (reflect.Type, error) {
 		root = corev1.ConfigMap{}
 	case "v1/Service":
 		root = corev1.Service{}
+	case "apps/v1/StatefulSet":
+		root = appsv1.StatefulSet{}
 	case "apps/v1/Deployment":
 		root = appsv1.Deployment{}
 	case "networking.k8s.io/v1/NetworkPolicy":
@@ -162,6 +157,27 @@ func validateSchemaValue(value any, typ reflect.Type) error {
 	}
 	if decoder.Decode(new(any)) != io.EOF {
 		return fmt.Errorf("trailing value")
+	}
+	return nil
+}
+
+// ValidateResolvedSetField checks the resolved schema without changing provenance.
+func ValidateResolvedSetField(f SetField, value any) error {
+	if err := ValidateSetField(f); err != nil {
+		return err
+	}
+	if f.DocumentFormat != "" {
+		return nil
+	}
+	if f.Ref.APIVersion == "" {
+		return nil
+	}
+	typ, err := fieldSchema(f.Ref.APIVersion, f.Ref.Kind, f.Path)
+	if err != nil {
+		return err
+	}
+	if err := validateSchemaValue(value, typ); err != nil {
+		return fmt.Errorf("SetField %s: invalid schema kind: %w", f.Path, err)
 	}
 	return nil
 }

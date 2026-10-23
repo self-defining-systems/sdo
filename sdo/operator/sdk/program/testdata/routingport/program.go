@@ -20,7 +20,7 @@ func (Program) Spec() program.ProgramSpec {
 // declared TCP port on every selected ready Pod. Declarations choose probes;
 // they never establish a listener without a successful TCP observation.
 func replacement(v program.ReadView, b program.Bindings) (corev1.Service, []corev1.Pod, int32, bool) {
-	ref := b["service"]
+	ref := b.Objects["service"]
 	for _, service := range v.Services() {
 		if service.Namespace != ref.Namespace || service.Name != ref.Name {
 			continue
@@ -103,16 +103,16 @@ func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Binding
 	if targetPort == port {
 		return program.Verdict{Result: program.NoMatch}, nil
 	}
-	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b["service"], Fact: "selected ready Pods accept declared port and refuse numeric targetPort", Observed: fmt.Sprint(targetPort), Expected: fmt.Sprint(port)}}}, nil
+	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b.Objects["service"], Fact: "selected ready Pods accept declared port and refuse numeric targetPort", Observed: fmt.Sprint(targetPort), Expected: fmt.Sprint(port)}}}, nil
 }
 func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
 	verdict, err := p.Diagnose(ctx, v, b)
 	if err != nil || verdict.Result != program.Match {
 		return program.Plan{}, err
 	}
-	_, _, port, ok := replacement(v, b)
+	_, pods, _, ok := replacement(v, b)
 	if !ok {
 		return program.Plan{}, nil
 	}
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: b["service"], Path: "spec.ports[0].targetPort", Value: port, Reason: "use observed selected-Pod listener"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromObserved(sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pods[0].Namespace, Name: pods[0].Name}, "spec.containers[0].ports[0].containerPort"), Reason: "use observed selected-Pod listener"}}}, nil
 }
