@@ -23,7 +23,10 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 	oldProcs := runtime.GOMAXPROCS(2)
 	defer runtime.GOMAXPROCS(oldProcs)
 	payload := []byte(`{"apiVersion":"v1","kind":"PodList","items":[` + strings.TrimSuffix(strings.Repeat(item+",", 950), ",") + `]}`)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(payload)
+	}))
 	defer up.Close()
 	dir := t.TempDir()
 	store, err := apihistory.Open(dir, "synthetic", apihistory.Limits{})
@@ -32,11 +35,16 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 	}
 	defer store.Close()
 	u, _ := url.Parse(up.URL)
-	proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defer transport.CloseIdleConnections()
+	proxy := httptest.NewServer(kubeproxy.New(u, transport, transport, store))
 	defer proxy.Close()
+	clientTransport := http.DefaultTransport.(*http.Transport).Clone()
+	defer clientTransport.CloseIdleConnections()
+	client := &http.Client{Transport: clientTransport, Timeout: 5 * time.Second}
 	get := func(endpoint string) time.Duration {
 		start := time.Now()
-		res, err := http.Get(endpoint + "/api/v1/namespaces/app/pods")
+		res, err := client.Get(endpoint + "/api/v1/namespaces/app/pods")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,26 +55,31 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 		}
 		return time.Since(start)
 	}
-	for range 50 {
-		get(up.URL)
-		get(proxy.URL)
-	}
-	added := make([]time.Duration, 200)
-	for i := range added {
-		var direct, proxied time.Duration
-		if i%2 == 0 {
-			direct = get(up.URL)
-			proxied = get(proxy.URL)
-		} else {
-			proxied = get(proxy.URL)
-			direct = get(up.URL)
+	measure := func() time.Duration {
+		added := make([]time.Duration, 200)
+		for i := range added {
+			var direct, proxied time.Duration
+			if i%2 == 0 {
+				direct = get(up.URL)
+				proxied = get(proxy.URL)
+			} else {
+				proxied = get(proxy.URL)
+				direct = get(up.URL)
+			}
+			added[i] = proxied - direct
+			time.Sleep(time.Millisecond)
 		}
-		added[i] = proxied - direct
-		time.Sleep(time.Millisecond)
+		sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
+		return added[189]
 	}
-	sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
-	t.Logf("%d-byte supported response, 200 balanced warm pairs: added p95=%s", len(payload), added[189])
-	if added[189] > 10*time.Millisecond {
+	// Connection establishment alone does not warm a multi-MiB transfer. Discard
+	// one complete window with the same pacing and ordering as the measured
+	// window, so cold TCP/runtime setup cannot enter the warm acceptance gate.
+	// This is fixed warmup, not a retry of a failed measurement.
+	t.Logf("discarded startup window: added p95=%s", measure())
+	p95 := measure()
+	t.Logf("%d-byte supported response, 200 balanced warm pairs: added p95=%s", len(payload), p95)
+	if p95 > 10*time.Millisecond {
 		t.Error("supported response exceeds 10ms forwarding target")
 	}
 }
