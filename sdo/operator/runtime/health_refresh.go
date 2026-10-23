@@ -88,7 +88,7 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 // closure may replay the idempotent broker effect using its existing receipt.
 // This never authorizes an investigation or new publication using stale policy.
 type committedRepairHealthBroker interface {
-	committedRepairHealthRevision(context.Context, IncidentClosure, *ClosureReceipt) (string, error)
+	committedRepairHealthReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, error)
 }
 
 func checkCommittedRepairHealth(ctx context.Context, root, compiled string, closure IncidentClosure, receipt *ClosureReceipt, broker IncidentBroker) error {
@@ -96,7 +96,7 @@ func checkCommittedRepairHealth(ctx context.Context, root, compiled string, clos
 	if !ok {
 		return ErrStaleHealthInvestigation
 	}
-	proposal, err := proof.committedRepairHealthRevision(ctx, closure, receipt)
+	existing, err := proof.committedRepairHealthReceipt(ctx, closure, receipt)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func checkCommittedRepairHealth(ctx context.Context, root, compiled string, clos
 	if err != nil {
 		return err
 	}
-	repair, err := memory.HealthInputs(ctx, root, proposal)
+	repair, err := memory.HealthInputs(ctx, root, existing.ProposalCommit)
 	if err != nil {
 		return err
 	}

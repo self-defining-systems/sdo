@@ -31,6 +31,9 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 			}
 			tracingWrite(t, workspace.Worktree, "README.md", "accepted source restoration annotation")
 			closure := nativeClosure(workspace)
+			if change == "receipt-not-persisted" {
+				closure.ObservationGeneration = "before-own-source-adoption"
+			}
 			receipt, err := native.ProcessClosure(ctx, closure)
 			if err != nil {
 				t.Fatal(err)

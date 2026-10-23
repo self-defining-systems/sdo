@@ -752,10 +752,10 @@ func (n NativeIncidentBroker) ledgerPath(incidentID string) string {
 	return path
 }
 
-// committedRepairHealthRevision authenticates the narrow post-commit health
+// committedRepairHealthReceipt authenticates the narrow post-commit health
 // continuation against durable native evidence and broker Git attribution.
-func (n NativeIncidentBroker) committedRepairHealthRevision(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (string, error) {
-	var revision string
+func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (ClosureReceipt, error) {
+	var recovered ClosureReceipt
 	err := n.withLock(func() error {
 		if n.Repository == nil || closure.Request.IncidentID == "" {
 			return ErrStaleHealthInvestigation
@@ -787,8 +787,8 @@ func (n NativeIncidentBroker) committedRepairHealthRevision(ctx context.Context,
 				return ErrStaleHealthInvestigation
 			}
 		}
-		revision = stored.ProposalCommit
+		recovered = *stored
 		return nil
 	})
-	return revision, err
+	return recovered, err
 }
