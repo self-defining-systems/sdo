@@ -100,6 +100,33 @@ workload cannot render, with the render gap recorded for retry; application
 source changes must never reuse the old deployment images.
 The gate needs Go and `uv`, but no cluster or container runtime.
 
+### Rendered deployment lock (LK1)
+
+The fast hermetic gate includes rollout/restart lock contracts, the FX1 memory
+publication regression using durable locks, and the seeded lock schedule.
+`SDO_CHAOS_SEED=<n> go test -run '^TestSimRenderedLockSchedule$' -timeout=5m .`
+from `sdo/operator/runtime` replays one schedule. The properties require unchanged
+lock bytes after memory commits, recovery between rollout and lock publication,
+and continued Service drift when another object's lock evidence is unavailable.
+
+The scripted Level 6 uses only the task's lane `luna-pilot-53`:
+
+```bash
+source /mnt/data/shli/cache/env.sh
+flock /absolute/path/to/shared/lane53.lock env \
+  SDO_LK1_RUN_DIR=/absolute/path/outside/repository/lk1-e2e \
+  bash scripts/test_rendered_lock_kind.sh
+```
+
+It creates that kind cluster if absent, loads `busybox:1.36`, and runs a real
+Deployment with a mutable regular and init image. The production controller,
+informer cache, SSA adoption, lock broker and `sdo source` tool process two
+scripted targetPort incidents with a human memory publication and controller
+restart between them. Each incident requires a restored real HTTP route and
+unchanged lock bytes. It makes no model calls, deletes its test namespace, and
+leaves lane 53 available for inspection. It does not install a controller Pod or
+exercise model-authored workers; those remain separate deployment gates.
+
 ### Tier 2a: toy real cluster
 
 Use the toy commands in [the fastloop README](../benchmarks/sregym/experiments/fastloop/README.md#tier-2a-toy-real-cluster).

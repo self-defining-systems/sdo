@@ -141,3 +141,11 @@ func TestRequiresValidatorJob(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderedLockPathsAreControllerArtifacts(t *testing.T) {
+	for _, p := range []string{RenderedLockFile, RenderedDir + "/" + strings.Repeat("a", 64) + ".yaml"} {
+		if _, _, ok := Classify(p); !ok {
+			t.Fatalf("rendered artifact not classified: %s", p)
+		}
+	}
+}

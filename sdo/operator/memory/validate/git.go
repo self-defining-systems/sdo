@@ -46,7 +46,7 @@ func ChangedPaths(ctx context.Context, root, base string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	ignored, err := git(ctx, root, "ls-files", "--others", "-z", "--", layout.LibrariesDir, layout.CorpusDir)
+	ignored, err := git(ctx, root, "ls-files", "--others", "-z", "--", layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir)
 	if err != nil {
 		return nil, err
 	}

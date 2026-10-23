@@ -48,7 +48,7 @@ func acceptedSourceDeployment(t *testing.T, withTree bool) (GitPlanSource, *Stat
 		if init {
 			return "example/setup@sha256:" + strings.Repeat("a", 64)
 		}
-		return "consul:deployed"
+		return "consul@sha256:" + strings.Repeat("b", 64)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,10 @@ func acceptedSourceDeployment(t *testing.T, withTree bool) (GitPlanSource, *Stat
 	}
 	t.Cleanup(tracker.Stop)
 	tracker.Observe(time.Unix(10, 0), true)
+	tracker.recordDeployedImage(ref, "consul", false, deployed.Spec.Template.Spec.Containers[0].Image, tree)
+	tracker.recordDeployedImage(ref, "setup", true, deployed.Spec.Template.Spec.InitContainers[0].Image, tree)
 	source.Images = tracker
+	commit = seedRenderedLock(t, source, commit, "app")
 	return source, tracker, commit, deployed, service
 }
 
@@ -131,6 +134,7 @@ func testAcceptedSourceAfterMemoryCommit(t *testing.T, withTree bool) {
 func TestAcceptedSourceRenderFailureIsObjectScoped(t *testing.T) {
 	source, _, commit, _, service := acceptedSourceDeployment(t, true)
 	source.Images = nil
+	commit = removeWorkloadLock(t, source, commit)
 	objects, err := source.AcceptedManifests(context.Background(), commit, "app")
 	if err == nil || len(objects) != 1 || objects[0].GetKind() != "Service" {
 		t.Fatalf("render gap must preserve service with explicit error: %+v %v", objects, err)

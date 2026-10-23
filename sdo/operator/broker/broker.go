@@ -19,6 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/rendered"
 )
 
 // Actor and Phase are defined by the validator, which owns the ownership
@@ -62,14 +63,15 @@ type Receipt struct {
 // agent. Its ledger record is staged before source acceptance and reconciled
 // against the attributed Git commit after an interrupted publish.
 type SourceEvidence struct {
-	ProposalTreeDigest string   `json:"proposal_tree_digest"`
-	ObservedRevision   string   `json:"observed_revision"`
-	StrategyID         string   `json:"strategy_id"`
-	Images             []string `json:"images"`
-	ResourceIDs        []string `json:"resource_ids"`
-	ManifestPaths      []string `json:"manifest_paths,omitempty"`
-	Ready              bool     `json:"ready"`
-	AcceptedCommit     string   `json:"accepted_commit,omitempty"`
+	ContainerImages    []rendered.DeployedImage `json:"container_images,omitempty"`
+	ProposalTreeDigest string                   `json:"proposal_tree_digest"`
+	ObservedRevision   string                   `json:"observed_revision"`
+	StrategyID         string                   `json:"strategy_id"`
+	Images             []string                 `json:"images"`
+	ResourceIDs        []string                 `json:"resource_ids"`
+	ManifestPaths      []string                 `json:"manifest_paths,omitempty"`
+	Ready              bool                     `json:"ready"`
+	AcceptedCommit     string                   `json:"accepted_commit,omitempty"`
 }
 
 type Broker struct {
@@ -478,7 +480,7 @@ func (b *Broker) locked(fn func() error) error {
 }
 
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
-	if err := addIgnoredProgramMemory(ctx, stage, nil); err != nil {
+	if err := addIgnoredOperationalMemory(ctx, stage, nil); err != nil {
 		return Receipt{}, err
 	}
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
@@ -579,7 +581,7 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	if _, err := run("add", "-A"); err != nil {
 		return "", err
 	}
-	if err := addIgnoredProgramMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
+	if err := addIgnoredOperationalMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
 		return "", err
 	}
 	tree, err := run("write-tree")
@@ -592,8 +594,8 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	return tree, nil
 }
 
-func addIgnoredProgramMemory(ctx context.Context, root string, env []string) error {
-	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir} {
+func addIgnoredOperationalMemory(ctx context.Context, root string, env []string) error {
+	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir} {
 		path := filepath.Join(root, part)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
@@ -603,7 +605,7 @@ func addIgnoredProgramMemory(ctx context.Context, root string, env []string) err
 			return err
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("program memory root must be a directory: %s", path)
+			return fmt.Errorf("operational memory root must be a directory: %s", path)
 		}
 		if _, err := runGitEnv(ctx, root, env, "add", "-f", "--all", "--", part); err != nil {
 			return err

@@ -38,6 +38,8 @@ const (
 	PlaybookIndexFile      = PlaybooksDir + "/README.md"
 	PlaybookFileName       = "README.md"
 	PlaybookScriptsDir     = "scripts"
+	RenderedDir            = Dir + "/rendered"
+	RenderedLockFile       = RenderedDir + "/lock.json"
 	OutcomesDir            = Dir + "/outcomes"
 	LegacyOutcomesFile     = Dir + "/outcomes.jsonl"
 	ApplicationGenerator   = "application"
@@ -76,6 +78,8 @@ const (
 	KindPlaybookIndex            Kind = "playbook-index"
 	KindPlaybook                 Kind = "playbook"
 	KindPlaybookScript           Kind = "playbook-script"
+	KindRenderedLock             Kind = "rendered-lock"
+	KindRenderedObject           Kind = "rendered-object"
 	KindOutcome                  Kind = "outcome"
 	KindLegacyOutcomes           Kind = "legacy-outcomes"
 )
@@ -161,6 +165,7 @@ const (
 var (
 	playbookIDPattern = regexp.MustCompile(PlaybookIDPattern)
 	detectorIDPattern = regexp.MustCompile(DetectorIDPattern)
+	renderedFile      = regexp.MustCompile(`^([0-9a-f]{64})\.yaml$`)
 	outcomeFile       = regexp.MustCompile(`^([0-9a-f]{64})\.json$`)
 )
 
@@ -191,6 +196,15 @@ func Classify(p string) (Kind, string, bool) {
 		return only(parts, KindLifecycleProvenance)
 	case "outcomes.jsonl":
 		return only(parts, KindLegacyOutcomes)
+	case "rendered":
+		if len(parts) == 2 {
+			if parts[1] == "lock.json" {
+				return KindRenderedLock, "", true
+			}
+			if match := renderedFile.FindStringSubmatch(parts[1]); match != nil {
+				return KindRenderedObject, match[1], true
+			}
+		}
 	case "outcomes":
 		if len(parts) == 2 {
 			if match := outcomeFile.FindStringSubmatch(parts[1]); match != nil {

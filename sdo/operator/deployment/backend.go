@@ -13,7 +13,12 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 // CommandBackend performs raw manifest deployment with the caller's configured
@@ -146,6 +151,7 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 		return WorkloadObservation{}, errors.New("observed workload lacks matching source revision")
 	}
 	images := []string{}
+	namedImages := []rendered.DeployedImage{}
 	for _, field := range []string{"initContainers", "containers"} {
 		for _, raw := range objectSlice(objectMap(template, "spec"), field) {
 			container, ok := raw.(map[string]any)
@@ -156,6 +162,11 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 			if !digestReference.MatchString(image) {
 				return WorkloadObservation{}, fmt.Errorf("observed workload image is mutable: %q", image)
 			}
+			name := objectString(container, "name")
+			if name == "" {
+				return WorkloadObservation{}, errors.New("observed container name is empty")
+			}
+			namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: objectString(object, "apiVersion"), Kind: parts[0], Namespace: parts[1], Name: parts[2]}, Name: name, Init: field == "initContainers", Applied: image, Digest: image})
 			images = append(images, image)
 		}
 	}
@@ -173,21 +184,25 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 		}
 		ready = ready && desired > 0 && objectInt(status, "updatedReplicas") >= desired && objectInt(status, "readyReplicas") >= desired
 		if parts[0] == "Deployment" {
-			ready = ready && objectInt(status, "availableReplicas") >= desired
+			var deployment appsv1.Deployment
+			if err := json.Unmarshal(data, &deployment); err != nil {
+				return WorkloadObservation{}, err
+			}
+			ready = ready && DeploymentRolloutComplete(&deployment)
 		}
 	case "DaemonSet":
 		desired := objectInt(status, "desiredNumberScheduled")
 		ready = ready && desired > 0 && objectInt(status, "updatedNumberScheduled") >= desired && objectInt(status, "numberReady") >= desired && objectInt(status, "numberAvailable") >= desired
 	case "Job":
-		desired := objectInt(spec, "completions")
-		if _, set := spec["completions"]; !set {
-			desired = 1
+		var job batchv1.Job
+		if err := json.Unmarshal(data, &job); err != nil {
+			return WorkloadObservation{}, err
 		}
-		ready = desired > 0 && objectInt(status, "succeeded") >= desired
+		ready = JobRolloutComplete(&job)
 	default:
 		return WorkloadObservation{}, fmt.Errorf("raw strategy cannot attest workload kind %q", parts[0])
 	}
-	return WorkloadObservation{ResourceID: resourceID, Revision: tree, Images: images, Ready: ready}, nil
+	return WorkloadObservation{ContainerImages: namedImages, ResourceID: resourceID, Revision: tree, Images: images, Ready: ready}, nil
 }
 
 func objectMap(parent map[string]any, key string) map[string]any {

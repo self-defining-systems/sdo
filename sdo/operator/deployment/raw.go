@@ -15,13 +15,16 @@ import (
 	"gopkg.in/yaml.v3"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 type WorkloadObservation struct {
-	ResourceID string
-	Revision   string
-	Images     []string
-	Ready      bool
+	ContainerImages []rendered.DeployedImage
+	ResourceID      string
+	Revision        string
+	Images          []string
+	Ready           bool
 }
 
 // RawBackend owns the external effects. BuildImage must return a pushed
@@ -75,13 +78,24 @@ func (strategy RawStrategy) VerifyAccepted(ctx context.Context, receipt lifecycl
 		if !observed.Ready || observed.ResourceID != id || observed.Revision != receipt.ProposalTreeDigest {
 			return Observation{}, fmt.Errorf("workload %s no longer matches accepted source", id)
 		}
+		if len(receipt.ContainerImages) > 0 {
+			expected := []rendered.DeployedImage{}
+			for _, image := range receipt.ContainerImages {
+				if image.Ref.Kind+"/"+image.Ref.Namespace+"/"+image.Ref.Name == id {
+					expected = append(expected, image)
+				}
+			}
+			if !sameNamedImages(expected, observed.ContainerImages) {
+				return Observation{}, fmt.Errorf("workload %s named images differ from recorded deployment", id)
+			}
+		}
 		images = append(images, observed.Images...)
 		ids = append(ids, id)
 	}
 	if !equalStrings(images, receipt.Images) {
 		return Observation{}, errors.New("accepted workload images differ from deployed images")
 	}
-	return Observation{Revision: receipt.ProposalTreeDigest, Images: images, ResourceIDs: ids, Ready: true}, nil
+	return Observation{ContainerImages: receipt.ContainerImages, Revision: receipt.ProposalTreeDigest, Images: images, ResourceIDs: ids, Ready: true}, nil
 }
 
 func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree string, plan *contracts.RawManifestStrategy) (Observation, error) {
@@ -118,7 +132,8 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		}
 		imageRefs[build.Image] = immutable
 	}
-	var rendered bytes.Buffer
+	var documents bytes.Buffer
+	namedImages := []rendered.DeployedImage{}
 	workloads := map[string][]string{}
 	manifestPaths, err := candidateManifestPaths(checkout, plan.ManifestPaths)
 	if err != nil {
@@ -147,10 +162,14 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			if len(document) == 0 {
 				continue
 			}
-			id, images, err := RenderManifest(document, strategy.Namespace, tree, func(_ string, _ string, _ string, _ bool, image string) string {
+			id, images, err := RenderManifest(document, strategy.Namespace, tree, func(kind, name, container string, init bool, image string) string {
 				if built := imageRefs[image]; built != "" {
-					return built
+					image = built
 				}
+				apiVersion, _ := document["apiVersion"].(string)
+				metadata, _ := document["metadata"].(map[string]any)
+				namespace, _ := metadata["namespace"].(string)
+				namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name}, Name: container, Init: init, Applied: image, Digest: image})
 				return image
 			})
 			if err != nil {
@@ -175,8 +194,8 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 				_ = file.Close()
 				return Observation{}, err
 			}
-			rendered.WriteString("---\n")
-			rendered.Write(encoded)
+			documents.WriteString("---\n")
+			documents.Write(encoded)
 		}
 		if err := file.Close(); err != nil {
 			return Observation{}, err
@@ -197,7 +216,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			return Observation{}, fmt.Errorf("workload %s is missing from deployment plan", id)
 		}
 	}
-	if err := strategy.Backend.Apply(ctx, rendered.Bytes()); err != nil {
+	if err := strategy.Backend.Apply(ctx, documents.Bytes()); err != nil {
 		return Observation{}, fmt.Errorf("apply candidate manifests: %w", err)
 	}
 	ids := make([]string, 0, len(workloads))
@@ -206,6 +225,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 	}
 	sort.Strings(ids)
 	allImages := []string{}
+	verifiedImages := []rendered.DeployedImage{}
 	for _, id := range ids {
 		observed, err := strategy.Backend.Observe(ctx, id)
 		if err != nil {
@@ -218,80 +238,28 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		if !observed.Ready || observed.ResourceID != id || observed.Revision != tree || strings.Join(expectedImages, "\x00") != strings.Join(actualImages, "\x00") {
 			return Observation{}, fmt.Errorf("workload %s is not ready at the candidate revision and images", id)
 		}
+		// Legacy/custom backends that supply only a flat image list cannot
+		// authorize per-container substitutions in a durable lock.
+		if len(observed.ContainerImages) > 0 {
+			expected := []rendered.DeployedImage{}
+			for _, image := range namedImages {
+				if image.Ref.Kind+"/"+image.Ref.Namespace+"/"+image.Ref.Name == id {
+					expected = append(expected, image)
+				}
+			}
+			if !sameNamedImages(expected, observed.ContainerImages) {
+				return Observation{}, fmt.Errorf("workload %s container names or roles differ from applied images", id)
+			}
+			verifiedImages = append(verifiedImages, expected...)
+		}
 		allImages = append(allImages, observed.Images...)
 	}
-	return Observation{Revision: tree, Images: allImages, ResourceIDs: ids, Ready: true}, nil
+	return Observation{ContainerImages: verifiedImages, Revision: tree, Images: allImages, ResourceIDs: ids, Ready: true}, nil
 }
 
-// RenderManifest applies the namespace, source revision, and deployed image
-// substitutions used by the raw deployment strategy.
-func RenderManifest(document map[string]any, defaultNamespace, tree string, imageFor func(kind, name, container string, init bool, sourceImage string) string) (string, []string, error) {
-	kind, _ := document["kind"].(string)
-	metadata, ok := document["metadata"].(map[string]any)
-	if !ok || kind == "" {
-		return "", nil, errors.New("Kubernetes document needs kind and metadata")
-	}
-	name, _ := metadata["name"].(string)
-	if name == "" {
-		return "", nil, errors.New("Kubernetes resource needs metadata.name")
-	}
-	namespace, _ := metadata["namespace"].(string)
-	if namespace == "" {
-		namespace = defaultNamespace
-		metadata["namespace"] = namespace
-	}
-	annotations := nestedMap(metadata, "annotations")
-	if tree != "" {
-		annotations["sdo.dev/source-tree"] = tree
-	}
-	if kind != "Deployment" && kind != "StatefulSet" && kind != "DaemonSet" && kind != "Job" {
-		return "", nil, nil
-	}
-	spec, ok := document["spec"].(map[string]any)
-	if !ok {
-		return "", nil, errors.New("workload needs spec")
-	}
-	template, ok := spec["template"].(map[string]any)
-	if !ok {
-		return "", nil, errors.New("workload needs pod template")
-	}
-	if tree != "" {
-		nestedMap(nestedMap(template, "metadata"), "annotations")["sdo.dev/source-tree"] = tree
-	}
-	podSpec, ok := template["spec"].(map[string]any)
-	if !ok {
-		return "", nil, errors.New("workload needs pod spec")
-	}
-	images := []string{}
-	for _, field := range []string{"initContainers", "containers"} {
-		containers, _ := podSpec[field].([]any)
-		for _, raw := range containers {
-			container, ok := raw.(map[string]any)
-			if !ok {
-				return "", nil, errors.New("workload has invalid container")
-			}
-			image, _ := container["image"].(string)
-			if imageFor != nil {
-				containerName, _ := container["name"].(string)
-				image = imageFor(kind, name, containerName, field == "initContainers", image)
-				container["image"] = image
-			}
-			images = append(images, image)
-		}
-	}
-	if len(images) == 0 {
-		return "", nil, errors.New("workload has no immutable container images")
-	}
-	return kind + "/" + namespace + "/" + name, images, nil
-}
-
-func nestedMap(parent map[string]any, name string) map[string]any {
-	value, ok := parent[name].(map[string]any)
-	if !ok {
-		value = map[string]any{}
-		parent[name] = value
-	}
-	return value
+// RenderManifest applies the common deployment and lock renderer.
+func RenderManifest(document map[string]any, namespace, tree string, imageFor func(string, string, string, bool, string) string) (string, []string, error) {
+	return rendered.RenderManifest(document, namespace, tree, imageFor)
 }
 
 func safeCandidatePath(root, raw string) (string, error) {
@@ -321,4 +289,23 @@ func imageRepository(image string) string {
 		return image[:colon]
 	}
 	return image
+}
+
+func sameNamedImages(expected, actual []rendered.DeployedImage) bool {
+	if len(expected) != len(actual) {
+		return false
+	}
+	counts := map[rendered.DeployedImage]int{}
+	for _, image := range expected {
+		counts[image]++
+	}
+	for _, image := range actual {
+		counts[image]--
+	}
+	for _, count := range counts {
+		if count != 0 {
+			return false
+		}
+	}
+	return true
 }

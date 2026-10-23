@@ -15,13 +15,15 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/rendered"
 )
 
 type Observation struct {
-	Revision    string
-	Images      []string
-	ResourceIDs []string
-	Ready       bool
+	ContainerImages []rendered.DeployedImage
+	Revision        string
+	Images          []string
+	ResourceIDs     []string
+	Ready           bool
 }
 
 type Registration struct {
@@ -153,7 +155,7 @@ func (registry *Registry) ApplyAndVerify(ctx context.Context, checkout string, p
 		}
 	}
 	receipt := lifecycle.DeploymentReceipt{
-		ProposalTreeDigest: tree, ObservedRevision: observed.Revision, StrategyID: entry.ID,
+		ContainerImages: observed.ContainerImages, ProposalTreeDigest: tree, ObservedRevision: observed.Revision, StrategyID: entry.ID,
 		Images: observed.Images, ResourceIDs: observed.ResourceIDs, Ready: true,
 	}
 	if raw, ok := config.(*contracts.RawManifestStrategy); ok {

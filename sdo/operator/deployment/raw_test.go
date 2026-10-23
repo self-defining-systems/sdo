@@ -11,6 +11,8 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 type fakeRawBackend struct {
@@ -26,7 +28,7 @@ func (backend *fakeRawBackend) Apply(_ context.Context, documents []byte) error 
 	return nil
 }
 func (backend *fakeRawBackend) Observe(_ context.Context, id string) (WorkloadObservation, error) {
-	return WorkloadObservation{ResourceID: id, Revision: backend.tree, Images: []string{"registry.example/app@sha256:" + strings.Repeat("b", 64)}, Ready: true}, nil
+	return WorkloadObservation{ContainerImages: []rendered.DeployedImage{{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "default", Name: "app"}, Name: "app", Applied: "registry.example/app@sha256:" + strings.Repeat("b", 64), Digest: "registry.example/app@sha256:" + strings.Repeat("b", 64)}}, ResourceID: id, Revision: backend.tree, Images: []string{"registry.example/app@sha256:" + strings.Repeat("b", 64)}, Ready: true}, nil
 }
 
 func TestRawStrategyStampsCandidateRevisionAndChecksObservedWorkload(t *testing.T) {
@@ -72,7 +74,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.ProposalTreeDigest != tree || len(receipt.ManifestPaths) != 1 || receipt.ManifestPaths[0] != "deployment.yaml" || !strings.Contains(backend.applied, tree) || !strings.Contains(backend.applied, "registry.example/app@sha256:") {
+	if len(receipt.ContainerImages) != 1 || receipt.ContainerImages[0].Name != "app" || receipt.ContainerImages[0].Init || receipt.ProposalTreeDigest != tree || len(receipt.ManifestPaths) != 1 || receipt.ManifestPaths[0] != "deployment.yaml" || !strings.Contains(backend.applied, tree) || !strings.Contains(backend.applied, "registry.example/app@sha256:") {
 		t.Fatalf("unbound deployment: %+v, %s", receipt, backend.applied)
 	}
 	for _, args := range [][]string{{"add", "-A"}, {"commit", "-qm", "accepted source"}} {
@@ -131,5 +133,48 @@ func TestRawStrategyAppliesOnlySelectedManifestDirectory(t *testing.T) {
 	_, err = (RawStrategy{Namespace: "default", Backend: backend}).ApplyAndVerify(context.Background(), checkout, tree, &contracts.RawManifestStrategy{ManifestPaths: []string{"kubernetes"}, ExpectedWorkloadIds: []string{"Deployment/default/app"}})
 	if err != nil || strings.Contains(backend.applied, "alternate") || !strings.Contains(backend.applied, "name: app") {
 		t.Fatalf("selected deployment = %s, %v", backend.applied, err)
+	}
+}
+
+type renamedRawObserver struct {
+	fakeRawBackend
+	init bool
+	flat bool
+}
+
+func (b *renamedRawObserver) Observe(ctx context.Context, id string) (WorkloadObservation, error) {
+	observed, err := b.fakeRawBackend.Observe(ctx, id)
+	if b.flat {
+		observed.ContainerImages = nil
+	} else if b.init {
+		observed.ContainerImages[0].Init = true
+	} else {
+		observed.ContainerImages[0].Name = "other"
+	}
+	return observed, err
+}
+
+func TestRawStrategyCannotAttestImagesByFlatInventoryAlone(t *testing.T) {
+	for _, mode := range []string{"wrong-name", "wrong-role", "flat-only"} {
+		t.Run(mode, func(t *testing.T) {
+			checkout := candidateRepository(t)
+			manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: app}\nspec:\n  template:\n    spec:\n      containers:\n      - name: app\n        image: registry.example/app@sha256:" + strings.Repeat("b", 64) + "\n"
+			if err := os.WriteFile(filepath.Join(checkout, "app.yaml"), []byte(manifest), 0600); err != nil {
+				t.Fatal(err)
+			}
+			tree, err := broker.ProposalTreeDigest(context.Background(), checkout)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := &renamedRawObserver{fakeRawBackend: fakeRawBackend{tree: tree}, init: mode == "wrong-role", flat: mode == "flat-only"}
+			observed, err := (RawStrategy{Namespace: "default", Backend: backend}).ApplyAndVerify(context.Background(), checkout, tree, &contracts.RawManifestStrategy{ManifestPaths: []string{"app.yaml"}, ExpectedWorkloadIds: []string{"Deployment/default/app"}})
+			if mode == "flat-only" {
+				if err != nil || len(observed.ContainerImages) != 0 {
+					t.Fatalf("flat legacy observation must not create named evidence: %+v %v", observed, err)
+				}
+			} else if err == nil {
+				t.Fatal("incorrect container identity accepted despite identical image inventory")
+			}
+		})
 	}
 }

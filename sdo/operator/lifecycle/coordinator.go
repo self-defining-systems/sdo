@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -51,6 +53,7 @@ type WorkerExecutor interface {
 // DeploymentReceipt binds an independently observed rollout to the exact
 // candidate source tree. Empty or incomplete evidence cannot be accepted.
 type DeploymentReceipt struct {
+	ContainerImages    []rendered.DeployedImage
 	ProposalTreeDigest string
 	ObservedRevision   string
 	StrategyID         string
@@ -341,15 +344,15 @@ func sameDeploymentIdentity(left, right DeploymentReceipt) bool {
 	slices.Sort(rightResources)
 	slices.Sort(leftPaths)
 	slices.Sort(rightPaths)
-	return slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
+	return reflect.DeepEqual(left.ContainerImages, right.ContainerImages) && slices.Equal(leftImages, rightImages) && slices.Equal(leftResources, rightResources) && slices.Equal(leftPaths, rightPaths)
 }
 
 func deploymentToBroker(receipt DeploymentReceipt) broker.SourceEvidence {
-	return broker.SourceEvidence{ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
+	return broker.SourceEvidence{ContainerImages: append([]rendered.DeployedImage(nil), receipt.ContainerImages...), ProposalTreeDigest: receipt.ProposalTreeDigest, ObservedRevision: receipt.ObservedRevision, StrategyID: receipt.StrategyID, Images: append([]string(nil), receipt.Images...), ResourceIDs: append([]string(nil), receipt.ResourceIDs...), ManifestPaths: append([]string(nil), receipt.ManifestPaths...), Ready: receipt.Ready}
 }
 
 func deploymentFromBroker(evidence broker.SourceEvidence) DeploymentReceipt {
-	return DeploymentReceipt{ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
+	return DeploymentReceipt{ContainerImages: append([]rendered.DeployedImage(nil), evidence.ContainerImages...), ProposalTreeDigest: evidence.ProposalTreeDigest, ObservedRevision: evidence.ObservedRevision, StrategyID: evidence.StrategyID, Images: append([]string(nil), evidence.Images...), ResourceIDs: append([]string(nil), evidence.ResourceIDs...), ManifestPaths: append([]string(nil), evidence.ManifestPaths...), Ready: evidence.Ready}
 }
 
 func (c Coordinator) architecture(ctx context.Context, id string, cfg Config, attempt int, sourceCommit, feedback string) (broker.Receipt, bool, string, error) {

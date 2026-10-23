@@ -5,6 +5,7 @@
 #   arch  — AST facade imports and ownership rules (tests/unit/test_architecture.py)
 #   types — pyright (scripts/type_check.sh)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
+#   schema — validator fingerprint and CLI binding contract tests
 
 set -e
 
@@ -16,6 +17,17 @@ if ! command -v uv >/dev/null 2>&1; then
     echo "Error: 'uv' is not installed."
     exit 1
 fi
+
+# Compile/vet alone cannot detect stale validator schema pins. Run the two
+# source-bound contract tests before the broader gates. Bound test execution
+# with -timeout; cold module downloads and compilation need their own time.
+echo "==> validator schema identity"
+(
+    cd "$PROJECT_ROOT/sdo/operator"
+    go test ./builder ./operatorcli \
+        -run '^(TestSchemaIdentityMatchesCommittedSDK|TestParseValidateLaunchRequiresBoundSchema)$' \
+        -count=1 -timeout=20s
+)
 
 echo "==> ruff"
 if [ "$1" == "--fix" ]; then

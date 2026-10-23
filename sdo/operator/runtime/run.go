@@ -419,7 +419,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
 		defer stateTracker.Stop()
 	}
-	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
+	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
 	var primitiveProber PrimitiveProber
 	if proberAddress != nil {
 		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
@@ -678,6 +678,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			// baseline no longer describes it.
 			stateTracker.Stop()
 			stateTracker.Reset()
+		}
+	}
+	if options.NativeBroker != nil {
+		reconciler := RenderedLockReconciler{Source: planSource, Client: bootstrapProvider.Client, Broker: options.NativeBroker.Repository}
+		controller.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
+			return reconciler.Reconcile(ctx, revision, *namespace)
 		}
 	}
 	persistControllerState := func() {

@@ -268,7 +268,7 @@ func (s *run) visit(rel, abs string) error {
 		s.add(Structural, d)
 		return nil
 	}
-	if kind == layout.KindOutcome || kind == layout.KindLegacyOutcomes {
+	if kind == layout.KindOutcome || kind == layout.KindLegacyOutcomes || kind == layout.KindRenderedLock || kind == layout.KindRenderedObject {
 		return nil
 	}
 	info, err := os.Lstat(abs)

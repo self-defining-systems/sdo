@@ -114,8 +114,7 @@ type StateTracker struct {
 	unobserved []string
 	baseline   *stateSnapshot
 	candidate  *stateSnapshot
-	// Image evidence outlives the configuration diff baseline across maintenance.
-	// GitPlanSource independently checks its source tree before using it.
+	// Named deployment evidence used only during lock construction.
 	images *stateSnapshot
 }
 
@@ -177,8 +176,7 @@ func (t *StateTracker) Stop() {
 }
 
 // Reset forgets the baseline, for example when a maintenance window may have
-// redeployed the application. Last healthy image evidence is retained separately;
-// it is usable only with matching source identity.
+// redeployed the application.
 func (t *StateTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -202,12 +200,10 @@ func (t *StateTracker) Observe(now time.Time, healthy bool) {
 	switch {
 	case t.baseline == nil:
 		t.baseline = t.snapshotLocked(now)
-		t.images = t.baseline
 	case t.candidate == nil:
 		t.candidate = t.snapshotLocked(now)
 	case now.Sub(t.candidate.at) >= t.config.Settle:
 		t.baseline = t.candidate
-		t.images = t.baseline
 		t.candidate = t.snapshotLocked(now)
 	}
 }
@@ -225,7 +221,30 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	return changes
 }
 
-// BaselineImage returns the image recorded before the current incident changed a workload.
+// recordDeployedImage fills the named image store from trusted deployment
+// evidence or source pins. A fresh tracker is used for lock construction, keeping the
+// healthy configuration-diff baseline and its settle lifecycle independent.
+func (t *StateTracker) recordDeployedImage(ref sdk.ObjectRef, container string, init bool, image, tree string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.images == nil {
+		t.images = &stateSnapshot{objects: map[string]objectState{}}
+	}
+	key := ref.Kind + "/" + ref.Name
+	state := t.images.objects[key]
+	if state == nil {
+		state = objectState{}
+		t.images.objects[key] = state
+	}
+	prefix := "container"
+	if init {
+		prefix = "initContainer"
+	}
+	state[prefix+"["+container+"].image"] = image
+	state["template.sourceTree"] = tree
+}
+
+// BaselineImage returns a named image explicitly recorded for lock construction.
 func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init bool) (string, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
