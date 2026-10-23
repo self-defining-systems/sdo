@@ -653,3 +653,18 @@ Go indexes missing open/fixed resource observations before the outcome commit an
 Controller maintenance normally resets the configuration baseline after a planned redeploy. Its explicit `preserve_baseline` observation option keeps the last healthy baseline while evaluation is paused. The benchmark injection-validity barrier uses that option so partial invalid writes cannot dispatch responders, while valid latent faults remain visible after resume. Go owns the maintenance state and baseline policy; no benchmark identities enter this interface.
 
 Structured plan authority is supplied by administrator-owned controller launch configuration; see [the authority contract](plan-safety-authority.md). Approved fixture images and their separately pinned policy hash are independent of responder plans and dry-run output.
+
+The production `run.go` `LoopFactory` builds the menu when the controller process
+has `SDO_RESPONDER_MENU=1` (unset or `0` is off; other values refuse startup).
+It reuses `KubernetesCurrentReader` with the existing typed Kubernetes client,
+all twelve supported namespace collections, independently owned health detectors,
+and XV1's source-bound `PlanSafetyPolicy`. A named reviewed object does not grant
+collection-wide opaque-read permission. Trusted embedded controllers may supply
+existing `RuntimeOptions.MenuSafety` callbacks establishing collection/consumer
+closure and actual admission/routing enforcement; standalone launch inputs cannot
+supply that missing evidence. Without it, the menu lists catalog-only disabled
+options with `collection_consumer_admission_provenance_unavailable` (or
+`plan_safety_authority_unavailable` without current reviewed policy), and performs
+no menu reads or writes. These entries make no diagnosis claim. Existing direct
+repair remains available under the universal credential-delta check. This wiring
+alone therefore does not establish a reachable mitigation for a live stream.

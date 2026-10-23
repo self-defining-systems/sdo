@@ -36,6 +36,9 @@ type RuntimeOptions struct {
 	Programs program.ProgramRegistry
 	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
 	PlanSafety *PlanSafetyPolicy
+	// MenuSafety is process-local evidence for complete collection/consumer and actual
+	// admission/routing closure. Launch flags and worker input cannot manufacture it.
+	MenuSafety *ResponderMenuSafety
 	Args       []string
 	Stdout     io.Writer
 	Stderr     io.Writer
@@ -244,6 +247,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		options.PlanSafety = reviewed
 	}
 
+	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
+	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
+		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
+	}
 	timeScale, err := developmentTimeScale()
 	if err != nil {
 		return err
@@ -527,6 +534,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
+				if menuEnabled == "1" {
+					loop.MenuConfig = productionResponderMenu(request, bootstrapProvider.Client, detectors, options.PlanSafety, options.MenuSafety)
+				}
 				loop.CheckHealth = func(ctx context.Context) error {
 					if controller != nil && controller.CheckHealth != nil {
 						if err := controller.CheckHealth(ctx); err != nil {

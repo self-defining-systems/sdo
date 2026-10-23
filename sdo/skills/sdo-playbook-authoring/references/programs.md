@@ -10,6 +10,10 @@ action reasons and failure context specific so the controller can report the fai
 safe changes. Keep credential or opaque content out of that context. A responder may observe the report and
 select another option or repair directly in the same session; do not assume one attempted option ends the
 incident. Each round uses a fresh observation within the shared incident allowance.
+A catalog entry can be disabled when the controller lacks collection, consumer,
+or admission/routing evidence. Read its refusal reason; never manufacture that
+evidence from source identity, a proposed plan, or a successful dry run. Named
+reviewed-object approval does not authorize reading an entire opaque collection.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.

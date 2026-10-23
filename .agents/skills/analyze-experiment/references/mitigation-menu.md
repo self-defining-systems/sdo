@@ -118,3 +118,16 @@ regardless of action path spelling; independent content, consumer and
 admission authorization remains mandatory around it. A successful scripted
 hermetic controller/Job/broker run proves interface wiring and can produce a
 strict benchmark receipt; it does not prove real-cluster admission or policy provisioning.
+
+## Production launch wiring
+
+`SDO_RESPONDER_MENU=1` on the controller process enables `run.go`'s real
+`LoopFactory` menu configuration; unset/`0` leaves it off. The standalone launch
+has no producer of collection-wide nonsecret/consumer/admission/routing evidence.
+Its catalog-only disabled options report `collection_consumer_admission_provenance_unavailable`
+(or `plan_safety_authority_unavailable` when reviewed policy is absent/stale).
+They make no diagnosis or execution claim. Trusted embedded `RuntimeOptions.MenuSafety`
+callbacks can supply the existing capabilities, still bounded by the separately
+reviewed source-bound policy. Synthetic embedded e2e evidence is not live-stream
+provenance. Full-scope direct lists, independent health, UID and credential checks
+remain mandatory; omitted producers are never interpreted as healthy empty data.

@@ -44,14 +44,31 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		response.Error = "menu safety capabilities unavailable"
 		return
 	}
-	view, err := l.menuSnapshot(ctx)
-	if err != nil {
-		response.Error = "menu observation refused"
-		return
+	refusal := ""
+	if l.MenuConfig.Refusal != nil {
+		refusal = l.MenuConfig.Refusal()
+	}
+	entries := map[string]menuEntry{}
+	var view sdk.DetectionContext
+	if refusal == "" {
+		var err error
+		view, err = l.menuSnapshot(ctx)
+		if err != nil {
+			response.Error = "menu observation refused"
+			return
+		}
 	}
 	readView := menuReadView{DetectionContext: view}
-	entries := map[string]menuEntry{}
-	if l.Programs != nil {
+	if refusal != "" && l.Programs != nil {
+		// Catalog-only disabled options explain missing evidence without guessing a
+		// diagnosis or fetching unapproved opaque collections.
+		for _, spec := range l.Programs.List() {
+			if _, ok := l.Programs.Mitigator(spec.ID); ok && (request.ProgramID == "" || request.ProgramID == spec.ID) {
+				entries["unavailable-"+spec.ID] = menuEntry{programID: spec.ID}
+			}
+		}
+	}
+	if refusal == "" && l.Programs != nil {
 		runs := SelectProgramCandidatesWithOptions(ctx, l.Programs, readView, l.Request.Findings, CandidateOptions{Deadline: l.deadline(), SweepLimit: l.CandidateSweepLimit})
 		for _, run := range runs {
 			if run.Verdict.Result != program.Match || request.ProgramID != "" && request.ProgramID != run.ProgramID {
@@ -87,6 +104,9 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 			revision = resolved
 		}
 		option := &contracts.MitigationOption{OptionId: id, ProgramId: entry.programID, ProgramRevision: revision, DependencyRevision: revision, Effects: []contracts.MitigationOption_Effect{contracts.MitigationOption_EFFECT_SDK_PLAN_ACTION}, MaxActionsPerRound: 32, Bindings: menuBindings(entry.bindings)}
+		if refusal != "" {
+			option.DisabledReason = refusal
+		}
 		if s.WritesFrozen {
 			option.DisabledReason = "mutation_owner_not_quiescent"
 		}
@@ -112,6 +132,9 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	l.menuEntries = entries
 	response.Menu = proto.Clone(menu).(*contracts.MitigationMenu)
 	response.Summary = fmt.Sprintf("%d mitigation options", len(menu.Options))
+	if refusal != "" {
+		response.Summary += "; refused: " + refusal
+	}
 }
 func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, response *ToolResponse) {
 	if l.selection == nil {

@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
@@ -208,11 +209,17 @@ func causalSupportedKind(kind sdk.WatchKind) bool {
 // KubernetesCurrentReader uses only existing client credentials and grants.
 // No informer, cached fallback, opaque-version ordering, or Secret API exists.
 // CausalBarrier must authorize each collection before invoking this reader.
-type KubernetesCurrentReader struct{ Client KubernetesPlanClient }
+type KubernetesCurrentReader struct {
+	Client      KubernetesPlanClient
+	TypedClient kubernetes.Interface
+}
 
 func (r KubernetesCurrentReader) ListCurrent(ctx context.Context, kind sdk.WatchKind) (CurrentObjectList, error) {
 	if !causalSupportedKind(kind) || kind.Namespace == "" {
 		return CurrentObjectList{}, errCausalObservation
+	}
+	if r.TypedClient != nil {
+		return r.listTypedCurrent(ctx, kind)
 	}
 	resource, err := r.Client.resource(sdk.ObjectRef{APIVersion: kind.APIVersion, Kind: kind.Kind, Namespace: kind.Namespace})
 	if err != nil {

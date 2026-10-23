@@ -35,6 +35,8 @@ type ResponderMenuSafety struct {
 // health. Dependencies must cover every diagnosis, health and affected consumer.
 // Plans are controller-built SDK plans; workers cannot submit arbitrary actions.
 type ResponderMenuConfig struct {
+	// Refusal supplies a content-free reason before any collection is fetched.
+	Refusal      func() string
 	Reader       DirectObservationReader
 	Dependencies []sdk.WatchKind
 	Safety       *ResponderMenuSafety
@@ -96,6 +98,15 @@ func (r menuSafeReader) ListCurrent(ctx context.Context, kind sdk.WatchKind) (Cu
 func (l *ResponderLoop) menuSnapshot(ctx context.Context) (sdk.DetectionContext, error) {
 	if !l.MenuConfig.valid() {
 		return nil, errMenuSafety
+	}
+	if l.MenuConfig.Refusal != nil && l.MenuConfig.Refusal() != "" {
+		return nil, errMenuSafety
+	}
+	// Preflight the full closure before reading its first collection.
+	for _, kind := range l.MenuConfig.Dependencies {
+		if l.MenuConfig.Safety.AuthorizeRead(ctx, kind) != nil {
+			return nil, errMenuSafety
+		}
 	}
 	snapshot := core.DetectionSnapshot{NamespaceName: l.Request.Namespace}
 	listed := map[sdk.WatchKind]bool{}
