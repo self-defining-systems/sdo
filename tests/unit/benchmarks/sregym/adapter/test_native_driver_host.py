@@ -469,3 +469,55 @@ def test_driver_rejects_invalid_cli_settings(argv: list[str], field: str) -> Non
 def test_driver_cli_can_enable_program_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", '{"program_fast_path": false}')
     assert driver._parse_args(["--program-fast-path"]).program_fast_path is True
+
+
+def test_completed_nonpersistent_install_collects_strict_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A bounded seeded install returns after closure, when its Job is inactive."""
+    sdo = tmp_path / ".sdo"
+    (sdo / "diagnostics").mkdir(parents=True)
+    (sdo / "diagnostics/manifest.yaml").write_text("detectors: []\n")
+    (sdo / "lifecycle-provenance.yaml").write_text("{}\n")
+    monkeypatch.setenv("SREGYM_DEFER_CLEANUP", "1")
+    monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "sregym-w1")
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "config"))
+    monkeypatch.setattr(driver, "get_api_base", lambda: "http://localhost:8000")
+    monkeypatch.setattr(driver, "poll_stage_sync", lambda *_args, **_kwargs: "diagnosis")
+    monkeypatch.setattr(driver, "get_app_info", lambda *_args: {"namespace": "demo", "app_name": "demo"})
+    monkeypatch.setattr(driver, "_application_repository", lambda: tmp_path)
+    monkeypatch.setattr(
+        driver,
+        "_deployed_lifecycle_context",
+        lambda *_args: driver.DeployedLifecycleContext(health_objective="healthy", active_resources=[]),
+    )
+    monkeypatch.setattr(driver, "prepare_benchmark_resources", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(driver, "wait_submission_bridge", lambda *_args: None)
+    events: list[str] = []
+
+    def install(config: native_operator.NativeInstallConfig) -> object:
+        assert config.duration_seconds is not None
+        assert config.exit_after_closure is True
+        events.append("completed")
+        return type("Receipt", (), {"reused": False, "accepted_commit": "a" * 40})()
+
+    monkeypatch.setattr(driver, "install_existing", install)
+    monkeypatch.setattr(
+        driver,
+        "inspect_existing",
+        lambda *_args: pytest.fail("completed Job cannot become active again"),
+    )
+    monkeypatch.setattr(driver, "_acknowledged_incident_id", lambda *_args: "incident-1")
+    monkeypatch.setattr(driver, "sync_existing", lambda *_args: events.append("sync"))
+
+    def collect(config: native_operator.NativeInstallConfig, incident_id: str) -> dict[str, object]:
+        assert incident_id == "incident-1"
+        events.append("strict-receipt")
+        return {"schema_version": "sdo.production-receipt/v2", "incident_id": incident_id}
+
+    monkeypatch.setattr(driver, "collect_native_receipt", collect)
+    monkeypatch.setattr(driver, "export_runtime_artifacts", lambda *_args: tmp_path / "artifacts")
+    receipt = driver._run(driver._parse_args([]))
+    assert events == ["completed", "sync", "strict-receipt"]
+    assert receipt["incident_id"] == "incident-1"
+    assert receipt["native_host_receipt"]["seeded"] is True

@@ -501,7 +501,7 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
 
 
 def _wait_for_installed_controller(install: NativeInstallConfig, *, timeout_seconds: float = 300.0) -> None:
-    """``install-existing`` returns once the controller is created; wait until it owns a ready Pod."""
+    """An unbounded persistent install returns at creation; wait for its ready Pod."""
 
     deadline = time.monotonic() + timeout_seconds
     while True:
@@ -662,7 +662,9 @@ def _launch_native_lifecycle(
                 {install.controller_image, install.responder_image, install.validator_image},
             )
         receipt = install_existing(install)
-        _wait_for_installed_controller(install)
+        # Bounded nonpersistent installs already wait for completion, so their Job is no longer active.
+        if persistent:
+            _wait_for_installed_controller(install)
         return {"installed": True, "seeded": True, "reused": receipt.reused, "accepted_commit": receipt.accepted_commit}
     host = NativeHostConfig(
         install=install,
