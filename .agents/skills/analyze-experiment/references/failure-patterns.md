@@ -119,3 +119,23 @@ source, human goal, controller outcomes, incident detectors or other playbooks.
 Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains controller-owned rollback pre-images, concrete applied actions, patches and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
 
 For latent drift or toy lane failures, read [drift and toy failure patterns](drift-failures.md).
+
+
+## Forced abort and quiet-lane evidence
+
+The persistent benchmark state now records `cleanup_targets` before lifecycle
+installation, keyed by application namespace, with control namespace and
+kubeconfig. `aborted_incidents` preserves incident ID, namespace, stage label and
+abort timestamp when a pending incident is cancelled. These are benchmark
+cancellations, not successful closures, validated outcomes, or strict receipts;
+abort never drains or writes accepted operational memory. Targets remain for
+idempotent cleanup and verification retries even after controllers are removed.
+
+The adjacent `<state>.processes.json` holds launcher, guardian, runner and host
+helper identities (PID, start ticks, boot ID, UID and group), without command
+lines or credentials. A printed abort locator may be a symlink to the result
+directory's normal state file. Process disappearance alone does not prove cluster
+quiescence: require the abort command's `quiet: true`, zero owned runtime objects
+and zero live registered helpers. Leftovers or failed inventory exit nonzero.
+The production stop command preserves repository PVCs and state ConfigMaps, so
+their survival is expected. Old unregistered helpers are outside this evidence.

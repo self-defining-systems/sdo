@@ -609,6 +609,9 @@ def _launch_native_lifecycle(
         registry_insecure=True,
         kind_cluster_name=kind_cluster_name,
     )
+    from benchmarks.sregym.adapter.persistent import record_cleanup_target
+
+    record_cleanup_target(namespace, control_namespace, str(kubeconfig))
     relay_target = _relay_target_api_base(api_base)
     prepare_benchmark_resources(cluster, relay_target_base=relay_target, kubeconfig=kubeconfig)
     if relay_target is not None:

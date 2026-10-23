@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         teardown,
         wait_for_maintenance_ack,
     )
+    from benchmarks.sregym.adapter.processes import bind_state
     from benchmarks.sregym.adapter.runtime import (
         ControllerInstallError,
         RuntimeConfig,
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     )
 
 _EXPORTS: dict[str, str] = {
+    "bind_state": "processes",
     "runtime_config_payload": "persistent",
     "runtime_config_from_payload": "persistent",
     "ControllerRecord": "persistent",
@@ -90,6 +92,7 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "bind_state",
     "runtime_config_payload",
     "runtime_config_from_payload",
     "ControllerRecord",

@@ -321,3 +321,56 @@ checks malformed snapshots, closed lifecycle enums, incident correlation and a
 rejected snapshot followed by a good one. Run it with `-fuzztime=30s
 -fuzzminimizetime=1s -parallel=2 -timeout=2m`; the operator CI leg runs the bounded
 target. Fake controller bookkeeping stays outside the generated snapshot shape.
+
+## Abort and quiescence
+
+Start with the stop/abort contracts and deterministic lifecycle cuts:
+
+```bash
+(cd sdo/operator && go test ./install ./operatorcli -run 'TestStop|TestParseStop' -count=1)
+uv run pytest tests/unit/benchmarks/sregym/adapter/test_abort.py \
+  tests/unit/benchmarks/sregym/adapter/test_processes.py \
+  tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py
+```
+
+`TestStopSeededLifecycleCuts` runs 20 seeds across install, incident, responder,
+reflection and drain cuts, including orphan Pods after Job deletion. The process
+schedule kills a real launcher at each cut and checks zero registered live
+helpers plus fake-cluster quiescence. SIGTERM/SIGINT tests exercise the abort trap.
+Stuck-deletion contracts require an error and an inventory of remaining objects.
+
+For level 6, select a disposable kind lane and its shared lock explicitly:
+
+```bash
+export SDO_ABORT_SMOKE_CLUSTER=<disposable-kind-lane>
+export SDO_ABORT_SMOKE_RUN_DIR=<absolute-evidence-directory>
+export SDO_ABORT_SMOKE_LOCK=<absolute-shared-lock-file>
+bash scripts/smoke_sdo_abort_kind.sh
+```
+
+The script holds `flock` throughout, uses prebuilt controller and worker images
+(overridable with `SDO_ABORT_SMOKE_BASE_IMAGE` and `SDO_ABORT_SMOKE_WORKER_IMAGE`)
+and `sdo-toy-app:v1`, and installs the current controller binary/source. It opens
+an actual toy incident with sleeping scripted workers, SIGKILLs the launcher,
+then invokes abort twice and requires zero runtime objects and helpers while
+preserving repository storage. The keeper and host bridge are inert stand-ins;
+no credentials are read and no model is invoked. The control namespace and PVC
+remain as preservation evidence; the script refuses to adopt existing fixture
+namespaces. Inspect `result.json` in the evidence directory.
+
+Normal launches through `scripts/run_sregym.sh` print their one-command abort:
+
+```bash
+uv run python -m benchmarks.sregym.adapter.persistent abort --state <printed-state-path>
+```
+
+For additional host helpers, set `SDO_RUN_HELPERS_FILE` to a JSON map such as
+`{"bridge": ["python3", "bridge.py"], "credential-keeper": ["keeper", "--foreground"]}`.
+The lifetime owner starts and registers these foreground commands before the
+runner; do not start helpers in an unrelated terminal or daemonize them.
+Aborting returns nonzero for surviving objects/helpers or failed verification.
+A reused PID never authorizes a signal. Historical runs without a helper
+registry require separate ownership evidence for any unregistered processes.
+Graceful `teardown --state ...` still drains before calling the production stop
+step. `sdo-operator stop --control-namespace ... --inspect` inventories production
+runtime without modifying it; stop leaves memory, Secrets and ConfigMaps intact.
