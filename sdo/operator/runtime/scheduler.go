@@ -122,6 +122,11 @@ func watchesEventInNamespace(watches []sdk.WatchKind, event sdk.WatchKind, app s
 	if app == "" {
 		return watchesEvent(watches, event)
 	}
+	// Synthetic namespaced events omit namespace and refer to the application.
+	// Normalize the event as well as its watch; this never matches a foreign watch.
+	if event.Namespace == "" && !(sdk.ObservationTarget{Kind: event.Kind}).Cluster() {
+		event.Namespace = app
+	}
 	for _, w := range watches {
 		if w.APIVersion != event.APIVersion || w.Kind != event.Kind {
 			continue

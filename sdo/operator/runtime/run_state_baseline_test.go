@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -65,11 +66,20 @@ func collectLines(reader io.Reader, into *lockedLines) {
 func gitRepository(t *testing.T) string {
 	t.Helper()
 	repository := t.TempDir()
+	// Production snapshots load observation policy only from accepted architecture.
+	// Keep these run fixtures on that contract, even without foreign observations.
+	if err := os.MkdirAll(filepath.Join(repository, ".sdo"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, ".sdo", "arch.md"), []byte("---\nschema_version: 1\n---\nSynthetic test architecture.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, command := range [][]string{
 		{"git", "init", "-q", repository},
 		{"git", "-C", repository, "config", "user.name", "test"},
 		{"git", "-C", repository, "config", "user.email", "test@example.com"},
-		{"git", "-C", repository, "commit", "-q", "--allow-empty", "-m", "initial"},
+		{"git", "-C", repository, "add", ".sdo/arch.md"},
+		{"git", "-C", repository, "commit", "-q", "-m", "initial"},
 	} {
 		if output, err := exec.Command(command[0], command[1:]...).CombinedOutput(); err != nil {
 			t.Fatalf("run %v: %v: %s", command, err, output)
