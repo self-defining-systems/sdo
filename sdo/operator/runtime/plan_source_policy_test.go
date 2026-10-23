@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"io"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,11 +22,15 @@ import (
 )
 
 type sourcePolicyFixture struct {
+	forbidInventory bool
 	lifecycleTestSource
 	accepted []*unstructured.Unstructured
 }
 
 func (s sourcePolicyFixture) AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error) {
+	if s.forbidInventory {
+		return nil, fmt.Errorf("opaque inventory is forbidden")
+	}
 	return s.accepted, nil
 }
 func TestStreamSourcePolicyEnforcesSourceAndPreservesLegacyLiterals(t *testing.T) {
@@ -35,7 +40,7 @@ func TestStreamSourcePolicyEnforcesSourceAndPreservesLegacyLiterals(t *testing.T
 	}
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
 	accepted := planObject(ref, map[string]any{"replicas": float64(1), "template": map[string]any{"spec": map[string]any{"automountServiceAccountToken": false, "containers": []any{map[string]any{"name": "api", "args": []any{"source"}, "resources": map[string]any{"limits": map[string]any{"memory": "64Mi"}}}}}}})
-	source := sourcePolicyFixture{accepted: []*unstructured.Unstructured{accepted}, lifecycleTestSource: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}}
+	source := sourcePolicyFixture{forbidInventory: true, accepted: []*unstructured.Unstructured{accepted}, lifecycleTestSource: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}}
 	incident := IncidentRequest{IncidentID: "fixture", Application: "fixture", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions", ResponseDeadline: time.Now().Add(time.Hour)}
 	authority := &SourcePlanAuthority{Config: cfg, Source: source, UID: func(context.Context, sdk.ObjectRef) (types.UID, error) { return "fixture-uid", nil }}
 	for _, test := range []struct {
@@ -83,8 +88,8 @@ func TestStreamSourcePolicyCreatesAndPinsOnlyIncidentNamedDeletes(t *testing.T) 
 	accepted := planObject(cm, nil)
 	delete(accepted.Object, "spec")
 	accepted.Object["data"] = map[string]any{"key": "safe"}
-	source := sourcePolicyFixture{accepted: []*unstructured.Unstructured{accepted}, lifecycleTestSource: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{cm: accepted}}}
-	incident := IncidentRequest{IncidentID: "fixture", Application: "fixture", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{{PrimaryResource: np}}}
+	source := sourcePolicyFixture{forbidInventory: true, accepted: []*unstructured.Unstructured{accepted}, lifecycleTestSource: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{cm: accepted}}}
+	incident := IncidentRequest{IncidentID: "fixture", Application: "fixture", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{{PrimaryResource: sdk.ObjectRef{Kind: np.Kind, Namespace: np.Namespace, Name: np.Name}}}}
 	authority := &SourcePlanAuthority{Config: cfg, Source: source, UID: func(_ context.Context, ref sdk.ObjectRef) (types.UID, error) {
 		if ref == cm {
 			return "", apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, cm.Name)
@@ -205,9 +210,17 @@ func TestStreamPolicyAllowsNamespaceConfinedNamedWebhookDelete(t *testing.T) {
 	authority := &SourcePlanAuthority{Config: cfg, Source: source, UID: func(context.Context, sdk.ObjectRef) (types.UID, error) { return "webhook-uid", nil }}
 	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}
 	e := PlanExecutor{Client: client, Source: source, SourceAuthority: authority, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	incident := IncidentRequest{IncidentID: "fixture", Application: "fixture", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{{PrimaryResource: ref}}}
+	incident := IncidentRequest{IncidentID: "fixture", Application: "fixture", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{{PrimaryResource: sdk.ObjectRef{Kind: ref.Kind, Namespace: ref.Namespace, Name: ref.Name}}}}
 	result, err := e.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false)
 	if err != nil || !result.VerificationPassed || client.deletes != 1 {
 		t.Fatalf("namespace-confined named webhook could not execute: %v", err)
 	}
+}
+
+func (s sourcePolicyFixture) AcceptedManifestRefs(context.Context, string, string) ([]sdk.ObjectRef, error) {
+	refs := []sdk.ObjectRef{}
+	for _, o := range s.accepted {
+		refs = append(refs, sdk.ObjectRef{APIVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()})
+	}
+	return refs, nil
 }

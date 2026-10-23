@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -12,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/rest"
-	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"strings"
@@ -108,12 +106,12 @@ func (a *SourcePlanAuthority) generate(ctx context.Context, incident IncidentReq
 		return nil, fmt.Errorf("source plan policy application namespace is outside reviewed scope")
 	}
 	inventory, ok := a.Source.(interface {
-		AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error)
+		AcceptedManifestRefs(context.Context, string, string) ([]sdk.ObjectRef, error)
 	})
 	if !ok {
 		return nil, fmt.Errorf("source plan policy requires accepted render inventory")
 	}
-	objects, err := inventory.AcceptedManifests(ctx, incident.SourceCommit, ns)
+	objects, err := inventory.AcceptedManifestRefs(ctx, incident.SourceCommit, ns)
 	if err != nil {
 		return nil, fmt.Errorf("source plan policy accepted render evidence unavailable")
 	}
@@ -121,11 +119,20 @@ func (a *SourcePlanAuthority) generate(ctx context.Context, incident IncidentReq
 	if !incident.ResponseDeadline.IsZero() && incident.ResponseDeadline.Before(p.ExpiresAt) {
 		p.ExpiresAt = incident.ResponseDeadline
 	}
-	for _, object := range objects {
-		ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
-		if ref.Namespace != ns || !sourcePlanKind(ref) || planSecretPredicate(object) != nil {
+
+	sourceRefs := map[sdk.ObjectRef]bool{}
+	for _, ref := range objects {
+		sourceRefs[ref] = true
+	}
+	for _, ref := range objects {
+		if ref.Namespace != ns || !sourcePlanKind(ref) {
 			continue
 		}
+		object, sourceErr := a.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+		if sourceErr != nil || object == nil || !samePlanRef(object, ref) || planSecretPredicate(object) != nil {
+			continue
+		}
+
 		uid, err := a.UID(ctx, ref)
 		create := containsPolicyKind(a.Config.CreateKinds, ref)
 		if apierrors.IsNotFound(err) {
@@ -155,10 +162,26 @@ func (a *SourcePlanAuthority) generate(ctx context.Context, incident IncidentReq
 		refs[event.Ref] = true
 	}
 	for ref := range refs {
+		// The detector contract permits kind/name references without a version.
+		// Resolve only the explicit delete kinds; never discover an arbitrary GVR.
+		if ref.APIVersion == "" {
+			switch ref.Kind {
+			case "NetworkPolicy":
+				ref.APIVersion = "networking.k8s.io/v1"
+			case "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration":
+				ref.APIVersion = "admissionregistration.k8s.io/v1"
+			}
+		}
+		if ref.Kind == "NetworkPolicy" && ref.Namespace == "" {
+			ref.Namespace = ns
+		}
 		if !containsPolicyKind(a.Config.DeleteKinds, ref) || ref.Name == "" || (ref.Namespace != "" && ref.Namespace != ns) {
 			continue
 		}
-		var lookupErr error
+
+		if sourceRefs[ref] {
+			continue
+		}
 		if ref.Namespace == "" {
 			named := false
 			for _, name := range a.Config.WebhookNames {
@@ -167,19 +190,11 @@ func (a *SourcePlanAuthority) generate(ctx context.Context, incident IncidentReq
 			if !named {
 				continue
 			}
-			scoped, ok := a.Source.(interface {
-				AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
-			})
-			if !ok {
-				continue
-			}
-			_, lookupErr = scoped.AcceptedScopedManifest(ctx, incident.SourceCommit, ns, ref)
-		} else {
-			_, lookupErr = a.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
 		}
-		if !errors.Is(lookupErr, rendered.ErrAcceptedManifestAbsent) {
-			continue
-		}
+		// Absence from lock identities only nominates the candidate. The executor
+		// still proves authoritative accepted-source absence before every delete;
+		// a missing/stale/omitted source manifest never becomes deletion proof here.
+
 		uid, err := a.UID(ctx, ref)
 		if err != nil || uid == "" {
 			continue
