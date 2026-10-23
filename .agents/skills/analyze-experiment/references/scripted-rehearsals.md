@@ -32,3 +32,5 @@ reject missing health detectors, new topology or a changed objective. Require it
 typed result and the independent Go broker validation; it provides no model or
 learning credit. Large non-manifest assets remain part of the source fingerprint
 through streaming, while YAML parsing retains its bounded input budget.
+
+The native health-refresh request carries the human objective extracted from the accepted goal document, without its YAML front matter or `# Health objective` heading. A scripted callback must compare that extracted objective and hash it for the typed result; comparing the complete Markdown document rejects a valid native refresh. Use a complete accepted goal document in callback transport regression fixtures.

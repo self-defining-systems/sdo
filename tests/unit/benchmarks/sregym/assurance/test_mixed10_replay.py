@@ -118,7 +118,8 @@ def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective
     monkeypatch.setenv("SDO_SCRIPTED_REPLAY_SLOT", "2")
     sdo = tmp_path / ".sdo"
     (sdo / "rendered").mkdir(parents=True)
-    (sdo / "goal.md").write_text("healthy\n")
+    goal_document = "---\nschema_version: 1\nowner: human\n---\n# Health objective\n\nhealthy\n"
+    (sdo / "goal.md").write_text(goal_document)
     names = {"health-objective", "service-endpoints", "service-reachability", "workload-health"}
     for name in names:
         if change == "missing-detector" and name == "workload-health":
@@ -148,7 +149,7 @@ def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective
         assert result.authored
         assert set(result.detector_ids) == names
         assert not result.HasField("artifact_proposal")
-        assert (sdo / "goal.md").read_text() == "healthy\n"
+        assert (sdo / "goal.md").read_text() == goal_document
 
         from sdo.contracts import (
             SCHEMA_VERSION,

@@ -704,7 +704,13 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     slot = int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"])
     if request.namespace != SCRIPTED_REPLAY_SLOTS[slot].namespace:
         raise ValueError("scripted health refresh namespace differs from rehearsal")
-    goal = (checkout / ".sdo/goal.md").read_text(encoding="utf-8").strip()
+    goal_document = (checkout / ".sdo/goal.md").read_text(encoding="utf-8")
+    parts = goal_document.split("---\n", 2)
+    if len(parts) != 3 or parts[0]:
+        raise ValueError("scripted health refresh requires an accepted goal document")
+    # Match memory.HealthInputs: the request carries the human objective, not
+    # the document header or its human-ownership metadata.
+    goal = parts[2].strip().removeprefix("# Health objective\n").strip()
     if request.health_objective.strip() != goal:
         raise ValueError("scripted health refresh cannot change the objective")
     lock = json.loads((checkout / ".sdo/rendered/lock.json").read_text(encoding="utf-8"))
