@@ -67,6 +67,40 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
     assert seconds == pytest.approx(2 * 1.0)
 
 
+@pytest.mark.parametrize("component_only", [False, True])
+def test_recovery_failure_identifies_component_without_sensitive_worker_details(component_only: bool) -> None:
+    class FailedWorker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            assert op == "recover"
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"component_index": 2, "status": "error", "error": "SYNTHETIC_SENSITIVE_CANARY"}],
+            }
+
+    driver = _driver(FailedWorker())
+    with pytest.raises(FastloopFaultError) as caught:
+        driver.recover_fault(2) if component_only else driver.recover()
+
+    assert "component 2: error" in str(caught.value)
+    assert "CANARY" not in str(caught.value)
+
+
+def test_recovery_failure_does_not_echo_unrecognized_component_metadata() -> None:
+    class FailedWorker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"component_index": "SYNTHETIC_CANARY", "status": "SYNTHETIC_CANARY"}],
+            }
+
+    with pytest.raises(FastloopFaultError, match="warm lane cannot be reused") as caught:
+        _driver(FailedWorker()).recover()
+
+    assert "CANARY" not in str(caught.value)
+
+
 def test_recovery_poll_interval_can_follow_the_run_time_scale() -> None:
     now = [0.0]
     worker = FakeWorker(health_sequence=[False, True])
