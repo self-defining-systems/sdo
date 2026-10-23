@@ -82,8 +82,14 @@ func productionResponderMenu(request IncidentRequest, client kubernetes.Interfac
 		if err := policy.authorizeRead(ref, request.SourceCommit, time.Now()); err != nil {
 			return err
 		}
+		// The policy can authorize a source image, but supplies no post-create UID
+		// capability for this adapter. Refuse before creating rather than discover
+		// the missing identity only after an irreversible API side effect.
+		if before == nil {
+			return errors.New("created_identity_provenance_unavailable")
+		}
 		proof := policy.Objects[ref]
-		if before == nil && !proof.CreateAllowed || after == nil && (!proof.DeleteAllowed || before == nil || string(before.GetUID()) != proof.UID) {
+		if after == nil && (!proof.DeleteAllowed || string(before.GetUID()) != proof.UID) {
 			return errMenuSafety
 		}
 		for _, object := range []*unstructured.Unstructured{before, after} {

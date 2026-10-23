@@ -131,3 +131,8 @@ callbacks can supply the existing capabilities, still bounded by the separately
 reviewed source-bound policy. Synthetic embedded e2e evidence is not live-stream
 provenance. Full-scope direct lists, independent health, UID and credential checks
 remain mandatory; omitted producers are never interpreted as healthy empty data.
+The production adapter refuses unpinned creation identity before any write;
+this appears as `plan_preflight_refused` in a selected attempt. Full effect
+preflight also refuses a multi-action plan if a later action lacks evidence,
+without first applying its earlier actions. SDK creation via direct apply
+retains its existing separate authority checks.

@@ -282,6 +282,16 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 		executor.Observer = nil
 		executor.Verifier = menuDeferredVerifier{}
 		preview, previewErr := executor.Apply(roundCtx, l.Request, plan, true)
+		if previewErr == nil {
+			// Refuse the complete plan before its first write if any effect lacks
+			// evidence. Each real write and compensation still rechecks the policy.
+			for _, patch := range preview.Patches {
+				if l.MenuConfig.Safety.AuthorizeEffect(roundCtx, patch.Ref, patch.Before, patch.After) != nil {
+					previewErr = errMenuSafety
+					break
+				}
+			}
+		}
 		if previewErr != nil {
 			cancel()
 			fail(contracts.MitigationReport_STATUS_REFUSED, "planning", "plan_preflight_refused")

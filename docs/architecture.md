@@ -668,3 +668,10 @@ options with `collection_consumer_admission_provenance_unavailable` (or
 no menu reads or writes. These entries make no diagnosis claim. Existing direct
 repair remains available under the universal credential-delta check. This wiring
 alone therefore does not establish a reachable mitigation for a live stream.
+
+The adapter additionally refuses `CreateFromSource` effects before mutation with
+`created_identity_provenance_unavailable`: named source-image approval does not
+supply the new live UID capability this menu adapter needs. The SDK executor's
+existing source/create and named UID-delete semantics are unchanged. The menu
+preflights every planned effect before its first write, then checks again at
+execution and compensation.
