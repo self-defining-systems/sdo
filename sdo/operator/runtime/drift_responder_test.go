@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"os"
 	"path/filepath"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -86,7 +90,9 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 		t.Fatal(err)
 	}
 	sink := &memorySink{}
-	c.SetFiringSink(sink)
+	lateClient := fake.NewSimpleClientset()
+	lateStore := latefindings.Store{Client: lateClient, Namespace: "control"}
+	c.SetFiringSink(lateFindingSink{Downstream: sink, Store: lateStore})
 	c.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: cache, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
 	}})
@@ -98,6 +104,9 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 	}
 	executePendingEffect(t, c)
 	first := awaitRequest(t, dispatcher.requests)
+	if err := lateStore.Ensure(context.Background(), first.IncidentID); err != nil {
+		t.Fatal(err)
+	}
 	frozen := exportState(t, c).IncidentRequest.PreparedAgentTask
 	cache.eventHandler(sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}).OnUpdate(before, broken)
 	if err := c.StepEvents(context.Background(), start.Add(2*time.Second), cache.TakeEvents()); err != nil {
@@ -115,6 +124,20 @@ func TestUnexplainedDriftDuringResponseAttachesToOpenIncident(t *testing.T) {
 				t.Fatalf("late drift not published: %+v", record)
 			}
 		}
+	}
+	cm, err := lateClient.CoreV1().ConfigMaps("control").Get(context.Background(), latefindings.ConfigMapName(first.IncidentID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := new(contracts.LateFindingsReport)
+	if err := wire.Unmarshal([]byte(cm.Data[latefindings.ReportKey]), report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.GetLateFindings()) != 1 || report.GetLateFindings()[0].GetDetectorId() != "drift.unexplained" {
+		t.Fatalf("running responder cannot pull late drift evidence: %v", report)
+	}
+	if len(first.DriftEvents) != 0 || len(dispatcher.requests) != 0 {
+		t.Fatal("late drift changed the frozen task or started another responder")
 	}
 	if late != 1 {
 		t.Fatalf("late activations=%d", late)

@@ -922,16 +922,25 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.mu.Unlock()
 		return
 	}
-	finalStates, verified := c.finalVerificationStates()
+	c.mu.Unlock()
+	driftClear := c.verifyClosureDrift(ctx, now, snapshot)
+	c.mu.Lock()
+	finalStates, healthVerified := c.finalVerificationStates()
+	verified := healthVerified && driftClear
+	// A terminal dispatch failure already closes as failed once health permits
+	// it. Unresolved drift must not delay it or count as verified recovery.
+	terminalFailure := healthVerified && c.dispatchError != ""
 	if !verified {
 		// One timeout bounds how long a stuck incident can block the stream. It
 		// closes as a normal failed incident: with no final detector states
 		// the outcome is never health-verified.
-		if now.Before(c.responderCompletedAt.Add(c.config.VerificationTimeout)) {
+		if !terminalFailure && now.Before(c.responderCompletedAt.Add(c.config.VerificationTimeout)) {
 			c.mu.Unlock()
 			return
 		}
-		logVerificationTimeout(c.currentIncidentRequest.IncidentID, c.config.VerificationTimeout, c.activeHealthDetectors())
+		if !terminalFailure {
+			logVerificationTimeout(c.currentIncidentRequest.IncidentID, c.config.VerificationTimeout, c.activeHealthDetectors())
+		}
 		finalStates = nil
 	}
 	if verified && c.config.CorpusSessionRoot != "" {
@@ -1036,7 +1045,7 @@ func (c *Controller) activeHealthDetectors() []string {
 }
 
 // logVerificationTimeout records that the verification window ended with
-// health detectors still active, so the incident closes as failed.
+// health or admitted source drift unresolved, so the incident closes as failed.
 func logVerificationTimeout(incidentID string, timeout time.Duration, active []string) {
 	slog.Warn("incident_verification_timeout", "incident_id", incidentID, "verification_timeout", timeout.String(), "active_health_detectors", active)
 }
@@ -1054,7 +1063,8 @@ func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responde
 
 // finalVerificationStates reports whether the incident is verified: the health
 // detectors (or, without any, the incident's own findings) have cleared and
-// evaluated clear since the responder completed. Drift detectors never gate it.
+// evaluated clear since the responder completed. maybeCloseIncident additionally
+// requires a fresh comparison of admitted source drift through verifyClosureDrift.
 func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 	if len(c.healthDetectorIDs) == 0 {
 		if c.tracker.HasActiveKeys(c.incidentFindingKeys) {
