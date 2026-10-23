@@ -328,6 +328,9 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
 		}
 	}
+	if err := i.reconcileObservationGrants(ctx, cfg, p); err != nil {
+		return err
+	}
 	for _, role := range p.ObservationClusterRoles {
 		prior, err := i.Client.RbacV1().ClusterRoles().Get(ctx, role.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
