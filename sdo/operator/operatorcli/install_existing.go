@@ -63,6 +63,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	var responderEnv repeatable
@@ -124,6 +125,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		DriftTokensPerHour: *driftTokensPerHour,
 		LateFindings:       *lateFindings,
 		HealthyBaseline:    *healthyBaseline,
+		MetricsURL:         *metricsURL,
 		TimeoutSeconds:     int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,

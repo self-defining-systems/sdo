@@ -48,6 +48,7 @@ type Config struct {
 	LateFindings                                            string
 	MaxFollowUps, FollowUpCooldownSeconds, MaxResponseLoops int
 	HealthyBaseline                                         bool
+	MetricsURL                                              string
 	TimeoutSeconds, VerificationTimeoutSeconds              int
 	ControllerDurationSeconds                               int
 	ExitAfterClosure                                        bool
@@ -395,6 +396,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
+	}
+	if c.MetricsURL != "" {
+		args = append(args, "--metrics-url", c.MetricsURL)
 	}
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())

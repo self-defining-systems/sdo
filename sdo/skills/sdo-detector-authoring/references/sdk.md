@@ -630,6 +630,14 @@ const APIVersion = "sdo.dev/v1alpha1"
     APIVersion is the API group of the pseudo-kinds the SDK adds for
     non-Kubernetes inputs.
 
+const AlertFiringState = "firing"
+    AlertFiringState is the only alert state that reports; pending alerts have
+    not yet held for their rule's duration.
+
+const AlertRulePrefix = "alert."
+    AlertRulePrefix prefixes the rule ID of each alert finding
+    ("alert.<alertname>").
+
 const ThresholdRulePrefix = "metric-threshold."
     ThresholdRulePrefix prefixes the rule ID of each threshold finding.
 
@@ -652,6 +660,15 @@ func FormatValue(value float64) string
 
 func LabelString(labels map[string]string) string
     LabelString renders labels sorted by name as `{a="1", b="2"}`.
+
+func NewAlertsDetector(spec sdk.DetectorSpec, mapping LabelMapping) sdk.Detector
+    NewAlertsDetector returns a detector that reports every firing alert
+    whose namespace label (mapping.Namespace, default "namespace") names the
+    application namespace, one finding per alert. It filters on nothing else:
+    the alert rules, not this detector, decide what is worth firing. Pending
+    alerts are ignored, and alerts without a namespace label are ignored but
+    counted in each finding's metadata. Alerts that could not be read are a
+    detector error, never a clear.
 
 func NewThresholdDetector(spec sdk.DetectorSpec, rules []ThresholdRule) sdk.Detector
     NewThresholdDetector returns a detector that compares the frozen result
