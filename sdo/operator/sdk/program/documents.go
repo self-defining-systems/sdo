@@ -18,6 +18,7 @@ func planDocument(raw any, format string) (map[string]any, error) {
 	switch format {
 	case "json":
 		decoder := json.NewDecoder(bytes.NewBufferString(text))
+		decoder.UseNumber()
 		if err := decoder.Decode(&object); err != nil {
 			return nil, fmt.Errorf("invalid ConfigMap JSON document")
 		}
@@ -120,7 +121,11 @@ func ApplySetFieldAction(current map[string]any, a SetField, source map[string]a
 	if err != nil {
 		return fmt.Errorf("invalid field value")
 	}
-	if err = json.Unmarshal(encoded, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	if a.DocumentFormat == "json" {
+		decoder.UseNumber()
+	}
+	if err = decoder.Decode(&value); err != nil {
 		return fmt.Errorf("invalid field value")
 	}
 	resolved := a

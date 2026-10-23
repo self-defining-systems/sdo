@@ -160,6 +160,7 @@ type SetField struct {
 	// ValueFromSource resolves the field against the incident-bound accepted manifest.
 	ValueFromSource bool
 	// DocumentFormat and DocumentPath select a JSON/YAML entry in one ConfigMap key.
+	// JSON edits preserve untouched number tokens; serialization may normalize formatting.
 	DocumentFormat string
 	DocumentPath   []string
 }

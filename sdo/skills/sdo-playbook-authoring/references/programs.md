@@ -84,3 +84,5 @@ HPA, PDB and named webhook effects require a direct current read. An unwatched k
 A cluster-scoped webhook delete proves source absence through the application’s current accepted render selection. Missing or stale lock evidence refuses; the installer’s exact-name webhook grant remains required.
 
 Credential safety also refuses deprecated identity aliases and unconfined storage. Pod and CronJob templates need explicit token automount disablement. NetworkPolicy repairs admit only bounded namespace-local pod-label peers; allow-all and cross-namespace routes refuse.
+
+JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.
