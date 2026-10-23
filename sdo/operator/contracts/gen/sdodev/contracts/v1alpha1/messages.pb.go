@@ -728,6 +728,8 @@ type StateChange struct {
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Change        string                 `protobuf:"bytes,3,opt,name=change,proto3" json:"change,omitempty"`
 	Fields        []*StateFieldChange    `protobuf:"bytes,4,rep,name=fields,proto3" json:"fields,omitempty"`
+	ApiVersion    *string                `protobuf:"bytes,5,opt,name=api_version,json=apiVersion,proto3,oneof" json:"api_version,omitempty"`
+	Namespace     *string                `protobuf:"bytes,6,opt,name=namespace,proto3,oneof" json:"namespace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -788,6 +790,20 @@ func (x *StateChange) GetFields() []*StateFieldChange {
 		return x.Fields
 	}
 	return nil
+}
+
+func (x *StateChange) GetApiVersion() string {
+	if x != nil && x.ApiVersion != nil {
+		return *x.ApiVersion
+	}
+	return ""
+}
+
+func (x *StateChange) GetNamespace() string {
+	if x != nil && x.Namespace != nil {
+		return *x.Namespace
+	}
+	return ""
 }
 
 type StateChanges struct {
@@ -3233,12 +3249,18 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x06before\x18\x02 \x01(\tH\x00R\x06before\x88\x01\x01\x12\x19\n" +
 	"\x05after\x18\x03 \x01(\tH\x01R\x05after\x88\x01\x01B\t\n" +
 	"\a_beforeB\b\n" +
-	"\x06_after\"\xc5\x01\n" +
+	"\x06_after\"\xac\x02\n" +
 	"\vStateChange\x12\x1b\n" +
 	"\x04kind\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1b\n" +
 	"\x04name\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x127\n" +
 	"\x06change\x18\x03 \x01(\tB\x1f\xbaH\x1cr\x1aR\x05addedR\aremovedR\bmodifiedR\x06change\x12C\n" +
-	"\x06fields\x18\x04 \x03(\v2+.sdodev.contracts.v1alpha1.StateFieldChangeR\x06fields\"\xb9\x02\n" +
+	"\x06fields\x18\x04 \x03(\v2+.sdodev.contracts.v1alpha1.StateFieldChangeR\x06fields\x12$\n" +
+	"\vapi_version\x18\x05 \x01(\tH\x00R\n" +
+	"apiVersion\x88\x01\x01\x12!\n" +
+	"\tnamespace\x18\x06 \x01(\tH\x01R\tnamespace\x88\x01\x01B\x0e\n" +
+	"\f_api_versionB\f\n" +
+	"\n" +
+	"_namespace\"\xb9\x02\n" +
 	"\fStateChanges\x12C\n" +
 	"\vbaseline_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"baselineAt\x12C\n" +
@@ -3671,6 +3693,7 @@ func file_sdodev_contracts_v1alpha1_messages_proto_init() {
 	file_sdodev_contracts_v1alpha1_traffic_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[4].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[7].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[8].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[9].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[25].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[28].OneofWrappers = []any{}

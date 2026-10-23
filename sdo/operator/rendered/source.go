@@ -51,6 +51,9 @@ func (s Source) AcceptedManifests(ctx context.Context, revision, namespace strin
 }
 
 func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([]*unstructured.Unstructured, error) {
+	return s.rawManifests(ctx, revision, namespace, false)
+}
+func (s Source) rawManifests(ctx context.Context, revision, namespace string, qualified bool) ([]*unstructured.Unstructured, error) {
 	if s.Repository == "" || !gitRevision.MatchString(revision) || namespace == "" {
 		return nil, fmt.Errorf("accepted repository, full commit revision, and namespace are required")
 	}
@@ -93,16 +96,24 @@ func (s Source) RawManifests(ctx context.Context, revision, namespace string) ([
 			if object.GetAPIVersion() == "" || object.GetKind() == "" || object.GetName() == "" {
 				continue
 			}
-			if object.GetNamespace() != "" && object.GetNamespace() != namespace {
+			objectNamespace := namespace
+			if qualified {
+				objectNamespace = object.GetNamespace()
+				if (sdk.ObservationTarget{Kind: object.GetKind()}).Cluster() {
+					objectNamespace = ""
+				} else if objectNamespace == "" {
+					objectNamespace = namespace
+				}
+			} else if object.GetNamespace() != "" && object.GetNamespace() != namespace {
 				continue
 			}
-			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: namespace, Name: object.GetName()}
+			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: objectNamespace, Name: object.GetName()}
 
 			if seen[ref] {
 				return nil, fmt.Errorf("%w: duplicate accepted manifest for %s/%s", ErrManifestSelectionUnavailable, ref.Kind, ref.Name)
 			}
 			seen[ref] = true
-			object.SetNamespace(namespace)
+			object.SetNamespace(objectNamespace)
 			objects = append(objects, object)
 		}
 	}
@@ -228,4 +239,30 @@ func (s Source) SameInputs(ctx context.Context, left, right string) (bool, error
 		return false, err
 	}
 	return s.sameImageSource(ctx, leftTree, rightTree)
+}
+
+// AcceptedScopedManifest is a read-only source comparison. The application's
+// trusted lock proves source selection/freshness; it does not authorize foreign
+// writes, image fallback or a foreign rendered lock.
+func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicationNamespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if _, err := s.readLock(ctx, revision, applicationNamespace); err != nil {
+		return nil, err
+	}
+	target := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
+	if target.Cluster() {
+		target.Name = ref.Name
+	}
+	if err := (sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}).Validate(); err != nil {
+		return nil, err
+	}
+	objects, err := s.rawManifests(ctx, revision, applicationNamespace, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range objects {
+		if objectRef(o) == ref {
+			return sdk.ProjectObservationObject(o)
+		}
+	}
+	return nil, ErrAcceptedManifestAbsent
 }

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"reflect"
 	"sort"
 	"time"
@@ -320,4 +323,31 @@ func (v adoptionConflictView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff
 		return v.diff, nil
 	}
 	return v.ReadView.DiffAgainstSource(ref)
+}
+
+func (v adoptionConflictView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
+}
+
+func (v adoptionConflictView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
+}
+
+func (v adoptionConflictView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
+}
+
+func (v adoptionConflictView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+}
+
+func (v adoptionConflictView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+}
+
+func (v adoptionConflictView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.ReadView).ObservationStatuses()
+}
+func (v adoptionConflictView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"time"
 
@@ -138,4 +140,31 @@ func (v mitigationReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff
 		return program.Diff{}, err
 	}
 	return v.live.DiffAgainstBaseline(ref)
+}
+
+func (v mitigationReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	return sdk.ScopedSource(v.live).ScopedDeployments(namespace)
+}
+
+func (v mitigationReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	return sdk.ScopedSource(v.live).ScopedServices(namespace)
+}
+
+func (v mitigationReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	return sdk.ScopedSource(v.live).ScopedEndpoints(namespace)
+}
+
+func (v mitigationReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.live).MutatingWebhookConfigurations()
+}
+
+func (v mitigationReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.live).ValidatingWebhookConfigurations()
+}
+
+func (v mitigationReadView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.live).ObservationStatuses()
+}
+func (v mitigationReadView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.live).ObservationGeneration()
 }

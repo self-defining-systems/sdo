@@ -1,6 +1,9 @@
 package runtime
 
 import (
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -131,7 +134,18 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
 	defer cancel()
-	source, err := v.Source.AcceptedManifest(ctx, v.SourceCommit, ref)
+	var source *unstructured.Unstructured
+	if ref.Namespace != v.Namespace() {
+		reader, ok := v.Source.(interface {
+			AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
+		})
+		if !ok {
+			return program.Diff{}, errors.New("qualified accepted source unavailable")
+		}
+		source, err = reader.AcceptedScopedManifest(ctx, v.SourceCommit, v.Namespace(), ref)
+	} else {
+		source, err = v.Source.AcceptedManifest(ctx, v.SourceCommit, ref)
+	}
 	if errors.Is(err, ErrAcceptedManifestAbsent) {
 		if observed == nil {
 			return program.Diff{SourceAbsent: true}, nil
@@ -147,6 +161,23 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	if source == nil || !samePlanRef(source, ref) {
 		return program.Diff{}, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
+	}
+	if ref.Namespace != v.Namespace() {
+		projected, projectErr := sdk.ProjectObservationObject(source)
+		if projectErr != nil {
+			return program.Diff{}, projectErr
+		}
+		source = projected
+		before, _ := json.Marshal(comparableFields(source.Object))
+		var actual any
+		if observed != nil {
+			actual = comparableFields(observed.Object)
+			if !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
+				actual = projectSourceFields(actual, comparableFields(source.Object))
+			}
+		}
+		after, _ := json.Marshal(actual)
+		return program.Diff{Changed: string(before) != string(after), Text: fmt.Sprintf("accepted: %s\nobserved: %s", before, after)}, nil
 	}
 	if observed == nil {
 		if v.Client != nil {
@@ -256,7 +287,7 @@ func comparableFields(object map[string]any) map[string]any {
 		}
 	}
 	result := map[string]any{}
-	for _, key := range []string{"spec", "data", "binaryData"} {
+	for _, key := range []string{"spec", "data", "binaryData", "webhooks", "subsets"} {
 		if value, ok := object[key]; ok {
 			result[key] = value
 		}
@@ -321,10 +352,12 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 		return program.Diff{}, errors.New("healthy baseline is unavailable")
 	}
 	if ref.Namespace != v.Namespace() {
-		return program.Diff{}, errors.New("object is outside snapshot namespace")
+		if _, err := v.scopedObject(ref); err != nil && !errors.Is(err, errSnapshotObjectAbsent) {
+			return program.Diff{}, err
+		}
 	}
 	for _, change := range baseline.Changes {
-		if change.Kind == ref.Kind && change.Name == ref.Name {
+		if change.Kind == ref.Kind && change.Name == ref.Name && ((change.Namespace == "" && ref.Namespace == v.Namespace()) || change.Namespace == ref.Namespace) && (change.APIVersion == "" || change.APIVersion == ref.APIVersion) {
 			encoded, err := json.Marshal(change)
 			if err != nil {
 				return program.Diff{}, err
@@ -337,7 +370,7 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	if ref.Namespace != v.Namespace() {
-		return nil, errors.New("object is outside snapshot namespace")
+		return v.scopedObject(ref)
 	}
 	var object any
 	switch ref.Kind {
@@ -413,4 +446,135 @@ func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructu
 	result.SetNamespace(ref.Namespace)
 	result.SetName(ref.Name)
 	return result, nil
+}
+
+func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	source, ok := v.DetectionContext.(sdk.ScopedObservationSource)
+	if !ok {
+		return nil, errors.New("scoped observations unavailable")
+	}
+	t := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
+	if t.Cluster() {
+		t.Name = ref.Name
+	}
+	matched := false
+	for _, status := range source.ObservationStatuses() {
+		if status.Target == t {
+			matched = true
+			if status.State != sdk.ObservationObserved {
+				return nil, errors.New("scoped observation unavailable")
+			}
+		}
+	}
+	if !matched {
+		return nil, errors.New("scoped observation undeclared")
+	}
+	var object any
+	switch ref.Kind {
+	case "Deployment":
+		items, err := source.ScopedDeployments(ref.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range items {
+			if o.Name == ref.Name {
+				object = o
+			}
+		}
+	case "Service":
+		items, err := source.ScopedServices(ref.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range items {
+			if o.Name == ref.Name {
+				object = o
+			}
+		}
+	case "Endpoints":
+		items, err := source.ScopedEndpoints(ref.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range items {
+			if o.Name == ref.Name {
+				object = o
+			}
+		}
+	case "MutatingWebhookConfiguration":
+		items, err := source.MutatingWebhookConfigurations()
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range items {
+			if o.Name == ref.Name {
+				object = o
+			}
+		}
+	case "ValidatingWebhookConfiguration":
+		items, err := source.ValidatingWebhookConfigurations()
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range items {
+			if o.Name == ref.Name {
+				object = o
+			}
+		}
+	}
+	if object == nil {
+		return nil, errSnapshotObjectAbsent
+	}
+	b, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	err = json.Unmarshal(b, &m)
+	if err != nil {
+		return nil, err
+	}
+	out := &unstructured.Unstructured{Object: m}
+	out.SetAPIVersion(ref.APIVersion)
+	out.SetKind(ref.Kind)
+	delete(out.Object, "status")
+	return out, nil
+}
+
+// ScopedRefAllowed binds drift admission to the snapshot's exact observed targets.
+func (v LiveReadView) ScopedRefAllowed(ref sdk.ObjectRef) bool {
+	_, err := v.scopedObject(ref)
+	return err == nil || errors.Is(err, errSnapshotObjectAbsent)
+}
+
+func (v LiveReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ScopedDeployments(namespace)
+	return result, err
+}
+
+func (v LiveReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ScopedServices(namespace)
+	return result, err
+}
+
+func (v LiveReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ScopedEndpoints(namespace)
+	return result, err
+}
+
+func (v LiveReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).MutatingWebhookConfigurations()
+	return result, err
+}
+
+func (v LiveReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ValidatingWebhookConfigurations()
+	return result, err
+}
+
+func (v LiveReadView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.DetectionContext).ObservationStatuses()
+}
+func (v LiveReadView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.DetectionContext).ObservationGeneration()
 }

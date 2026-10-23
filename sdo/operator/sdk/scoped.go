@@ -246,6 +246,10 @@ func safeMeta(m metav1.ObjectMeta) metav1.ObjectMeta {
 // annotations, probes, volumes, Secret references or arbitrary status messages.
 func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment {
 	out := appsv1.Deployment{ObjectMeta: safeMeta(o.ObjectMeta)}
+	if o.Spec.Replicas == nil {
+		v := int32(1)
+		out.Spec.Replicas = &v
+	}
 	if o.Spec.Replicas != nil {
 		v := *o.Spec.Replicas
 		out.Spec.Replicas = &v
@@ -254,6 +258,14 @@ func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment {
 	out.Spec.Template.Labels = copyStrings(o.Spec.Template.Labels)
 	for _, c := range o.Spec.Template.Spec.Containers {
 		out.Spec.Template.Spec.Containers = append(out.Spec.Template.Spec.Containers, corev1.Container{Name: c.Name, Image: safeImage(c.Image), Ports: append([]corev1.ContainerPort(nil), c.Ports...), Resources: *c.Resources.DeepCopy()})
+	}
+	for i := range out.Spec.Template.Spec.Containers {
+		for j := range out.Spec.Template.Spec.Containers[i].Ports {
+			port := &out.Spec.Template.Spec.Containers[i].Ports[j]
+			if port.Protocol == "" {
+				port.Protocol = corev1.ProtocolTCP
+			}
+		}
 	}
 	out.Status.Replicas = o.Status.Replicas
 	out.Status.ReadyReplicas = o.Status.ReadyReplicas
@@ -281,11 +293,15 @@ func ProjectForeignService(o corev1.Service) corev1.Service {
 	out := corev1.Service{ObjectMeta: safeMeta(o.ObjectMeta)}
 	out.Spec.Selector = copyStrings(o.Spec.Selector)
 	out.Spec.Type = o.Spec.Type
+	if out.Spec.Type == "" {
+		out.Spec.Type = corev1.ServiceTypeClusterIP
+	}
 	out.Spec.ClusterIP = o.Spec.ClusterIP
 	out.Spec.ExternalName = o.Spec.ExternalName
 	out.Spec.Ports = make([]corev1.ServicePort, len(o.Spec.Ports))
 	for i := range o.Spec.Ports {
 		out.Spec.Ports[i] = *o.Spec.Ports[i].DeepCopy()
+		defaultServicePort(&out.Spec.Ports[i])
 	}
 	return out
 }
@@ -295,6 +311,9 @@ func ProjectForeignEndpoints(o corev1.Endpoints) corev1.Endpoints {
 		part := corev1.EndpointSubset{Ports: make([]corev1.EndpointPort, len(s.Ports))}
 		for i := range s.Ports {
 			part.Ports[i] = *s.Ports[i].DeepCopy()
+			if part.Ports[i].Protocol == "" {
+				part.Ports[i].Protocol = corev1.ProtocolTCP
+			}
 		}
 		for _, a := range s.Addresses {
 			part.Addresses = append(part.Addresses, corev1.EndpointAddress{IP: a.IP, Hostname: a.Hostname})
@@ -319,6 +338,10 @@ func projectClient(c admissionv1.WebhookClientConfig) admissionv1.WebhookClientC
 	if c.Service != nil {
 		out.Service = c.Service.DeepCopy()
 		out.Service.Path = nil
+		if out.Service.Port == nil {
+			v := int32(443)
+			out.Service.Port = &v
+		}
 	}
 	if c.URL != nil {
 		v := "[redacted external URL]"
@@ -354,6 +377,7 @@ func ProjectMutatingWebhook(o admissionv1.MutatingWebhookConfiguration) admissio
 	out.ObjectMeta = safeMeta(o.ObjectMeta)
 	for i := range out.Webhooks {
 		w := &out.Webhooks[i]
+		defaultMutatingWebhook(w)
 		w.ClientConfig = projectClient(w.ClientConfig)
 		w.MatchConditions = nil
 	}
@@ -364,6 +388,7 @@ func ProjectValidatingWebhook(o admissionv1.ValidatingWebhookConfiguration) admi
 	out.ObjectMeta = safeMeta(o.ObjectMeta)
 	for i := range out.Webhooks {
 		w := &out.Webhooks[i]
+		defaultValidatingWebhook(w)
 		w.ClientConfig = projectClient(w.ClientConfig)
 		w.MatchConditions = nil
 	}

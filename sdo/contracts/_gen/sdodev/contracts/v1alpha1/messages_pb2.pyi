@@ -159,16 +159,20 @@ class StateFieldChange(_message.Message):
     def __init__(self, field: _Optional[str] = ..., before: _Optional[str] = ..., after: _Optional[str] = ...) -> None: ...
 
 class StateChange(_message.Message):
-    __slots__ = ("kind", "name", "change", "fields")
+    __slots__ = ("kind", "name", "change", "fields", "api_version", "namespace")
     KIND_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     CHANGE_FIELD_NUMBER: _ClassVar[int]
     FIELDS_FIELD_NUMBER: _ClassVar[int]
+    API_VERSION_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
     kind: str
     name: str
     change: str
     fields: _containers.RepeatedCompositeFieldContainer[StateFieldChange]
-    def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., change: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[StateFieldChange, _Mapping]]] = ...) -> None: ...
+    api_version: str
+    namespace: str
+    def __init__(self, kind: _Optional[str] = ..., name: _Optional[str] = ..., change: _Optional[str] = ..., fields: _Optional[_Iterable[_Union[StateFieldChange, _Mapping]]] = ..., api_version: _Optional[str] = ..., namespace: _Optional[str] = ...) -> None: ...
 
 class StateChanges(_message.Message):
     __slots__ = ("baseline_at", "observed_at", "changes", "omitted", "unobserved_kinds")

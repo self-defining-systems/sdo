@@ -50,3 +50,12 @@ is not an applied action. Require strict receipts and proxy history for writes,
 verification and accepted learning; retain missing evidence as unknown. A
 healthy-source negative with stale health alarms is a false alarm even if the
 normal fault gate blocks. Do not bypass that gate or invent an injected fault.
+
+
+## Scoped observation captures
+
+`scoped_observation` version 1 contains accepted `generation`, versioned `scope`, per-target `statuses` and credential-free foreign objects. Targets use API version, kind, namespace and (for cluster webhooks) name. Generation binds accepted commit and policy identities; do not compare object inventories across generations as drift.
+
+Only `observed` means a complete read, including a successful empty list or named webhook NotFound. `forbidden`, `unsupported` and `unavailable` are evidence gaps, never absence or health. Captures retain those statuses for offline accessor errors. A denied detector dependency cannot clear a finding; incomplete coverage suspends healthy baseline promotion. Regrant requires a fresh read and retains comparison with the prior observed state.
+
+Foreign Deployment captures exclude all environment values/references, command/args, volumes, probes, annotations and free-text status. Webhook URLs retain origin only; CA bytes are digest markers. Service/Endpoints projections exclude arbitrary metadata and endpoint target references. These are safe views, not complete Kubernetes backups. App-local ConfigMap capture-only redaction is unchanged. Scoped polling uses no foreign Secret reads and no webhook-wide list.

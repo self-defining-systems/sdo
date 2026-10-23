@@ -108,6 +108,8 @@ message StateChange {
   string name = 2 [(buf.validate.field).string.min_len = 1];
   string change = 3 [(buf.validate.field).string = {in: ["added", "removed", "modified"]}];
   repeated StateFieldChange fields = 4;
+ optional string api_version = 5;
+ optional string namespace = 6;
 }
 
 message StateChanges {

@@ -165,6 +165,10 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 	}
 	for _, change := range state.Changes {
 		item := &contracts.StateChange{Kind: change.Kind, Name: change.Name, Change: change.Change, Fields: make([]*contracts.StateFieldChange, 0, len(change.Fields))}
+		if change.APIVersion != "" {
+			item.ApiVersion = proto.String(change.APIVersion)
+			item.Namespace = proto.String(change.Namespace)
+		}
 		for _, field := range change.Fields {
 			value := &contracts.StateFieldChange{Field: field.Field}
 			if field.Before != "" {
@@ -481,7 +485,7 @@ func stateChangesState(message *contracts.StateChanges) *StateChanges {
 		UnobservedKinds: append([]string(nil), message.GetUnobservedKinds()...),
 	}
 	for _, change := range message.GetChanges() {
-		item := StateChange{Kind: change.GetKind(), Name: change.GetName(), Change: change.GetChange()}
+		item := StateChange{APIVersion: change.GetApiVersion(), Namespace: change.GetNamespace(), Kind: change.GetKind(), Name: change.GetName(), Change: change.GetChange()}
 		for _, field := range change.GetFields() {
 			item.Fields = append(item.Fields, StateFieldChange{Field: field.GetField(), Before: field.GetBefore(), After: field.GetAfter()})
 		}

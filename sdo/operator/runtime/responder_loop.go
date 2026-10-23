@@ -510,7 +510,7 @@ func (l *ResponderLoop) refresh(ctx context.Context) ([]sdk.Finding, []ProgramRu
 	}
 	findings := make([]sdk.Finding, 0)
 	for _, detector := range l.Detectors {
-		observed, err := detector.Detect(ctx, view)
+		observed, err := sdk.DetectObserved(ctx, detector, view)
 		if err != nil {
 			return nil, nil, fmt.Sprintf("detector %s: %v", detector.Spec().ID, err)
 		}
@@ -773,7 +773,7 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
-		observed, err := detector.Detect(ctx, view)
+		observed, err := sdk.DetectObserved(ctx, detector, view)
 		state := DetectorEvaluation{DetectorID: detector.Spec().ID, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
 		if err != nil {
 			state.Status, state.Error = DetectorEvaluationError, err.Error()

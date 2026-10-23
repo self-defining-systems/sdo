@@ -232,7 +232,7 @@ func NewController(
 	}
 	sort.Strings(healthDetectorIDs)
 	return &Controller{
-		config: config, startedAt: start, scheduler: NewScheduler(detectors, start), detectors: byID,
+		config: config, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker:    tracker,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
@@ -316,7 +316,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.mu.Unlock()
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		findings, detectErr := detector.Detect(ctx, snapshot)
+		findings, detectErr := sdk.DetectObserved(ctx, detector, snapshot)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)

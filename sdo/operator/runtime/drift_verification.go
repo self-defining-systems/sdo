@@ -84,7 +84,12 @@ func driftFieldsRestored(diff program.Diff, events []sdk.DriftEvent) bool {
 		return false
 	}
 	for _, field := range events[0].Fields {
-		if !reflect.DeepEqual(accepted[field.Path], observed[field.Path]) {
+		left, leftExists := accepted[field.Path]
+		right, rightExists := observed[field.Path]
+		if !leftExists && !rightExists {
+			return false
+		}
+		if leftExists != rightExists || !reflect.DeepEqual(left, right) {
 			return false
 		}
 	}
