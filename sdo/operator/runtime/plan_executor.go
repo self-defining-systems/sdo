@@ -403,6 +403,9 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			return err
 		}
 	}
+	if err := e.validateCredentialDelta(ctx, current, restored); err != nil {
+		return err
+	}
 	from, _ := json.Marshal(current.Object)
 	to, _ := json.Marshal(restored.Object)
 	delta, err := jsonpatch.CreateMergePatch(from, to)
@@ -653,7 +656,12 @@ func (e PlanExecutor) validateAcceptedRevision(incident IncidentRequest) error {
 	return nil
 }
 
-func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured, safe bool) (*unstructured.Unstructured, error) {
+func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured, safe bool) (prepared *unstructured.Unstructured, prepareErr error) {
+	defer func() {
+		if prepareErr == nil {
+			prepareErr = e.validateCredentialDelta(ctx, current, prepared)
+		}
+	}()
 	next := current.DeepCopy()
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
