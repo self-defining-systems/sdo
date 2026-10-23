@@ -19,6 +19,9 @@ type programDetector struct {
 
 // DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector {
+	if spec.Playbooks == nil {
+		spec.Playbooks = []string{p.Spec().ID}
+	}
 	return programDetector{program: p, locate: locate, spec: spec}
 }
 

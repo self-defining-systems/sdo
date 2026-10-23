@@ -140,3 +140,7 @@ The source-only stream policy derives structured repair values and creates from 
 Webhook namespace selectors may confine admission to the application. Network peer confinement is checked on NetworkPolicy rules.
 
 Source policy inventory uses render-lock identities and filters allowed kinds before reading source content; a missing lock entry alone never proves deletion eligibility.
+
+`spec.template.spec.dnsPolicy` is a schema-checked SetField path for Deployment and StatefulSet source
+restoration. A DNS policy repair does not remove an injected dnsConfig; if that field was absent from
+accepted source, report the missing removal capability rather than inventing an empty source value.

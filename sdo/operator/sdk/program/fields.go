@@ -24,7 +24,7 @@ var allowedFieldPaths = []*regexp.Regexp{
 	regexp.MustCompile(`^spec\.ports\[` + listIdentity + `\]\.(port|targetPort|protocol|name)$`),
 	regexp.MustCompile(`^spec\.selector(\.[A-Za-z0-9_./-]+)?$`),
 	regexp.MustCompile(`^spec\.(replicas|minReplicas|maxReplicas|minAvailable|maxUnavailable)$`),
-	regexp.MustCompile(`^spec\.template\.spec\.(nodeSelector|tolerations|affinity|serviceAccountName)$`),
+	regexp.MustCompile(`^spec\.template\.spec\.(nodeSelector|tolerations|affinity|serviceAccountName|dnsPolicy)$`),
 	regexp.MustCompile(`^spec\.template\.spec\.(containers|initContainers)\[` + listIdentity + `\]\.(image|command|args|volumeMounts|ports\[` + listIdentity + `\]\.(containerPort|hostPort|protocol|name)|((liveness|readiness|startup)Probe|env\[` + listIdentity + `\]|resources)(\.[A-Za-z0-9_./-]+)*)$`),
 }
 
