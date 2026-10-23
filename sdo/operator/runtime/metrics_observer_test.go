@@ -257,17 +257,25 @@ func TestMetricsObserverFetchesOnlyDeclaredInputs(t *testing.T) {
 }
 
 func TestMetricsObserverUnavailableSourceIsADetectorErrorNeverClear(t *testing.T) {
-	fake, server := newFakePrometheus(t)
-	fake.queries[errorQuery.Expr] = vector()
-	cases := map[string]func(){
-		"5xx":            func() { fake.status = http.StatusBadGateway },
-		"malformed json": func() { fake.queries[errorQuery.Expr] = `{"status": "succ`; fake.alerts = `not json` },
-		"timeout":        func() { fake.hang[errorQuery.Expr] = true },
+	cases := map[string]func(*fakePrometheus){
+		"5xx": func(fake *fakePrometheus) { fake.status = http.StatusBadGateway },
+		"malformed json": func(fake *fakePrometheus) {
+			fake.queries[errorQuery.Expr] = `{"status": "succ`
+			fake.alerts = `not json`
+		},
+		"timeout": func(fake *fakePrometheus) {
+			fake.hang[errorQuery.Expr] = true
+			fake.hang[""] = true // The alerts endpoint has no query expression.
+		},
 	}
 	for name, arrange := range cases {
 		t.Run(name, func(t *testing.T) {
-			arrange()
-			t.Cleanup(func() { fake.status, fake.hang = 0, map[string]bool{}; fake.queries[errorQuery.Expr] = vector() })
+			// A timed-out fetch may leave its HTTP handler running. Keep each
+			// case's configuration unchanged until its server cleanup joins it.
+			fake, server := newFakePrometheus(t)
+			fake.queries[errorQuery.Expr] = vector()
+			fake.alerts = `{"status":"success","data":{"alerts":[]}}`
+			arrange(fake)
 			detectors := []sdk.Detector{
 				metricsDetector("thresholds", errorQuery),
 				alertReader{spec: metricsSpec("alerts")},
