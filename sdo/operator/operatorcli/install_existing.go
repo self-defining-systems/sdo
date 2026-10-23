@@ -63,6 +63,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	var responderNamespaces repeatable
 	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	var responderEnv repeatable
@@ -118,6 +119,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		LateFindings:    *lateFindings,
 		HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+		MetricsURL:    *metricsURL,
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,

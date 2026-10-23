@@ -204,3 +204,30 @@ func TestIncidentDetectorsStayQuietOnHealthyBaseline(t *testing.T) {
     }
 }
 `
+
+const metricsContractTest = `package generated
+
+import (
+    "testing"
+    "sdo.dev/operator/sdk/metrics"
+)
+
+func TestMetricsDetectorsDeclareValidQueries(t *testing.T) {
+    detectors := All()
+    for _, detector := range detectors {
+        if err := metrics.ValidateDetector(detector); err != nil {
+            t.Errorf("detector %s: %v", detector.Spec().ID, err)
+        }
+    }
+    if _, err := metrics.Queries(detectors); err != nil {
+        t.Error(err)
+    }
+}
+`
+
+// generateMetricsTest checks every detector's metric declarations: unique,
+// non-empty query IDs and expressions, a bounded query count, and rules the
+// threshold constructor accepts.
+func generateMetricsTest(root string) error {
+	return os.WriteFile(filepath.Join(root, "generated", "metrics_contract_test.go"), []byte(metricsContractTest), 0o644)
+}

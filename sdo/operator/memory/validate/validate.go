@@ -96,6 +96,10 @@ type Request struct {
 	CaptureRoot      string
 	CaptureDirectory string
 	IncidentID       string
+	// MetricsDetectors also installs the generic metrics detectors when the
+	// health judge's initial memory is prepared. It is true only where the
+	// controller has a metrics source.
+	MetricsDetectors bool
 }
 
 // Diagnostic is one validation finding. Path is repository-relative and Line is
