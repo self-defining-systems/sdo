@@ -77,6 +77,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	var responderNamespaces repeatable
 	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
@@ -164,7 +165,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		ValidatorImage: *validatorImage, BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider,
-		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 		MaxResponseLoops: *maxResponseLoops,

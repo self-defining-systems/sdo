@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"sdo.dev/operator/sdk"
 )
@@ -86,6 +87,9 @@ type StateBaseline interface {
 type StateTrackerConfig struct {
 	Scope, Ceiling sdk.ObservationScope
 	Client         kubernetes.Interface
+	// MetadataClient is required to observe Secrets. Without it Secrets are
+	// unobserved; the typed Client is never used as a fallback.
+	MetadataClient rest.Interface
 	Namespace      string
 	// Settle defaults to DefaultStateSettle.
 	Settle time.Duration
@@ -142,6 +146,20 @@ func (t *StateTracker) Start(ctx context.Context) error {
 	started := map[string]cache.SharedIndexInformer{}
 	unobserved := []string{}
 	for _, kind := range trackedKinds {
+		if kind.kind == "Secret" {
+			if t.config.MetadataClient == nil {
+				unobserved = append(unobserved, kind.kind)
+				continue
+			}
+			if _, err := t.listSecretMetadata(ctx, metav1.ListOptions{Limit: 1}); err != nil {
+				unobserved = append(unobserved, kind.kind)
+				continue
+			}
+			informer := t.secretMetadataInformer(runCtx)
+			started[kind.kind] = informer
+			go informer.Run(runCtx.Done())
+			continue
+		}
 		if err := kind.probe(ctx, t.config.Client, t.config.Namespace); err != nil {
 			unobserved = append(unobserved, kind.kind)
 			continue
@@ -483,17 +501,7 @@ var trackedKinds = []trackedKind{
 		},
 		state: configMapState,
 	},
-	{
-		kind: "Secret",
-		informer: func(f informers.SharedInformerFactory) cache.SharedIndexInformer {
-			return f.Core().V1().Secrets().Informer()
-		},
-		probe: func(ctx context.Context, c kubernetes.Interface, ns string) error {
-			_, err := c.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{Limit: 1})
-			return err
-		},
-		state: secretState,
-	},
+	{kind: "Secret", state: secretState},
 	{
 		kind: "Role",
 		informer: func(f informers.SharedInformerFactory) cache.SharedIndexInformer {
@@ -612,17 +620,14 @@ func configMapState(object any) (string, objectState, bool) {
 	return configMap.Name, state, true
 }
 
+// PartialObjectMetadata omits Secret type and data key names. Do not fetch
+// either, or inspect annotations (which may embed a complete applied Secret).
 func secretState(object any) (string, objectState, bool) {
-	secret, ok := object.(*corev1.Secret)
-	if !ok || sdoOwned(secret.ObjectMeta) || secret.Type == corev1.SecretTypeServiceAccountToken ||
-		secret.Type == "helm.sh/release.v1" {
+	secret, ok := object.(*metav1.PartialObjectMetadata)
+	if !ok || sdoOwned(secret.ObjectMeta) {
 		return "", nil, false
 	}
-	state := objectState{"type": string(secret.Type)}
-	for key, value := range secret.Data {
-		state["data["+key+"]"] = digest(value)
-	}
-	return secret.Name, state, true
+	return secret.Name, objectState{"uid": string(secret.UID), "resourceVersion": secret.ResourceVersion}, true
 }
 
 func roleState(object any) (string, objectState, bool) {

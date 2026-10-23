@@ -22,7 +22,7 @@ func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Ac
 			return nil, err
 		}
 	}
-	return validate.Check(ctx, validate.Request{ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision}, compile)
+	return validate.Check(ctx, validate.Request{ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, MetricsDetectors: b.MetricsDetectors}, compile)
 }
 
 // PublishReflection binds the returned worker decision independently of any

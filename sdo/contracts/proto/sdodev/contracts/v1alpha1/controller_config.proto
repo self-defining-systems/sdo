@@ -123,4 +123,11 @@ message ControllerConfig {
   int32 program_trust_threshold = 65 [(buf.validate.field).int32.gte = 0];
   // Unset uses the runtime's 10-second firing and clearing confirmation.
   google.protobuf.Duration program_min_duration = 69 [(buf.validate.field).duration.gte = {}];
+
+  // Prometheus-compatible API that metric and alert detectors query once per
+  // evaluation cycle. Unset runs no metrics source: detectors that need one
+  // report an error instead of health. The token file holds an optional bearer
+  // token and requires metrics_url.
+  string metrics_url = 70;
+  string metrics_token_file = 71;
 }

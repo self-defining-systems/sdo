@@ -125,8 +125,14 @@ type ControllerConfig struct {
 	ProgramTrustThreshold int32                `protobuf:"varint,65,opt,name=program_trust_threshold,json=programTrustThreshold,proto3" json:"program_trust_threshold,omitempty"`
 	// Unset uses the runtime's 10-second firing and clearing confirmation.
 	ProgramMinDuration *durationpb.Duration `protobuf:"bytes,69,opt,name=program_min_duration,json=programMinDuration,proto3" json:"program_min_duration,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Prometheus-compatible API that metric and alert detectors query once per
+	// evaluation cycle. Unset runs no metrics source: detectors that need one
+	// report an error instead of health. The token file holds an optional bearer
+	// token and requires metrics_url.
+	MetricsUrl       string `protobuf:"bytes,70,opt,name=metrics_url,json=metricsUrl,proto3" json:"metrics_url,omitempty"`
+	MetricsTokenFile string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -581,11 +587,25 @@ func (x *ControllerConfig) GetProgramMinDuration() *durationpb.Duration {
 	return nil
 }
 
+func (x *ControllerConfig) GetMetricsUrl() string {
+	if x != nil {
+		return x.MetricsUrl
+	}
+	return ""
+}
+
+func (x *ControllerConfig) GetMetricsTokenFile() string {
+	if x != nil {
+		return x.MetricsTokenFile
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xe4\x1b\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb3\x1c\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -654,7 +674,10 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x17deployed_manifest_paths\x18? \x03(\tR\x15deployedManifestPaths\x12*\n" +
 	"\x11program_fast_path\x18@ \x01(\bR\x0fprogramFastPath\x12?\n" +
 	"\x17program_trust_threshold\x18A \x01(\x05B\a\xbaH\x04\x1a\x02(\x00R\x15programTrustThreshold\x12U\n" +
-	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDurationB\x14\n" +
+	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDuration\x12\x1f\n" +
+	"\vmetrics_url\x18F \x01(\tR\n" +
+	"metricsUrl\x12,\n" +
+	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFileB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10ER\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourB\x88\x02\n" +

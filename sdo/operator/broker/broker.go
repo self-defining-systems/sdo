@@ -76,6 +76,11 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
+	// MetricsDetectors installs the optional generic metrics detectors when
+	// the health judge's initial memory is accepted. Set it only where a
+	// metrics source is configured.
+	MetricsDetectors bool
+
 	observationCeiling   sdk.ObservationScope
 	applicationNamespace string
 	target               string

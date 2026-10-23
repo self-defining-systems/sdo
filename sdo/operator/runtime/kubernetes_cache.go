@@ -22,6 +22,7 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -103,6 +104,10 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 				continue
 			}
 			if watch.Namespace != "" && watch.Namespace != config.Namespace || (sdk.ObservationTarget{Kind: watch.Kind}).Cluster() {
+				continue
+			}
+			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
+				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
 			}
 			watch.Namespace = config.Namespace
@@ -283,7 +288,7 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		return nil, err
 	}
 	c.observeScoped(scoped)
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime:time.Now().UTC(), ScopedSnapshot: scoped}
+	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC(), ScopedSnapshot: scoped}
 	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)

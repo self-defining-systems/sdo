@@ -15,7 +15,9 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
@@ -62,6 +64,25 @@ func NewKubernetesClient() (kubernetes.Interface, error) {
 		return nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
 	return client, nil
+}
+
+// NewKubernetesMetadataClient creates a metadata-only decoder using the same
+// Kubernetes configuration and rate limits as the controller's typed clients.
+// Callers must set a strict PartialObjectMetadata Accept header per request.
+func NewKubernetesMetadataClient() (rest.Interface, error) {
+	config, err := kubernetesConfig()
+	if err != nil {
+		return nil, err
+	}
+	if err := applyClientRateLimits(config, os.LookupEnv); err != nil {
+		return nil, err
+	}
+	config = metadata.ConfigFor(config)
+	config.ContentType = "application/json"
+	config.AcceptContentTypes = "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1"
+	config.GroupVersion = &schema.GroupVersion{Version: "v1"}
+	config.APIPath = "/api"
+	return rest.RESTClientFor(config)
 }
 
 func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {

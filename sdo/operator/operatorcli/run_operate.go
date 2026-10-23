@@ -74,6 +74,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
+	// The generic metrics detectors are installed only where a metrics source
+	// is configured; the judge's own check and the broker must agree.
+	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	buildBackend := deployment.KubernetesBuildBackend{
 		Client: client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
 		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
@@ -97,6 +100,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		CredentialsSecret: config.Install.CredentialsSecret,
 		Environment:       agentEnvironment,
+	}
+	if config.Install.MetricsURL != "" {
+		workers.Environment[memoryMetricsEnv] = "1"
 	}
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},
