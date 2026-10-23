@@ -101,4 +101,5 @@ def test_restart_class_ack_to_publication_uses_broker_owned_lock(tmp_path: Path)
     )
     assert receipt["native_ledger"]["acknowledged"] is True
     assert receipt["native_ledger"]["outcome_document"]["classification"] == "success"
-    assert [event[0] for event in ops.events] == ["active", "paused"]
+    # Close-out resumes the controller, pauses it again, then retains the resumed run's logs.
+    assert [event[0] for event in ops.events] == ["active", "paused", "logs"]

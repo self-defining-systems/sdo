@@ -2,8 +2,6 @@
 
 The adapter's lock-settlement failure must carry the controller's own
 reconciliation error, so a live retry can be diagnosed without another hour.
-Strict xfail: it flips to a failure, and must be un-marked, once the adapter
-surfaces the controller's reason.
 """
 
 from __future__ import annotations
@@ -24,9 +22,6 @@ if TYPE_CHECKING:
 REASON = "reconcile rendered lock: Deployment/user-service rollout is incomplete"
 
 
-@pytest.mark.xfail(
-    strict=True, reason="adapter drops the controller's reconciliation error; owned by RH3B adapter code"
-)
 def test_lock_settlement_failure_surfaces_the_controller_reconciliation_error(tmp_path: Path) -> None:
     config = _config(tmp_path)
     repository = config.repository
