@@ -8,7 +8,7 @@ import (
 )
 
 func TestDurablePlanEvidenceDropsOnlyRetiredJournals(t *testing.T) {
-	data := []byte(`{"plan":{"actions":[{"set_field":{"ref":{"api_version":"v1","kind":"Service","namespace":"app","name":"api"},"path":"spec.selector","value":{"pre_images":{"preserve":true},"patches":[1,2]},"reason":"restore selector"}}]},"applied":true,"pre_images":[{"object":{"spec":{"old":true}}}],"patches":[{"patch_json":"retired write"}]}`)
+	data := []byte(`{"plan":{"actions":[{"set_field":{"ref":{"api_version":"v1","kind":"Service","namespace":"app","name":"api"},"path":"spec.selector","value":{"source":{"ref":{"api_version":"v1","kind":"ConfigMap","namespace":"app","name":"settings"},"path":"data[pre_images.patches]"}},"reason":"restore selector"}}]},"applied":true,"pre_images":[{"object":{"spec":{"old":true}}}],"patches":[{"patch_json":"retired write"}]}`)
 	if err := Unmarshal(data, new(contracts.PlanApplication)); err == nil {
 		t.Fatal("live wire boundary accepted retired fields")
 	}
@@ -19,8 +19,8 @@ func TestDurablePlanEvidenceDropsOnlyRetiredJournals(t *testing.T) {
 	if !application.GetApplied() {
 		t.Fatal("lost applied outcome")
 	}
-	value := application.GetPlan().GetActions()[0].GetSetField().GetValue().GetStructValue()
-	if value.GetFields()["pre_images"] == nil || len(value.GetFields()["patches"].GetListValue().GetValues()) != 2 {
+	value := application.GetPlan().GetActions()[0].GetSetField().GetValue().GetSource()
+	if value.GetPath() != "data[pre_images.patches]" {
 		t.Fatal("migration edited arbitrary action data")
 	}
 	camel := strings.Replace(string(data), `"pre_images":[`, `"preImages":[`, 1)

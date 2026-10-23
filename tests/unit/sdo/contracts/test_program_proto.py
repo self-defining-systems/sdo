@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from google.protobuf import duration_pb2, json_format, struct_pb2
+from google.protobuf import duration_pb2, json_format
 
 from sdo.contracts import proto as contracts
 
@@ -32,7 +32,7 @@ def test_program_messages_round_trip_as_protojson() -> None:
                     set_field=contracts.SetField(
                         ref=contracts.ObjectRef(kind="Service", name="frontend"),
                         path="spec.ports[0].targetPort",
-                        value=struct_pb2.Value(number_value=8080),
+                        value=contracts.PlanValue(parameter="target_port"),
                         reason="restore source port",
                     )
                 ),

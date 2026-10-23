@@ -23,22 +23,28 @@ class ProgramSpec(_message.Message):
     def __init__(self, id: _Optional[str] = ..., params: _Optional[_Iterable[_Union[ParamSpec, _Mapping]]] = ...) -> None: ...
 
 class ParamSpec(_message.Message):
-    __slots__ = ("name", "kind", "required")
+    __slots__ = ("name", "kind", "required", "value_kind", "default")
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     REQUIRED_FIELD_NUMBER: _ClassVar[int]
+    VALUE_KIND_FIELD_NUMBER: _ClassVar[int]
+    DEFAULT_FIELD_NUMBER: _ClassVar[int]
     name: str
     kind: str
     required: bool
-    def __init__(self, name: _Optional[str] = ..., kind: _Optional[str] = ..., required: _Optional[bool] = ...) -> None: ...
+    value_kind: str
+    default: _struct_pb2.Value
+    def __init__(self, name: _Optional[str] = ..., kind: _Optional[str] = ..., required: _Optional[bool] = ..., value_kind: _Optional[str] = ..., default: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ...) -> None: ...
 
 class Binding(_message.Message):
-    __slots__ = ("name", "object")
+    __slots__ = ("name", "object", "value")
     NAME_FIELD_NUMBER: _ClassVar[int]
     OBJECT_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
     name: str
     object: _common_pb2.ObjectRef
-    def __init__(self, name: _Optional[str] = ..., object: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ...) -> None: ...
+    value: _struct_pb2.Value
+    def __init__(self, name: _Optional[str] = ..., object: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., value: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ...) -> None: ...
 
 class RelationCoveredFinding(_message.Message):
     __slots__ = ("finding_fingerprint", "program_id", "bindings")
@@ -93,20 +99,26 @@ class Plan(_message.Message):
     def __init__(self, actions: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., rationale: _Optional[str] = ...) -> None: ...
 
 class Action(_message.Message):
-    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object")
+    __slots__ = ("reconcile_from_source", "rollback", "set_field", "restart_rollout", "create_from_source", "delete_object", "delete_pod", "scale_workload", "exec")
     RECONCILE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_FIELD_NUMBER: _ClassVar[int]
     SET_FIELD_FIELD_NUMBER: _ClassVar[int]
     RESTART_ROLLOUT_FIELD_NUMBER: _ClassVar[int]
     CREATE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     DELETE_OBJECT_FIELD_NUMBER: _ClassVar[int]
+    DELETE_POD_FIELD_NUMBER: _ClassVar[int]
+    SCALE_WORKLOAD_FIELD_NUMBER: _ClassVar[int]
+    EXEC_FIELD_NUMBER: _ClassVar[int]
     reconcile_from_source: ReconcileFromSource
     rollback: Rollback
     set_field: SetField
     restart_rollout: RestartRollout
     create_from_source: CreateFromSource
     delete_object: DeleteObject
-    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ...) -> None: ...
+    delete_pod: DeletePod
+    scale_workload: ScaleWorkload
+    exec: Exec
+    def __init__(self, reconcile_from_source: _Optional[_Union[ReconcileFromSource, _Mapping]] = ..., rollback: _Optional[_Union[Rollback, _Mapping]] = ..., set_field: _Optional[_Union[SetField, _Mapping]] = ..., restart_rollout: _Optional[_Union[RestartRollout, _Mapping]] = ..., create_from_source: _Optional[_Union[CreateFromSource, _Mapping]] = ..., delete_object: _Optional[_Union[DeleteObject, _Mapping]] = ..., delete_pod: _Optional[_Union[DeletePod, _Mapping]] = ..., scale_workload: _Optional[_Union[ScaleWorkload, _Mapping]] = ..., exec: _Optional[_Union[Exec, _Mapping]] = ...) -> None: ...
 
 class CreateFromSource(_message.Message):
     __slots__ = ("ref", "reason")
@@ -157,22 +169,90 @@ class Rollback(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., to_revision: _Optional[str] = ...) -> None: ...
 
 class SetField(_message.Message):
-    __slots__ = ("ref", "path", "value", "reason", "value_from_source", "document_format", "document_path")
+    __slots__ = ("ref", "path", "value", "reason", "document_format", "document_path")
     REF_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     VALUE_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
-    VALUE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
     DOCUMENT_FORMAT_FIELD_NUMBER: _ClassVar[int]
     DOCUMENT_PATH_FIELD_NUMBER: _ClassVar[int]
     ref: _common_pb2.ObjectRef
     path: str
-    value: _struct_pb2.Value
+    value: PlanValue
     reason: str
-    value_from_source: bool
     document_format: str
     document_path: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., reason: _Optional[str] = ..., value_from_source: _Optional[bool] = ..., document_format: _Optional[str] = ..., document_path: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., value: _Optional[_Union[PlanValue, _Mapping]] = ..., reason: _Optional[str] = ..., document_format: _Optional[str] = ..., document_path: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class PlanValue(_message.Message):
+    __slots__ = ("source", "observed", "parameter")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_FIELD_NUMBER: _ClassVar[int]
+    PARAMETER_FIELD_NUMBER: _ClassVar[int]
+    source: ValueField
+    observed: ValueField
+    parameter: str
+    def __init__(self, source: _Optional[_Union[ValueField, _Mapping]] = ..., observed: _Optional[_Union[ValueField, _Mapping]] = ..., parameter: _Optional[str] = ...) -> None: ...
+
+class ValueField(_message.Message):
+    __slots__ = ("ref", "path")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    path: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ...) -> None: ...
+
+class ValueProvenance(_message.Message):
+    __slots__ = ("origin", "ref", "path", "source_commit", "resource_version", "parameter")
+    ORIGIN_FIELD_NUMBER: _ClassVar[int]
+    REF_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_COMMIT_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_VERSION_FIELD_NUMBER: _ClassVar[int]
+    PARAMETER_FIELD_NUMBER: _ClassVar[int]
+    origin: str
+    ref: _common_pb2.ObjectRef
+    path: str
+    source_commit: str
+    resource_version: str
+    parameter: str
+    def __init__(self, origin: _Optional[str] = ..., ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., source_commit: _Optional[str] = ..., resource_version: _Optional[str] = ..., parameter: _Optional[str] = ...) -> None: ...
+
+class ActionReport(_message.Message):
+    __slots__ = ("action_index", "status", "values", "exit_code")
+    ACTION_INDEX_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    VALUES_FIELD_NUMBER: _ClassVar[int]
+    EXIT_CODE_FIELD_NUMBER: _ClassVar[int]
+    action_index: int
+    status: str
+    values: _containers.RepeatedCompositeFieldContainer[ValueProvenance]
+    exit_code: int
+    def __init__(self, action_index: _Optional[int] = ..., status: _Optional[str] = ..., values: _Optional[_Iterable[_Union[ValueProvenance, _Mapping]]] = ..., exit_code: _Optional[int] = ...) -> None: ...
+
+class DeletePod(_message.Message):
+    __slots__ = ("ref",)
+    REF_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ...) -> None: ...
+
+class ScaleWorkload(_message.Message):
+    __slots__ = ("ref", "replicas")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    REPLICAS_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    replicas: PlanValue
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., replicas: _Optional[_Union[PlanValue, _Mapping]] = ...) -> None: ...
+
+class Exec(_message.Message):
+    __slots__ = ("pod", "container", "command")
+    POD_FIELD_NUMBER: _ClassVar[int]
+    CONTAINER_FIELD_NUMBER: _ClassVar[int]
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    pod: _common_pb2.ObjectRef
+    container: str
+    command: _containers.RepeatedCompositeFieldContainer[PlanValue]
+    def __init__(self, pod: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., container: _Optional[str] = ..., command: _Optional[_Iterable[_Union[PlanValue, _Mapping]]] = ...) -> None: ...
 
 class RestartRollout(_message.Message):
     __slots__ = ("ref", "reason")
@@ -205,7 +285,7 @@ class ProgramRun(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -223,6 +303,7 @@ class PlanApplication(_message.Message):
     VERIFICATION_PASSED_FIELD_NUMBER: _ClassVar[int]
     FINAL_EQUIVALENCE_VERIFIED_FIELD_NUMBER: _ClassVar[int]
     OBJECT_EFFECTS_FIELD_NUMBER: _ClassVar[int]
+    ACTION_REPORTS_FIELD_NUMBER: _ClassVar[int]
     plan: Plan
     applied: bool
     dry_run: bool
@@ -240,7 +321,8 @@ class PlanApplication(_message.Message):
     verification_passed: bool
     final_equivalence_verified: bool
     object_effects: _containers.RepeatedCompositeFieldContainer[PlanObjectEffect]
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ...) -> None: ...
+    action_reports: _containers.RepeatedCompositeFieldContainer[ActionReport]
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")

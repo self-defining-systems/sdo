@@ -8,7 +8,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -25,10 +24,7 @@ func programVerdict() *contracts.Verdict {
 }
 
 func TestProgramContractsProtoJSONRoundTrip(t *testing.T) {
-	value, err := structpb.NewValue(int64(8080))
-	if err != nil {
-		t.Fatal(err)
-	}
+	value := &contracts.PlanValue{Origin: &contracts.PlanValue_Source{Source: &contracts.ValueField{Ref: programRef(), Path: "spec.ports[0].targetPort"}}}
 	plan := &contracts.Plan{Actions: []*contracts.Action{
 		{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: programRef()}}},
 		{Kind: &contracts.Action_Rollback{Rollback: &contracts.Rollback{Ref: programRef(), ToRevision: "abc123"}}},
