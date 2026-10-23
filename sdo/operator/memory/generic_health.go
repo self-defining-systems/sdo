@@ -14,13 +14,32 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/servicehealth"
 )
 
-// PrepareHealth is the explicit Go bootstrap step shared by memory check and
-// broker acceptance. It installs policy detectors from final workload files;
-// it never translates or repairs the judge's authored artifacts.
+// MetricsAlertsDetectorID names the generic detector that reports firing
+// alerts of the application namespace from the configured metrics source.
+const MetricsAlertsDetectorID = "metrics-alerts"
+
+// HealthOptions selects the optional generic policy detectors.
+type HealthOptions struct {
+	// Metrics installs the alerts detector. It reads Prometheus alerts through
+	// the controller's metrics source, so it is installed only where a metrics
+	// URL is configured: without a source it could only report itself
+	// unavailable.
+	Metrics bool
+}
+
+// PrepareHealth installs the default generic policy detectors.
 func PrepareHealth(root string) error {
+	return PrepareHealthWith(root, HealthOptions{})
+}
+
+// PrepareHealthWith is the explicit Go bootstrap step shared by memory check
+// and broker acceptance. It installs policy detectors from final workload
+// files; it never translates or repairs the judge's authored artifacts.
+func PrepareHealthWith(root string, options HealthOptions) error {
 	if _, err := os.Stat(filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective"))); os.IsNotExist(err) {
 		return fmt.Errorf("health judge omitted health-objective detector")
 	} else if err != nil {
@@ -35,6 +54,13 @@ func PrepareHealth(root string) error {
 	}
 	if err := writeGenericDetector(root, genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()); err != nil {
 		return err
+	}
+	if options.Metrics {
+		alerts := genericManifest(MetricsAlertsDetectorID, "30s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "Metrics"}})
+		alerts.Batching.Severity = string(sdk.SeverityWarning)
+		if err := writeGenericDetector(root, alerts, metricsAlertsSource()); err != nil {
+			return err
+		}
 	}
 	directory := filepath.Join(root, layout.TrafficWorkloadsDir)
 	entries, err := os.ReadDir(directory)
@@ -135,6 +161,8 @@ func genericPackage(id string) string {
 		return "serviceendpoints"
 	case "service-reachability":
 		return "servicereachability"
+	case MetricsAlertsDetectorID:
+		return "metricsalerts"
 	case workloadHealthID:
 		return "workloads"
 	}
@@ -174,13 +202,17 @@ func New() sdk.Detector {
 }
 
 func genericSpec(id string) string {
+	return genericSpecWithSeverity(id, "Critical")
+}
+
+func genericSpecWithSeverity(id string, severity string) string {
 	return fmt.Sprintf(`ID: %q,
 		Class: sdk.DetectorClassHealth,
 		Owner: sdk.DetectorOwnerHealthJudge,
 		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
-		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
+		Batching: sdk.BatchingPolicy{Severity: sdk.Severity%s, Debounce: 500 * time.Millisecond},
 		Playbooks: []string{"health-objective"},
-		OriginatingCommit: "lifecycle-bootstrap",`, id)
+		OriginatingCommit: "lifecycle-bootstrap",`, id, severity)
 }
 
 func endpointSource() string {
@@ -250,4 +282,26 @@ func New() sdk.Detector {
 	}, %q)
 }
 `, constructor, genericSpec(id), workload)
+}
+
+// metricsAlertsSource batches warning alerts as well as critical ones: an
+// alert rule that fires in the application namespace is already an operator's
+// judgement that something is wrong.
+func metricsAlertsSource() string {
+	return fmt.Sprintf(`package metricsalerts
+
+import (
+	"time"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
+)
+
+func New() sdk.Detector {
+	return metrics.NewAlertsDetector(sdk.DetectorSpec{
+		%s
+		Watches: []sdk.WatchKind{metrics.Watch},
+		Interval: 30 * time.Second,
+	}, metrics.LabelMapping{})
+}
+`, genericSpecWithSeverity(MetricsAlertsDetectorID, "Warning"))
 }

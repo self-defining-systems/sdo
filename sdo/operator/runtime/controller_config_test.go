@@ -68,6 +68,8 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		ProberBinary:               "/workspace/prober",
 		ProberImage:                "registry/prober:latest",
 		ProberUrl:                  "http://prober:8080",
+		MetricsUrl:                 "http://prometheus:9090",
+		MetricsTokenFile:           "/var/run/secrets/metrics/token",
 		CleanResponderHelpers:      &cleanHelpers,
 		StateBaseline:              &stateBaseline,
 	}
@@ -176,6 +178,8 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		"--program-min-duration":    "3s",
 		"--response-timeout":        "30m0s",
 		"--lease-duration":          "1m0s",
+		"--metrics-url":             "http://prometheus:9090",
+		"--metrics-token-file":      "/var/run/secrets/metrics/token",
 	}
 	for flag, want := range wantValue {
 		if got := pairs[flag]; got != want {
@@ -218,6 +222,7 @@ func TestControllerConfigOmitsUnsetFields(t *testing.T) {
 		if strings.HasPrefix(arg, "--synthetic-traffic") ||
 			strings.HasPrefix(arg, "--clean-responder-helpers") ||
 			strings.HasPrefix(arg, "--state-baseline") ||
+			strings.HasPrefix(arg, "--metrics") ||
 			strings.HasPrefix(arg, "--response-timeout") ||
 			strings.HasPrefix(arg, "--verification-timeout") ||
 			strings.HasPrefix(arg, "--lease-duration") {

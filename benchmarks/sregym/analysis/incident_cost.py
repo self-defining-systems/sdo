@@ -621,6 +621,10 @@ def _is_state_change(command: str) -> bool:
             tokens = tokens[1:]
         if not tokens:
             continue
+        if Path(tokens[0]).name == "sdo" and tokens[1:2] == ["act"] and "--" in tokens:
+            tokens = tokens[tokens.index("--") + 1 :]
+            if not tokens:
+                continue
         program = tokens[0]
         if Path(program).name == "kubectl":
             if any(token.startswith("--dry-run") for token in tokens):
@@ -655,15 +659,48 @@ def _timestamp(value: object) -> float | None:
         return None
 
 
+def _command_execution(record: dict[str, Any]) -> tuple[str, float, float] | None:
+    """Read a completed Codex command item, whose execution clocks are in milliseconds."""
+
+    payload = record.get("payload")
+    if record.get("type") != "event_msg" or not isinstance(payload, dict):
+        return None
+    item = payload.get("item")
+    if payload.get("type") != "item_completed" or not isinstance(item, dict):
+        return None
+    if item.get("type") != "CommandExecution":
+        return None
+    command = item.get("command")
+    if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
+        return None
+    # Shell argv keeps the entire script in one argument; don't let the shell
+    # executable hide a write behind ``bash -lc``.
+    if Path(command[0]).name in {"bash", "sh"} and len(command) >= 3 and command[1] in {"-c", "-lc"}:
+        script = command[2]
+    else:
+        script = " ".join(command)
+    started = _float(payload.get("started_at_ms"))
+    completed = _float(payload.get("completed_at_ms"))
+    if started is None or completed is None or completed < started:
+        return None
+    return script, started / 1000, completed / 1000
+
+
 def first_mutation_at(rollouts: list[Path], *, after: float) -> float | None:
     """Epoch of the first state-changing tool call issued at or after *after* in Codex rollouts."""
 
     first: float | None = None
     for path in rollouts:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if '"function_call"' not in line and '"custom_tool_call"' not in line:
+            if '"function_call"' not in line and '"custom_tool_call"' not in line and '"CommandExecution"' not in line:
                 continue
             record = json.loads(line)
+            execution = _command_execution(record)
+            if execution is not None:
+                command, issued, _ = execution
+                if issued >= after and (first is None or issued < first) and _is_state_change(command):
+                    first = issued
+                continue
             payload = record.get("payload")
             issued = _timestamp(record.get("timestamp"))
             if not isinstance(payload, dict) or issued is None or issued < after:
@@ -681,7 +718,8 @@ def last_mutation_done_at(rollouts: list[Path], *, after: float, before: float) 
 
     Completion is the call's output record (paired by ``call_id``), capped at
     *before* (the mitigation POST); a call without a recorded output counts at
-    its issue time.
+    its issue time. Completed ``CommandExecution`` items instead carry both
+    execution timestamps directly, in milliseconds.
     """
 
     issued_at: dict[str, float] = {}
@@ -689,9 +727,19 @@ def last_mutation_done_at(rollouts: list[Path], *, after: float, before: float) 
     last: float | None = None
     for path in rollouts:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            if '"call_id"' not in line and '"custom_tool_call"' not in line and '"function_call"' not in line:
+            if not any(
+                marker in line
+                for marker in ('"call_id"', '"custom_tool_call"', '"function_call"', '"CommandExecution"')
+            ):
                 continue
             record = json.loads(line)
+            execution = _command_execution(record)
+            if execution is not None:
+                command, issued, completed = execution
+                if after <= issued <= before and _is_state_change(command):
+                    done = min(completed, before)
+                    last = done if last is None else max(last, done)
+                continue
             payload = record.get("payload")
             stamp = _timestamp(record.get("timestamp"))
             if not isinstance(payload, dict) or stamp is None:
