@@ -728,6 +728,8 @@ type StateChange struct {
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Change        string                 `protobuf:"bytes,3,opt,name=change,proto3" json:"change,omitempty"`
 	Fields        []*StateFieldChange    `protobuf:"bytes,4,rep,name=fields,proto3" json:"fields,omitempty"`
+	ApiVersion    *string                `protobuf:"bytes,5,opt,name=api_version,json=apiVersion,proto3,oneof" json:"api_version,omitempty"`
+	Namespace     *string                `protobuf:"bytes,6,opt,name=namespace,proto3,oneof" json:"namespace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -788,6 +790,20 @@ func (x *StateChange) GetFields() []*StateFieldChange {
 		return x.Fields
 	}
 	return nil
+}
+
+func (x *StateChange) GetApiVersion() string {
+	if x != nil && x.ApiVersion != nil {
+		return *x.ApiVersion
+	}
+	return ""
+}
+
+func (x *StateChange) GetNamespace() string {
+	if x != nil && x.Namespace != nil {
+		return *x.Namespace
+	}
+	return ""
 }
 
 type StateChanges struct {
@@ -1662,31 +1678,32 @@ func (x *OperationalArtifactProposal) GetDeletePlaybookIds() []string {
 
 // IncidentRequest is the snapshot the controller dispatches to the responder.
 type IncidentRequest struct {
-	state                protoimpl.MessageState     `protogen:"open.v1"`
-	SchemaVersion        string                     `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
-	Application          string                     `protobuf:"bytes,2,opt,name=application,proto3" json:"application,omitempty"`
-	Namespace            string                     `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	IncidentId           string                     `protobuf:"bytes,4,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
-	Findings             []*Finding                 `protobuf:"bytes,5,rep,name=findings,proto3" json:"findings,omitempty"`
-	DetectorHistory      []*DetectorEvaluation      `protobuf:"bytes,6,rep,name=detector_history,json=detectorHistory,proto3" json:"detector_history,omitempty"`
-	SurfacedPlaybooks    []*SurfacedPlaybook        `protobuf:"bytes,7,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
-	RelevantOutcomes     []*PriorOutcomeEvidence    `protobuf:"bytes,8,rep,name=relevant_outcomes,json=relevantOutcomes,proto3" json:"relevant_outcomes,omitempty"`
-	SourceCommit         string                     `protobuf:"bytes,9,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
-	DeployedCommit       string                     `protobuf:"bytes,10,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
-	RepositoryWorktree   string                     `protobuf:"bytes,13,opt,name=repository_worktree,json=repositoryWorktree,proto3" json:"repository_worktree,omitempty"`
-	RepositoryBaseCommit string                     `protobuf:"bytes,14,opt,name=repository_base_commit,json=repositoryBaseCommit,proto3" json:"repository_base_commit,omitempty"`
-	ResponseDeadline     *timestamppb.Timestamp     `protobuf:"bytes,15,opt,name=response_deadline,json=responseDeadline,proto3" json:"response_deadline,omitempty"`
-	CancellationToken    string                     `protobuf:"bytes,16,opt,name=cancellation_token,json=cancellationToken,proto3" json:"cancellation_token,omitempty"`
-	RepairPolicy         string                     `protobuf:"bytes,17,opt,name=repair_policy,json=repairPolicy,proto3" json:"repair_policy,omitempty"`
-	StateChanges         *StateChanges              `protobuf:"bytes,18,opt,name=state_changes,json=stateChanges,proto3" json:"state_changes,omitempty"`
-	MemorySnapshot       *OperationalMemorySnapshot `protobuf:"bytes,20,opt,name=memory_snapshot,json=memorySnapshot,proto3" json:"memory_snapshot,omitempty"`
-	InitialProgramRuns   []*ProgramRun              `protobuf:"bytes,21,rep,name=initial_program_runs,json=initialProgramRuns,proto3" json:"initial_program_runs,omitempty"`
-	MaxResponseLoops     int32                      `protobuf:"varint,22,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
-	DriftEvents          []*DriftEvent              `protobuf:"bytes,23,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
-	FastPathSummary      string                     `protobuf:"bytes,24,opt,name=fast_path_summary,json=fastPathSummary,proto3" json:"fast_path_summary,omitempty"`
-	PreparedAgentTask    string                     `protobuf:"bytes,25,opt,name=prepared_agent_task,json=preparedAgentTask,proto3" json:"prepared_agent_task,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	state                 protoimpl.MessageState     `protogen:"open.v1"`
+	SchemaVersion         string                     `protobuf:"bytes,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	Application           string                     `protobuf:"bytes,2,opt,name=application,proto3" json:"application,omitempty"`
+	Namespace             string                     `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	IncidentId            string                     `protobuf:"bytes,4,opt,name=incident_id,json=incidentId,proto3" json:"incident_id,omitempty"`
+	Findings              []*Finding                 `protobuf:"bytes,5,rep,name=findings,proto3" json:"findings,omitempty"`
+	DetectorHistory       []*DetectorEvaluation      `protobuf:"bytes,6,rep,name=detector_history,json=detectorHistory,proto3" json:"detector_history,omitempty"`
+	SurfacedPlaybooks     []*SurfacedPlaybook        `protobuf:"bytes,7,rep,name=surfaced_playbooks,json=surfacedPlaybooks,proto3" json:"surfaced_playbooks,omitempty"`
+	RelevantOutcomes      []*PriorOutcomeEvidence    `protobuf:"bytes,8,rep,name=relevant_outcomes,json=relevantOutcomes,proto3" json:"relevant_outcomes,omitempty"`
+	SourceCommit          string                     `protobuf:"bytes,9,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
+	DeployedCommit        string                     `protobuf:"bytes,10,opt,name=deployed_commit,json=deployedCommit,proto3" json:"deployed_commit,omitempty"`
+	RepositoryWorktree    string                     `protobuf:"bytes,13,opt,name=repository_worktree,json=repositoryWorktree,proto3" json:"repository_worktree,omitempty"`
+	RepositoryBaseCommit  string                     `protobuf:"bytes,14,opt,name=repository_base_commit,json=repositoryBaseCommit,proto3" json:"repository_base_commit,omitempty"`
+	ResponseDeadline      *timestamppb.Timestamp     `protobuf:"bytes,15,opt,name=response_deadline,json=responseDeadline,proto3" json:"response_deadline,omitempty"`
+	CancellationToken     string                     `protobuf:"bytes,16,opt,name=cancellation_token,json=cancellationToken,proto3" json:"cancellation_token,omitempty"`
+	RepairPolicy          string                     `protobuf:"bytes,17,opt,name=repair_policy,json=repairPolicy,proto3" json:"repair_policy,omitempty"`
+	StateChanges          *StateChanges              `protobuf:"bytes,18,opt,name=state_changes,json=stateChanges,proto3" json:"state_changes,omitempty"`
+	MemorySnapshot        *OperationalMemorySnapshot `protobuf:"bytes,20,opt,name=memory_snapshot,json=memorySnapshot,proto3" json:"memory_snapshot,omitempty"`
+	InitialProgramRuns    []*ProgramRun              `protobuf:"bytes,21,rep,name=initial_program_runs,json=initialProgramRuns,proto3" json:"initial_program_runs,omitempty"`
+	MaxResponseLoops      int32                      `protobuf:"varint,22,opt,name=max_response_loops,json=maxResponseLoops,proto3" json:"max_response_loops,omitempty"`
+	DriftEvents           []*DriftEvent              `protobuf:"bytes,23,rep,name=drift_events,json=driftEvents,proto3" json:"drift_events,omitempty"`
+	FastPathSummary       string                     `protobuf:"bytes,24,opt,name=fast_path_summary,json=fastPathSummary,proto3" json:"fast_path_summary,omitempty"`
+	PreparedAgentTask     string                     `protobuf:"bytes,25,opt,name=prepared_agent_task,json=preparedAgentTask,proto3" json:"prepared_agent_task,omitempty"`
+	ObservationGeneration string                     `protobuf:"bytes,26,opt,name=observation_generation,json=observationGeneration,proto3" json:"observation_generation,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *IncidentRequest) Reset() {
@@ -1869,6 +1886,13 @@ func (x *IncidentRequest) GetFastPathSummary() string {
 func (x *IncidentRequest) GetPreparedAgentTask() string {
 	if x != nil {
 		return x.PreparedAgentTask
+	}
+	return ""
+}
+
+func (x *IncidentRequest) GetObservationGeneration() string {
+	if x != nil {
+		return x.ObservationGeneration
 	}
 	return ""
 }
@@ -3006,6 +3030,7 @@ type IncidentClosure struct {
 	VerifiedAt                          *timestamppb.Timestamp   `protobuf:"bytes,14,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`
 	HealthClearedAt                     *timestamppb.Timestamp   `protobuf:"bytes,15,opt,name=health_cleared_at,json=healthClearedAt,proto3,oneof" json:"health_cleared_at,omitempty"`
 	CleanedHelpers                      []string                 `protobuf:"bytes,19,rep,name=cleaned_helpers,json=cleanedHelpers,proto3" json:"cleaned_helpers,omitempty"`
+	ObservationGeneration               string                   `protobuf:"bytes,20,opt,name=observation_generation,json=observationGeneration,proto3" json:"observation_generation,omitempty"`
 	unknownFields                       protoimpl.UnknownFields
 	sizeCache                           protoimpl.SizeCache
 }
@@ -3152,6 +3177,13 @@ func (x *IncidentClosure) GetCleanedHelpers() []string {
 	return nil
 }
 
+func (x *IncidentClosure) GetObservationGeneration() string {
+	if x != nil {
+		return x.ObservationGeneration
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_messages_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
@@ -3233,12 +3265,18 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x06before\x18\x02 \x01(\tH\x00R\x06before\x88\x01\x01\x12\x19\n" +
 	"\x05after\x18\x03 \x01(\tH\x01R\x05after\x88\x01\x01B\t\n" +
 	"\a_beforeB\b\n" +
-	"\x06_after\"\xc5\x01\n" +
+	"\x06_after\"\xac\x02\n" +
 	"\vStateChange\x12\x1b\n" +
 	"\x04kind\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1b\n" +
 	"\x04name\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\x127\n" +
 	"\x06change\x18\x03 \x01(\tB\x1f\xbaH\x1cr\x1aR\x05addedR\aremovedR\bmodifiedR\x06change\x12C\n" +
-	"\x06fields\x18\x04 \x03(\v2+.sdodev.contracts.v1alpha1.StateFieldChangeR\x06fields\"\xb9\x02\n" +
+	"\x06fields\x18\x04 \x03(\v2+.sdodev.contracts.v1alpha1.StateFieldChangeR\x06fields\x12$\n" +
+	"\vapi_version\x18\x05 \x01(\tH\x00R\n" +
+	"apiVersion\x88\x01\x01\x12!\n" +
+	"\tnamespace\x18\x06 \x01(\tH\x01R\tnamespace\x88\x01\x01B\x0e\n" +
+	"\f_api_versionB\f\n" +
+	"\n" +
+	"_namespace\"\xb9\x02\n" +
 	"\fStateChanges\x12C\n" +
 	"\vbaseline_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"baselineAt\x12C\n" +
@@ -3315,7 +3353,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12traffic_generators\x18\x03 \x03(\v23.sdodev.contracts.v1alpha1.ProposedTrafficGeneratorR\x11trafficGenerators\x12W\n" +
 	"\x11traffic_workloads\x18\x04 \x03(\v2*.sdodev.contracts.v1alpha1.TrafficWorkloadR\x10trafficWorkloads\x12.\n" +
 	"\x13delete_detector_ids\x18\x05 \x03(\tR\x11deleteDetectorIds\x12.\n" +
-	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds:\x02\x18\x01\"\x90\f\n" +
+	"\x13delete_playbook_ids\x18\x06 \x03(\tR\x11deletePlaybookIds:\x02\x18\x01\"\xc7\f\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -3341,7 +3379,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x12max_response_loops\x18\x16 \x01(\x05R\x10maxResponseLoops\x12H\n" +
 	"\fdrift_events\x18\x17 \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12*\n" +
 	"\x11fast_path_summary\x18\x18 \x01(\tR\x0ffastPathSummary\x12.\n" +
-	"\x13prepared_agent_task\x18\x19 \x01(\tR\x11preparedAgentTaskJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xbf\x01\n" +
+	"\x13prepared_agent_task\x18\x19 \x01(\tR\x11preparedAgentTask\x125\n" +
+	"\x16observation_generation\x18\x1a \x01(\tR\x15observationGenerationJ\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_up\"\xbf\x01\n" +
 	"\x11RootCauseEvidence\x12^\n" +
 	"\x04kind\x18\x01 \x01(\tBJ\xbaHGrER\x10detector-findingR\x11synthetic-trafficR\fstate-changeR\x10live-observationR\x04kind\x12\x1f\n" +
 	"\x06source\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06source\x12)\n" +
@@ -3485,8 +3524,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01:\x9d\x02\xbaH\x99\x02\x1a\x80\x01\n" +
 	"\x1etimeline.last_seen_after_first\x120last_seen_at must not precede first_activated_at\x1a,this.last_seen_at >= this.first_activated_at\x1a\x93\x01\n" +
 	"\x1ctimeline.cleared_after_first\x12.cleared_at must not precede first_activated_at\x1aC!has(this.cleared_at) || this.cleared_at >= this.first_activated_atB\r\n" +
-	"\v_cleared_at\"\xe4\n" +
-	"\n" +
+	"\v_cleared_at\"\x9b\v\n" +
 	"\x0fIncidentClosure\x12L\n" +
 	"\arequest\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestB\x06\xbaH\x03\xc8\x01\x01R\arequest\x12A\n" +
 	"\x06result\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.IncidentResultR\x06result\x12*\n" +
@@ -3506,7 +3544,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\vverified_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"verifiedAt\x12K\n" +
 	"\x11health_cleared_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampH\x01R\x0fhealthClearedAt\x88\x01\x01\x12'\n" +
-	"\x0fcleaned_helpers\x18\x13 \x03(\tR\x0ecleanedHelpersB\x11\n" +
+	"\x0fcleaned_helpers\x18\x13 \x03(\tR\x0ecleanedHelpers\x125\n" +
+	"\x16observation_generation\x18\x14 \x01(\tR\x15observationGenerationB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
 	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reasonB\x80\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\rMessagesProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
@@ -3671,6 +3710,7 @@ func file_sdodev_contracts_v1alpha1_messages_proto_init() {
 	file_sdodev_contracts_v1alpha1_traffic_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[4].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[7].OneofWrappers = []any{}
+	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[8].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[9].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[25].OneofWrappers = []any{}
 	file_sdodev_contracts_v1alpha1_messages_proto_msgTypes[28].OneofWrappers = []any{}

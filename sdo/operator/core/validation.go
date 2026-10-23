@@ -39,6 +39,8 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 }
 
 var supportedWatches = map[string]struct{}{
+	"admissionregistration.k8s.io/v1/MutatingWebhookConfiguration":   {},
+	"admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration": {},
 	"apps/v1/Deployment":                 {},
 	"apps/v1/ReplicaSet":                 {},
 	"discovery.k8s.io/v1/EndpointSlice":  {},

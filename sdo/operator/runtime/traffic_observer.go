@@ -435,10 +435,11 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 		window, _ := p.Reachability.Window()
 		reachability = &window
 	}
-	return trafficContext{DetectionContext: base, windows: windows, reachability: reachability}, nil
+	return trafficContext{ScopedObservationSource: scopedSource(base),DetectionContext: base, windows: windows, reachability: reachability}, nil
 }
 
 type trafficContext struct {
+	sdk.ScopedObservationSource
 	sdk.DetectionContext
 	windows      map[string]traffic.Window
 	reachability *servicehealth.ReachabilityWindow
@@ -470,4 +471,11 @@ func (c trafficContext) TrafficWindow(workload string) (traffic.Window, bool) {
 // The credential-free prober uses its existing application-only network policy.
 func (c HTTPProberClient) ProbePod(ctx context.Context, ref sdk.ObjectRef, ip string, port int32) (program.ProbeResult, error) {
 	return c.primitive(ctx, prober.PrimitiveRequest{To: ref, Port: port, PodIP: ip})
+}
+
+func scopedSource(view sdk.DetectionContext) sdk.ScopedObservationSource {
+	if source, ok := view.(sdk.ScopedObservationSource); ok {
+		return source
+	}
+	return sdk.ScopedSnapshot{}
 }

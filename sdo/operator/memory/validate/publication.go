@@ -14,6 +14,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk"
 )
 
 const ContextFile = "sdo-check-context.json"
@@ -22,9 +23,11 @@ const DecisionFile = "sdo-reflection-decision.json"
 // PublicationContext contains only the publication inputs unavailable in files.
 // Lifecycle facts are recomputed from Base, whose history is in the sandbox.
 type PublicationContext struct {
-	BaseCommit         string `json:"base_commit"`
-	IncidentID         string `json:"incident_id"`
-	VerifiedSourceTree string `json:"verified_source_tree,omitempty"`
+	ObservationCeiling   sdk.ObservationScope `json:"observation_ceiling"`
+	ApplicationNamespace string               `json:"application_namespace,omitempty"`
+	BaseCommit           string               `json:"base_commit"`
+	IncidentID           string               `json:"incident_id"`
+	VerifiedSourceTree   string               `json:"verified_source_tree,omitempty"`
 }
 
 func metadataPath(ctx context.Context, root, name string) (string, error) {

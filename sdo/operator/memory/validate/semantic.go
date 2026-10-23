@@ -14,6 +14,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/sdk"
 )
 
 var (
@@ -28,6 +30,7 @@ func (s *run) semantic(ctx context.Context) error {
 	if s.memory {
 		s.completeness()
 		s.documents()
+		s.observationRules()
 		s.playbookIndex()
 		s.detectorRules()
 		if err := s.scripts(ctx); err != nil {
@@ -359,4 +362,28 @@ func containsPath(paths []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (s *run) observationRules() {
+	if s.arch == nil {
+		return
+	}
+	scope, err := observation.Parse([]byte(s.arch.doc.Source))
+	if err == nil {
+		err = scope.Within(s.req.ObservationCeiling)
+	}
+	if err != nil {
+		s.add(Semantic, Diagnostic{Rule: "observation.scope", Path: layout.ArchitectureFile, Message: err.Error()})
+		return
+	}
+	for _, d := range s.detectors {
+		if d.manifest == nil {
+			continue
+		}
+		for _, w := range d.manifest.Watches {
+			if !scope.AllowsWatch(sdk.WatchKind{APIVersion: w.APIVersion, Kind: w.Kind, Namespace: w.Namespace}, s.req.ApplicationNamespace) {
+				s.add(Semantic, Diagnostic{Rule: "observation.watch", Path: layout.ArchitectureFile, Message: "detector watch exceeds accepted observation scope"})
+			}
+		}
+	}
 }

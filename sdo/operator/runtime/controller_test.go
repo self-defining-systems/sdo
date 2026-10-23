@@ -325,7 +325,7 @@ func TestDifferentFingerprintCannotDispatchWhileResponderRuns(t *testing.T) {
 	controller, err := NewController(
 		config,
 		[]sdk.Detector{detector},
-		staticProvider{snapshot: sdktest.Snapshot{}},
+		staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}},
 		dispatcher,
 		start,
 	)
@@ -366,7 +366,7 @@ func TestControllerDebouncesFindingsFromSeparateWatchEvents(t *testing.T) {
 	config := testControllerConfig()
 	config.FiringThreshold = 1
 	config.BatchDebounce = 100 * time.Millisecond
-	controller, err := NewController(config, []sdk.Detector{first, second}, staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, start)
+	controller, err := NewController(config, []sdk.Detector{first, second}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "demo"}}, dispatcher, start)
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}

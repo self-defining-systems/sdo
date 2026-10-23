@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"reflect"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"sort"
 	"time"
 
@@ -320,4 +325,62 @@ func (v adoptionConflictView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff
 		return v.diff, nil
 	}
 	return v.ReadView.DiffAgainstSource(ref)
+}
+
+func (v adoptionConflictView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
+}
+
+func (v adoptionConflictView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
+}
+
+func (v adoptionConflictView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	return sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
+}
+
+func (v adoptionConflictView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+}
+
+func (v adoptionConflictView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	return sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+}
+
+func (v adoptionConflictView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.ReadView).ObservationStatuses()
+}
+func (v adoptionConflictView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
+}
+
+func (v adoptionConflictView) ObservedAt() time.Time {
+	if clock, ok := v.ReadView.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v adoptionConflictView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.ReadView.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v adoptionConflictView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v adoptionConflictView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v adoptionConflictView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	return result, err
 }

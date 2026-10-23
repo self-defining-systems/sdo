@@ -107,7 +107,7 @@ func (c *Controller) probeGate(
 ) {
 	for _, detector := range probes {
 		spec := detector.Spec()
-		findings, err := detector.Detect(ctx, snapshot)
+		findings, err := sdk.DetectObserved(ctx, detector, snapshot)
 		if err == nil {
 			for index := range findings {
 				if findings[index].DetectorID == "" {
