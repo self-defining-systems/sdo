@@ -280,3 +280,115 @@ func TestSelectionLedgerRejectsSelectionFenceMismatch(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectionLedgerRejectsInconsistentDurableFacts(t *testing.T) {
+	for _, failure := range []string{"empty_history", "missing_reservation", "duplicate_request", "future_acceptance", "partial_checkpoint"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx := context.Background()
+			journal, store, menu, selection := selectionLedgerFixture(t)
+			if _, _, err := journal.accept(ctx, menu, selection); err != nil {
+				t.Fatal(err)
+			}
+			store.mu.Lock()
+			s := store.state.SelectionLedger
+			switch failure {
+			case "empty_history":
+				s.SourceHistory = nil
+			case "missing_reservation":
+				s.ReservedBatches = 0
+			case "duplicate_request":
+				s.Attempts = append(s.Attempts, proto.Clone(s.Attempts[0]).(*contracts.SelectionAttempt))
+				s.ReservedBatches = 4
+			case "future_acceptance":
+				s.Attempts[0].AcceptanceEpoch = 2
+			case "partial_checkpoint":
+				s.CheckpointDigest = ""
+			}
+			store.mu.Unlock()
+			if _, err := openSelectionJournal(ctx, store, IncidentRequest{IncidentID: "incident"}, "ignored", 5); err == nil {
+				t.Fatal("inconsistent durable selection state was adopted")
+			}
+		})
+	}
+}
+
+func TestSelectionLedgerFrozenRestartStillDeliversReports(t *testing.T) {
+	ctx := context.Background()
+	journal, store, menu, selection := selectionLedgerFixture(t)
+	attempt, _, err := journal.accept(ctx, menu, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.adopt(ctx, "source-b", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.recover(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	state, _, _ := store.Load(ctx)
+	replacement := NewResponderLoop(IncidentRequest{IncidentID: "incident", SourceCommit: "source-b"}, nil, nil, nil, PlanExecutor{}, 50)
+	if err := replacement.attachSelectionJournal(ctx, replacement.Request, store, state, false); err != nil {
+		t.Fatalf("frozen replacement cannot redeliver reports: %v", err)
+	}
+	if len(replacement.selection.pendingReports()) != 1 {
+		t.Fatal("frozen replacement lost report outbox")
+	}
+	if err := replacement.selection.acknowledge(ctx, attempt.AttemptId, "provider-session", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.selection.authorizeMutation(ctx, 3); err == nil {
+		t.Fatal("report delivery unfroze mutations")
+	}
+}
+func TestSelectionLedgerCannotSettleUnknownAsSuccess(t *testing.T) {
+	ctx := context.Background()
+	journal, _, menu, selection := selectionLedgerFixture(t)
+	attempt, _, err := journal.accept(ctx, menu, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := &contracts.MitigationActionReceipt{ActionId: "uncertain", Resource: &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "app", Name: "a"}, Effect: contracts.MitigationOption_EFFECT_SCOPED_ROUTING_SET_FIELD, State: contracts.MitigationActionReceipt_STATE_UNKNOWN}
+	if err := journal.beginAction(ctx, attempt.AttemptId, 1, "forward", receipt); err != nil {
+		t.Fatal(err)
+	}
+	report := &contracts.MitigationReport{Version: 1, IncidentId: "incident", SessionId: "session", RequestId: "request", AttemptId: attempt.AttemptId, AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_SUCCESS}
+	if _, err := journal.settle(ctx, attempt.AttemptId, report, 1); err == nil {
+		t.Fatal("unknown action settled as success")
+	}
+}
+
+func TestSelectionLedgerRejectsStaleOwnerSemanticRetry(t *testing.T) {
+	ctx := context.Background()
+	journal, store, menu, selection := selectionLedgerFixture(t)
+	if _, _, err := journal.accept(ctx, menu, selection); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := openSelectionJournal(ctx, store, IncidentRequest{IncidentID: "incident"}, "ignored", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.adopt(ctx, "source-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := journal.accept(ctx, menu, selection); err == nil {
+		t.Fatal("old owner returned pending/report for stale epoch")
+	}
+}
+
+func TestSelectionLedgerMigratesLegacyBudgetInTheGenesisCAS(t *testing.T) {
+	ctx := context.Background()
+	_, _, menu, _ := selectionLedgerFixture(t)
+	payload := []byte(`{"Version":2,"IncidentID":"incident","SourceCommit":"source-a","Batches":3,"MaxBatches":5}`)
+	store := &selectionTestStore{state: &contracts.ControllerState{Version: RuntimeStateVersion, ResponderToolStateJson: payload}, revision: 1}
+	journal, err := openSelectionJournal(ctx, store, IncidentRequest{IncidentID: "incident", SourceCommit: "source-a", ResponseDeadline: menu.OriginalDeadline.AsTime()}, "session", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := journal.snapshot()
+	if state.TotalBatches != 5 || state.UsedBatches != 3 {
+		t.Fatalf("genesis reset legacy allowance: %+v", state)
+	}
+	if store.revision != 2 {
+		t.Fatal("legacy migration did not share the genesis CAS")
+	}
+}

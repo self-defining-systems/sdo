@@ -220,7 +220,7 @@ class MitigationActionReceipt(_message.Message):
     def __init__(self, action_id: _Optional[str] = ..., resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., effect: _Optional[_Union[MitigationOption.Effect, str]] = ..., state: _Optional[_Union[MitigationActionReceipt.State, str]] = ..., uid: _Optional[str] = ..., resource_version: _Optional[str] = ..., compensation_state: _Optional[_Union[MitigationActionReceipt.State, str]] = ..., rollback_conflict: _Optional[bool] = ...) -> None: ...
 
 class MitigationBarrier(_message.Message):
-    __slots__ = ("capture_id", "attempt_id", "round_index", "phase", "occurrence", "observations", "observed_at", "complete")
+    __slots__ = ("capture_id", "attempt_id", "round_index", "phase", "occurrence", "observations", "observed_at", "complete", "collections")
     CAPTURE_ID_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
     ROUND_INDEX_FIELD_NUMBER: _ClassVar[int]
@@ -229,6 +229,7 @@ class MitigationBarrier(_message.Message):
     OBSERVATIONS_FIELD_NUMBER: _ClassVar[int]
     OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
     COMPLETE_FIELD_NUMBER: _ClassVar[int]
+    COLLECTIONS_FIELD_NUMBER: _ClassVar[int]
     capture_id: str
     attempt_id: str
     round_index: int
@@ -237,7 +238,8 @@ class MitigationBarrier(_message.Message):
     observations: _containers.RepeatedCompositeFieldContainer[MitigationObservation]
     observed_at: _timestamp_pb2.Timestamp
     complete: bool
-    def __init__(self, capture_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., round_index: _Optional[int] = ..., phase: _Optional[str] = ..., occurrence: _Optional[int] = ..., observations: _Optional[_Iterable[_Union[MitigationObservation, _Mapping]]] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., complete: _Optional[bool] = ...) -> None: ...
+    collections: _containers.RepeatedCompositeFieldContainer[MitigationCollectionObservation]
+    def __init__(self, capture_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., round_index: _Optional[int] = ..., phase: _Optional[str] = ..., occurrence: _Optional[int] = ..., observations: _Optional[_Iterable[_Union[MitigationObservation, _Mapping]]] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., complete: _Optional[bool] = ..., collections: _Optional[_Iterable[_Union[MitigationCollectionObservation, _Mapping]]] = ...) -> None: ...
 
 class MitigationObservation(_message.Message):
     __slots__ = ("resource", "uid", "resource_version", "confirmed_absent", "effect_confirmed")
@@ -374,3 +376,17 @@ class MitigationSession(_message.Message):
     pending_reports: _containers.RepeatedCompositeFieldContainer[MitigationReport]
     writes_frozen: bool
     def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., dispatch_epoch: _Optional[int] = ..., original_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., provider: _Optional[str] = ..., provider_session_id: _Optional[str] = ..., checkpoint_digest: _Optional[str] = ..., pending_reports: _Optional[_Iterable[_Union[MitigationReport, _Mapping]]] = ..., writes_frozen: _Optional[bool] = ...) -> None: ...
+
+class MitigationCollectionObservation(_message.Message):
+    __slots__ = ("api_version", "kind", "namespace", "resource_version", "item_count")
+    API_VERSION_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_VERSION_FIELD_NUMBER: _ClassVar[int]
+    ITEM_COUNT_FIELD_NUMBER: _ClassVar[int]
+    api_version: str
+    kind: str
+    namespace: str
+    resource_version: str
+    item_count: int
+    def __init__(self, api_version: _Optional[str] = ..., kind: _Optional[str] = ..., namespace: _Optional[str] = ..., resource_version: _Optional[str] = ..., item_count: _Optional[int] = ...) -> None: ...

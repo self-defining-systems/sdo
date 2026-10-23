@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"k8s.io/apimachinery/pkg/types"
+	"sdo.dev/operator/sdk"
 	"sync"
 	"time"
 )
@@ -74,4 +76,20 @@ func (o *mutationOwner) freezeAfterFailedDrain(ctx context.Context, source strin
 	durable, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	return errors.Join(cause, o.journal.adopt(durable, source, false))
+}
+
+// The owner holds the whole operation while this edge rechecks every outgoing
+// API write. A multi-action apply or automatic rollback must not keep issuing
+// calls after another process has adopted/frozen its epoch.
+type selectionFencedPlanClient struct {
+	PlanObjectClient
+	journal *selectionJournal
+	epoch   uint64
+}
+
+func (c selectionFencedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	if err := c.journal.authorizeMutation(ctx, c.epoch); err != nil {
+		return err
+	}
+	return c.PlanObjectClient.Patch(ctx, ref, kind, patch)
 }

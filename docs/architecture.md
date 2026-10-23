@@ -120,6 +120,8 @@ ConfigMap through `StateStore` CAS, alongside the legacy counter journal.
 Acceptance reserves one or two batches atomically; normalized semantic request
 hashes exclude dispatch epoch. Adoption retains the logical/provider session,
 original deadline, incident budget, acceptance epochs and source history.
+Genesis imports legacy counters in the same CAS, avoiding an empty-budget
+window during migration; inconsistent cross-record facts fail closed.
 Intent/completion receipts contain identities only, never pre-images. Settlement
 releases unused reservation once; uncertain calls spend the full reservation.
 Terminal reports are immutable and remain in an outbox until provider delivery
@@ -129,19 +131,35 @@ generated ProtoJSON, including uint64 epochs.
 The worker has a gated same-session recovery path (`SDO_MITIGATION_SESSION=1`)
 which verifies a persisted provider transcript prefix before resuming Codex or
 Claude, includes pending reports in that session's prompt and acknowledges them
-after delivery. Missing checkpoints, changed identities and unproven old-owner
+after delivery. Every resumed turn uses the original deadline as its timeout.
+Missing checkpoints, changed identities and unproven old-owner
 quiescence fail visibly. The mutation-owner component drains complete calls
 before adoption; a failed drain freezes writes. Legacy apply/rollback share the
-owner and reserved incident budget once a selection journal exists.
+owner and reserved incident budget once a selection journal exists, with
+revalidation at each backend write. A durable write freeze still permits
+read-only report delivery; a local storage failure freezes that owner entirely.
 
 This remains an incomplete implementation: `menu` and `mitigate` execution are
 not enabled, and the dispatcher does not yet activate the worker recovery flag.
 Raw `act` mutation-gateway integration, health-refresh session continuity,
-causal barriers, closure handoff and guarded execution still gate enablement.
+causal-barrier wiring, closure handoff and guarded execution still gate enablement.
 Recovery without a current reader records an explicit observation failure,
 never successful verification. The executable B3 and credential fixtures in
 `runtime/mitigation_menu_slice1_test.go` therefore deliberately remain red.
 Existing sessions without a selection journal retain their capture-gap behavior.
+
+`runtime/causal_barrier.go` supplies a separate direct-read component. It
+persists a unique attempt/round/phase/occurrence intent before collection and
+marks it complete through CAS only after current reads, UID/owned-effect or
+absence checks, and a repeated source/scope/policy fence. Collection receipts
+retain opaque list versions and item counts, including empty collections.
+Verification receives the resulting current objects; unlisted kinds and
+unavailable traffic readers fail closed. The Kubernetes reader uses current
+namespaced lists, with no informer fallback, resourceVersion ordering or
+Secret API. A caller-supplied nonsecret authorization gate is mandatory before
+any collection read; this component does not itself establish provenance.
+The component remains separate from diagnosis and restored-closure hooks until
+the scoped-observation changes are merged and those integrations are validated.
 
 The intended enabled scope is routing `SetField` and Deployment restart only.
 Before enabling either, the Go menu must enforce an explicit fail-closed Secret

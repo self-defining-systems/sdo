@@ -115,3 +115,26 @@ def test_pending_reports_enter_same_session_prompt_and_ack_only_after_delivery(t
     with pytest.raises(SessionRecoveryError):
         recovery.acknowledge_reports()
     assert not seen
+
+
+def test_original_deadline_bounds_every_resumed_turn(tmp_path: Path) -> None:
+    session = controller_session()
+    session.original_deadline.FromDatetime(datetime.now(UTC))
+    recovery = SessionRecovery(session, "codex", tmp_path, lambda _: None)
+    with pytest.raises(SessionRecoveryError, match="original deadline"):
+        recovery.remaining_seconds()
+
+
+def test_expired_session_does_not_launch_a_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.responder import codex
+    from tests.unit.sdo.agents.responder.test_codex_responder import _request
+
+    session = controller_session()
+    session.original_deadline.FromDatetime(datetime(1970, 1, 1, tzinfo=UTC))
+    recovery = SessionRecovery(session, "codex", tmp_path, lambda _: None)
+    monkeypatch.setattr(codex, "open_recovery", lambda *_: recovery)
+    monkeypatch.setattr(
+        codex, "run_structured_turn", lambda *_args, **_kwargs: pytest.fail("expired provider launched")
+    )
+    with pytest.raises(codex.ResponderExecutionError, match="original deadline"):
+        codex.execute_incident(_request(), provider="codex")

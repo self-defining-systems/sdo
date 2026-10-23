@@ -98,6 +98,7 @@ def execute_incident(
                 access="danger-full-access",
                 model=model,
                 reasoning_effort=INCIDENT_REASONING_EFFORT,
+                timeout_seconds=recovery.remaining_seconds() if recovery is not None else None,
                 resume_session_id=resume_session_id,
                 executor=executor,
                 on_session_started=recovery.checkpoint if recovery is not None else None,

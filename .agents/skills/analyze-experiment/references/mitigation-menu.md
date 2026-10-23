@@ -82,3 +82,29 @@ The report outbox drains only after the original provider session acknowledges
 delivery; publication into a transport response file alone does not drain it.
 Raw `act` fencing, health-refresh continuity and fresh closure integration
 remain outstanding; do not interpret these records as proof they are wired.
+
+## Direct causal component
+
+`MitigationBarrier.collections` retains each fully read kind/namespace, opaque
+collection resourceVersion and item count. Empty lists need these receipts too.
+The direct Kubernetes reader requests most-recent namespaced lists; pagination,
+missing readers and unobserved dependencies refuse completeness. ResourceVersion
+identity is recorded, never ordered. UID replacement, a missing intended effect,
+server defaults restoring a removed field, finalizers on a delete, and a source
+fence changing during reads all fail the barrier. Creation observation requires
+a durable prior-absence capture and the newly observed UID; no create effect is
+enabled by this component.
+
+Each capture has a durable incomplete intent before collection and a separate
+completion CAS. A failed completion exposes no usable verification view. The
+returned view contains the direct objects and rejects unlisted kinds; unavailable
+traffic observations cannot masquerade as healthy. Read authorization must be
+supplied by the caller before collection. These are causal checks, not proof of
+nonsecret provenance. The component is not yet wired through diagnosis or closure.
+
+A resumed worker's turn timeout is the remaining original deadline; expiration
+does not allocate a fresh deadline. Journal integrity checks reject missing
+reservation totals, duplicate IDs, future acceptance epochs, incomplete provider
+identities and contradictory action facts. A persisted write prohibition allows
+read-only report redelivery after another restart; it differs from the local
+storage-failure fence, which cannot safely continue that owner.

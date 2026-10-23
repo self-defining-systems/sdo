@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -11,26 +10,29 @@ import (
 
 func (l *ResponderLoop) openMenuSession(ctx context.Context, response *ToolResponse) {
 	if l.selection == nil {
+		// Publish current legacy facts before genesis, which imports them
+		// atomically. Never create a zero-counter ledger and migrate later.
+		if l.batches > 0 && l.saveToolState == nil {
+			response.Error = "durable legacy budget unavailable"
+			return
+		}
+		if err := l.persistToolState(ctx); err != nil {
+			response.Error = "durable legacy budget unavailable"
+			return
+		}
 		journal, err := openSelectionJournal(ctx, l.selectionStore, l.Request, l.sessionID, l.MaxBatches)
 		if err != nil {
 			response.Error = "durable selection session unavailable"
 			return
 		}
-		if l.batches > 0 {
-			journal.mu.Lock()
-			next := journal.next()
-			next.SelectionLedger.UsedBatches = uint32(l.batches)
-			err = journal.save(ctx, next)
-			journal.mu.Unlock()
-			if err != nil {
-				response.Error = "selection budget migration failed"
-				return
-			}
-		}
 		l.selection = journal
 		l.mutationOwner = newMutationOwner(journal)
 	}
 	s := l.selection.snapshot()
+	if err := l.selection.currentEpoch(ctx, s.DispatchEpoch); err != nil {
+		response.Error = "stale responder session owner"
+		return
+	}
 	response.Session = &contracts.MitigationSession{Version: 1, IncidentId: s.IncidentId, SessionId: s.SessionId, DispatchEpoch: s.DispatchEpoch, OriginalDeadline: s.OriginalDeadline, Provider: s.Provider, ProviderSessionId: s.ProviderSessionId, CheckpointDigest: s.CheckpointDigest, PendingReports: l.selection.pendingReports(), WritesFrozen: s.WritesFrozen}
 	response.Summary = "durable responder session"
 }
@@ -100,19 +102,6 @@ func (l *ResponderLoop) attachSelectionJournal(ctx context.Context, request Inci
 	return nil
 }
 
-// Only menu session participants use this gate. Existing capture-only sessions
-// retain their evidence-gap semantics until they open a durable menu session.
-func (l *ResponderLoop) selectionWriteGuard(ctx context.Context) error {
-	if l.selection == nil {
-		return nil
-	}
-	s := l.selection.snapshot()
-	if err := l.selection.authorizeMutation(ctx, s.DispatchEpoch); err != nil {
-		return errors.Join(errors.New("selection session prohibits mutations"), err)
-	}
-	return nil
-}
-
 func cloneSelectionReport(report *contracts.MitigationReport) *contracts.MitigationReport {
 	if report == nil {
 		return nil
@@ -126,11 +115,19 @@ func (l *ResponderLoop) withSelectionOwner(ctx context.Context, response *ToolRe
 		return
 	}
 	epoch := l.selection.snapshot().DispatchEpoch
-	if err := l.mutationOwner.run(ctx, epoch, func(callCtx context.Context) error { call(callCtx); return nil }); err != nil {
+	if err := l.mutationOwner.run(ctx, epoch, func(callCtx context.Context) error {
+		original := l.Executor.Client
+		if original != nil {
+			l.Executor.Client = selectionFencedPlanClient{PlanObjectClient: original, journal: l.selection, epoch: epoch}
+		}
+		defer func() { l.Executor.Client = original }()
+		call(callCtx)
+		return nil
+	}); err != nil {
 		response.Error = "selection session prohibits mutations"
 	}
 }
-func (l *ResponderLoop) selectionReport(_ context.Context, query *contracts.MitigationReportQuery, response *ToolResponse) {
+func (l *ResponderLoop) selectionReport(ctx context.Context, query *contracts.MitigationReportQuery, response *ToolResponse) {
 	if l.selection == nil || query == nil || wire.Validate(query) != nil {
 		response.Error = "invalid selection report query"
 		return
@@ -138,6 +135,10 @@ func (l *ResponderLoop) selectionReport(_ context.Context, query *contracts.Miti
 	s := l.selection.snapshot()
 	if query.IncidentId != s.IncidentId || query.SessionId != s.SessionId || query.DispatchEpoch != s.DispatchEpoch {
 		response.Error = "stale selection report query"
+		return
+	}
+	if err := l.selection.currentEpoch(ctx, query.DispatchEpoch); err != nil {
+		response.Error = "stale selection report owner"
 		return
 	}
 	a, err := selectionAttempt(s, query.AttemptId)

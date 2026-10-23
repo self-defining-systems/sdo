@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 )
 
 func TestSelectionMutationOwnerDrainsBeforeAdoption(t *testing.T) {
@@ -175,5 +178,43 @@ func TestSelectionLedgerRecoveryRetainsCompensationUncertainty(t *testing.T) {
 	}
 	if journal.snapshot().UsedBatches != 2 {
 		t.Fatal("uncertain compensation released budget")
+	}
+}
+
+type selectionBoundaryClient struct {
+	calls      int
+	afterPatch func() error
+}
+
+func (c *selectionBoundaryClient) Get(context.Context, sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return nil, errors.New("unused synthetic read")
+}
+func (c *selectionBoundaryClient) Patch(context.Context, sdk.ObjectRef, types.PatchType, []byte) error {
+	c.calls++
+	if c.afterPatch != nil {
+		return c.afterPatch()
+	}
+	return nil
+}
+func TestSelectionMutationOwnerFencesEachBackendCall(t *testing.T) {
+	ctx := context.Background()
+	journal, store, _, _ := selectionLedgerFixture(t)
+	replacement, err := openSelectionJournal(ctx, store, IncidentRequest{IncidentID: "incident"}, "ignored", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &selectionBoundaryClient{afterPatch: func() error { return replacement.adopt(ctx, "source-b", false) }}
+	loop := &ResponderLoop{selection: journal, mutationOwner: newMutationOwner(journal), Executor: PlanExecutor{Client: client}}
+	response := ToolResponse{}
+	loop.withSelectionOwner(ctx, &response, func(callCtx context.Context) {
+		if err := loop.Executor.Client.Patch(callCtx, menuService, types.MergePatchType, []byte(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := loop.Executor.Client.Patch(callCtx, menuService, types.MergePatchType, []byte(`{}`)); err == nil {
+			t.Fatal("second request escaped adopted epoch")
+		}
+	})
+	if client.calls != 1 {
+		t.Fatal("fenced owner sent another API write")
 	}
 }

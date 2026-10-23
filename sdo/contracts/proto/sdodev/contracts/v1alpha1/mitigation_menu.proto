@@ -154,6 +154,7 @@ message MitigationBarrier {
   repeated MitigationObservation observations = 6;
   google.protobuf.Timestamp observed_at = 7 [(buf.validate.field).required = true];
   bool complete = 8;
+  repeated MitigationCollectionObservation collections = 9;
 }
 
 message MitigationObservation {
@@ -239,4 +240,14 @@ message MitigationSession {
   string checkpoint_digest = 8;
   repeated MitigationReport pending_reports = 9;
   bool writes_frozen = 10;
+}
+
+// Empty collections still need direct-read receipts. The opaque list version
+// records read identity only and must never be ordered against write versions.
+message MitigationCollectionObservation {
+  string api_version = 1 [(buf.validate.field).string.min_len = 1];
+  string kind = 2 [(buf.validate.field).string.min_len = 1];
+  string namespace = 3 [(buf.validate.field).string.min_len = 1];
+  string resource_version = 4 [(buf.validate.field).string.min_len = 1];
+  uint32 item_count = 5;
 }

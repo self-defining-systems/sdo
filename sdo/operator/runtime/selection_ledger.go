@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -54,15 +55,33 @@ func openSelectionJournal(ctx context.Context, store StateStore, request Inciden
 		if err := wire.Validate(existing); err != nil {
 			return nil, fmt.Errorf("invalid selection ledger: %w", err)
 		}
+		if err := validateSelectionLedger(existing); err != nil {
+			return nil, err
+		}
 		j.epoch = existing.DispatchEpoch
-		j.frozen = existing.WritesFrozen
 		return j, nil
 	}
 	if request.IncidentID == "" || session == "" || request.SourceCommit == "" || request.ResponseDeadline.IsZero() || maxBatches <= 0 || maxBatches > 100 {
 		return nil, errors.New("selection ledger requires incident, session, source, original deadline and bounded budget")
 	}
+	// Migrate counters in the same genesis CAS. A crash between separate
+	// genesis/migration writes must never restore a fresh budget.
+	used := 0
+	if len(j.state.ResponderToolStateJson) > 0 {
+		var legacy responderToolState
+		if json.Unmarshal(j.state.ResponderToolStateJson, &legacy) != nil || (legacy.Version != 1 && legacy.Version != 2) || legacy.IncidentID != request.IncidentID || legacy.Batches < 0 || legacy.MaxBatches < 0 {
+			return nil, errors.New("invalid legacy incident budget")
+		}
+		used = legacy.Batches
+		if legacy.MaxBatches > 0 && legacy.MaxBatches < maxBatches {
+			maxBatches = legacy.MaxBatches
+		}
+		if used > maxBatches {
+			return nil, errors.New("legacy incident budget exceeds original limit")
+		}
+	}
 	next := proto.Clone(j.state).(*contracts.ControllerState)
-	next.SelectionLedger = &contracts.SelectionLedger{Version: 1, IncidentId: request.IncidentID, SessionId: session, OriginalDeadline: timestamppb.New(request.ResponseDeadline), DispatchEpoch: 1, SourceHistory: []string{request.SourceCommit}, TotalBatches: uint32(maxBatches), OwnerQuiescent: true}
+	next.SelectionLedger = &contracts.SelectionLedger{Version: 1, IncidentId: request.IncidentID, SessionId: session, OriginalDeadline: timestamppb.New(request.ResponseDeadline), DispatchEpoch: 1, SourceHistory: []string{request.SourceCommit}, TotalBatches: uint32(maxBatches), UsedBatches: uint32(used), OwnerQuiescent: true}
 	if err := j.save(ctx, next); err != nil {
 		return nil, err
 	}
@@ -76,7 +95,12 @@ func (j *selectionJournal) snapshot() *contracts.SelectionLedger {
 	return proto.Clone(j.state.SelectionLedger).(*contracts.SelectionLedger)
 }
 func (j *selectionJournal) save(ctx context.Context, next *contracts.ControllerState) error {
+	if err := validateSelectionLedger(next.SelectionLedger); err != nil {
+		j.frozen = true
+		return err
+	}
 	if err := wire.Validate(next); err != nil {
+		j.frozen = true
 		return err
 	}
 	revision, err := j.store.Save(ctx, next, j.revision)
@@ -112,6 +136,13 @@ func (j *selectionJournal) authorizeMutation(ctx context.Context, epoch uint64) 
 	if err := j.writable(epoch); err != nil {
 		return err
 	}
+	return j.currentEpochLocked(ctx, epoch)
+}
+
+func (j *selectionJournal) currentEpochLocked(ctx context.Context, epoch uint64) error {
+	if j.frozen || epoch != j.epoch {
+		return errSelectionFenced
+	}
 	current, revision, err := j.store.Load(ctx)
 	if err != nil {
 		j.frozen = true
@@ -123,9 +154,18 @@ func (j *selectionJournal) authorizeMutation(ctx context.Context, epoch uint64) 
 	}
 	return nil
 }
+func (j *selectionJournal) currentEpoch(ctx context.Context, epoch uint64) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.currentEpochLocked(ctx, epoch)
+}
+
 func (j *selectionJournal) checkpoint(ctx context.Context, provider, session, digest string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if err := j.currentEpochLocked(ctx, j.epoch); err != nil {
+		return err
+	}
 	if err := j.writable(j.epoch); err != nil {
 		return err
 	}
@@ -192,6 +232,9 @@ func (j *selectionJournal) accept(ctx context.Context, menu *contracts.Mitigatio
 		return nil, false, err
 	}
 	if err := j.writable(selection.DispatchEpoch); err != nil {
+		return nil, false, err
+	}
+	if err := j.currentEpochLocked(ctx, selection.DispatchEpoch); err != nil {
 		return nil, false, err
 	}
 	s := j.state.SelectionLedger
@@ -312,6 +355,9 @@ func (j *selectionJournal) settle(ctx context.Context, id string, report *contra
 	if j.frozen {
 		return nil, errSelectionFenced
 	}
+	if err := j.currentEpochLocked(ctx, j.epoch); err != nil {
+		return nil, err
+	}
 	next := j.next()
 	s := next.SelectionLedger
 	a, err := selectionAttempt(s, id)
@@ -336,6 +382,9 @@ func (j *selectionJournal) settle(ctx context.Context, id string, report *contra
 	// budget on the assumption that a lost API reply meant no effect.
 	for _, action := range a.Actions {
 		if !action.Complete {
+			if candidate.Status == contracts.MitigationReport_STATUS_SUCCESS {
+				return nil, errors.New("uncertain action cannot authorize success")
+			}
 			used = a.ReservedBatches
 		}
 	}
@@ -413,6 +462,9 @@ func (j *selectionJournal) pendingReports() []*contracts.MitigationReport {
 func (j *selectionJournal) acknowledge(ctx context.Context, id, providerSession string, closure bool) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if err := j.currentEpochLocked(ctx, j.epoch); err != nil {
+		return err
+	}
 	if j.frozen {
 		return errSelectionFenced
 	}

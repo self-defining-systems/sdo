@@ -1022,15 +1022,16 @@ func (x *MitigationActionReceipt) GetRollbackConflict() bool {
 
 // Identity and causal proof only; never full Kubernetes objects or log bodies.
 type MitigationBarrier struct {
-	state         protoimpl.MessageState   `protogen:"open.v1"`
-	CaptureId     string                   `protobuf:"bytes,1,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
-	AttemptId     string                   `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
-	RoundIndex    uint32                   `protobuf:"varint,3,opt,name=round_index,json=roundIndex,proto3" json:"round_index,omitempty"`
-	Phase         string                   `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
-	Occurrence    uint32                   `protobuf:"varint,5,opt,name=occurrence,proto3" json:"occurrence,omitempty"`
-	Observations  []*MitigationObservation `protobuf:"bytes,6,rep,name=observations,proto3" json:"observations,omitempty"`
-	ObservedAt    *timestamppb.Timestamp   `protobuf:"bytes,7,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
-	Complete      bool                     `protobuf:"varint,8,opt,name=complete,proto3" json:"complete,omitempty"`
+	state         protoimpl.MessageState             `protogen:"open.v1"`
+	CaptureId     string                             `protobuf:"bytes,1,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
+	AttemptId     string                             `protobuf:"bytes,2,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	RoundIndex    uint32                             `protobuf:"varint,3,opt,name=round_index,json=roundIndex,proto3" json:"round_index,omitempty"`
+	Phase         string                             `protobuf:"bytes,4,opt,name=phase,proto3" json:"phase,omitempty"`
+	Occurrence    uint32                             `protobuf:"varint,5,opt,name=occurrence,proto3" json:"occurrence,omitempty"`
+	Observations  []*MitigationObservation           `protobuf:"bytes,6,rep,name=observations,proto3" json:"observations,omitempty"`
+	ObservedAt    *timestamppb.Timestamp             `protobuf:"bytes,7,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	Complete      bool                               `protobuf:"varint,8,opt,name=complete,proto3" json:"complete,omitempty"`
+	Collections   []*MitigationCollectionObservation `protobuf:"bytes,9,rep,name=collections,proto3" json:"collections,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1119,6 +1120,13 @@ func (x *MitigationBarrier) GetComplete() bool {
 		return x.Complete
 	}
 	return false
+}
+
+func (x *MitigationBarrier) GetCollections() []*MitigationCollectionObservation {
+	if x != nil {
+		return x.Collections
+	}
+	return nil
 }
 
 type MitigationObservation struct {
@@ -1791,6 +1799,84 @@ func (x *MitigationSession) GetWritesFrozen() bool {
 	return false
 }
 
+// Empty collections still need direct-read receipts. The opaque list version
+// records read identity only and must never be ordered against write versions.
+type MitigationCollectionObservation struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ApiVersion      string                 `protobuf:"bytes,1,opt,name=api_version,json=apiVersion,proto3" json:"api_version,omitempty"`
+	Kind            string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Namespace       string                 `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	ResourceVersion string                 `protobuf:"bytes,4,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
+	ItemCount       uint32                 `protobuf:"varint,5,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *MitigationCollectionObservation) Reset() {
+	*x = MitigationCollectionObservation{}
+	mi := &file_sdodev_contracts_v1alpha1_mitigation_menu_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MitigationCollectionObservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MitigationCollectionObservation) ProtoMessage() {}
+
+func (x *MitigationCollectionObservation) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_mitigation_menu_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MitigationCollectionObservation.ProtoReflect.Descriptor instead.
+func (*MitigationCollectionObservation) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *MitigationCollectionObservation) GetApiVersion() string {
+	if x != nil {
+		return x.ApiVersion
+	}
+	return ""
+}
+
+func (x *MitigationCollectionObservation) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *MitigationCollectionObservation) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *MitigationCollectionObservation) GetResourceVersion() string {
+	if x != nil {
+		return x.ResourceVersion
+	}
+	return ""
+}
+
+func (x *MitigationCollectionObservation) GetItemCount() uint32 {
+	if x != nil {
+		return x.ItemCount
+	}
+	return 0
+}
+
 var File_sdodev_contracts_v1alpha1_mitigation_menu_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
@@ -1919,7 +2005,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11STATE_NOT_APPLIED\x10\x01\x12\x11\n" +
 	"\rSTATE_APPLIED\x10\x02\x12\x11\n" +
-	"\rSTATE_UNKNOWN\x10\x03\"\xcc\x03\n" +
+	"\rSTATE_UNKNOWN\x10\x03\"\xaa\x04\n" +
 	"\x11MitigationBarrier\x12&\n" +
 	"\n" +
 	"capture_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tcaptureId\x12&\n" +
@@ -1934,7 +2020,8 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\fobservations\x18\x06 \x03(\v20.sdodev.contracts.v1alpha1.MitigationObservationR\fobservations\x12C\n" +
 	"\vobserved_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
 	"observedAt\x12\x1a\n" +
-	"\bcomplete\x18\b \x01(\bR\bcomplete\"\xf4\x01\n" +
+	"\bcomplete\x18\b \x01(\bR\bcomplete\x12\\\n" +
+	"\vcollections\x18\t \x03(\v2:.sdodev.contracts.v1alpha1.MitigationCollectionObservationR\vcollections\"\xf4\x01\n" +
 	"\x15MitigationObservation\x12H\n" +
 	"\bresource\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\bresource\x12\x10\n" +
 	"\x03uid\x18\x02 \x01(\tR\x03uid\x12)\n" +
@@ -2009,7 +2096,15 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\x11checkpoint_digest\x18\b \x01(\tR\x10checkpointDigest\x12T\n" +
 	"\x0fpending_reports\x18\t \x03(\v2+.sdodev.contracts.v1alpha1.MitigationReportR\x0ependingReports\x12#\n" +
 	"\rwrites_frozen\x18\n" +
-	" \x01(\bR\fwritesFrozenB\x86\x02\n" +
+	" \x01(\bR\fwritesFrozen\"\xe2\x01\n" +
+	"\x1fMitigationCollectionObservation\x12(\n" +
+	"\vapi_version\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
+	"apiVersion\x12\x1b\n" +
+	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12%\n" +
+	"\tnamespace\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x122\n" +
+	"\x10resource_version\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x0fresourceVersion\x12\x1d\n" +
+	"\n" +
+	"item_count\x18\x05 \x01(\rR\titemCountB\x86\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x13MitigationMenuProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -2025,64 +2120,66 @@ func file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDescGZIP() []byte {
 }
 
 var file_sdodev_contracts_v1alpha1_mitigation_menu_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_sdodev_contracts_v1alpha1_mitigation_menu_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_sdodev_contracts_v1alpha1_mitigation_menu_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_sdodev_contracts_v1alpha1_mitigation_menu_proto_goTypes = []any{
-	(MitigationOption_Effect)(0),        // 0: sdodev.contracts.v1alpha1.MitigationOption.Effect
-	(MitigationReport_Status)(0),        // 1: sdodev.contracts.v1alpha1.MitigationReport.Status
-	(MitigationActionReceipt_State)(0),  // 2: sdodev.contracts.v1alpha1.MitigationActionReceipt.State
-	(*MitigationMenu)(nil),              // 3: sdodev.contracts.v1alpha1.MitigationMenu
-	(*MitigationOption)(nil),            // 4: sdodev.contracts.v1alpha1.MitigationOption
-	(*MitigationSelection)(nil),         // 5: sdodev.contracts.v1alpha1.MitigationSelection
-	(*MitigationReportQuery)(nil),       // 6: sdodev.contracts.v1alpha1.MitigationReportQuery
-	(*MitigationReport)(nil),            // 7: sdodev.contracts.v1alpha1.MitigationReport
-	(*MitigationRoundReport)(nil),       // 8: sdodev.contracts.v1alpha1.MitigationRoundReport
-	(*MitigationActionReceipt)(nil),     // 9: sdodev.contracts.v1alpha1.MitigationActionReceipt
-	(*MitigationBarrier)(nil),           // 10: sdodev.contracts.v1alpha1.MitigationBarrier
-	(*MitigationObservation)(nil),       // 11: sdodev.contracts.v1alpha1.MitigationObservation
-	(*SelectionLedger)(nil),             // 12: sdodev.contracts.v1alpha1.SelectionLedger
-	(*SelectionAttempt)(nil),            // 13: sdodev.contracts.v1alpha1.SelectionAttempt
-	(*SelectionAction)(nil),             // 14: sdodev.contracts.v1alpha1.SelectionAction
-	(*MitigationSessionCheckpoint)(nil), // 15: sdodev.contracts.v1alpha1.MitigationSessionCheckpoint
-	(*MitigationSession)(nil),           // 16: sdodev.contracts.v1alpha1.MitigationSession
-	(*Binding)(nil),                     // 17: sdodev.contracts.v1alpha1.Binding
-	(*timestamppb.Timestamp)(nil),       // 18: google.protobuf.Timestamp
-	(*ObjectRef)(nil),                   // 19: sdodev.contracts.v1alpha1.ObjectRef
-	(*Verdict)(nil),                     // 20: sdodev.contracts.v1alpha1.Verdict
+	(MitigationOption_Effect)(0),            // 0: sdodev.contracts.v1alpha1.MitigationOption.Effect
+	(MitigationReport_Status)(0),            // 1: sdodev.contracts.v1alpha1.MitigationReport.Status
+	(MitigationActionReceipt_State)(0),      // 2: sdodev.contracts.v1alpha1.MitigationActionReceipt.State
+	(*MitigationMenu)(nil),                  // 3: sdodev.contracts.v1alpha1.MitigationMenu
+	(*MitigationOption)(nil),                // 4: sdodev.contracts.v1alpha1.MitigationOption
+	(*MitigationSelection)(nil),             // 5: sdodev.contracts.v1alpha1.MitigationSelection
+	(*MitigationReportQuery)(nil),           // 6: sdodev.contracts.v1alpha1.MitigationReportQuery
+	(*MitigationReport)(nil),                // 7: sdodev.contracts.v1alpha1.MitigationReport
+	(*MitigationRoundReport)(nil),           // 8: sdodev.contracts.v1alpha1.MitigationRoundReport
+	(*MitigationActionReceipt)(nil),         // 9: sdodev.contracts.v1alpha1.MitigationActionReceipt
+	(*MitigationBarrier)(nil),               // 10: sdodev.contracts.v1alpha1.MitigationBarrier
+	(*MitigationObservation)(nil),           // 11: sdodev.contracts.v1alpha1.MitigationObservation
+	(*SelectionLedger)(nil),                 // 12: sdodev.contracts.v1alpha1.SelectionLedger
+	(*SelectionAttempt)(nil),                // 13: sdodev.contracts.v1alpha1.SelectionAttempt
+	(*SelectionAction)(nil),                 // 14: sdodev.contracts.v1alpha1.SelectionAction
+	(*MitigationSessionCheckpoint)(nil),     // 15: sdodev.contracts.v1alpha1.MitigationSessionCheckpoint
+	(*MitigationSession)(nil),               // 16: sdodev.contracts.v1alpha1.MitigationSession
+	(*MitigationCollectionObservation)(nil), // 17: sdodev.contracts.v1alpha1.MitigationCollectionObservation
+	(*Binding)(nil),                         // 18: sdodev.contracts.v1alpha1.Binding
+	(*timestamppb.Timestamp)(nil),           // 19: google.protobuf.Timestamp
+	(*ObjectRef)(nil),                       // 20: sdodev.contracts.v1alpha1.ObjectRef
+	(*Verdict)(nil),                         // 21: sdodev.contracts.v1alpha1.Verdict
 }
 var file_sdodev_contracts_v1alpha1_mitigation_menu_proto_depIdxs = []int32{
-	17, // 0: sdodev.contracts.v1alpha1.MitigationMenu.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	18, // 0: sdodev.contracts.v1alpha1.MitigationMenu.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
 	4,  // 1: sdodev.contracts.v1alpha1.MitigationMenu.options:type_name -> sdodev.contracts.v1alpha1.MitigationOption
-	18, // 2: sdodev.contracts.v1alpha1.MitigationMenu.original_deadline:type_name -> google.protobuf.Timestamp
+	19, // 2: sdodev.contracts.v1alpha1.MitigationMenu.original_deadline:type_name -> google.protobuf.Timestamp
 	0,  // 3: sdodev.contracts.v1alpha1.MitigationOption.effects:type_name -> sdodev.contracts.v1alpha1.MitigationOption.Effect
-	17, // 4: sdodev.contracts.v1alpha1.MitigationSelection.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	18, // 4: sdodev.contracts.v1alpha1.MitigationSelection.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
 	1,  // 5: sdodev.contracts.v1alpha1.MitigationReport.status:type_name -> sdodev.contracts.v1alpha1.MitigationReport.Status
 	8,  // 6: sdodev.contracts.v1alpha1.MitigationReport.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
 	10, // 7: sdodev.contracts.v1alpha1.MitigationReport.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
-	19, // 8: sdodev.contracts.v1alpha1.MitigationReport.residuals:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	20, // 8: sdodev.contracts.v1alpha1.MitigationReport.residuals:type_name -> sdodev.contracts.v1alpha1.ObjectRef
 	9,  // 9: sdodev.contracts.v1alpha1.MitigationRoundReport.actions:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
-	20, // 10: sdodev.contracts.v1alpha1.MitigationRoundReport.diagnosis:type_name -> sdodev.contracts.v1alpha1.Verdict
-	20, // 11: sdodev.contracts.v1alpha1.MitigationRoundReport.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
-	19, // 12: sdodev.contracts.v1alpha1.MitigationActionReceipt.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	21, // 10: sdodev.contracts.v1alpha1.MitigationRoundReport.diagnosis:type_name -> sdodev.contracts.v1alpha1.Verdict
+	21, // 11: sdodev.contracts.v1alpha1.MitigationRoundReport.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
+	20, // 12: sdodev.contracts.v1alpha1.MitigationActionReceipt.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
 	0,  // 13: sdodev.contracts.v1alpha1.MitigationActionReceipt.effect:type_name -> sdodev.contracts.v1alpha1.MitigationOption.Effect
 	2,  // 14: sdodev.contracts.v1alpha1.MitigationActionReceipt.state:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt.State
 	2,  // 15: sdodev.contracts.v1alpha1.MitigationActionReceipt.compensation_state:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt.State
 	11, // 16: sdodev.contracts.v1alpha1.MitigationBarrier.observations:type_name -> sdodev.contracts.v1alpha1.MitigationObservation
-	18, // 17: sdodev.contracts.v1alpha1.MitigationBarrier.observed_at:type_name -> google.protobuf.Timestamp
-	19, // 18: sdodev.contracts.v1alpha1.MitigationObservation.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	18, // 19: sdodev.contracts.v1alpha1.SelectionLedger.original_deadline:type_name -> google.protobuf.Timestamp
-	13, // 20: sdodev.contracts.v1alpha1.SelectionLedger.attempts:type_name -> sdodev.contracts.v1alpha1.SelectionAttempt
-	14, // 21: sdodev.contracts.v1alpha1.SelectionAttempt.actions:type_name -> sdodev.contracts.v1alpha1.SelectionAction
-	8,  // 22: sdodev.contracts.v1alpha1.SelectionAttempt.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
-	10, // 23: sdodev.contracts.v1alpha1.SelectionAttempt.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
-	7,  // 24: sdodev.contracts.v1alpha1.SelectionAttempt.report:type_name -> sdodev.contracts.v1alpha1.MitigationReport
-	9,  // 25: sdodev.contracts.v1alpha1.SelectionAction.receipt:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
-	18, // 26: sdodev.contracts.v1alpha1.MitigationSession.original_deadline:type_name -> google.protobuf.Timestamp
-	7,  // 27: sdodev.contracts.v1alpha1.MitigationSession.pending_reports:type_name -> sdodev.contracts.v1alpha1.MitigationReport
-	28, // [28:28] is the sub-list for method output_type
-	28, // [28:28] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	19, // 17: sdodev.contracts.v1alpha1.MitigationBarrier.observed_at:type_name -> google.protobuf.Timestamp
+	17, // 18: sdodev.contracts.v1alpha1.MitigationBarrier.collections:type_name -> sdodev.contracts.v1alpha1.MitigationCollectionObservation
+	20, // 19: sdodev.contracts.v1alpha1.MitigationObservation.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19, // 20: sdodev.contracts.v1alpha1.SelectionLedger.original_deadline:type_name -> google.protobuf.Timestamp
+	13, // 21: sdodev.contracts.v1alpha1.SelectionLedger.attempts:type_name -> sdodev.contracts.v1alpha1.SelectionAttempt
+	14, // 22: sdodev.contracts.v1alpha1.SelectionAttempt.actions:type_name -> sdodev.contracts.v1alpha1.SelectionAction
+	8,  // 23: sdodev.contracts.v1alpha1.SelectionAttempt.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
+	10, // 24: sdodev.contracts.v1alpha1.SelectionAttempt.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
+	7,  // 25: sdodev.contracts.v1alpha1.SelectionAttempt.report:type_name -> sdodev.contracts.v1alpha1.MitigationReport
+	9,  // 26: sdodev.contracts.v1alpha1.SelectionAction.receipt:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
+	19, // 27: sdodev.contracts.v1alpha1.MitigationSession.original_deadline:type_name -> google.protobuf.Timestamp
+	7,  // 28: sdodev.contracts.v1alpha1.MitigationSession.pending_reports:type_name -> sdodev.contracts.v1alpha1.MitigationReport
+	29, // [29:29] is the sub-list for method output_type
+	29, // [29:29] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_mitigation_menu_proto_init() }
@@ -2098,7 +2195,7 @@ func file_sdodev_contracts_v1alpha1_mitigation_menu_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

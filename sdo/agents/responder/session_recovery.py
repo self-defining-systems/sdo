@@ -14,6 +14,7 @@ import os
 import re
 import tempfile
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -167,6 +168,12 @@ class SessionRecovery:
             self.persist(self._wire(checkpoint))
         except OSError as exc:
             raise SessionRecoveryError("interrupted: provider checkpoint persistence failed") from exc
+
+    def remaining_seconds(self) -> float:
+        remaining = (self.session.original_deadline.ToDatetime(tzinfo=UTC) - datetime.now(UTC)).total_seconds()
+        if remaining <= 0:
+            raise SessionRecoveryError("interrupted: original deadline expired")
+        return remaining
 
     def recovered_prompt(self) -> str:
         if not self.session.pending_reports:
