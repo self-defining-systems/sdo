@@ -80,9 +80,14 @@ func planSafetyDigest(object *unstructured.Unstructured) string {
 	if annotations := copy.GetAnnotations(); len(annotations) > 0 {
 		values := map[string]any{}
 		for k, v := range annotations {
+			if k == "deployment.kubernetes.io/revision" && copy.GetKind() == "Deployment" {
+				continue
+			}
 			values[k] = v
 		}
-		metadata["annotations"] = values
+		if len(values) > 0 {
+			metadata["annotations"] = values
+		}
 	}
 	copy.Object["metadata"] = metadata
 	canonicalizePlanObject(copy)
@@ -199,6 +204,29 @@ func (e PlanExecutor) validateServiceAccount(ctx context.Context, ref sdk.Object
 	uid, err := reader.TokenlessServiceAccount(ctx, account)
 	if err != nil || uid != expected {
 		return fmt.Errorf("plan safety: existing tokenless service account identity is unproven")
+	}
+	return nil
+}
+
+// checkObservedObject authorizes the independently approved image and applies
+// the hard predicate to the complete live object. Callers separately compare
+// the fields their plan owns; API defaults and controller metadata are unowned.
+func (p *PlanSafetyPolicy) checkObservedObject(live, approved *unstructured.Unstructured, ref sdk.ObjectRef, created bool) error {
+	if live == nil || approved == nil || !samePlanRef(live, ref) {
+		return fmt.Errorf("plan safety: observed identity is unavailable")
+	}
+	if err := planSecretPredicate(live); err != nil {
+		return err
+	}
+	expected := approved.DeepCopy()
+	if created {
+		expected.SetUID("")
+	}
+	if err := p.checkObject(expected, ref); err != nil {
+		return err
+	}
+	if !created && (live.GetUID() == "" || string(live.GetUID()) != p.Objects[ref].UID) {
+		return fmt.Errorf("plan safety: observed UID changed")
 	}
 	return nil
 }

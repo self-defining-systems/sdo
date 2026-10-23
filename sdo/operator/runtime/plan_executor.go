@@ -389,7 +389,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		return err
 	}
 	if patch.Structured {
-		if err := e.Safety.checkObject(current, patch.Ref); err != nil {
+		if err := e.Safety.checkObservedObject(current, patch.After, patch.Ref, false); err != nil {
 			return err
 		}
 	}
@@ -412,7 +412,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		}
 	}
 	if patch.Structured {
-		if err := e.Safety.checkObject(restored, patch.Ref); err != nil {
+		if err := e.Safety.checkObservedObject(restored, patch.Before, patch.Ref, false); err != nil {
 			return err
 		}
 	}

@@ -338,3 +338,63 @@ func TestPlanCreateLostReplyAndRecreatedUIDFailClosed(t *testing.T) {
 		})
 	}
 }
+
+type defaultingServiceCreateClient struct {
+	*lifecycleTestClient
+	changeSelector bool
+}
+
+func (c defaultingServiceCreateClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	created, err := c.lifecycleTestClient.Create(ctx, ref, object)
+	if err != nil {
+		return nil, err
+	}
+	spec := created.Object["spec"].(map[string]any)
+	spec["clusterIP"] = "10.96.0.8"
+	spec["clusterIPs"] = []any{"10.96.0.8"}
+	spec["ipFamilies"] = []any{"IPv4"}
+	spec["ipFamilyPolicy"] = "SingleStack"
+	spec["type"] = "ClusterIP"
+	spec["sessionAffinity"] = "None"
+	spec["internalTrafficPolicy"] = "Cluster"
+	for _, item := range spec["ports"].([]any) {
+		port := item.(map[string]any)
+		port["protocol"] = "TCP"
+		port["targetPort"] = port["port"]
+	}
+	if c.changeSelector {
+		spec["selector"] = map[string]any{"app": "unapproved"}
+	}
+	c.objects[ref] = created
+	return created.DeepCopy(), nil
+}
+
+func TestPlanCreateServiceDefaultsPreserveRoutingProof(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint(changed), func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "missing"}
+			accepted := planObject(ref, map[string]any{"selector": map[string]any{"app": "api"}, "ports": []any{map[string]any{"port": float64(80)}}})
+			raw := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
+			client := defaultingServiceCreateClient{lifecycleTestClient: raw, changeSelector: changed}
+			safety := fixturePlanSafety(t, ref, accepted)
+			proof := safety.Objects[ref]
+			proof.UID = ""
+			proof.CreateAllowed = true
+			safety.Objects[ref] = proof
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "fixture"}}}, false)
+			if changed {
+				if err == nil || result.VerificationCompleted {
+					t.Fatal("changed selector passed default normalization")
+				}
+				return
+			}
+			if err != nil || !result.VerificationPassed {
+				t.Fatalf("safe server defaults refused: %v", err)
+			}
+			if err := e.Rollback(context.Background(), result); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

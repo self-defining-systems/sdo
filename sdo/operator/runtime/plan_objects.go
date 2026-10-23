@@ -386,9 +386,7 @@ func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) 
 	if patch.After.GetUID() == "" || live.GetUID() != patch.After.GetUID() {
 		return fmt.Errorf("create observation unknown: UID changed or unavailable")
 	}
-	approved := live.DeepCopy()
-	approved.SetUID("")
-	if err := e.Safety.checkObject(approved, patch.Ref); err != nil {
+	if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, true); err != nil {
 		return err
 	}
 	for _, field := range []string{"spec", "data", "binaryData"} {
@@ -420,10 +418,14 @@ func (e PlanExecutor) restoreCreatedObject(ctx context.Context, patch PlanPatch)
 	if patch.After == nil || patch.After.GetUID() == "" || live.GetUID() != patch.After.GetUID() {
 		return fmt.Errorf("create compensation UID conflict")
 	}
-	approved := live.DeepCopy()
-	approved.SetUID("")
-	if err := e.Safety.checkObject(approved, patch.Ref); err != nil {
+	if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, true); err != nil {
 		return err
+	}
+	// Do not delete a create whose source-owned fields were changed by another writer.
+	for _, field := range []string{"spec", "data", "binaryData"} {
+		if expected, exists := patch.After.Object[field]; exists && !planValueContains(live.Object[field], expected) {
+			return fmt.Errorf("create compensation conflict: source-owned fields changed")
+		}
 	}
 	if err := client.Delete(ctx, patch.Ref, live.GetUID(), live.GetResourceVersion()); err != nil {
 		return fmt.Errorf("create compensation delete failed")
