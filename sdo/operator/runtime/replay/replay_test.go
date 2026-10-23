@@ -124,7 +124,7 @@ func TestCreateDeleteScaleRepair(t *testing.T) {
 type broadDetector struct{}
 
 func (broadDetector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "broad", Playbooks: []string{"field"}}
+	return sdk.DetectorSpec{ID: "broad", Class: sdk.DetectorClassIncident, Playbooks: []string{"field"}}
 }
 func (broadDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return []sdk.Finding{{Status: sdk.FindingActive}}, nil

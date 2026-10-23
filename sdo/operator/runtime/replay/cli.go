@@ -165,7 +165,7 @@ func LoadManifests(path string) ([]*unstructured.Unstructured, error) {
 }
 
 // Run is the compiled bundle entry point. JSONL goes to stdout, the short
-// false-positive table and timing to stderr. It has no live client configuration.
+// role-specific outcome tables and timing to stderr. It has no live client configuration.
 func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.Detector, args []string, out, summary io.Writer) int {
 	flags := flag.NewFlagSet("closed-loop", flag.ContinueOnError)
 	flags.SetOutput(summary)
@@ -188,8 +188,20 @@ func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.
 	start := time.Now()
 	encoder := json.NewEncoder(out)
 	count, failed, positives := 0, 0, 0
-	fmt.Fprintln(summary, "FALSE POSITIVES (program/case/trigger)")
+	tables := []struct {
+		name string
+		rows []string
+	}{
+		{name: "HEALTH FALSE POSITIVES"},
+		{name: "HEALTH FALSE NEGATIVES"},
+		{name: "INCIDENT AND DIAGNOSE FALSE POSITIVES"},
+		{name: "INCIDENT AND DIAGNOSE FALSE NEGATIVES"},
+		{name: "OVERLAP"},
+	}
 	for n := 0; n < *repeat; n++ {
+		// Linked detector observations also appear on program rows. Count each
+		// (category, case, trigger) once per repetition in the summary tables.
+		seen := map[string]bool{}
 		var rows []Result
 		if *matrix {
 			rows = Matrix(ctx, registry, detectors, cases)
@@ -224,13 +236,26 @@ func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.
 			if r.Status != "replayed" && r.Status != "negative" && r.Status != "detected" {
 				failed++
 			}
-			for _, fp := range r.FalsePositives {
-				positives++
-				fmt.Fprintf(summary, "%s\t%s\t%s\n", r.ProgramID, r.CaseID, fp)
+			for i, triggers := range [][]string{r.HealthFalsePositives, r.HealthFalseNegatives, r.IncidentFalsePositives, r.IncidentFalseNegatives, r.Overlap} {
+				for _, trigger := range triggers {
+					key := fmt.Sprintf("%d\x00%s\x00%s", i, r.CaseID, trigger)
+					if !seen[key] {
+						seen[key] = true
+						tables[i].rows = append(tables[i].rows, fmt.Sprintf("%s\t%s\t%s", r.ProgramID, r.CaseID, trigger))
+					}
+				}
 			}
 		}
 	}
 	elapsed := time.Since(start)
+	for _, table := range tables {
+		fmt.Fprintf(summary, "%s (program/case/trigger)\n", table.name)
+		for _, row := range table.rows {
+			fmt.Fprintln(summary, row)
+		}
+	}
+	positives = len(tables[0].rows) + len(tables[2].rows)
+	fmt.Fprintf(summary, "%d health FP, %d health FN, %d incident/Diagnose FP, %d incident/Diagnose FN, %d overlap\n", len(tables[0].rows), len(tables[1].rows), len(tables[2].rows), len(tables[3].rows), len(tables[4].rows))
 	fmt.Fprintf(summary, "%d rows, %d failed/refused, %d false positives; %d cases in %s (%.3f ms/case after build)\n", count, failed, positives, len(cases)**repeat, elapsed, float64(elapsed)/float64(time.Millisecond)/float64(len(cases)**repeat))
 	if failed > 0 {
 		return 1

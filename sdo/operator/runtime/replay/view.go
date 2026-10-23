@@ -3,7 +3,6 @@ package replay
 import (
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
 	operator "sdo.dev/operator/runtime"
@@ -37,27 +36,21 @@ func checkDetector(ctx context.Context, d sdk.Detector, c Case) (r Result) {
 			r.Errors = append(r.Errors, fmt.Sprintf("detector panic: %v", v))
 		}
 	}()
-	for _, id := range d.Spec().Playbooks {
-		r.ExpectedMatch = r.ExpectedMatch || slices.Contains(c.Corpus.RootCauseProgramIDs, id)
+	familyMatch := detectorFamilyMatches(d, c)
+	r.ExpectedMatch = familyMatch
+	if d.Spec().Class == sdk.DetectorClassHealth {
+		r.ExpectedMatch = healthImpact(c)
 	}
 	r.Detectors["healthy"] = detect(ctx, []sdk.Detector{d}, c.Corpus.Healthy)
 	r.Detectors["faulted"] = detect(ctx, []sdk.Detector{d}, c.Corpus.Open)
-	for phase, rows := range r.Detectors {
-		for _, row := range rows {
-			if row.Error != "" {
-				r.Errors = append(r.Errors, phase+": "+row.Error)
-			}
-			if row.Active > 0 && (phase == "healthy" || !r.ExpectedMatch) {
-				r.FalsePositives = append(r.FalsePositives, phase+":detector:"+row.ID)
-			}
-			if phase == "faulted" && r.ExpectedMatch && row.Active == 0 {
-				r.Errors = append(r.Errors, "matching detector did not fire")
-			}
+	for _, phase := range []string{"healthy", "faulted"} {
+		for _, row := range r.Detectors[phase] {
+			r.scoreDetector(phase, row, familyMatch, c)
 		}
 	}
-	if len(r.Errors) > 0 || len(r.FalsePositives) > 0 {
+	if r.hasFailures() {
 		r.Status = "failed"
-	} else if r.ExpectedMatch {
+	} else if r.Detectors["faulted"][0].Active > 0 {
 		r.Status = "detected"
 	}
 	return r

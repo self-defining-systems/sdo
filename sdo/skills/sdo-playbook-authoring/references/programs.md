@@ -34,6 +34,11 @@ Diagnosis replay requires Match at open and NoMatch at fixed and healthy peers, 
 resources, labels, ports and images. Prove matching and near-miss cases. Unknown or failed primitive reads stay
 Unknown; empty or absent observations never prove success or refusal.
 
+Offline closed-loop matrix fixtures may add `health_impact: true|false` to `labels.json` (default true).
+False permits health detectors to stay silent on latent faults; it never relaxes incident detector or Diagnose
+family expectations or detector silence on Healthy. Detector roles use existing `Spec().Class`; cross-family
+health firing is reported as overlap. See the [closed-loop report contract](../../../operator/runtime/replay/README.md).
+
 ## Source restoration
 
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.

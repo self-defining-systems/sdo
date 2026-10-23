@@ -33,25 +33,31 @@ type Case struct {
 }
 type DetectorResult struct {
 	ID       string                   `json:"id"`
+	Class    sdk.DetectorClass        `json:"class"`
 	Active   int                      `json:"active"`
 	Error    string                   `json:"error,omitempty"`
 	Bindings []program.ObjectBindings `json:"bindings,omitempty"`
 }
 type Result struct {
-	ProgramID      string                      `json:"program_id"`
-	CaseID         string                      `json:"case_id"`
-	Status         string                      `json:"status"`
-	BoundObjects   program.ObjectBindings      `json:"bound_objects,omitempty"`
-	ExpectedMatch  bool                        `json:"expected_match"`
-	Healthy        program.Verdict             `json:"healthy"`
-	Faulted        program.Verdict             `json:"faulted"`
-	Post           program.Verdict             `json:"post"`
-	Detectors      map[string][]DetectorResult `json:"detectors"`
-	Actions        []operator.PlanActionReport `json:"actions,omitempty"`
-	Effects        []string                    `json:"effects,omitempty"`
-	FalsePositives []string                    `json:"false_positives,omitempty"`
-	Errors         []string                    `json:"errors,omitempty"`
-	DurationMS     float64                     `json:"duration_ms"`
+	ProgramID              string                      `json:"program_id"`
+	CaseID                 string                      `json:"case_id"`
+	Status                 string                      `json:"status"`
+	BoundObjects           program.ObjectBindings      `json:"bound_objects,omitempty"`
+	ExpectedMatch          bool                        `json:"expected_match"`
+	Healthy                program.Verdict             `json:"healthy"`
+	Faulted                program.Verdict             `json:"faulted"`
+	Post                   program.Verdict             `json:"post"`
+	Detectors              map[string][]DetectorResult `json:"detectors"`
+	Actions                []operator.PlanActionReport `json:"actions,omitempty"`
+	Effects                []string                    `json:"effects,omitempty"`
+	FalsePositives         []string                    `json:"false_positives,omitempty"`
+	HealthFalsePositives   []string                    `json:"health_false_positives,omitempty"`
+	HealthFalseNegatives   []string                    `json:"health_false_negatives,omitempty"`
+	IncidentFalsePositives []string                    `json:"incident_false_positives,omitempty"`
+	IncidentFalseNegatives []string                    `json:"incident_false_negatives,omitempty"`
+	Overlap                []string                    `json:"overlap,omitempty"`
+	Errors                 []string                    `json:"errors,omitempty"`
+	DurationMS             float64                     `json:"duration_ms"`
 }
 
 // Check executes one closed loop. Detectors are the detectors linked to this
@@ -84,45 +90,36 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	r.Faulted = program.RunDiagnose(ctx, p, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, 5*time.Second)
 	r.Detectors["healthy"] = detect(ctx, detectors, c.Corpus.Healthy)
 	r.Detectors["faulted"] = detect(ctx, detectors, c.Corpus.Open)
+	for _, phase := range []string{"healthy", "faulted"} {
+		for i, row := range r.Detectors[phase] {
+			r.scoreDetector(phase, row, detectorFamilyMatches(detectors[i], c), c)
+		}
+	}
+	if r.Healthy.Result == program.Match {
+		r.incidentFP("healthy:diagnose:" + p.Spec().ID)
+	}
 	if r.Healthy.Result != program.NoMatch {
 		r.Errors = append(r.Errors, "healthy diagnosis is not NoMatch")
 	}
-	for _, d := range r.Detectors["healthy"] {
-		if d.Active > 0 {
-			r.FalsePositives = append(r.FalsePositives, "healthy:detector:"+d.ID)
-		}
-		if d.Error != "" {
-			r.Errors = append(r.Errors, "healthy detector "+d.ID+": "+d.Error)
-		}
-	}
 	if !r.ExpectedMatch {
 		if r.Faulted.Result == program.Match {
-			r.FalsePositives = append(r.FalsePositives, "diagnose:"+p.Spec().ID)
+			r.incidentFP("faulted:diagnose:" + p.Spec().ID)
 		}
-		for _, d := range r.Detectors["faulted"] {
-			if d.Active > 0 {
-				r.FalsePositives = append(r.FalsePositives, "detector:"+d.ID)
-			}
-			if d.Error != "" {
-				r.Errors = append(r.Errors, "faulted detector "+d.ID+": "+d.Error)
-			}
+		if r.Faulted.Result != program.Match && r.Faulted.Result != program.NoMatch {
+			r.Errors = append(r.Errors, "faulted diagnosis is not NoMatch")
 		}
-		if len(r.Errors) == 0 && len(r.FalsePositives) == 0 && r.Faulted.Result == program.NoMatch {
+		if !r.hasFailures() && r.Faulted.Result == program.NoMatch {
 			r.Status = "negative"
 		}
 		return r
 	}
 	if r.Faulted.Result != program.Match {
+		if r.Faulted.Result == program.NoMatch {
+			r.IncidentFalseNegatives = append(r.IncidentFalseNegatives, "faulted:diagnose:"+p.Spec().ID)
+		}
 		return fail(fmt.Errorf("faulted diagnosis is %s, want Match", r.Faulted.Result))
 	}
 	if len(detectors) > 0 {
-		active := false
-		for _, d := range r.Detectors["faulted"] {
-			active = active || d.Active > 0
-			if d.Error != "" {
-				r.Errors = append(r.Errors, "faulted detector "+d.ID+": "+d.Error)
-			}
-		}
 		for _, row := range r.Detectors["faulted"] {
 			for _, actual := range row.Bindings {
 				for key, want := range bindings.Objects {
@@ -132,11 +129,8 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 				}
 			}
 		}
-		if !active {
-			r.Errors = append(r.Errors, "matching detector did not fire")
-		}
 	}
-	if len(r.Errors) > 0 || len(r.FalsePositives) > 0 {
+	if r.hasFailures() {
 		return r
 	}
 	if m == nil {
@@ -245,7 +239,7 @@ func bindingsFor(spec program.ProgramSpec, b program.Bindings) program.Bindings 
 func detect(ctx context.Context, ds []sdk.Detector, s sdktest.Snapshot) []DetectorResult {
 	out := []DetectorResult{}
 	for _, d := range ds {
-		r := DetectorResult{ID: d.Spec().ID}
+		r := DetectorResult{ID: d.Spec().ID, Class: d.Spec().Class}
 		fs, e := d.Detect(ctx, s)
 		if e != nil {
 			r.Error = e.Error()
