@@ -34,6 +34,11 @@ func ValidateSetField(f SetField) error
     kind. An absent API version retains legacy program validation; executors
     require it.
 
+func ValidateValueBinding(spec ParamSpec, value any) error
+    ValidateValueBinding checks types without coercing strings to numbers or
+    booleans. Quantities and durations use their Kubernetes and Go textual
+    syntax.
+
 
 TYPES
 
@@ -95,6 +100,10 @@ type ParamSpec struct {
 	Name     string
 	Kind     Kind
 	Required bool
+	// ValueKind selects a scalar parameter instead of an object Kind.
+	ValueKind ValueKind
+	// Default is optional; nil means no default.
+	Default any
 }
 
 type Plan struct {
@@ -165,6 +174,50 @@ type SetField struct {
 	DocumentPath   []string
 }
 
+type Value struct {
+	// Has unexported fields.
+}
+    Value is an opaque reference, never a resolved value or a Go literal.
+    Its zero value is invalid. Only the controller resolves it at apply time.
+
+func FromObserved(ref sdk.ObjectRef, path string) Value
+
+func FromParam(name string) Value
+
+func FromSource(ref sdk.ObjectRef, path string) Value
+
+func (v Value) MarshalJSON() ([]byte, error)
+
+func (v Value) Origin() ValueOrigin
+
+func (v Value) Param() string
+
+func (v Value) Path() string
+
+func (v Value) Ref() sdk.ObjectRef
+
+func (v *Value) UnmarshalJSON(raw []byte) error
+
+func (v Value) Validate() error
+
+type ValueKind string
+    ValueKind is the schema of a declared scalar value parameter.
+
+const (
+	StringValue   ValueKind = "string"
+	IntValue      ValueKind = "int"
+	QuantityValue ValueKind = "quantity"
+	DurationValue ValueKind = "duration"
+	BoolValue     ValueKind = "bool"
+)
+type ValueOrigin string
+    ValueOrigin identifies the authority from which an action value is resolved.
+
+const (
+	SourceValue    ValueOrigin = "source"
+	ObservedValue  ValueOrigin = "observed"
+	ParameterValue ValueOrigin = "parameter"
+)
 type Verdict struct {
 	Result   Result     `json:"result"`
 	Evidence []Evidence `json:"evidence,omitempty"`
