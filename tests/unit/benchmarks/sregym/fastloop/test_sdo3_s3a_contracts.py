@@ -223,5 +223,6 @@ def test_real_v2_worker_addresses_nested_components_and_reports_failed_cleanup(t
         events = worker.request("events")["events"]
         assert events[-3:] == [["recover", "injected-first"], ["recover", "single"], ["recover", "declared-first"]]
         driver.inject("broken")
-        with pytest.raises(FastloopFaultError, match="recovery.*synthetic cleanup failure"):
+        with pytest.raises(FastloopFaultError, match="full recovery failed") as error:
             driver.recover()
+        assert "synthetic cleanup failure" not in str(error.value)

@@ -14,6 +14,7 @@ from benchmarks.sregym.fastloop.fault_driver import FastloopFaultError, SregymFa
 class FakeWorker:
     health_sequence: list[bool] = field(default_factory=lambda: [True])
     requests: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    seed_contract: bool = False
 
     def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
         self.requests.append((op, args))
@@ -22,7 +23,17 @@ class FakeWorker:
         if op == "oracle":
             return {"kind": "sregym-mitigation-oracle", "success": True, "details": {"success": True}}
         if op == "recover":
+            if self.seed_contract:
+                return {
+                    "seconds": 4.0,
+                    "protocol_version": 2,
+                    "recovery_contract": "seed-compatible/v1",
+                    "success": True,
+                }
             return {"seconds": 4.0}
+        if op == "refresh":
+            assert self.seed_contract
+            return {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True}
         if op == "health":
             healthy = self.health_sequence.pop(0) if len(self.health_sequence) > 1 else self.health_sequence[0]
             return {"healthy": healthy, "unready": [] if healthy else ["mongodb-geo"]}
@@ -108,7 +119,7 @@ def test_recovery_waits_for_rollouts_in_every_application_namespace() -> None:
             raise AssertionError(value)
 
     cluster = Cluster()
-    driver = _driver(FakeWorker())
+    driver = _driver(FakeWorker(seed_contract=True))
     driver._baselines = tuple(
         ApplicationBaseline(
             namespace,
@@ -146,7 +157,7 @@ def test_recovery_rollout_timeout_reports_unready_workload() -> None:
         def apply(self, namespace: str, value: dict[str, Any]) -> None:
             raise AssertionError(value)
 
-    driver = _driver(FakeWorker(), timeout=5.0)
+    driver = _driver(FakeWorker(seed_contract=True), timeout=5.0)
     driver._baselines = (
         ApplicationBaseline(
             "hotel-reservation",
@@ -190,7 +201,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
             return super().request(op, timeout=timeout, **args)
 
     driver = SregymFaultDriver(
-        Worker(),
+        Worker(seed_contract=True),
         namespace="hotel-reservation",
         baseline=ApplicationBaseline("hotel-reservation", []),
         cluster=Cluster(),
@@ -198,7 +209,7 @@ def test_recovery_reconciles_before_waiting_for_health() -> None:
 
     driver.recover()
 
-    assert events == ["recover", "list", "delete", "health", "list"]
+    assert events == ["recover", "list", "delete", "refresh", "health", "list"]
     assert driver.last_cleanup.deleted_counts == {"Job": 1}
 
 
@@ -215,7 +226,7 @@ def test_recovery_cleans_every_recorded_application_namespace() -> None:
 
     deleted: list[tuple[str, str, str]] = []
     driver = SregymFaultDriver(
-        FakeWorker(),
+        FakeWorker(seed_contract=True),
         namespace="hotel-reservation",
         baseline=(ApplicationBaseline("hotel-reservation", []), ApplicationBaseline("hotel-db", [])),
         cluster=Cluster(),
@@ -320,7 +331,12 @@ def test_partial_composite_injection_recovers_the_first_fault() -> None:
 
 
 @pytest.mark.parametrize(
-    "reply", [{"seconds": 0}, {"protocol_version": 2, "success": False}, {"protocol_version": 2, "success": True}]
+    "reply",
+    [
+        {"seconds": 0},
+        {"protocol_version": 2, "success": False},
+        {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True},
+    ],
 )
 def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dict[str, Any]) -> None:
     events: list[str] = []
@@ -331,6 +347,8 @@ def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dic
             if op == "recover":
                 assert args["mode"] == "full"
                 return reply
+            if op == "refresh":
+                return {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True}
             return super().request(op, timeout=timeout, **args)
 
     class Cluster:
@@ -350,7 +368,7 @@ def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dic
     assert driver.last_full_cleanup_verified is False
     if reply.get("success") is True:
         driver.recover()
-        assert events == ["recover", "list", "health", "list"]
+        assert events == ["recover", "list", "refresh", "health", "list"]
         assert driver.last_full_cleanup_verified is True
         # A later failed cleanup must not inherit the prior slot's success.
         reply["success"] = False
