@@ -32,28 +32,89 @@ type ParamSpec struct {
 	Default any
 }
 
-type Bindings map[string]sdk.ObjectRef
+// ObjectBindings binds declared object parameters to named Kubernetes resources.
+type ObjectBindings map[string]sdk.ObjectRef
+
+// Bindings contains object identities and separately typed scalar parameters.
+type Bindings struct {
+	Objects ObjectBindings `json:"objects,omitempty"`
+	Values  map[string]any `json:"values,omitempty"`
+}
 
 func ValidateBindings(spec ProgramSpec, b Bindings) error {
 	params := make(map[string]ParamSpec, len(spec.Params))
-	for _, param := range spec.Params {
-		params[param.Name] = param
-		if param.Required {
-			if _, ok := b[param.Name]; !ok {
-				return fmt.Errorf("required parameter %q is unbound", param.Name)
+	for _, p := range spec.Params {
+		if p.Name == "" {
+			return fmt.Errorf("parameter name is required")
+		}
+		if _, ok := params[p.Name]; ok {
+			return fmt.Errorf("duplicate parameter %q", p.Name)
+		}
+		if (p.Kind == "") == (p.ValueKind == "") {
+			return fmt.Errorf("parameter %q requires exactly one object or value kind", p.Name)
+		}
+		if p.ValueKind != "" {
+			switch p.ValueKind {
+			case StringValue, IntValue, QuantityValue, DurationValue, BoolValue:
+			default:
+				return fmt.Errorf("parameter %q has an unknown value kind", p.Name)
 			}
 		}
+		params[p.Name] = p
+		if p.Default != nil {
+			if p.ValueKind == "" {
+				return fmt.Errorf("object parameter %q cannot have a value default", p.Name)
+			}
+			if err := ValidateValueBinding(p, p.Default); err != nil {
+				return err
+			}
+		}
+		_, objectBound := b.Objects[p.Name]
+		_, valueBound := b.Values[p.Name]
+		if p.Required && !objectBound && !valueBound && p.Default == nil {
+			return fmt.Errorf("required parameter %q is unbound", p.Name)
+		}
 	}
-	for name, ref := range b {
-		param, ok := params[name]
+	for name, ref := range b.Objects {
+		p, ok := params[name]
 		if !ok {
 			return fmt.Errorf("unknown parameter %q", name)
 		}
-		if ref.Kind != string(param.Kind) {
-			return fmt.Errorf("parameter %q: kind %q, want %q", name, ref.Kind, param.Kind)
+		if p.ValueKind != "" || ref.Kind != string(p.Kind) {
+			return fmt.Errorf("parameter %q: kind %q, want %q", name, ref.Kind, p.Kind)
+		}
+	}
+	for name, value := range b.Values {
+		p, ok := params[name]
+		if !ok {
+			return fmt.Errorf("unknown parameter %q", name)
+		}
+		if err := ValidateValueBinding(p, value); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// Parameter resolves one declared value, including a validated default.
+func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error) {
+	if err := ValidateBindings(spec, b); err != nil {
+		return nil, err
+	}
+	for _, p := range spec.Params {
+		if p.Name != name || p.ValueKind == "" {
+			continue
+		}
+		v, ok := b.Values[name]
+		if !ok {
+			v = p.Default
+		}
+		if v == nil {
+			return nil, fmt.Errorf("value parameter %q is unbound", name)
+		}
+		return v, nil
+	}
+	return nil, fmt.Errorf("undeclared value parameter %q", name)
 }
 
 type Diagnoser interface {
@@ -164,10 +225,8 @@ func (Rollback) action() {}
 type SetField struct {
 	Ref    sdk.ObjectRef
 	Path   string
-	Value  any
+	Value  Value
 	Reason string
-	// ValueFromSource resolves the field against the incident-bound accepted manifest.
-	ValueFromSource bool
 	// DocumentFormat and DocumentPath select a JSON/YAML entry in one ConfigMap key.
 	// JSON edits preserve untouched number tokens; serialization may normalize formatting.
 	DocumentFormat string
@@ -175,6 +234,29 @@ type SetField struct {
 }
 
 func (SetField) action() {}
+
+// DeletePod removes one named pod with UID/version preconditions.
+type DeletePod struct{ Ref sdk.ObjectRef }
+
+func (DeletePod) action() {}
+
+// ScaleWorkload restores replicas from accepted source, observations or a parameter.
+type ScaleWorkload struct {
+	Ref      sdk.ObjectRef
+	Replicas Value
+}
+
+func (ScaleWorkload) action() {}
+
+// Exec executes a provenance-derived command. Only its exit code is reported.
+// The Kubernetes API enforces the controller's existing pods/exec RBAC grant.
+type Exec struct {
+	Pod       sdk.ObjectRef
+	Container string
+	Command   []Value
+}
+
+func (Exec) action() {}
 
 type RestartRollout struct {
 	Ref    sdk.ObjectRef
@@ -190,6 +272,9 @@ type Plan struct {
 
 func (p Plan) Validate() error {
 	for _, action := range p.Actions {
+		if err := validateRuntimeAction(action); err != nil {
+			return err
+		}
 		if err := validateObjectAction(action); err != nil {
 			return err
 		}

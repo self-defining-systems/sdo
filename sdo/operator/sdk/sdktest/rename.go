@@ -180,13 +180,14 @@ func renameCorpusCase(c CorpusCase) (CorpusCase, error) {
 }
 
 func renameBindings(bindings program.Bindings, namespace string, m *renameMapping) program.Bindings {
-	renamed := make(program.Bindings, len(bindings))
-	for key, ref := range bindings {
+	renamed := program.Bindings{Objects: make(program.ObjectBindings, len(bindings.Objects))}
+	for key, ref := range bindings.Objects {
 		if ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
-		renamed[key] = ref
+		renamed.Objects[key] = ref
 	}
+	renamed.Values = bindings.Clone().Values
 	return renamed
 }
 

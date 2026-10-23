@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"sdo.dev/operator/memory/layout"
 	"sync"
 	"time"
@@ -413,7 +412,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 
 func runOfAppliedPlan(run ProgramRun, applied []selectedPlan) bool {
 	for _, plan := range applied {
-		if run.ProgramID == plan.programID && maps.Equal(run.Bindings, plan.bindings) {
+		if run.ProgramID == plan.programID && run.Bindings.Equal(plan.bindings) {
 			return true
 		}
 	}
@@ -846,7 +845,7 @@ func boundPlansNoMatch(selected []selectedPlan, runs []ProgramRun) bool {
 	for _, plan := range selected {
 		clear := false
 		for _, run := range runs {
-			if run.ProgramID != plan.programID || !maps.Equal(run.Bindings, plan.bindings) {
+			if run.ProgramID != plan.programID || !run.Bindings.Equal(plan.bindings) {
 				continue
 			}
 			if run.Verdict.Result != program.NoMatch {
@@ -872,7 +871,7 @@ func onlyUnrelatedFindings(applied []selectedPlan, findings []sdk.Finding) bool 
 			return false
 		}
 		for _, plan := range applied {
-			for _, bound := range plan.bindings {
+			for _, bound := range plan.bindings.Objects {
 				if sameResource(finding.PrimaryResource, bound) {
 					return false
 				}

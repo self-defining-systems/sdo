@@ -33,7 +33,7 @@ type fixedNameDiagnoser struct{}
 
 func (fixedNameDiagnoser) Spec() program.ProgramSpec { return targetport.Program{}.Spec() }
 func (fixedNameDiagnoser) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	if b["service"].Name != "front" {
+	if b.Objects["service"].Name != "front" {
 		return program.Verdict{Result: program.NoMatch}, nil
 	}
 	return targetport.Program{}.Diagnose(context.Background(), v, b)
@@ -44,7 +44,7 @@ type fixedPortDiagnoser struct{}
 func (fixedPortDiagnoser) Spec() program.ProgramSpec { return targetport.Program{}.Spec() }
 func (fixedPortDiagnoser) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
 	for _, service := range v.Services() {
-		if service.Name == b["service"].Name && service.Spec.Ports[0].TargetPort == intstr.FromInt32(8087) {
+		if service.Name == b.Objects["service"].Name && service.Spec.Ports[0].TargetPort == intstr.FromInt32(8087) {
 			return program.Verdict{Result: program.Match}, nil
 		}
 	}
@@ -93,7 +93,7 @@ func TestRenameCorpusCaseKeepsReferencesAndRecordingsAligned(t *testing.T) {
 	}
 	service := renamed.Open.ServiceList[0]
 	pod := renamed.Open.PodList[0]
-	if service.Name != "front-rx7" || service.OwnerReferences[0].Name != "front-rx7" || service.Spec.Selector["app"] != "front-rx7" || pod.Labels["app"] != "front-rx7" || renamed.Bindings["service"].Name != "front-rx7" {
+	if service.Name != "front-rx7" || service.OwnerReferences[0].Name != "front-rx7" || service.Spec.Selector["app"] != "front-rx7" || pod.Labels["app"] != "front-rx7" || renamed.Bindings.Objects["service"].Name != "front-rx7" {
 		t.Fatalf("resource references diverged: service=%+v pod=%+v bindings=%+v", service, pod, renamed.Bindings)
 	}
 	container := pod.Spec.Containers[0]
