@@ -1206,12 +1206,9 @@ func evaluateOnce(
 	application := flags.String("application", "", "application identity")
 	flags.String("app-root", "", "application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
-<<<<<<< HEAD
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
-=======
 	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
->>>>>>> origin/vic-lsh/fix/social-seed-refresh
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
