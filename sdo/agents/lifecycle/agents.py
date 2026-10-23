@@ -327,6 +327,9 @@ Correction feedback from the prior fresh attempt:
 the proposal checkout and no conversation state. Continuity comes only from the structured deployer handoff
 and prior detector metadata below.
 
+Accepted source and developer changes express intent. Operational memory is fallible advice.
+Recovery requires evidence from the intended application behavior.
+
 Human-owned health objective:
 {health_objective}
 
