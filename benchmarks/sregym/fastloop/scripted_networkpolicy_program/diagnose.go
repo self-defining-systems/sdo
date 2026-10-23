@@ -19,7 +19,7 @@ func (Program) Spec() program.ProgramSpec {
 // isolates a pod serving an unchanged accepted Service. Partial rules need
 // judgement; this program does not pretend to implement a network-policy engine.
 func (Program) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
-	ref := bindings["policy"]
+	ref := bindings.Objects["policy"]
 	ref.APIVersion = "networking.k8s.io/v1"
 	for _, policy := range view.NetworkPolicies() {
 		if policy.Namespace != ref.Namespace || policy.Name != ref.Name {

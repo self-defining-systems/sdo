@@ -15,7 +15,7 @@ func (Program) Spec() program.ProgramSpec {
 }
 
 func (Program) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
-	ref := bindings["service"]
+	ref := bindings.Objects["service"]
 	for _, service := range view.Services() {
 		if service.Namespace != ref.Namespace || service.Name != ref.Name {
 			continue

@@ -110,9 +110,19 @@ func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bin
 	if err != nil || verdict.Result != program.Match {
 		return program.Plan{}, err
 	}
-	_, pods, _, ok := replacement(v, b)
+	_, pods, port, ok := replacement(v, b)
 	if !ok {
 		return program.Plan{}, nil
 	}
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromObserved(sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pods[0].Namespace, Name: pods[0].Name}, "spec.containers[0].ports[0].containerPort"), Reason: "use observed selected-Pod listener"}}}, nil
+	for _, pod := range pods[:1] {
+		for ci, container := range pod.Spec.Containers {
+			for pi, exposed := range container.Ports {
+				if exposed.ContainerPort == port && (exposed.Protocol == "" || exposed.Protocol == "TCP") {
+					value := program.FromObserved(sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}, fmt.Sprintf("spec.containers[%d].ports[%d].containerPort", ci, pi))
+					return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: value, Reason: "use observed selected-Pod listener"}}}, nil
+				}
+			}
+		}
+	}
+	return program.Plan{}, nil
 }

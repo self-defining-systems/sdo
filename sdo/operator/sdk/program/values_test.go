@@ -2,11 +2,13 @@ package program_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os/exec"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
 	"testing/quick"
@@ -145,5 +147,33 @@ func TestSecretValueRefusedBeforeLookup(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("Secret reference reached object reader")
+	}
+}
+
+func TestValueWireRejectsAmbiguousOrLiteralShape(t *testing.T) {
+	for _, raw := range []string{`123`, `"literal"`, `null`, `{}`, `{"origin":"parameter","param":"count","path":"data[count]"}`, `{"origin":"parameter","param":"count","literal":3}`, `{"origin":"source","ref":{"api_version":"v1","kind":"ConfigMap","namespace":"app","name":"settings"},"path":"data[count]","param":"count"}`} {
+		var value program.Value
+		if err := json.Unmarshal([]byte(raw), &value); err == nil {
+			t.Fatalf("accepted non-constructor value shape %s", raw)
+		}
+	}
+}
+
+type valueFirstProgram struct{}
+
+func (valueFirstProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "value-first", Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue, Required: true, Default: 2}, {Name: "service", Kind: "Service", Required: true}}}
+}
+func (valueFirstProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
+	return program.Verdict{Result: program.Match}, nil
+}
+func TestDetectorSelectsRequiredObjectAfterValueParameter(t *testing.T) {
+	ref := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "service"}
+	detector := program.DetectorFromProgram(valueFirstProgram{}, func(sdk.DetectionContext) []program.Bindings {
+		return []program.Bindings{{Objects: program.ObjectBindings{"service": ref}}}
+	}, sdk.DetectorSpec{ID: "value-first"})
+	findings, err := detector.Detect(context.Background(), sdktest.Snapshot{})
+	if err != nil || len(findings) != 1 || findings[0].PrimaryResource != ref {
+		t.Fatalf("wrong primary resource after scalar declaration: %+v %v", findings, err)
 	}
 }
