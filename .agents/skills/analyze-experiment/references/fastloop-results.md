@@ -194,3 +194,15 @@ this field, a successful post-recovery oracle, no skipped cleanup and no error
 or infrastructure outcome. Aggregate-only faults remain supported; missing
 per-fault probe timing does not bypass the cleanup gate. DT1's shared detached
 launcher owns supervision and its process run record; dispatch adds no launcher.
+
+### Fresh source seed acceptance
+
+A seed's objective/endpoints-only health capture does not establish a green
+accepted detector bundle. Compile the entire accepted diagnostics projection
+and run `sdo-controller --evaluate-once --accept-seed --namespace <namespace>
+--prober-url <live-prober-url>`. Retain its JSON and exit status: any finding or
+evaluation error rejects acceptance, and reachability cannot be skipped. Keep
+historical seed proofs immutable. Scoped build-input declarations must be
+installed before fresh builds and recorded with independent rollout identities;
+measure a manifest-only source edit through real broker/lock reconciliation
+before reporting L6 continuity.

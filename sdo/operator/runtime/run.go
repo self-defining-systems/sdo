@@ -1206,8 +1206,12 @@ func evaluateOnce(
 	application := flags.String("application", "", "application identity")
 	flags.String("app-root", "", "application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+<<<<<<< HEAD
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
+=======
+	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
+>>>>>>> origin/vic-lsh/fix/social-seed-refresh
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -1237,6 +1241,9 @@ func evaluateOnce(
 	}
 	if ConsumesServiceReachability(detectors) {
 		if *proberURL == "" {
+			if *acceptSeed {
+				return errors.New("seed acceptance requires --prober-url for service reachability")
+			}
 			fmt.Fprintln(stderr, "service reachability skipped: evaluate-once has no --prober-url")
 		} else {
 			// Gather the gate's history now: Failures rounds, a second apart,
@@ -1285,7 +1292,13 @@ func evaluateOnce(
 			break
 		}
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings})
+	if err := json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings}); err != nil {
+		return err
+	}
+	if *acceptSeed && len(findings) != 0 {
+		return fmt.Errorf("seed acceptance rejected: %d detector finding(s)", len(findings))
+	}
+	return nil
 }
 
 func defaultIdentity() string {
