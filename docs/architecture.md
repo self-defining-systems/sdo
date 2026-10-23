@@ -231,34 +231,44 @@ Incident responders never merge directly into the operational branch. The broker
 The installer defaults to its existing namespaced grants. Disposable benchmark
 lanes can explicitly select `--permissive-responder`, with repeatable
 `--responder-namespace policy-system` for fault backends. The Go installer
-enumerates concrete namespaced API resources, including custom resources and
-their subresources, and grants get/list/watch/create/update/patch/delete/
-deletecollection in the app and selected backend namespaces. Cluster access to
-mutating/validating webhook configurations is limited to get/list/watch/delete;
-create/update/patch could register a Secret-observing AdmissionReview endpoint,
-and RBAC cannot constrain webhook rules or destinations.
+uses discovery only to select concrete resources from a reviewed built-in
+allowlist: core pods, services, endpoints and events; apps deployments,
+replicasets, statefulsets and daemonsets; discovery.k8s.io endpointslices; and
+networking.k8s.io networkpolicies. Added namespaced grants allow get/list/watch,
+plus delete on pods so their controller can recreate the same spec. No added
+subresources, logs, proxy, ConfigMaps, ServiceAccounts, Jobs, workload/Service
+writes, or RBAC writes are permitted. Custom API grants have an empty reviewed
+allowlist: discovery never automatically trusts a custom group, resource, kind
+or status endpoint, including in the application namespace.
 
-Permissive discovery excludes Secret APIs and their subresources, TokenRequests,
-exec, attach, port-forward, ephemeral containers, CSRs/signers and nodes/proxy.
-Its explicit verb list excludes bind, escalate and impersonate for every API;
-RBAC writes remain subject to the apiserver's privilege-escalation checks.
-It requires a separate control namespace and rejects foreign kube-* namespaces.
-The baseline repair Role is literally unchanged, including app-namespace
+Cluster access to mutating/validating webhook configurations is limited to
+get/list/watch/delete. Deleting a bad webhook remains a repair for the selected
+TLS mismatch and backend outage faults; configuration writes and backend takeover
+are unavailable through added grants. Cluster-wide deletion is the chosen repair
+boundary and can remove protective webhooks; no admission-confinement guarantee
+is inferred from it.
+
+The option requires a separate control namespace and rejects foreign kube-*
+namespaces. The baseline repair Role is literally unchanged, including app
 PodSpec writes, helper Jobs, logs, ConfigMaps and exec/attach/port-forward.
-Those pre-existing indirect Secret paths remain available. Discovery does not
-extend the streaming grant to backend namespaces.
-
-Broad backend workload/ServiceAccount/configuration writes, logs/proxy reads,
-takeover of an existing Secret-observing webhook's backend, and custom resources
-whose controllers may copy Secrets are accepted additional indirect paths for
-disposable benchmark repairs. This permission mode is not
-an end-to-end Secret confidentiality boundary. Other worker/controller grants
-retain their existing scope. Settings are bound to the installed Job, restored
-with namespace grants on reuse, and revoked on downgrade; reconciliation replaces
-old permissive Roles and ClusterRoles. New APIs require another install/inspection
-to refresh discovery. Benchmark
+Those pre-existing indirect Secret paths remain available. Permissive mode adds
+no new Secret-data path under the reviewed built-in resource contract; it does
+not establish end-to-end Secret confidentiality or constrain ambient bindings.
+Other worker/controller grants retain their existing scope. Settings are bound
+to the installed Job, restored with namespace grants on reuse, and revoked on
+downgrade; reconciliation replaces old permissive Roles and ClusterRoles.
+Discovery refresh cannot widen grants beyond the reviewed allowlist. Benchmark
 capability policy and per-fault evidence stay under `benchmarks/sregym/`; they
 do not enter production worker tasks or prompts.
+
+Negative installer tests check the authorization prerequisites of each backend
+Secret path, webhook takeover and custom-controller path, with permitted repair
+operations as positive controls. The test authorizer resolves RoleBindings to
+Roles or ClusterRoles, ClusterRoleBindings, standard ServiceAccount group/User
+subjects, and resource/subresource wildcards within the generated Plan. It does
+not model ambient cluster bindings, ClusterRole aggregation, admission,
+non-resource requests or named-resource requests. These are permission-contract
+tests, not proof from a live cluster or a simulated Secret exfiltration.
 
 ## Controller/responder interaction
 

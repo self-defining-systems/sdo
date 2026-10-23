@@ -2,8 +2,8 @@ package install
 
 import (
 	"context"
-	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,13 +29,31 @@ func discoveryFixture() []*metav1.APIResourceList {
 	}
 }
 
-// This authorizer resolves the generated subject/binding/role graph, including
-// wildcard matching, rather than asserting that particular rules were appended.
+// This models resource requests by system:serviceaccount:demo-sdo:sdo-responder
+// against this Plan only. It resolves Role/ClusterRole refs, standard SA groups,
+// User subjects and resource/subresource wildcards. It does not model ambient
+// cluster bindings, ClusterRole aggregation, admission, non-resource URLs or
+// named-resource requests (ResourceNames rules cannot allow these unnamed checks).
 func planAllows(p Plan, namespace, group, resource, verb string) bool {
-	subjectMatches := func(subjects []rbacv1.Subject) bool {
+	subjectMatches := func(subjects []rbacv1.Subject, bindingNamespace string) bool {
 		for _, s := range subjects {
-			if s.Kind == "ServiceAccount" && s.Name == "sdo-responder" && s.Namespace == "demo-sdo" {
-				return true
+			switch s.Kind {
+			case "ServiceAccount":
+				ns := s.Namespace
+				if ns == "" {
+					ns = bindingNamespace
+				}
+				if s.Name == "sdo-responder" && ns == "demo-sdo" {
+					return true
+				}
+			case "User":
+				if s.Name == "system:serviceaccount:demo-sdo:sdo-responder" {
+					return true
+				}
+			case "Group":
+				if s.Name == "system:authenticated" || s.Name == "system:serviceaccounts" || s.Name == "system:serviceaccounts:demo-sdo" {
+					return true
+				}
 			}
 		}
 		return false
@@ -50,24 +68,35 @@ func planAllows(p Plan, namespace, group, resource, verb string) bool {
 				}
 				return false
 			}
-			if has(r.APIGroups, group) && has(r.Resources, resource) && has(r.Verbs, verb) {
+			_, subresource, _ := strings.Cut(resource, "/")
+			resourceMatches := has(r.Resources, resource) || (subresource != "" && slices.Contains(r.Resources, "*/"+subresource))
+			if len(r.ResourceNames) == 0 && has(r.APIGroups, group) && resourceMatches && has(r.Verbs, verb) {
 				return true
 			}
 		}
 		return false
 	}
 	for _, b := range append(append([]*rbacv1.RoleBinding{}, p.ControlBindings...), p.AppBindings...) {
-		if b.Namespace != namespace || !subjectMatches(b.Subjects) {
+		if b.Namespace != namespace || !subjectMatches(b.Subjects, b.Namespace) {
 			continue
 		}
-		for _, r := range append(append([]*rbacv1.Role{}, p.ControlRoles...), p.AppRoles...) {
-			if r.Namespace == namespace && r.Name == b.RoleRef.Name && matches(r.Rules) {
-				return true
+		switch b.RoleRef.Kind {
+		case "Role":
+			for _, r := range append(append([]*rbacv1.Role{}, p.ControlRoles...), p.AppRoles...) {
+				if r.Namespace == namespace && r.Name == b.RoleRef.Name && matches(r.Rules) {
+					return true
+				}
+			}
+		case "ClusterRole":
+			for _, r := range p.ClusterRoles {
+				if r.Name == b.RoleRef.Name && matches(r.Rules) {
+					return true
+				}
 			}
 		}
 	}
 	for _, b := range p.ClusterBindings {
-		if !subjectMatches(b.Subjects) {
+		if b.RoleRef.Kind != "ClusterRole" || !subjectMatches(b.Subjects, "") {
 			continue
 		}
 		for _, r := range p.ClusterRoles {
@@ -98,11 +127,11 @@ func TestPermissiveResponderAuthorizer(t *testing.T) {
 			}
 		}
 		for _, ns := range []string{"demo", "policy-system"} {
-			if got := planAllows(p, ns, "example.dev", "widgets", "deletecollection"); got != enabled {
+			if got := planAllows(p, ns, "example.dev", "widgets", "deletecollection"); got {
 				t.Errorf("enabled=%v namespace=%s CRD allowed=%v", enabled, ns, got)
 			}
-			if !planAllows(p, ns, "apps", "deployments", "patch") && enabled {
-				t.Errorf("restart denied in %s", ns)
+			if got := planAllows(p, ns, "", "pods", "delete"); got != (ns == "demo" || enabled) {
+				t.Errorf("enabled=%v namespace=%s pod restart allowed=%v", enabled, ns, got)
 			}
 		}
 		for _, ns := range []string{"", "demo", "policy-system", "demo-sdo", "unrelated"} {
@@ -213,41 +242,6 @@ func TestPermissiveGrantsPersistRestoreAndRevoke(t *testing.T) {
 	if _, err := client.RbacV1().ClusterRoleBindings().Get(ctx, name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("old cluster binding survived: %v", err)
 	}
-}
-
-func FuzzPermissiveSecretReadsDenied(f *testing.F) {
-	f.Add("demo", "get", "secrets")
-	f.Add("policy-system", "list", "secrets/status")
-	f.Add("demo-sdo", "watch", "secrets")
-	f.Fuzz(func(t *testing.T, namespace, verb, resource string) {
-		if namespace == "" {
-			namespace = "demo"
-		}
-		if resource != "secrets" && !strings.HasPrefix(resource, "secrets/") {
-			resource = "secrets"
-		}
-		// The canary is deliberately present in every Secret-bearing config input.
-		cfg := testConfig()
-		cfg.Credentials = map[string][]byte{"TOKEN": []byte("PX1_SECRET_CANARY")}
-		cfg.RegistryPushDockerConfig = []byte("PX1_SECRET_CANARY")
-		cfg.PermissiveResponder = true
-		cfg.ResponderNamespaces = []string{"policy-system"}
-		discovered := append(discoveryFixture(), &metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: resource, Namespaced: true}}})
-		p, err := Resources(cfg, discovered...)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if planAllows(p, namespace, "", resource, verb) {
-			t.Fatalf("Secret access allowed: %q/%q/%q", namespace, resource, verb)
-		}
-		grants, err := json.Marshal(struct {
-			Roles        []*rbacv1.Role
-			ClusterRoles []*rbacv1.ClusterRole
-		}{append(append([]*rbacv1.Role{}, p.ControlRoles...), p.AppRoles...), p.ClusterRoles})
-		if err != nil || strings.Contains(string(grants), "PX1_SECRET_CANARY") {
-			t.Fatalf("Secret value entered grants: %v", err)
-		}
-	})
 }
 
 // Secret-path checks use the complete effective grant graph, including the
@@ -423,54 +417,47 @@ func TestPermissiveSecretPathsRevokedOnRestore(t *testing.T) {
 			}
 		}
 	}
+	for _, path := range []struct{ group, resource, verb string }{
+		{"", "pods", "create"}, {"", "configmaps", "get"},
+		{"", "pods/log", "get"}, {"", "pods/proxy", "get"},
+		{"", "services", "patch"}, {"", "serviceaccounts", "create"},
+		{"apps", "deployments", "patch"}, {"batch", "jobs", "create"},
+		{"example.dev", "widgets", "get"},
+	} {
+		if planAllows(got, "policy-system", path.group, path.resource, path.verb) {
+			t.Errorf("stale backend Secret path survived restore: %+v", path)
+		}
+	}
+	if !planAllows(got, "policy-system", "", "pods", "delete") {
+		t.Fatal("backend Pod delete lost on restore")
+	}
+
 }
 
-func TestPermissiveBroadRepairsRetained(t *testing.T) {
+func TestPermissiveBaselineUnchanged(t *testing.T) {
 	cfg := testConfig()
 	cfg.PermissiveResponder = true
 	cfg.ResponderNamespaces = []string{"policy-system"}
-	discovered := append(discoveryFixture(), &metav1.APIResourceList{GroupVersion: "external-secrets.io/v1", APIResources: []metav1.APIResource{
-		{Name: "externalsecrets", Namespaced: true}, {Name: "externalsecrets/status", Namespaced: true},
-	}}, &metav1.APIResourceList{GroupVersion: "batch/v1", APIResources: []metav1.APIResource{{Name: "jobs", Namespaced: true}, {Name: "cronjobs", Namespaced: true}}})
-	discovered = append(discovered, &metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{
-		{Name: "pods/log", Namespaced: true}, {Name: "pods/proxy", Namespaced: true}, {Name: "services/proxy", Namespaced: true},
-	}})
-	plan, err := Resources(cfg, discovered...)
+	plan, err := Resources(cfg, discoveryFixture()...)
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, path := range []struct{ group, resource string }{
-		{"", "pods"}, {"", "configmaps"}, {"", "serviceaccounts"},
-		{"", "pods/log"}, {"", "pods/proxy"}, {"", "services/proxy"},
-		{"apps", "deployments"}, {"batch", "jobs"}, {"batch", "cronjobs"},
-		{"rbac.authorization.k8s.io", "roles"}, {"rbac.authorization.k8s.io", "rolebindings"},
-		{"example.dev", "widgets"}, {"external-secrets.io", "externalsecrets"}, {"external-secrets.io", "externalsecrets/status"},
-	} {
-		for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"} {
-			for _, ns := range []string{"demo", "policy-system"} {
-				if !planAllows(plan, ns, path.group, path.resource, verb) {
-					t.Errorf("broad repair denied in %s: %+v/%s", ns, path, verb)
-				}
-			}
-			for _, ns := range []string{"demo-sdo", "kube-system", "unrelated"} {
-				if ns == "demo-sdo" && path.group == "" && path.resource == "configmaps" {
-					continue // Existing control Role grants ConfigMap access.
-				}
-				if planAllows(plan, ns, path.group, path.resource, verb) {
-					t.Errorf("broad repair escaped scope in %s: %+v/%s", ns, path, verb)
-				}
-			}
-		}
 	}
 	strict, err := Resources(testConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, baseline := range append(strict.ControlRoles, strict.AppRoles...) {
+		found := false
 		for _, actual := range append(plan.ControlRoles, plan.AppRoles...) {
-			if actual.Name == baseline.Name && actual.Namespace == baseline.Namespace && !reflect.DeepEqual(actual, baseline) {
-				t.Errorf("baseline Role changed: %s/%s", baseline.Namespace, baseline.Name)
+			if actual.Name == baseline.Name && actual.Namespace == baseline.Namespace {
+				found = true
+				if !reflect.DeepEqual(actual, baseline) {
+					t.Errorf("baseline Role changed: %s/%s", baseline.Namespace, baseline.Name)
+				}
 			}
+		}
+		if !found {
+			t.Errorf("baseline Role removed: %s/%s", baseline.Namespace, baseline.Name)
 		}
 	}
 }

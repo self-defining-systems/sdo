@@ -83,25 +83,35 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 	return nil
 }
 
-// Keep broad repair verbs on concrete discovered resources, without granting
-// identity/escalation verbs through a wildcard. This constrains only additional
-// grants: the baseline app repair Role remains unchanged. Workload writes and
-// controllers behind custom APIs can still expose Secrets indirectly.
+// Discovery is not a trust decision. Only reviewed built-in group/resource
+// pairs can receive added grants; the reviewed custom-API allowlist is empty.
+// Do not add subresources or infer trust from Kind/resource names. The baseline
+// app Role is unchanged; backend repairs can read these built-ins or delete a
+// Pod so its existing controller recreates the same spec.
 func permissiveResourceVerbs(group, resource string) []string {
-	base, _, _ := strings.Cut(resource, "/")
-	if base == "secrets" || group == "certificates.k8s.io" {
-		return nil
-	}
-	if group == "" {
+	switch group {
+	case "":
 		switch resource {
-		case "pods/exec", "pods/attach", "pods/portforward", "pods/ephemeralcontainers", "serviceaccounts/token", "nodes/proxy":
-			return nil
+		case "pods":
+			return []string{"get", "list", "watch", "delete"}
+		case "services", "endpoints", "events":
+			return []string{"get", "list", "watch"}
+		}
+	case "apps":
+		switch resource {
+		case "deployments", "replicasets", "statefulsets", "daemonsets":
+			return []string{"get", "list", "watch"}
+		}
+	case "discovery.k8s.io":
+		if resource == "endpointslices" {
+			return []string{"get", "list", "watch"}
+		}
+	case "networking.k8s.io":
+		if resource == "networkpolicies" {
+			return []string{"get", "list", "watch"}
 		}
 	}
-	if group == "admissionregistration.k8s.io" && (resource == "mutatingwebhookconfigurations" || resource == "validatingwebhookconfigurations") {
-		return []string{"get", "list", "watch", "delete"}
-	}
-	return []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"}
+	return nil
 }
 
 func (i Installer) resources(c Config) (Plan, error) {
