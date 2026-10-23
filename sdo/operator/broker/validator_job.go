@@ -47,7 +47,7 @@ func JobValidator(client ValidationJobClient) Validator {
 		if client == nil {
 			return errors.New("isolated validator job is not configured")
 		}
-		if !layout.RequiresValidatorJob(paths) {
+		if len(paths) > 0 && !layout.RequiresValidatorJob(paths) {
 			slog.Info("validator_job_skipped", "reason", "no executable or corpus change", "changed_paths", len(paths))
 			return nil
 		}

@@ -67,6 +67,9 @@ func Run(detectors []sdk.Detector) {
 func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry) {
 	if err := RunWithOptions(context.Background(), detectors, RuntimeOptions{Programs: programs}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, memory.ErrHealthRefreshRequired) {
+			os.Exit(memory.HealthRefreshExitCode)
+		}
 		os.Exit(1)
 	}
 }
@@ -472,6 +475,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
+				loop.CheckHealth = func(ctx context.Context) error {
+					if controller != nil && controller.CheckHealth != nil {
+						if err := controller.CheckHealth(ctx); err != nil {
+							return err
+						}
+					}
+					if launchConfig != nil {
+						return checkInvestigationHealth(ctx, resolvedRoot, request.SourceCommit, launchConfig.GetControllerRevision())
+					}
+					return nil
+				}
+				loop.Executor.Client = healthGuardedPlanClient{PlanObjectClient: loop.Executor.Client, Check: loop.CheckHealth}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
 						return nil
@@ -537,11 +552,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
 		}
 	}
+	if launchConfig != nil {
+		controller.CheckHealth = controllerHealthGuard(controller, resolvedRoot, launchConfig.GetControllerRevision())
+	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
 	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap)
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
+	}
+	if launchConfig != nil {
+		controller.discardRestoredHealthObservations(start)
 	}
 	if err := attachFiringTelemetry(controller, *telemetryPath, jobDispatch, *repositoryMountPath); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -728,6 +749,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
 		}
 	}
+	if err := controller.prepareHealthEffects(runCtx, time.Now().UTC()); err != nil {
+		return err
+	}
 	if !desired.Paused {
 		kubernetesCache.Start(runCtx)
 		cacheStarted = true
@@ -754,7 +778,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	if err := executePendingEffects(runCtx, controller); err != nil {
+	if err := executeStartupEffects(runCtx, controller, desired.Paused); err != nil {
 		if runCtx.Err() != nil {
 			return nil
 		}
@@ -1239,9 +1263,20 @@ func defaultIdentity() string {
 	return hostname + "-" + strconv.Itoa(os.Getpid())
 }
 
+// executeStartupEffects keeps restored responder work pending during a pause.
+func executeStartupEffects(ctx context.Context, controller *Controller, paused bool) error {
+	if paused {
+		return executePausedEffects(ctx, controller)
+	}
+	return executePendingEffects(ctx, controller)
+}
+
 // executePausedEffects runs only operational-memory effects: a paused
 // controller neither prepares nor dispatches a responder.
 func executePausedEffects(ctx context.Context, controller *Controller) (err error) {
+	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	defer func() {
 		if errors.Is(err, ErrEffectNotDurable) {
 			err = nil
@@ -1263,6 +1298,9 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 }
 
 func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
+	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	// A failed state write leaves effects pending for the next successful save.
 	defer func() {
 		if errors.Is(err, ErrEffectNotDurable) {

@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.88d0498aeecabd7f"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.b6d584fd12e90248"
 
 type repeatable []string
 
@@ -138,7 +138,17 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 			if err != nil {
 				return builder.DiagnosticsProjection{}, err
 			}
-			return resolveAcceptedDiagnostics(ctx, root, repository)
+			if _, err := resolveAcceptedDiagnostics(ctx, root, repository); err != nil {
+				return builder.DiagnosticsProjection{}, err
+			}
+			if err := refreshControllerHealth(ctx, launch, repository); err != nil {
+				return builder.DiagnosticsProjection{}, err
+			}
+			projected, err := memory.AcceptedDiagnostics(ctx, root)
+			if err != nil {
+				return builder.DiagnosticsProjection{}, err
+			}
+			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
 		PublishProber: memory.PublishProber,
 	}, *supervise, nil
