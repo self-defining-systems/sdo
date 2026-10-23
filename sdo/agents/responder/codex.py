@@ -424,6 +424,8 @@ def _warm_instructions(playbooks: list[WarmPlaybook], namespace: str) -> str:
         "Warm path: incident memory supplies repair hypotheses for this incident. "
         f"Prior verified outcome(s): {', '.join(priors)}. Historical matches and detector validation do not "
         "establish applicability to current accepted source.\n"
+        "Check only the evidence the repair needs and the accepted-source values it would write, then act. "
+        "Explore the repository or cluster further only to resolve a contradiction.\n"
         f"Playbook evidence:\n{evidence}"
         "Fast procedure:\n"
         "1. Run one combined sanity check of current evidence, accepted source and intended application behavior.\n"

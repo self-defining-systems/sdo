@@ -299,6 +299,16 @@ def test_registered_but_not_fired_incident_detector_gets_precondition_sanity_che
     assert "Confirm a surfaced playbook against live state before applying it" not in prompt
 
 
+def test_warm_path_limits_checks_to_repair_evidence_and_accepted_source_values(tmp_path: Path) -> None:
+    for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path)):
+        prompt = _responder_prompt(request)
+
+        assert (
+            "Check only the evidence the repair needs and the accepted-source values it would write, then act" in prompt
+        )
+        assert "Explore the repository or cluster further only to resolve a contradiction" in prompt
+
+
 def test_cold_prompt_is_unchanged_without_exact_incident_detector_match(tmp_path: Path) -> None:
     registered = tmp_path / "registered"
     no_prior = evolve(_request(), repository_worktree=str(registered))
