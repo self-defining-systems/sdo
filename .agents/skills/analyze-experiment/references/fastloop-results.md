@@ -187,9 +187,12 @@ accepted commits and status. It also aggregates the slot rows into
 manifest failed and prevents any subsequent slot. Output directories cannot be
 reused; restarting a failed stream is an explicit new experiment.
 
-`full_cleanup_verified=true` means the driver observed successful protocol-v2
-full recovery, reconciled its application baseline, then observed healthy
-workloads and completed rollouts. Legacy rows default false. Dispatch requires
+`full_cleanup_verified=true` on RC1 and newer drivers means successful protocol-v2
+`seed-compatible/v1` recovery, application baseline reconciliation, successful
+post-seed client refresh, then healthy workloads and completed rollouts. Older
+drivers did not require seed compatibility or client refresh; inspect the run's
+driver/harness revisions before treating their true flag as full credential recovery.
+Legacy rows default false. Dispatch requires
 this field, a successful post-recovery oracle, no skipped cleanup and no error
 or infrastructure outcome. Aggregate-only faults remain supported; missing
 per-fault probe timing does not bypass the cleanup gate. DT1's shared detached
@@ -206,3 +209,6 @@ historical seed proofs immutable. Scoped build-input declarations must be
 installed before fresh builds and recorded with independent rollout identities;
 measure a manifest-only source edit through real broker/lock reconciliation
 before reporting L6 continuity.
+
+For infrastructure validity, mixed-app slot dispatch and full-cleanup gates, read
+[slot cleanup evidence](slot-cleanup.md).
