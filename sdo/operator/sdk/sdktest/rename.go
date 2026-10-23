@@ -182,7 +182,7 @@ func renameCorpusCase(c CorpusCase) (CorpusCase, error) {
 func renameBindings(bindings program.Bindings, namespace string, m *renameMapping) program.Bindings {
 	renamed := make(program.Bindings, len(bindings))
 	for key, ref := range bindings {
-		if ref.Namespace == namespace || ref.Namespace == "" {
+		if ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
 		renamed[key] = ref
@@ -218,7 +218,7 @@ func renameSelector(selector *metav1.LabelSelector, m *renameMapping) {
 }
 
 func renameObjectRef(ref *corev1.ObjectReference, namespace string, m *renameMapping) {
-	if ref != nil && (ref.Namespace == "" || ref.Namespace == namespace) {
+	if ref != nil && (ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster()) {
 		ref.Name = m.value(ref.Name)
 	}
 }
@@ -567,6 +567,9 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 	renamed := make([]PrimitiveCall, len(calls))
 	for index, call := range calls {
 		renamed[index] = call
+		if strings.HasPrefix(call.Method, "Scoped") || call.Method == "MutatingWebhookConfigurations" || call.Method == "ValidatingWebhookConfigurations" {
+			continue
+		}
 		var args []json.RawMessage
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return nil, fmt.Errorf("recording %d %s arguments: %w", index, call.Method, err)
@@ -578,7 +581,7 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 		if err := json.Unmarshal(args[0], &ref); err != nil {
 			return nil, fmt.Errorf("recording %d %s reference: %w", index, call.Method, err)
 		}
-		if ref.Namespace == "" || ref.Namespace == namespace {
+		if ref.Namespace == namespace || ref.Namespace == "" && !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
 			ref.Name = m.value(ref.Name)
 		}
 		args[0], _ = json.Marshal(ref)

@@ -12,27 +12,27 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/traffic"
 )
 
 type Snapshot struct {
 	// SourceName names the file a loaded snapshot came from, for messages.
-	SourceName        string                                  `json:"-"`
-	NamespaceName     string                                  `json:"namespace"`
-	ConfigMapList     []corev1.ConfigMap                      `json:"configMaps"`
-	ServiceList       []corev1.Service                        `json:"services"`
-	PodList           []corev1.Pod                            `json:"pods"`
-	DeploymentList    []appsv1.Deployment                     `json:"deployments"`
-	StatefulSetList   []appsv1.StatefulSet                    `json:"statefulSets"`
-	ReplicaSetList    []appsv1.ReplicaSet                     `json:"replicaSets"`
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
-	PDBList           []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
-	EndpointList      []corev1.Endpoints                      `json:"endpoints"`
-	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
-	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
-	EventList         []corev1.Event                          `json:"events"`
-	// ObservedAtTime is when the live view was read; nil when unrecorded.
-	// It backs sdk.ObservationClock so age-based detectors replay exactly.
+	SourceName         string `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+	NamespaceName      string                                  `json:"namespace"`
+	ConfigMapList      []corev1.ConfigMap                      `json:"configMaps"`
+	ServiceList        []corev1.Service                        `json:"services"`
+	PodList            []corev1.Pod                            `json:"pods"`
+	DeploymentList     []appsv1.Deployment                     `json:"deployments"`
+	StatefulSetList    []appsv1.StatefulSet                    `json:"statefulSets"`
+	ReplicaSetList     []appsv1.ReplicaSet                     `json:"replicaSets"`
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
+	PDBList            []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
+	EndpointList       []corev1.Endpoints                      `json:"endpoints"`
+	EndpointSliceList  []discoveryv1.EndpointSlice             `json:"endpointSlices"`
+	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies"`
+	EventList          []corev1.Event                          `json:"events"`
 	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`

@@ -38,6 +38,9 @@ func LoadSnapshots(dir string) ([]Snapshot, error) {
 		if err := decoder.Decode(&snapshot); err != nil {
 			return nil, fmt.Errorf("snapshot %s: %w", filepath.Base(path), err)
 		}
+		if err := snapshot.ValidateObservation(); err != nil {
+			return nil, fmt.Errorf("snapshot %s: %w", filepath.Base(path), err)
+		}
 		snapshot.SourceName = filepath.Base(path)
 		snapshots = append(snapshots, snapshot)
 	}

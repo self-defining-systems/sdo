@@ -29,6 +29,45 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		observed := clock.ObservedAt().UTC()
 		s.ObservedAtTime = &observed
 	}
+	if scoped, ok := view.(sdk.ScopedObservationSource); ok {
+		s.ScopedSnapshot.Version = 1
+		s.ScopedSnapshot.Generation = scoped.ObservationGeneration()
+		for _, status := range scoped.ObservationStatuses() {
+			s.ScopedSnapshot.Scope.Version = 1
+			s.ScopedSnapshot.Scope.Targets = append(s.ScopedSnapshot.Scope.Targets, status.Target)
+			s.ScopedSnapshot.Statuses = append(s.ScopedSnapshot.Statuses, status)
+			if status.State != sdk.ObservationObserved {
+				continue
+			}
+			t := status.Target
+			switch t.Kind {
+			case "Deployment":
+				objects, err := scoped.ScopedDeployments(t.Namespace)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				s.ScopedSnapshot.Deployments = append(s.ScopedSnapshot.Deployments, objects...)
+			case "Service":
+				objects, err := scoped.ScopedServices(t.Namespace)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				s.ScopedSnapshot.Services = append(s.ScopedSnapshot.Services, objects...)
+			case "Endpoints":
+				objects, err := scoped.ScopedEndpoints(t.Namespace)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				s.ScopedSnapshot.Endpoints = append(s.ScopedSnapshot.Endpoints, objects...)
+			}
+		}
+		if objects, err := scoped.MutatingWebhookConfigurations(); err == nil {
+			s.ScopedSnapshot.Mutating = objects
+		}
+		if objects, err := scoped.ValidatingWebhookConfigurations(); err == nil {
+			s.ScopedSnapshot.Validating = objects
+		}
+	}
 	for _, object := range view.ConfigMaps() {
 		if object.Namespace == namespace {
 			copy := *object.DeepCopy()

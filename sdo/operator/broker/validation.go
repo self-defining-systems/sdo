@@ -10,7 +10,7 @@ import (
 
 // checkCandidate applies the same complete pipeline as memory check. Only the
 // compile transport differs: the broker requires its independent validator Job.
-func checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision) ([]validate.Diagnostic, error) {
+func (b *Broker) checkCandidate(ctx context.Context, root, base string, actor Actor, phase Phase, paths []string, runner Validator, publication *validate.PublicationContext, decision *contracts.ReflectionDecision) ([]validate.Diagnostic, error) {
 	var compile validate.CompileRunner
 	if runner != nil {
 		compile = func(ctx context.Context, _ validate.Request) ([]validate.Diagnostic, error) {
@@ -22,7 +22,7 @@ func checkCandidate(ctx context.Context, root, base string, actor Actor, phase P
 			return nil, err
 		}
 	}
-	return validate.Check(ctx, validate.Request{Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision}, compile)
+	return validate.Check(ctx, validate.Request{ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision}, compile)
 }
 
 // PublishReflection binds the returned worker decision independently of any

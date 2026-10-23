@@ -25,8 +25,11 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
-	Namespace string
-	Client    kubernetes.Interface
+	Scope      sdk.ObservationScope
+	Ceiling    sdk.ObservationScope
+	Generation string
+	Namespace  string
+	Client     kubernetes.Interface
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -119,7 +122,12 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		return DetectionSnapshot{}, fmt.Errorf("list events: %w", err)
 	}
 
+	scoped, err := ObserveScoped(ctx, p.Client, p.Scope, p.Ceiling, p.Generation)
+	if err != nil {
+		return nil, err
+	}
 	return DetectionSnapshot{
+		ScopedSnapshot:    scoped,
 		NamespaceName:     namespace,
 		ConfigMapList:     configMaps.Items,
 		ServiceList:       services.Items,
@@ -139,19 +147,20 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 }
 
 type DetectionSnapshot struct {
-	NamespaceName     string
-	ConfigMapList     []corev1.ConfigMap
-	ServiceList       []corev1.Service
-	PodList           []corev1.Pod
-	DeploymentList    []appsv1.Deployment
-	ReplicaSetList    []appsv1.ReplicaSet
-	StatefulSetList   []appsv1.StatefulSet
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler
-	PDBList           []policyv1.PodDisruptionBudget
-	EndpointList      []corev1.Endpoints
-	EndpointSliceList []discoveryv1.EndpointSlice
-	NetworkPolicyList []networkingv1.NetworkPolicy
-	EventList         []corev1.Event
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+	NamespaceName      string
+	ConfigMapList      []corev1.ConfigMap
+	ServiceList        []corev1.Service
+	PodList            []corev1.Pod
+	DeploymentList     []appsv1.Deployment
+	ReplicaSetList     []appsv1.ReplicaSet
+	StatefulSetList    []appsv1.StatefulSet
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler
+	PDBList            []policyv1.PodDisruptionBudget
+	EndpointList       []corev1.Endpoints
+	EndpointSliceList  []discoveryv1.EndpointSlice
+	NetworkPolicyList  []networkingv1.NetworkPolicy
+	EventList          []corev1.Event
 	// TrafficWindows holds synthetic-traffic observations by workload name.
 	TrafficWindows map[string]traffic.Window
 	// ObservedAtTime is when the snapshot was read. Detectors read it through

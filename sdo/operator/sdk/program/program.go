@@ -1,6 +1,10 @@
 package program
 
 import (
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+
 	"context"
 	"fmt"
 	"regexp"
@@ -288,4 +292,41 @@ func (v *checkedReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error) {
 	result, err := v.ReadView.DiffAgainstBaseline(ref)
 	v.check(err)
 	return result, err
+}
+
+func (v *checkedReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.ReadView).ObservationStatuses()
+}
+func (v *checkedReadView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
 }
