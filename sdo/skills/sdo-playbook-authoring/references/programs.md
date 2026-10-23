@@ -74,3 +74,5 @@ a flag alone does not prove that learning is blocked.
 Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. A repair must not add or change a credential channel; existing channels permit unrelated legacy repairs.
 
 Compensation restores reversible writes even when a plan also deleted an object. The delete remains explicitly irreversible and not restored; it never triggers recreation.
+
+Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse.

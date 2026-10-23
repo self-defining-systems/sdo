@@ -179,6 +179,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture policy; never responder/plan output")
+	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently pinned reviewed policy SHA256")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
@@ -231,6 +233,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	if *planSafetyJSON != "" || *planSafetySHA != "" {
+		if options.PlanSafety != nil {
+			return errors.New("plan safety authority supplied twice")
+		}
+		reviewed, err := loadReviewedPlanSafety(*planSafetyJSON, *planSafetySHA, time.Now())
+		if err != nil {
+			return err
+		}
+		options.PlanSafety = reviewed
+	}
+
 	timeScale, err := developmentTimeScale()
 	if err != nil {
 		return err
