@@ -517,6 +517,23 @@ func ownedDriftPathsForEntry(object *unstructured.Unstructured, entry metav1.Man
 	return owned
 }
 
+// attachPendingDrift gives queued drift the same incident ownership as drift
+// arriving after launch. Individual batch deadlines must not strand evidence
+// across verification and acknowledgment, including after a controller restart.
+// Run before evaluating drift so clearance cannot retract the queued evidence
+// before it is retained in this incident's outcome.
+func (c *Controller) attachPendingDrift() {
+	c.mu.Lock()
+	open := c.incidentOpen && c.currentIncidentRequest != nil
+	c.mu.Unlock()
+	if !open {
+		return
+	}
+	for _, finding := range c.batcher.DrainDetectorPrefix("drift.") {
+		c.attachDrift(finding)
+	}
+}
+
 // attachDrift retains evidence arriving after launch without changing the frozen
 // worker request. Tools read the moving controller view on each call.
 func (c *Controller) attachDrift(finding sdk.Finding) bool {
