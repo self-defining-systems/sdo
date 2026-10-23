@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
@@ -62,5 +63,59 @@ func TestPrepareHealthInstallsWorkloadHealthDetector(t *testing.T) {
 	// Preparing an already prepared tree must accept the identical policy.
 	if err := PrepareHealth(root); err != nil {
 		t.Fatalf("second preparation: %v", err)
+	}
+}
+
+func TestPrepareHealthInstallsServiceReachabilityForEveryApplication(t *testing.T) {
+	root := t.TempDir()
+	objective := filepath.Join(root, layout.DetectorManifestPath(layout.ClassHealth, "health-objective"))
+	if err := os.MkdirAll(filepath.Dir(objective), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(objective, []byte("judge authored\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No traffic workloads: the probe needs no authoring at all.
+	if err := PrepareHealth(root); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, "service-reachability"))
+	data, err := os.ReadFile(filepath.Join(directory, layout.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := layout.ParseDetectorManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watches := make([]string, 0, len(manifest.Watches))
+	for _, watch := range manifest.Watches {
+		watches = append(watches, watch.APIVersion+"/"+watch.Kind)
+	}
+	want := make([]string, 0)
+	for _, watch := range servicehealth.ReachabilityWatches() {
+		want = append(want, watch.APIVersion+"/"+watch.Kind)
+	}
+	if manifest.ID != "service-reachability" || manifest.Class != string(layout.ClassHealth) || manifest.Interval != "10s" ||
+		!reflect.DeepEqual(watches, want) {
+		t.Fatalf("manifest: %+v watches %v", manifest, watches)
+	}
+	source, err := os.ReadFile(filepath.Join(directory, layout.DetectorFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"package servicereachability", "servicehealth.NewReachabilityDetector", "servicehealth.ReachabilityWatches()"} {
+		if !strings.Contains(string(source), needle) {
+			t.Fatalf("detector source must contain %q:\n%s", needle, source)
+		}
+	}
+	if err := PrepareHealth(root); err != nil {
+		t.Fatalf("preparation must be idempotent: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, layout.DetectorFileName), append(source, []byte("// edited\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareHealth(root); err == nil || !strings.Contains(err.Error(), "differs from Go policy") {
+		t.Fatalf("an edited generic package must be rejected, got %v", err)
 	}
 }
