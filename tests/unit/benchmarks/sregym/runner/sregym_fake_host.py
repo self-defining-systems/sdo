@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from benchmarks.sregym.runner.preflight import GB, ImageInfo, ImageVersions
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
 CODEX_PIN = "0.163.0"
@@ -38,6 +38,9 @@ class FakeHost:
     git_answers: dict[tuple[str, ...], str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
     load: tuple[float, float, float] | None = (1.0, 2.0, 3.0)
     probed: list[str] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+
+    def kickoff_import(self, command: str, workdir: Path, sregym_dir: Path, env: Mapping[str, str]) -> str | None:
+        return None
 
     def free_bytes(self, path: Path) -> int | None:
         for prefix, value in self.free.items():
