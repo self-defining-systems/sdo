@@ -29,7 +29,8 @@ diagnostic; look it up here.
 - A watch is `{apiVersion, kind}` and must name a kind the snapshot exposes: `apps/v1 Deployment`,
   `apps/v1 ReplicaSet`, `discovery.k8s.io/v1 EndpointSlice`, `networking.k8s.io/v1 NetworkPolicy`,
   `v1 ConfigMap`, `v1 Endpoints`, `v1 Event`, `v1 Pod`, `v1 Service`, and the synthetic-traffic watch
-  `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only). Watches are unique and
+  `sdo.dev/v1alpha1 SyntheticTraffic` (health detectors over traffic workloads only), and the controller-emitted
+  `sdo.dev/v1alpha1 ServiceReachability` (detectors over Service reachability dials). Watches are unique and
   non-empty. Enforced by: `manifest.invalid`, `detector.compile`.
 Advice, not validator-checked: watch every kind whose snapshot accessor the detector calls; the controller
 evaluates a detector when a watched kind changes.

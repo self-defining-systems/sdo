@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -412,11 +413,12 @@ func (o *TrafficObserver) Summary() map[string]any {
 	return summary
 }
 
-// TrafficSnapshotProvider adds synthetic-traffic windows to another
-// provider's snapshots.
+// TrafficSnapshotProvider adds synthetic-traffic windows and Service
+// reachability observations to another provider's snapshots.
 type TrafficSnapshotProvider struct {
-	Base     SnapshotProvider
-	Observer *TrafficObserver
+	Base         SnapshotProvider
+	Observer     *TrafficObserver
+	Reachability *ServiceReachabilityObserver
 }
 
 func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -428,12 +430,35 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	if p.Observer != nil {
 		windows = p.Observer.Windows()
 	}
-	return trafficContext{DetectionContext: base, windows: windows}, nil
+	var reachability *servicehealth.ReachabilityWindow
+	if p.Reachability != nil {
+		window, _ := p.Reachability.Window()
+		reachability = &window
+	}
+	return trafficContext{DetectionContext: base, windows: windows, reachability: reachability}, nil
 }
 
 type trafficContext struct {
 	sdk.DetectionContext
-	windows map[string]traffic.Window
+	windows      map[string]traffic.Window
+	reachability *servicehealth.ReachabilityWindow
+}
+
+// ServiceReachability implements servicehealth.ReachabilitySource.
+func (c trafficContext) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if c.reachability == nil {
+		return servicehealth.ReachabilityWindow{}, false
+	}
+	return *c.reachability, true
+}
+
+// ObservedAt forwards the base snapshot's clock, which embedding an interface
+// would otherwise hide from sdk.ObservationTime.
+func (c trafficContext) ObservedAt() time.Time {
+	if clock, ok := c.DetectionContext.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
 }
 
 func (c trafficContext) TrafficWindow(workload string) (traffic.Window, bool) {

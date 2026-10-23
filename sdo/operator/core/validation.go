@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -49,6 +50,8 @@ var supportedWatches = map[string]struct{}{
 	// Emitted by the controller runtime's synthetic-traffic prober rather
 	// than by a Kubernetes informer.
 	traffic.Watch.APIVersion + "/" + traffic.Watch.Kind: {},
+	// Emitted by the controller runtime's Service reachability observer.
+	servicehealth.ReachabilityWatch.APIVersion + "/" + servicehealth.ReachabilityWatch.Kind: {},
 }
 
 func validateDetectorSpec(spec sdk.DetectorSpec) error {

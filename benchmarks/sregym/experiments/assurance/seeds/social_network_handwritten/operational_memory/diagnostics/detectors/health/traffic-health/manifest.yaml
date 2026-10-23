@@ -1,0 +1,20 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: traffic-health
+constructor: New
+class: health
+owner: health_judge
+watches:
+    - apiVersion: sdo.dev/v1alpha1
+      kind: SyntheticTraffic
+interval: 10s
+persistence:
+    firing: 2
+    clearing: 2
+batching:
+    severity: critical
+    debounce: 500ms
+possiblePlaybooks:
+    - health-objective
+originatingCommit: lifecycle-bootstrap

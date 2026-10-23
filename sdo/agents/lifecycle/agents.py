@@ -393,7 +393,14 @@ Run `sdo-operator memory ls` to inspect existing memory and `sdo-operator memory
 Fix every named diagnostic and rerun until it exits zero within your turn budget. The environment is already
 set to SDO_ACTOR=health_judge and SDO_PHASE=initial with the accepted SDO_BASE_COMMIT; never override it.
 The Go broker repeats the same validation independently. Its explicit bootstrap step installs the generic
-service-endpoints and traffic-* detectors from the authored workloads; do not author those packages.
+service-endpoints, workload-health, service-reachability and traffic-* detectors (the last from the authored workloads);
+do not author those packages. service-endpoints already reports Services without ready endpoints.
+service-reachability already reports Service ports that refuse connections while their pods are Ready.
+workload-health already reports failed, Unknown, stuck Pending or unschedulable pods; crash-looping,
+image-pull, config-error, OOMKilled, errored, waiting, restarting or unready containers; stuck init
+containers; and Deployments below their desired availability or past their progress deadline.
+Do not re-implement those generic pod and Deployment state checks in health-objective; spend it on
+application-specific evidence of the human objective.
 For covered_resources, copy every resource required by the objective exactly from the deployer handoff, preserving
 each kind, name, source-manifest namespace, source path, and complete dependencies list; never invent an object that
 is absent from the handoff, and do not substitute the configured runtime namespace into this provenance field. For a

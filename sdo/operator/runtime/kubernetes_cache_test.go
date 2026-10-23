@@ -14,6 +14,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -27,6 +28,18 @@ func TestKubernetesCacheRoutesSyntheticTrafficNotificationsWithoutAnInformer(t *
 	}
 	cache.Notify(traffic.Watch)
 	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: traffic.Watch.APIVersion, Kind: traffic.Watch.Kind, Namespace: "demo"})
+}
+
+func TestKubernetesCacheRoutesServiceReachabilityNotificationsWithoutAnInformer(t *testing.T) {
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "service-reachability", Interval: time.Second, Watches: servicehealth.ReachabilityWatches(),
+		}}})
+	if err != nil {
+		t.Fatalf("the reachability watch must not require an informer: %v", err)
+	}
+	cache.Notify(servicehealth.ReachabilityWatch)
+	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: servicehealth.ReachabilityWatch.APIVersion, Kind: servicehealth.ReachabilityWatch.Kind, Namespace: "demo"})
 }
 
 func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) {
@@ -79,6 +92,28 @@ func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) 
 	}
 	if deploymentLists.Load() != 1 || configMapLists.Load() != 1 {
 		t.Fatalf("unexpected API relists: deployments=%d configmaps=%d", deploymentLists.Load(), configMapLists.Load())
+	}
+}
+
+func TestKubernetesCacheSnapshotsCarryTheirObservationTimeThroughTraffic(t *testing.T) {
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
+		}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	snapshot, err := TrafficSnapshotProvider{Base: cache}.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock, ok := snapshot.(sdk.ObservationClock)
+	if !ok {
+		t.Fatalf("traffic snapshot %T must expose its observation time", snapshot)
+	}
+	if observed := clock.ObservedAt(); observed.Before(before) || observed.After(time.Now()) {
+		t.Fatalf("observation time %v outside the snapshot call", observed)
 	}
 }
 

@@ -95,6 +95,12 @@ func (p *ProberPod) binarySubPath() (string, string, error) {
 	return relative, path.Base(binary), nil
 }
 
+// proberPodLabels identify the prober pod; NetworkPolicy admission of the
+// prober's reachability dials is evaluated against them.
+func proberPodLabels() map[string]string {
+	return map[string]string{"app.kubernetes.io/name": ProberName, "app.kubernetes.io/managed-by": "sdo"}
+}
+
 // Manifests returns the prober's NetworkPolicy and Pod.
 func (p *ProberPod) Manifests() (*networkingv1.NetworkPolicy, *corev1.Pod, error) {
 	if p.Namespace == "" || p.AppNamespace == "" || p.Image == "" || p.RepositoryPVC == "" {
@@ -108,7 +114,7 @@ func (p *ProberPod) Manifests() (*networkingv1.NetworkPolicy, *corev1.Pod, error
 	if err != nil {
 		return nil, nil, err
 	}
-	labels := map[string]string{"app.kubernetes.io/name": ProberName, "app.kubernetes.io/managed-by": "sdo"}
+	labels := proberPodLabels()
 	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
 	dns := intstr.FromInt32(53)
 	policy := &networkingv1.NetworkPolicy{

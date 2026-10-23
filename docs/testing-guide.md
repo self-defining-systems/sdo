@@ -377,3 +377,101 @@ git -C third_party/sregym submodule update --init SREGym-applications
 
 The Python unit-test CI job initializes these application sources explicitly so
 the discovery gate runs instead of silently skipping its cross-repository checks.
+
+## Abort and quiescence
+
+Start with the stop/abort contracts and deterministic lifecycle cuts:
+
+```bash
+(cd sdo/operator && go test ./install ./operatorcli -run 'TestStop|TestParseStop' -count=1)
+uv run pytest tests/unit/benchmarks/sregym/adapter/test_abort.py \
+  tests/unit/benchmarks/sregym/adapter/test_processes.py \
+  tests/unit/benchmarks/sregym/adapter/test_detached.py \
+  tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py
+```
+
+`TestStopSeededLifecycleCuts` runs 20 seeds across install, incident, responder,
+reflection and drain cuts, including orphan Pods after Job deletion. The process
+schedule kills a real launcher at each cut and checks zero registered live
+helpers plus fake-cluster quiescence. SIGTERM/SIGINT tests exercise the abort trap.
+Stuck-deletion contracts require an error and an inventory of remaining objects.
+
+For level 6, select a disposable kind lane and its shared lock explicitly:
+
+```bash
+export SDO_ABORT_SMOKE_CLUSTER=<disposable-kind-lane>
+export SDO_ABORT_SMOKE_RUN_DIR=<absolute-evidence-directory>
+export SDO_ABORT_SMOKE_LOCK=<absolute-shared-lock-file>
+bash scripts/smoke_sdo_abort_kind.sh
+```
+
+The script holds `flock` throughout, uses prebuilt controller and worker images
+(overridable with `SDO_ABORT_SMOKE_BASE_IMAGE` and `SDO_ABORT_SMOKE_WORKER_IMAGE`)
+and `sdo-toy-app:v1`, and installs the current controller binary/source. It opens
+an actual toy incident with sleeping scripted workers, SIGKILLs the launcher,
+then invokes abort twice and requires zero runtime objects and helpers while
+preserving repository storage. The keeper and host bridge are inert stand-ins;
+no credentials are read and no model is invoked. The control namespace and PVC
+remain as preservation evidence; the script refuses to adopt existing fixture
+namespaces. Inspect `result.json` in the evidence directory.
+
+Normal launches through `scripts/run_sregym.sh` print their one-command abort:
+
+```bash
+uv run python -m benchmarks.sregym.adapter.persistent abort --state <printed-state-path>
+```
+
+For additional host helpers, set `SDO_RUN_HELPERS_FILE` to a JSON map such as
+`{"bridge": ["python3", "bridge.py"], "credential-keeper": ["keeper", "--foreground"]}`.
+The lifetime owner starts and registers these foreground commands before the
+runner; do not start helpers in an unrelated terminal or daemonize them.
+Aborting returns nonzero for surviving objects/helpers or failed verification.
+A reused PID never authorizes a signal. Historical runs without a helper
+registry require separate ownership evidence for any unregistered processes.
+Graceful `teardown --state ...` still drains before calling the production stop
+step. `sdo-operator stop --control-namespace ... --inspect` inventories production
+runtime without modifying it; stop leaves memory, Secrets and ConfigMaps intact.
+
+### Detached launches
+
+Start long jobs through the detached entry point from the frozen worktree. Use
+one absolute record path shared by every agent/worktree using the same lane,
+and a unique run directory outside the repository for each launch:
+
+```bash
+uv run python -m benchmarks.sregym.adapter.detached launch \
+  --record /absolute/shared/lane/launch.json \
+  --run-dir /absolute/results/run-id \
+  -- uv run python -m benchmarks.sregym.fastloop run <run-options>
+```
+
+For a normal benchmark, replace the command after `--` with
+`uv run python -m benchmarks.sregym.run <config.toml>`. Optional `--helpers`
+accepts the same helper JSON file as the foreground launcher;
+`SDO_RUN_HELPERS_FILE` also remains supported. The lifetime owner registers and
+starts these helpers. Keep secrets out of explicit command arguments.
+
+The command returns after publishing the record and starting the owner in its
+own session and process group. The record contains its PID, process group,
+Linux start ticks, boot ID, UID, UTC launch time, state path, explicit worker
+command and output paths. Output goes to `launcher.stdout.log` and
+`launcher.stderr.log` in the run directory. Killing the invoking agent shell or
+its `uv` wrapper does not stop the run. Deliberately sending SIGTERM/SIGINT to
+the recorded owner still invokes the existing abort trap.
+
+After a restart, find and adopt the live run instead of launching another:
+
+```bash
+uv run python -m benchmarks.sregym.adapter.detached status --record /absolute/shared/lane/launch.json
+uv run python -m benchmarks.sregym.adapter.detached abort --record /absolute/shared/lane/launch.json
+```
+
+`status` prints the live record (exit 0), or exits 1 when it is no longer live.
+Launching again with that lane record is refused while the owner or its
+registered helpers remain live, even with a different run directory. Launch
+and abort hold the same lane lock. Abort uses the recorded state and verifies
+its registry identity, preserves the existing quiescence checks, and returns
+nonzero for cleanup errors. Start ticks, boot ID and UID are checked before
+signalling: a reused PID never authorizes a signal. Keep the record and logs
+after completion; the next launch replaces a stale record. The printed
+`persistent abort --state ...` command remains available as well.
