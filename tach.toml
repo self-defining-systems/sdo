@@ -87,6 +87,7 @@ depends_on = [
 path = "benchmarks.sregym.runner"
 depends_on = [
     "benchmarks.sregym.faults",
+    "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",
 ]
 

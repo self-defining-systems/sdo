@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -19,8 +20,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 func TestRenderedLockAfterRolloutAndRestart(t *testing.T) {
@@ -101,18 +104,41 @@ func TestRenderedLockAfterRolloutAndRestart(t *testing.T) {
 	if _, err := source.AcceptedManifest(context.Background(), changed, sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}); err == nil {
 		t.Fatal("stale lock served after source change")
 	}
-	if _, err := reconciler.Reconcile(context.Background(), changed, "app"); err == nil {
-		t.Fatal("lock regenerated before changed source rolled out")
+	// Unrelated objects regain current source while the workload keeps an
+	// explicit evidence gap. Source changes never re-authorize its old images.
+	gapped, err := reconciler.Reconcile(context.Background(), changed, "app")
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Workload annotation must identify the new deployment before regeneration.
+	workload := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"}
+	if _, err := source.AcceptedManifest(context.Background(), gapped, workload); !errors.Is(err, rendered.ErrEvidenceGap) {
+		t.Fatalf("changed source reused old deployment evidence: %v", err)
+	}
+	if _, err := source.AcceptedManifest(context.Background(), gapped, sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}); err != nil {
+		t.Fatalf("workload gap hid new Service source: %v", err)
+	}
+	// Updating rollout annotations alone supplies no trusted image evidence.
 	deployed.Annotations["sdo.dev/source-tree"] = nativeGit(t, source.Repository, "rev-parse", "HEAD^{tree}")
 	deployed.Spec.Template.Annotations["sdo.dev/source-tree"] = deployed.Annotations["sdo.dev/source-tree"]
 	if _, err := client.AppsV1().Deployments("app").Update(context.Background(), deployed, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	next, err = reconciler.Reconcile(context.Background(), changed, "app")
-	if err != nil || next == changed {
-		t.Fatalf("manifest lock not regenerated: %s %v", next, err)
+	if err != nil || next != gapped {
+		t.Fatalf("annotation-only rollout rewrote evidence: %s %v", next, err)
+	}
+	// A later trusted source deployment supplies fresh named regular/init
+	// evidence. Only that publication can restore workload source coverage.
+	deployedRevision := publishTestDeploymentEvidence(t, authority, source, deployed, nil)
+	if _, err := client.AppsV1().Deployments("app").Update(context.Background(), deployed, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	regained, err := reconciler.Reconcile(context.Background(), deployedRevision, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.AcceptedManifest(context.Background(), regained, workload); err != nil {
+		t.Fatalf("fresh trusted deployment did not regain source evidence: %v", err)
 	}
 }
 
@@ -300,6 +326,149 @@ func TestRenderedLockConsulGapAfterMemoryCommitKeepsReservationDrift(t *testing.
 	}
 }
 
+// A reduced persistent sequence: the first incident accepts a source repair
+// and real broker reflection; the next incident needs an unrelated Service.
+// Memory alone must preserve the lock. A source repair must publish explicit
+// workload gaps rather than strand every object behind a stale global lock.
+func TestRenderedLockSourceRepairAndBrokerReflectionKeepServiceDrift(t *testing.T) {
+	for _, repairSource := range []bool{false, true} {
+		t.Run(fmt.Sprintf("source_repair=%t", repairSource), func(t *testing.T) {
+			ctx := context.Background()
+			source, _, revision, deployed, service := acceptedSourceDeployment(t, true)
+			nativeMemoryFixture(t, source.Repository)
+			revision = nativeGit(t, source.Repository, "rev-parse", "HEAD")
+			replicas := int32(1)
+			deployed.Spec.Replicas = &replicas
+			deployed.Generation = 1
+			deployed.Status = appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}
+			client := fake.NewSimpleClientset(deployed, service)
+			authority, err := broker.New(source.Repository, t.TempDir(), func(context.Context, string, []string) error { return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			native := NativeIncidentBroker{
+				Repository: authority, LedgerRoot: t.TempDir(), ResponderBackend: "test", ResponderModel: "test",
+				Deriver: OutcomeDeriverFunc(func(_ context.Context, c IncidentClosure, _, _, _ string) (DerivedOutcome, error) {
+					return testDerivedOutcome(c.Request.IncidentID, "success", true), nil
+				}),
+				Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, w IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+					return writeGoodPlaybook(w)
+				}),
+			}
+			workspace, err := native.PrepareIncident(ctx, "first-incident")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repairSource {
+				path := filepath.Join(workspace.Worktree, "app.yaml")
+				body, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body = append(body, []byte("\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: restored-config\ndata:\n  mode: healthy\n")...)
+				if err := os.WriteFile(path, body, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			closure := nativeClosure(workspace)
+			closure.Request.RepairPolicy = "recorded-actions"
+			receipt, err := native.ProcessClosure(ctx, closure)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.ReflectionCommit == "" {
+				t.Fatal("first incident did not publish its memory change")
+			}
+			source.Images = nil // Reconciliation cannot reuse volatile live images.
+			events := &fixedObjectChanges{}
+			cache := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*service}}}
+			controller, err := NewController(ControllerConfig{Application: "app", Namespace: "app", SourceCommit: revision, DeployedCommit: source.DeployedCommit, FiringThreshold: 1, ClearThreshold: 1, ResponseTimeout: time.Minute, RepairPolicy: "recorded-actions"}, nil, cache, &recordingDispatcher{}, time.Unix(10, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
+				return (RenderedLockReconciler{Source: source, Client: client, Broker: authority}).Reconcile(ctx, revision, "app")
+			}
+			controller.ConfigureDrift(DriftControllerConfig{Source: source, Events: events, View: func(snapshot sdk.DetectionContext) program.ReadView {
+				return LiveReadView{DetectionContext: snapshot, Source: source, SourceCommit: controller.CurrentAcceptedCommit()}
+			}})
+			if err := controller.Step(ctx, time.Unix(11, 0), nil); err != nil {
+				t.Fatal(err)
+			}
+			current := controller.CurrentAcceptedCommit()
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+			accepted, err := source.AcceptedManifest(ctx, current, ref)
+			if err != nil {
+				t.Fatalf("source repair stranded unrelated Service after broker reflection: %v", err)
+			}
+			config := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "restored-config"}
+			if _, err := source.AcceptedManifest(ctx, current, config); repairSource && err != nil {
+				t.Fatalf("source repair ConfigMap unavailable: %v", err)
+			} else if !repairSource && !errors.Is(err, rendered.ErrAcceptedManifestAbsent) {
+				t.Fatalf("source absence unavailable: %v", err)
+			}
+			config.Name = "absent-config"
+			if _, err := source.AcceptedManifest(ctx, current, config); !errors.Is(err, rendered.ErrAcceptedManifestAbsent) {
+				t.Fatalf("workload gap hid confirmed source absence: %v", err)
+			}
+			assertGap := func(want int, phase string) {
+				t.Helper()
+				data := nativeGit(t, source.Repository, "show", controller.CurrentAcceptedCommit()+":"+rendered.LockPath)
+				var lock rendered.Lock
+				if err := json.Unmarshal([]byte(data), &lock); err != nil {
+					t.Fatal(err)
+				}
+				gaps, workloads := 0, 0
+				for _, object := range lock.Objects {
+					if object.Ref.Kind == "Deployment" {
+						workloads++
+						if object.Error != "" {
+							gaps++
+							if object.File != "" || len(object.Images) != 0 {
+								t.Fatal("gapped workload retained image authority")
+							}
+						}
+					}
+				}
+				t.Logf("coverage %s: %d/%d workloads gapped", phase, gaps, workloads)
+				if gaps != want {
+					t.Fatalf("%s: got %d workload gaps, want %d", phase, gaps, want)
+				}
+			}
+			want := 0
+			if repairSource {
+				want = 1
+			}
+			assertGap(want, "after source/real memory publication")
+			if repairSource {
+				// An annotation-only rollout without newly trusted deployment
+				// evidence cannot re-authorize the old mutable images.
+				tree := nativeGit(t, source.Repository, "rev-parse", "HEAD^{tree}")
+				deployed.Annotations["sdo.dev/source-tree"] = tree
+				deployed.Spec.Template.Annotations["sdo.dev/source-tree"] = tree
+				if _, err := client.AppsV1().Deployments("app").Update(ctx, deployed, metav1.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				if err := controller.Step(ctx, time.Unix(12, 0), nil); err != nil {
+					t.Fatal(err)
+				}
+				assertGap(1, "after own rollout without new deployment proof")
+				if _, err := source.AcceptedManifest(ctx, controller.CurrentAcceptedCommit(), sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"}); !errors.Is(err, rendered.ErrEvidenceGap) {
+					t.Fatalf("untrusted rollout repaired evidence gap: %v", err)
+				}
+			}
+			service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
+			events.changes = []ObjectChange{{Old: accepted, New: driftObject(service, sdk.WatchKind{APIVersion: "v1", Kind: "Service", Namespace: "app"}), Adoption: true}}
+			if err := controller.Step(ctx, time.Unix(20, 0), nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(exportState(t, controller).DriftEvents) == 0 {
+				t.Fatal("next Service incident disappeared behind workload gap")
+			}
+		})
+	}
+}
+
 func TestRenderedLockPublicationWaitsForClosureAcknowledgment(t *testing.T) {
 	now := time.Unix(1000, 0)
 	controller := newClosureRetryController(t, ClosureRetryPolicy{}, &rejectingIncidentBroker{}, &now)
@@ -423,12 +592,13 @@ spec:
 func publishTestDeploymentEvidence(t *testing.T, authority *broker.Broker, source GitPlanSource, live *appsv1.Deployment, pod *corev1.Pod) string {
 	t.Helper()
 	ctx := context.Background()
-	proposal, err := authority.CreateProposalForPhase(ctx, "fixture-deployment", broker.InitialPhase)
+	incidentID := "fixture-deployment-" + nativeGit(t, source.Repository, "rev-parse", "HEAD")
+	proposal, err := authority.CreateProposalForPhase(ctx, incidentID, broker.InitialPhase)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Add an input so the real broker performs a source publication.
-	if err := os.WriteFile(filepath.Join(proposal.Path, "deployment-input.txt"), []byte("trusted synthetic deployment\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(proposal.Path, "deployment-input.txt"), []byte("trusted synthetic deployment "+incidentID+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	tree, err := broker.ProposalTreeDigest(ctx, proposal.Path)
@@ -464,7 +634,7 @@ func publishTestDeploymentEvidence(t *testing.T, authority *broker.Broker, sourc
 			proof.ContainerImages = append(proof.ContainerImages, rendered.DeployedImage{Ref: ref, Name: c.Name, Init: init, Applied: c.Image, Digest: digest})
 		}
 	}
-	receipt, err := authority.PublishVerifiedSource(ctx, "fixture-deployment", proof)
+	receipt, err := authority.PublishVerifiedSource(ctx, incidentID, proof)
 	if err != nil {
 		t.Fatal(err)
 	}

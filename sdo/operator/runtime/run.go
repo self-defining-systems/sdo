@@ -25,6 +25,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/worker_registry"
 )
@@ -396,9 +397,25 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *syntheticTraffic {
 		trafficObserver = NewTrafficObserver(proberAPI, trafficWorkloads, func() { kubernetesCache.Notify(traffic.Watch) }, 0)
 	}
+	// Service reachability is a routing probe, not a synthetic workload, so
+	// it runs whenever a prober exists and a detector consumes it.
+	var reachabilityObserver *ServiceReachabilityObserver
+	if proberAddress != nil && ConsumesServiceReachability(detectors) {
+		identity := servicehealth.ProberIdentity{}
+		if *proberURL == "" {
+			identity = servicehealth.ProberIdentity{Namespace: *controlNamespace, Labels: proberPodLabels()}
+		}
+		reachabilityObserver = NewServiceReachabilityObserver(ServiceReachabilityConfig{
+			Prober: HTTPProberClient{BaseURL: proberAddress}, Snapshots: kubernetesCache, Identity: identity,
+			Notify: func() { kubernetesCache.Notify(servicehealth.ReachabilityWatch) },
+		})
+		defer reachabilityObserver.Stop()
+	}
 	var snapshotProvider SnapshotProvider = kubernetesCache
+	if trafficObserver != nil || reachabilityObserver != nil {
+		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
+	}
 	if trafficObserver != nil {
-		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver}
 		defer trafficObserver.Stop()
 	}
 	jobEnvironment, err := parseResponderEnvironment(responderEnvironment)
@@ -669,6 +686,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		if trafficObserver != nil {
 			trafficObserver.Stop()
 		}
+		if reachabilityObserver != nil {
+			reachabilityObserver.Stop()
+		}
+	}
+	// startReachability begins fresh dial rounds; a maintenance window may
+	// have redeployed the application, so earlier samples are dropped.
+	startReachability := func() {
+		if reachabilityObserver == nil {
+			return
+		}
+		reachabilityObserver.Reset()
+		reachabilityObserver.Start(runCtx)
+		if err := encoder.Encode(map[string]any{"service_reachability": "started"}); err != nil {
+			fmt.Fprintln(stderr, err)
+		}
 	}
 	// startState begins observing the application's configuration, in
 	// parallel with the traffic warm-up, so the first quiet evaluation
@@ -725,6 +757,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		waitState := startState()
 		startTraffic()
+		startReachability()
 		waitState()
 		if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
@@ -780,6 +813,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			waitState = startState()
 		}
 		startTraffic()
+		startReachability()
 		waitState()
 		kubernetesCache.TakeEvents()
 		if !preserved {
@@ -1158,6 +1192,7 @@ func evaluateOnce(
 		}
 		provider = kubernetesProvider
 	}
+	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
 			return errors.New("traffic health evaluation requires a live prober URL")
@@ -1166,7 +1201,26 @@ func evaluateOnce(
 		if !observer.WaitWarm(ctx, 30*time.Second) {
 			return errors.New("traffic prober did not produce a complete bounded health window")
 		}
-		provider = TrafficSnapshotProvider{Base: provider, Observer: observer}
+		trafficProvider.Observer = observer
+	}
+	if ConsumesServiceReachability(detectors) {
+		if *proberURL == "" {
+			fmt.Fprintln(stderr, "service reachability skipped: evaluate-once has no --prober-url")
+		} else {
+			// Gather the gate's history now: Failures rounds, a second apart,
+			// judged by the same observer and detector as the controller.
+			reachability := NewServiceReachabilityObserver(ServiceReachabilityConfig{
+				Prober: HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}, Snapshots: provider,
+				Interval: evaluateOnceReachabilityInterval,
+			})
+			if err := reachability.Collect(ctx); err != nil {
+				return fmt.Errorf("collect service reachability: %w", err)
+			}
+			trafficProvider.Reachability = reachability
+		}
+	}
+	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
+		provider = trafficProvider
 	}
 	start := time.Now().UTC()
 	controller, err := NewController(ControllerConfig{

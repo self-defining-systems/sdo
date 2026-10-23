@@ -18,30 +18,18 @@ if TYPE_CHECKING:
 def test_replacing_controller_preserves_externally_provisioned_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    objects = {
-        "jobs": {"sdo-controller-run", "sdo-responder-old", "sdo-validator-old"},
-        "deployments": {"sdo-benchmark-registry"},
-        "pods": {"sdo-repository-sync"},
-        "persistentvolumeclaims": {"sdo-application-repository"},
-        "configmaps": {"sdo-controller-state", "sdo-agent-registrations"},
-        "leases": {"sdo-controller"},
-        "secrets": {"sdo-agent-credentials"},
-    }
+    from benchmarks.sregym.adapter import native_operator
 
-    def kubectl(args: list[str], *, namespace: str | None, **_kwargs: object) -> SimpleNamespace:
-        assert args[0] == "delete"
-        if args[1] == "namespace/demo-sdo":
-            objects.clear()
-        else:
-            assert namespace == "demo-sdo"
-            assert "--all" in args
-            for kind in args[1].split(","):
-                objects.pop(kind, None)
-        return SimpleNamespace(returncode=0)
+    calls = []
 
-    monkeypatch.setattr(persistent, "kubectl", kubectl)
+    def stop(namespace: str, **kwargs: object) -> dict[str, list[str]]:
+        calls.append((namespace, kwargs))
+        return {"removed": ["job/demo-sdo/sdo-controller-run"], "leftovers": []}
+
+    monkeypatch.setattr(native_operator, "stop_runtime", stop)
+    monkeypatch.setattr(persistent, "kubectl", lambda *_args, **_kwargs: pytest.fail("stop must delegate to Go"))
     persistent.KubectlClusterOps().delete_controller("demo-sdo")
-    assert objects == {"secrets": {"sdo-agent-credentials"}}
+    assert calls == [("demo-sdo", {"kubeconfig": None})]
 
 
 def test_persistent_maintenance_and_receipt_do_not_start_python_sync_pod(
@@ -207,3 +195,21 @@ def test_controller_inventory_confirms_absence(monkeypatch: pytest.MonkeyPatch, 
 
     monkeypatch.setattr(persistent, "kubectl", kubectl)
     assert persistent.KubectlClusterOps().controller_pod("demo-sdo") is None
+
+
+def test_graceful_teardown_stops_benchmark_transport_after_go_runtime(tmp_path, monkeypatch):
+    from tests.unit.benchmarks.sregym.adapter.test_abort import seed_state
+
+    path = tmp_path / "state.json"
+    seed_state(path)
+    state = persistent.PersistentState.load(path)
+    state.controllers["demo"].pending = None
+    state.controllers["demo"].kubeconfig = "/recorded/lane"
+    state.save(path)
+    events = []
+    ops = persistent.KubectlClusterOps()
+    monkeypatch.setattr(ops, "controller_pod", lambda *_: None)
+    monkeypatch.setattr(ops, "stop_runtime", lambda target: events.append(("go-stop", target.kubeconfig)))
+    monkeypatch.setattr(ops, "stop_transport", lambda target: events.append(("benchmark-stop", target.kubeconfig)))
+    assert persistent.teardown(path, ops=ops) == []
+    assert events == [("go-stop", "/recorded/lane"), ("benchmark-stop", "/recorded/lane")]

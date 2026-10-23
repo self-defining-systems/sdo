@@ -317,3 +317,53 @@ def test_partial_composite_injection_recovers_the_first_fault() -> None:
     with pytest.raises(FastloopFaultError, match="second fault unavailable"):
         _driver(worker).inject_composite(["a", "b"])
     assert [op for op, _ in worker.requests][-2:] == ["recover", "health"]
+
+
+@pytest.mark.parametrize(
+    "reply", [{"seconds": 0}, {"protocol_version": 2, "success": False}, {"protocol_version": 2, "success": True}]
+)
+def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dict[str, Any]) -> None:
+    events: list[str] = []
+
+    class Worker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            events.append(op)
+            if op == "recover":
+                assert args["mode"] == "full"
+                return reply
+            return super().request(op, timeout=timeout, **args)
+
+    class Cluster:
+        def list_objects(self, namespace: str) -> list[dict[str, Any]]:
+            events.append("list")
+            return []
+
+        def delete(self, namespace: str, kind: str, name: str) -> None:
+            raise AssertionError("no objects to delete")
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            raise AssertionError("no objects to restore")
+
+    driver = SregymFaultDriver(
+        Worker(), namespace="app", baseline=ApplicationBaseline("app", []), cluster=Cluster(), require_full_cleanup=True
+    )
+    assert driver.last_full_cleanup_verified is False
+    if reply.get("success") is True:
+        driver.recover()
+        assert events == ["recover", "list", "health", "list"]
+        assert driver.last_full_cleanup_verified is True
+        # A later failed cleanup must not inherit the prior slot's success.
+        reply["success"] = False
+        with pytest.raises(FastloopFaultError):
+            driver.recover()
+        assert driver.last_full_cleanup_verified is False
+    else:
+        with pytest.raises(FastloopFaultError):
+            driver.recover()
+        assert events == ["recover"]
+        assert driver.last_full_cleanup_verified is False
+
+
+def test_full_cleanup_rejects_missing_baseline_before_injection() -> None:
+    with pytest.raises(ValueError, match="baseline"):
+        SregymFaultDriver(FakeWorker(), namespace="app", require_full_cleanup=True)

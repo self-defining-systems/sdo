@@ -1,0 +1,63 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: links
+purpose: link-probe
+description: Fresh TCP dial of every Thrift service-to-service dependency the application source declares.
+links:
+  - from: nginx-thrift
+    to: compose-post-service
+    port: 9090
+  - from: nginx-thrift
+    to: home-timeline-service
+    port: 9090
+  - from: nginx-thrift
+    to: social-graph-service
+    port: 9090
+  - from: nginx-thrift
+    to: user-service
+    port: 9090
+  - from: nginx-thrift
+    to: user-timeline-service
+    port: 9090
+  - from: compose-post-service
+    to: home-timeline-service
+    port: 9090
+  - from: compose-post-service
+    to: media-service
+    port: 9090
+  - from: compose-post-service
+    to: post-storage-service
+    port: 9090
+  - from: compose-post-service
+    to: text-service
+    port: 9090
+  - from: compose-post-service
+    to: unique-id-service
+    port: 9090
+  - from: compose-post-service
+    to: user-service
+    port: 9090
+  - from: compose-post-service
+    to: user-timeline-service
+    port: 9090
+  - from: home-timeline-service
+    to: post-storage-service
+    port: 9090
+  - from: home-timeline-service
+    to: social-graph-service
+    port: 9090
+  - from: social-graph-service
+    to: user-service
+    port: 9090
+  - from: text-service
+    to: url-shorten-service
+    port: 9090
+  - from: text-service
+    to: user-mention-service
+    port: 9090
+  - from: user-service
+    to: social-graph-service
+    port: 9090
+  - from: user-timeline-service
+    to: post-storage-service
+    port: 9090

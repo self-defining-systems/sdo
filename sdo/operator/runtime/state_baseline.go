@@ -176,7 +176,8 @@ func (t *StateTracker) Stop() {
 }
 
 // Reset forgets the baseline, for example when a maintenance window may have
-// redeployed the application.
+// redeployed the application. Last healthy image evidence is retained separately;
+// it is usable only with matching source identity.
 func (t *StateTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -200,10 +201,12 @@ func (t *StateTracker) Observe(now time.Time, healthy bool) {
 	switch {
 	case t.baseline == nil:
 		t.baseline = t.snapshotLocked(now)
+		t.images = t.baseline
 	case t.candidate == nil:
 		t.candidate = t.snapshotLocked(now)
 	case now.Sub(t.candidate.at) >= t.config.Settle:
 		t.baseline = t.candidate
+		t.images = t.baseline
 		t.candidate = t.snapshotLocked(now)
 	}
 }

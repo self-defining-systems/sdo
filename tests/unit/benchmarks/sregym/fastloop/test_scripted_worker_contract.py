@@ -135,3 +135,31 @@ def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monk
     assert len(plans) == 2
     assert scripted_worker._tool("apply", *plans)["healthy"] is True
     assert scripted_worker._tool("verify")["healthy"] is True
+
+
+def test_scripted_reflection_can_publish_memory_without_a_program_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path
+) -> None:
+    app = _accepted_app(tmp_path)
+    monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
+    monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-captured-pair"))
+    monkeypatch.setenv("SDO_ACTOR", "responder")
+    monkeypatch.setenv("SDO_PHASE", "reflection")
+    monkeypatch.setenv("SDO_BASE_COMMIT", "HEAD")
+    monkeypatch.setenv("SDO_OPERATOR_ROOT", str(OPERATOR))
+    monkeypatch.setenv("SDO_INCIDENT_ID", "scripted-incident")
+    command = scripted_worker._command
+
+    def real_operator(argv: list[str], *, timeout: int = 180) -> str:
+        return command([str(operator_binary) if value == "sdo-operator" else value for value in argv], timeout=timeout)
+
+    monkeypatch.setattr(scripted_worker, "_command", real_operator)
+    closure = IncidentClosure()
+    closure.request.namespace = "demo"
+    turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
+    assert turn.learning_decision == "updated"
+    assert turn.playbook_ids == ["verified-repair-notes"]
+    notes = app / ".sdo/playbooks/verified-repair-notes/README.md"
+    assert "scripted-incident" in notes.read_text()
+    assert "verified-repair-notes/README.md" in (app / ".sdo/playbooks/README.md").read_text()
+    assert not list((app / ".sdo/playbooks").rglob("*.go"))

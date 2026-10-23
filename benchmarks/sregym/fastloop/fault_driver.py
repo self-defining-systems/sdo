@@ -85,11 +85,16 @@ class SregymFaultDriver:
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         before_inject: Callable[[str], None] | None = None,
+        require_full_cleanup: bool = False,
     ) -> None:
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
         if health_poll_seconds <= 0:
             raise ValueError("health_poll_seconds must be positive")
+        if require_full_cleanup and (not baseline or cluster is None):
+            raise ValueError("full cleanup requires an application baseline and cluster")
+        self._require_full_cleanup = require_full_cleanup
+        self.last_full_cleanup_verified = False
         self._worker = worker
         self._namespace = namespace
         self._baselines = (baseline,) if isinstance(baseline, ApplicationBaseline) else baseline
@@ -179,7 +184,10 @@ class SregymFaultDriver:
 
         started = self._monotonic()
         self.last_cleanup = RecoveryCleanup()
+        self.last_full_cleanup_verified = False
         reply = self._worker.request("recover", mode="full", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        if self._require_full_cleanup and reply.get("protocol_version") != 2:
+            raise FastloopFaultError("full cleanup requires protocol v2 recovery")
         _check_recovery(reply)
         if self._baselines is not None and self._cluster is not None:
             for baseline in self._baselines:
@@ -199,6 +207,11 @@ class SregymFaultDriver:
             if health.get("healthy"):
                 unready_rollouts = self._unready_rollouts()
                 if not unready_rollouts:
+                    self.last_full_cleanup_verified = (
+                        reply.get("protocol_version") == 2
+                        and reply.get("success") is True
+                        and self.last_cleanup.skipped_reason is None
+                    )
                     return self._monotonic() - started
             if self._monotonic() >= deadline:
                 raise FastloopFaultError(

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -132,6 +133,8 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		EndpointSliceList: endpointSlices.Items,
 		NetworkPolicyList: networkPolicies.Items,
 		EventList:         events.Items,
+		// Stamped after every list so no listed object postdates it.
+		ObservedAtTime: time.Now().UTC(),
 	}, nil
 }
 
@@ -151,6 +154,9 @@ type DetectionSnapshot struct {
 	EventList         []corev1.Event
 	// TrafficWindows holds synthetic-traffic observations by workload name.
 	TrafficWindows map[string]traffic.Window
+	// ObservedAtTime is when the snapshot was read. Detectors read it through
+	// sdk.ObservationTime instead of calling time.Now.
+	ObservedAtTime time.Time
 }
 
 func (s DetectionSnapshot) StatefulSets() []appsv1.StatefulSet {
@@ -187,6 +193,11 @@ func (s DetectionSnapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 }
 
 // TrafficWindow implements traffic.Source.
+// ObservedAt implements sdk.ObservationClock.
+func (s DetectionSnapshot) ObservedAt() time.Time {
+	return s.ObservedAtTime
+}
+
 func (s DetectionSnapshot) TrafficWindow(workload string) (traffic.Window, bool) {
 	window, ok := s.TrafficWindows[workload]
 	return window, ok

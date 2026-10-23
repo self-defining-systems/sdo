@@ -43,5 +43,5 @@ Missing inputs are errors; the caller supplies the accepted base and authoring r
 - Keep changed lines free of trailing whitespace and keep logical snapshots within the aggregate budget.
   Supply valid detector sources so the snapshot can be projected. Enforced by: `diff.whitespace`,
   `memory.snapshot-budget`, `memory.snapshot`.
-- Generic service-endpoint and traffic health detectors come from Go policy. Do not author or overwrite them;
+- Generic service-endpoint, service-reachability and traffic health detectors come from Go policy. Do not author or overwrite them;
   the shared check prepares and validates them. Enforced by: `bootstrap.generic-health`.

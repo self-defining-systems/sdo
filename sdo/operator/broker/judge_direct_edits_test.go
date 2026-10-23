@@ -72,7 +72,7 @@ func TestFakeJudgeDirectEditsBootstrapAndRefinementOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"service-endpoints", "traffic-links"} {
+	for _, id := range []string{"service-endpoints", "workload-health", "service-reachability", "traffic-links"} {
 		path := ".sdo/diagnostics/detectors/health/" + id + "/manifest.yaml"
 		if !slices.Contains(receipt.ChangedPaths, path) {
 			t.Fatalf("Go bootstrap file missing from receipt: %s", path)

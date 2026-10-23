@@ -1,0 +1,30 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: service-reachability
+constructor: New
+class: health
+owner: health_judge
+watches:
+    - apiVersion: v1
+      kind: Service
+    - apiVersion: v1
+      kind: Endpoints
+    - apiVersion: v1
+      kind: Pod
+    - apiVersion: apps/v1
+      kind: Deployment
+    - apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+    - apiVersion: sdo.dev/v1alpha1
+      kind: ServiceReachability
+interval: 10s
+persistence:
+    firing: 2
+    clearing: 2
+batching:
+    severity: critical
+    debounce: 500ms
+possiblePlaybooks:
+    - health-objective
+originatingCommit: lifecycle-bootstrap

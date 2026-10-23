@@ -169,6 +169,23 @@ class DeferredReceipt(BaseModel):
     staging_dir: Path
 
 
+class CleanupTarget(BaseModel):
+    """Recorded before installation, including installations interrupted before readiness."""
+
+    model_config = ConfigDict(extra="forbid")
+    namespace: str
+    control_namespace: str
+    kubeconfig: str | None = None
+
+
+class AbortedIncident(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    incident_id: str
+    namespace: str
+    stage_label: str
+    aborted_at: datetime
+
+
 class PersistentState(BaseModel):
     """Pipeline-scoped registry of persistent controllers, keyed by application namespace."""
 
@@ -176,6 +193,8 @@ class PersistentState(BaseModel):
 
     controllers: dict[str, ControllerRecord] = Field(default_factory=dict)
     deferred_receipts: list[DeferredReceipt] = Field(default_factory=list)
+    cleanup_targets: dict[str, CleanupTarget] = Field(default_factory=dict)
+    aborted_incidents: list[AbortedIncident] = Field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> PersistentState:
@@ -188,6 +207,21 @@ class PersistentState(BaseModel):
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(self.model_dump_json(indent=2) + "\n", encoding="utf-8")
         temporary.replace(path)
+
+
+def record_cleanup_target(namespace: str, control_namespace: str, kubeconfig: str | None) -> None:
+    """Journal a native launch before any benchmark transport or installer side effect."""
+    selected = os.getenv(PERSISTENT_STATE_ENV) or os.getenv("SDO_RUN_REGISTRY_STATE")
+    if not selected:
+        return
+    path = Path(selected).resolve()
+    state = PersistentState.load(path)
+    state.cleanup_targets[namespace] = CleanupTarget(
+        namespace=namespace,
+        control_namespace=control_namespace,
+        kubeconfig=kubeconfig,
+    )
+    state.save(path)
 
 
 @dataclass(frozen=True)
@@ -285,31 +319,75 @@ class KubectlClusterOps:
         return kubectl(["get", f"namespace/{namespace}"], namespace=None, check=False).returncode == 0
 
     def delete_controller(self, control_namespace: str) -> None:
-        # Credentials are provisioned outside the controller lifecycle. Keep
-        # their namespace and Secrets when replacing a lane's runtime.
+        self.stop_runtime(CleanupTarget(namespace=control_namespace, control_namespace=control_namespace))
+
+    def stop_runtime(self, target: CleanupTarget) -> None:
+        from benchmarks.sregym.adapter.native_operator import stop_runtime
+
+        result = stop_runtime(target.control_namespace, kubeconfig=target.kubeconfig)
+        for name in result["removed"]:
+            logger.info("stopped %s", name)
+
+    def stop_transport(self, target: CleanupTarget) -> None:
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+        # These resources belong to the benchmark, never to the production stop API.
         kubectl(
             [
                 "delete",
-                "jobs",
-                "--all",
+                "deployment/sdo-sregym-bridge",
+                "service/sdo-sregym-bridge",
+                "deployment/sdo-benchmark-registry",
+                "service/sdo-benchmark-registry",
+                "--ignore-not-found=true",
                 "--cascade=foreground",
-                "--ignore-not-found=true",
                 "--wait=true",
-                "--timeout=300s",
+                "--timeout=60s",
             ],
-            namespace=control_namespace,
+            namespace=target.control_namespace,
+            kubeconfig=config,
         )
+
+    def abort_workload(self, target: CleanupTarget) -> None:
+        self.stop_transport(target)
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+        if target.namespace == target.control_namespace:
+            raise PersistentControllerError("refusing to delete an application namespace containing accepted memory")
         kubectl(
-            [
-                "delete",
-                "deployments,pods,services,persistentvolumeclaims,configmaps,leases,roles,rolebindings",
-                "--all",
-                "--ignore-not-found=true",
-                "--wait=true",
-                "--timeout=300s",
-            ],
-            namespace=control_namespace,
+            ["delete", "namespace", target.namespace, "--ignore-not-found=true", "--wait=true", "--timeout=60s"],
+            namespace=None,
+            kubeconfig=config,
         )
+
+    def abort_leftovers(self, target: CleanupTarget) -> list[str]:
+        from benchmarks.sregym.adapter.native_operator import stop_runtime
+
+        remaining = stop_runtime(target.control_namespace, kubeconfig=target.kubeconfig, inspect=True)["leftovers"]
+        config = Path(target.kubeconfig) if target.kubeconfig else None
+        for namespace, names in (
+            (
+                target.control_namespace,
+                [
+                    "deployment/sdo-sregym-bridge",
+                    "service/sdo-sregym-bridge",
+                    "deployment/sdo-benchmark-registry",
+                    "service/sdo-benchmark-registry",
+                ],
+            ),
+            (None, [f"namespace/{target.namespace}"]),
+        ):
+            response = kubectl(
+                ["get", *names, "--ignore-not-found=true", "-o", "name"], namespace=namespace, kubeconfig=config
+            )
+            remaining.extend(response.stdout.splitlines())
+        # Deployment deletion can return before its orphaned ReplicaSet pods disappear.
+        response = kubectl(["get", "pods", "-o", "json"], namespace=target.control_namespace, kubeconfig=config)
+        for pod in json.loads(response.stdout or "{}").get("items", []):
+            if pod.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/name") in (
+                "sdo-sregym-bridge",
+                "sdo-benchmark-registry",
+            ):
+                remaining.append("pod/" + pod["metadata"]["name"])
+        return remaining
 
     def install(self, config: RuntimeConfig) -> bool:
         from benchmarks.sregym.adapter.native_operator import install_existing, sync_existing
@@ -445,6 +523,12 @@ def run_persistent_stage(
             f"namespace {inputs.namespace!r} is operated by the persistent controller of "
             f"{record.application!r}; refusing to reuse it for {inputs.application!r}"
         )
+    state.cleanup_targets[inputs.namespace] = CleanupTarget(
+        namespace=inputs.namespace,
+        control_namespace=control,
+        kubeconfig=inputs.kubeconfig,
+    )
+    state.save(inputs.state_path)
     pod = ops.controller_pod(control) if record is not None else None
     inventory_ready = clock.monotonic()
     drain_seconds = 0.0
@@ -1011,10 +1095,73 @@ def teardown(state_path: Path, *, ops: ClusterOps, clock: Clock | None = None) -
         except (PersistentControllerError, ControllerInstallError, OSError, ValueError) as exc:
             errors.append(f"{namespace}: {exc}")
         finally:
-            ops.delete_controller(record.control_namespace)
-            state.controllers.pop(namespace, None)
+            try:
+                if isinstance(ops, KubectlClusterOps):
+                    target = CleanupTarget(
+                        namespace=record.namespace,
+                        control_namespace=record.control_namespace,
+                        kubeconfig=record.kubeconfig,
+                    )
+                    ops.stop_runtime(target)
+                    ops.stop_transport(target)
+                else:
+                    ops.delete_controller(record.control_namespace)
+            except (PersistentControllerError, NativeOperatorError, OSError, ValueError, RuntimeError) as exc:
+                errors.append(f"{namespace}: stop failed: {exc}")
+            else:
+                state.controllers.pop(namespace, None)
             state.save(state_path)
     return errors
+
+
+def abort(state_path: Path, *, ops: AbortClusterOps) -> list[str]:
+    """Force quiescence using recorded identities; never drain or read runtime incident state."""
+    from benchmarks.sregym.adapter.processes import terminate_run
+
+    try:
+        errors = terminate_run(state_path)
+    except (OSError, ValueError, RuntimeError) as exc:
+        errors = [f"host helper cleanup failed: {exc}"]
+    state_path = state_path.resolve()
+    state = PersistentState.load(state_path)
+    targets = dict(state.cleanup_targets)
+    for namespace, record in state.controllers.items():
+        targets[namespace] = CleanupTarget(
+            namespace=record.namespace, control_namespace=record.control_namespace, kubeconfig=record.kubeconfig
+        )
+        if record.pending is not None:
+            state.aborted_incidents.append(
+                AbortedIncident(
+                    incident_id=record.pending.incident_id,
+                    namespace=namespace,
+                    stage_label=record.pending.stage_label,
+                    aborted_at=datetime.now(timezone.utc),
+                )
+            )
+            record.pending = None
+    state.cleanup_targets = targets
+    state.save(state_path)
+    for namespace, target in targets.items():
+        for action in (ops.stop_runtime, ops.abort_workload):
+            try:
+                action(target)
+            except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+                errors.append(f"{namespace}: {exc}")
+        try:
+            leftovers = ops.abort_leftovers(target)
+            errors.extend(f"{namespace}: leftover {name}" for name in leftovers)
+            if not leftovers:
+                state.controllers.pop(namespace, None)
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            errors.append(f"{namespace}: could not verify quiet lane: {exc}")
+        state.save(state_path)
+    return errors
+
+
+class AbortClusterOps(Protocol):
+    def stop_runtime(self, target: CleanupTarget) -> None: ...
+    def abort_workload(self, target: CleanupTarget) -> None: ...
+    def abort_leftovers(self, target: CleanupTarget) -> list[str]: ...
 
 
 def _publish_drained_receipts(state_path: Path) -> None:
@@ -1305,7 +1452,13 @@ def _main(argv: list[str] | None = None) -> int:
         type=Path,
         help="pipeline directory whose published runs receive the drained receipts and controller logs",
     )
+    abort_parser = subparsers.add_parser("abort", help="kill the run and stop its recorded resources without draining")
+    abort_parser.add_argument("--state", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.command == "abort":
+        errors = abort(args.state, ops=KubectlClusterOps())
+        print(json.dumps({"quiet": not errors, "leftovers_or_errors": errors}, indent=2))
+        return 1 if errors else 0
     state = PersistentState.load(args.state)
     kubeconfigs = {record.kubeconfig for record in state.controllers.values() if record.kubeconfig}
     if kubeconfigs:
