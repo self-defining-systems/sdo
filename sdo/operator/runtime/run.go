@@ -35,8 +35,6 @@ import (
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
 	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
-	// PlanExecConfig supplies the existing controller transport; nil refuses Exec.
-	PlanExecConfig   *rest.Config
 	PlanSafety       *PlanSafetyPolicy
 	SourcePlanPolicy *SourcePlanPolicy
 	Args             []string
