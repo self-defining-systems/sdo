@@ -85,3 +85,19 @@ def test_program_validation_rules_are_in_python_descriptors() -> None:
 
     action_rule = contracts.Action.DESCRIPTOR.oneofs_by_name["kind"].GetOptions().Extensions[validate_pb2.oneof]
     assert action_rule.required
+
+
+def test_lifecycle_actions_and_effects_are_public_contracts() -> None:
+    from sdo.contracts import CreateFromSource, DeleteObject, PlanObjectEffect
+
+    ref = contracts.ObjectRef(api_version="v1", kind="ConfigMap", namespace="app", name="flags")
+    actions = [
+        contracts.Action(create_from_source=CreateFromSource(ref=ref, reason="synthetic fixture")),
+        contracts.Action(delete_object=DeleteObject(ref=ref, reason="synthetic fixture")),
+    ]
+    application = contracts.PlanApplication(
+        plan=contracts.Plan(actions=actions),
+        object_effects=[PlanObjectEffect(ref=ref, operation="delete", irreversible=True, confirmed=True)],
+    )
+    encoded = contracts.to_canonical_json(application)
+    assert contracts.parse_json(encoded, contracts.PlanApplication()) == application

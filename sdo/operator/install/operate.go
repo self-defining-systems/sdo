@@ -126,6 +126,15 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
 	}
+	if cfg.PlanSourcePolicyJSON != "" {
+		args = append(args, "--plan-source-policy-json", cfg.PlanSourcePolicyJSON)
+	}
+	if cfg.PlanSafetyPolicyJSON != "" || cfg.PlanSafetyPolicySHA256 != "" {
+		args = append(args, "--plan-safety-policy-json", cfg.PlanSafetyPolicyJSON, "--plan-safety-policy-sha256", cfg.PlanSafetyPolicySHA256)
+	}
+	for _, name := range cfg.planWebhookNames() {
+		args = append(args, "--plan-webhook-name", name)
+	}
 	if cfg.ProgramFastPath {
 		args = append(args, "--program-fast-path")
 	}

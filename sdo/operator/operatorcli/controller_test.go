@@ -12,6 +12,11 @@ func TestInstallerNativeArgumentsProduceAtomicTypedBrokerLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	launch := config.Controller
+	reviewed, _, reviewErr := ParseControllerLaunch(append(append([]string(nil), args...), "--plan-safety-policy-json", `{"version":1}`, "--plan-safety-policy-sha256", strings.Repeat("a", 64)))
+	if reviewErr != nil || reviewed.Controller.PlanSafetyPolicyJson != `{"version":1}` || reviewed.Controller.PlanSafetyPolicySha256 != strings.Repeat("a", 64) {
+		t.Fatalf("reviewed launch authority lost: %v", reviewErr)
+	}
+
 	configured, _, configErr := ParseControllerLaunch(append(append([]string(nil), args...), "--program-min-duration", "3s"))
 	if configErr != nil || configured.Controller.GetProgramMinDuration().AsDuration().Seconds() != 3 {
 		t.Fatalf("program persistence did not reach the typed launch: %v", configErr)

@@ -28,6 +28,7 @@ Programs use `operator/sdk/program` to diagnose through namespace-scoped read vi
 
 - Write a failing contract test before changing public behavior. Preserve fresh deployer, judge, responder, and reflection sessions where their roles require separation.
 - Keep agent tasks language neutral. An agent may edit only its proposal checkout, never the accepted repository or broker-owned `.sdo/` outcomes.
+- SDK API or semantics changes must update the hand-written authoring guidance in `sdo/skills/` as well as regenerating SDK references.
 - Run generated detector code only through isolated validation and deterministic Go controller execution. Keep benchmark verdicts, submission relays, and receipts under `../benchmarks/sregym/`.
 - Keep existing async Python handlers on their event loop.
 - Update `../docs/architecture.md` and `../.agents/skills/analyze-experiment/references/` when ownership, layout, or evidence interpretation changes.

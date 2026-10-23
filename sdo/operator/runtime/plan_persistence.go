@@ -22,6 +22,13 @@ type persistedPlan struct {
 type planApplicationFields PlanApplicationResult
 
 func (result PlanApplicationResult) MarshalJSON() ([]byte, error) {
+	for _, effect := range result.ObjectEffects {
+		if effect.DeletedPreImage != nil {
+			if err := planSecretPredicate(effect.DeletedPreImage); err != nil {
+				return nil, err
+			}
+		}
+	}
 	plan, err := encodePersistedActions(result.Plan.Actions)
 	if err != nil {
 		return nil, fmt.Errorf("encode plan: %w", err)
@@ -68,6 +75,10 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 	for _, action := range actions {
 		var kind string
 		switch action.(type) {
+		case program.CreateFromSource, *program.CreateFromSource:
+			kind = "create_from_source"
+		case program.DeleteObject, *program.DeleteObject:
+			kind = "delete_object"
 		case program.ReconcileFromSource, *program.ReconcileFromSource:
 			kind = "reconcile_from_source"
 		case program.Rollback, *program.Rollback:
@@ -99,6 +110,10 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 	for _, entry := range encoded {
 		var action program.Action
 		switch entry.Kind {
+		case "create_from_source":
+			action = &program.CreateFromSource{}
+		case "delete_object":
+			action = &program.DeleteObject{}
 		case "reconcile_from_source":
 			action = &program.ReconcileFromSource{}
 		case "rollback":
@@ -117,6 +132,10 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			return nil, fmt.Errorf("decode %s action: %w", entry.Kind, err)
 		}
 		switch value := action.(type) {
+		case *program.CreateFromSource:
+			decoded = append(decoded, *value)
+		case *program.DeleteObject:
+			decoded = append(decoded, *value)
 		case *program.ReconcileFromSource:
 			decoded = append(decoded, *value)
 		case *program.Rollback:
