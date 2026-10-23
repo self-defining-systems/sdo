@@ -11,6 +11,8 @@
     "mf__hotel_reservation__n2__s1773744812__v_",
     "mf__hotel_reservation__n2__s3830920265__v_",
     "mf__hotel_reservation__n2__s3801549391__v_",
-    "mf__hotel_reservation__n2__s1085951852__v_"
+    "mf__hotel_reservation__n2__s1085951852__v_",
+    "missing_configmap_hotel_reservation",
+    "wrong_service_selector_hotel_reservation"
   ]
 }

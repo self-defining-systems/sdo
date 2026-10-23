@@ -99,7 +99,7 @@ def test_adding_fault_indices_to_colocated_does_not_lose_draws():
     assert describe_problem("generated", problem).faults[0].class_name == "WrongBinUsage"
 
 
-def test_proposed_ten_incident_suite_is_inside_current_sdo_scope():
+def test_proposed_twelve_incident_suite_repeats_are_inside_current_sdo_scope():
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems
@@ -109,7 +109,12 @@ def test_proposed_ten_incident_suite_is_inside_current_sdo_scope():
     stream = load_stream(root / "tests/fixtures/sregym/fastloop/sdo3_initial.json")
     catalog = describe_sregym_problems(tuple(ids[0] for ids in stream), sregym_dir=root / "third_party/sregym")
     validate_suite(catalog)
-    assert len(stream) == 10
+    assert len(stream) == 12
+    assert stream[-2:] == (("missing_configmap_hotel_reservation",), ("wrong_service_selector_hotel_reservation",))
+    assert len(set(stream[:10])) == 10
+    for position in (10, 11):
+        assert position - stream.index(stream[position]) >= 3
+        validate_suite({stream[position][0]: catalog[stream[position][0]]})
     assert sum(item.composite for item in catalog.values()) == 5
 
 
