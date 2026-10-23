@@ -4,6 +4,7 @@ package operatorcli_test
 
 import (
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,18 +18,24 @@ import (
 )
 
 // A fixed set of windows separates a sustained regression from a transient
-// runner stall. Within each window retain p95 (including genuine tail delays).
-// The 10ms budget applies on fast runners; when the direct transfer itself is
-// slow, allow three direct-transfer times for the extra hop and capture copies.
-// This compares work on the current machine instead of assuming dedicated CPUs.
+// runner stall. The proxy is measured against a control hop in the same run:
+// a minimal handler that fetches the same upstream response and copies it to
+// the client without capture or history. The control allocates and copies the
+// payload like any forwarder, so host noise that slows allocation-heavy work
+// (scheduling, GC, page faults) moves it together with the proxy, while a slow
+// direct transfer would not reveal it. Only proxy-specific cost remains.
+// That cost needs CPU too, so the 10ms budget grows to three times the measured
+// direct-plus-control-hop cost when the machine is slow.
 type forwardingWindow struct {
-	directP95 time.Duration
-	addedP95  time.Duration
+	directP95  time.Duration // direct transfer, for diagnostics
+	controlP95 time.Duration // control hop minus direct, for diagnostics
+	addedP95   time.Duration // proxy minus control
 }
 
+const forwardingBudget = 10 * time.Millisecond
+
 func (w forwardingWindow) budgetRatio() float64 {
-	budget := max(10*time.Millisecond, 3*w.directP95)
-	return float64(w.addedP95) / float64(budget)
+	return float64(w.addedP95) / float64(max(forwardingBudget, 3*(w.directP95+w.controlP95)))
 }
 
 func forwardingBudgetRatio(windows [3]forwardingWindow) float64 {
@@ -41,8 +48,8 @@ func forwardingBudgetRatio(windows [3]forwardingWindow) float64 {
 }
 
 func TestForwardingWindows(t *testing.T) {
-	quiet := forwardingWindow{time.Millisecond, 2 * time.Millisecond}
-	stall := forwardingWindow{time.Millisecond, 200 * time.Millisecond}
+	quiet := forwardingWindow{time.Millisecond, time.Millisecond, 2 * time.Millisecond}
+	stall := forwardingWindow{time.Millisecond, time.Millisecond, 200 * time.Millisecond}
 	for _, tc := range []struct {
 		name    string
 		windows [3]forwardingWindow
@@ -60,23 +67,27 @@ func TestForwardingWindows(t *testing.T) {
 	}
 }
 
+// Slowness shared with the control hop is host noise and does not count; only
+// proxy cost beyond the control does.
 func TestForwardingWindowBudget(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		direct, added time.Duration
-		pass          bool
+		name            string
+		direct, control time.Duration
+		added           time.Duration
+		pass            bool
 	}{
-		{"quiet", time.Millisecond, 2 * time.Millisecond, true},
-		{"absolute_boundary", time.Millisecond, 10 * time.Millisecond, true},
-		{"over_absolute_budget", time.Millisecond, 11 * time.Millisecond, false},
-		{"cpu_contention", 10 * time.Millisecond, 25 * time.Millisecond, true},
-		{"relative_boundary", 10 * time.Millisecond, 30 * time.Millisecond, true},
-		{"over_relative_budget", 10 * time.Millisecond, 31 * time.Millisecond, false},
-		{"tenfold_proxy_regression", time.Millisecond, 20 * time.Millisecond, false},
-		{"tenfold_proxy_regression_under_contention", 10 * time.Millisecond, 250 * time.Millisecond, false},
+		{"quiet", time.Millisecond, time.Millisecond, 2 * time.Millisecond, true},
+		{"absolute_boundary", time.Millisecond, time.Millisecond, forwardingBudget, true},
+		{"over_budget", time.Millisecond, time.Millisecond, forwardingBudget + time.Millisecond, false},
+		{"tenfold_proxy_regression", time.Millisecond, time.Millisecond, 20 * time.Millisecond, false},
+		{"noisy_host_shared_with_control", time.Millisecond, 45 * time.Millisecond, 3 * time.Millisecond, true},
+		{"cpu_contention", 2 * time.Millisecond, 4 * time.Millisecond, 15 * time.Millisecond, true},
+		{"relative_boundary", 10 * time.Millisecond, 10 * time.Millisecond, 60 * time.Millisecond, true},
+		{"over_relative_budget", 10 * time.Millisecond, 10 * time.Millisecond, 61 * time.Millisecond, false},
+		{"tenfold_proxy_regression_under_contention", 10 * time.Millisecond, 10 * time.Millisecond, 600 * time.Millisecond, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ratio := (forwardingWindow{tc.direct, tc.added}).budgetRatio()
+			ratio := (forwardingWindow{tc.direct, tc.control, tc.added}).budgetRatio()
 			if (ratio <= 1) != tc.pass {
 				t.Fatalf("budget ratio=%g, want pass=%v", ratio, tc.pass)
 			}
@@ -109,6 +120,22 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 	clientTransport := http.DefaultTransport.(*http.Transport).Clone()
 	defer clientTransport.CloseIdleConnections()
 	client := &http.Client{Transport: clientTransport, Timeout: 5 * time.Second}
+	controlTransport := http.DefaultTransport.(*http.Transport).Clone()
+	defer controlTransport.CloseIdleConnections()
+	controlHop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out := r.Clone(r.Context())
+		out.URL.Scheme, out.URL.Host, out.Host, out.RequestURI = u.Scheme, u.Host, u.Host, ""
+		res, err := controlTransport.RoundTrip(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer res.Body.Close()
+		maps.Copy(w.Header(), res.Header)
+		w.WriteHeader(res.StatusCode)
+		io.Copy(w, res.Body)
+	}))
+	defer controlHop.Close()
 	get := func(endpoint string) time.Duration {
 		start := time.Now()
 		res, err := client.Get(endpoint + "/api/v1/namespaces/app/pods")
@@ -123,24 +150,31 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 		return time.Since(start)
 	}
 	measure := func() forwardingWindow {
-		added := make([]time.Duration, 100)
 		directs := make([]time.Duration, 100)
+		controls := make([]time.Duration, 100)
+		added := make([]time.Duration, 100)
 		for i := range added {
-			var direct, proxied time.Duration
-			if i%2 == 0 {
-				direct = get(up.URL)
-				proxied = get(proxy.URL)
-			} else {
-				proxied = get(proxy.URL)
-				direct = get(up.URL)
+			// Rotate the order of the three paths so none is systematically first.
+			var direct, control, proxied time.Duration
+			for _, step := range [][3]int{{0, 1, 2}, {2, 0, 1}, {1, 2, 0}}[i%3] {
+				switch step {
+				case 0:
+					direct = get(up.URL)
+				case 1:
+					control = get(controlHop.URL)
+				case 2:
+					proxied = get(proxy.URL)
+				}
 			}
 			directs[i] = direct
-			added[i] = proxied - direct
+			controls[i] = control - direct
+			added[i] = proxied - control
 			time.Sleep(time.Millisecond)
 		}
-		sort.Slice(added, func(i, j int) bool { return added[i] < added[j] })
-		sort.Slice(directs, func(i, j int) bool { return directs[i] < directs[j] })
-		return forwardingWindow{directs[94], added[94]}
+		for _, samples := range [][]time.Duration{directs, controls, added} {
+			sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+		}
+		return forwardingWindow{directs[94], controls[94], added[94]}
 	}
 	// Fixed warmup, then three fixed windows, regardless of their results.
 	// No retry-until-pass: a sustained slowdown fails the median window, while
@@ -149,11 +183,11 @@ func TestLargeResponseWarmAddedP95(t *testing.T) {
 	var windows [3]forwardingWindow
 	for i := range windows {
 		windows[i] = measure()
-		t.Logf("window %d: %d bytes, 100 balanced warm pairs: direct p95=%s added p95=%s budget ratio=%.3f",
-			i, len(payload), windows[i].directP95, windows[i].addedP95, windows[i].budgetRatio())
+		t.Logf("window %d: %d bytes, 100 balanced warm pairs: direct p95=%s control hop +%s proxy +%s over control, budget ratio=%.3f",
+			i, len(payload), windows[i].directP95, windows[i].controlP95, windows[i].addedP95, windows[i].budgetRatio())
 	}
 	if ratio := forwardingBudgetRatio(windows); ratio > 1 {
-		t.Fatalf("median window budget ratio %.3f exceeds 1 (10ms added or 3x direct p95)", ratio)
+		t.Fatalf("median window budget ratio %.3f exceeds 1 (10ms, or 3x direct plus control-hop cost, over the control hop)", ratio)
 	}
 }
 
