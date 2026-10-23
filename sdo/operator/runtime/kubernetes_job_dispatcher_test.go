@@ -37,6 +37,23 @@ func (catalog fixedMemoryCatalog) Snapshot(context.Context) (*contracts.Operatio
 	return &contracts.OperationalMemorySnapshot{AcceptedCommit: catalog.commit}, nil
 }
 
+// goUntilCleanup runs fn on its own goroutine and registers a cleanup that
+// cancels its context and waits for it to return. Cleanups run last-in
+// first-out, so calling this after t.TempDir guarantees fn has stopped writing
+// under the directory before testing removes it.
+func goUntilCleanup(t *testing.T, cancel context.CancelFunc, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+}
+
 func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 	root := t.TempDir()
 	client := fake.NewSimpleClientset()
@@ -51,14 +68,15 @@ func TestNativeResponderSessionsAreIsolatedPerIncident(t *testing.T) {
 		PollInterval: time.Millisecond,
 	}
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
-	go func() { _, _ = dispatcher.Dispatch(firstCtx, request) }()
+	firstRequest := request
+	goUntilCleanup(t, cancelFirst, func() { _, _ = dispatcher.Dispatch(firstCtx, firstRequest) })
 	first := awaitJob(t, client, IncidentJobName(request.IncidentID))
 	cancelFirst()
 	request.IncidentID = "incident-two"
 	request.RepositoryWorktree = root + "/proposals/incident-two"
 	secondCtx, cancelSecond := context.WithCancel(context.Background())
-	defer cancelSecond()
-	go func() { _, _ = dispatcher.Dispatch(secondCtx, request) }()
+	secondRequest := request
+	goUntilCleanup(t, cancelSecond, func() { _, _ = dispatcher.Dispatch(secondCtx, secondRequest) })
 	second := awaitJob(t, client, IncidentJobName(request.IncidentID))
 	session := func(job *batchv1.Job) string {
 		container := job.Spec.Template.Spec.Containers[0]
@@ -422,8 +440,7 @@ func TestResponderJobStartsBeforeSettleCapture(t *testing.T) {
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _, _ = dispatcher.Dispatch(ctx, request) }()
+	goUntilCleanup(t, cancel, func() { _, _ = dispatcher.Dispatch(ctx, request) })
 	_ = awaitJob(t, client, IncidentJobName(request.IncidentID))
 	dir, err := memory.IncidentCorpusDir(root, request.IncidentID)
 	if err != nil {
@@ -701,8 +718,7 @@ func TestKubernetesJobDispatcherUsesRegisteredWorker(t *testing.T) {
 		RepositoryMountPath: "/workspace", PollInterval: time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _, _ = dispatcher.Dispatch(ctx, request) }()
+	goUntilCleanup(t, cancel, func() { _, _ = dispatcher.Dispatch(ctx, request) })
 	job := awaitJob(t, client, IncidentJobName(request.IncidentID))
 	container := job.Spec.Template.Spec.Containers[0]
 	if container.Image != "example/custom:1" || len(container.Command) != 1 || container.Command[0] != "/custom-worker" {
@@ -734,8 +750,7 @@ func TestKubernetesJobDispatcherAddsDispatchTimeEnvironment(t *testing.T) {
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _, _ = dispatcher.Dispatch(ctx, request) }()
+	goUntilCleanup(t, cancel, func() { _, _ = dispatcher.Dispatch(ctx, request) })
 	container := awaitJob(t, client, IncidentJobName(request.IncidentID)).Spec.Template.Spec.Containers[0]
 	if !containsEnvironment(container.Env, "SDO_PROBER_URL", "http://10.0.0.7:8080") {
 		t.Fatalf("dispatch-time environment was not propagated: %#v", container.Env)

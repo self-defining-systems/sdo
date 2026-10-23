@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/contracts/wire"
 	"strings"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -253,13 +254,17 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		directory := filepath.Join(d.RepositoryMountPath, relative, "tools")
 		toolCtx, stopTools := context.WithCancel(ctx)
-		defer stopTools()
+		var tools sync.WaitGroup
+		// Dispatch owns these goroutines: they write corpus captures and tool
+		// responses under the repository mount, so none may outlive it.
+		defer func() { stopTools(); tools.Wait() }()
 		server := SessionToolServer{Directory: directory, Handle: loop.Handle}
 		if err := server.Prepare(); err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare responder tools: %w", err)
 		}
-		go func() { _ = server.Serve(toolCtx) }()
-		go loop.RetryInitialDiagnose(toolCtx)
+		tools.Add(2)
+		go func() { defer tools.Done(); _ = server.Serve(toolCtx) }()
+		go func() { defer tools.Done(); loop.RetryInitialDiagnose(toolCtx) }()
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
 	}
 	executor := worker_registry.KubernetesExecutor{

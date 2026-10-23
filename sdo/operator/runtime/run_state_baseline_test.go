@@ -127,6 +127,9 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	stderrReader, stderrWriter := io.Pipe()
 	errors := &lockedLines{}
 	go collectLines(stderrReader, errors)
+	// Created on the test goroutine so its TempDir cleanup registers before the
+	// controller-stop cleanup below and therefore runs after it.
+	appRoot := gitRepository(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	exited := make(chan struct{})
 	var runErr error
@@ -134,7 +137,7 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 		defer close(exited)
 		runErr = RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
 			Args: []string{
-				"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", gitRepository(t),
+				"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", appRoot,
 				"--application", "hotel",
 				"--synthetic-traffic=false", "--lease-duration", "3s",
 			},
