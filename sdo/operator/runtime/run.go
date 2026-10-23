@@ -1236,6 +1236,7 @@ func evaluateOnce(
 		}
 		provider = kubernetesProvider
 	}
+	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
 			return errors.New("traffic health evaluation requires a live prober URL")
@@ -1244,7 +1245,26 @@ func evaluateOnce(
 		if !observer.WaitWarm(ctx, 30*time.Second) {
 			return errors.New("traffic prober did not produce a complete bounded health window")
 		}
-		provider = TrafficSnapshotProvider{Base: provider, Observer: observer}
+		trafficProvider.Observer = observer
+	}
+	if ConsumesServiceReachability(detectors) {
+		if *proberURL == "" {
+			fmt.Fprintln(stderr, "service reachability skipped: evaluate-once has no --prober-url")
+		} else {
+			// Gather the gate's history now: Failures rounds, a second apart,
+			// judged by the same observer and detector as the controller.
+			reachability := NewServiceReachabilityObserver(ServiceReachabilityConfig{
+				Prober: HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}, Snapshots: provider,
+				Interval: evaluateOnceReachabilityInterval,
+			})
+			if err := reachability.Collect(ctx); err != nil {
+				return fmt.Errorf("collect service reachability: %w", err)
+			}
+			trafficProvider.Reachability = reachability
+		}
+	}
+	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
+		provider = trafficProvider
 	}
 	start := time.Now().UTC()
 	controller, err := NewController(ControllerConfig{

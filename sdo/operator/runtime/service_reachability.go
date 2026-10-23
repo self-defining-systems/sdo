@@ -22,6 +22,11 @@ import (
 // client, no service-account token and no new RBAC, and a replaced prober pod
 // loses no history.
 
+// evaluateOnceReachabilityInterval spaces the synchronous rounds of a
+// bounded --evaluate-once run: the default three rounds take about two
+// seconds plus the dials (each round at most four 1 s dial timeouts).
+const evaluateOnceReachabilityInterval = time.Second
+
 // ReachabilityDialer is the prober capability the observer needs.
 type ReachabilityDialer interface {
 	DialTargets(ctx context.Context, request prober.DialRequest) (prober.DialResponse, error)
@@ -114,8 +119,8 @@ func (o *ServiceReachabilityObserver) Cycle(ctx context.Context) bool {
 	var response prober.DialResponse
 	if len(targets) > 0 {
 		// A round lasts at most four dial timeouts in the prober; bound the
-		// HTTP exchange by the interval so a hung prober cannot stall rounds.
-		roundCtx, cancel := context.WithTimeout(ctx, o.config.Interval)
+		// HTTP exchange so a hung prober cannot stall rounds.
+		roundCtx, cancel := context.WithTimeout(ctx, o.config.Interval+4*o.config.Timeout)
 		response, err = o.config.Prober.DialTargets(roundCtx, prober.DialRequest{Targets: targets, Timeout: o.config.Timeout})
 		cancel()
 	}
@@ -165,6 +170,30 @@ func (o *ServiceReachabilityObserver) Cycle(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// Collect runs Failures rounds synchronously, Interval apart, so a bounded
+// evaluation judges the same gate as the long-running controller from a
+// history it gathered itself. It stops early when the prober cannot be read,
+// leaving the load error in the window.
+func (o *ServiceReachabilityObserver) Collect(ctx context.Context) error {
+	for round := 0; round < o.config.Failures; round++ {
+		if round > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(o.config.Interval):
+			}
+		}
+		o.Cycle(ctx)
+		o.mu.Lock()
+		failed := o.failure != ""
+		o.mu.Unlock()
+		if failed {
+			return nil
+		}
+	}
+	return ctx.Err()
 }
 
 // Start runs a round every interval until Stop; on a running observer it is a no-op.

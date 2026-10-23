@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http/httptest"
@@ -188,5 +190,91 @@ func TestHTTPProberClientDialsTargets(t *testing.T) {
 	})
 	if err != nil || len(response.Results) != 1 || !response.Results[0].Sample.OK {
 		t.Fatalf("response %+v err %v", response, err)
+	}
+}
+
+// TestEvaluateOnceCollectsReachabilityRounds covers the bounded health
+// command: --evaluate-once dials the snapshot-derived targets through the
+// prober's /v1/dials endpoint until the gate can be judged, so a refusing
+// port is reported and a listening one stays clear.
+func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = connection.Close()
+		}
+	}()
+	closed, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusing := closed.Addr().String()
+	_ = closed.Close()
+	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{
+		ID: "service-reachability", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
+		Watches: servicehealth.ReachabilityWatches(), Interval: 10 * time.Second,
+		Persistence: sdk.PersistencePolicy{Firing: 2, Clearing: 2},
+		Batching:    sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond},
+		Playbooks:   []string{"health-objective"}, OriginatingCommit: "lifecycle-bootstrap",
+	})
+	for name, test := range map[string]struct {
+		address string
+		status  DetectorEvaluationStatus
+	}{
+		"refusing":  {address: refusing, status: DetectorEvaluationFiring},
+		"listening": {address: listener.Addr().String(), status: DetectorEvaluationClear},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := prober.New(prober.Config{Namespace: "shop", LinkAddress: func(traffic.Link) string { return test.address }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(prober.Handler(p))
+			defer server.Close()
+			var stdout bytes.Buffer
+			err = RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
+				Args:     []string{"--evaluate-once", "--namespace", "shop", "--prober-url", server.URL},
+				Stdout:   &stdout,
+				Provider: staticProvider{snapshot: reachabilityApp(8083)},
+			})
+			if err != nil {
+				t.Fatalf("evaluate once: %v", err)
+			}
+			var output struct {
+				Status   DetectorEvaluationStatus `json:"status"`
+				Findings []sdk.Finding            `json:"findings"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+				t.Fatalf("decode %q: %v", stdout.String(), err)
+			}
+			if output.Status != test.status {
+				t.Fatalf("status %q, want %q: %s", output.Status, test.status, stdout.String())
+			}
+			if test.status == DetectorEvaluationFiring && (len(output.Findings) != 1 ||
+				output.Findings[0].RuleID != servicehealth.RuleServicePortUnreachable || output.Findings[0].PrimaryResource.Name != "geo") {
+				t.Fatalf("expected one service-port-unreachable finding for geo, got %+v", output.Findings)
+			}
+		})
+	}
+}
+
+func TestEvaluateOnceSkipsReachabilityWithoutAProber(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
+	err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
+		Args: []string{"--evaluate-once", "--namespace", "shop"}, Stdout: &stdout, Stderr: &stderr,
+		Provider: staticProvider{snapshot: reachabilityApp(8083)},
+	})
+	if err != nil || !bytes.Contains(stdout.Bytes(), []byte(`"status":"clear"`)) ||
+		!bytes.Contains(stderr.Bytes(), []byte("service reachability skipped")) {
+		t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
 	}
 }
