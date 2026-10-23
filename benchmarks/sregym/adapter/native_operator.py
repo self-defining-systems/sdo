@@ -191,6 +191,10 @@ class NativeExistingReceipt:
     accepted_commit: str
 
 
+# A cold build downloads modules and compiles the whole controller graph.
+_OPERATOR_BUILD_TIMEOUT_SECONDS = 300
+
+
 @lru_cache(maxsize=1)
 def _source_operator(module: Path) -> str:
     directory = Path(tempfile.mkdtemp(prefix="sdo-operator-"))
@@ -202,7 +206,7 @@ def _source_operator(module: Path) -> str:
             cwd=module,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=_OPERATOR_BUILD_TIMEOUT_SECONDS,
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:

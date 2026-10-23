@@ -158,6 +158,15 @@ jobs:
         with:
           go-version: "1.26.8"
           cache-dependency-path: sdo/operator/go.sum
+      # The unit tests build the Go operator (adapter tests run it on fake
+      # controller state). Pin the toolchain so GOTOOLCHAIN=auto does not
+      # download go1.26 inside that build's timeout. The Go caches are
+      # restored by the dedicated cache step below.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        if: matrix.name == 'unit tests'
+        with:
+          go-version: "1.26.8"
+          cache: false
       - name: Check out the SREGym harness
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
