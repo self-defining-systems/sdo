@@ -373,6 +373,7 @@ initialize both repository edges:
 ```bash
 git submodule update --init third_party/sregym
 git -C third_party/sregym submodule update --init SREGym-applications
+git -C third_party/sregym/SREGym-applications submodule update --init astronomy-shop
 ```
 
 The Python unit-test CI job initializes these application sources explicitly so

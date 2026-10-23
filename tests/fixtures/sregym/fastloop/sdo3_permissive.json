@@ -1,0 +1,19 @@
+{
+  "capability_mode": "permissive",
+  "permissive_responder": true,
+  "responder_namespaces": [
+    "policy-system"
+  ],
+  "incidents": [
+    "mf__astronomy_shop__n3__s1416840650__reliable__v_",
+    "mf__astronomy_shop__n5__s64878673__reliable__v_",
+    "mf__social_network__n2__s3455414167__reliable__v_",
+    "mf__social_network__n2__s2571351228__reliable__v_",
+    "mf__astronomy_shop__n5__s1913342792__reliable__v_",
+    "mf__astronomy_shop__n3__s2092627323__reliable__v_",
+    "mf__astronomy_shop__n2__s1471960113__reliable__v_",
+    "mf__social_network__n2__s1969073207__reliable__v_",
+    "mf__astronomy_shop__n2__s2139970257__reliable__v_",
+    "mf__social_network__n5__s2045972234__reliable__v_"
+  ]
+}

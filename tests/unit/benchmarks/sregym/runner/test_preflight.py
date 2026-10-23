@@ -613,3 +613,36 @@ def test_suite_capabilities_are_rejected_before_launch(fake_host, sregym_dir, mo
     check = _check(_preflight([_luna()], fake_host, sregym_dir), "suite-capabilities")
     assert check.status == "fail"
     assert scope in check.detail
+
+
+def test_permissive_suite_preflight_preserves_missing_capabilities_in_manifest(
+    fake_host, sregym_dir, monkeypatch, tmp_path
+):
+    from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription
+    from benchmarks.sregym.runner.manifest import build_run_manifest
+
+    description = ProblemDescription(
+        problem_id="new",
+        faults=(
+            FaultSpec("readiness", "frontend", class_name="Unknown", required_capabilities=("unreviewed:Unknown",)),
+        ),
+        injection_order=(0,),
+    )
+    monkeypatch.setattr(fake_host, "suite_descriptions", lambda *args: {"new": description.model_dump(mode="json")})
+    config = _luna(capability_mode="permissive")
+    report = _preflight([config], fake_host, sregym_dir)
+    assert _check(report, "suite-capabilities").status == "pass"
+    snapshot = tmp_path / "experiment.toml"
+    snapshot.write_text('capability_mode = "permissive"')
+    manifest = build_run_manifest(
+        run_dir=tmp_path,
+        configs=[config],
+        snapshot=snapshot,
+        report=report,
+        host=fake_host,
+        project_root=REPO_ROOT,
+        sregym_dir=sregym_dir,
+        env={},
+    )
+    assert manifest["fault_capabilities"][0]["mode"] == "permissive"
+    assert manifest["fault_capabilities"][0]["faults"][0]["missing_capabilities"] == ["unreviewed:Unknown"]

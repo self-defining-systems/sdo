@@ -54,6 +54,8 @@ class RuntimeConfig:
     late_findings: str = "off"
     max_response_loops: int = 5
     healthy_baseline: bool = False
+    permissive_responder: bool = False
+    responder_namespaces: tuple[str, ...] = ()
     controller_namespace: str | None = None
     reuse_existing: bool = False
     submission_api_base: str | None = None
@@ -69,6 +71,10 @@ class RuntimeConfig:
     deployed_manifest_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if type(self.permissive_responder) is not bool:
+            raise TypeError("permissive_responder must be a boolean")
+        if self.responder_namespaces and not self.permissive_responder:
+            raise ValueError("responder_namespaces requires permissive_responder")
         for field in (
             "namespace",
             "application",
@@ -146,6 +152,8 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         program_fast_path=config.program_fast_path,
         program_trust_threshold=config.program_trust_threshold,
         healthy_baseline=config.healthy_baseline,
+        permissive_responder=config.permissive_responder,
+        responder_namespaces=config.responder_namespaces,
         max_response_loops=config.max_response_loops,
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,

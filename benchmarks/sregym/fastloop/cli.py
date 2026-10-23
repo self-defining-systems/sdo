@@ -40,7 +40,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 )
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
-from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents
+from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
@@ -361,6 +361,8 @@ def _sdo_agent(
         kind_cluster_name=environment.cluster,
         persistent=True,
         agent_registrations=registrations,
+        permissive_responder=getattr(args, "permissive_responder", False),
+        responder_namespaces=getattr(args, "responder_namespaces", ()),
     )
     settings = SdoAgentSettings(
         repository=environment.workspace,
@@ -465,9 +467,15 @@ def _run(args: argparse.Namespace) -> int:
         if environment.app != "toy"
         else {}
     )
-    if args.agent == "sdo":
-        validate_suite(descriptions, require_tracking=args.require_fault_tracking)
-    elif args.require_fault_tracking:
+    capability_mode = stream_config.capability_mode if stream_config else "strict"
+    capability_evidence = validate_suite(
+        descriptions if args.agent == "sdo" else {},
+        require_tracking=args.require_fault_tracking,
+        capability_mode=capability_mode,
+    )
+    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
+    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
+    if args.agent != "sdo" and args.require_fault_tracking:
         # Capability scope is specific to SDO; tracking is common to both arms.
         unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
         if unsupported:
@@ -497,8 +505,12 @@ def _run(args: argparse.Namespace) -> int:
         results_path=results_dir / INCIDENTS_FILENAME,
         stream=stream,
         continue_on_error=args.continue_on_error,
+        capability_evidence=capability_evidence,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         slot_offset=args.slot_offset,
     )
+    write_loop_manifest(config)
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
         worker.request(
