@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from benchmarks.sregym.adapter import SCRIPTED_REPLAY_SLOTS as SLOTS
+from benchmarks.sregym.adapter import control_namespace_for
 from benchmarks.sregym.assurance.cli import require_scripted
 from benchmarks.sregym.assurance.scripted_codex.mixed10 import directive_for
 from benchmarks.sregym.fastloop import cli
@@ -100,6 +101,35 @@ def check_lease(path: Path, cluster: str) -> None:
     raise ValueError(f"active responder-lanes lease does not cover {cluster}")
 
 
+def prepare_scripted_control(environment: FastloopEnvironment) -> None:
+    """Create fresh-lane prerequisites for already-validated model-free images.
+
+    Existing Secrets are left untouched. Creation needs no Secret data read and
+    an empty Secret satisfies the runtime's required credentials volume.
+    """
+    namespace = control_namespace_for(environment.namespace)
+    resources = [
+        {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}},
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "type": "Opaque",
+            "metadata": {"name": "sdo-agent-credentials", "namespace": namespace},
+        },
+    ]
+    for resource in resources:
+        result = subprocess.run(
+            ["kubectl", "--kubeconfig", str(environment.kubeconfig), "create", "-f", "-"],
+            input=json.dumps(resource),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+        if result.returncode and "(AlreadyExists)" not in result.stderr:
+            raise RuntimeError(f"cannot prepare scripted {resource['kind']}/{resource['metadata']['name']}")
+
+
 def verify_results(output: Path, environment: FastloopEnvironment) -> None:
     records = load_records(output / "incidents.jsonl")
     if len(records) != 1 or records[0].error or not records[0].full_cleanup_verified:
@@ -176,6 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         if cli.main(["reset", "--run-dir", str(run_dir)]):
             raise RuntimeError("initial reset to refreshed seed failed")
         try:
+            prepare_scripted_control(environment)
             result = cli.main(runner)
             if result:
                 return result

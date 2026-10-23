@@ -58,6 +58,56 @@ def test_credential_rehearsals_require_two_cleanup_passes(tmp_path: Path, slot: 
     assert args.cleanup_passes == passes
 
 
+def test_fresh_scripted_lane_prepares_empty_credentials_without_reading_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.assurance import mixed10_rehearsal
+
+    created = []
+
+    def create(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command == ["kubectl", "--kubeconfig", str(tmp_path / "kubeconfig"), "create", "-f", "-"]
+        created.append(json.loads(str(kwargs["input"])))
+        return subprocess.CompletedProcess(command, 0, "created", "")
+
+    monkeypatch.setattr(mixed10_rehearsal.subprocess, "run", create)
+    environment = SimpleNamespace(namespace="social-network", kubeconfig=tmp_path / "kubeconfig")
+    mixed10_rehearsal.prepare_scripted_control(environment)
+    assert created == [
+        {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "social-network-sdo"}},
+        {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "type": "Opaque",
+            "metadata": {"name": "sdo-agent-credentials", "namespace": "social-network-sdo"},
+        },
+    ]
+
+
+@pytest.mark.parametrize("exists", [True, False])
+def test_scripted_control_only_tolerates_already_existing_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, exists: bool
+) -> None:
+    import subprocess
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.assurance import mixed10_rehearsal
+
+    def create(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", "(AlreadyExists)" if exists else "(Forbidden)")
+
+    monkeypatch.setattr(mixed10_rehearsal.subprocess, "run", create)
+    environment = SimpleNamespace(namespace="social-network", kubeconfig=tmp_path / "kubeconfig")
+    if exists:
+        mixed10_rehearsal.prepare_scripted_control(environment)
+    else:
+        with pytest.raises(RuntimeError, match="scripted Namespace"):
+            mixed10_rehearsal.prepare_scripted_control(environment)
+
+
 def test_exact_stream_directives() -> None:
     assert len(SLOTS) == 10
     assert [slot.problem_id.split("__")[3] for slot in SLOTS] == [

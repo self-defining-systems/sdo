@@ -59,6 +59,11 @@ faulty-oracle check while the controller is paused. Oracle errors are invalid
 injections, never fault proof. `pre-repair-oracle.json` retains this benchmark-only
 evidence. Diagnosis grading is off; no model is invoked.
 
+After checking the scripted-image labels, the wrapper creates a missing control
+namespace and an empty credentials Secret for its required runtime volume. It
+does not read Secret data or alter an existing Secret. Credential slots 1 and 4
+also require two full cleanup passes and a passing recovery oracle after each.
+
 After the runner completes, the wrapper requires the official mitigation oracle,
 full-cleanup verification, strictly parsed native receipts, broker source and
 outcome commits, and a zero-gap accepted rendered lock bound to the repaired source tree. A stale
