@@ -275,14 +275,23 @@ func TestSR2dCrashProcess(t *testing.T) {
 
 func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 	cuts := []string{"proposal", "request", "job", "result", "before-accept", "after-accept", "before-adoption", "after-adoption", "before-closure-persist", "after-closure-persist"}
+	// The accepted baseline is immutable; each schedule gets a separate clone
+	// and proposal/API/state stores. Avoid republishing it twenty times.
+	baselineRoot, _, _, _, baseline := tracingFixture(t)
+	old := tracingRefresh(t, baselineRoot, baseline)
 	covered := map[string]bool{}
+	executed := 0
 	for seed := int64(1); seed <= 20; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			executed++
 			random := rand.New(rand.NewSource(seed))
 			cut := cuts[(seed-1)%int64(len(cuts))]
 			covered[cut] = true
-			root, proposals, _, _, baseline := tracingFixture(t)
-			old := tracingRefresh(t, root, baseline)
+			root := filepath.Join(t.TempDir(), "accepted")
+			nativeGit(t, filepath.Dir(root), "clone", "-q", "--shared", baselineRoot, root)
+			nativeGit(t, root, "config", "user.name", "Test")
+			nativeGit(t, root, "config", "user.email", "test@example.com")
+			proposals := filepath.Join(t.TempDir(), "proposals")
 			if random.Intn(2) == 0 {
 				tracingSwap(t, root)
 			} else {
@@ -428,6 +437,10 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			}
 			t.Logf("seed=%d cut=%s verified=%s old_evidence=failed", seed, cut, current.Commit)
 		})
+	}
+	// A filtered -run subtest selection is a replay, not a coverage sweep.
+	if executed != 20 {
+		return
 	}
 	for _, cut := range cuts {
 		if !covered[cut] {
