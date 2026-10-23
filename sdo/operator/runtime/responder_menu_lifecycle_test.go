@@ -153,3 +153,15 @@ func TestResponderMenuRechecksSourceBeforeCompensation(t *testing.T) {
 		t.Fatal("compensation crossed accepted-source fence")
 	}
 }
+
+func TestResponderMenuPolicyRotationFencesAllRemainingWrites(t *testing.T) {
+	loop, cluster := menuB3Loop(t)
+	response := menuCall(t, loop, map[string]any{"command": "menu"})
+	menu := response["menu"].(map[string]any)
+	cluster.afterPatch = func(sdk.ObjectRef) { loop.MenuConfig.Safety.Digest = "rotated-policy" }
+	result := menuCall(t, loop, menuSelection(t, menu, "routing-then-restart", 2, "policy-fence"))
+	report, ok := result["report"].(map[string]any)
+	if !ok || report["status"] == "STATUS_SUCCESS" || len(cluster.patches) != 1 {
+		t.Fatal("remaining forward/compensation writes crossed a menu policy fence")
+	}
+}

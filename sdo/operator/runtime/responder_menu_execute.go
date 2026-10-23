@@ -158,6 +158,9 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	l.batches = int(s.UsedBatches + s.ReservedBatches)
 }
 func (l *ResponderLoop) menuFence(ctx context.Context) error {
+	if !l.MenuConfig.valid() || (l.menu != nil && (l.menu.PolicyDigest != l.MenuConfig.Safety.Digest || l.menu.ScopeDigest != menuDigest(l.MenuConfig.Dependencies))) {
+		return errSelectionFenced
+	}
 	if l.CheckHealth != nil {
 		if err := l.CheckHealth(ctx); err != nil {
 			return err
@@ -350,12 +353,16 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 			}
 			if result.Applied && !result.RolledBack {
 				if _, err := l.menuSnapshot(settlingCtx); err != nil {
+					report.FailedPhase = "compensation"
+					report.ReasonCode = "compensation_safety_refused"
 					for _, patch := range result.Patches {
 						report.Residuals = append(report.Residuals, planRefProto(patch.Ref))
 					}
 					continue
 				}
 				if err := executor.Rollback(settlingCtx, result); err != nil {
+					report.FailedPhase = "compensation"
+					report.ReasonCode = "compensation_failed"
 					for _, patch := range result.Patches {
 						report.Residuals = append(report.Residuals, planRefProto(patch.Ref))
 					}

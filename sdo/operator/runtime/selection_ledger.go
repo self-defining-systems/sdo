@@ -393,6 +393,17 @@ func (j *selectionJournal) settle(ctx context.Context, id string, report *contra
 				return nil, errors.New("uncertain action cannot authorize success")
 			}
 			used = a.ReservedBatches
+			s.WritesFrozen = true
+			candidate.WritesFrozen = true
+			if action.Receipt != nil && action.Receipt.Resource != nil {
+				found := false
+				for _, ref := range candidate.Residuals {
+					found = found || proto.Equal(ref, action.Receipt.Resource)
+				}
+				if !found {
+					candidate.Residuals = append(candidate.Residuals, proto.Clone(action.Receipt.Resource).(*contracts.ObjectRef))
+				}
+			}
 		}
 	}
 	if s.WritesFrozen && !candidate.WritesFrozen {

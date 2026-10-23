@@ -193,6 +193,9 @@ func (c *menuPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 	if err := l.selection.beginAction(ctx, c.attempt, c.round, c.phase, receipt); err != nil {
 		return err
 	}
+	if l.menuFence(ctx) != nil {
+		return errSelectionFenced
+	}
 	if err := c.PlanObjectClient.Patch(ctx, ref, kind, patch); err != nil {
 		return errMenuSafety
 	}

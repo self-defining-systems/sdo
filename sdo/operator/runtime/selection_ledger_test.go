@@ -413,3 +413,31 @@ func TestSelectionLedgerTerminalRetryRemainsReadOnlyWhenFrozen(t *testing.T) {
 		t.Fatal("frozen retry lost immutable report")
 	}
 }
+
+func TestSelectionLedgerUnknownEffectsFreezeFurtherWrites(t *testing.T) {
+	ctx := context.Background()
+	journal, _, menu, selection := selectionLedgerFixture(t)
+	attempt, _, err := journal.accept(ctx, menu, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := &contracts.MitigationActionReceipt{ActionId: "lost-reply", Resource: &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Effect: contracts.MitigationOption_EFFECT_SDK_PLAN_ACTION, State: contracts.MitigationActionReceipt_STATE_UNKNOWN}
+	if err := journal.beginAction(ctx, attempt.AttemptId, 1, "forward", action); err != nil {
+		t.Fatal(err)
+	}
+	report, err := journal.settle(ctx, attempt.AttemptId, &contracts.MitigationReport{Version: 1, IncidentId: selection.IncidentId, SessionId: selection.SessionId, RequestId: selection.RequestId, AttemptId: attempt.AttemptId, AcceptanceEpoch: attempt.AcceptanceEpoch, Status: contracts.MitigationReport_STATUS_EXECUTION_ERROR, FailedPhase: "forward"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.WritesFrozen || !journal.snapshot().WritesFrozen || len(report.Residuals) != 1 {
+		t.Fatal("unknown API effect did not durably prohibit later writes and retain residual evidence")
+	}
+	next := proto.Clone(selection).(*contracts.MitigationSelection)
+	next.RequestId = "unsafe-alternate"
+	if _, _, err := journal.accept(ctx, menu, next); err == nil {
+		t.Fatal("accepted another option after an unproven API effect")
+	}
+	if report.RemainingBatches != 3 {
+		t.Fatal("unknown operation did not charge its full reservation")
+	}
+}

@@ -33,6 +33,9 @@ func (c *menuPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *
 	if err != nil {
 		return nil, err
 	}
+	if l.menuFence(ctx) != nil {
+		return nil, errSelectionFenced
+	}
 	created, err := base.Create(ctx, ref, object.DeepCopy())
 	if err != nil {
 		return nil, errMenuSafety
@@ -67,6 +70,9 @@ func (c *menuPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 	id, err := c.beginLifecycle(ctx, ref, "delete")
 	if err != nil {
 		return err
+	}
+	if l.menuFence(ctx) != nil {
+		return errSelectionFenced
 	}
 	if err := base.Delete(ctx, ref, uid, version); err != nil {
 		return errMenuSafety
