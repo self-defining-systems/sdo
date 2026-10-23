@@ -62,4 +62,4 @@ def test_astronomy_shop_source_pins_are_explicit() -> None:
     assert pins["demo_version"] == "2.2.0"
     assert pins["demo_commit"] == "b74a7bc7bbe66099c61951f42b24dab8b6f02d18"
     assert pins["chart_commit"] == "7d7b074714345a0c282b0be75af7a2c504b44c95"
-    assert pins["sregym_commit"] == "69c419f3c398b78cd797c71b57feb95b39d9b371"
+    assert pins["sregym_commit"] == "a1c8751818cb43dcb3e8e817a7060cb772f0afd8"
