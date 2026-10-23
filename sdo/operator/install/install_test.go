@@ -814,3 +814,34 @@ func TestKubeconfigSeederUsesExplicitContextWithoutChangingProcessEnvironment(t 
 		t.Fatalf("process KUBECONFIG changed to %q", got)
 	}
 }
+
+func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		cfg := testConfig()
+		if !split {
+			cfg.ControlNamespace = cfg.Namespace
+		}
+		plan, err := Resources(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, role := range append(plan.ControlRoles, plan.AppRoles...) {
+			if role.Name != "sdo-controller" && role.Name != "sdo-operate" {
+				continue
+			}
+			for _, rule := range role.Rules {
+				if !contains(rule.Resources, "secrets") {
+					continue
+				}
+				if !contains(rule.Verbs, "list") || !contains(rule.Verbs, "watch") {
+					t.Error("Secret metadata observation needs list/watch")
+				}
+				for _, verb := range rule.Verbs {
+					if verb != "list" && verb != "watch" {
+						t.Errorf("Secret grant includes unnecessary verb %q in %s/%s", verb, role.Namespace, role.Name)
+					}
+				}
+			}
+		}
+	}
+}

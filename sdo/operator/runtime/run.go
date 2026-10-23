@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -40,6 +42,9 @@ type RuntimeOptions struct {
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
 	Client kubernetes.Interface
+	// MetadataClient replaces the Secret metadata transport in embedded runs.
+	// When Client is supplied without it, Secrets remain unobserved.
+	MetadataClient rest.Interface
 	// StateBaselineStartTimeout bounds the state tracker's RBAC probes and
 	// initial sync; zero means defaultStateBaselineStartTimeout.
 	StateBaselineStartTimeout time.Duration
@@ -75,6 +80,9 @@ func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry)
 }
 
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
+	// The typed launch path fills options.Client itself; that is still a
+	// production client and must receive the metadata transport below.
+	clientInjected := options.Client != nil
 	args := options.Args
 	if args == nil {
 		args = os.Args[1:]
@@ -132,7 +140,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"",
 		"namespace holding the controller's Lease, state, maintenance ConfigMap, and responder Jobs; defaults to --namespace",
 	)
-	appRoot := flags.String("app-root", "", "application repository root")
+	appRoot := flags.String("app-root", "", "accepted application repository root")
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
@@ -206,6 +214,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
+	metricsURL := flags.String(
+		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
+	)
+	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url, read on every request")
 	cleanResponderHelpers := flags.Bool(
 		"clean-responder-helpers", true,
 		"delete pods and Jobs labelled "+ResponderHelperLabel+"=true once the responder completes",
@@ -362,8 +374,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *controlNamespace == *namespace {
 		stateConfigMapName = controllerStateConfigMap
 	}
+	ceiling, err := observation.CeilingFromEnvironment()
+	if err != nil {
+		return err
+	}
+	scope, scopeCommit, err := observation.Accepted(ctx, resolvedRoot)
+	if err != nil {
+		return err
+	}
+	if err = scope.Within(ceiling); err != nil {
+		return err
+	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
+		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
+			return observation.Accepted(ctx, resolvedRoot)
+		}, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -418,6 +443,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
+	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false)
+	if err != nil {
+		return err
+	}
 	jobEnvironment, err := parseResponderEnvironment(responderEnvironment)
 	if err != nil {
 		return err
@@ -436,7 +465,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	var stateTracker *StateTracker
 	if *stateBaseline {
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		metadataClient := options.MetadataClient
+		if metadataClient == nil && !clientInjected {
+			metadataClient, err = core.NewKubernetesMetadataClient()
+			if err != nil {
+				return fmt.Errorf("create Secret metadata client: %w", err)
+			}
+		}
+		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
 	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
@@ -641,6 +678,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	cacheStarted := false
 	if err := encoder.Encode(desired.Record()); err != nil {
 		fmt.Fprintln(stderr, err)
+	}
+	if metricsObserver != nil {
+		if err := encoder.Encode(map[string]any{"metrics": metricsObserver.Summary()}); err != nil {
+			fmt.Fprintln(stderr, err)
+		}
 	}
 	// startTraffic makes sure the prober runs, clears its observations, and
 	// waits briefly for a first sample of every scenario, so the next
@@ -1177,8 +1219,11 @@ func evaluateOnce(
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	application := flags.String("application", "", "application identity")
-	flags.String("app-root", "", "application repository root")
+	appRoot := flags.String("app-root", "", "accepted application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
+	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -1192,6 +1237,22 @@ func evaluateOnce(
 		kubernetesProvider, err := core.NewKubernetesSnapshotProvider(*namespace)
 		if err != nil {
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
+		}
+		if *appRoot != "" {
+			scope, revision, err := observation.Accepted(ctx, *appRoot)
+			if err != nil {
+				return err
+			}
+			ceiling, err := observation.CeilingFromEnvironment()
+			if err != nil {
+				return err
+			}
+			if err = scope.Within(ceiling); err != nil {
+				return err
+			}
+			kubernetesProvider.Scope = scope
+			kubernetesProvider.Ceiling = ceiling
+			kubernetesProvider.Generation = revision
 		}
 		provider = kubernetesProvider
 	}
@@ -1208,6 +1269,9 @@ func evaluateOnce(
 	}
 	if ConsumesServiceReachability(detectors) {
 		if *proberURL == "" {
+			if *acceptSeed {
+				return errors.New("seed acceptance requires --prober-url for service reachability")
+			}
 			fmt.Fprintln(stderr, "service reachability skipped: evaluate-once has no --prober-url")
 		} else {
 			// Gather the gate's history now: Failures rounds, a second apart,
@@ -1224,6 +1288,10 @@ func evaluateOnce(
 	}
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
+	}
+	provider, _, err := withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
+	if err != nil {
+		return err
 	}
 	start := time.Now().UTC()
 	controller, err := NewController(ControllerConfig{
@@ -1252,7 +1320,13 @@ func evaluateOnce(
 			break
 		}
 	}
-	return json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings})
+	if err := json.NewEncoder(stdout).Encode(map[string]any{"status": status, "findings": findings}); err != nil {
+		return err
+	}
+	if *acceptSeed && len(findings) != 0 {
+		return fmt.Errorf("seed acceptance rejected: %d detector finding(s)", len(findings))
+	}
+	return nil
 }
 
 func defaultIdentity() string {

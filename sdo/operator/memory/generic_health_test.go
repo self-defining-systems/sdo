@@ -119,3 +119,64 @@ func TestPrepareHealthInstallsServiceReachabilityForEveryApplication(t *testing.
 		t.Fatalf("an edited generic package must be rejected, got %v", err)
 	}
 }
+
+func healthRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	manifest := filepath.Join(root, filepath.FromSlash(layout.DetectorManifestPath(layout.ClassHealth, "health-objective")))
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, []byte("id: health-objective\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func detectorFile(root string, id string) string {
+	return filepath.Join(root, filepath.FromSlash(layout.DetectorDir(layout.ClassHealth, id)), layout.DetectorFileName)
+}
+
+func TestPrepareHealthDoesNotInstallMetricsDetectorsByDefault(t *testing.T) {
+	root := healthRoot(t)
+	if err := PrepareHealth(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(detectorFile(root, "service-endpoints")); err != nil {
+		t.Fatalf("the default install keeps its endpoint detector: %v", err)
+	}
+	if _, err := os.Stat(detectorFile(root, MetricsAlertsDetectorID)); !os.IsNotExist(err) {
+		t.Fatalf("the metrics alerts detector is opt-in: %v", err)
+	}
+	if err := PrepareHealthWith(root, HealthOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareHealthWithMetricsInstallsTheAlertsDetectorIdempotently(t *testing.T) {
+	root := healthRoot(t)
+	for range 2 {
+		if err := PrepareHealthWith(root, HealthOptions{Metrics: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source, err := os.ReadFile(detectorFile(root, MetricsAlertsDetectorID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"metrics.NewAlertsDetector", "metrics.Watch", "package metricsalerts"} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("generated detector lacks %q:\n%s", want, source)
+		}
+	}
+	manifest, err := os.ReadFile(filepath.Join(filepath.Dir(detectorFile(root, MetricsAlertsDetectorID)), layout.ManifestFileName))
+	if err != nil || !strings.Contains(string(manifest), "kind: Metrics") || !strings.Contains(string(manifest), "severity: warn") {
+		t.Fatalf("manifest %q err %v", manifest, err)
+	}
+	if err := os.WriteFile(detectorFile(root, MetricsAlertsDetectorID), append(source, []byte("// edit\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareHealthWith(root, HealthOptions{Metrics: true}); err == nil || !strings.Contains(err.Error(), "differs from Go policy") {
+		t.Fatalf("an edited generic detector must be rejected: %v", err)
+	}
+}

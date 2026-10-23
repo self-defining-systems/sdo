@@ -14,11 +14,36 @@ def main() -> int:
     worker = importlib.import_module("sregym.fastloop.worker")
     handle = worker.FastloopWorker.handle
 
+    def prepare_astronomy() -> None:
+        from pathlib import Path
+
+        from benchmarks.sregym.adapter import prepare_oracle_observability
+
+        assert worker.__file__ is not None
+        prepare_oracle_observability(
+            kubeconfig=Path(os.environ["KUBECONFIG"]),
+            sregym_dir=Path(worker.__file__).resolve().parents[2],
+            cluster=os.environ["SREGYM_KIND_CLUSTER_NAME"],
+        )
+
     def extended_handle(self: Any, request: dict[str, Any]) -> dict[str, Any]:
+        astronomy = (
+            request.get("op") == "deploy"
+            and self._problem_factory(str(request["problem_id"])).namespace == "astronomy-shop"
+        )
+        if astronomy:
+            prepare_astronomy()
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
             return self._grade(problem)
-        return handle(self, request)
+        reply = handle(self, request)
+        if astronomy:
+            from pathlib import Path
+
+            from benchmarks.sregym.adapter import route_astronomy_traces
+
+            route_astronomy_traces(Path(os.environ["KUBECONFIG"]))
+        return reply
 
     if "FASTLOOP_KIND_CONFIG" in os.environ:
         worker_infra.worker_kind_config_path = lambda: os.environ["FASTLOOP_KIND_CONFIG"]

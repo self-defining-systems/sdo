@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -38,6 +39,8 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 }
 
 var supportedWatches = map[string]struct{}{
+	"admissionregistration.k8s.io/v1/MutatingWebhookConfiguration":   {},
+	"admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration": {},
 	"apps/v1/Deployment":                 {},
 	"apps/v1/ReplicaSet":                 {},
 	"discovery.k8s.io/v1/EndpointSlice":  {},
@@ -52,6 +55,9 @@ var supportedWatches = map[string]struct{}{
 	traffic.Watch.APIVersion + "/" + traffic.Watch.Kind: {},
 	// Emitted by the controller runtime's Service reachability observer.
 	servicehealth.ReachabilityWatch.APIVersion + "/" + servicehealth.ReachabilityWatch.Kind: {},
+	// Declared by metrics detectors, which run on their interval; no
+	// informer backs it.
+	metrics.Watch.APIVersion + "/" + metrics.Watch.Kind: {},
 }
 
 func validateDetectorSpec(spec sdk.DetectorSpec) error {

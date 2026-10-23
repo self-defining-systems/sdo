@@ -1,0 +1,107 @@
+version: 1
+app:
+  name: OpenTelemetry Demo Astronomy Shop
+  filter: astronomy_shop
+source:
+  path: upstream
+  url: https://github.com/open-telemetry/opentelemetry-demo.git
+  ref: b74a7bc7bbe66099c61951f42b24dab8b6f02d18
+image_tag: '{tag}'
+images:
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/accounting/Dockerfile
+  suffix: -accounting
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/ad/Dockerfile
+  suffix: -ad
+  build_args:
+    OTEL_JAVA_AGENT_VERSION: 2.23.0
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/cart/src/Dockerfile
+  suffix: -cart
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/checkout/Dockerfile
+  suffix: -checkout
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/currency/Dockerfile
+  suffix: -currency
+  build_args:
+    OPENTELEMETRY_CPP_VERSION: 1.24.0
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/email/Dockerfile
+  suffix: -email
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/fraud-detection/Dockerfile
+  suffix: -fraud-detection
+  build_args:
+    OTEL_JAVA_AGENT_VERSION: 2.23.0
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/frontend/Dockerfile
+  suffix: -frontend
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/frontend-proxy/Dockerfile
+  suffix: -frontend-proxy
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/image-provider/Dockerfile
+  suffix: -image-provider
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/load-generator/Dockerfile
+  suffix: -load-generator
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/payment/Dockerfile
+  suffix: -payment
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/product-catalog/Dockerfile
+  suffix: -product-catalog
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/product-reviews/Dockerfile
+  suffix: -product-reviews
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/quote/Dockerfile
+  suffix: -quote
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/recommendation/Dockerfile
+  suffix: -recommendation
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/shipping/Dockerfile
+  suffix: -shipping
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/flagd-ui/Dockerfile
+  suffix: -flagd-ui
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/kafka/Dockerfile
+  suffix: -kafka
+  build_args:
+    OTEL_JAVA_AGENT_VERSION: 2.23.0
+- name: ghcr.io/open-telemetry/demo
+  context: .
+  dockerfile: src/llm/Dockerfile
+  suffix: -llm
+deployment:
+  kind: helm
+  root: harness
+  path: astronomy-shop/charts/opentelemetry-demo
+  namespace: astronomy-shop
+  url: https://github.com/vic-lsh/SREGym-applications.git
+  ref: d1a7e02eb873520d2df3eea9f81f54eda5eb149d
+  helm_tag_keys:
+  - default.image.tag

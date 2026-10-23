@@ -400,7 +400,8 @@ data:
     \  telemetry:\n    metrics:\n      level: detailed\n      readers:\n      - periodic:\n\
     \          exporter:\n            otlp:\n              endpoint: http://otel-collector:4318\n\
     \              insecure: true\n              protocol: http/protobuf\n       \
-    \   interval: 10000\n          timeout: 5000\n"
+    \   interval: 10000\n          timeout: 5000\n      - pull:\n          exporter:\n\
+    \            prometheus:\n              host: 0.0.0.0\n              port: 8888\n"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -7701,9 +7702,6 @@ spec:
   - name: transport
     protocol: TCP
     port: 9300
-  - name: metrics
-    protocol: TCP
-    port: 9600
 ---
 kind: Service
 apiVersion: v1
@@ -7730,8 +7728,6 @@ spec:
     port: 9200
   - name: transport
     port: 9300
-  - name: metrics
-    port: 9600
 ---
 apiVersion: v1
 kind: Service
@@ -8329,6 +8325,8 @@ spec:
             port: 13133
         resources:
           limits:
+            memory: 448Mi
+          requests:
             memory: 200Mi
         volumeMounts:
         - mountPath: /conf
@@ -8420,6 +8418,8 @@ spec:
         resources:
           limits:
             cpu: 100m
+            memory: 256Mi
+          requests:
             memory: 100Mi
         securityContext:
           allowPrivilegeEscalation: false
@@ -8460,6 +8460,8 @@ spec:
         resources:
           limits:
             cpu: 100m
+            memory: 192Mi
+          requests:
             memory: 100Mi
         securityContext:
           allowPrivilegeEscalation: false
@@ -8500,6 +8502,8 @@ spec:
         resources:
           limits:
             cpu: 100m
+            memory: 192Mi
+          requests:
             memory: 100Mi
         securityContext:
           allowPrivilegeEscalation: false
@@ -8599,6 +8603,8 @@ spec:
             port: grafana
         resources:
           limits:
+            memory: 384Mi
+          requests:
             memory: 175Mi
       volumes:
       - name: config
@@ -8726,6 +8732,8 @@ spec:
         resources:
           limits:
             memory: 600Mi
+          requests:
+            memory: 600Mi
         volumeMounts:
         - name: user-config
           mountPath: /etc/jaeger
@@ -8793,7 +8801,9 @@ spec:
           value: 'false'
         resources:
           limits:
-            memory: 120Mi
+            memory: 384Mi
+          requests:
+            memory: 256Mi
         volumeMounts: null
       initContainers:
       - command:
@@ -8802,6 +8812,11 @@ spec:
         - until nc -z -v -w30 kafka 9092; do echo waiting for kafka; sleep 2; done;
         image: busybox:latest
         name: wait-for-kafka
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -8863,6 +8878,8 @@ spec:
           value: otlp
         resources:
           limits:
+            memory: 576Mi
+          requests:
             memory: 300Mi
         volumeMounts: null
       volumes: null
@@ -8929,6 +8946,8 @@ spec:
         resources:
           limits:
             memory: 160Mi
+          requests:
+            memory: 160Mi
         volumeMounts: null
       initContainers:
       - command:
@@ -8938,6 +8957,11 @@ spec:
           2; done;
         image: busybox:latest
         name: wait-for-valkey-cart
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -9013,6 +9037,8 @@ spec:
           value: 16MiB
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 20Mi
         volumeMounts: null
       initContainers:
@@ -9022,6 +9048,11 @@ spec:
         - until nc -z -v -w30 kafka 9092; do echo waiting for kafka; sleep 2; done;
         image: busybox:latest
         name: wait-for-kafka
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -9081,6 +9112,8 @@ spec:
           value: 'false'
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 20Mi
         volumeMounts: null
       volumes: null
@@ -9144,6 +9177,8 @@ spec:
           value: '8013'
         resources:
           limits:
+            memory: 192Mi
+          requests:
             memory: 100Mi
         volumeMounts: null
       volumes: null
@@ -9210,6 +9245,8 @@ spec:
           value: 60MiB
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 75Mi
         volumeMounts:
         - name: config-rw
@@ -9242,7 +9279,9 @@ spec:
           value: localhost
         resources:
           limits:
-            memory: 250Mi
+            memory: 512Mi
+          requests:
+            memory: 512Mi
         volumeMounts:
         - mountPath: /app/data
           name: config-rw
@@ -9258,6 +9297,11 @@ spec:
           name: config-ro
         - mountPath: /config-rw
           name: config-rw
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            memory: '0'
       volumes:
       - name: config-rw
         emptyDir: {}
@@ -9323,6 +9367,8 @@ spec:
           value: 'true'
         resources:
           limits:
+            memory: 576Mi
+          requests:
             memory: 300Mi
         volumeMounts: null
       initContainers:
@@ -9332,6 +9378,11 @@ spec:
         - until nc -z -v -w30 kafka 9092; do echo waiting for kafka; sleep 2; done;
         image: busybox:latest
         name: wait-for-kafka
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            memory: '0'
       volumes: null
 ---
 apiVersion: apps/v1
@@ -9419,6 +9470,8 @@ spec:
           value: http://localhost:8080/otlp-http/v1/traces
         resources:
           limits:
+            memory: 256Mi
+          requests:
             memory: 250Mi
         securityContext:
           runAsGroup: 1001
@@ -9520,6 +9573,8 @@ spec:
           value: '4318'
         resources:
           limits:
+            memory: 192Mi
+          requests:
             memory: 65Mi
         securityContext:
           runAsGroup: 101
@@ -9592,6 +9647,8 @@ spec:
           value: $(OTEL_COLLECTOR_NAME)
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 50Mi
         volumeMounts: null
       volumes: null
@@ -9659,6 +9716,8 @@ spec:
           value: 1@kafka:9093
         resources:
           limits:
+            memory: 1152Mi
+          requests:
             memory: 600Mi
         securityContext:
           runAsGroup: 1000
@@ -9718,7 +9777,11 @@ spec:
           value: flagd
         - name: FLAGD_PORT
           value: '8013'
-        resources: null
+        resources:
+          limits:
+            memory: 192Mi
+          requests:
+            memory: '0'
         volumeMounts: null
       volumes: null
 ---
@@ -9796,6 +9859,8 @@ spec:
         resources:
           limits:
             memory: 1500Mi
+          requests:
+            memory: 1500Mi
         volumeMounts: null
       - name: locust-exporter
         image: containersol/locust_exporter:v0.5.0
@@ -9809,7 +9874,7 @@ spec:
         resources:
           limits:
             cpu: 50m
-            memory: 64Mi
+            memory: 128Mi
           requests:
             cpu: 10m
             memory: 32Mi
@@ -9874,6 +9939,8 @@ spec:
           value: 'false'
         resources:
           limits:
+            memory: 256Mi
+          requests:
             memory: 140Mi
         securityContext:
           runAsGroup: 1000
@@ -9936,6 +10003,8 @@ spec:
           value: otel
         resources:
           limits:
+            memory: 256Mi
+          requests:
             memory: 100Mi
         volumeMounts:
         - name: postgresql-init
@@ -10008,6 +10077,8 @@ spec:
           value: http://$(OTEL_COLLECTOR_NAME):4317
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 20Mi
         volumeMounts: null
       volumes: null
@@ -10089,6 +10160,8 @@ spec:
           value: http://$(OTEL_COLLECTOR_NAME):4317
         resources:
           limits:
+            memory: 192Mi
+          requests:
             memory: 100Mi
         volumeMounts: null
       volumes: null
@@ -10152,6 +10225,8 @@ spec:
           value: 'false'
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 40Mi
         securityContext:
           runAsGroup: 33
@@ -10224,6 +10299,8 @@ spec:
         resources:
           limits:
             memory: 500Mi
+          requests:
+            memory: 500Mi
         volumeMounts: null
       volumes: null
 ---
@@ -10284,7 +10361,9 @@ spec:
           value: 'false'
         resources:
           limits:
-            memory: 20Mi
+            memory: 128Mi
+          requests:
+            memory: 128Mi
         volumeMounts: null
       volumes: null
 ---
@@ -10335,6 +10414,8 @@ spec:
         env: []
         resources:
           limits:
+            memory: 128Mi
+          requests:
             memory: 20Mi
         securityContext:
           runAsGroup: 1000
@@ -10426,7 +10507,11 @@ spec:
             - ALL
           runAsNonRoot: true
           runAsUser: 1000
-        resources: {}
+        resources:
+          limits:
+            memory: 128Mi
+          requests:
+            memory: '0'
         volumeMounts:
         - mountPath: /tmp/config/
           name: config-emptydir
@@ -10461,11 +10546,9 @@ spec:
           containerPort: 9200
         - name: transport
           containerPort: 9300
-        - name: metrics
-          containerPort: 9600
         resources:
           limits:
-            memory: 1100Mi
+            memory: 2240Mi
           requests:
             cpu: 1000m
             memory: 100Mi

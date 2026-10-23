@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -64,10 +65,18 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		SchemaIdentity: sdkSchemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
 	}
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, broker.JobValidator(validation))
+	ceiling, policyErr := observation.CeilingFromEnvironment()
+	if policyErr != nil {
+		return lifecycle.Result{}, policyErr
+	}
+
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, broker.JobValidator(validation), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
+	// The generic metrics detectors are installed only where a metrics source
+	// is configured; the judge's own check and the broker must agree.
+	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	buildBackend := deployment.KubernetesBuildBackend{
 		Client: client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
 		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
@@ -91,6 +100,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		CredentialsSecret: config.Install.CredentialsSecret,
 		Environment:       agentEnvironment,
+	}
+	if config.Install.MetricsURL != "" {
+		workers.Environment[memoryMetricsEnv] = "1"
 	}
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},

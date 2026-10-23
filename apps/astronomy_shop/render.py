@@ -1,10 +1,63 @@
 """Render pinned chart inputs into SDO's plain Kubernetes source manifests."""
 
 import json
+import math
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+
+MEMORY_BASELINE = json.loads((Path(__file__).resolve().parent / "memory-baseline.json").read_text())
+MEMORY_REQUESTS = {(r["kind"], r["workload"], r["container"], r["init"]): r["effective_request_memory"]
+                   for r in MEMORY_BASELINE["containers"]}
+MEMORY_PEAKS = {(r["kind"], r["workload"], r["container"], r["init"]): r["observed_peak_bytes"]
+                for r in MEMORY_BASELINE["containers"]}
+
+
+def prepare_baseline(obj: dict[str, Any]) -> None:
+    """Keep the pinned chart's declared baseline consistent with its images."""
+    kind, name = obj["kind"], obj["metadata"]["name"]
+    if kind in {"Deployment", "StatefulSet", "DaemonSet"}:
+        for group in ("containers", "initContainers"):
+            for container in obj["spec"]["template"]["spec"].get(group, []):
+                key = (kind, name, container["name"], group == "initContainers")
+                if key not in MEMORY_PEAKS:
+                    raise ValueError(f"memory baseline measurement required for {key}")
+                resources = container.get("resources") or {}
+                container["resources"] = resources
+                resources.setdefault("requests", {}).setdefault("memory", MEMORY_REQUESTS[key])
+                limits = resources.setdefault("limits", {})
+                stock = limits.get("memory", "0Mi")
+                if not stock.endswith("Mi"):
+                    raise ValueError(f"expected pinned chart memory in Mi for {key}: {stock}")
+                quantum = MEMORY_BASELINE["rounding_mib"]
+                headroom = math.ceil(
+                    MEMORY_BASELINE["headroom_multiplier"] * MEMORY_PEAKS[key] / (quantum * 2**20)
+                ) * quantum
+                limits["memory"] = f'{max(int(stock[:-2]), MEMORY_BASELINE["floor_mib"], headroom)}Mi'
+    if kind == "ConfigMap" and name == "otel-collector-agent":
+        config = yaml.safe_load(obj["data"]["relay"])
+        readers = config["service"]["telemetry"]["metrics"]["readers"]
+        # The periodic OTLP reader does not serve the chart's metrics Service.
+        prometheus = {"host": "0.0.0.0", "port": 8888}
+        for reader in readers:
+            exporter = reader.get("pull", {}).get("exporter", {})
+            if "prometheus" in exporter:
+                exporter["prometheus"].update(prometheus)
+                break
+        else:
+            readers.append({"pull": {"exporter": {"prometheus": prometheus}}})
+        obj["data"]["relay"] = yaml.safe_dump(config, sort_keys=False)
+    # The pinned OpenSearch 3.4 image disables Performance Analyzer because
+    # its required configuration is absent. Preserve HTTP/transport, without
+    # advertising a metrics listener that the image does not provide.
+    if kind == "Service" and name in {"opensearch", "opensearch-headless"}:
+        obj["spec"]["ports"] = [p for p in obj["spec"]["ports"] if p["port"] != 9600]
+    if kind == "StatefulSet" and name == "opensearch":
+        for container in obj["spec"]["template"]["spec"]["containers"]:
+            container["ports"] = [p for p in container["ports"] if p["containerPort"] != 9600]
 
 
 def main() -> None:
@@ -36,6 +89,7 @@ def main() -> None:
     for obj in yaml.safe_load_all(rendered):
         if not obj:
             continue
+        prepare_baseline(obj)
         if obj["kind"] in {"ClusterRole", "ClusterRoleBinding"}:
             infrastructure.append(obj)
         else:

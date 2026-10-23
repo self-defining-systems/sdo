@@ -17,6 +17,7 @@ import (
 
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -65,6 +66,9 @@ const (
 
 // Request describes one validation run.
 type Request struct {
+	// ObservationCeiling is caller-owned installer policy, never loaded from candidate memory.
+	ObservationCeiling   sdk.ObservationScope
+	ApplicationNamespace string
 	// MitigationReplayNotes optionally receives informational corpus replay results.
 	MitigationReplayNotes *[]sdktest.MitigationReplayResult
 	// StageTimings optionally receives the Go toolchain stage durations of the compile layer.
@@ -96,6 +100,10 @@ type Request struct {
 	CaptureRoot      string
 	CaptureDirectory string
 	IncidentID       string
+	// MetricsDetectors also installs the generic metrics detectors when the
+	// health judge's initial memory is prepared. It is true only where the
+	// controller has a metrics source.
+	MetricsDetectors bool
 }
 
 // Diagnostic is one validation finding. Path is repository-relative and Line is

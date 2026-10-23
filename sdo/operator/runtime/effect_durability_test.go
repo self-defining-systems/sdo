@@ -36,7 +36,7 @@ func durabilityController(t *testing.T, client *fake.Clientset, config Controlle
 	config.FiringThreshold = 1
 	controller, err := NewController(
 		config,
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}}, dispatcher, time.Unix(0, 0),
 	)
 	if err != nil {

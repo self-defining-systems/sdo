@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -37,6 +39,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")
+	ceilingJSON := flags.String("observation-ceiling-json", "", "installer-owned observation ceiling JSON")
 	namespace := flags.String("namespace", "", "application namespace")
 	control := flags.String("control-namespace", "", "operator namespace")
 	application := flags.String("application", "", "application identity")
@@ -74,6 +77,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	var responderNamespaces repeatable
 	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL; installs the metrics alerts detector and lets metric detectors query it")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
@@ -143,13 +147,25 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if *kubeconfig != "" && !filepath.IsAbs(*kubeconfig) {
 		return HostConfig{}, errors.New("kubeconfig path must be absolute")
 	}
+	var ceiling sdk.ObservationScope
+	if *ceilingJSON != "" {
+		decoder := json.NewDecoder(strings.NewReader(*ceilingJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&ceiling); err != nil {
+			return HostConfig{}, err
+		}
+		if err := ceiling.Validate(); err != nil {
+			return HostConfig{}, err
+		}
+	}
 	config := install.Config{
-		Namespace: *namespace, ControlNamespace: *control, Application: *application,
+		ObservationCeiling: ceiling,
+		Namespace:          *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		ValidatorImage: *validatorImage, BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider,
-		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 		MaxResponseLoops: *maxResponseLoops,

@@ -6,6 +6,22 @@ Generic CLI benchmark agents may emit JSON or JSONL trajectories under run-speci
 
 Use trajectories to explain hypotheses, commands, tool failures, and detours. Do not use them as substitutes for controller outcomes, broker commits, independent verification, or strict receipts.
 
+## Codex command execution
+
+Codex rollouts can encode commands as `event_msg` records with
+`payload.type=item_completed` and `payload.item.type=CommandExecution`, as well
+as legacy `response_item` tool calls and paired outputs. The item carries a
+`command` argv array, commonly `["/usr/bin/bash", "-lc", "<script>"]`;
+`payload.started_at_ms` and `payload.completed_at_ms` are epoch milliseconds.
+Use these execution clocks rather than the record's export timestamp. Unwrap
+the shell script and the `sdo act ... -- <command>` repair wrapper before
+classifying writes. Ignore reads, pre-injection commands, malformed or
+incomplete command items, and commands started after the mitigation POST; cap
+completion at that POST. `incident_cost` accepts both schemas without changing
+its output fields. A missing floor means no recognized command evidence, not
+proof that no mutation occurred. Indirect writes inside Python or other scripts
+can still require manual reconciliation.
+
 ## Worker provider resolution
 
 Each SDO worker Job logs `sdo-agent-resolved role=<role> provider=<p> model=<m>` to its stderr and, where an incident session is mounted, appends the same record to `sdo_runtime/sessions/<digest>/agent-resolved.jsonl`. `run_validity` fails a run (`agent-provider`, `invalid_infra`) when a record differs from the manifest's configured provider/model for that role; runs without records report `not_recorded`.
