@@ -143,9 +143,33 @@ func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, 
 
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
+func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
+
+func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
+func (v *RecordingReadView) ObservationGeneration() string
+
+func (v *RecordingReadView) ObservationStatuses() []sdk.ObservationStatus
+
+func (v *RecordingReadView) ObservedAt() time.Time
+
 func (v *RecordingReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
 func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
+
+func (v *RecordingReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
+
+func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error)
+
+func (v *RecordingReadView) ScopedServices(namespace string) ([]corev1.Service, error)
+
+func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
+
+func (v *RecordingReadView) TrafficWindow(name string) (traffic.Window, bool)
+
+func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error)
+
+func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
 type ReplayReadView struct {
 	Snapshot
@@ -163,29 +187,38 @@ func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, err
 
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
+func (v *ReplayReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
 func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
 
+func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
+
+func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error)
+
+func (v *ReplayReadView) ScopedServices(namespace string) ([]corev1.Service, error)
+
+func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
+
 type Snapshot struct {
 	// SourceName names the file a loaded snapshot came from, for messages.
-	SourceName        string                                  `json:"-"`
-	NamespaceName     string                                  `json:"namespace"`
-	ConfigMapList     []corev1.ConfigMap                      `json:"configMaps"`
-	ServiceList       []corev1.Service                        `json:"services"`
-	PodList           []corev1.Pod                            `json:"pods"`
-	DeploymentList    []appsv1.Deployment                     `json:"deployments"`
-	StatefulSetList   []appsv1.StatefulSet                    `json:"statefulSets"`
-	ReplicaSetList    []appsv1.ReplicaSet                     `json:"replicaSets"`
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
-	PDBList           []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
-	EndpointList      []corev1.Endpoints                      `json:"endpoints"`
-	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
-	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
-	EventList         []corev1.Event                          `json:"events"`
-	// ObservedAtTime is when the live view was read; nil when unrecorded.
-	// It backs sdk.ObservationClock so age-based detectors replay exactly.
-	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
+	SourceName         string `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+	NamespaceName      string                                  `json:"namespace"`
+	ConfigMapList      []corev1.ConfigMap                      `json:"configMaps"`
+	ServiceList        []corev1.Service                        `json:"services"`
+	PodList            []corev1.Pod                            `json:"pods"`
+	DeploymentList     []appsv1.Deployment                     `json:"deployments"`
+	StatefulSetList    []appsv1.StatefulSet                    `json:"statefulSets"`
+	ReplicaSetList     []appsv1.ReplicaSet                     `json:"replicaSets"`
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
+	PDBList            []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
+	EndpointList       []corev1.Endpoints                      `json:"endpoints"`
+	EndpointSliceList  []discoveryv1.EndpointSlice             `json:"endpointSlices"`
+	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies"`
+	EventList          []corev1.Event                          `json:"events"`
+	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
 }

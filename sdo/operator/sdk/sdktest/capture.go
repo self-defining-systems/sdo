@@ -41,6 +41,22 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 			}
 			t := status.Target
 			switch t.Kind {
+			case "MutatingWebhookConfiguration":
+				object, err := scoped.MutatingWebhookConfiguration(t.Name)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				if object != nil {
+					s.ScopedSnapshot.Mutating = append(s.ScopedSnapshot.Mutating, *object)
+				}
+			case "ValidatingWebhookConfiguration":
+				object, err := scoped.ValidatingWebhookConfiguration(t.Name)
+				if err != nil {
+					return Snapshot{}, err
+				}
+				if object != nil {
+					s.ScopedSnapshot.Validating = append(s.ScopedSnapshot.Validating, *object)
+				}
 			case "Deployment":
 				objects, err := scoped.ScopedDeployments(t.Namespace)
 				if err != nil {
@@ -61,12 +77,7 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 				s.ScopedSnapshot.Endpoints = append(s.ScopedSnapshot.Endpoints, objects...)
 			}
 		}
-		if objects, err := scoped.MutatingWebhookConfigurations(); err == nil {
-			s.ScopedSnapshot.Mutating = objects
-		}
-		if objects, err := scoped.ValidatingWebhookConfigurations(); err == nil {
-			s.ScopedSnapshot.Validating = objects
-		}
+
 	}
 	for _, object := range view.ConfigMaps() {
 		if object.Namespace == namespace {

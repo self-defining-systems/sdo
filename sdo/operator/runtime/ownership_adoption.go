@@ -9,6 +9,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"reflect"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"sort"
 	"time"
 
@@ -350,4 +352,35 @@ func (v adoptionConflictView) ObservationStatuses() []sdk.ObservationStatus {
 }
 func (v adoptionConflictView) ObservationGeneration() string {
 	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
+}
+
+func (v adoptionConflictView) ObservedAt() time.Time {
+	if clock, ok := v.ReadView.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v adoptionConflictView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.ReadView.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v adoptionConflictView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v adoptionConflictView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v adoptionConflictView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	return result, err
 }

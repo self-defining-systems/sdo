@@ -526,3 +526,22 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedCompositionPreservesObservationClock(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	target := sdk.ObservationTarget{APIVersion: "v1", Kind: "Service", Namespace: "foreign"}
+	scoped := sdk.ScopedSnapshot{Version: 1, Generation: "commit", Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}}
+	base := sdktest.Snapshot{NamespaceName: "app", ObservedAtTime: &now, ScopedSnapshot: scoped}
+	trafficView := trafficContext{DetectionContext: base, ScopedObservationSource: base}
+	live := LiveReadView{DetectionContext: trafficView}
+	recorded := &sdktest.RecordingReadView{ReadView: live}
+	for _, view := range []sdk.DetectionContext{trafficView, live, recorded} {
+		if !sdk.ObservationTime(view).Equal(now) {
+			t.Fatalf("%T hid observation clock", view)
+		}
+		capture, err := sdktest.CaptureSnapshot(view, "app")
+		if err != nil || !sdk.ObservationTime(capture).Equal(now) || capture.ObservationGeneration() != "commit" {
+			t.Fatalf("wrapper capture changed clock/scope: %T %v", view, err)
+		}
+	}
+}

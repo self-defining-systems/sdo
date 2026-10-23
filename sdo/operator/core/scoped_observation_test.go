@@ -124,3 +124,52 @@ func TestScopedMissingWebhookAPIIsUnknown(t *testing.T) {
 		t.Fatal("missing API became observed absence")
 	}
 }
+
+func TestScopedCapturePreservesMixedWebhookEvidence(t *testing.T) {
+	for _, kind := range []string{"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"} {
+		t.Run(kind, func(t *testing.T) {
+			a := sdk.ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: kind, Name: "readable"}
+			b := a
+			b.Name = "denied"
+			scope := sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{a, b}}
+			client := fake.NewSimpleClientset(
+				&admissionv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: a.Name}},
+				&admissionv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: a.Name}},
+			)
+			client.PrependReactor("get", "*", func(action ktesting.Action) (bool, runtime.Object, error) {
+				if action.(ktesting.GetAction).GetName() == b.Name {
+					return true, nil, apierrors.NewForbidden(action.GetResource().GroupResource(), b.Name, errors.New("denied"))
+				}
+				return false, nil, nil
+			})
+			observed, err := ObserveScoped(context.Background(), client, scope, scope, "commit")
+			if err != nil {
+				t.Fatal(err)
+			}
+			capture, err := sdktest.CaptureSnapshot(DetectionSnapshot{NamespaceName: "app", ScopedSnapshot: observed}, "app")
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(capture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var replay sdktest.Snapshot
+			if err := json.Unmarshal(encoded, &replay); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(observed, replay.ScopedSnapshot) {
+				t.Fatal("mixed availability discarded successfully observed webhook evidence")
+			}
+			if kind == "MutatingWebhookConfiguration" {
+				if _, err := replay.MutatingWebhookConfigurations(); err == nil {
+					t.Fatal("partial aggregate appeared complete")
+				}
+			} else {
+				if _, err := replay.ValidatingWebhookConfigurations(); err == nil {
+					t.Fatal("partial aggregate appeared complete")
+				}
+			}
+		})
+	}
+}

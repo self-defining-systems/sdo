@@ -124,6 +124,8 @@ type ScopedObservationSource interface {
 	ScopedEndpoints(string) ([]corev1.Endpoints, error)
 	MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
 	ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
+	MutatingWebhookConfiguration(string) (*admissionv1.MutatingWebhookConfiguration, error)
+	ValidatingWebhookConfiguration(string) (*admissionv1.ValidatingWebhookConfiguration, error)
 	ObservationStatuses() []ObservationStatus
 	ObservationGeneration() string
 }
@@ -238,6 +240,49 @@ func (s ScopedSnapshot) ValidatingWebhookConfigurations() ([]admissionv1.Validat
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
+
+// checkTarget permits an individually observed name without claiming complete
+// aggregate coverage for other declared names of that kind.
+func (s ScopedSnapshot) checkTarget(target ObservationTarget) error {
+	if err := s.ValidateObservation(); err != nil {
+		return err
+	}
+	if s.Scope.Allows(target) {
+		for _, status := range s.Statuses {
+			if status.Target == target && status.State == ObservationObserved {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("scoped observation unavailable or undeclared: %s", target.Key())
+}
+func (s ScopedSnapshot) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	target := ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration", Name: name}
+	if err := s.checkTarget(target); err != nil {
+		return nil, err
+	}
+	for _, object := range s.Mutating {
+		if object.Name == name {
+			projected := ProjectMutatingWebhook(object)
+			return &projected, nil
+		}
+	}
+	return nil, nil
+}
+func (s ScopedSnapshot) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	target := ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: name}
+	if err := s.checkTarget(target); err != nil {
+		return nil, err
+	}
+	for _, object := range s.Validating {
+		if object.Name == name {
+			projected := ProjectValidatingWebhook(object)
+			return &projected, nil
+		}
+	}
+	return nil, nil
+}
+
 func safeMeta(m metav1.ObjectMeta) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: m.Name, Namespace: m.Namespace}
 }

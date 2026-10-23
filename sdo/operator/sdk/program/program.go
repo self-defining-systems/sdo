@@ -4,6 +4,8 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 
 	"context"
 	"fmt"
@@ -329,4 +331,37 @@ func (v *checkedReadView) ObservationStatuses() []sdk.ObservationStatus {
 }
 func (v *checkedReadView) ObservationGeneration() string {
 	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
+}
+
+func (v *checkedReadView) ObservedAt() time.Time {
+	if clock, ok := v.ReadView.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.ReadView.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v *checkedReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v *checkedReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	v.check(err)
+	return result, err
+}
+
+func (v *checkedReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	v.check(err)
+	return result, err
 }

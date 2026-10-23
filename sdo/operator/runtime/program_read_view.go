@@ -3,6 +3,8 @@ package runtime
 import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 
 	"context"
 	"encoding/json"
@@ -577,4 +579,35 @@ func (v LiveReadView) ObservationStatuses() []sdk.ObservationStatus {
 }
 func (v LiveReadView) ObservationGeneration() string {
 	return sdk.ScopedSource(v.DetectionContext).ObservationGeneration()
+}
+
+func (v LiveReadView) ObservedAt() time.Time {
+	if clock, ok := v.DetectionContext.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v LiveReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.DetectionContext.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v LiveReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.DetectionContext.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v LiveReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).MutatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v LiveReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.DetectionContext).ValidatingWebhookConfiguration(name)
+	return result, err
 }

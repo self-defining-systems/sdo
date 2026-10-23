@@ -9,6 +9,8 @@ import (
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -167,4 +169,35 @@ func (v mitigationReadView) ObservationStatuses() []sdk.ObservationStatus {
 }
 func (v mitigationReadView) ObservationGeneration() string {
 	return sdk.ScopedSource(v.live).ObservationGeneration()
+}
+
+func (v mitigationReadView) ObservedAt() time.Time {
+	if clock, ok := v.live.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v mitigationReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.live.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v mitigationReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.live.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v mitigationReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.live).MutatingWebhookConfiguration(name)
+	return result, err
+}
+
+func (v mitigationReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.live).ValidatingWebhookConfiguration(name)
+	return result, err
 }

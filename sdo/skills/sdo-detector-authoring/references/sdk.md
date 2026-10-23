@@ -8,6 +8,12 @@ Current Go APIs follow.
 package sdk // import "sdo.dev/operator/sdk"
 
 
+CONSTANTS
+
+const MaxObservationObjects = 500
+const MaxObservationTargets = 32
+const ObservationObserved = "observed"
+
 FUNCTIONS
 
 func CanonicalObjectKind(raw string) string
@@ -31,6 +37,19 @@ func ObservationTime(ctx DetectionContext) time.Time
     from it can only be underestimated: a grace period may elapse late, never
     early. It is zero when the context records no time at all.
 
+func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment
+    Foreign projections use an allowlist. No environment, commands, arguments,
+    annotations, probes, volumes, Secret references or arbitrary status
+    messages.
+
+func ProjectForeignEndpoints(o corev1.Endpoints) corev1.Endpoints
+func ProjectForeignService(o corev1.Service) corev1.Service
+func ProjectMutatingWebhook(o admissionv1.MutatingWebhookConfiguration) admissionv1.MutatingWebhookConfiguration
+func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.Unstructured, error)
+    ProjectObservationObject uses exactly the SDK projection for source and
+    drift.
+
+func ProjectValidatingWebhook(o admissionv1.ValidatingWebhookConfiguration) admissionv1.ValidatingWebhookConfiguration
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -159,6 +178,10 @@ type Finding struct {
 	Metadata          map[string]any       `json:"metadata,omitempty"`
 }
 
+func DetectObserved(ctx context.Context, detector Detector, view DetectionContext) ([]Finding, error)
+    DetectObserved prevents an unreadable declared dependency from clearing a
+    finding, even if the detector ignores an accessor error.
+
 type FindingSeverity string
 
 const (
@@ -218,6 +241,42 @@ type ObservationClock interface {
     objects were read. The controller stamps each snapshot once, when it builds
     it, and corpus captures carry the stamp so replay sees the same time.
 
+type ObservationScope struct {
+	Version int                 `json:"version" yaml:"version"`
+	Targets []ObservationTarget `json:"targets" yaml:"targets"`
+}
+    ObservationScope is also the installer ceiling. A zero ceiling authorizes no
+    additional observation, regardless of the service account's ambient grants.
+
+func (s ObservationScope) Allows(t ObservationTarget) bool
+
+func (s ObservationScope) AllowsWatch(w WatchKind, app string) bool
+
+func (s ObservationScope) Identity() string
+
+func (s ObservationScope) Validate() error
+
+func (s ObservationScope) Within(ceiling ObservationScope) error
+
+type ObservationStatus struct {
+	Target ObservationTarget `json:"target"`
+	State  string            `json:"state"`
+	Reason string            `json:"reason,omitempty"`
+}
+
+type ObservationTarget struct {
+	APIVersion string `json:"api_version" yaml:"api_version"`
+	Kind       string `json:"kind" yaml:"kind"`
+	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Name       string `json:"name,omitempty" yaml:"name,omitempty"`
+}
+    ObservationTarget is a qualified read grant. Cluster webhooks require one
+    explicit name per target; namespace targets cover only the declared kind.
+
+func (t ObservationTarget) Cluster() bool
+
+func (t ObservationTarget) Key() string
+
 type PersistencePolicy struct {
 	Firing   int
 	Clearing int
@@ -231,6 +290,60 @@ type PersistencePolicy struct {
 	// while a persistent fault still fires once both conditions hold.
 	MinDuration time.Duration
 }
+
+type ScopedObservationSource interface {
+	ScopedDeployments(string) ([]appsv1.Deployment, error)
+	ScopedServices(string) ([]corev1.Service, error)
+	ScopedEndpoints(string) ([]corev1.Endpoints, error)
+	MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+	ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
+	MutatingWebhookConfiguration(string) (*admissionv1.MutatingWebhookConfiguration, error)
+	ValidatingWebhookConfiguration(string) (*admissionv1.ValidatingWebhookConfiguration, error)
+	ObservationStatuses() []ObservationStatus
+	ObservationGeneration() string
+}
+    ScopedObservationSource is optional; legacy accessors remain application
+    local.
+
+func ScopedSource(view any) ScopedObservationSource
+    ScopedSource returns a failing source when an optional interface is absent.
+
+type ScopedSnapshot struct {
+	Version     int                                          `json:"version"`
+	Scope       ObservationScope                             `json:"scope"`
+	Generation  string                                       `json:"generation"`
+	Statuses    []ObservationStatus                          `json:"statuses"`
+	Deployments []appsv1.Deployment                          `json:"deployments,omitempty"`
+	Services    []corev1.Service                             `json:"services,omitempty"`
+	Endpoints   []corev1.Endpoints                           `json:"endpoints,omitempty"`
+	Mutating    []admissionv1.MutatingWebhookConfiguration   `json:"mutating_webhooks,omitempty"`
+	Validating  []admissionv1.ValidatingWebhookConfiguration `json:"validating_webhooks,omitempty"`
+}
+    ScopedSnapshot is the versioned, credential-free replay representation.
+    Accessors project again so even manually constructed replay fixtures cannot
+    accidentally expose fields excluded by the public scoped API.
+
+func (s ScopedSnapshot) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
+
+func (s ScopedSnapshot) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
+func (s ScopedSnapshot) ObservationGeneration() string
+
+func (s ScopedSnapshot) ObservationStatuses() []ObservationStatus
+
+func (s ScopedSnapshot) ScopedDeployments(ns string) ([]appsv1.Deployment, error)
+
+func (s ScopedSnapshot) ScopedEndpoints(ns string) ([]corev1.Endpoints, error)
+
+func (s ScopedSnapshot) ScopedServices(ns string) ([]corev1.Service, error)
+
+func (s ScopedSnapshot) ValidateObservation() error
+    ValidateObservation checks the persisted replay version and coverage
+    envelope.
+
+func (s ScopedSnapshot) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error)
+
+func (s ScopedSnapshot) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
 type WatchKind struct {
 	APIVersion string

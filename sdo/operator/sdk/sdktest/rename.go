@@ -567,7 +567,7 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 	renamed := make([]PrimitiveCall, len(calls))
 	for index, call := range calls {
 		renamed[index] = call
-		if strings.HasPrefix(call.Method, "Scoped") || call.Method == "MutatingWebhookConfigurations" || call.Method == "ValidatingWebhookConfigurations" {
+		if strings.HasPrefix(call.Method, "Scoped") || strings.HasPrefix(call.Method, "MutatingWebhookConfiguration") || strings.HasPrefix(call.Method, "ValidatingWebhookConfiguration") {
 			continue
 		}
 		var args []json.RawMessage
