@@ -236,10 +236,12 @@ def dispatch(
             }
             manifest["slots"].append(slot)
             _save_manifest(output, manifest)
-            record = item.run_slot(index, problem_id, slot["run_id"])
-            commit = item.accepted_commit()
-            slot["accepted_commit_after"] = commit
-            manifest["environments"][app]["accepted_commit"] = commit
+            try:
+                record = item.run_slot(index, problem_id, slot["run_id"])
+            finally:
+                commit = item.accepted_commit()
+                slot["accepted_commit_after"] = commit
+                manifest["environments"][app]["accepted_commit"] = commit
             if record.index != index or record.problem_id != problem_id or record.run_id != slot["run_id"]:
                 raise ValueError(f"slot {index} returned a mismatched incident identity")
             append_record(output / "incidents.jsonl", record)

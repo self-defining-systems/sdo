@@ -202,3 +202,19 @@ def test_output_directory_is_never_reused(tmp_path: Path) -> None:
     environments = {app: FakeEnvironment(env, []) for app, env in settings.environments.items()}
     with pytest.raises(FileExistsError):
         dispatch(settings, environments, tmp_path, run_id="mixed")
+
+
+def test_failed_child_still_records_its_latest_accepted_commit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = config(tmp_path)
+    environments = {app: FakeEnvironment(env, []) for app, env in settings.environments.items()}
+    astronomy = environments["astronomy_shop"]
+
+    def broken(*_args: object) -> IncidentRecord:
+        astronomy.memory.append(0)
+        raise RuntimeError("child failed after accepting memory")
+
+    monkeypatch.setattr(astronomy, "run_slot", broken)
+    assert dispatch(settings, environments, tmp_path / "result", run_id="mixed") == 1
+    manifest = json.loads((tmp_path / "result/run_manifest.json").read_text())
+    assert manifest["environments"]["astronomy_shop"]["accepted_commit"] == "astronomy-shop:[0]"
+    assert manifest["slots"][0]["accepted_commit_after"] == "astronomy-shop:[0]"
