@@ -4,6 +4,8 @@ Every experiment and pipeline runs these checks before it launches. A failure
 aborts with an actionable error before any directory, cluster or agent is
 touched:
 
+- ``kickoff-import``: the real host driver imports through its registered kickoff
+  command, working directory and harness uv environment (no model calls);
 - ``disk``: at least 100 GB free on the logs disk and on Docker's data disk
   (a full data disk once crashed MongoDB pods mid-run);
 - ``codex-cli-pins``: one concrete Codex CLI version everywhere. The stock
@@ -250,6 +252,7 @@ class HostProbe(Protocol):
     home: Path
 
     def ipv4_neighbor_limit(self) -> int | None: ...
+    def kickoff_import(self, command: str, workdir: Path, sregym_dir: Path, env: Mapping[str, str]) -> str | None: ...
     def free_bytes(self, path: Path) -> int | None: ...
     def docker_root(self) -> Path | None: ...
     def image(self, ref: str) -> ImageInfo | None: ...
@@ -288,6 +291,35 @@ class SystemHost:
             return int(Path("/proc/sys/net/ipv4/neigh/default/gc_thresh3").read_text().strip())
         except (OSError, ValueError):
             return None
+
+    def kickoff_import(self, command: str, workdir: Path, sregym_dir: Path, env: Mapping[str, str]) -> str | None:
+        """Import the real driver via its registered command in the harness uv environment.
+
+        --help exits at argument parsing, before any cluster access or model call.
+        The outer uv reproduces the PATH/VIRTUAL_ENV inherited from main.py;
+        the inner command keeps the registry's working directory and environment.
+        """
+        script = (
+            "import subprocess, sys; "
+            f"sys.exit(subprocess.call({command + ' --help'!r}, shell=True, cwd={str(workdir)!r}))"
+        )
+        try:
+            result = self._run(
+                ["uv", "run", "python", "-c", script],
+                cwd=sregym_dir,
+                env=dict(env),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"kickoff import probe could not run: {type(exc).__name__}"
+        if result.returncode:
+            # Driver import failures end in the actionable exception; never dump the environment.
+            lines = (result.stderr or result.stdout or "no output").strip().splitlines()
+            return f"exit {result.returncode}: {lines[-1]}"
+        return None
 
     def free_bytes(self, path: Path) -> int | None:
         probe = path
@@ -653,6 +685,27 @@ def _check_neighbor_cache(ctx: _Context) -> PreflightCheck:
             "net.ipv4.neigh.default.gc_thresh3=65536",
         )
     return PreflightCheck("neighbor-cache", "pass", f"IPv4 neighbor capacity {limit} >= {MIN_IPV4_NEIGHBOR_LIMIT}")
+
+
+def _check_kickoff_import(ctx: _Context) -> PreflightCheck | None:
+    if "sdo_codex" not in ctx.agents:
+        return None
+    registry = ctx.project_root / "benchmarks" / "sregym" / "registry.yaml"
+    remedy = "Fix the sdo_codex kickoff command/project or use SDO's third_party/sregym layout."
+    try:
+        agents = yaml.safe_load(registry.read_text())["agents"]
+        agent = next(item for item in agents if item["name"] == "sdo_codex")
+        command = str(agent["kickoff_command"])
+        workdir = (ctx.sregym_dir / (agent.get("kickoff_workdir") or ".")).resolve()
+        env = dict(ctx.env)
+        env.update(agent.get("kickoff_env") or {})
+    except (OSError, KeyError, TypeError, StopIteration, yaml.YAMLError):
+        return PreflightCheck("kickoff-import", "fail", "Cannot read the SDO kickoff registration", remedy)
+    error = ctx.host.kickoff_import(command, workdir, ctx.sregym_dir, env)
+    ctx.facts["kickoff_import"] = {"command": command, "workdir": str(workdir), "imported": error is None}
+    if error:
+        return PreflightCheck("kickoff-import", "fail", f"SDO driver kickoff from {workdir}: {error}", remedy)
+    return PreflightCheck("kickoff-import", "pass", f"Real SDO driver imports via {command} from {workdir}")
 
 
 def _check_disk(ctx: _Context) -> PreflightCheck:
@@ -1034,6 +1087,7 @@ def run_preflight(
     )
     checks = [
         _check_neighbor_cache(ctx),
+        _check_kickoff_import(ctx),
         _check_disk(ctx),
         _check_application_sources(ctx),
         _check_codex_pins(ctx),
