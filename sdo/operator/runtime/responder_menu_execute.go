@@ -97,6 +97,12 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	}
 	if len(menu.Options) > 0 {
 		menu.Bindings = menu.Options[0].Bindings
+		for _, option := range menu.Options[1:] {
+			if !sameSelectionBindings(option.Bindings, menu.Bindings) {
+				menu.Bindings = nil
+				break
+			}
+		}
 	}
 	if menu.RoundLimit == 0 {
 		menu.RoundLimit = 1
@@ -247,6 +253,29 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 		// direct barrier rather than the executor's potentially stale cache/verifier.
 		executor.Observer = nil
 		executor.Verifier = menuDeferredVerifier{}
+		preview, previewErr := executor.Apply(roundCtx, l.Request, plan, true)
+		if previewErr != nil {
+			cancel()
+			fail(contracts.MitigationReport_STATUS_REFUSED, "planning", "plan_preflight_refused")
+			break
+		}
+		var absent []EffectExpectation
+		for _, patch := range preview.Patches {
+			if patch.Operation == "create" {
+				absent = append(absent, EffectExpectation{Ref: patch.Ref, RequireAbsent: true})
+			}
+		}
+		priorAbsence := ""
+		if len(absent) > 0 {
+			before, err := barrier.Capture(roundCtx, attempt.AttemptId, round, "before_round", absent)
+			if err != nil {
+				cancel()
+				fail(contracts.MitigationReport_STATUS_UNRESOLVED, "barrier", "creation_absence_unproven")
+				break
+			}
+			priorAbsence = before.Receipt.CaptureId
+			rr.BarrierIds = append(rr.BarrierIds, priorAbsence)
+		}
 		*used = round
 		result, applyErr := executor.Apply(roundCtx, l.Request, plan, false)
 		applications = append(applications, result)
@@ -257,10 +286,7 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 			fail(contracts.MitigationReport_STATUS_EXECUTION_ERROR, "forward", "plan_execution_failed")
 			break
 		}
-		effects := make([]EffectExpectation, 0, len(result.Patches))
-		for _, patch := range result.Patches {
-			effects = append(effects, EffectExpectation{Ref: patch.Ref, UID: string(patch.Before.GetUID()), Before: patch.Before, After: patch.After})
-		}
+		effects := menuEffectExpectations(result, priorAbsence)
 		after, err := barrier.Capture(roundCtx, attempt.AttemptId, round, "after_write", effects)
 		if err != nil {
 			cancel()
@@ -433,4 +459,30 @@ func (menuReadView) DiffAgainstSource(sdk.ObjectRef) (program.Diff, error) {
 }
 func (menuReadView) DiffAgainstBaseline(sdk.ObjectRef) (program.Diff, error) {
 	return program.Diff{}, errMenuSafety
+}
+
+func menuEffectExpectations(result PlanApplicationResult, priorAbsence string) []EffectExpectation {
+	var effects []EffectExpectation
+	byRef := map[sdk.ObjectRef]int{}
+	for _, patch := range result.Patches {
+		effect := EffectExpectation{Ref: patch.Ref, Before: patch.Before, After: patch.After}
+		switch patch.Operation {
+		case "create":
+			effect.Before = nil
+			effect.PriorAbsenceCaptureID = priorAbsence
+		case "delete":
+			effect.RequireAbsent = true
+		default:
+			if patch.Before != nil {
+				effect.UID = string(patch.Before.GetUID())
+			}
+		}
+		if index, exists := byRef[patch.Ref]; exists {
+			effects[index].After = effect.After
+		} else {
+			byRef[patch.Ref] = len(effects)
+			effects = append(effects, effect)
+		}
+	}
+	return effects
 }

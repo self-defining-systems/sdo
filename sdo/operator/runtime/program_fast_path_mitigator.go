@@ -63,23 +63,31 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 			results <- outcome{err: err}
 			return
 		}
-		// Each accessor returns defensive copies. Timed-out executions keep only this
-		// private snapshot and read capabilities, never maps owned by ResponderLoop.
-		snapshot := sdktest.Snapshot{NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(), PodList: view.Pods(), DeploymentList: view.Deployments(), ReplicaSetList: view.ReplicaSets(), EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(), EventList: view.Events()}
-		if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
-			snapshot.StatefulSetList = extended.StatefulSets()
+		var isolated program.ReadView
+		if _, currentMenuView := view.(menuReadView); currentMenuView {
+			// Causal views are immutable and return defensive copies lazily.
+			// Do not require authorization for kinds the program never reads.
+			isolated = view
+		} else {
+			// Each accessor returns defensive copies. Timed-out executions keep only this
+			// private snapshot and read capabilities, never maps owned by ResponderLoop.
+			snapshot := sdktest.Snapshot{NamespaceName: view.Namespace(), ConfigMapList: view.ConfigMaps(), ServiceList: view.Services(), PodList: view.Pods(), DeploymentList: view.Deployments(), ReplicaSetList: view.ReplicaSets(), EndpointList: view.Endpoints(), EndpointSliceList: view.EndpointSlices(), NetworkPolicyList: view.NetworkPolicies(), EventList: view.Events()}
+			if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
+				snapshot.StatefulSetList = extended.StatefulSets()
+			}
+			if extended, ok := view.(interface {
+				HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+			}); ok {
+				snapshot.HPAList = extended.HorizontalPodAutoscalers()
+			}
+			if extended, ok := view.(interface {
+				PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+			}); ok {
+				snapshot.PDBList = extended.PodDisruptionBudgets()
+			}
+			isolated = mitigationReadView{Snapshot: snapshot, ctx: ctx, live: view}
 		}
-		if extended, ok := view.(interface {
-			HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-		}); ok {
-			snapshot.HPAList = extended.HorizontalPodAutoscalers()
-		}
-		if extended, ok := view.(interface {
-			PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-		}); ok {
-			snapshot.PDBList = extended.PodDisruptionBudgets()
-		}
-		isolated := mitigationReadView{Snapshot: snapshot, ctx: ctx, live: view}
+
 		plan, err := p.Mitigate(ctx, isolated, bindings)
 		if err == nil {
 			err = plan.Validate()

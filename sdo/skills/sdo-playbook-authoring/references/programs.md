@@ -1,7 +1,7 @@
 # Direct program authoring
 
 Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a bound resource view;
-mitigation returns typed actions. Shared read helpers come from the diagnostics module's library packages.
+mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
 Accepted Mitigators become selectable options in the responder menu. Reflection should author each as a
@@ -36,9 +36,17 @@ Unknown; empty or absent observations never prove success or refusal.
 ## Source restoration
 
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
+Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
+ConfigMap JSON/YAML entries preserve unrelated values. Use ValueFromSource for an accepted-source field value,
+and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects need
+current controller-owned nonsecret provenance; accepted Git origin alone supplies no clearance.
 ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
 produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
-replay remains mandatory. SetField-only plans must replay to NoMatch after applying their patches.
+replay remains mandatory. Literal SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
+CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes only
+an explicitly allowed named object proven absent from that source; disclose deletion as irreversible, retain
+its nonsecret receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
+and live verification requires direct current UID/absence evidence plus independent health checks.
 Never delete a valid mitigator merely to eliminate a skipped-effect note.
 
 ## Routing

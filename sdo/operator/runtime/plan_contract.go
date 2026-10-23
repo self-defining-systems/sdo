@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"google.golang.org/protobuf/types/known/structpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -41,6 +42,20 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		application.Verification = &contracts.Verdict{Result: verdict}
 	}
+	for _, effect := range r.ObjectEffects {
+		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
+		if effect.DeletedPreImage != nil {
+			if err := planSecretPredicate(effect.DeletedPreImage); err != nil {
+				return nil, err
+			}
+			image, err := structpb.NewStruct(effect.DeletedPreImage.Object)
+			if err != nil {
+				return nil, fmt.Errorf("encode nonsecret delete receipt")
+			}
+			encoded.DeletedPreImage = image
+		}
+		application.ObjectEffects = append(application.ObjectEffects, encoded)
+	}
 	return application, nil
 }
 
@@ -59,6 +74,13 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 			result.ActionsApplied = append(result.ActionsApplied, decoded)
 		}
 	}
+	for _, effect := range application.GetObjectEffects() {
+		decoded := PlanObjectEffect{Operation: effect.GetOperation(), Ref: objectRefState(effect.GetRef()), UID: effect.GetUid(), State: effect.GetState(), Confirmed: effect.GetConfirmed(), Irreversible: effect.GetIrreversible()}
+		if effect.GetDeletedPreImage() != nil {
+			decoded.DeletedPreImage = &unstructured.Unstructured{Object: effect.GetDeletedPreImage().AsMap()}
+		}
+		result.ObjectEffects = append(result.ObjectEffects, decoded)
+	}
 	result.VerificationCompleted = application.GetVerificationCompleted() || application.GetVerification() != nil
 	result.VerificationPassed = application.GetVerificationPassed() || application.GetVerification().GetResult() == contracts.Verdict_RESULT_NO_MATCH
 	if application.GetDuration() != nil {
@@ -70,6 +92,18 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 
 func planActionProto(action program.Action) (*contracts.Action, error) {
 	switch a := action.(type) {
+	case program.CreateFromSource:
+		return &contracts.Action{Kind: &contracts.Action_CreateFromSource{CreateFromSource: &contracts.CreateFromSource{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
+	case program.DeleteObject:
+		return &contracts.Action{Kind: &contracts.Action_DeleteObject{DeleteObject: &contracts.DeleteObject{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
+	case *program.CreateFromSource:
+		if a != nil {
+			return planActionProto(*a)
+		}
+	case *program.DeleteObject:
+		if a != nil {
+			return planActionProto(*a)
+		}
 	case program.ReconcileFromSource:
 		return &contracts.Action{Kind: &contracts.Action_ReconcileFromSource{ReconcileFromSource: &contracts.ReconcileFromSource{Ref: planRefProto(a.Ref)}}}, nil
 	case program.Rollback:
@@ -109,6 +143,10 @@ func planRefProto(ref sdk.ObjectRef) *contracts.ObjectRef {
 func planActionState(action *contracts.Action) program.Action {
 	var decoded program.Action
 	switch kind := action.GetKind().(type) {
+	case *contracts.Action_CreateFromSource:
+		decoded = program.CreateFromSource{Ref: objectRefState(kind.CreateFromSource.GetRef()), Reason: kind.CreateFromSource.GetReason()}
+	case *contracts.Action_DeleteObject:
+		decoded = program.DeleteObject{Ref: objectRefState(kind.DeleteObject.GetRef()), Reason: kind.DeleteObject.GetReason()}
 	case *contracts.Action_ReconcileFromSource:
 		decoded = program.ReconcileFromSource{Ref: objectRefState(kind.ReconcileFromSource.GetRef())}
 	case *contracts.Action_Rollback:

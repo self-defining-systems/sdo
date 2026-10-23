@@ -18,8 +18,10 @@ import (
 // owner must establish provenance before allowing any opaque object read.
 // UID binds live reads; source objects have no UID. Unknown versions fail closed.
 type PlanObjectSafety struct {
-	UID     string
-	Digests map[string]bool
+	UID           string
+	CreateAllowed bool
+	DeleteAllowed bool
+	Digests       map[string]bool
 }
 
 // PlanSafetyPolicy bounds the new vocabulary to independently authorized objects.
@@ -102,7 +104,7 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 		case map[string]any:
 			for k, child := range v {
 				switch k {
-				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim":
+				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock":
 					return fmt.Errorf("plan safety: credential or unconfined content channel")
 				case "hostNetwork", "hostPID", "hostIPC", "privileged", "allowPrivilegeEscalation":
 					if child != false {
@@ -137,6 +139,35 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 			return fmt.Errorf("plan safety: selectorless routing is forbidden")
 		}
 	}
+	if object.GetKind() == "MutatingWebhookConfiguration" || object.GetKind() == "ValidatingWebhookConfiguration" {
+		webhooks, _, err := unstructured.NestedSlice(object.Object, "webhooks")
+		if err != nil {
+			return fmt.Errorf("plan safety: unknown webhook shape")
+		}
+		for _, item := range webhooks {
+			webhook, ok := item.(map[string]any)
+			if !ok {
+				return fmt.Errorf("plan safety: unknown webhook shape")
+			}
+			if url, found, _ := unstructured.NestedString(webhook, "clientConfig", "url"); found && url != "" {
+				return fmt.Errorf("plan safety: external webhook routing")
+			}
+			rules, _, _ := unstructured.NestedSlice(webhook, "rules")
+			for _, item := range rules {
+				rule, ok := item.(map[string]any)
+				if !ok {
+					return fmt.Errorf("plan safety: unknown webhook rule")
+				}
+				resources, _, _ := unstructured.NestedStringSlice(rule, "resources")
+				for _, resource := range resources {
+					if resource == "*" || resource == "*/*" || resource == "secrets" || resource == "secrets/*" {
+						return fmt.Errorf("plan safety: credential-observing webhook")
+					}
+				}
+			}
+		}
+	}
+
 	if template, found, _ := unstructured.NestedMap(object.Object, "spec", "template", "spec"); found {
 		if value, ok := template["automountServiceAccountToken"]; !ok || value != false {
 			return fmt.Errorf("plan safety: explicit token automount disablement is required")

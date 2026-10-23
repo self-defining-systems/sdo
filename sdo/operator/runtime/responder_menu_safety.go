@@ -7,7 +7,9 @@ import (
 	"sort"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
@@ -136,6 +138,9 @@ func (c *menuPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 	}
 	object, err := c.PlanObjectClient.Get(ctx, ref)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, apierrors.NewNotFound(schema.GroupResource{Resource: ref.Kind}, ref.Name)
+		}
 		return nil, errMenuSafety
 	}
 	if c.loop.MenuConfig.Safety.object(ctx, ref, object) != nil {
@@ -145,7 +150,7 @@ func (c *menuPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 }
 func (c *menuPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
 	l := c.loop
-	if l.selection.authorizeMutation(ctx, l.selection.snapshot().DispatchEpoch) != nil {
+	if l.menuFence(ctx) != nil {
 		return errSelectionFenced
 	}
 	if _, err := l.menuSnapshot(ctx); err != nil {
@@ -217,6 +222,9 @@ func (s menuPlanSource) AcceptedManifest(ctx context.Context, commit string, ref
 		return nil, errMenuSafety
 	}
 	object, err := s.PlanSource.AcceptedManifest(ctx, commit, ref)
+	if errors.Is(err, ErrAcceptedManifestAbsent) {
+		return nil, ErrAcceptedManifestAbsent
+	}
 	if err != nil {
 		return nil, errMenuSafety
 	}

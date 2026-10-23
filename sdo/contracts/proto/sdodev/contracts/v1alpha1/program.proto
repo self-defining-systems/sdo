@@ -73,7 +73,31 @@ message Action {
     Rollback rollback = 2;
     SetField set_field = 3;
     RestartRollout restart_rollout = 4;
+    CreateFromSource create_from_source = 5;
+    DeleteObject delete_object = 6;
   }
+}
+
+message CreateFromSource {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// Irreversible; its preimage is evidence, never recreation authority.
+message DeleteObject {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message PlanObjectEffect {
+  string operation = 1 [(buf.validate.field).string = {in: ["create", "delete"]}];
+  ObjectRef ref = 2 [(buf.validate.field).required = true];
+  string uid = 3;
+  string state = 4 [(buf.validate.field).string = {in: ["not_applied", "applied", "unknown"]}];
+  bool confirmed = 5;
+  bool irreversible = 6;
+  // Read-only nonsecret evidence. Never replay or auto-recreate from it.
+  google.protobuf.Struct deleted_pre_image = 7;
 }
 
 message ReconcileFromSource {
@@ -134,6 +158,7 @@ message PlanApplication {
   bool verification_passed = 17;
   // Final exact plan equivalence. False means no credit, not a program failure.
   optional bool final_equivalence_verified = 18;
+  repeated PlanObjectEffect object_effects = 19;
 }
 
 message ProgramToolCall {

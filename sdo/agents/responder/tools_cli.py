@@ -14,7 +14,9 @@ from sdo.agents.responder import recorded_actions
 
 PLAN_ACTIONS = (
     "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
-    "ConfigMap JSON/YAML entries preserve unrelated keys."
+    "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
+    "CreateFromSource restores a named missing object from accepted source.\n"
+    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
 )
 
 CLI_EXAMPLES = (

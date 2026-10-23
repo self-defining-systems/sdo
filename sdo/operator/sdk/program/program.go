@@ -129,6 +129,23 @@ func (v Verdict) Validate() error {
 
 type Action interface{ action() }
 
+// CreateFromSource restores a missing named object from accepted source.
+type CreateFromSource struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+
+func (CreateFromSource) action() {}
+
+// DeleteObject irreversibly deletes a named object absent from accepted source.
+// Its receipt retains a nonsecret preimage; compensation never recreates it.
+type DeleteObject struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+
+func (DeleteObject) action() {}
+
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
 
 func (ReconcileFromSource) action() {}
@@ -168,6 +185,9 @@ type Plan struct {
 
 func (p Plan) Validate() error {
 	for _, action := range p.Actions {
+		if err := validateObjectAction(action); err != nil {
+			return err
+		}
 		if action == nil {
 			return fmt.Errorf("nil action")
 		}

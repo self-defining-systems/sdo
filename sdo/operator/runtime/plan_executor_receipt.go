@@ -16,6 +16,9 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 		return result, fmt.Errorf("invalid pending application action %d", index)
 	}
 	patch := result.Patches[index]
+	if patch.Operation != "" {
+		return e.reconcileObjectEffect(ctx, result, index)
+	}
 	if patch.Before == nil || patch.After == nil {
 		return result, fmt.Errorf("pending write has no in-process field images")
 	}

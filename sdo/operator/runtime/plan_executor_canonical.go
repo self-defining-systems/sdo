@@ -13,6 +13,9 @@ import (
 // form ("1000m" becomes "1", "0.5Gi" becomes "512Mi") and drops empty optional
 // lists.
 func canonicalizePlanObject(object *unstructured.Unstructured) {
+	if object == nil {
+		return
+	}
 	for _, field := range []string{"spec", "data", "binaryData"} {
 		if value, ok := object.Object[field]; ok {
 			object.Object[field] = canonicalizePlanValue(value, "")

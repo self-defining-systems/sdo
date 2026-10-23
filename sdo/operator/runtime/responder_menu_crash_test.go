@@ -79,6 +79,17 @@ func TestResponderMenuSeededCrashCutsAboveRoundTwo(t *testing.T) {
 					return false
 				}}
 				loop.selection.store = injected
+				if cut == "effect_applied_round_3" && seed%2 == 1 {
+					prior := cluster.afterPatch
+					cluster.afterPatch = func(ref sdk.ObjectRef) {
+						prior(ref)
+						actions := loop.selection.snapshot().Attempts[0].Actions
+						if len(actions) > 0 && actions[len(actions)-1].RoundIndex == 3 && !actions[len(actions)-1].Complete {
+							injected.fired = true
+							panic(menuCrash{}) // API effect landed, completion reply was lost.
+						}
+					}
+				}
 				crashed := false
 				var delivered map[string]any
 				func() {
