@@ -77,6 +77,9 @@ type CorpusCase struct {
 	PeerBindings           program.Bindings
 	Provenance             CorpusProvenance
 	SyntheticNoMatchReason string
+	// HealthImpact marks visible impact in Open. Nil defaults to true for
+	// existing fault fixtures; false permits silent health detectors.
+	HealthImpact *bool
 }
 
 func LoadCorpusCase(dir string) (CorpusCase, error)

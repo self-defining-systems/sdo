@@ -159,6 +159,9 @@ type CorpusCase struct {
 	PeerBindings           program.Bindings
 	Provenance             CorpusProvenance
 	SyntheticNoMatchReason string
+	// HealthImpact marks visible impact in Open. Nil defaults to true for
+	// existing fault fixtures; false permits silent health detectors.
+	HealthImpact *bool
 }
 
 // CapturedFixedNoMatchPhase identifies observed negative evidence only.
@@ -187,7 +190,8 @@ func LoadCorpusCase(dir string) (CorpusCase, error) {
 			PeerBindings           *program.Bindings `json:"peer_bindings"`
 			Provenance             *CorpusProvenance `json:"provenance"`
 			SyntheticNoMatchReason *string           `json:"synthetic_no_match_reason"`
-		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason}},
+			HealthImpact           **bool            `json:"health_impact"`
+		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact}},
 	} {
 		path := filepath.Join(dir, item.name)
 		raw, err := os.ReadFile(path)
