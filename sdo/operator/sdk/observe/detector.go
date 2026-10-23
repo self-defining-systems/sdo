@@ -5,6 +5,7 @@ package observe
 import (
 	"context"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 )
 
 type detector struct {
@@ -15,19 +16,23 @@ type detector struct {
 // NewDetector observes candidate symptoms for Service, Deployment, ConfigMap,
 // or NetworkPolicy. The caller owns policy, playbooks and provenance in spec.
 // NetworkPolicy candidates merely identify existing policies, not harmful ones.
-// Unsupported kinds produce no findings. Findings bind the candidate as target.
+// Service candidates reuse servicehealth readiness policy, including intentional
+// scale-to-zero suppression. Unsupported kinds produce no findings. Findings
+// bind the candidate as target.
 func NewDetector(spec sdk.DetectorSpec, kind string) sdk.Detector {
 	return detector{spec: spec, kind: kind}
 }
 func (d detector) Spec() sdk.DetectorSpec { return d.spec }
-func (d detector) Detect(_ context.Context, v sdk.DetectionContext) ([]sdk.Finding, error) {
+func (d detector) Detect(ctx context.Context, v sdk.DetectionContext) ([]sdk.Finding, error) {
 	var refs []sdk.ObjectRef
 	switch d.kind {
 	case "Service":
-		for _, s := range v.Services() {
-			if sdk.ServiceExpectsEndpoints(s) && len(s.Spec.Selector) > 0 && v.ReadyEndpointCountForService(s.Namespace, s.Name) == 0 {
-				refs = append(refs, sdk.ObjectRefFrom("Service", "v1", &s))
-			}
+		findings, err := servicehealth.NewReadyEndpointsDetector(d.spec).Detect(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		for _, finding := range findings {
+			refs = append(refs, finding.PrimaryResource)
 		}
 	case "Deployment":
 		for _, s := range v.Deployments() {

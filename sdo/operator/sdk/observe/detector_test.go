@@ -57,3 +57,12 @@ func TestCandidateDetector(t *testing.T) {
 		t.Fatal("unsupported kind produced candidates")
 	}
 }
+
+func TestServiceCandidateReusesIntentionalScaleToZeroPolicy(t *testing.T) {
+	zero := int32(0)
+	snapshot := sdktest.Snapshot{NamespaceName: "sample", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Namespace: "sample", Name: "api"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"role": "api"}}}}, DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Namespace: "sample", Name: "api"}, Spec: appsv1.DeploymentSpec{Replicas: &zero, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"role": "api"}}}}}}}
+	findings, err := observe.NewDetector(sdk.DetectorSpec{ID: "candidate"}, "Service").Detect(context.Background(), snapshot)
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("intentionally scaled-to-zero workload reported: %+v %v", findings, err)
+	}
+}

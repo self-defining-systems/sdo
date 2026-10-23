@@ -632,10 +632,11 @@ FUNCTIONS
 
 func NewDetector(spec sdk.DetectorSpec, kind string) sdk.Detector
     NewDetector observes candidate symptoms for Service, Deployment, ConfigMap,
-    or NetworkPolicy. The caller owns policy, playbooks and provenance in spec.
-    NetworkPolicy candidates merely identify existing policies, not harmful
-    ones. Unsupported kinds produce no findings. Findings bind the candidate as
-    target.
+    or NetworkPolicy. The caller owns policy, playbooks and provenance
+    in spec. NetworkPolicy candidates merely identify existing policies,
+    not harmful ones. Service candidates reuse servicehealth readiness policy,
+    including intentional scale-to-zero suppression. Unsupported kinds produce
+    no findings. Findings bind the candidate as target.
 
 ```
 
