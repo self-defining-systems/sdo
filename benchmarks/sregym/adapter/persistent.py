@@ -908,6 +908,27 @@ def _closeout_settled(receipt: dict[str, Any]) -> bool:
     return receipt.get("completed") is True and receipt.get("remaining_worktrees") == []
 
 
+def _rendered_lock_settled(repository: Path) -> bool:
+    """Read the synchronized accepted lock; agents never publish this evidence."""
+    path = repository / ".sdo/rendered/lock.json"
+    if not path.exists():
+        return True  # Legacy repositories have no rendered-lock contract.
+    try:
+        source = json.loads(path.read_text())["source_commit"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if not isinstance(source, str) or not source:
+        return False
+    result = subprocess.run(
+        ["git", "diff", "--quiet", source, "HEAD", "--", ".", ":(exclude).sdo"],
+        cwd=repository,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    return result.returncode == 0
+
+
 def _collect_settled_receipt(
     ops: ClusterOps,
     config: RuntimeConfig,
@@ -920,6 +941,8 @@ def _collect_settled_receipt(
 
     Re-samples the receipt until its volatile close-out signals settle so a solved
     incident is not rejected because the asynchronous close-out had not finished.
+    Accepted source repairs also wait for the controller-owned rendered lock,
+    which is published after acknowledgment; collection synchronizes that Git state.
     A genuinely unsettled receipt (for example a responder that never reported
     ``completed``) still falls through after ``timeout`` and is validated as-is, so
     a real failure is reported promptly rather than hidden.
@@ -929,10 +952,28 @@ def _collect_settled_receipt(
     if timeout is None:
         timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
     deadline = clock.monotonic() + timeout
-    while not _closeout_settled(receipt) and clock.monotonic() < deadline:
-        clock.sleep(POLL_SECONDS)
-        receipt = ops.collect_receipt(config, incident_id, receipt_dir)
-    return receipt
+    resumed = False
+    control = config.control_namespace
+    try:
+        while (
+            not _closeout_settled(receipt) or not _rendered_lock_settled(config.repository)
+        ) and clock.monotonic() < deadline:
+            if _closeout_settled(receipt) and not _rendered_lock_settled(config.repository) and not resumed:
+                # Maintenance permits closure but suppresses rendered reconciliation.
+                # Recovery precedes fastloop learning. Let the acknowledged
+                # controller publish source evidence, then pause it again.
+                ops.set_maintenance(control, paused=False, generation=f"rendered-closeout-{uuid.uuid4().hex[:8]}")
+                resumed = True
+            clock.sleep(POLL_SECONDS)
+            receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+        if not _rendered_lock_settled(config.repository):
+            raise PersistentControllerError(
+                "controller acknowledged closure but did not publish a current rendered source lock"
+            )
+        return receipt
+    finally:
+        if resumed:
+            pause_controller(ops, control, label="rendered-closeout", clock=clock)
 
 
 def _record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:

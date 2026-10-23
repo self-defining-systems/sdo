@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from benchmarks.sregym.adapter.persistent import (
     STRICT_RECEIPT_FILENAME,
     PersistentState,
@@ -132,3 +134,55 @@ def test_drain_waits_for_the_worktree_to_drain(tmp_path: Path) -> None:
     )
 
     assert (record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).is_file()
+
+
+@pytest.mark.parametrize("publish", [True, False])
+def test_closeout_waits_for_rendered_lock_after_acknowledged_source_repair(tmp_path: Path, publish: bool) -> None:
+    import json
+    import subprocess
+
+    from benchmarks.sregym.adapter.persistent import PersistentControllerError, _collect_settled_receipt
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import _config
+
+    config = _config(tmp_path)
+    repository = config.repository
+    repository.mkdir(parents=True, exist_ok=True)
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(repository), *args], text=True).strip()
+
+    git("init", "-q")
+    source = repository / "app.yaml"
+    source.write_text("seed\n")
+    git("add", ".")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "seed")
+    seed = git("rev-parse", "HEAD")
+    source.write_text("repaired\n")
+    git("add", ".")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "repair")
+    repair = git("rev-parse", "HEAD")
+    lock = repository / ".sdo/rendered/lock.json"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"source_commit": seed}))
+
+    class PublishingOps(FakeOps):
+        samples = 0
+
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            self.samples += 1
+            if publish and self.samples == 3:
+                lock.write_text(json.dumps({"source_commit": repair}))
+            return {"schema_version": "sdo.production-receipt/v2", "native_ledger": {"acknowledged": True}}
+
+    ops = PublishingOps()
+    ops.logs[config.control_namespace] = []
+    if not publish:
+        with pytest.raises(PersistentControllerError, match="current rendered source lock"):
+            _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", _clock(ops), timeout=5)
+        assert ops.samples == 6
+        assert [event[0] for event in ops.events] == ["active", "paused"]
+        return
+    receipt = _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", _clock(ops), timeout=5)
+    assert receipt["native_ledger"]["acknowledged"]
+    assert ops.samples == 3
+    assert [event[0] for event in ops.events] == ["active", "paused"]
