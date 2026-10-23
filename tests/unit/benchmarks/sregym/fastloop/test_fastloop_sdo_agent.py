@@ -198,7 +198,9 @@ class FakeOps:
         self.logs[control] = []
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         mode = "paused" if paused else "active"
         self.logs[control_namespace].append(
             json.dumps({"controller_maintenance": mode, "maintenance_generation": generation})

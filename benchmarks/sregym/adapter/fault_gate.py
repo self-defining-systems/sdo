@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.protocol import request_with_retry
+from benchmarks.sregym.protocol.injection import InvalidInjectionError, check_injection
 
 if TYPE_CHECKING:
     import subprocess
@@ -33,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 class FaultGateError(RuntimeError):
     """Raised when the fault cannot be injected into a monitored baseline."""
+
+
+class InvalidFaultInjection(InvalidInjectionError, FaultGateError):
+    """Deferred injection ended without opening a valid incident."""
 
 
 class KubectlRunner(Protocol):
@@ -69,8 +74,13 @@ def request_fault_injection(api_base: str) -> None:
     """Ask the conductor to inject the deferred fault and open the incident."""
 
     response = request_with_retry("POST", f"{api_base.rstrip('/')}{INJECT_FAULT_ENDPOINT}", max_retries=2, timeout=300)
-    stage = response.json().get("stage")
-    if stage in (None, AWAITING_FAULT_INJECTION):
+    reply = response.json()
+    try:
+        check_injection(reply)
+    except InvalidInjectionError as exc:
+        raise InvalidFaultInjection(exc.details, reply=reply) from exc
+    stage = reply.get("stage")
+    if stage in (None, AWAITING_FAULT_INJECTION, "done", "finished", "completed"):
         raise FaultGateError(f"conductor did not open an incident stage after injection (stage={stage!r})")
 
 

@@ -1298,6 +1298,7 @@ class TestPersistentControllerPipeline:
         teardown_writes_receipts: bool,
         receipt_stages: tuple[int, ...] = (0, 1),
         teardown_returncode: int = 0,
+        terminal_infrastructure: bool = False,
         continue_on_agent_failure: bool = False,
     ) -> tuple[int, list[list[str]], list[dict[str, str]], Path]:
         config = self._config(continue_on_agent_failure=continue_on_agent_failure)
@@ -1324,7 +1325,9 @@ class TestPersistentControllerPipeline:
             agent_dir.mkdir(parents=True, exist_ok=True)
             agent_dirs.append(agent_dir)
             (problem_run / "results_test.csv").write_text(
-                '"Diagnosis.success","Mitigation.success","agent_error","problem_id"\nTrue,True,False,"problem"\n',
+                "problem_id,infra_error,Injection.composite_valid\nproblem,injection_invalid,False\n"
+                if terminal_infrastructure
+                else '"Diagnosis.success","Mitigation.success","agent_error","problem_id"\nTrue,True,False,"problem"\n',
                 encoding="utf-8",
             )
             # Only a resolution record exists at stage end; the strict receipt follows the drain.
@@ -1340,6 +1343,26 @@ class TestPersistentControllerPipeline:
                 config, project_root=tmp_path, sregym_dir=sregym_dir, pipeline_dir=pipeline_dir, state=state
             )
         return rc, calls, envs, pipeline_dir
+
+    def test_terminal_infrastructure_drains_and_resumes_without_receipts(self, sregym_dir, tmp_path: Path) -> None:
+        rc, calls, _, pipeline_dir = self._run(
+            sregym_dir, tmp_path, teardown_writes_receipts=False, terminal_infrastructure=True
+        )
+        assert rc == 0
+        assert "benchmarks.sregym.adapter.persistent" in calls[-1]
+        state = read_pipeline_state(pipeline_dir)
+        assert [stage.status for stage in state.stages] == ["invalid_infra", "invalid_infra"]
+        assert all("injection_invalid" in stage.error for stage in state.stages)
+        with (
+            patch.object(runner_mod, "_run_stage", side_effect=AssertionError("terminal stage must not rerun")),
+            patch("subprocess.run", return_value=type("Result", (), {"returncode": 0})()),
+        ):
+            assert (
+                runner_mod.run_pipeline(
+                    self._config(), project_root=tmp_path, sregym_dir=sregym_dir, pipeline_dir=pipeline_dir, state=state
+                )
+                == 0
+            )
 
     def test_stages_share_one_state_file_and_teardown_runs_last(self, sregym_dir, tmp_path: Path) -> None:
         rc, calls, envs, pipeline_dir = self._run(sregym_dir, tmp_path, teardown_writes_receipts=True)
@@ -1537,3 +1560,16 @@ def test_pipeline_rejects_keys_of_the_removed_crucible_agent(tmp_path: Path, sec
 
     with pytest.raises(ValueError, match=key):
         load_pipeline_config(path)
+
+
+@pytest.mark.parametrize("infra", ["injection_invalid", "oracle_timeout"])
+def test_sdo3_terminal_infrastructure_row_does_not_require_agent_receipt(tmp_path: Path, infra: str) -> None:
+    result = tmp_path / "runs/000000_problem/worker_0/results/sdo_codex/problem/problem_sdo_codex_results.csv"
+    result.parent.mkdir(parents=True)
+    result.write_text(
+        "problem_id,infra_error,Diagnosis.success,Mitigation.success,Injection.composite_valid\nproblem,"
+        + infra
+        + ",,,False\n"
+    )
+    # Terminal infrastructure rows are resumable, but do not pass as graded agent outcomes.
+    assert _stage_results_error(tmp_path, require_strict_receipt=True) is None

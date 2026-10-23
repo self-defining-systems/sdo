@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.fastloop.fault_tracker import composite_faults
+from benchmarks.sregym.faults.description import ProblemDescription
 
 NETWORK_POLICY_PREFIX = "deny-all-"
 
@@ -91,7 +91,14 @@ def main(argv: list[str]) -> int:
         problem = json.loads(reports[0].read_text(encoding="utf-8"))["problem_id"]
         firings = load_firings(directory, since=_injection_start(directory))
         parts = []
-        for fault in composite_faults(problem):
+        catalog_path = directory / "fault_descriptions.json"
+        if not catalog_path.is_file():
+            raise ValueError(f"{directory}: missing recorded fault_descriptions.json; cannot infer components")
+        catalog = {
+            key: ProblemDescription.model_validate(item)
+            for key, item in json.loads(catalog_path.read_text(encoding="utf-8")).items()
+        }
+        for fault in (fault for key in problem.split("+") for fault in catalog[key].ordered_faults()):
             found = first_activations(firings, fault.component)
             learned = found.get("learned")
             if learned is None:

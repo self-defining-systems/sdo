@@ -3,7 +3,9 @@ package runtime
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -105,6 +107,18 @@ func frontendEndpoints(ready int) *corev1.Endpoints {
 // 13d5613, run.go's start context stopped the tracker's informers once Start
 // returned, so the diff stayed frozen at the startup state and was empty.
 func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
+	testRunAttachesStateChanges(t, false, false)
+}
+
+func TestRunPreservesStateChangesAcrossObservationBarrier(t *testing.T) {
+	testRunAttachesStateChanges(t, true, false)
+}
+
+func TestRunPreservesLatentFaultAcrossObservationBarrier(t *testing.T) {
+	testRunAttachesStateChanges(t, true, true)
+}
+
+func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) {
 	objects := hotelObjects()
 	objects = append(objects, frontendEndpoints(1))
 	for index := range readyFrontend() {
@@ -130,14 +144,34 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	exited := make(chan struct{})
 	var runErr error
+	repository := gitRepository(t)
+	runArgs := []string{"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", repository,
+		"--application", "hotel", "--synthetic-traffic=false", "--lease-duration", "3s", "--drift-batch-window", "20ms"}
+	if latent {
+		service, err := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		service.APIVersion, service.Kind = "v1", "Service"
+		manifest, err := json.Marshal(service)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(repository+"/app.json", manifest, 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, args := range [][]string{{"add", "app.json"}, {"commit", "-m", "accepted service"}} {
+			if output, err := exec.Command("git", append([]string{"-C", repository}, args...)...).CombinedOutput(); err != nil {
+				t.Fatalf("%s: %v", output, err)
+			}
+		}
+		seedRenderedLock(t, GitPlanSource{Repository: repository, ManifestPaths: []string{"app.json"}}, nativeGit(t, repository, "rev-parse", "HEAD"), hotel)
+		runArgs = append(runArgs, "--deployed-manifest-path", "app.json")
+	}
 	go func() {
 		defer close(exited)
 		runErr = RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
-			Args: []string{
-				"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", gitRepository(t),
-				"--application", "hotel",
-				"--synthetic-traffic=false", "--lease-duration", "3s",
-			},
+			Args:   runArgs,
 			Stdout: stdoutWriter, Stderr: stderrWriter,
 			Client: client, StateBaselineStartTimeout: startTimeout, Dispatcher: dispatcher,
 		})
@@ -164,18 +198,54 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	})
 	// Outlive the start deadline, so a tracker still bound to it has stopped.
 	time.Sleep(4 * startTimeout)
+	if observationBarrier {
+		_, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMapName, Namespace: hotel + "-sdo"},
+			Data:       map[string]string{"state": "paused", "generation": "barrier", "preserve_baseline": "true"},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "observation pause acknowledgement", func() bool {
+			return lines.has(`{"controller_maintenance":"paused"`)
+		})
+	}
 
-	service, err := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	if latent {
+		policy := foreignPolicy("deny-frontend")
+		policy.Namespace = hotel
+		if _, err := client.NetworkingV1().NetworkPolicies(hotel).Create(ctx, policy, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		select {
+		case request := <-dispatcher.requests:
+			t.Fatalf("dispatched while observation paused: %s", request.IncidentID)
+		default:
+		}
+	} else {
+		service, err := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		service.Spec.Selector["current_service_name"] = "frontend"
+		if _, err := client.CoreV1().Services(hotel).Update(ctx, service, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		// The endpoints controller empties the Service's endpoints.
+		if _, err := client.CoreV1().Endpoints(hotel).Update(ctx, frontendEndpoints(0), metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	service.Spec.Selector["current_service_name"] = "frontend"
-	if _, err := client.CoreV1().Services(hotel).Update(ctx, service, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	// The endpoints controller empties the Service's endpoints.
-	if _, err := client.CoreV1().Endpoints(hotel).Update(ctx, frontendEndpoints(0), metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
+	if observationBarrier {
+		cm, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Get(ctx, MaintenanceConfigMapName, metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cm.Data = map[string]string{"state": "active", "generation": "barrier-resumed"}
+		if _, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	var request IncidentRequest
@@ -186,6 +256,14 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	}
 	if request.StateChanges == nil {
 		t.Fatalf("the incident carries no state diff: %+v", request)
+	}
+	if latent {
+		for _, event := range request.DriftEvents {
+			if event.Ref.Kind == "NetworkPolicy" && event.Ref.Name == "deny-frontend" {
+				return
+			}
+		}
+		t.Fatalf("latent watch change lost across observation barrier: %+v", request)
 	}
 	change := findChange(request.StateChanges, "Service", "frontend")
 	if change == nil || change.Change != StateChangeModified {

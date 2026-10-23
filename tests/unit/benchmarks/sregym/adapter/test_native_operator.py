@@ -158,6 +158,8 @@ def test_sync_and_maintenance_use_go_cli_without_python_broker(
         "--kubeconfig",
         str(config.kubeconfig),
     ]
+    set_maintenance(config.control_namespace, paused=True, generation="barrier", preserve_baseline=True)
+    assert "--preserve-baseline" in calls[2]
 
 
 def test_incident_evidence_requires_correlated_native_ledger(

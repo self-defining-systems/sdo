@@ -463,7 +463,7 @@ def test_failed_injection_stops_before_another_fault_can_be_applied(tmp_path: Pa
     assert "injector did not return a window" in str(records[0].error)
 
 
-def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) -> None:
+def test_composed_stream_injects_together_and_uses_official_aggregate_oracle(tmp_path: Path) -> None:
     clock = FakeClock()
 
     class CompositeDriver(FakeDriver):
@@ -473,7 +473,7 @@ def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) 
 
         def oracle(self, *, fault: int | None = None) -> OracleVerdict:
             self.events.append(f"oracle:{fault}")
-            return OracleVerdict(kind="sregym-mitigation-oracle", success=fault == 0)
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=self.recovered)
 
     driver = CompositeDriver(clock)
     config = LoopConfig(
@@ -486,8 +486,21 @@ def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) 
 
     records = run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)
 
-    assert driver.events[:3] == ["compose:a+b", "oracle:0", "oracle:1"]
+    assert driver.events[:3] == ["compose:a+b", "oracle:None", "recover"]
     assert records[0].problem_id == "a+b"
     assert records[0].oracle is not None
     assert records[0].oracle.success is False
     assert "oracle reported failure" in str(records[0].error)
+
+
+def test_failed_recovery_never_advances_even_with_continue_and_reset(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = FakeDriver(clock, recover_fails=True)
+    resets = []
+    config = LoopConfig("cleanup", ("a", "b"), 2, tmp_path / "incidents.jsonl", continue_on_error=True)
+    records = run_incidents(FakeAgent(clock), driver, config, on_failed_incident=lambda: resets.append("reset"))
+    assert len(records) == 1
+    assert records[0].recovery_error
+    assert resets == []
+    assert driver.events.count("inject:a") == 1
+    assert "inject:b" not in driver.events

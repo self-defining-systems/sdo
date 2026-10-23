@@ -25,13 +25,16 @@ const (
 // MaintenanceState is the operator's declared observation mode. While paused
 // (for example during a planned application redeploy), the controller keeps
 // finishing its in-flight incident lifecycle (closure, reflection,
-// acknowledgment) but stops evaluating detectors and stops observing the
-// application namespace, so an application that is intentionally absent is
+// acknowledgment) but stops evaluating detectors. By default it also stops
+// observing the application namespace, so an application that is intentionally absent is
 // never treated as an incident. A new generation marks each resume so external
 // observers can correlate the first evaluation after it.
+// PreserveBaseline instead retains informers and their pending changes until resume.
 type MaintenanceState struct {
 	Paused     bool
 	Generation string
+	// PreserveBaseline suspends observation without adopting changes made while paused.
+	PreserveBaseline bool
 }
 
 // Record is the controller log line that announces the mode it operates under.
@@ -66,7 +69,11 @@ func (w MaintenanceWatcher) Read(ctx context.Context) (MaintenanceState, error) 
 	case "", maintenanceStateActive:
 		return MaintenanceState{Generation: generation}, nil
 	case maintenanceStatePaused:
-		return MaintenanceState{Paused: true, Generation: generation}, nil
+		preserve := strings.TrimSpace(configMap.Data["preserve_baseline"])
+		if preserve != "" && preserve != "false" && preserve != "true" {
+			return MaintenanceState{}, fmt.Errorf("invalid preserve_baseline %q", preserve)
+		}
+		return MaintenanceState{Paused: true, Generation: generation, PreserveBaseline: preserve == "true"}, nil
 	default:
 		return MaintenanceState{}, fmt.Errorf(
 			"maintenance ConfigMap %s/%s has unsupported state %q",

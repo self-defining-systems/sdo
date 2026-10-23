@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
-from benchmarks.sregym.runner.codex_baseline import ensure_agent_image_supports_prompt_appendix
+from benchmarks.sregym.protocol.infrastructure import has_injection_evidence, infrastructure_error
 from benchmarks.sregym.runner.experiment import (
     ExperimentConfig,
     application_workspace_mode,
@@ -183,7 +183,6 @@ def run_single_experiment(
     cli_args = config_to_main_args(config, exp_dir, tasklist_path)
     cli_args.extend(extra_args)
     env = config_to_env(config, project_root, exp_dir=exp_dir)
-    ensure_agent_image_supports_prompt_appendix(env)
 
     _print_experiment_info(config, env)
     print()
@@ -236,7 +235,6 @@ def _run_stage(
     env = config_to_env(exp_config, project_root, exp_dir=stage_exp_dir)
     if extra_env:
         env.update(extra_env)
-    ensure_agent_image_supports_prompt_appendix(env)
 
     _print_experiment_info(exp_config, env)
 
@@ -359,12 +357,30 @@ def _strict_receipt_error(receipt_path: Path) -> str | None:
     return None
 
 
+def _stage_result_paths(stage_exp_dir: Path) -> list[Path]:
+    results = sorted((stage_exp_dir / "problem_runs").glob("*/results_*.csv"))
+    results.extend(sorted((stage_exp_dir / "runs").glob("*/worker_*/results/*/*/run_*/*_results.csv")))
+    # Invalid injections finish before a run_<attempt> directory exists.
+    results.extend(sorted((stage_exp_dir / "runs").glob("*/worker_*/results/*/*/*_results.csv")))
+    return results
+
+
+def _stage_infrastructure_outcomes(stage_exp_dir: Path) -> list[str]:
+    outcomes: list[str] = []
+    for result in _stage_result_paths(stage_exp_dir):
+        with result.open(newline="", encoding="utf-8") as stream:
+            for row in csv.DictReader(stream):
+                reason = infrastructure_error(row)
+                if reason:
+                    outcomes.append(f"{row.get('problem_id') or result.parent.name}: {reason}")
+    return outcomes
+
+
 def _stage_results_error(
     stage_exp_dir: Path, *, require_strict_receipt: bool = False, allow_failed_verdicts: bool = False
 ) -> str | None:
     """Reject benchmark-zero stages without complete, valid per-problem evidence."""
-    results = sorted((stage_exp_dir / "problem_runs").glob("*/results_*.csv"))
-    results.extend(sorted((stage_exp_dir / "runs").glob("*/worker_*/results/*/*/run_*/*_results.csv")))
+    results = _stage_result_paths(stage_exp_dir)
     if not results:
         return "no per-problem result CSV was produced"
     for result in results:
@@ -372,7 +388,14 @@ def _stage_results_error(
             rows = list(csv.DictReader(stream))
         if not rows:
             return f"{result.name} contains no result rows"
+        graded_rows: list[dict[str, str | None]] = []
         for row in rows:
+            reason = infrastructure_error(row)
+            if reason:
+                if reason == "injection_invalid" and not has_injection_evidence(row):
+                    return f"problem {row.get('problem_id')} injection_invalid has no injection evidence"
+                continue
+            graded_rows.append(row)
             if str(row.get("agent_error", "")).strip().lower() in {"1", "true", "yes"}:
                 problem = row.get("problem_id") or result.parent.name
                 return f"problem {problem} recorded agent_error=true"
@@ -383,7 +406,7 @@ def _stage_results_error(
                 if not accepted:
                     problem = row.get("problem_id") or result.parent.name
                     return f"problem {problem} requires {stage}.success=true"
-        if require_strict_receipt:
+        if require_strict_receipt and graded_rows:
             receipt_dir = result.parent if result.parent.name.startswith("run_") else result.parent / "agent"
             problem = result.parent.name
             receipts = sorted(receipt_dir.glob("sdo_production_receipt_*.json"))
@@ -541,7 +564,7 @@ def run_pipeline(
         for i, stage_cfg in enumerate(config.stages):
             stage_state = state.stages[i]
 
-            if stage_state.status in ("completed", "agent_failure"):
+            if stage_state.status in ("completed", "agent_failure", "invalid_infra"):
                 print(
                     f"Stage {i}/{len(config.stages) - 1}: "
                     f"{stage_cfg.name or f'stage_{i}'} [skipped — already {stage_state.status}]"
@@ -627,10 +650,11 @@ def run_pipeline(
                 print(f"Resume with: run_sregym.sh {pipeline_dir}")
                 return 1
 
-            stage_state.status = "completed"
-            stage_state.error = ""
+            infrastructure = _stage_infrastructure_outcomes(stage_exp_dir)
+            stage_state.status = "invalid_infra" if infrastructure else "completed"
+            stage_state.error = "; ".join(infrastructure)
             write_pipeline_state(state, pipeline_dir)
-            print(f"\nStage {i} completed.\n")
+            print(f"\nStage {i} {stage_state.status}.\n")
 
         if deferred_receipt_stages or persistent_state.exists():
             teardown_error = _teardown_persistent_controllers(persistent_state, project_root, hook_env)

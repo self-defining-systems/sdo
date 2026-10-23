@@ -10,6 +10,10 @@ ignore_type_checking_imports = true
 # --- Layer 0: libs (no internal deps) ---
 
 [[modules]]
+path = "benchmarks.sregym.faults"
+depends_on = []
+
+[[modules]]
 path = "libs.agent_cli"
 depends_on = []
 
@@ -63,6 +67,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
+    "benchmarks.sregym.faults",
     "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",
     "sdo.agents.responder",
@@ -81,6 +86,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.runner"
 depends_on = [
+    "benchmarks.sregym.faults",
     "benchmarks.sregym.protocol",
 ]
 

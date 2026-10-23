@@ -25,7 +25,6 @@ import socket
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -232,7 +231,13 @@ def _up(args: argparse.Namespace) -> int:
     )
     worker = SregymWorker(
         worker_argv(placeholder.sregym_dir, private_tmp=private_tmp),
-        env={**worker_env, "PYTHONPATH": str(REPO_ROOT), "PYTHONUNBUFFERED": "1"},
+        env={
+            **worker_env,
+            # kubernetes.config freezes its default path when the child imports it.
+            "KUBECONFIG": str(placeholder.kubeconfig),
+            "PYTHONPATH": str(REPO_ROOT),
+            "PYTHONUNBUFFERED": "1",
+        },
         log_path=run_dir / "worker.log",
     )
     with worker:
@@ -285,15 +290,6 @@ def _composite_settings(args: argparse.Namespace) -> CompositeSettings:
         stable_seconds=20.0 * args.time_scale,
         poll_seconds=min(1.0, 2.0 * args.time_scale),
     )
-
-
-def _is_composite(problems: tuple[str, ...]) -> bool:
-    from benchmarks.sregym.fastloop.fault_tracker import composite_faults
-
-    flags = {bool(composite_faults(problem)) for problem in problems}
-    if len(flags) > 1:
-        raise SystemExit("do not mix composite and single-fault problems in one run")
-    return flags == {True}
 
 
 def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | None = None) -> ClusterOps:
@@ -458,15 +454,42 @@ def _run(args: argparse.Namespace) -> int:
 
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
-    from benchmarks.sregym.fastloop.fault_tracker import composite_faults, describe_sregym_faults, stream_faults
+    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
+    from benchmarks.sregym.faults.description import validate_suite
 
-    if stream:
-        tracked = [ids for ids in stream if len(ids) > 1 or (ids and ids[0].startswith("mf__"))]
-        described_incidents = stream if args.sweep_service else tracked
-        tracked_ids = tuple(dict.fromkeys(problem_id for ids in described_incidents for problem_id in ids))
-    else:
-        tracked = []
-        tracked_ids = ()
+    # Discovery and capability checks must finish before a worker can deploy or launch an agent.
+    description_started = time.monotonic()
+    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
+    descriptions = (
+        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
+        if environment.app != "toy"
+        else {}
+    )
+    if args.agent == "sdo":
+        validate_suite(descriptions, require_tracking=args.require_fault_tracking)
+    elif args.require_fault_tracking:
+        # Capability scope is specific to SDO; tracking is common to both arms.
+        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
+        if unsupported:
+            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
+    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
+    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
+    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
+    for ids in incidents:
+        first_id = next(iter(ids))
+        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
+            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
+    if args.require_fault_tracking:
+        for key, faults in faults_by_incident.items():
+            if len({fault.name for fault in faults}) != len(faults):
+                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
+    registered_composites = bool(faults_by_incident)
+    description_seconds = time.monotonic() - description_started
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "fault_descriptions.json").write_text(
+        json.dumps({key: item.model_dump(mode="json") for key, item in descriptions.items()}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     config = LoopConfig(
         run_id=run_id,
         problems=problems,
@@ -475,17 +498,8 @@ def _run(args: argparse.Namespace) -> int:
         stream=stream,
         continue_on_error=args.continue_on_error,
     )
-    with ThreadPoolExecutor(max_workers=1) as pool, _worker(environment) as worker:
+    with _worker(environment) as worker:
         worker_ready = time.monotonic()
-
-        def describe() -> tuple[dict[str, tuple[FaultSpec, ...]], float]:
-            started = time.monotonic()
-            catalog = describe_sregym_faults(
-                tracked_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace
-            )
-            return catalog, time.monotonic() - started
-
-        descriptions = pool.submit(describe) if stream and tracked_ids else None
         worker.request(
             "deploy",
             problem_id=environment.deploy_problem,
@@ -493,18 +507,7 @@ def _run(args: argparse.Namespace) -> int:
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
         deployed = time.monotonic()
-        catalog: dict[str, tuple[FaultSpec, ...]] = {}
-        if stream:
-            catalog, description_seconds = descriptions.result() if descriptions is not None else ({}, 0.0)
-            faults_by_incident = {"+".join(ids): stream_faults(ids, catalog=catalog) for ids in tracked}
-            registered_composites = bool(faults_by_incident) or any(
-                composite_faults(ids[0]) for ids in stream if len(ids) == 1
-            )
-        else:
-            faults_by_incident = {}
-            registered_composites = _is_composite(problems)
-            description_seconds = 0.0
-        described = time.monotonic()
+        described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
         if baseline is None:
             logger.warning(
@@ -629,12 +632,7 @@ def _run_codex(
                 worker.request("codex_prompt", problem_id=problem_id.split("+", 1)[0], api_base=api_base)["prompt"]
             ),
         )
-        if config.stream:
-            from benchmarks.sregym.fastloop.fault_tracker import composite_faults
-
-            registered = bool(stream_faults) or any(composite_faults(ids[0]) for ids in config.stream if len(ids) == 1)
-        else:
-            registered = _is_composite(config.problems)
+        registered = bool(stream_faults)
         if registered:
             from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
 
@@ -880,7 +878,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--agent", choices=("sdo", "codex"), required=True)
     run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
     run.add_argument("--agent-registrations", type=Path, help="SDO worker registration directory")
-    run.add_argument("--problem", action="append", help="problem id; repeat to cycle through several")
+    run.add_argument("--problem", "--problems", action="append", help="problem id; repeat to cycle through several")
+    run.add_argument(
+        "--require-fault-tracking",
+        action="store_true",
+        help="reject faults without attributable probes before deployment",
+    )
     run.add_argument("--stream", type=Path, help="JSON array or object with incidents and grading settings")
     run.add_argument(
         "--sweep-service",

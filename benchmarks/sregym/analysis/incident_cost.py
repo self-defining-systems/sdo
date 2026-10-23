@@ -356,6 +356,12 @@ class Verdict:
     #: Injection until the agent's last state-changing command before its mitigation POST completed.
     last_mitigation_seconds: float | None = None
 
+    faults_total: int | None = None
+    faults_fixed: int | None = None
+    faults_diagnosed: int | None = None
+    composite_valid: bool | None = None
+    per_fault_details: dict[str, str | None] = field(default_factory=dict)
+
     @property
     def passed(self) -> bool:
         return self.diagnosis is True and self.mitigation is True
@@ -531,6 +537,13 @@ def read_result_row(results_dir: Path) -> dict[str, str | None] | None:
     return None
 
 
+def _integer(value: str | None) -> int | None:
+    try:
+        return int(value) if value is not None and value.strip() else None
+    except ValueError:
+        return None
+
+
 def read_verdict(results_dir: Path) -> Verdict | None:
     """Read the last row of the problem run's ``*_ALL_results.csv`` (or any results CSV)."""
 
@@ -559,6 +572,11 @@ def read_verdict(results_dir: Path) -> Verdict | None:
         raw_incl_judge_seconds=raw,
         grading_wait_seconds=grading_wait,
         diagnosis_seconds=diagnosed - injected if injected is not None and diagnosed is not None else None,
+        faults_total=_integer(row.get("Mitigation.faults_total") or row.get("Diagnosis.faults_total")),
+        faults_fixed=_integer(row.get("Mitigation.faults_fixed")),
+        faults_diagnosed=_integer(row.get("Diagnosis.faults_diagnosed")),
+        composite_valid=_truthy(row.get("Injection.composite_valid") or row.get("Mitigation.composite_valid")),
+        per_fault_details={key: value for key, value in row.items() if ".fault_" in key},
     )
 
 

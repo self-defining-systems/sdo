@@ -29,6 +29,7 @@ from benchmarks.sregym.fastloop.composite import CompositeSettings
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
 from benchmarks.sregym.fastloop.records import load_records
+from benchmarks.sregym.faults.description import ProblemDescription
 from sdo.contracts import AgentResult, AgentTask, IncidentRequest, IncidentResult, to_canonical_json
 from tests.proto_messages import from_dict
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps
@@ -529,13 +530,14 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     monkeypatch.setattr(composite, "reader_for", lambda *_args: app.read)
     monkeypatch.setattr(
         fault_tracker,
-        "describe_sregym_faults",
+        "describe_sregym_problems",
         lambda ids, **_kwargs: {
-            problem: (
-                FaultSpec(
-                    "target_port" if "target_port" in problem else "incorrect_image",
-                    component_for(problem),
+            problem: ProblemDescription(
+                problem_id=problem,
+                faults=(
+                    FaultSpec("target_port" if "target_port" in problem else "incorrect_image", component_for(problem)),
                 ),
+                injection_order=(0,),
             )
             for problem in ids
         },

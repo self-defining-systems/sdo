@@ -8,6 +8,45 @@ from benchmarks.sregym.adapter import scripted_worker
 from sdo.contracts import DriftEvent, IncidentRequest, ObjectRef
 
 
+def test_scripted_source_repair_removes_injected_probe_when_source_has_none(monkeypatch) -> None:
+    import json
+
+    request = IncidentRequest(incident_id="repair", namespace="app")
+    commands = []
+    monkeypatch.setattr(
+        scripted_worker,
+        "_tool",
+        lambda *_args: {
+            "source": {
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": "frontend",
+                                    "image": "app:accepted",
+                                    "livenessProbe": {"tcpSocket": {"port": 80}},
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+    )
+    monkeypatch.setattr(scripted_worker, "_command", lambda argv, **_kwargs: commands.append(argv))
+
+    scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "frontend"})
+
+    patch = json.loads(commands[0][-1])["spec"]["template"]["spec"]["containers"][0]
+    # A strategic merge needs explicit null to delete an injected optional field.
+    assert "readinessProbe" in patch
+    assert patch["readinessProbe"] is None
+    assert patch["startupProbe"] is None
+    assert patch["livenessProbe"] == {"tcpSocket": {"port": 80}}
+    assert patch["image"] == "app:accepted"
+
+
 def test_scripted_drift_requires_source_mismatch_and_observed_listening_ports(monkeypatch, tmp_path: Path) -> None:
     from contextlib import nullcontext
 

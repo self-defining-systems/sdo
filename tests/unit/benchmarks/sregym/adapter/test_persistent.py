@@ -132,7 +132,9 @@ class FakeOps:
         self.events.append(("install", control))
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         mode = "paused" if paused else "active"
         self.events.append((mode, control_namespace))
         self.logs[control_namespace].append(
@@ -458,7 +460,9 @@ def test_recreated_namespace_regains_controller_access_before_resume_and_injecti
             elapsed[0] += 2
             return reused
 
-        def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+        def set_maintenance(
+            self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+        ) -> None:
             if not paused:
                 assert self.grants_present, "recreated app namespace has no controller RBAC"
             super().set_maintenance(control_namespace, paused=paused, generation=generation)
@@ -1450,3 +1454,54 @@ def test_teardown_preserves_pending_state_when_controller_inventory_fails(tmp_pa
     assert not any(event[0] == "delete" for event in ops.events)
     assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending is not None
     assert not (tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).exists()
+
+
+def test_invalid_deferred_injection_pauses_without_incident_or_receipt_wait(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    ops = FakeOps()
+    inputs = _inputs(tmp_path, "invalid")
+
+    def invalid():
+        raise InvalidInjectionError({"composite_valid": False})
+
+    with pytest.raises(InvalidInjectionError):
+        run_persistent_stage(inputs, ops=ops, run_lifecycle=lambda: True, inject=invalid, clock=_clock(ops))
+    assert ops.incidents == 0
+    assert ops.events[-1] == ("paused", inputs.runtime_config.control_namespace)
+    assert not any(event[0] in {"receipt", "reflected"} for event in ops.events)
+    outcome = json.loads((inputs.receipt_dir / "sdo_infrastructure_outcome.json").read_text())
+    assert outcome["infra_error"] == "injection_invalid"
+    assert outcome["incident_credit"] is False
+
+
+def test_validity_barrier_keeps_invalid_partial_injection_unobservable_to_responders() -> None:
+    from benchmarks.sregym.adapter.persistent import inject_while_paused
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    ops = FakeOps()
+    control = "hotel-sdo"
+    ops.logs[control] = []
+
+    def invalid():
+        assert ops.events[-1] == ("paused", control)
+        raise InvalidInjectionError({"partial_write": True})
+
+    with pytest.raises(InvalidInjectionError):
+        inject_while_paused(ops, control, "validity", invalid, clock=_clock(ops))
+    assert ops.events == [("paused", control)]
+
+
+def test_valid_injection_barrier_retains_the_healthy_observation_baseline() -> None:
+    from benchmarks.sregym.adapter.persistent import inject_while_paused
+
+    class BarrierOps(FakeOps):
+        def set_maintenance(self, control_namespace, *, paused, generation, preserve_baseline=False):
+            if paused:
+                assert preserve_baseline, "a valid fault must survive the observation pause"
+            super().set_maintenance(control_namespace, paused=paused, generation=generation)
+
+    ops = BarrierOps()
+    ops.logs["hotel-sdo"] = []
+    inject_while_paused(ops, "hotel-sdo", "valid", lambda: None, clock=_clock(ops))
+    assert ops.events == [("paused", "hotel-sdo"), ("active", "hotel-sdo")]

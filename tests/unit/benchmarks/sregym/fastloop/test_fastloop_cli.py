@@ -90,8 +90,9 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
     (tmp_path / "application_workspace").mkdir()
 
     class Worker:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+        def __init__(self, *_args: object, **kwargs: Any) -> None:
+            # Kubernetes caches KUBECONFIG at import time, before the cluster op.
+            assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "kubeconfigs/worker_0.kubeconfig")
 
         def __enter__(self) -> Worker:
             return self
@@ -429,11 +430,20 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
     monkeypatch.setattr(cli, "_sdo_agent", agent)
     monkeypatch.setattr(cli, "run_incidents", lambda *_args, **_kwargs: [])
     from benchmarks.sregym.fastloop.fault_tracker import FaultSpec
+    from benchmarks.sregym.faults.description import ProblemDescription
 
     monkeypatch.setattr(
-        "benchmarks.sregym.fastloop.fault_tracker.describe_sregym_faults",
+        "benchmarks.sregym.fastloop.fault_tracker.describe_sregym_problems",
         lambda ids, **_kwargs: {
-            problem_id: (FaultSpec("target_port", "reservation"), FaultSpec("incorrect_image", "rate"))
+            problem_id: ProblemDescription(
+                problem_id=problem_id,
+                composite=True,
+                faults=(
+                    FaultSpec("target_port", "reservation"),
+                    FaultSpec("incorrect_image", "rate", declared_index=1),
+                ),
+                injection_order=(0, 1),
+            )
             for problem_id in ids
         },
     )
@@ -603,7 +613,7 @@ def test_codex_prompt_and_oracle_cover_every_playbook_stream_incident(
         prompt = (tmp_path / "results" / f"{index:03d}_{'+'.join(ids)}" / "prompt.txt").read_text(encoding="utf-8")
         assert "Application: Hotel Reservation" in prompt
         assert all(problem not in prompt for problem in ids)
-        expected_faults = list(range(len(ids))) if len(ids) > 1 else [None]
+        expected_faults = [None]  # official aggregate oracle, including nested composites
         assert [
             fault for injected, fault, recovered in worker.oracles if injected == ids and not recovered
         ] == expected_faults

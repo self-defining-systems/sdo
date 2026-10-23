@@ -82,7 +82,6 @@ GB = 10**9
 DEFAULT_KIND_CLUSTER_PREFIX = "sregym-w"
 #: SREGym's default kind topology when ``kind_worker_nodes`` is 0.
 DEFAULT_KIND_WORKERS = 3
-AGENT_BASE_IMAGE = "sregym-agent-base:latest"
 #: Where each SDO image is defaulted when ``[agent.sdo_codex]`` names none (``config_to_env``).
 SDO_IMAGE_DEFAULTS = {
     "controller_image": "sdo-controller:v0.1.0",
@@ -252,6 +251,7 @@ class HostProbe(Protocol):
 
     home: Path
 
+    def suite_descriptions(self, config: ExperimentConfig, sregym_dir: Path) -> dict[str, Any]: ...
     def ipv4_neighbor_limit(self) -> int | None: ...
     def kickoff_import(self, command: str, workdir: Path, sregym_dir: Path, env: Mapping[str, str]) -> str | None: ...
     def free_bytes(self, path: Path) -> int | None: ...
@@ -285,6 +285,11 @@ class SystemHost:
         except (OSError, subprocess.SubprocessError):
             return None
         return completed.stdout if completed.returncode == 0 else None
+
+    def suite_descriptions(self, config: ExperimentConfig, sregym_dir: Path) -> dict[str, Any]:
+        from benchmarks.sregym.runner.suite import describe_suite
+
+        return {key: value.model_dump(mode="json") for key, value in describe_suite(config, sregym_dir).items()}
 
     def ipv4_neighbor_limit(self) -> int | None:
         """Read the Linux host's global IPv4 neighbor allocation ceiling."""
@@ -758,6 +763,33 @@ def _check_application_sources(ctx: _Context) -> PreflightCheck | None:
     return PreflightCheck("application-sources", "pass", f"{len(entries)} application sources present")
 
 
+def _check_suite_capabilities(ctx: _Context) -> PreflightCheck | None:
+    from benchmarks.sregym.faults.description import ProblemDescription, validate_suite
+
+    selected = [config for config in ctx.configs if config.agent == "sdo_codex"]
+    if not selected:
+        return None
+    descriptions: dict[str, Any] = {}
+    try:
+        for config in selected:
+            catalog = {
+                key: ProblemDescription.model_validate(value)
+                for key, value in ctx.host.suite_descriptions(config, ctx.sregym_dir).items()
+            }
+            if not catalog:
+                raise ValueError("suite selection resolved no problems")
+            validate_suite(catalog)
+            descriptions.update({key: value.model_dump(mode="json") for key, value in catalog.items()})
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        return PreflightCheck(
+            "suite-capabilities", "fail", str(exc), "select faults within SDO's application Role and snapshot scope"
+        )
+    ctx.facts["fault_descriptions"] = descriptions
+    return PreflightCheck(
+        "suite-capabilities", "pass", f"{len(descriptions)} problems within SDO repair/snapshot scope"
+    )
+
+
 def _check_codex_pins(ctx: _Context) -> PreflightCheck:
     dockerfile = ctx.project_root / "sdo" / "operator" / "Dockerfile.runtime"
     pin = dockerfile_arg(dockerfile, "CODEX_VERSION") if dockerfile.is_file() else None
@@ -822,8 +854,6 @@ def _check_sdo_images(ctx: _Context) -> PreflightCheck | None:
     images: dict[str, str] = {}
     for config in sdo_configs:
         images.update({f"{key}:{ref}": ref for key, ref in sdo_images(config).items()})
-    if "codex" in ctx.agents:
-        images[f"agent_base:{AGENT_BASE_IMAGE}"] = AGENT_BASE_IMAGE
     if ctx.images is not None:
         images = {f"{key}:{ref}": ref for key, ref in ctx.images.items()}
     if not images:
@@ -1091,6 +1121,7 @@ def run_preflight(
         _check_kickoff_import(ctx),
         _check_disk(ctx),
         _check_application_sources(ctx),
+        _check_suite_capabilities(ctx),
         _check_codex_pins(ctx),
         _check_agentshim(ctx),
         _check_sdo_images(ctx),

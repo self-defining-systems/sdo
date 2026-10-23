@@ -64,6 +64,7 @@ from benchmarks.sregym.protocol.conductor import (
     poll_stage_sync,
     signal_cleanup,
 )
+from benchmarks.sregym.protocol.injection import InvalidInjectionError
 from benchmarks.sregym.protocol.schema import READY_STAGES, TERMINAL_STAGES
 
 logger = logging.getLogger(__name__)
@@ -795,7 +796,14 @@ class _FaultGate:
     def _inject(self) -> None:
         if self._before_inject is not None:
             self._before_inject()
-        request_fault_injection(self._api_base)
+        from benchmarks.sregym.adapter.persistent import KubectlClusterOps, inject_while_paused
+
+        inject_while_paused(
+            KubectlClusterOps(),
+            self._namespace,
+            f"deferred-{uuid.uuid4().hex[:8]}",
+            lambda: request_fault_injection(self._api_base),
+        )
 
     def _run(self) -> None:
         try:
@@ -812,6 +820,8 @@ class _FaultGate:
 
     def join(self) -> None:
         self._thread.join(timeout=5)
+        if isinstance(self._error, InvalidInjectionError):
+            raise self._error
         if self._error is not None:
             raise FaultGateError(f"deferred fault was not injected: {self._error}") from self._error
         if not self.timings:
@@ -1001,7 +1011,11 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     )
     runtime_ready = time.monotonic()
     if gate is not None:
-        gate.join()
+        try:
+            gate.join()
+        except InvalidInjectionError:
+            _remove_sdo_jobs_before_benchmark_grading({}, control_namespace)
+            raise
     native = _native_install_for_run(args, repository, namespace, application, api_base)
     if native.kubeconfig is None:
         raise RuntimeError("native benchmark evidence requires an absolute trusted kubeconfig")
@@ -1022,6 +1036,26 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     return receipt
 
 
+def _finish_invalid_injection(args: argparse.Namespace, api_base: str, exc: InvalidInjectionError) -> int:
+    directory = _receipt_directory(args.logs_dir, _application_repository())
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "sdo_infrastructure_outcome.json").write_text(
+        json.dumps(
+            {
+                "infra_error": exc.infra_error,
+                "injection_evidence": exc.details,
+                "cleanup_error": exc.cleanup_error,
+                "incident_credit": False,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    signal_cleanup(api_base)
+    return 1 if exc.cleanup_error else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = _parse_args(argv)
@@ -1031,6 +1065,8 @@ def main(argv: list[str] | None = None) -> int:
         return _main_persistent(args, api_base)
     try:
         receipt = _run(args)
+    except InvalidInjectionError as exc:
+        return _finish_invalid_injection(args, api_base, exc)
     except Exception:
         logger.exception("production SDO incident lifecycle failed")
         return 1
@@ -1058,6 +1094,8 @@ def _main_persistent(args: argparse.Namespace, api_base: str) -> int:
         raise RuntimeError("sdo_codex requires defer_cleanup: true in the SREGym agent registry")
     try:
         resolution = _run_persistent(args, api_base, started)
+    except InvalidInjectionError as exc:
+        return _finish_invalid_injection(args, api_base, exc)
     except Exception:
         logger.exception("persistent SDO incident lifecycle failed")
         return 1

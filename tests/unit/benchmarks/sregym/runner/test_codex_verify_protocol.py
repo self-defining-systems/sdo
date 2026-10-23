@@ -10,7 +10,6 @@ snapshots: ``true`` maps to ``"full"``, ``false`` to ``"none"``.
 
 from __future__ import annotations
 
-import subprocess
 import textwrap
 from typing import TYPE_CHECKING
 
@@ -24,8 +23,6 @@ from benchmarks.sregym.runner.codex_baseline import (
     PROMPT_APPENDIX_ENV,
     VERIFY_PROTOCOL_PROMPT,
     CodexBaselineConfig,
-    PromptAppendixImageError,
-    ensure_agent_image_supports_prompt_appendix,
 )
 from benchmarks.sregym.runner.experiment import (
     ExperimentConfig,
@@ -254,43 +251,3 @@ def test_no_codex_baseline_prompt_carries_a_benchmark_tailored_token() -> None:
     for text in (CONCISE_VERIFY_PROMPT, FULL_VERIFY_PROMPT, EXEC_DISCLOSURE_PROMPT):
         for pattern, why in TAILORED_TOKENS:
             assert not re.search(pattern, text, re.IGNORECASE), why
-
-
-class _FakeDocker:
-    def __init__(self, *, image_exists: bool, has_hook: bool) -> None:
-        self.image_exists = image_exists
-        self.has_hook = has_hook
-        self.calls: list[list[str]] = []
-
-    def __call__(self, argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        self.calls.append(argv)
-        if argv[:3] == ["docker", "image", "inspect"]:
-            return subprocess.CompletedProcess(argv, 0 if self.image_exists else 1, "", "")
-        return subprocess.CompletedProcess(argv, 0 if self.has_hook else 1, "", "")
-
-
-def test_the_image_check_is_skipped_without_an_appendix() -> None:
-    docker = _FakeDocker(image_exists=True, has_hook=False)
-
-    ensure_agent_image_supports_prompt_appendix({}, run=docker)
-
-    assert docker.calls == []
-
-
-def test_a_missing_image_passes_because_sregym_builds_it_from_this_checkout() -> None:
-    docker = _FakeDocker(image_exists=False, has_hook=False)
-
-    ensure_agent_image_supports_prompt_appendix({PROMPT_APPENDIX_ENV: "x"}, run=docker)
-
-    assert len(docker.calls) == 1
-
-
-def test_a_stale_image_without_the_hook_is_rejected_with_the_rebuild_command() -> None:
-    docker = _FakeDocker(image_exists=True, has_hook=False)
-
-    with pytest.raises(PromptAppendixImageError, match="docker/agents/build.sh"):
-        ensure_agent_image_supports_prompt_appendix({PROMPT_APPENDIX_ENV: "x"}, run=docker)
-
-    ensure_agent_image_supports_prompt_appendix(
-        {PROMPT_APPENDIX_ENV: "x"}, run=_FakeDocker(image_exists=True, has_hook=True)
-    )

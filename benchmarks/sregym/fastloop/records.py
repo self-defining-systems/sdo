@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from benchmarks.sregym.protocol.injection import FaultComponent  # noqa: TC001 - Pydantic resolves this at runtime.
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -98,6 +100,10 @@ class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal["sdo.fastloop-incident/v1"] = SCHEMA_VERSION
+    infra_error: str | None = None
+    recovery_error: str | None = None
+    injection_evidence: dict[str, Any] = Field(default_factory=dict)
+    fault_components: list[FaultComponent] = Field(default_factory=list)
     run_id: str = Field(min_length=1)
     index: int = Field(ge=0)
     agent: AgentName
@@ -250,6 +256,7 @@ class AgentSummary(BaseModel):
 
     agent: AgentName
     incidents: int
+    infrastructure_outcomes: int = 0
     oracle_passed: int
     errors: int
     warm_path_fired: int
@@ -273,11 +280,12 @@ def summarize(records: list[IncidentRecord]) -> list[AgentSummary]:
     present = {record.agent for record in records}
     agents: list[AgentName] = [agent for agent in get_args(AgentName) if agent in present]
     for agent in sorted(agents):
-        selected = [record for record in records if record.agent == agent]
+        selected = [record for record in records if record.agent == agent and record.infra_error is None]
         rows.append(
             AgentSummary(
                 agent=agent,
                 incidents=len(selected),
+                infrastructure_outcomes=sum(1 for record in records if record.agent == agent and record.infra_error),
                 oracle_passed=sum(1 for record in selected if record.oracle is not None and record.oracle.success),
                 errors=sum(1 for record in selected if record.error),
                 warm_path_fired=sum(1 for record in selected if record.warm_path),

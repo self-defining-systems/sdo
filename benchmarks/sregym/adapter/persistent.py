@@ -59,6 +59,7 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.injection import InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import (
     ControllerObservation,
@@ -229,7 +230,9 @@ class ClusterOps(Protocol):
 
     def install(self, config: RuntimeConfig) -> bool: ...
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None: ...
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None: ...
 
     def runtime_state(self, control_namespace: str) -> dict[str, Any]: ...
 
@@ -321,12 +324,15 @@ class KubectlClusterOps:
         sync_existing(native)
         return install_existing(native).reused
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         kubeconfig = os.getenv("KUBECONFIG", "").strip()
         go_set_maintenance(
             control_namespace,
             paused=paused,
             generation=generation,
+            preserve_baseline=preserve_baseline,
             kubeconfig=Path(kubeconfig).resolve() if kubeconfig else None,
         )
 
@@ -355,7 +361,7 @@ class KubectlClusterOps:
         return inject_fault_after_resumed_baseline(
             control_namespace,
             generation,
-            inject=inject,
+            inject=lambda: inject_while_paused(self, control_namespace, generation, inject),
             kubectl_runner=kubectl,
             timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS * scale,
             poll_seconds=min(1.0, scale),
@@ -547,7 +553,32 @@ def run_persistent_stage(
     install_ready = clock.monotonic()
     generation = f"{inputs.stage_label}-{uuid.uuid4().hex[:8]}"
     ops.set_maintenance(control, paused=False, generation=generation)
-    gate_timings = ops.inject_after_resume(control, generation, inject)
+    try:
+        gate_timings = ops.inject_after_resume(control, generation, inject)
+    except InvalidInjectionError as exc:
+        # No incident exists: settle maintenance without waiting for response, reflection,
+        # acknowledgment, or a strict receipt, and retain a benchmark terminal record.
+        try:
+            paused = f"{generation}-injection-invalid"
+            ops.set_maintenance(control, paused=True, generation=paused)
+            wait_for_maintenance_ack(ops, control, paused, clock)
+        except Exception as cleanup_exc:
+            exc.cleanup_error = f"controller cleanup failed: {cleanup_exc}"
+        inputs.receipt_dir.mkdir(parents=True, exist_ok=True)
+        (inputs.receipt_dir / "sdo_infrastructure_outcome.json").write_text(
+            json.dumps(
+                {
+                    "infra_error": exc.infra_error,
+                    "injection_evidence": exc.details,
+                    "cleanup_error": exc.cleanup_error,
+                    "incident_credit": False,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raise
     injected = clock.monotonic()
     verified = _wait_for_verified_incident(
         ops,
@@ -1203,6 +1234,18 @@ def _log_records(logs: str) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             records.append(payload)
     return records
+
+
+def inject_while_paused(
+    ops: ClusterOps, control: str, generation: str, inject: Callable[[], None], *, clock: Clock | None = None
+) -> None:
+    """Keep partial injector writes behind maintenance until v2 validity is known."""
+    clock = clock or Clock()
+    paused = f"{generation}-validating-injection"
+    ops.set_maintenance(control, paused=True, generation=paused, preserve_baseline=True)
+    wait_for_maintenance_ack(ops, control, paused, clock)
+    inject()  # failure intentionally leaves maintenance paused
+    ops.set_maintenance(control, paused=False, generation=f"{generation}-injected")
 
 
 def wait_for_maintenance_ack(

@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 
 from benchmarks.sregym.fastloop.fault_tracker import (
-    COMPOSITE_FAULTS,
     FaultTracker,
     composite_faults,
     describe_sregym_faults,
@@ -28,7 +27,18 @@ def test_fault_description_uses_the_deployed_application_source(
     def run(_command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         assert kwargs["env"]["SREGYM_APP_SOURCE_DIR"] == str(source)
         return subprocess.CompletedProcess(
-            [], 0, stdout=json.dumps({"paired": [{"kind": "target_port", "component": "geo"}]})
+            [],
+            0,
+            stdout=json.dumps(
+                {
+                    "paired": {
+                        "schema_version": "sdo.sregym-fault-description/v1",
+                        "problem_id": "paired",
+                        "faults": [{"kind": "target_port", "component": "geo"}],
+                        "injection_order": [0],
+                    }
+                }
+            ),
         )
 
     monkeypatch.setattr(fault_tracker.subprocess, "run", run)
@@ -128,13 +138,6 @@ def test_registered_composites_declare_faults_in_injection_order() -> None:
         ("network_policy", "recommendation"),
     ]
     assert composite_faults("missing_configmap_hotel_reservation") == ()
-    assert set(COMPOSITE_FAULTS) == {
-        "composite3_hotel_geo_rate_recommendation",
-        "composite3b_hotel_profile_mongodb_geo_recommendation",
-        "composite3c_hotel_rate_mongodb_geo_user",
-        "composite4_hotel_profile_rate_recommendation_frontend",
-        "composite5_hotel_geo_rate_recommendation_frontend_user",
-    }
 
 
 def _deployment(ready: int, replicas: int = 1, *, updated: int | None = None) -> dict[str, Any]:
@@ -224,7 +227,11 @@ def test_all_playbook_stream_ids_resolve_to_registered_fault_probes_without_a_cl
         for ids in stream:
             faults = stream_faults(ids, catalog=catalog)
             assert faults
-            assert len(probes_for(faults, _reader({}))) == len(faults)
+            if all(fault.tracking_supported for fault in faults):
+                assert len(probes_for(faults, _reader({}))) == len(faults)
+            else:
+                with pytest.raises(ValueError, match="tracking unsupported"):
+                    probes_for(faults, _reader({}))
             if ids[0].startswith("mf__"):
                 assert len(faults) == 2
 

@@ -46,3 +46,17 @@ def test_load_firings_keeps_only_the_composites_own_firings(tmp_path: Path) -> N
 
     assert [f["fingerprint"] for f in load_firings(tmp_path)] == ["old", "new"]
     assert [f["fingerprint"] for f in load_firings(tmp_path, since="2026-10-01T07:05:00Z")] == ["new"]
+
+
+def test_sequence_uses_recorded_generated_description(tmp_path: Path, capsys) -> None:
+    from benchmarks.sregym.analysis.composite_sequence import main
+    from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription
+
+    problem = "mf__generated"
+    (tmp_path / "composite_000_generated.json").write_text(json.dumps({"problem_id": problem}))
+    description = ProblemDescription(
+        problem_id=problem, composite=True, faults=(FaultSpec("target_port", "geo"),), injection_order=(0,)
+    )
+    (tmp_path / "fault_descriptions.json").write_text(json.dumps({problem: description.model_dump(mode="json")}))
+    assert main([str(tmp_path)]) == 0
+    assert "target_port:geo: learned=no" in capsys.readouterr().out

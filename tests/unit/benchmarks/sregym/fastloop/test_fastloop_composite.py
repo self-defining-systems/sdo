@@ -34,6 +34,20 @@ PROBLEM = "composite3_hotel_geo_rate_recommendation"
 FAST = CompositeSettings(deadline_seconds=60, idle_seconds=5, stable_seconds=0.001, poll_seconds=0.01)
 
 
+@pytest.fixture(autouse=True)
+def registered_faults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "benchmarks.sregym.fastloop.composite.composite_faults",
+        lambda problem: (
+            FaultSpec("readiness", "geo"),
+            FaultSpec("configmap", "mongodb-rate"),
+            FaultSpec("network_policy", "recommendation"),
+        )
+        if problem == PROBLEM
+        else (),
+    )
+
+
 def _closure(incident_id: str, offset: int) -> dict[str, Any]:
     at = INJECTED + timedelta(seconds=offset)
     return {
@@ -86,7 +100,9 @@ class FakeOps:
         self.logs[control] = []
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         self.maintenance.append("paused" if paused else "active")
         self.logs[control_namespace].append(
             json.dumps(
@@ -286,7 +302,7 @@ def _inject() -> InjectionWindow:
 
 
 @pytest.mark.parametrize("recovery_oracle_failed", [False, True])
-def test_failed_composite_reset_restarts_controller_before_next_incident(
+def test_failed_composite_resets_only_after_verified_harness_recovery(
     tmp_path: Path, recovery_oracle_failed: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     class RestartOps(FakeOps):
@@ -336,6 +352,11 @@ def test_failed_composite_reset_restarts_controller_before_next_incident(
     with caplog.at_level("INFO"):
         rows = run_incidents(agent, Driver(), config, on_failed_incident=reset_failed)
 
+    if recovery_oracle_failed:
+        assert len(rows) == 1
+        assert rows[0].recovery_error is not None
+        assert resets == []
+        return
     assert len(rows) == 2
     assert rows[0].error is not None
     assert "oracle reported failure" in rows[0].error

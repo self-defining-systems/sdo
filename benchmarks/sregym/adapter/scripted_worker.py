@@ -100,11 +100,7 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
                                 "image": item["image"]
                                 if "@sha256:" in item["image"]
                                 else baseline_images.get(f"container[{item['name']}].image", item["image"]),
-                                **{
-                                    key: item[key]
-                                    for key in ("readinessProbe", "livenessProbe", "startupProbe")
-                                    if key in item
-                                },
+                                **{key: item.get(key) for key in ("readinessProbe", "livenessProbe", "startupProbe")},
                             }
                             for item in containers
                         ]

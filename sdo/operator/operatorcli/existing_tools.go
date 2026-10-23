@@ -56,6 +56,7 @@ func RunSyncExisting(ctx context.Context, cfg SyncExistingConfig) error {
 type MaintenanceConfig struct {
 	ControlNamespace, Generation, Kubeconfig string
 	Paused                                   bool
+	PreserveBaseline                         bool
 }
 
 func ParseMaintenanceLaunch(args []string) (MaintenanceConfig, error) {
@@ -66,6 +67,7 @@ func ParseMaintenanceLaunch(args []string) (MaintenanceConfig, error) {
 	flags.SetOutput(io.Discard)
 	control := flags.String("control-namespace", "", "operator namespace")
 	paused := flags.Bool("paused", false, "pause controller observation")
+	preserve := flags.Bool("preserve-baseline", false, "retain the healthy observation baseline across the pause")
 	generation := flags.String("generation", "", "unique redeploy generation")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes configuration")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -80,7 +82,7 @@ func ParseMaintenanceLaunch(args []string) (MaintenanceConfig, error) {
 	if *kubeconfig != "" && !filepath.IsAbs(*kubeconfig) {
 		return MaintenanceConfig{}, errors.New("kubeconfig path must be absolute")
 	}
-	return MaintenanceConfig{ControlNamespace: *control, Generation: *generation, Kubeconfig: *kubeconfig, Paused: *paused}, nil
+	return MaintenanceConfig{ControlNamespace: *control, Generation: *generation, Kubeconfig: *kubeconfig, Paused: *paused, PreserveBaseline: *preserve}, nil
 }
 
 func RunMaintenance(ctx context.Context, cfg MaintenanceConfig) error {
@@ -88,5 +90,5 @@ func RunMaintenance(ctx context.Context, cfg MaintenanceConfig) error {
 	if err != nil {
 		return err
 	}
-	return install.SetMaintenance(ctx, client, cfg.ControlNamespace, cfg.Paused, cfg.Generation)
+	return install.SetMaintenanceWithOptions(ctx, client, cfg.ControlNamespace, cfg.Paused, cfg.Generation, install.MaintenanceOptions{PreserveBaseline: cfg.PreserveBaseline})
 }
