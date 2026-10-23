@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
 
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
@@ -15,19 +19,56 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 )
 
 
-def test_recovery_restores_sdo_field_ownership(monkeypatch: Any, tmp_path: Path) -> None:
+def test_recovery_recreates_missing_objects_with_sdo_field_ownership(monkeypatch: Any, tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
-    def record(args: list[str], **_kwargs: Any) -> None:
+    def record(args: list[str], **_kwargs: Any) -> Any:
         calls.append(args)
+        return SimpleNamespace(stdout="")
 
     monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", record)
     KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", obj("Service", "reservation", spec={"ports": []}))
-    assert calls == [["apply", "--server-side", "--field-manager=sdo-deployer", "--force-conflicts", "-f", "-"]]
+    assert calls == [
+        ["get", "service/reservation", "-o", "json", "--ignore-not-found=true"],
+        ["apply", "--server-side", "--field-manager=sdo-deployer", "--force-conflicts", "-f", "-"],
+    ]
 
 
-if TYPE_CHECKING:
-    from pathlib import Path
+@pytest.mark.parametrize("literal_baseline", [True, False])
+def test_restore_replaces_environment_value_source_after_another_manager_changed_it(
+    monkeypatch: Any, tmp_path: Path, literal_baseline: bool
+) -> None:
+    literal = {"name": "DATABASE_URL", "value": "synthetic-database"}
+    reference = {"name": "DATABASE_URL", "valueFrom": {"secretKeyRef": {"name": "synthetic-db", "key": "url"}}}
+    expected, injected = (literal, reference) if literal_baseline else (reference, literal)
+    baseline = obj(
+        "Deployment", "catalog", spec={"template": {"spec": {"containers": [{"name": "catalog", "env": [expected]}]}}}
+    )
+    live = deepcopy(baseline)
+    live["metadata"]["resourceVersion"] = "17"
+    live["spec"]["template"]["spec"]["containers"][0]["env"] = [injected]
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(live))
+        if args[0] == "apply":
+            # SSA preserves fields owned by the injector, creating an invalid EnvVar union.
+            raise RuntimeError("valueFrom may not be specified when value is not empty")
+        assert args[:3] == ["patch", "deployment/catalog", "--type=json"]
+        for operation in json.loads(Path(args[4]).read_text(encoding="utf-8")):
+            if operation["op"] == "test":
+                assert operation["path"] == "/metadata/resourceVersion"
+                assert operation["value"] == live["metadata"]["resourceVersion"]
+            else:
+                assert operation["path"] == "/spec"
+                live["spec"] = operation["value"]
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+
+    KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", baseline)
+
+    assert live["spec"] == baseline["spec"]
 
 
 def obj(kind: str, name: str, namespace: str = "hotel", **fields: Any) -> dict[str, Any]:
