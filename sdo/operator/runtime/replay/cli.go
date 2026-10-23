@@ -212,12 +212,16 @@ func Run(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.
 			}
 		}
 		for _, r := range rows {
+			if r.ExpectedMatch && !strings.HasPrefix(r.ProgramID, "detector:") && len(r.Detectors["faulted"]) == 0 {
+				r.Status = "failed"
+				r.Errors = append(r.Errors, "matching program has no linked detector")
+			}
 			if err = encoder.Encode(r); err != nil {
 				fmt.Fprintln(summary, err)
 				return 2
 			}
 			count++
-			if r.Status != "replayed" && r.Status != "negative" {
+			if r.Status != "replayed" && r.Status != "negative" && r.Status != "detected" {
 				failed++
 			}
 			for _, fp := range r.FalsePositives {

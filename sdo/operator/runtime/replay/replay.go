@@ -3,9 +3,10 @@
 package replay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"reflect"
 	"slices"
 	"time"
 
@@ -28,14 +29,16 @@ type Case struct {
 	Revisions map[string][]*unstructured.Unstructured
 }
 type DetectorResult struct {
-	ID     string `json:"id"`
-	Active int    `json:"active"`
-	Error  string `json:"error,omitempty"`
+	ID       string                   `json:"id"`
+	Active   int                      `json:"active"`
+	Error    string                   `json:"error,omitempty"`
+	Bindings []program.ObjectBindings `json:"bindings,omitempty"`
 }
 type Result struct {
 	ProgramID      string                      `json:"program_id"`
 	CaseID         string                      `json:"case_id"`
 	Status         string                      `json:"status"`
+	BoundObjects   program.ObjectBindings      `json:"bound_objects,omitempty"`
 	ExpectedMatch  bool                        `json:"expected_match"`
 	Healthy        program.Verdict             `json:"healthy"`
 	Faulted        program.Verdict             `json:"faulted"`
@@ -65,12 +68,17 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		return fail(fmt.Errorf("case namespace is missing or inconsistent"))
 	}
 	bindings := bindingsFor(p.Spec(), c.Corpus.Bindings)
+	r.BoundObjects = bindings.Objects
+	source, err := newSource(c)
+	if err != nil {
+		return fail(err)
+	}
 	healthyBindings := bindingsFor(p.Spec(), c.Corpus.PeerBindings)
 	if len(c.Corpus.PeerBindings.Objects) == 0 && len(c.Corpus.PeerBindings.Values) == 0 {
 		healthyBindings = bindings
 	}
-	r.Healthy = program.RunDiagnose(ctx, p, &sdktest.ReplayReadView{Snapshot: c.Corpus.Healthy, Calls: c.Corpus.PhaseRecordings("healthy")}, healthyBindings, 5*time.Second)
-	r.Faulted = program.RunDiagnose(ctx, p, &sdktest.ReplayReadView{Snapshot: c.Corpus.Open, Calls: c.Corpus.PhaseRecordings("open")}, bindings, 5*time.Second)
+	r.Healthy = program.RunDiagnose(ctx, p, newReadView(ctx, c.Corpus.Healthy, c.Corpus.PhaseRecordings("healthy"), source), healthyBindings, 5*time.Second)
+	r.Faulted = program.RunDiagnose(ctx, p, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, 5*time.Second)
 	r.Detectors["healthy"] = detect(ctx, detectors, c.Corpus.Healthy)
 	r.Detectors["faulted"] = detect(ctx, detectors, c.Corpus.Open)
 	if r.Healthy.Result != program.NoMatch {
@@ -112,6 +120,15 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 				r.Errors = append(r.Errors, "faulted detector "+d.ID+": "+d.Error)
 			}
 		}
+		for _, row := range r.Detectors["faulted"] {
+			for _, actual := range row.Bindings {
+				for key, want := range bindings.Objects {
+					if got, ok := actual[key]; ok && got != want {
+						r.Errors = append(r.Errors, "detector binding differs from labeled object: "+key)
+					}
+				}
+			}
+		}
 		if !active {
 			r.Errors = append(r.Errors, "matching detector did not fire")
 		}
@@ -122,7 +139,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if m == nil {
 		return fail(fmt.Errorf("matching program has no mitigator"))
 	}
-	plan, err := m.Mitigate(ctx, &sdktest.ReplayReadView{Snapshot: c.Corpus.Open, Calls: c.Corpus.PhaseRecordings("open")}, bindings)
+	plan, err := m.Mitigate(ctx, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings)
 	if err != nil {
 		return fail(fmt.Errorf("Mitigate: %w", err))
 	}
@@ -133,10 +150,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err != nil {
 		return fail(err)
 	}
-	source, err := newSource(c)
-	if err != nil {
-		return fail(err)
-	}
+	r.Effects = append(r.Effects, "simulated:apiserver-metadata")
 	const commit = "offline-accepted"
 	incident := operator.IncidentRequest{IncidentID: c.ID, Application: c.Corpus.Open.NamespaceName, Namespace: c.Corpus.Open.NamespaceName, SourceCommit: commit, RepairPolicy: "recorded-actions"}
 	// Corpus bindings and detector findings, rather than the proposed plan, name
@@ -174,10 +188,14 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 			authority.Config.WebhookNames = append(authority.Config.WebhookNames, ref.Name)
 		}
 	}
+	observedObjects, err := snapshotObjects(c.Corpus.Open)
+	if err != nil {
+		return fail(err)
+	}
 	waiter := &reaction{cluster: client, plan: plan, effects: &r.Effects}
-	verifier := &postVerifier{cluster: client, p: p, bindings: bindings, detectors: detectors, result: &r}
+	verifier := &postVerifier{cluster: client, source: source, p: p, bindings: bindings, detectors: detectors, result: &r, reaction: waiter}
 	executor := operator.PlanExecutor{Client: client, Source: source, SourceAuthority: authority, AcceptedRevision: func() string { return commit }, Rollouts: waiter, Verifier: verifier, Values: program.ValueInputs{Spec: p.Spec(), Bindings: bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
-		o := client.initial[ref]
+		o := observedObjects[ref]
 		if o == nil {
 			return nil, fmt.Errorf("observed object unavailable")
 		}
@@ -187,7 +205,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	r.Actions = application.ActionReports
 	for _, a := range application.ActionReports {
 		if a.Status == "applied" {
-			r.Effects = append(r.Effects, fmt.Sprintf("real:action:%d", a.ActionIndex))
+			r.Effects = append(r.Effects, fmt.Sprintf("real:%T:action:%d", plan.Actions[a.ActionIndex], a.ActionIndex))
 		}
 	}
 	if err != nil {
@@ -238,6 +256,9 @@ func detect(ctx context.Context, ds []sdk.Detector, s sdktest.Snapshot) []Detect
 func Matrix(ctx context.Context, registry program.ProgramRegistry, detectors []sdk.Detector, cases []Case) []Result {
 	out := []Result{}
 	for _, c := range cases {
+		for _, detector := range detectors {
+			out = append(out, checkDetector(ctx, detector, c))
+		}
 		for _, spec := range registry.List() {
 			p, _ := registry.Diagnoser(spec.ID)
 			m, _ := registry.Mitigator(spec.ID)
@@ -255,18 +276,23 @@ func Matrix(ctx context.Context, registry program.ProgramRegistry, detectors []s
 
 type postVerifier struct {
 	cluster   *cluster
+	source    *source
 	p         program.Diagnoser
 	bindings  program.Bindings
 	detectors []sdk.Detector
 	result    *Result
+	reaction  *reaction
 }
 
 func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
+	if err := v.reaction.finish(ctx); err != nil {
+		return false, err
+	}
 	s, err := v.cluster.snapshot(ctx)
 	if err != nil {
 		return false, err
 	}
-	v.result.Post = program.RunDiagnose(ctx, v.p, &sdktest.ReplayReadView{Snapshot: s}, v.bindings, 5*time.Second)
+	v.result.Post = program.RunDiagnose(ctx, v.p, newReadView(ctx, s, nil, v.source), v.bindings, 5*time.Second)
 	v.result.Detectors["post"] = detect(ctx, v.detectors, s)
 	clear := v.result.Post.Result == program.NoMatch
 	for _, d := range v.result.Detectors["post"] {
@@ -290,6 +316,17 @@ func checkWrites(ctx context.Context, c *cluster, a operator.PlanApplicationResu
 			expected[patch.Ref] = patch.After.DeepCopy()
 		}
 	}
+	for ref := range c.simDeleted {
+		delete(expected, ref)
+	}
+	for ref, o := range c.simCreated {
+		expected[ref] = o.DeepCopy()
+	}
+	for ref, status := range c.simStatus {
+		if o := expected[ref]; o != nil {
+			o.Object["status"] = status
+		}
+	}
 	actual, err := c.objects(ctx)
 	if err != nil {
 		return err
@@ -299,7 +336,9 @@ func checkWrites(ctx context.Context, c *cluster, a operator.PlanApplicationResu
 		if got == nil {
 			return fmt.Errorf("unrelated object disappeared: %s/%s", ref.Kind, ref.Name)
 		}
-		if !reflect.DeepEqual(comparable(o), comparable(got)) {
+		left, leftErr := json.Marshal(comparable(o))
+		right, rightErr := json.Marshal(comparable(got))
+		if leftErr != nil || rightErr != nil || !bytes.Equal(left, right) {
 			return fmt.Errorf("unrelated fields changed: %s/%s", ref.Kind, ref.Name)
 		}
 		delete(actual, ref)
@@ -311,7 +350,7 @@ func checkWrites(ctx context.Context, c *cluster, a operator.PlanApplicationResu
 }
 func comparable(o *unstructured.Unstructured) map[string]any {
 	x := o.DeepCopy()
-	delete(x.Object, "status")
+
 	x.SetUID("")
 	x.SetResourceVersion("")
 	x.SetGeneration(0)
@@ -323,7 +362,10 @@ func comparable(o *unstructured.Unstructured) map[string]any {
 // client-go's tracker is synthesized. No action implementation lives here.
 type cluster struct {
 	operator.TypedPlanClient
-	fake     *kubefake.Clientset
-	initial  map[sdk.ObjectRef]*unstructured.Unstructured
-	original sdktest.Snapshot
+	fake       *kubefake.Clientset
+	initial    map[sdk.ObjectRef]*unstructured.Unstructured
+	original   sdktest.Snapshot
+	simCreated map[sdk.ObjectRef]*unstructured.Unstructured
+	simDeleted map[sdk.ObjectRef]bool
+	simStatus  map[sdk.ObjectRef]map[string]any
 }

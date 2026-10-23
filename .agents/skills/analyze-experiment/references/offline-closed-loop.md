@@ -1,0 +1,13 @@
+# Offline closed-loop reports
+
+`sdo/operator/cmd/sdo-replay` builds the accepted program/detector registrations through the production builder, then runs `runtime/replay` on explicit CorpusCase fixtures and accepted source manifests. Reports are JSONL outside the repository. They are synthetic offline evidence, never independent live outcomes, program trust credits, broker ACKs or benchmark receipts.
+
+Each row has `program_id`, `case_id`, `status`, `expected_match`, `healthy`, `faulted`, `post`, `detectors` by phase, bound object identities, action statuses/value provenance, `effects`, `false_positives`, `errors`, and `duration_ms`. Detector-only matrix rows use `program_id: detector:<id>` and status `detected` or `negative` when correct; program rows use `replayed` or `negative`. `failed` and `refused` never prove repair. A passing detector-only row proves detection, not mitigation.
+
+`real:program.<Action>:action:<index>` means the production PlanExecutor applied the action through the fake Kubernetes client. `simulated:apiserver-metadata`, `simulated:rollout-status:<kind>/<name>`, `simulated:pod-recreation:<old-name>` and `simulated:pod-ready:<new-name>` disclose assumptions absent from client-go. Ready is simulated, not evidence of successful scheduling, application startup, network connectivity or correct credentials. Exec has no transport or new RBAC grant and reports refused. Unsupported post-plan primitive observations remain Unknown and fail; fixed recordings never supply a post-plan answer. Source diffs are recomputed from the mutated state and explicit accepted manifests. Rollback needs explicit revision fixtures.
+
+The checker compares final objects with production executor after-images, plus explicitly named controller reactions, and checks other fields/objects for unintended changes. Matrix mode evaluates every detector and Diagnose on every fixture; root-cause labels identify matching families and detector Playbooks associate detectors with those families. Missing bindings, observation errors and Unknown remain failures. The CLI requires a linked detector for every expected matching program.
+
+Accepted source inputs use per-case `accepted.yaml` or `accepted.json`, or a shared `-source` file. Empty source inventories must be explicit. No Secret manifests belong in these inputs. Timing summaries measure replay after one compilation; distinguish repeated execution of one fixture from distinct fixtures and from a live experiment.
+
+The existing SDK-only `sdktest.CheckMitigation` remains a compatibility helper for existing validation callers. Its legacy `skipped_unreplayable_effect` note is not a closed-loop result and proves no repair; the runtime checker never emits that status.

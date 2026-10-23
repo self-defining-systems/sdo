@@ -26,6 +26,16 @@ var resources = []resource{
 	{"configMaps", "v1", "ConfigMap", "configmaps"}, {"services", "v1", "Service", "services"}, {"pods", "v1", "Pod", "pods"}, {"deployments", "apps/v1", "Deployment", "deployments"}, {"statefulSets", "apps/v1", "StatefulSet", "statefulsets"}, {"replicaSets", "apps/v1", "ReplicaSet", "replicasets"}, {"horizontalPodAutoscalers", "autoscaling/v2", "HorizontalPodAutoscaler", "horizontalpodautoscalers"}, {"podDisruptionBudgets", "policy/v1", "PodDisruptionBudget", "poddisruptionbudgets"}, {"endpoints", "v1", "Endpoints", "endpoints"}, {"endpointSlices", "discovery.k8s.io/v1", "EndpointSlice", "endpointslices"}, {"networkPolicies", "networking.k8s.io/v1", "NetworkPolicy", "networkpolicies"}, {"events", "v1", "Event", "events"},
 }
 
+var scopedResources = []resource{
+	{"deployments", "apps/v1", "Deployment", "deployments"}, {"services", "v1", "Service", "services"}, {"endpoints", "v1", "Endpoints", "endpoints"},
+	{"mutating_webhooks", "admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration", "mutatingwebhookconfigurations"},
+	{"validating_webhooks", "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", "validatingwebhookconfigurations"},
+}
+
+func allResources() []resource {
+	out := append([]resource{}, resources...)
+	return append(out, scopedResources[3:]...)
+}
 func (r resource) gvk() schema.GroupVersionKind {
 	return schema.FromAPIVersionAndKind(r.version, r.kind)
 }
@@ -44,10 +54,21 @@ func snapshotObjects(s sdktest.Snapshot) (map[sdk.ObjectRef]*unstructured.Unstru
 	if err = json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
 	}
+	var scoped map[string]json.RawMessage
+	if err = json.Unmarshal(fields["scoped_observation"], &scoped); err != nil {
+		return nil, err
+	}
 	out := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	for _, r := range resources {
+	for index, r := range append(append([]resource{}, resources...), scopedResources...) {
 		var items []map[string]any
-		if err = json.Unmarshal(fields[r.field], &items); err != nil {
+		rawField := fields[r.field]
+		if index >= len(resources) {
+			rawField = scoped[r.field]
+		}
+		if len(rawField) == 0 {
+			continue
+		}
+		if err = json.Unmarshal(rawField, &items); err != nil {
 			return nil, err
 		}
 		for _, item := range items {
@@ -63,7 +84,7 @@ func snapshotObjects(s sdktest.Snapshot) (map[sdk.ObjectRef]*unstructured.Unstru
 			}
 			o.SetAPIVersion(r.version)
 			o.SetKind(r.kind)
-			if o.GetNamespace() == "" {
+			if o.GetNamespace() == "" && index < len(resources) {
 				o.SetNamespace(s.NamespaceName)
 			}
 			ref := objectRef(o)
@@ -131,11 +152,11 @@ func newCluster(s sdktest.Snapshot) (*cluster, error) {
 }
 func (c *cluster) objects(ctx context.Context) (map[sdk.ObjectRef]*unstructured.Unstructured, error) {
 	out := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	for _, r := range resources {
+	for _, r := range allResources() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		list, e := c.fake.Tracker().List(r.gvr(), r.gvk(), c.original.NamespaceName)
+		list, e := c.fake.Tracker().List(r.gvr(), r.gvk(), "")
 		if e != nil {
 			return nil, e
 		}
@@ -176,15 +197,35 @@ func (c *cluster) snapshot(ctx context.Context) (sdktest.Snapshot, error) {
 	if err != nil {
 		return sdktest.Snapshot{}, err
 	}
-	fields := map[string]any{"namespace": c.original.NamespaceName, "scoped_observation": c.original.ScopedSnapshot}
+	scopedRaw, _ := json.Marshal(c.original.ScopedSnapshot)
+	var scoped map[string]any
+	if err = json.Unmarshal(scopedRaw, &scoped); err != nil {
+		return sdktest.Snapshot{}, err
+	}
+	fields := map[string]any{"namespace": c.original.NamespaceName, "scoped_observation": scoped}
 	for _, r := range resources {
 		items := []any{}
 		for ref, o := range objects {
-			if ref.APIVersion == r.version && ref.Kind == r.kind {
+			if ref.APIVersion == r.version && ref.Kind == r.kind && ref.Namespace == c.original.NamespaceName {
 				items = append(items, o.Object)
 			}
 		}
 		fields[r.field] = items
+	}
+	for _, r := range scopedResources {
+		items := []any{}
+		for ref, o := range objects {
+			if ref.APIVersion != r.version || ref.Kind != r.kind {
+				continue
+			}
+			for _, target := range c.original.ScopedSnapshot.Scope.Targets {
+				if target.APIVersion == ref.APIVersion && target.Kind == ref.Kind && target.Namespace == ref.Namespace && (target.Name == "" || target.Name == ref.Name) {
+					items = append(items, o.Object)
+					break
+				}
+			}
+		}
+		scoped[r.field] = items
 	}
 	raw, err := json.Marshal(fields)
 	if err != nil {
@@ -236,6 +277,9 @@ func (s *source) AcceptedManifest(_ context.Context, _ string, ref sdk.ObjectRef
 	}
 	return nil, operator.ErrAcceptedManifestAbsent
 }
+func (s *source) AcceptedScopedManifest(ctx context.Context, commit, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return s.AcceptedManifest(ctx, commit, ref)
+}
 func (s *source) Revision(_ context.Context, ref sdk.ObjectRef, revision string) (*unstructured.Unstructured, error) {
 	if o := s.revisions[revision][ref]; o != nil {
 		return o.DeepCopy(), nil
@@ -250,13 +294,14 @@ func (s *source) AcceptedManifestRefs(context.Context, string, string) ([]sdk.Ob
 	return out, nil
 }
 
-// reaction never copies the fixed fixture. It models rollout status only;
-// application readiness, pod recreation and network/exec outcomes are unknown
-// until an explicitly supported model is supplied.
+// reaction never copies the fixed fixture. Rollout status and controller-owned
+// pod recreation/readiness are explicit simulation assumptions; external
+// network and exec observations are never invented.
 type reaction struct {
 	cluster *cluster
 	plan    program.Plan
 	effects *[]string
+	done    map[int]bool
 }
 
 func (w *reaction) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
@@ -275,6 +320,18 @@ func (w *reaction) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 		if err = w.cluster.Patch(ctx, ref, types.MergePatchType, raw); err != nil {
 			return err
 		}
+		if w.cluster.simStatus == nil {
+			w.cluster.simStatus = map[sdk.ObjectRef]map[string]any{}
+		}
+		observed, err := w.cluster.Get(ctx, ref)
+		if err != nil {
+			return err
+		}
+		recorded, _, err := unstructured.NestedMap(observed.Object, "status")
+		if err != nil {
+			return err
+		}
+		w.cluster.simStatus[ref] = recorded
 		*w.effects = append(*w.effects, "simulated:rollout-status:"+ref.Kind+"/"+ref.Name)
 	}
 	return nil
