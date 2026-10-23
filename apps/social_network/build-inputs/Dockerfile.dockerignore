@@ -1,0 +1,10 @@
+# Preserve the pinned socialNetwork/.dockerignore for the shared service build.
+*
+!/src/
+!/CMakeLists.txt
+!/cmake/
+!/datasets/
+!/gen-cpp/
+!/scripts/
+!/third_party/
+!/wrk2/
