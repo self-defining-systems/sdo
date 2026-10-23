@@ -439,6 +439,7 @@ class KubectlClusterOps:
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
+        self.set_maintenance(control_namespace, paused=False, generation=generation)
         scale = float(os.getenv("SDO_TIME_SCALE", "1"))
         return inject_fault_after_resumed_baseline(
             control_namespace,
@@ -640,7 +641,6 @@ def run_persistent_stage(
     known = _known_incident_ids(ops.runtime_state(control))
     install_ready = clock.monotonic()
     generation = f"{inputs.stage_label}-{uuid.uuid4().hex[:8]}"
-    ops.set_maintenance(control, paused=False, generation=generation)
     try:
         gate_timings = ops.inject_after_resume(control, generation, inject)
     except InvalidInjectionError as exc:

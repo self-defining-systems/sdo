@@ -172,6 +172,7 @@ class FakeOps:
     def inject_after_resume(
         self, control_namespace: str, generation: str, inject: Callable[[], None]
     ) -> dict[str, float]:
+        self.set_maintenance(control_namespace, paused=False, generation=generation)
         assert self.logs[control_namespace][-1] == json.dumps(
             {"controller_maintenance": "active", "maintenance_generation": generation}
         )

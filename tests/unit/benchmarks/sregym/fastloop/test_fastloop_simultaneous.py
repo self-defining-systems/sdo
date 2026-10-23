@@ -40,8 +40,6 @@ def test_faults_are_injected_while_the_controller_is_paused_and_it_resumes_after
     events: list[str] = []
     ops = _ops(events)
 
-    ops.set_maintenance("ctl", paused=False, generation="g1")
-    assert events == []  # the resume is deferred until the faults are in
     timings = ops.inject_after_resume("ctl", "g1", lambda: events.append("inject"))
 
     assert events == ["pause:g1-presim", "ack:g1-presim", "inject", "resume:g1"]
@@ -56,6 +54,17 @@ def test_pausing_and_other_calls_pass_through() -> None:
 
     assert events == ["pause:g2"]
     assert ops.controller_pod("ctl") == "pod"
+
+
+def test_post_injection_resume_passes_through_for_rendered_closeout() -> None:
+    events: list[str] = []
+    ops = _ops(events)
+    ops.inject_after_resume("ctl", "first", lambda: events.append("inject:first"))
+    ops.set_maintenance("ctl", paused=True, generation="after-repair")
+
+    ops.set_maintenance("ctl", paused=False, generation="publication")
+
+    assert events[-1] == "resume:publication"
 
 
 def test_cli_flag_is_opt_in() -> None:

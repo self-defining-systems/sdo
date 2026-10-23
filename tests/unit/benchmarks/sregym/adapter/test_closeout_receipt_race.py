@@ -244,3 +244,28 @@ def test_rendered_closeout_follows_progress_and_reports_controller_failure(
             _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", clock)
         assert 600 <= now[0] < 601
     assert any(event[0] == "paused" for event in ops.events)
+
+
+def test_rendered_closeout_resumes_through_the_inject_before_resume_wrapper(
+    tmp_path: Path, repaired_source_lock
+) -> None:
+    import json
+
+    from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
+    from benchmarks.sregym.fastloop.simultaneous import InjectBeforeResumeOps
+
+    config, lock, repair = repaired_source_lock
+
+    class PublishingOps(FakeOps):
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            if any(event[0] == "active" for event in self.events):
+                lock.write_text(json.dumps({"source_commit": repair}))
+            return {"schema_version": "sdo.production-receipt/v2", "native_ledger": {"acknowledged": True}}
+
+    inner = PublishingOps()
+    inner.logs[config.control_namespace] = []
+    ops = InjectBeforeResumeOps(inner)
+    receipt = _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", _clock(inner), timeout=5)
+
+    assert receipt["native_ledger"]["acknowledged"]
+    assert [event[0] for event in inner.events] == ["active", "paused", "logs"]
