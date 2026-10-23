@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"os"
-	"path/filepath"
 	"sdo.dev/operator/memory/layout"
 	"sync"
 	"time"
@@ -463,6 +461,9 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	if err != nil {
 		return nil, err
 	}
+	if l.Request.ObservationGeneration != "" && l.Request.ObservationGeneration != observationGeneration(snapshot) {
+		return nil, fmt.Errorf("observation scope changed; incident diagnosis requires fresh investigation")
+	}
 	if l.ReadView == nil {
 		return nil, errors.New("live read view is unavailable")
 	}
@@ -471,24 +472,8 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 			return nil, err
 		}
 	}
-	if l.CorpusSessionRoot != "" && l.capturePhase == "open@detect" {
-		dir, err := memory.IncidentCorpusDir(l.CorpusSessionRoot, l.Request.IncidentID)
-		if err != nil {
-			return nil, err
-		}
-		data, err := os.ReadFile(filepath.Join(dir, "open@detect.json"))
-		if err != nil {
-			return nil, err
-		}
-		var captured sdktest.Snapshot
-		if err := json.Unmarshal(data, &captured); err != nil {
-			return nil, err
-		}
-		if observationGeneration(captured) != observationGeneration(snapshot) {
-			return nil, fmt.Errorf("observation scope changed; open capture is historical evidence only")
-		}
-		snapshot = captured
-	}
+	// Captures are immutable historical evidence. Every operational diagnosis,
+	// including a resumed initial diagnosis, uses this attempt's fresh snapshot.
 	view := l.ReadView(snapshot)
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
 		phase := l.capturePhase

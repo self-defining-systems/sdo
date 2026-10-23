@@ -175,8 +175,8 @@ func TestResponderRestartPlansFromLiveViewInsteadOfCapturedMatch(t *testing.T) {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}
 	request.InitialProgramRuns = preparer.InitialDiagnose(context.Background())
-	if len(request.InitialProgramRuns) == 0 || request.InitialProgramRuns[0].Verdict.Result != program.Match {
-		t.Fatalf("dispatch diagnosis missed captured image-pull state: %+v", request.InitialProgramRuns)
+	if len(request.InitialProgramRuns) == 0 || request.InitialProgramRuns[0].Verdict.Result != program.NoMatch {
+		t.Fatalf("dispatch diagnosis reused captured image-pull state: %+v", request.InitialProgramRuns)
 	}
 	loop := NewResponderLoop(request, registry, staticProvider{snapshot: recovered}, nil, PlanExecutor{Client: client}, 5)
 	loop.CorpusSessionRoot = root

@@ -101,7 +101,7 @@ func TestScopedClosureGenerationSeededCuts(t *testing.T) {
 
 func TestScopedDiagnosisRejectsObsoleteOpenCapture(t *testing.T) {
 	root := t.TempDir()
-	request := IncidentRequest{IncidentID: "generation", Namespace: "app"}
+	request := IncidentRequest{IncidentID: "generation", Namespace: "app", ObservationGeneration: "S1"}
 	phase := "open@detect"
 	snapshot := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: sdk.ScopedSnapshot{Version: 1, Generation: "S1"}}
 	loop := ResponderLoop{Request: request, CorpusSessionRoot: root, capturePhase: phase, Provider: staticProvider{snapshot: snapshot}, ReadView: func(s sdk.DetectionContext) program.ReadView { return LiveReadView{DetectionContext: s} }}

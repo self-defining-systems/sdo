@@ -33,20 +33,7 @@ func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snap
 		if _, ok := active[finding.DetectorID]; !ok {
 			active[finding.DetectorID] = nil
 		}
-		resolved := false
-		err := fmt.Errorf("accepted source view is unavailable")
-		if c.drift != nil && c.drift.View != nil {
-			if snapshot == nil {
-				snapshot, err = c.provider.Snapshot(ctx)
-			} else {
-				err = nil
-			}
-			if err == nil {
-				diff, diffErr := c.drift.View(snapshot).DiffAgainstSource(finding.PrimaryResource)
-				err = diffErr
-				resolved = err == nil && (diff.SourceAbsent || driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == ""))
-			}
-		}
+		resolved, err := c.closureSourceRestored(ctx, snapshot, finding, events)
 		if !resolved {
 			clear = false
 			active[finding.DetectorID] = append(active[finding.DetectorID], finding)
@@ -76,4 +63,21 @@ func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snap
 		}
 	}
 	return clear
+}
+
+// closureSourceRestored is also used at the broker handoff, where a restored
+// closure has no active incident request and cannot reuse the old source check.
+func (c *Controller) closureSourceRestored(ctx context.Context, snapshot sdk.DetectionContext, finding sdk.Finding, events []sdk.DriftEvent) (bool, error) {
+	if c.drift == nil || c.drift.View == nil {
+		return false, fmt.Errorf("accepted source view is unavailable")
+	}
+	if snapshot == nil {
+		var err error
+		snapshot, err = c.provider.Snapshot(ctx)
+		if err != nil {
+			return false, err
+		}
+	}
+	diff, err := c.drift.View(snapshot).DiffAgainstSource(finding.PrimaryResource)
+	return err == nil && (diff.SourceAbsent || driftFieldsRestored(diff, events) || (!diff.Changed && diff.Text == "")), err
 }
