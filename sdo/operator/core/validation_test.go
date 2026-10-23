@@ -6,8 +6,18 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
+
+func TestValidateDetectorsAcceptsTheServiceReachabilityWatches(t *testing.T) {
+	detector := validationDetector{spec: sdk.DetectorSpec{
+		ID: "service-reachability", Interval: time.Second, Watches: servicehealth.ReachabilityWatches(),
+	}}
+	if err := ValidateDetectors([]sdk.Detector{detector}); err != nil {
+		t.Fatalf("service reachability watches must be supported: %v", err)
+	}
+}
 
 func TestValidateDetectorsAcceptsTheSyntheticTrafficWatch(t *testing.T) {
 	detector := validationDetector{spec: sdk.DetectorSpec{

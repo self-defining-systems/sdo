@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -11,6 +12,8 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"sdo.dev/operator/sdk"
 )
 
 func TestKubernetesSnapshotProviderListsNamespaceState(t *testing.T) {
@@ -73,6 +76,18 @@ func TestKubernetesSnapshotProviderListsNamespaceState(t *testing.T) {
 	policies := snapshot.NetworkPolicies()
 	if len(policies) != 1 || policies[0].Name != "deny-api" {
 		t.Fatalf("expected NetworkPolicy, got %#v", policies)
+	}
+}
+
+func TestKubernetesSnapshotProviderRecordsObservationTime(t *testing.T) {
+	before := time.Now()
+	snapshot, err := KubernetesSnapshotProvider{Namespace: "demo", Client: fake.NewSimpleClientset()}.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := sdk.ObservationTime(snapshot)
+	if observed.Before(before) || observed.After(time.Now()) {
+		t.Fatalf("observation time %v outside the snapshot call", observed)
 	}
 }
 

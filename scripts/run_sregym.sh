@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 if [ $# -eq 0 ]; then
-  exec uv run python -m benchmarks.sregym.run benchmarks/sregym/experiments/sdo_example.toml
+  exec uv run python -m benchmarks.sregym.adapter.launcher -- uv run python -m benchmarks.sregym.run benchmarks/sregym/experiments/sdo_example.toml
 else
-  exec uv run python -m benchmarks.sregym.run "$@"
+  exec uv run python -m benchmarks.sregym.adapter.launcher -- uv run python -m benchmarks.sregym.run "$@"
 fi

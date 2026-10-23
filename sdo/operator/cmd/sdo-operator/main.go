@@ -127,6 +127,22 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "stop" {
+		config, err := operatorcli.ParseStopLaunch(os.Args[1:])
+		if err == nil {
+			var result install.StopResult
+			result, err = operatorcli.RunStop(context.Background(), config)
+			encodeErr := json.NewEncoder(os.Stdout).Encode(result)
+			if err == nil {
+				err = encodeErr
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "install-existing" {
 		config, err := operatorcli.ParseInstallExistingLaunch(os.Args[1:])
 		if err == nil {

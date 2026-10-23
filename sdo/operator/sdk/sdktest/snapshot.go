@@ -2,6 +2,7 @@ package sdktest
 
 import (
 	"sort"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -30,8 +31,19 @@ type Snapshot struct {
 	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
 	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
 	EventList         []corev1.Event                          `json:"events"`
+	// ObservedAtTime is when the live view was read; nil when unrecorded.
+	// It backs sdk.ObservationClock so age-based detectors replay exactly.
+	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
+}
+
+// ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
+func (s Snapshot) ObservedAt() time.Time {
+	if s.ObservedAtTime == nil {
+		return time.Time{}
+	}
+	return *s.ObservedAtTime
 }
 
 func (s Snapshot) StatefulSets() []appsv1.StatefulSet {

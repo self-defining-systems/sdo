@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -135,5 +136,28 @@ func TestCapturedConfigMapPresenceDiagnosisIsPreserved(t *testing.T) {
 		if len(before) != len(after) || (len(after) == 0) != present {
 			t.Fatalf("key-only capture changed missing-ConfigMap diagnosis: present=%v", present)
 		}
+	}
+}
+
+func TestCaptureSnapshotRecordsObservationTimeForReplay(t *testing.T) {
+	observed := time.Date(2026, 10, 23, 12, 0, 0, 123456789, time.UTC)
+	captured, err := CaptureSnapshot(Snapshot{NamespaceName: "app", ObservedAtTime: &observed}, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replayed Snapshot
+	if err := json.Unmarshal(data, &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.ObservedAt().Equal(observed) || !sdk.ObservationTime(replayed).Equal(observed) {
+		t.Fatalf("replayed observation time %v, want %v", replayed.ObservedAt(), observed)
+	}
+	unclocked, err := json.Marshal(Snapshot{NamespaceName: "app"})
+	if err != nil || strings.Contains(string(unclocked), "observedAt") {
+		t.Fatalf("a snapshot without a clock must not encode one: %s %v", unclocked, err)
 	}
 }

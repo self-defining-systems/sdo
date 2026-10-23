@@ -98,3 +98,6 @@ exp_config/*/*.log
 
 *.local.*
 .fastloop/
+
+# Stable abort locators for launcher-owned runs
+.sdo-runs/

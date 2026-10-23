@@ -120,6 +120,16 @@
     "--kubeconfig",
     "/fixture/lane.kubeconfig"
   ],
+  "stop": [
+    "stop",
+    "--control-namespace",
+    "hotel-sdo",
+    "--timeout",
+    "60s",
+    "--kubeconfig",
+    "/fixture/lane.kubeconfig",
+    "--inspect"
+  ],
   "host": [
     "host",
     "--repository",

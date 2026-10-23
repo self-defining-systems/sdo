@@ -71,6 +71,25 @@ func Handler(prober *Prober) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc(PathDials, func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			http.Error(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var dials DialRequest
+		decoder := json.NewDecoder(io.LimitReader(request.Body, 64*1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&dials); err != nil {
+			http.Error(w, "decode dial request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		result, err := prober.DialTargets(request.Context(), dials)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	mux.HandleFunc(PathPrimitive, func(w http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost {
 			http.Error(w, "use POST", http.StatusMethodNotAllowed)

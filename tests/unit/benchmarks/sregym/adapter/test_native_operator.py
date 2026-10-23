@@ -369,3 +369,22 @@ def test_inspect_existing_reuses_live_go_controller_without_local_checkout(
     assert result.pod_uid == "pod-uid"
     assert calls[0][0:2] == ["/tmp/sdo-operator", "inspect-existing"]
     assert "--repository" not in calls[0]
+
+
+def test_install_records_abort_target_before_transport_call(tmp_path, monkeypatch):
+    from benchmarks.sregym.adapter import native_operator
+    from benchmarks.sregym.adapter.persistent import PersistentState
+
+    path = tmp_path / "abort-state.json"
+    monkeypatch.setenv("SDO_RUN_REGISTRY_STATE", str(path))
+    config = _install(tmp_path)
+
+    def interrupted(*args, **kwargs):
+        target = PersistentState.load(path).cleanup_targets["hotel"]
+        assert target.control_namespace == "hotel-sdo"
+        assert target.kubeconfig == str(config.kubeconfig)
+        raise NativeOperatorError("interrupted install")
+
+    monkeypatch.setattr(native_operator, "execute_operator", interrupted)
+    with pytest.raises(NativeOperatorError, match="interrupted install"):
+        install_existing(config)
