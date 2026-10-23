@@ -95,9 +95,9 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 	if expectedErr != nil || actualErr != nil {
 		return fmt.Errorf("value write observation unknown: requested path unavailable")
 	}
-	// Scalar and list requests must match even when they were no-ops against the
-	// pre-image. Map fields also retain the default-aware guarded delta check below.
-	if _, mapping := expected.(map[string]any); !mapping && !planValuesEqual(expected, actual) {
+	// Requested leaves must match even for no-op writes. Extra server defaults
+	// remain allowed; the delta check below also proves requested removals.
+	if !planRequestedValueObserved(expected, actual) {
 		return fmt.Errorf("value write observation unknown: requested value changed")
 	}
 
@@ -110,6 +110,37 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 		}
 	}
 	return nil
+}
+
+// planRequestedValueObserved compares every requested leaf while allowing the
+// API server to add defaulted object fields.
+func planRequestedValueObserved(expected, actual any) bool {
+	if want, ok := expected.(map[string]any); ok {
+		got, ok := actual.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key, value := range want {
+			observed, exists := got[key]
+			if !exists || !planRequestedValueObserved(value, observed) {
+				return false
+			}
+		}
+		return true
+	}
+	if want, ok := expected.([]any); ok {
+		got, ok := actual.([]any)
+		if !ok || len(want) != len(got) {
+			return false
+		}
+		for i := range want {
+			if !planRequestedValueObserved(want[i], got[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return planValuesEqual(expected, actual)
 }
 
 func actionUsesSourceValue(action program.Action) bool {

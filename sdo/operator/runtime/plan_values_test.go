@@ -155,3 +155,21 @@ func TestXV2NoopValuesCannotVerifyForeignWrites(t *testing.T) {
 		})
 	}
 }
+
+func TestXV2MapValueVerificationChecksUnchangedRequestedLeaves(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "front"}
+	before := planObject(ref, map[string]any{"selector": map[string]any{"app": "safe"}})
+	for _, changed := range []bool{false, true} {
+		live := before.DeepCopy()
+		selector := map[string]any{"app": "safe", "server-default": "allowed"}
+		if changed {
+			selector["app"] = "foreign"
+		}
+		_ = unstructured.SetNestedMap(live.Object, selector, "spec", "selector")
+		e := PlanExecutor{Client: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: live}}}
+		err := e.verifyValueWrite(context.Background(), program.SetField{Ref: ref, Path: "spec.selector", Value: program.FromSource(ref, "spec.selector")}, PlanPatch{Ref: ref, Before: before, After: before.DeepCopy()})
+		if changed && err == nil || !changed && err != nil {
+			t.Fatalf("changed=%v verification=%v", changed, err)
+		}
+	}
+}
