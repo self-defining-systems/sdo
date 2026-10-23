@@ -19,11 +19,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # Compile/vet alone cannot detect stale validator schema pins. Run the two
-# source-bound contract tests before the broader gates, with a wall-clock cap.
+# source-bound contract tests before the broader gates. Bound test execution
+# with -timeout; cold module downloads and compilation need their own time.
 echo "==> validator schema identity"
 (
     cd "$PROJECT_ROOT/sdo/operator"
-    timeout 25s go test ./builder ./operatorcli \
+    go test ./builder ./operatorcli \
         -run '^(TestSchemaIdentityMatchesCommittedSDK|TestParseValidateLaunchRequiresBoundSchema)$' \
         -count=1 -timeout=20s
 )
