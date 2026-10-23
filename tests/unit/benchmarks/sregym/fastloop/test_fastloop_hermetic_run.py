@@ -86,7 +86,8 @@ func main() {
 	if !ok {
 		panic("expected SetField")
 	}
-	value, _, err := program.ResolveValue(action.Value, program.ValueInputs{Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
+	value, _, err := program.ResolveValue(action.Value, program.ValueInputs{
+        Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
         for _, pod := range snapshot.Pods() {
             if ref.Kind == "Pod" && pod.Namespace == ref.Namespace && pod.Name == ref.Name {
                 raw, err := json.Marshal(pod)
@@ -97,7 +98,8 @@ func main() {
             }
         }
         return nil, os.ErrNotExist
-    }})
+        },
+    })
     if err != nil { panic(err) }
 	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
 		"result": verdict.Result, "path": action.Path, "value": value,
