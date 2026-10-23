@@ -67,6 +67,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed accepted-source and incident policy JSON")
+	planSourceFile := flags.String("plan-source-policy-file", "", "reviewed source policy file; defaults to SDO_PLAN_SOURCE_POLICY_FILE")
 	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
 	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
 	var planWebhookNames repeatable
@@ -85,6 +87,10 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	if err := flags.Parse(args[1:]); err != nil {
 		return OperateConfig{}, err
+	}
+	sourcePolicyInput, sourcePolicyErr := readSourcePolicyInput(*planSourceFile, *planSourceJSON)
+	if sourcePolicyErr != nil {
+		return OperateConfig{}, sourcePolicyErr
 	}
 	if flags.NArg() != 0 {
 		return OperateConfig{}, fmt.Errorf("unexpected operate arguments: %v", flags.Args())
@@ -172,7 +178,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 			MaxResponseLoops:     *maxResponseLoops,
-			PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
+			PlanSourcePolicyJSON: sourcePolicyInput, PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},

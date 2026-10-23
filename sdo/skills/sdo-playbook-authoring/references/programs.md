@@ -86,3 +86,5 @@ A cluster-scoped webhook delete proves source absence through the application’
 Credential safety also refuses deprecated identity aliases and unconfined storage. Pod and CronJob templates need explicit token automount disablement; dropping that denial restores the default token mount and counts as a credential-channel addition. NetworkPolicy repairs admit only bounded namespace-local pod-label peers; allow-all and cross-namespace routes refuse.
 
 JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.
+
+The source-only stream policy derives structured repair values and creates from accepted source, and grants deletes only to individually named incident resources with pinned UIDs. Legacy numeric SetField literals retain their existing allowlist and credential-delta check. Application patch receipts label these as `accepted-source`, `incident-named-delete`, or `legacy-literal`.

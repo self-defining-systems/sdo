@@ -135,8 +135,10 @@ type ControllerConfig struct {
 	// Never populate these fields from responder, plan, or dry-run output.
 	PlanSafetyPolicyJson   string `protobuf:"bytes,72,opt,name=plan_safety_policy_json,json=planSafetyPolicyJson,proto3" json:"plan_safety_policy_json,omitempty"`
 	PlanSafetyPolicySha256 string `protobuf:"bytes,73,opt,name=plan_safety_policy_sha256,json=planSafetyPolicySha256,proto3" json:"plan_safety_policy_sha256,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Reviewed source-only policy; generated per incident, never from plans.
+	PlanSourcePolicyJson string `protobuf:"bytes,74,opt,name=plan_source_policy_json,json=planSourcePolicyJson,proto3" json:"plan_source_policy_json,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -619,11 +621,18 @@ func (x *ControllerConfig) GetPlanSafetyPolicySha256() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetPlanSourcePolicyJson() string {
+	if x != nil {
+		return x.PlanSourcePolicyJson
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xa5\x1d\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xdc\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -697,7 +706,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"metricsUrl\x12,\n" +
 	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x125\n" +
 	"\x17plan_safety_policy_json\x18H \x01(\tR\x14planSafetyPolicyJson\x129\n" +
-	"\x19plan_safety_policy_sha256\x18I \x01(\tR\x16planSafetyPolicySha256B\x14\n" +
+	"\x19plan_safety_policy_sha256\x18I \x01(\tR\x16planSafetyPolicySha256\x125\n" +
+	"\x17plan_source_policy_json\x18J \x01(\tR\x14planSourcePolicyJsonB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>J\x04\bC\x10DJ\x04\bD\x10ER\x06brokerR\vbroker_argsR\x0emax_follow_upsR\x12follow_up_cooldownR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourR\x19drift_dispatches_per_hourR\x15drift_tokens_per_hourB\x88\x02\n" +

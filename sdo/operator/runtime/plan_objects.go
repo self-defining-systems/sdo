@@ -170,7 +170,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
 		operation := objectActionOperation(action)
-		patch := PlanPatch{Ref: ref, Operation: operation, Before: current[ref].DeepCopy(), Structured: true, SourceCommit: incident.SourceCommit, Irreversible: operation == "delete"}
+		patch := PlanPatch{Authorization: planAuthorizationMode(action, e.SourceAuthority != nil), Ref: ref, Operation: operation, Before: current[ref].DeepCopy(), Structured: true, SourceCommit: incident.SourceCommit, Irreversible: operation == "delete"}
 		if operation != "" {
 			patch.After, err = e.prepareObjectAction(ctx, incident, action, current[ref])
 			if err != nil {

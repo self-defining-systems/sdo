@@ -35,11 +35,12 @@ import (
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
 	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
-	PlanSafety *PlanSafetyPolicy
-	Args       []string
-	Stdout     io.Writer
-	Stderr     io.Writer
-	Provider   SnapshotProvider
+	PlanSafety       *PlanSafetyPolicy
+	SourcePlanPolicy *SourcePlanPolicy
+	Args             []string
+	Stdout           io.Writer
+	Stderr           io.Writer
+	Provider         SnapshotProvider
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
@@ -179,6 +180,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
+	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed source-only incident authority")
 	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture policy; never responder/plan output")
 	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently pinned reviewed policy SHA256")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
@@ -232,6 +234,16 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *planSourceJSON != "" {
+		if options.SourcePlanPolicy != nil || options.PlanSafety != nil || *planSafetyJSON != "" || *planSafetySHA != "" {
+			return errors.New("plan safety authority supplied twice")
+		}
+		parsedSourcePolicy, policyErr := LoadSourcePlanPolicy(*planSourceJSON)
+		if policyErr != nil {
+			return policyErr
+		}
+		options.SourcePlanPolicy = parsedSourcePolicy
 	}
 	if *planSafetyJSON != "" || *planSafetySHA != "" {
 		if options.PlanSafety != nil {
@@ -491,6 +503,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
+	planMetadataClient := options.MetadataClient
+	if options.SourcePlanPolicy != nil && planMetadataClient == nil && !clientInjected {
+		planMetadataClient, err = core.NewKubernetesMetadataClient()
+		if err != nil {
+			return fmt.Errorf("create plan metadata reader: %w", err)
+		}
+	}
 	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
 	var primitiveProber PrimitiveProber
 	if proberAddress != nil {
@@ -517,8 +536,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
+				var sourceAuthority *SourcePlanAuthority
+				if options.SourcePlanPolicy != nil {
+					sourceAuthority = &SourcePlanAuthority{Config: options.SourcePlanPolicy, Source: planSource, UID: sourcePolicyUIDReader(planMetadataClient)}
+					policyCtx, policyCancel := context.WithTimeout(ctx, 30*time.Second)
+					if _, policyErr := sourceAuthority.Policy(policyCtx, request); policyErr != nil {
+						fmt.Fprintln(stderr, "source-bound plan authority unavailable:", policyErr)
+					}
+					policyCancel()
+				}
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource, Safety: options.PlanSafety,
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
 					AcceptedRevision: func() string {
 						if controller == nil {
 							return ""
