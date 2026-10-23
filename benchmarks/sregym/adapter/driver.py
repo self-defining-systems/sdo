@@ -284,6 +284,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=config.get("program_trust_threshold", 3),
         help="successful verified repairs required before a program is trusted (positive integer)",
     )
+    parser.add_argument(
+        "--permissive-responder",
+        action=argparse.BooleanOptionalAction,
+        default=config.get("permissive_responder", False),
+        help="enable reviewed permissive responder grants for this benchmark",
+    )
+    parser.add_argument(
+        "--responder-namespace",
+        dest="responder_namespaces",
+        action="append",
+        default=None,
+        help="additional reviewed responder namespace; repeat to replace the configured list",
+    )
     parser.add_argument("--agent-registrations", default=config.get("agent_registrations"))
     parser.add_argument(
         "--reflection-session",
@@ -335,6 +348,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise ValueError("program_fast_path must be a boolean")
     if type(args.program_trust_threshold) is not int or args.program_trust_threshold <= 0:
         raise ValueError("program_trust_threshold must be a positive integer")
+    if type(args.permissive_responder) is not bool:
+        raise ValueError("permissive_responder must be a boolean")
+    namespaces = args.responder_namespaces
+    if namespaces is None:
+        namespaces = config.get("responder_namespaces", [])
+    if not isinstance(namespaces, list) or any(not isinstance(ns, str) or not ns.strip() for ns in namespaces):
+        raise ValueError("responder_namespaces must be a list of non-empty strings")
+    if namespaces and not args.permissive_responder:
+        raise ValueError("responder_namespaces requires permissive_responder")
+    args.responder_namespaces = tuple(namespaces)
     return args
 
 
@@ -601,6 +624,15 @@ def _launch_native_lifecycle(
     if not raw_kubeconfig or not Path(raw_kubeconfig).is_absolute():
         raise RuntimeError("native benchmark operation requires an absolute trusted kubeconfig")
     kubeconfig = Path(raw_kubeconfig)
+    if namespace == "astronomy-shop":
+        from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
+
+        prepare_oracle_observability(
+            kubeconfig=kubeconfig,
+            sregym_dir=Path(__file__).resolve().parents[3] / "third_party/sregym",
+            cluster=kind_cluster_name,
+        )
+        route_astronomy_traces(kubeconfig)
     control_namespace = control_namespace_for(namespace)
     cluster = BenchmarkClusterResourcesConfig(
         namespace=namespace,
@@ -638,6 +670,8 @@ def _launch_native_lifecycle(
         deployed_manifest_paths=args.deployed_manifest_paths,
         program_fast_path=args.program_fast_path,
         program_trust_threshold=args.program_trust_threshold,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
@@ -744,6 +778,8 @@ def _native_install_for_run(
         deployed_manifest_paths=args.deployed_manifest_paths,
         program_fast_path=args.program_fast_path,
         program_trust_threshold=args.program_trust_threshold,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
         verification_timeout_seconds=120,
@@ -944,6 +980,8 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         deployed_manifest_paths=args.deployed_manifest_paths,
         program_fast_path=args.program_fast_path,
         program_trust_threshold=args.program_trust_threshold,
+        permissive_responder=args.permissive_responder,
+        responder_namespaces=args.responder_namespaces,
         late_findings=args.late_findings,
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,

@@ -1573,3 +1573,8 @@ def test_sdo3_terminal_infrastructure_row_does_not_require_agent_receipt(tmp_pat
     )
     # Terminal infrastructure rows are resumable, but do not pass as graded agent outcomes.
     assert _stage_results_error(tmp_path, require_strict_receipt=True) is None
+
+
+def test_pipeline_preserves_permissive_capability_mode() -> None:
+    config = merge_stage_config({"capability_mode": "permissive"}, {})
+    assert config.capability_mode == "permissive"

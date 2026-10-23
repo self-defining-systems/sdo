@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     )
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
     from benchmarks.sregym.adapter.native_operator import execute_operator, inspect_existing, install_existing
+    from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
     from benchmarks.sregym.adapter.persistent import (
         REJECTED_RECEIPT_FILENAME,
         STRICT_RECEIPT_FILENAME,
@@ -56,6 +57,8 @@ if TYPE_CHECKING:
 _EXPORTS: dict[str, str] = {
     "replay_recorded_repair": "scripted_replay",
     "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
+    "prepare_oracle_observability": "oracle_observability",
+    "route_astronomy_traces": "oracle_observability",
     "bind_state": "processes",
     "runtime_config_payload": "persistent",
     "runtime_config_from_payload": "persistent",
@@ -96,6 +99,8 @@ _EXPORTS: dict[str, str] = {
 __all__ = [
     "replay_recorded_repair",
     "SCRIPTED_REPLAY_SLOTS",
+    "prepare_oracle_observability",
+    "route_astronomy_traces",
     "bind_state",
     "runtime_config_payload",
     "runtime_config_from_payload",
