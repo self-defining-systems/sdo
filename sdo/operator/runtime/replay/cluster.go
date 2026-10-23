@@ -299,6 +299,7 @@ func (s *source) AcceptedManifestRefs(context.Context, string, string) ([]sdk.Ob
 // network and exec observations are never invented.
 type reaction struct {
 	cluster *cluster
+	source  *source
 	plan    program.Plan
 	effects *[]string
 	done    map[int]bool
@@ -312,6 +313,11 @@ func (w *reaction) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 		o, err := w.cluster.Get(ctx, ref)
 		if err != nil {
 			return err
+		}
+		template, _, _ := unstructured.NestedMap(o.Object, "spec", "template")
+		if !w.acceptedTemplate(ref, template) {
+			*w.effects = append(*w.effects, "simulated:rollout-unresolved:"+ref.Kind+"/"+ref.Name)
+			continue
 		}
 		replicas, _, _ := unstructured.NestedInt64(o.Object, "spec", "replicas")
 

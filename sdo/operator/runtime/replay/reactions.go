@@ -202,10 +202,16 @@ func (w *reaction) replace(ctx context.Context, ref sdk.ObjectRef, old *unstruct
 	pod.OwnerReferences = old.GetOwnerReferences()
 	pod.ResourceVersion = ""
 	pod.UID = ""
-	pod.Status.Phase = corev1.PodRunning
-	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}, {Type: corev1.ContainersReady, Status: corev1.ConditionTrue}, {Type: corev1.PodInitialized, Status: corev1.ConditionTrue}}
+	ready := w.podReadiness(ctx, old, template)
+	pod.Status.Phase = corev1.PodPending
+	if ready {
+		pod.Status.Phase = corev1.PodRunning
+	}
+	if ready {
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}, {Type: corev1.ContainersReady, Status: corev1.ConditionTrue}, {Type: corev1.PodInitialized, Status: corev1.ConditionTrue}}
+	}
 	for _, container := range pod.Spec.Containers {
-		pod.Status.ContainerStatuses = append(pod.Status.ContainerStatuses, corev1.ContainerStatus{Name: container.Name, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})
+		pod.Status.ContainerStatuses = append(pod.Status.ContainerStatuses, corev1.ContainerStatus{Name: container.Name, Ready: ready})
 	}
 	if remove {
 		if err := w.cluster.Delete(ctx, ref, old.GetUID(), old.GetResourceVersion()); err != nil {
@@ -229,6 +235,57 @@ func (w *reaction) replace(ctx context.Context, ref sdk.ObjectRef, old *unstruct
 	}
 	w.cluster.simCreated[objectRef(o)] = o
 	w.cluster.simDeleted[ref] = true
-	*w.effects = append(*w.effects, "simulated:pod-recreation:"+ref.Name, "simulated:pod-ready:"+pod.Name)
+	*w.effects = append(*w.effects, "simulated:pod-recreation:"+ref.Name)
+	if ready {
+		*w.effects = append(*w.effects, "simulated:pod-ready:"+pod.Name)
+	} else {
+		*w.effects = append(*w.effects, "simulated:pod-readiness-unresolved:"+pod.Name)
+	}
 	return nil
+}
+
+// acceptedTemplate bounds assumed readiness to the accepted executable template.
+// It is a simulation precondition, never a claim that startup actually succeeded.
+func (w *reaction) acceptedTemplate(ref sdk.ObjectRef, template map[string]any) bool {
+	accepted := w.source.accepted[ref]
+	if accepted == nil {
+		return false
+	}
+	want, found, err := unstructured.NestedMap(accepted.Object, "spec", "template")
+	if err != nil || !found {
+		return false
+	}
+	normalize := func(fields map[string]any) ([]byte, error) {
+		typed := new(corev1.PodTemplateSpec)
+		if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(fields, typed); err != nil {
+			return nil, err
+		}
+		delete(typed.Annotations, "kubectl.kubernetes.io/restartedAt")
+		return json.Marshal(typed)
+	}
+	left, le := normalize(want)
+	right, re := normalize(template)
+	return le == nil && re == nil && bytes.Equal(left, right)
+}
+func (w *reaction) podReadiness(ctx context.Context, pod *unstructured.Unstructured, template map[string]any) bool {
+	for _, owner := range pod.GetOwnerReferences() {
+		if owner.Controller == nil || !*owner.Controller {
+			continue
+		}
+		ref := sdk.ObjectRef{APIVersion: owner.APIVersion, Kind: owner.Kind, Namespace: pod.GetNamespace(), Name: owner.Name}
+		if owner.Kind == "ReplicaSet" {
+			rs, err := w.ownerObject(ctx, ref)
+			if err != nil {
+				return false
+			}
+			for _, parent := range rs.GetOwnerReferences() {
+				if parent.Controller != nil && *parent.Controller {
+					ref = sdk.ObjectRef{APIVersion: parent.APIVersion, Kind: parent.Kind, Namespace: pod.GetNamespace(), Name: parent.Name}
+					break
+				}
+			}
+		}
+		return w.acceptedTemplate(ref, template)
+	}
+	return false
 }

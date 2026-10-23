@@ -195,7 +195,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if err != nil {
 		return fail(err)
 	}
-	waiter := &reaction{cluster: client, plan: plan, effects: &r.Effects}
+	waiter := &reaction{cluster: client, source: source, plan: plan, effects: &r.Effects}
 	verifier := &postVerifier{cluster: client, source: source, p: p, bindings: bindings, detectors: detectors, result: &r, reaction: waiter}
 	executor := operator.PlanExecutor{Client: client, Source: source, SourceAuthority: authority, AcceptedRevision: func() string { return commit }, Rollouts: waiter, Verifier: verifier, Values: program.ValueInputs{Spec: p.Spec(), Bindings: bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
 		o := observedObjects[ref]
@@ -217,6 +217,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 			r.Status = "failed"
 		}
 		return fail(fmt.Errorf("PlanExecutor: %w", err))
+	}
+	if err = checkTargetValues(ctx, plan, application, source); err != nil {
+		return fail(err)
 	}
 	if !application.VerificationCompleted || !application.VerificationPassed {
 		return fail(fmt.Errorf("post-plan diagnosis or detector remains active/unknown"))

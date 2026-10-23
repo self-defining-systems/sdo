@@ -10,6 +10,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -229,6 +230,11 @@ func runtimeFixture(mode string) Case {
 	c.Corpus.Healthy.PodList = []corev1.Pod{pod}
 	deployment := appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: pod.Spec}}}
 	rs := appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "api", Controller: &yes}}}, Spec: appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{Spec: pod.Spec}}}
+	fields, _ := kruntime.DefaultUnstructuredConverter.ToUnstructured(&deployment)
+	accepted := &unstructured.Unstructured{Object: fields}
+	accepted.SetAPIVersion("apps/v1")
+	accepted.SetKind("Deployment")
+	c.Accepted = []*unstructured.Unstructured{accepted}
 	c.Corpus.Open.DeploymentList = []appsv1.Deployment{deployment}
 	c.Corpus.Open.ReplicaSetList = []appsv1.ReplicaSet{rs}
 	c.Corpus.Healthy.DeploymentList = []appsv1.Deployment{deployment}
@@ -412,5 +418,47 @@ func TestWrongExistingPathExecutesAndFailsPostCheck(t *testing.T) {
 	r := Check(context.Background(), p, p, nil, fixture("field"))
 	if r.Status != "failed" || len(r.Actions) != 1 || r.Actions[0].Status != "applied" || r.Post.Result != program.Match {
 		t.Fatalf("wrong fix escaped post-check: %+v", r)
+	}
+}
+
+type wrongImageProgram struct{ runtimeProgram }
+
+func (wrongImageProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "restart", Params: []program.ParamSpec{{Name: "image", ValueKind: program.StringValue, Default: "synthetic:wrong"}}}
+}
+func (wrongImageProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].image", Value: program.FromParam("image")}}}, nil
+}
+func TestWrongImageCannotBorrowSimulatedReadiness(t *testing.T) {
+	p := wrongImageProgram{runtimeProgram{mode: "restart"}}
+	r := Check(context.Background(), p, p, nil, runtimeFixture("restart"))
+	if r.Status == "replayed" {
+		t.Fatalf("wrong image concealed by simulated readiness: %+v", r)
+	}
+}
+
+type weakScaleProgram struct{}
+
+func (weakScaleProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "scale", Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue, Default: 3}}}
+}
+func (weakScaleProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
+	r := program.NoMatch
+	for _, d := range v.Deployments() {
+		if d.Spec.Replicas == nil || *d.Spec.Replicas == 0 {
+			r = program.Match
+		}
+	}
+	return program.Verdict{Result: r}, nil
+}
+func (weakScaleProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}, Replicas: program.FromParam("replicas")}}}, nil
+}
+func TestParameterWriteMustRestoreAcceptedTarget(t *testing.T) {
+	p := weakScaleProgram{}
+	r := Check(context.Background(), p, p, nil, fixture("scale"))
+	if r.Status != "failed" || r.Post.Result != program.NoMatch || len(r.Errors) == 0 {
+		t.Fatalf("weak diagnosis accepted a wrong parameter value: %+v", r)
 	}
 }
