@@ -205,18 +205,18 @@ func (s Snapshot) ValidateWithEvidence(ctx context.Context, repository, revision
 		}
 		tree := actual.GetAnnotations()["sdo.dev/source-tree"]
 		if tree != "" {
-			same, err := source.SameInputs(ctx, tree, revision)
+			same, err := source.SameWorkloadInputs(ctx, tree, revision, expected, evidence)
 			if err != nil || !same {
 				return errors.New("lock object has stale deployed source tree")
 			}
 		}
 		authorized := map[ContainerImage]DeployedImage{}
 		for _, proof := range evidence {
-			same, err := source.SameInputs(ctx, proof.SourceTree, revision)
-			if err != nil || !same {
-				continue
-			}
 			for _, image := range proof.Images {
+				same, err := source.SameImageInputs(ctx, proof.SourceTree, revision, image.Inputs)
+				if err != nil || !same {
+					continue
+				}
 				if image.Ref != entry.Ref {
 					continue
 				}
@@ -241,7 +241,7 @@ func (s Snapshot) ValidateWithEvidence(ctx context.Context, repository, revision
 				}
 			} else {
 				proof, ok := authorized[ContainerImage{Name: image.Name, Init: image.Init}]
-				if !ok || proof.Applied != images[i].Digest || proof.Digest != entry.Images[i].Digest {
+				if !ok || (proof.Inputs.SourceImage != "" && proof.Inputs.SourceImage != image.Digest) || proof.Applied != images[i].Digest || proof.Digest != entry.Images[i].Digest {
 					return errors.New("lock image lacks trusted named deployment evidence")
 				}
 			}

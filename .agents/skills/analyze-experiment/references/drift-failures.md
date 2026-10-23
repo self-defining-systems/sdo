@@ -83,7 +83,14 @@ A cold restart no longer needs the former in-memory healthy image baseline. Sour
 images must remain identical. Mutable or built references require trusted
 apply/rollout-time evidence in the broker's private `source-evidence` ledger,
 bound to the accepted source inputs, workload, container name and regular/init
-role. Its `container_images` entries retain both `applied` and `digest`; legacy
+role. Its `container_images` entries retain both `applied` and `digest`. Optional
+`inputs` records the trusted plan's `source_image`, `context_path`, and
+`dockerfile_path`; a source image with empty paths explicitly has no local
+build. Missing inputs retain the all-source rule. Known builds compare their
+context (respecting Docker ignore files), Dockerfile and ignore configuration.
+Any intervening accepted source change to these inputs retires that image's
+evidence, including an edit followed by a revert. Unaffected images retain
+coverage; gapped workloads require fresh trusted deployment evidence. Legacy
 flat `images` lists cannot authorize a substitution. Matching current annotations,
 readiness or Pod image status alone are insufficient. A missing ledger after
 restart creates an explicit per-object gap rather than accepting the live image.
