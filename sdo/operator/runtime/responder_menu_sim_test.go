@@ -58,18 +58,18 @@ type menuSimProgram struct {
 }
 
 func (p menuSimProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
+	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "port", ValueKind: program.IntValue, Default: p.port}}}
 }
 func (p menuSimProgram) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
 	for _, service := range v.Services() {
-		if service.Name == b["service"].Name && service.Spec.Ports[0].TargetPort.IntVal != 8080 {
+		if service.Name == b.Objects["service"].Name && service.Spec.Ports[0].TargetPort.IntVal != 8080 {
 			return program.Verdict{Result: program.Match}, nil
 		}
 	}
 	return program.Verdict{Result: program.NoMatch}, nil
 }
 func (p menuSimProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: b["service"], Path: "spec.ports[0].targetPort", Value: p.port}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port")}}}, nil
 }
 
 func TestSimResponderMenuSeededSchedules(t *testing.T) {

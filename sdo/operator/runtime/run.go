@@ -49,6 +49,8 @@ type RuntimeOptions struct {
 	// MetadataClient replaces the Secret metadata transport in embedded runs.
 	// When Client is supplied without it, Secrets remain unobserved.
 	MetadataClient rest.Interface
+	// PlanExecConfig reuses controller credentials for ordinary pod exec.
+	PlanExecConfig *rest.Config
 	// StateBaselineStartTimeout bounds the state tracker's RBAC probes and
 	// initial sync; zero means defaultStateBaselineStartTimeout.
 	StateBaselineStartTimeout time.Duration
@@ -366,6 +368,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return fmt.Errorf("create dedicated leader-election client: %w", err)
 		}
 	}
+	planExecConfig := options.PlanExecConfig
+	if planExecConfig == nil && options.Client == nil {
+		planExecConfig, err = responderPlanExecConfig()
+		if err != nil {
+			return fmt.Errorf("load plan exec client configuration: %w", err)
+		}
+	}
 	stateStartTimeout := options.StateBaselineStartTimeout
 	if stateStartTimeout <= 0 {
 		stateStartTimeout = defaultStateBaselineStartTimeout
@@ -551,7 +560,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					policyCancel()
 				}
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
+					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
 					AcceptedRevision: func() string {
 						if controller == nil {
 							return ""

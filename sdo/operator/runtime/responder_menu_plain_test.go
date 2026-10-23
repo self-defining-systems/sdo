@@ -78,7 +78,7 @@ func plainProgramOption(t *testing.T, menu *contracts.MitigationMenu, index int)
 	t.Helper()
 	ids := []string{}
 	for _, option := range menu.Options {
-		if option.ProgramId != "" {
+		if option.ProgramId == "routing-then-restart" || option.ProgramId == "restart-only" {
 			ids = append(ids, option.OptionId)
 		}
 	}

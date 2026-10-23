@@ -17,7 +17,7 @@ func TestProductionResponderMenuStreamFamilyParity(t *testing.T) {
 			ref := menuService
 			before := cluster.objects[ref].DeepCopy()
 			after := before.DeepCopy()
-			action := program.Action(program.SetField{Ref: ref, Path: "spec.selector", ValueFromSource: true})
+			action := program.Action(program.SetField{Ref: ref, Path: "spec.selector", Value: program.FromSource(ref, "spec.selector")})
 			if family == "missing_configmap" {
 				ref = sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "missing"}
 				after = planObject(ref, nil)
@@ -35,7 +35,10 @@ func TestProductionResponderMenuStreamFamilyParity(t *testing.T) {
 					path = "spec.template.spec.containers[0].readinessProbe"
 					value = map[string]any{"httpGet": map[string]any{"path": "/ready", "port": float64(8080)}}
 				}
-				action = program.SetField{Ref: ref, Path: path, Value: value}
+				if err := program.ApplySetField(after.Object, path, value); err != nil {
+					t.Fatal(err)
+				}
+				action = program.SetField{Ref: ref, Path: path, Value: program.FromSource(ref, path)}
 				// Legacy numeric/string workload fields use the executor's universal delta.
 			}
 			policy := fixturePlanSafety(t, ref, before, after)

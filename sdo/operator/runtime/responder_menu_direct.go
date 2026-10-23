@@ -38,7 +38,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				continue
 			}
 			bindings := []program.Bindings{}
-			if len(request.Bindings) > 0 {
+			if len(request.Bindings.Objects)+len(request.Bindings.Values) > 0 {
 				bindings = append(bindings, request.Bindings)
 			} else {
 				for _, finding := range l.Request.Findings {
@@ -58,7 +58,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		p := plan.Plan
 		entries[plan.ID] = menuEntry{programID: plan.ProgramID, bindings: cloneProgramBindings(plan.Bindings), plan: &p}
 	}
-	menu := &contracts.MitigationMenu{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, DispatchEpoch: 1, SourceCommit: l.Request.SourceCommit, ScopeDigest: "direct", PolicyDigest: "direct", RoundLimit: uint32(max(0, min(5, l.MaxBatches)-l.batches)), RemainingBatches: uint32(max(0, min(5, l.MaxBatches)-l.batches)), OriginalDeadline: timestamppb.New(l.Request.ResponseDeadline)}
+	menu := &contracts.MitigationMenu{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, DispatchEpoch: 1, SourceCommit: l.Request.SourceCommit, ScopeDigest: "direct", PolicyDigest: "direct", RoundLimit: uint32(max(1, min(5, l.MaxBatches)-l.batches)), RemainingBatches: uint32(max(0, min(5, l.MaxBatches)-l.batches)), OriginalDeadline: timestamppb.New(l.Request.ResponseDeadline)}
 	ids := make([]string, 0, len(entries))
 	for id := range entries {
 		ids = append(ids, id)
@@ -97,8 +97,13 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		response.Error = "unknown mitigation option"
 		return
 	}
+	bindings, bindingErr := menuBindProgram(entry, parameters)
 	attempt := fmt.Sprintf("mitigation-%s-%d", l.sessionID, len(l.menuReports)+1)
-	report := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: selection.RequestId, AttemptId: attempt, AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_UNRESOLVED}
+	requestID := selection.RequestId
+	if requestID == "" {
+		requestID = attempt
+	}
+	report := &contracts.MitigationReport{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, RequestId: requestID, AttemptId: attempt, AcceptanceEpoch: 1, Status: contracts.MitigationReport_STATUS_UNRESOLVED}
 	rounds := selection.RoundLimit
 	if rounds == 0 {
 		rounds = 1
@@ -118,30 +123,48 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		_ = l.persistToolState(ctx)
 		plan := program.Plan{}
 		var err error
-		if entry.action != nil {
-			plan, err = menuRawPlan(entry.action, parameters)
+		if bindingErr != nil {
+			err = bindingErr
+		} else if entry.action != nil {
+			inputs := program.ValueInputs{Spec: program.ProgramSpec{ID: string(entry.action.Message().Name())}}
+			inputs.Observed = func(ref sdk.ObjectRef) (map[string]any, error) {
+				if err := program.FromObserved(ref, "metadata.name").Validate(); err != nil {
+					return nil, err
+				}
+				object, err := l.Executor.Client.Get(ctx, ref)
+				if err != nil {
+					return nil, err
+				}
+				if object == nil {
+					return nil, fmt.Errorf("observed value object unavailable")
+				}
+				return object.Object, nil
+			}
+			plan, err = menuRawPlan(entry.action, parameters, &inputs)
+			if err == nil {
+				plan = program.BindPlanValues(plan, inputs)
+			}
 		} else if entry.plan != nil {
 			plan = *entry.plan
 		} else {
 			mitigator, found := l.Programs.Mitigator(entry.programID)
 			if !found {
-				report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
-				report.FailedPhase = "planning"
-				report.ReasonCode = "mitigator_unavailable"
-				break
-			}
-			view, viewErr := l.snapshotView(ctx)
-			if viewErr != nil {
-				err = viewErr
+				err = fmt.Errorf("mitigator %s is unavailable", entry.programID)
 			} else {
-				plan, err = l.runMitigator(ctx, entry.programID, mitigator, view, entry.bindings)
+				view, viewErr := l.snapshotView(ctx)
+				if viewErr != nil {
+					err = viewErr
+				} else {
+					plan, err = l.runMitigator(ctx, entry.programID, mitigator, view, bindings)
+				}
 			}
 		}
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 			report.FailedPhase = "planning"
 			report.ReasonCode = "direct_plan_failed"
-			rr.Verification = menuErrorVerdict(err)
+			rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
+			response.MenuExecution = append(response.MenuExecution, MenuRoundExecution{RoundIndex: round, Error: boundedToolText(err.Error())})
 			break
 		}
 		applicationID := fmt.Sprintf("%s-r%d", attempt, round)
@@ -159,6 +182,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			l.applications[applicationID] = result
 			response.ApplicationID = applicationID
 		}
+		description.ActionResults = result.ActionReports
 		description.ChangesRemain = result.Applied && !result.RolledBack
 		description.RolledBack = result.RolledBack
 		description.Pending = result.PendingAction != nil
@@ -175,7 +199,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			if result.PendingAction != nil && index == len(result.ActionsApplied) {
 				receipt.State = contracts.MitigationActionReceipt_STATE_UNKNOWN
 			}
-			if result.RolledBack {
+			if result.RolledBack && receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {
 				receipt.CompensationState = contracts.MitigationActionReceipt_STATE_APPLIED
 			}
 			receipt.ActionKind = patch.Operation
@@ -193,18 +217,19 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			}
 		}
 		rr.IndependentlyHealthy = result.VerificationPassed
-		rr.OriginalFindingsClear = result.VerificationPassed
 		rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
 		if result.VerificationPassed {
 			rr.Verification = verdictContract(program.Verdict{Result: program.NoMatch})
 			report.Status = contracts.MitigationReport_STATUS_SUCCESS
+			report.FailedPhase = ""
+			report.ReasonCode = ""
 			l.findings = nil
 			break
 		}
 		report.FailedPhase = "verification"
 		report.ReasonCode = "direct_verification_unresolved"
 		if applyErr != nil {
-			rr.Verification = menuErrorVerdict(applyErr)
+			rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
 			if !result.Applied {
 				report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 				report.FailedPhase = "forward"
@@ -221,8 +246,4 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	l.menuExecutions[attempt] = response.MenuExecution
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
-}
-
-func menuErrorVerdict(err error) *contracts.Verdict {
-	return verdictContract(program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "error", Observed: boundedToolText(err.Error())}}})
 }

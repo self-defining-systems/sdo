@@ -171,7 +171,7 @@ def _option_selection(args: argparse.Namespace) -> dict[str, object]:
     if len(options) != 1 or options[0].get("disabled_reason"):
         raise ValueError("mitigation option unavailable or ambiguous")
     option = options[0]
-    limit = int(menu.get("round_limit", 0))
+    limit = int(menu.get("remaining_batches", menu.get("round_limit", 0)))
     rounds = args.rounds if args.rounds is not None else 1
     if not 1 <= rounds <= limit:
         raise ValueError("rounds exceed remaining incident allowance")

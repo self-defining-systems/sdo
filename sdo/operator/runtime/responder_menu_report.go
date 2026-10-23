@@ -10,13 +10,14 @@ import (
 // MenuRoundExecution describes execution without retaining resolved values or
 // rollback preimages in the tool report. Application IDs use ordinary rollback.
 type MenuRoundExecution struct {
-	RoundIndex    uint32          `json:"round_index"`
-	ApplicationID string          `json:"application_id,omitempty"`
-	Plan          *contracts.Plan `json:"-"`
-	ChangesRemain bool            `json:"changes_remain"`
-	RolledBack    bool            `json:"rolled_back"`
-	Pending       bool            `json:"pending"`
-	Error         string          `json:"error,omitempty"`
+	ActionResults []PlanActionReport `json:"action_results,omitempty"`
+	RoundIndex    uint32             `json:"round_index"`
+	ApplicationID string             `json:"application_id,omitempty"`
+	Plan          *contracts.Plan    `json:"-"`
+	ChangesRemain bool               `json:"changes_remain"`
+	RolledBack    bool               `json:"rolled_back"`
+	Pending       bool               `json:"pending"`
+	Error         string             `json:"error,omitempty"`
 }
 
 func (r MenuRoundExecution) MarshalJSON() ([]byte, error) {

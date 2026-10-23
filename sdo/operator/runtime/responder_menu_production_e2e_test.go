@@ -34,7 +34,7 @@ type productionMenuProgram struct {
 }
 
 func (p productionMenuProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
+	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "port", ValueKind: program.IntValue, Default: p.port}}}
 }
 func (p productionMenuProgram) Diagnose(_ context.Context, view program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	if len(view.Services()) != 1 {
@@ -46,7 +46,7 @@ func (p productionMenuProgram) Diagnose(_ context.Context, view program.ReadView
 	return program.Verdict{Result: program.NoMatch}, nil
 }
 func (p productionMenuProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: b["service"], Path: "spec.ports[0].targetPort", Value: p.port}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port")}}}, nil
 }
 
 type productionMenuHealth struct{}

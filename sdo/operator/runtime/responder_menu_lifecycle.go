@@ -45,3 +45,16 @@ func (c healthGuardedPlanClient) TokenlessServiceAccount(ctx context.Context, re
 	}
 	return base.TokenlessServiceAccount(ctx, ref)
 }
+
+func (c healthGuardedPlanClient) Exec(ctx context.Context, ref sdk.ObjectRef, container string, command []string) (int, error) {
+	if c.Check != nil {
+		if err := c.Check(ctx); err != nil {
+			return 0, err
+		}
+	}
+	base, ok := c.PlanObjectClient.(PlanExecClient)
+	if !ok {
+		return 0, fmt.Errorf("plan client does not support exec")
+	}
+	return base.Exec(ctx, ref, container, command)
+}

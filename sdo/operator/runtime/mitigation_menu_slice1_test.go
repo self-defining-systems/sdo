@@ -26,7 +26,7 @@ var menuDeployment = sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Na
 type menuB3Program struct{ id string }
 
 func (p menuB3Program) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "deployment", Kind: "Deployment", Required: true}}}
+	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "deployment", Kind: "Deployment", Required: true}, {Name: "port", ValueKind: program.IntValue, Default: 8080}}}
 }
 func (p menuB3Program) Diagnose(_ context.Context, view program.ReadView, _ program.Bindings) (program.Verdict, error) {
 	if len(view.Services()) != 1 || len(view.Deployments()) != 1 {
@@ -39,9 +39,9 @@ func (p menuB3Program) Diagnose(_ context.Context, view program.ReadView, _ prog
 }
 func (p menuB3Program) Mitigate(_ context.Context, view program.ReadView, b program.Bindings) (program.Plan, error) {
 	if p.id == "routing-then-restart" && view.Services()[0].Spec.Ports[0].TargetPort.IntVal != 8080 {
-		return program.Plan{Actions: []program.Action{program.SetField{Ref: b["service"], Path: "spec.ports[0].targetPort", Value: 8080, Reason: "synthetic routing repair"}}}, nil
+		return program.Plan{Actions: []program.Action{program.SetField{Ref: b.Objects["service"], Path: "spec.ports[0].targetPort", Value: program.FromParam("port"), Reason: "synthetic routing repair"}}}, nil
 	}
-	return program.Plan{Actions: []program.Action{program.RestartRollout{Ref: b["deployment"], Reason: "bootstrap after observed backend readiness"}}}, nil
+	return program.Plan{Actions: []program.Action{program.RestartRollout{Ref: b.Objects["deployment"], Reason: "bootstrap after observed backend readiness"}}}, nil
 }
 
 type menuB3Cluster struct {
