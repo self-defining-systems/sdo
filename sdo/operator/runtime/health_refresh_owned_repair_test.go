@@ -8,13 +8,14 @@ import (
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 )
 
 // RH3: the broker has already independently verified and committed a repair.
 // A no-op health refresh must permit its durable ACK after restart, while an
 // unrelated source/policy change or an uncommitted investigation remains stale.
 func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
-	for _, change := range []string{"none", "source", "objective", "policy", "receipt", "processing"} {
+	for _, change := range []string{"none", "source", "objective", "policy", "receipt", "processing", "receipt-not-persisted", "ledger-incomplete"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
 			root, _, repository, _, coordinator := tracingFixture(t)
@@ -62,22 +63,38 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 			now := time.Now().UTC()
 			cfg := testControllerConfig()
 			cfg.SourceCommit = current.Commit
-			c, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
+			c, err := NewController(cfg, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, staticProvider{}, &recordingDispatcher{}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			c.pendingClosure = &closure
 			c.closureState = contracts.ClosureState_CLOSURE_STATE_COMMITTED
 			c.closureReceipt = &receipt
+			if change == "ledger-incomplete" {
+				ledger, err := native.readLedger(closure.Request.IncidentID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ledger.Receipt = nil
+				if err := native.saveLedger(ledger); err != nil {
+					t.Fatal(err)
+				}
+				c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
+				c.closureReceipt = nil
+			}
+			if change == "receipt-not-persisted" {
+				c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
+				c.closureReceipt = nil
+			}
 			if change == "processing" {
 				c.closureState = contracts.ClosureState_CLOSURE_STATE_PROCESSING
 			}
 			if err := c.SetIncidentBroker(native); err != nil {
 				t.Fatal(err)
 			}
-			if change == "none" {
+			if change == "none" || change == "receipt-not-persisted" {
 				state := exportState(t, c)
-				restored, err := NewController(cfg, nil, staticProvider{}, &recordingDispatcher{}, now)
+				restored, err := NewController(cfg, []sdk.Detector{controllerDetector("health", time.Second, sdk.Finding{})}, staticProvider{}, &recordingDispatcher{}, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -98,7 +115,7 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 				t.Fatal("fixture lost original evidence")
 			}
 			err = c.CheckHealth(ctx)
-			if change != "none" {
+			if change != "none" && change != "receipt-not-persisted" {
 				if !errors.Is(err, ErrStaleHealthInvestigation) {
 					t.Fatalf("unrelated/stale change allowed: %v", err)
 				}
@@ -106,6 +123,28 @@ func TestHealthRefreshAcknowledgesOnlyOwnCommittedRepair(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("own committed repair cannot finish after unchanged policy adoption: %v", err)
+			}
+			if change == "receipt-not-persisted" {
+				replay, ok := c.PendingClosureEffect()
+				if !ok {
+					t.Fatal("restored closure has no replayable broker effect")
+				}
+				before := nativeGit(t, root, "rev-list", "--count", "HEAD")
+				if err := c.ExecuteClosureEffect(ctx, replay); err != nil {
+					t.Fatal(err)
+				}
+				awaitBrokerResult(t, c.closureResults)
+				c.processBrokerCompletions()
+				if c.closureReceipt == nil || *c.closureReceipt != receipt {
+					t.Fatal("broker replay changed receipt")
+				}
+				if nativeGit(t, root, "rev-list", "--count", "HEAD") != before {
+					t.Fatal("broker replay republished repair or outcome")
+				}
+
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
 			}
 			effect, ok := c.PendingClosureAcknowledgmentEffect()
 			if !ok {

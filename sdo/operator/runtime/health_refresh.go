@@ -58,9 +58,11 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		receipt := cloneClosureReceipt(c.closureReceipt)
 		broker := c.broker
 		c.mu.Unlock()
-		if pending != nil && receipt != nil && phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED && (request == nil || request.IncidentID == pending.Request.IncidentID) {
+		committed := phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED && receipt != nil
+		replay := receipt == nil && (phase == contracts.ClosureState_CLOSURE_STATE_PENDING || phase == contracts.ClosureState_CLOSURE_STATE_PROCESSING)
+		if pending != nil && (committed || replay) && (request == nil || request.IncidentID == pending.Request.IncidentID) {
 			if err := checkInvestigationHealth(ctx, root, pending.Request.SourceCommit, compiled); errors.Is(err, ErrStaleHealthInvestigation) {
-				return checkCommittedRepairHealth(ctx, root, compiled, *pending, *receipt, broker)
+				return checkCommittedRepairHealth(ctx, root, compiled, *pending, receipt, broker)
 			} else if err != nil {
 				return err
 			}
@@ -80,14 +82,16 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 	}
 }
 
-// Only native broker evidence can authorize finishing an already committed
+// Only complete native broker evidence can authorize finishing an already committed
 // incident across adoption of that incident's own accepted source repair.
-// This is not an authorization to investigate or publish using stale policy.
+// A restart may precede persistence of the controller receipt, so a frozen
+// closure may replay the idempotent broker effect using its existing receipt.
+// This never authorizes an investigation or new publication using stale policy.
 type committedRepairHealthBroker interface {
-	committedRepairHealthRevision(context.Context, IncidentClosure, ClosureReceipt) (string, error)
+	committedRepairHealthRevision(context.Context, IncidentClosure, *ClosureReceipt) (string, error)
 }
 
-func checkCommittedRepairHealth(ctx context.Context, root, compiled string, closure IncidentClosure, receipt ClosureReceipt, broker IncidentBroker) error {
+func checkCommittedRepairHealth(ctx context.Context, root, compiled string, closure IncidentClosure, receipt *ClosureReceipt, broker IncidentBroker) error {
 	proof, ok := broker.(committedRepairHealthBroker)
 	if !ok {
 		return ErrStaleHealthInvestigation
