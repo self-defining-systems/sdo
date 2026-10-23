@@ -28,6 +28,7 @@ from benchmarks.sregym.fastloop.records import (
     append_record,
     write_records,
 )
+from benchmarks.sregym.protocol.injection import InvalidInjectionError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -211,6 +212,8 @@ def run_incidents(
             if (
                 config.continue_on_error
                 and record.error
+                and record.recovery_error is None
+                and record.infra_error is None
                 and index + 1 < config.incidents
                 and on_failed_incident is not None
             ):
@@ -236,7 +239,11 @@ def run_incidents(
                 record.incident_wall_seconds or 0.0,
                 record.error,
             )
-            if (not config.continue_on_error and not recovered) or (config.continue_on_error and not baseline_ready):
+            if (
+                record.recovery_error
+                or (not config.continue_on_error and not recovered)
+                or (config.continue_on_error and not baseline_ready)
+            ):
                 stop_reason = f"incident {index} did not clear the recovery and learning gate"
                 logger.error("stopping: incident %d did not clear the recovery and learning gate", index)
                 break
@@ -309,6 +316,39 @@ def _run_one(
     outcome: AgentOutcome | None = None
     try:
         outcome = agent.resolve(index, problem_id, inject)
+    except InvalidInjectionError as exc:
+        cleanup_error = exc.cleanup_error
+        recovered = False
+        recovery_seconds = None
+        try:
+            recovery_seconds = driver.recover()
+            recovered = cleanup_error is None
+        except Exception as recovery_exc:
+            cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
+        stamp = now()
+        start = exc.reply.get("started_at")
+        end = exc.reply.get("finished_at")
+        return IncidentRecord(
+            run_id=config.run_id,
+            index=index,
+            agent=agent.name,
+            problem_id=problem_id,
+            model=agent.model,
+            injection_started_at=datetime.fromtimestamp(start, tz=timezone.utc)
+            if isinstance(start, (int, float))
+            else stamp,
+            injection_finished_at=datetime.fromtimestamp(end, tz=timezone.utc)
+            if isinstance(end, (int, float))
+            else stamp,
+            fault_components=getattr(driver, "last_components", []),
+            infra_error=exc.infra_error,
+            recovery_error=cleanup_error,
+            injection_evidence=exc.details,
+            error=cleanup_error,
+            recovery_finished_at=now() if recovered else None,
+            fault_recovery_seconds=recovery_seconds,
+            incident_wall_seconds=monotonic() - started,
+        ), recovered
     except KeyboardInterrupt:
         if windows:
             try:
@@ -323,10 +363,12 @@ def _run_one(
         errors.append(_describe(exc))
 
     oracle: OracleVerdict | None = None
+    infra_error: str | None = None
     recovery_oracle: OracleVerdict | None = None
     oracle_finished_at: datetime | None = None
     recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
+    recovery_error: str | None = None
     recovered = bool(windows)
     diagnosis_grade: DiagnosisGrade | None = None
     if windows and grader is not None and outcome is not None and outcome.diagnosis.strip():
@@ -339,24 +381,20 @@ def _run_one(
     if windows:
 
         def grade() -> OracleVerdict:
-            if len(problem_ids) > 1:
-                verdicts = [driver.oracle(fault=position) for position in range(len(problem_ids))]  # type: ignore[call-arg]
-                return OracleVerdict(
-                    kind="composition",
-                    success=all(verdict.success for verdict in verdicts),
-                    details={
-                        problem: verdict.model_dump() for problem, verdict in zip(problem_ids, verdicts, strict=True)
-                    },
-                )
+            # The official aggregate oracle owns collateral/traffic policy. A submitted
+            # problem may itself contribute multiple components; positions are not IDs.
             return driver.oracle()
 
         try:
             oracle = grade()
-            if not oracle.success:
+            raw_infra = oracle.details.get("infra_error")
+            infra_error = raw_infra if isinstance(raw_infra, str) and raw_infra.strip() else None
+            if not oracle.success and infra_error is None:
                 errors.append("oracle reported failure")
         except Exception as exc:
             logger.exception("oracle failed for incident %d", index)
-            errors.append(f"oracle failed: {_describe(exc)}")
+            infra_error = f"oracle failed: {_describe(exc)}"
+            errors.append(infra_error)
         finally:
             oracle_finished_at = now()
         try:
@@ -367,13 +405,14 @@ def _run_one(
                 raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
         except Exception as exc:
             logger.exception("fault recovery failed for incident %d", index)
-            errors.append(f"fault recovery failed: {_describe(exc)}")
+            recovery_error = f"fault recovery failed: {_describe(exc)}"
+            errors.append(recovery_error)
             recovered = False
 
     learning_complete = True
     if outcome is not None and outcome.terminal_error:
         learning_complete = False
-    elif outcome is not None and recovered:
+    elif outcome is not None and recovered and infra_error is None:
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:
@@ -394,8 +433,11 @@ def _run_one(
         model=agent.model,
         injection_started_at=window.started_at,
         injection_finished_at=window.finished_at,
+        fault_components=getattr(driver, "last_components", []),
+        infra_error=infra_error,
         oracle=oracle,
         recovery_oracle=recovery_oracle,
+        recovery_error=recovery_error,
         diagnosis_grade=diagnosis_grade,
         oracle_finished_at=oracle_finished_at,
         recovery_finished_at=recovery_finished_at,

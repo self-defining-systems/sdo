@@ -51,7 +51,7 @@ Captures omit Kubernetes write metadata and sensitive environment values; worker
 | `sdo/operator/rendered/` | Production deployment renderer, selected-manifest reader and durable rendered-lock storage edge; no benchmark dependencies. |
 | `sdo/operator/broker/`, `memory/` (including `memory/layout` and `memory/validate`), `outcome_derivation/` | Go commit authority, logical snapshots and explicit generic-health preparation, the single operational-memory validator, outcome store with physical JSON adapter, controller-derived three-class outcomes without diagnosis verification, and read-only controller observations |
 | `sdo/operator/{sdk,core,runtime,builder,install}/` | Detector and program SDK with canonical object-ref text parsing, deterministic execution, drift feed to responders, revision-bound trusted plans, controller state and its typed projection, builder/supervisor, and Kubernetes installation |
-| `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, protocol, runner, experiments, and analysis |
+| `benchmarks/sregym/` | First-party benchmark adapter, Go receipt checker and submission guard, versioned fault descriptions, suite capability preflight, runner, experiments, and analysis |
 | `third_party/sregym/` | External benchmark harness Git submodule |
 
 Production packages do not import SREGym code. Benchmark-only image stages live in `benchmarks/sregym/Dockerfile.worker`, extending the built production responder; development mounts expose only production sources, examples and the operator binary. Benchmark adapters may call production APIs; strict receipts and submission relays remain in the benchmark boundary. The native path passed an end-to-end kind smoke with real goal/source/architecture/judge artifacts, concrete deployment and health evidence, provider credentials, and controller installation. Detector SDK staleness/dependency interface changes are outside this refactor.
@@ -103,6 +103,45 @@ Kubernetes client and never writes state. Controller publication validation
 remains at the controller's storage edge; this read projection strictly decodes
 field types and rejects undefined lifecycle enums. Source-mode operator launches
 use a cached build, so observation polling does not repeatedly use `go run`.
+
+## Benchmark fault and result boundary
+
+`benchmarks/sregym/faults/description.py` owns the versioned
+`sdo.sregym-fault-description/v1` metadata contract. Its harness subprocess
+resolves registered singles, catalog composites (excluding decoys), and generated
+co-located composites without cluster access. Descriptions preserve declared
+indices, actual injection order, class/key, parameters, probe availability, and
+required repair/snapshot scope. The runner and both fastloop selection paths
+validate this scope before deployment. Namespace labels/PSA, ResourceQuotas,
+admission webhooks, and unreviewed fault classes fail this check; production
+Roles and informers remain application scoped.
+
+Fastloop records `fault_descriptions.json` alongside incident results. Composite
+analysis reads that recorded catalog, avoiding a second hand-maintained fault
+map or dependence on the analyst's current harness checkout. Unsupported probes
+use the official aggregate oracle and record `tracking_supported=false` with no
+per-fault resolution times. `--require-fault-tracking` rejects such runs before
+deployment. Hidden identities, injection details and oracle answers stay in this
+benchmark boundary and never enter production tasks or operational memory.
+
+The sdo3 v2 worker and deferred HTTP gate expose explicit injection validity.
+Invalid injections stop before response/receipt polling; the persistent adapter
+pauses maintenance and records benchmark infrastructure evidence. Fastloop
+performs full cleanup, records an infrastructure row without learning credit,
+and excludes it from incident summaries. Full recovery errors stop the warm
+stream, including continue-on-error runs. Component addressing flattens every
+worker-returned index; official aggregate oracles retain collateral/traffic policy.
+
+The pipeline accepts terminal infrastructure rows in both per-problem and
+`run_<attempt>` layouts, records their state as `invalid_infra`, and preserves
+resume and workspace chaining. Such rows require no agent verdicts or strict
+receipts; invalid injections still require injection evidence. Analysis checks
+the top-level `infra_error` before token, submission and receipt requirements,
+excludes these rows from agent scores, and preserves independently graded
+aggregate failures with only per-fault infrastructure details. Composite metrics
+retain fault counts, injection validity and per-fault details beside existing
+aggregate success and timing. The harness owns selection and validation of its
+immutable checked agent image; the adapter no longer probes an obsolete tag.
 
 ## Controller
 
@@ -404,6 +443,7 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 | `.sdo/diagnostics/detectors/<class>/<id>/manifest.yaml` | Owner of the detector class | Owner of the detector class | One manifest per detector; its class, ID, and package must match its location. |
 | `.sdo/schema-version`, `.sdo/lifecycle-provenance.yaml` | Upkeep or controller metadata path | Same owning path | Validation metadata, not additional artifact classes. Upkeep alone may migrate schema versions 1 and 2 to 3: it rewrites detector manifests, moves packages, and rewrites playbook paths in detector source to logical IDs, and the broker rejects any other detector change in the same commit. |
 | Benchmark strict/rejected receipts (outside `.sdo/`) | Benchmark Go checker derives and accepts/rejects evidence | Python adapter transports and persists generated results | `NativeProductionReceipt` and `ReceiptFailure` define the decision; rejected raw evidence grants no memory or mitigation authority. |
+| Benchmark fault descriptions and terminal infrastructure rows (outside `.sdo/`) | Harness subprocess and benchmark runner | Benchmark runner/analysis | Versioned descriptions preserve ordering and probe capabilities; unsupported repair/snapshot scope is rejected; infrastructure-only rows grant no agent credit. |
 | Benchmark submission decisions (outside `.sdo/`) | Benchmark Go guard | Python only transports the decision and opaque upstream reply | Generated `SubmissionGuardDecision`; only the matching observed phase authorizes POST; completion polls never authorize POST. |
 | Session API history (outside `.sdo/`) | Go proxy; memory edge writes attempt generation and verified recovery marker | Same controller-owned paths | Per-incident bounded append-only envelopes and projected content hashes; workers mount read-only; caps, gaps, unfinished requests, mismatched attempt generations and epochs cannot establish continuity. |
 | Runtime-state ConfigMap (outside `.sdo/`) | Go controller | Go controller | `ControllerState` is publication-validated by its storage edge; `ControllerObservation` is a read-only Go interpretation, never a second writer or persistence schema. |
@@ -424,7 +464,7 @@ Source-absent drift admission also covers reviewed foreign NetworkPolicy creates
 | `sdo/skills/` | Production authoring guidance installed in worker homes; generated SDK references and validator rule citations. |
 | `libs/agent_cli/` | Production-neutral agent turn runner. |
 | `apps/` | Deployment and evaluation inputs. `apps/toy/` owns the reusable tiny Kubernetes app, seed and cluster-state fault injectors/oracles; it has no SREGym dependency. |
-| `benchmarks/sregym/{adapter,fastloop,protocol,runner,experiments,analysis}/` | First-party benchmark integration; `protocol/native_receipt_go` owns typed receipt decisions and `protocol/submission_go` owns phase and acknowledgment decisions from generated contracts; Python transports/persists the results; scripted restore reads controller-rendered source through `sdo source`. Baseline recovery uses server-side apply as `sdo-deployer` and waits for application rollouts before the benchmark residue check; fastloop rows retain responder usage and mitigation timing from verified stage evidence if learning fails, and expose closure phase intervals, resolution path, and fast-path programs from the native ledger. |
+| `benchmarks/sregym/{adapter,fastloop,faults,protocol,runner,experiments,analysis}/` | First-party benchmark integration; `faults/description.py` owns shared discovery and capability validation, with catalogs recorded beside fastloop results and infrastructure classification before scoring; `protocol/native_receipt_go` owns typed receipt decisions and `protocol/submission_go` owns phase and acknowledgment decisions from generated contracts; Python transports/persists the results; scripted restore reads controller-rendered source through `sdo source`. Baseline recovery uses server-side apply as `sdo-deployer` and waits for application rollouts before the benchmark residue check; fastloop rows retain responder usage and mitigation timing from verified stage evidence if learning fails, and expose closure phase intervals, resolution path, and fast-path programs from the native ledger. |
 | `third_party/sregym/` | External benchmark harness Git submodule. |
 | Historical bounded operator, shell health checks, trajectory recorder, UI, prompt stack, standalone fault injection | Excluded from production scope. |
 

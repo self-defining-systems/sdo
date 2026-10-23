@@ -59,6 +59,7 @@ from benchmarks.sregym.adapter.runtime import (
     export_controller_logs,
 )
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
+from benchmarks.sregym.protocol.injection import InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
 from sdo.contracts import (
     ControllerObservation,
@@ -547,7 +548,32 @@ def run_persistent_stage(
     install_ready = clock.monotonic()
     generation = f"{inputs.stage_label}-{uuid.uuid4().hex[:8]}"
     ops.set_maintenance(control, paused=False, generation=generation)
-    gate_timings = ops.inject_after_resume(control, generation, inject)
+    try:
+        gate_timings = ops.inject_after_resume(control, generation, inject)
+    except InvalidInjectionError as exc:
+        # No incident exists: settle maintenance without waiting for response, reflection,
+        # acknowledgment, or a strict receipt, and retain a benchmark terminal record.
+        try:
+            paused = f"{generation}-injection-invalid"
+            ops.set_maintenance(control, paused=True, generation=paused)
+            wait_for_maintenance_ack(ops, control, paused, clock)
+        except Exception as cleanup_exc:
+            exc.cleanup_error = f"controller cleanup failed: {cleanup_exc}"
+        inputs.receipt_dir.mkdir(parents=True, exist_ok=True)
+        (inputs.receipt_dir / "sdo_infrastructure_outcome.json").write_text(
+            json.dumps(
+                {
+                    "infra_error": exc.infra_error,
+                    "injection_evidence": exc.details,
+                    "cleanup_error": exc.cleanup_error,
+                    "incident_credit": False,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raise
     injected = clock.monotonic()
     verified = _wait_for_verified_incident(
         ops,

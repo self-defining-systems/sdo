@@ -280,7 +280,7 @@ def test_recovering_one_fault_of_a_composition_does_not_wait_for_health() -> Non
 
     seconds = driver.recover_fault(1)
 
-    assert worker.requests[-1] == ("recover", {"fault": 1})
+    assert worker.requests[-1] == ("recover", {"mode": "full", "fault": 1})
     assert seconds == pytest.approx(1.5)
     assert all(op != "health" for op, _ in worker.requests)
 

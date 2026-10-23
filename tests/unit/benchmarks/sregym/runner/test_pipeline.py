@@ -1537,3 +1537,16 @@ def test_pipeline_rejects_keys_of_the_removed_crucible_agent(tmp_path: Path, sec
 
     with pytest.raises(ValueError, match=key):
         load_pipeline_config(path)
+
+
+@pytest.mark.parametrize("infra", ["injection_invalid", "oracle_timeout"])
+def test_sdo3_terminal_infrastructure_row_does_not_require_agent_receipt(tmp_path: Path, infra: str) -> None:
+    result = tmp_path / "runs/000000_problem/worker_0/results/sdo_codex/problem/problem_sdo_codex_results.csv"
+    result.parent.mkdir(parents=True)
+    result.write_text(
+        "problem_id,infra_error,Diagnosis.success,Mitigation.success,Injection.composite_valid\nproblem,"
+        + infra
+        + ",,,False\n"
+    )
+    # Terminal infrastructure rows are resumable, but do not pass as graded agent outcomes.
+    assert _stage_results_error(tmp_path, require_strict_receipt=True) is None

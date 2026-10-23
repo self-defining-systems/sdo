@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, RecoveryCleanup, reconcile_application
 from benchmarks.sregym.fastloop.loop import InjectionWindow
 from benchmarks.sregym.fastloop.records import OracleVerdict
+from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectionError, check_injection
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -27,6 +28,13 @@ class FastloopFaultError(RuntimeError):
 
 class WorkerRequester(Protocol):
     def request(self, op: str, *, timeout: float = ..., **args: Any) -> dict[str, Any]: ...
+
+
+def _check_recovery(reply: dict[str, Any]) -> None:
+    if reply.get("protocol_version") == 2 and reply.get("success") is not True:
+        raise FastloopFaultError(
+            f"full recovery {reply.get('status')}: pending={reply.get('pending')}; errors={reply.get('errors')}"
+        )
 
 
 def _utc(epoch: object) -> datetime:
@@ -87,6 +95,7 @@ class SregymFaultDriver:
         self._baselines = (baseline,) if isinstance(baseline, ApplicationBaseline) else baseline
         self._cluster = cluster
         self.last_cleanup = RecoveryCleanup()
+        self.last_components: list[FaultComponent] = []
         self._health_timeout = health_timeout_seconds
         self._health_poll = health_poll_seconds
         self._monotonic = monotonic
@@ -97,6 +106,8 @@ class SregymFaultDriver:
         if self._before_inject is not None:
             self._before_inject(problem_id)
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
+        self.last_components = [FaultComponent.model_validate(item) for item in reply.get("components", [])]
+        check_injection(reply)
         return _window(reply)
 
     def inject_composite(self, problem_ids: Sequence[str]) -> CompositeInjection:
@@ -111,15 +122,30 @@ class SregymFaultDriver:
         if len(set(problems)) != len(problems):
             raise ValueError(f"a composite fault lists a problem more than once: {problems}")
         faults: list[InjectedFault] = []
+        self.last_components = []
         for position, problem_id in enumerate(problems):
             try:
                 reply = self._worker.request(
                     "inject", problem_id=problem_id, compose=position > 0, timeout=WORKER_OP_TIMEOUT_SECONDS
                 )
+                self.last_components.extend(FaultComponent.model_validate(item) for item in reply.get("components", []))
+                check_injection(reply)
+                indices = reply.get("faults", [reply.get("fault")])
+                if (
+                    not isinstance(indices, list)
+                    or not indices
+                    or indices != list(range(len(faults), len(faults) + len(indices)))
+                ):
+                    raise FastloopFaultError(f"worker returned invalid component indices for {problem_id}: {indices!r}")
                 index = reply.get("fault")
-                if index != position:
-                    raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {position}")
-                faults.append(InjectedFault(problem_id=problem_id, index=position, window=_window(reply)))
+                if index != len(faults):
+                    raise FastloopFaultError(f"worker placed {problem_id} at fault {index!r}, expected {len(faults)}")
+                faults.extend(
+                    InjectedFault(problem_id=problem_id, index=index, window=_window(reply)) for index in indices
+                )
+            except InvalidInjectionError:
+                # The loop owns terminal recording and cleanup, including the failed component.
+                raise
             except Exception as exc:
                 if faults:
                     try:
@@ -133,14 +159,16 @@ class SregymFaultDriver:
 
     def oracle(self, *, fault: int | None = None) -> OracleVerdict:
         args: dict[str, Any] = {} if fault is None else {"fault": fault}
-        return OracleVerdict.model_validate(self._worker.request("oracle", timeout=WORKER_OP_TIMEOUT_SECONDS, **args))
+        reply = self._worker.request("oracle", timeout=WORKER_OP_TIMEOUT_SECONDS, **args)
+        return OracleVerdict(kind=reply["kind"], success=reply["success"], details=reply.get("details", {}))
 
     def recover_fault(self, index: int) -> float:
         """Revert one fault of a composition; the others stay, so the application may stay unhealthy."""
 
         if index < 0:
             raise ValueError("fault index must not be negative")
-        reply = self._worker.request("recover", fault=index, timeout=WORKER_OP_TIMEOUT_SECONDS)
+        reply = self._worker.request("recover", mode="full", fault=index, timeout=WORKER_OP_TIMEOUT_SECONDS)
+        _check_recovery(reply)
         seconds = reply.get("seconds")
         if not isinstance(seconds, (int, float)):
             raise FastloopFaultError(f"worker returned a non-numeric recovery time {seconds!r}")
@@ -151,7 +179,8 @@ class SregymFaultDriver:
 
         started = self._monotonic()
         self.last_cleanup = RecoveryCleanup()
-        self._worker.request("recover", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        reply = self._worker.request("recover", mode="full", timeout=WORKER_OP_TIMEOUT_SECONDS)
+        _check_recovery(reply)
         if self._baselines is not None and self._cluster is not None:
             for baseline in self._baselines:
                 cleaned = reconcile_application(self._cluster, baseline, baseline.namespace)

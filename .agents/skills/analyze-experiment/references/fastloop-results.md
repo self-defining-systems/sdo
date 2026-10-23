@@ -102,3 +102,54 @@ and earns no additional program trust credit. `PlanApplication` keeps applied
 actions and verification outcomes; rollback pre-images and patches are retired
 (reserved fields 11 and 13). The tools-state ConfigMap retains attempt counts,
 limits and revision-bound failure signals, not mutation history.
+
+
+## sdo3 fault discovery and tracking
+
+New runs record `fault_descriptions.json` beside `incidents.jsonl`, keyed by
+problem ID. Each `sdo.sregym-fault-description/v1` document preserves fault class,
+key, parameters, declared index and actual `injection_order`; catalog decoys are
+excluded. A stream entry may join several problem IDs, each contributing several
+faults. Use these recorded descriptions in composite sequence analysis; never
+reconstruct identities from a hard-coded map or a different harness revision.
+
+`tracking_supported=false` means no attributable probe exists for at least one
+fault (or probe identities collide). The official aggregate oracle still grades
+the result. Such composite reports contain empty `resolved_s`/timeline and no
+per-fault resolution credit; the table displays `untracked`. Do not interpret
+missing probe timing as an unresolved fault, an inert injection, or zero latency.
+An explicit `--require-fault-tracking` launch rejects unsupported tracking before
+deployment. Capability validation separately rejects repair/snapshot scope that
+SDO lacks, including namespace PSA labels, quotas and admission webhooks.
+
+
+## sdo3 infrastructure outcomes and composites
+
+Inspect the CSV's top-level `infra_error` before judging submissions, token
+artifacts or strict receipts. A non-empty infrastructure error invalidates the
+measurement even if an aggregate oracle says false; report the recorded reason
+and exclude it from agent scores. `injection_invalid` is terminal and intentionally
+ungraded, with benchmark `Injection.*` evidence and no required agent artifacts.
+Do not accuse the agent of failing to submit or count an injection as an incident
+response. A `fault_i_infra_error` alone does not override an already graded
+aggregate failure: preserve the harness's top-level policy.
+
+Per-problem CSVs can appear directly below `results/<agent>/<problem>/` when no
+agent attempt started, as well as below `run_<attempt>/`. Pipeline state
+`invalid_infra` preserves these terminal outcomes across resume; it is distinct
+from `completed`, `agent_failure`, and missing artifacts. Persistent-controller
+drain still runs for the pipeline, but terminal infrastructure rows need no
+strict receipt. Workspace chaining uses the previous stage's actual workspace.
+
+Composite verdict exports retain `faults_total`, `faults_fixed`,
+`faults_diagnosed`, `composite_valid`, and `per_fault_details`, alongside aggregate
+success and judge-free TTD/TTM. Missing values remain unknown. Retain per-fault
+infrastructure details without silently converting them to agent failures.
+
+
+Fastloop invalid injections carry `infra_error=injection_invalid` and
+`injection_evidence`; they have no response, oracle grade or learning credit.
+Summaries exclude them from incident denominators and expose
+`infrastructure_outcomes` separately. `recovery_error` stops the stream even with
+continue-on-error: no baseline repair or reset can erase failed full recovery.
+The driver requests protocol v2 full cleanup before restoring its owned baseline.

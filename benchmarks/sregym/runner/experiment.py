@@ -372,7 +372,7 @@ def resolve_tasklist(
         return dest
 
     if config.tasklist:
-        source = _resolve_tasklist_source(config.tasklist, sregym_dir)
+        source = resolve_tasklist_source(config.tasklist, sregym_dir)
         shutil.copy2(source, dest)
         return dest
 
@@ -380,7 +380,7 @@ def resolve_tasklist(
     return None
 
 
-def _resolve_tasklist_source(tasklist_ref: str, sregym_dir: Path) -> Path:
+def resolve_tasklist_source(tasklist_ref: str, sregym_dir: Path) -> Path:
     """Resolve a tasklist reference to an actual file path.
 
     A tasklist_ref can be:

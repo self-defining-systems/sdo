@@ -14,13 +14,15 @@ change is not counted as resolved early.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription, describe_sregym_problems
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -28,84 +30,28 @@ if TYPE_CHECKING:
 NETWORK_POLICY_LABEL_KEY = "io.kompose.service"
 
 
-@dataclass(frozen=True)
-class FaultSpec:
-    kind: str
-    component: str
-    policy_name: str | None = None
-    pod_label_key: str = NETWORK_POLICY_LABEL_KEY
-
-    @property
-    def name(self) -> str:
-        return f"{self.kind}:{self.component}"
-
-
-#: Hand-registered composites (third_party/sregym ``COMPOSITE_SPECS``), in injection order.
-COMPOSITE_FAULTS: dict[str, tuple[FaultSpec, ...]] = {
-    "composite3_hotel_geo_rate_recommendation": (
-        FaultSpec("readiness", "geo"),
-        FaultSpec("configmap", "mongodb-rate"),
-        FaultSpec("network_policy", "recommendation"),
-    ),
-    "composite3b_hotel_profile_mongodb_geo_recommendation": (
-        FaultSpec("readiness", "profile"),
-        FaultSpec("configmap", "mongodb-geo"),
-        FaultSpec("network_policy", "recommendation"),
-    ),
-    "composite3c_hotel_rate_mongodb_geo_user": (
-        FaultSpec("readiness", "rate"),
-        FaultSpec("configmap", "mongodb-geo"),
-        FaultSpec("network_policy", "user"),
-    ),
-    "composite4_hotel_profile_rate_recommendation_frontend": (
-        FaultSpec("readiness", "profile"),
-        FaultSpec("configmap", "mongodb-rate"),
-        FaultSpec("network_policy", "recommendation"),
-        FaultSpec("wrong_selector", "frontend"),
-    ),
-    "composite5_hotel_geo_rate_recommendation_frontend_user": (
-        FaultSpec("readiness", "geo"),
-        FaultSpec("configmap", "mongodb-rate"),
-        FaultSpec("network_policy", "recommendation"),
-        FaultSpec("wrong_selector", "frontend"),
-        FaultSpec("resource_request", "user"),
-    ),
-}
-
-
 def composite_faults(problem_id: str) -> tuple[FaultSpec, ...]:
-    return COMPOSITE_FAULTS.get(problem_id, ())
+    """Compatibility helper; resolve registered composites rather than maintaining a second catalog."""
+    description = _default_description(problem_id)
+    return description.ordered_faults() if description.composite else ()
+
+
+@lru_cache(maxsize=256)
+def _default_description(problem_id: str) -> ProblemDescription:
+    return describe_sregym_problems(
+        (problem_id,), sregym_dir=Path(__file__).resolve().parents[3] / "third_party/sregym"
+    )[problem_id]
 
 
 def describe_sregym_faults(
     problem_ids: tuple[str, ...], *, sregym_dir: Path, app_source_dir: Path | None = None
 ) -> dict[str, tuple[FaultSpec, ...]]:
-    """Resolve probe targets from SREGym's registered problem instances without cluster calls."""
-
-    if not problem_ids:
-        return {}
-    root = Path(__file__).resolve().parents[3]
-    env = {
-        **os.environ,
-        "PYTHONPATH": os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH", "")))),
+    return {
+        key: value.ordered_faults()
+        for key, value in describe_sregym_problems(
+            problem_ids, sregym_dir=sregym_dir, app_source_dir=app_source_dir
+        ).items()
     }
-    if app_source_dir is not None:
-        env["SREGYM_APP_SOURCE_DIR"] = str(app_source_dir)
-    completed = subprocess.run(
-        ["uv", "run", "--directory", str(sregym_dir), "python", "-m", "benchmarks.sregym.fastloop.fault_spec_worker"],
-        input=json.dumps(problem_ids),
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=120,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise ValueError(f"SREGym fault description failed: {(completed.stderr or completed.stdout)[-2000:]}")
-    described = json.loads(completed.stdout)
-    if set(described) != set(problem_ids):
-        raise ValueError("SREGym returned incomplete fault descriptions")
-    return {problem_id: tuple(FaultSpec(**item) for item in items) for problem_id, items in described.items()}
 
 
 def stream_faults(
@@ -189,6 +135,10 @@ def probes_for(
 ) -> dict[str, Callable[[], bool]]:
     probes: dict[str, Callable[[], bool]] = {}
     for fault in faults:
+        if not fault.tracking_supported:
+            raise ValueError(f"per-fault tracking unsupported: {fault.tracking_reason}")
+        if fault.name in probes:
+            raise ValueError(f"duplicate probe identity {fault.name}")
         component = fault.component
         if fault.kind in {"readiness", "configmap", "resource_request", "incorrect_image"}:
             probes[fault.name] = lambda component=component: _deployment_available(read, component)

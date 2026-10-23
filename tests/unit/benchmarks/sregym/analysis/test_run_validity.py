@@ -393,3 +393,76 @@ def test_a_truncated_worker_resolution_record_fails_the_check_instead_of_crashin
     (check,) = (c for c in _one(experiment).checks if c.name == "agent-provider")
 
     assert check.status == "fail"
+
+
+def _add_columns(exp: Path, columns: dict[str, str]) -> None:
+    import csv
+
+    path = next(exp.rglob("*_ALL_results.csv"))
+    with path.open() as stream:
+        rows = list(csv.DictReader(stream))
+    rows[0].update(columns)
+    with path.open("w") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_top_level_infrastructure_error_precedes_agent_scoring(tmp_path: Path) -> None:
+    exp = Run(mitigation="False").write(tmp_path / "exp")
+    _add_columns(exp, {"infra_error": "synthetic_oracle_timeout"})
+    result = _one(exp)
+    assert result.classification == "invalid_infra"
+    assert any("synthetic_oracle_timeout" in reason for reason in result.reasons)
+    assert not any(check.blame == "agent" and check.status == "fail" for check in result.checks)
+
+
+def test_invalid_injection_needs_evidence_but_no_agent_artifacts(tmp_path: Path) -> None:
+    exp = Run(
+        diagnosis="", mitigation="", diagnosed="", mitigated="", ttl="", rollout_turns=None, usage_metrics=None
+    ).write(tmp_path / "exp")
+    _add_columns(exp, {"infra_error": "injection_invalid", "injection_evidence": '{"composite_valid": false}'})
+    result = _one(exp)
+    assert result.classification == "invalid_infra"
+    assert result.reasons == ("infra_error=injection_invalid",)
+    assert not any(check.name in {"outcome", "codex-tokens", "receipt"} for check in result.checks)
+
+
+def test_per_fault_infra_error_preserves_graded_aggregate_policy(tmp_path: Path) -> None:
+    exp = Run(mitigation="False").write(tmp_path / "exp")
+    _add_columns(exp, {"Mitigation.fault_1_infra_error": "timeout"})
+    assert _one(exp).classification == "agent_failure"
+
+
+def test_invalid_injection_without_evidence_is_explicitly_invalid(tmp_path: Path) -> None:
+    exp = Run(diagnosis="", mitigation="", rollout_turns=None, usage_metrics=None).write(tmp_path / "exp")
+    _add_columns(exp, {"infra_error": "injection_invalid"})
+    result = _one(exp)
+    assert any("no injection evidence" in reason for reason in result.reasons)
+    assert not any("never submitted" in reason for reason in result.reasons)
+
+
+def test_composite_verdict_preserves_sdo3_counts_and_fault_details(tmp_path: Path) -> None:
+    from benchmarks.sregym.analysis.incident_cost import read_verdict
+
+    exp = Run().write(tmp_path / "exp")
+    _add_columns(
+        exp,
+        {
+            "Mitigation.faults_total": "2",
+            "Mitigation.faults_fixed": "1",
+            "Diagnosis.faults_diagnosed": "2",
+            "Injection.composite_valid": "True",
+            "Mitigation.fault_1_infra_error": "timeout",
+            "Mitigation.fault_0_verdict": "True",
+        },
+    )
+    result = read_verdict(next((exp / "runs").glob("*/worker_*/results")))
+    assert result is not None
+    assert (result.faults_total, result.faults_fixed, result.faults_diagnosed, result.composite_valid) == (
+        2,
+        1,
+        2,
+        True,
+    )
+    assert result.per_fault_details["Mitigation.fault_1_infra_error"] == "timeout"

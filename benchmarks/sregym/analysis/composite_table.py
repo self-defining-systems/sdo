@@ -83,7 +83,19 @@ def rows(directories: list[Path]) -> list[dict[str, Any]]:
                     "index": index,
                     "agent": report.get("agent"),
                     "problem": report.get("problem_id"),
-                    "resolved": f"{report['faults_resolved']}/{report['faults_total']}",
+                    "resolved": (
+                        f"{report['faults_resolved']}/{report['faults_total']}"
+                        if report.get("tracking_supported", True)
+                        else "untracked"
+                    ),
+                    "tracking_supported": report.get("tracking_supported", True),
+                    "faults_total": oracle.get("faults_total", report.get("faults_total")),
+                    "faults_fixed": oracle.get("faults_fixed"),
+                    "faults_diagnosed": (record.get("diagnosis_grade") or {})
+                    .get("details", {})
+                    .get("faults_diagnosed"),
+                    "composite_valid": oracle.get("composite_valid"),
+                    "per_fault_details": {key: value for key, value in oracle.items() if key.startswith("fault_")},
                     "all_resolved_s": report.get("all_resolved_s"),
                     "per_fault_s": report.get("resolved_s"),
                     "inert_faults": [name for name, red in (report.get("ever_red") or {}).items() if not red],

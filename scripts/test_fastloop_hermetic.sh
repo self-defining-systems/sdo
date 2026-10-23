@@ -13,6 +13,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 uv run --extra test pytest -q -p no:tach \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_hermetic_run.py \
+    tests/unit/benchmarks/sregym/fastloop/test_sdo3_descriptions.py \
+    tests/unit/benchmarks/sregym/fastloop/test_sdo3_s3a_contracts.py \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py::test_failed_composite_reset_restarts_controller_before_next_incident \
     tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py::test_reset_stage_syncs_accepted_pvc_before_recreating_controller \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_reset.py::test_reset_cancels_and_awaits_workers_before_deleting_captures \

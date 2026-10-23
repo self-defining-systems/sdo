@@ -90,9 +90,27 @@ def make_tracker(
     faults: tuple[FaultSpec, ...] = (),
 ):
     faults = faults or composite_faults(problem_id)
-    if not faults:
+    if (
+        not faults
+        or not all(fault.tracking_supported for fault in faults)
+        or len({f.name for f in faults}) != len(faults)
+    ):
         return None
     return FaultTracker(probes_for(faults, reader), stable_seconds=settings.stable_seconds)
+
+
+def _unsupported_report(agent: str, problem_id: str, faults: tuple[FaultSpec, ...]) -> dict[str, Any]:
+    return {
+        "agent": agent,
+        "problem_id": problem_id,
+        "tracking_supported": False,
+        "tracking_reason": "attributable probes unavailable; aggregate official oracle only",
+        "faults_total": len(faults),
+        "faults_resolved": None,
+        "resolved_s": {},
+        "timeline": [],
+        "origin": "injection_end",
+    }
 
 
 def write_composite_report(path: Path, report: dict[str, Any]) -> None:
@@ -151,8 +169,18 @@ class TrackedAgent:
         return self._inner.model
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
-        tracker = make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
+        tracker = (
+            make_tracker(problem_id, self._reader, self._settings, faults=self._stream_faults.get(problem_id, ()))
+            if not self._stream_faults or problem_id in self._stream_faults
+            else None
+        )
         if tracker is None:
+            faults = self._stream_faults.get(problem_id, ())
+            if faults:
+                write_composite_report(
+                    self._report_dir / f"composite_{index:03d}_{problem_id}.json",
+                    _unsupported_report(self.name, problem_id, faults),
+                )
             return self._inner.resolve(index, problem_id, inject)
         poller = BackgroundPoller(tracker, interval_seconds=self._settings.poll_seconds)
         started = time.monotonic()
@@ -215,10 +243,20 @@ class CompositeSdoAgent(SdoPersistentAgent):
 
     def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
         composite = self._composite
-        tracker = make_tracker(problem_id, self._reader, composite, faults=self._stream_faults.get(problem_id, ()))
+        tracker = (
+            make_tracker(problem_id, self._reader, composite, faults=self._stream_faults.get(problem_id, ()))
+            if not self._stream_faults or problem_id in self._stream_faults
+            else None
+        )
         if tracker is None:
-            if problem_id.startswith(("mf__", "composite")):
+            if problem_id.startswith(("mf__", "composite")) and problem_id not in self._stream_faults:
                 raise ValueError(f"{problem_id!r} is not a registered composite")
+            faults = self._stream_faults.get(problem_id, ())
+            if faults:
+                write_composite_report(
+                    self._report_dir / f"composite_{index:03d}_{problem_id}.json",
+                    _unsupported_report(self.name, problem_id, faults),
+                )
             self._reflection_drain_seconds = 0.0
             self._reflection_started_at = None
             self._keep_running = False

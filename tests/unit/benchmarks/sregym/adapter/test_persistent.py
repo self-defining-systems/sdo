@@ -1450,3 +1450,22 @@ def test_teardown_preserves_pending_state_when_controller_inventory_fails(tmp_pa
     assert not any(event[0] == "delete" for event in ops.events)
     assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending is not None
     assert not (tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).exists()
+
+
+def test_invalid_deferred_injection_pauses_without_incident_or_receipt_wait(tmp_path: Path) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    ops = FakeOps()
+    inputs = _inputs(tmp_path, "invalid")
+
+    def invalid():
+        raise InvalidInjectionError({"composite_valid": False})
+
+    with pytest.raises(InvalidInjectionError):
+        run_persistent_stage(inputs, ops=ops, run_lifecycle=lambda: True, inject=invalid, clock=_clock(ops))
+    assert ops.incidents == 0
+    assert ops.events[-1] == ("paused", inputs.runtime_config.control_namespace)
+    assert not any(event[0] in {"receipt", "reflected"} for event in ops.events)
+    outcome = json.loads((inputs.receipt_dir / "sdo_infrastructure_outcome.json").read_text())
+    assert outcome["infra_error"] == "injection_invalid"
+    assert outcome["incident_credit"] is False

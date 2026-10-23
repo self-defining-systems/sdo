@@ -105,3 +105,6 @@ Flat reflection usage follows ProtoJSON: int64 token counts may be strings.
 First-party incident rows include `reflection_evidence_gap_count`, copied from the Go incident ledger. Missing
 historical values remain unknown. Count typed `decline_reason=evidence_gap` decisions to distinguish actual
 learning declines from missing observations that did not block a program; see [outcomes](outcome-records.md).
+
+
+sdo3 outcomes: see [fastloop results](fastloop-results.md#sdo3-infrastructure-outcomes-and-composites).
