@@ -73,6 +73,10 @@ def _verification(healthy: bool, output: str, *, claimed: bool = False) -> dict[
 
 
 def respond(turn: Turn, directive: Directive, request: dict[str, Any], prompt: str, worktree: Path) -> dict[str, Any]:
+    if directive.fault == "recorded_repair":
+        from benchmarks.sregym.adapter import replay_recorded_repair as replay
+
+        return replay(turn.run, int(directive.extra["slot"]), request, worktree, attempts=directive.status_attempts)
     started = utc_now()
     plan = PLANS[directive.fault]
     namespace = str(request["namespace"])

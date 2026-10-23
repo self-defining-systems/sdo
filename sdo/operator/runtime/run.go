@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -263,6 +264,24 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
 		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
 	}
+
+	if policy := options.SourcePlanPolicy; policy != nil && len(policy.Applications) > 0 {
+		raw := []byte(*planSourceJSON)
+		if len(raw) == 0 {
+			raw, _ = json.Marshal(policy)
+		}
+		event := struct {
+			Loaded       bool   `json:"plan_source_policy_loaded"`
+			Applications int    `json:"applications"`
+			CreateKinds  int    `json:"create_kinds"`
+			DeleteKinds  int    `json:"delete_kinds"`
+			SHA256       string `json:"sha256"`
+		}{true, len(policy.Applications), len(policy.CreateKinds), len(policy.DeleteKinds), fmt.Sprintf("%x", sha256.Sum256(raw))}
+		if err := json.NewEncoder(stdout).Encode(event); err != nil {
+			return fmt.Errorf("log loaded source plan policy: %w", err)
+		}
+	}
+
 	timeScale, err := developmentTimeScale()
 	if err != nil {
 		return err

@@ -67,6 +67,40 @@ def test_recovery_waits_until_the_app_is_healthy_again() -> None:
     assert seconds == pytest.approx(2 * 1.0)
 
 
+@pytest.mark.parametrize("component_only", [False, True])
+def test_recovery_failure_identifies_component_without_sensitive_worker_details(component_only: bool) -> None:
+    class FailedWorker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            assert op == "recover"
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"component_index": 2, "status": "error", "error": "SYNTHETIC_SENSITIVE_CANARY"}],
+            }
+
+    driver = _driver(FailedWorker())
+    with pytest.raises(FastloopFaultError) as caught:
+        driver.recover_fault(2) if component_only else driver.recover()
+
+    assert "component 2: error" in str(caught.value)
+    assert "CANARY" not in str(caught.value)
+
+
+def test_recovery_failure_does_not_echo_unrecognized_component_metadata() -> None:
+    class FailedWorker(FakeWorker):
+        def request(self, op: str, *, timeout: float = 0, **args: Any) -> dict[str, Any]:
+            return {
+                "protocol_version": 2,
+                "success": False,
+                "errors": [{"component_index": "SYNTHETIC_CANARY", "status": "SYNTHETIC_CANARY"}],
+            }
+
+    with pytest.raises(FastloopFaultError, match="warm lane cannot be reused") as caught:
+        _driver(FailedWorker()).recover()
+
+    assert "CANARY" not in str(caught.value)
+
+
 def test_recovery_poll_interval_can_follow_the_run_time_scale() -> None:
     now = [0.0]
     worker = FakeWorker(health_sequence=[False, True])
@@ -385,3 +419,84 @@ def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dic
 def test_full_cleanup_rejects_missing_baseline_before_injection() -> None:
     with pytest.raises(ValueError, match="baseline"):
         SregymFaultDriver(FakeWorker(), namespace="app", require_full_cleanup=True)
+
+
+@pytest.mark.parametrize(
+    ("success", "details"),
+    [(True, {}), (False, {"infra_error": "oracle unavailable"}), (False, {"oracles": [{"error": "query failed"}]})],
+)
+def test_rehearsal_rejects_unproven_fault_before_responder(success, details) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {"kind": "composition", "success": success, "details": details}
+            return super().request(op, timeout=timeout, **args)
+
+    with pytest.raises(InvalidInjectionError, match="injection_invalid"):
+        SregymFaultDriver(Worker(), namespace="app", require_faulty_oracle=True).inject("composite")
+
+
+def test_rehearsal_accepts_faulty_official_oracle() -> None:
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {"kind": "composition", "success": False, "details": {"oracles": [{"success": False}]}}
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(Worker(), namespace="app", require_faulty_oracle=True)
+    driver.inject("composite")
+    assert driver.last_pre_repair_oracle is not None
+    assert not driver.last_pre_repair_oracle.success
+
+
+def test_composite_rehearsal_checks_oracle_after_all_injections() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            reply = super().request(op, timeout=timeout, **args)
+            if op == "inject":
+                index = sum(name == "inject" for name, _ in self.requests) - 1
+                return {**reply, "fault": index, "faults": [index]}
+            return reply
+
+    worker = Worker()
+    driver = SregymFaultDriver(worker, namespace="app", require_faulty_oracle=True)
+    with pytest.raises(InvalidInjectionError):
+        driver.inject_composite(["one", "two"])
+    assert [op for op, _ in worker.requests] == ["inject", "inject", "oracle"]
+
+
+@pytest.mark.parametrize("valkey_success", [True, False, None])
+def test_required_component_fault_cannot_be_masked_by_another_fault(valkey_success) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {
+                    "kind": "composition",
+                    "success": False,
+                    "details": {
+                        "oracles": [
+                            {"name": "fault_0:ReadinessProbeMisconfiguration", "success": False},
+                            {"name": "fault_1:ValkeyMemoryDisruption", "success": valkey_success},
+                        ]
+                    },
+                }
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(
+        Worker(),
+        namespace="app",
+        require_faulty_oracle=True,
+        required_faulty_components=("fault_1:ValkeyMemoryDisruption",),
+    )
+    if valkey_success is False:
+        driver.inject("composite")
+    else:
+        with pytest.raises(InvalidInjectionError) as error:
+            driver.inject("composite")
+        assert "required component fault_1:ValkeyMemoryDisruption" in error.value.details["reason"]

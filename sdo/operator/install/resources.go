@@ -38,6 +38,7 @@ const (
 )
 
 type Config struct {
+	ResponderMenu        bool
 	PlanSourcePolicyJSON string
 	// PlanSafetyPolicyJSON and its reviewer-pinned hash are controller-only authority.
 	PlanSafetyPolicyJSON   string
@@ -508,11 +509,16 @@ func controllerJob(c Config) *batchv1.Job {
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
 	policyJSON, _ := json.Marshal(c.ObservationCeiling)
+	menu := "0"
+	if c.ResponderMenu {
+		menu = "1"
+	}
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,
 		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: c.CredentialsSecret}}}},
 		Env: []corev1.EnvVar{
+			{Name: "SDO_RESPONDER_MENU", Value: menu},
 			{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"},
 			{Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"},
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},

@@ -163,3 +163,15 @@ def test_scripted_reflection_can_publish_memory_without_a_program_pair(
     assert "scripted-incident" in notes.read_text()
     assert "verified-repair-notes/README.md" in (app / ".sdo/playbooks/README.md").read_text()
     assert not list((app / ".sdo/playbooks").rglob("*.go"))
+
+
+@pytest.mark.parametrize("typed", [False, True])
+def test_scripted_binding_args_extract_object_bindings(typed: bool) -> None:
+    objects = {"service": {"kind": "Service", "namespace": "app", "name": "front"}}
+    bindings = {"objects": objects, "values": {}} if typed else objects
+    assert scripted_worker._binding_args(bindings) == ["--bind", "service=Service/app/front"]
+
+
+def test_scripted_binding_args_never_drop_scalar_values() -> None:
+    with pytest.raises(ValueError, match="scalar value bindings"):
+        scripted_worker._binding_args({"objects": {}, "values": {"count": 2}})

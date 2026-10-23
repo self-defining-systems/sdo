@@ -55,14 +55,17 @@ diagnostic; look it up here.
 
 ## Value provenance and runtime effects
 
-- Mitigation returns to accepted or observed state; intended-state changes are source repairs. An emergency
-  literal is a declared scalar parameter the responder fills and justifies. Use opaque `FromSource`,
-  `FromObserved`, or `FromParam` values; raw SetField, replica, or command literals fail Go compilation.
-- Declare each scalar parameter's kind and optional default. `ValidateBindings` checks supplied values;
-  undeclared parameters, wrong types, zero Values, and Secret references fail resolution before a write.
-- Action reports and receipts retain commit/path, resourceVersion/path, or parameter-name provenance.
-  DeletePod requires a named UID/version guard. ScaleWorkload directly verifies replicas. Exec uses existing
-  controller RBAC and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
+Mitigation returns to accepted or observed state; intended-state changes are source repairs. An emergency
+literal is a declared scalar parameter the responder fills and justifies. Opaque `FromSource`, `FromObserved`,
+or `FromParam` values enforce the Go API boundary; raw SetField, replica, or command literals fail compilation.
+
+Declare each scalar parameter's kind and optional default. The SDK's `ValidateBindings` checks supplied values;
+its value resolver rejects undeclared parameters, wrong types, zero Values, and Secret references before writes.
+
+Runtime action reports and receipts retain commit/path, resourceVersion/path, or parameter-name provenance.
+The runtime guards DeletePod by UID/version and directly verifies ScaleWorkload replicas. Exec uses existing
+controller RBAC and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
+
 - Replay external effects only with the required evidence. A skipped effect proves no repair; irreversible
   Pod deletion or Exec never grants restart mutation or recreation authority. Enforced by:
   `program.mitigation-unreplayable`.

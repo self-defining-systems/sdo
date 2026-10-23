@@ -58,6 +58,8 @@ Captures omit Kubernetes write metadata and sensitive environment values; worker
 
 Production packages do not import SREGym code. Benchmark-only image stages live in `benchmarks/sregym/Dockerfile.worker`, extending the built production responder; development mounts expose only production sources, examples and the operator binary. Benchmark adapters may call production APIs; strict receipts and submission relays remain in the benchmark boundary. The native path passed an end-to-end kind smoke with real goal/source/architecture/judge artifacts, concrete deployment and health evidence, provider credentials, and controller installation. Detector SDK staleness/dependency interface changes are outside this refactor.
 
+Installing an independently accepted seed may also require its private deployment ledger. The host operator's optional `install-existing --seed-broker-root` names an explicit trusted directory outside the accepted repository. Go snapshots bounded regular `source-evidence` records, independently checks named image authority against the accepted Git history, and copies those records into the fresh controller PVC after its workspace reset. It imports no proposals or incident receipts and derives no authority from repository locks or live Pods. The benchmark adapter forwards this operator setting; broker ownership and validation remain in Go.
+
 Object-reference identity on the wire is `common.proto:ObjectRef`. The SDK
 keeps a comparable value projection for detector maps and plans. Its
 `ParseObjectRef`/`FormatObjectRef` pair owns agent text parsing and canonical
@@ -262,6 +264,16 @@ The broker's `checkCandidate` calls `validate.Check` on its staged clone. That f
 Responder traffic: responders own incident-scoped traffic (`traffic/generators/incident/` and `traffic/workloads/incident-*.yaml`) in the reflection phase, and the health judge owns all other traffic. This is the broker's long-standing behavior and what the ownership matrix below documents. Both roles edit final checkout files directly; the proposal writer has been removed. The shared check prepares generic health policy detectors explicitly.
 
 `schema-version` and `lifecycle-provenance.yaml` are validation metadata. They do not change the six ownership classes. Lifecycle provenance may attest an exact diagnostics-tree digest against an immutable validator image identity; only that exact pair can reuse a prior successful compilation, while any detector or validator change forces isolated validation again.
+
+Go broker seeds may omit the historical Python lifecycle-provenance file. The
+benchmark adapter recognizes a current-schema goal, architecture and health
+bundle for seeded installation; the Go installer still independently validates
+that memory before starting the controller.
+
+The storage edge fingerprints all accepted regular source blobs, streaming
+non-manifest assets without retaining their bytes. YAML parsing keeps a 64 MiB
+aggregate budget; large binary assets do not consume that parsing budget. The
+fingerprint encoding and exclusion of operational-memory files remain unchanged.
 
 ### Detector firing telemetry
 
@@ -602,6 +614,11 @@ Go indexes missing open/fixed resource observations before the outcome commit an
 
 Controller maintenance normally resets the configuration baseline after a planned redeploy. Its explicit `preserve_baseline` observation option keeps the last healthy baseline while evaluation is paused. The benchmark injection-validity barrier uses that option so partial invalid writes cannot dispatch responders, while valid latent faults remain visible after resume. Go owns the maintenance state and baseline policy; no benchmark identities enter this interface.
 
+A controller may finish the acknowledgment of an already committed native incident after adopting that incident’s own source repair. The health guard requires an exact durable native broker ledger and receipt, broker-attributed proposal/outcome commits, unchanged objective and health-policy bytes, and current source inputs matching the accepted repair. This continuation does not authorize a stale investigation or a new proposal after an unrelated source or policy advance.
+
+The complete native receipt may reach the broker ledger before the controller persists its receipt state. After health adoption, the same ownership proof may resume that frozen closure’s idempotent broker effect, returning the existing receipt without publishing again. An absent/incomplete native receipt still fails closed. The restart fixture must cover both sides of the controller receipt persistence boundary.
+
+A complete authenticated native receipt is recovered as an existing decision. Its replay does not re-run the pre-commit observation-generation check or independent closure decision after adoption, because source publication itself changes that generation. The health guard and durable effect identity still apply; incomplete receipts use the ordinary fresh-observation path.
 Structured plan authority is supplied by administrator-owned controller launch configuration; see [the authority contract](plan-safety-authority.md). Approved fixture images and their separately pinned policy hash are independent of responder plans and dry-run output.
 
 The production `run.go` `LoopFactory` enables the convenience menu when the controller process has

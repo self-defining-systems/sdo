@@ -284,3 +284,27 @@ def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolati
     if not near_miss:
         assert response.repair_actions[0].kind == "kubectl-delete"
         assert response.repair_actions[0].target == "NetworkPolicy/deny"
+
+
+def test_scripted_source_restore_allows_slow_init_clone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 170s init clone can start 41s after the repair, within a 600s rollout."""
+    request = IncidentRequest(namespace="social-network")
+    monkeypatch.setattr(
+        scripted_worker,
+        "_tool",
+        lambda *args: {
+            "source": {"spec": {"template": {"spec": {"containers": [{"name": "api", "image": "api@sha256:abc"}]}}}}
+        },
+    )
+
+    def command(argv: list[str], *, timeout: int = 180) -> str:
+        if "status" in argv:
+            bound = int(
+                next(arg.removeprefix("--timeout=").removesuffix("s") for arg in argv if arg.startswith("--timeout="))
+            )
+            if bound < 211 or timeout <= bound:
+                raise RuntimeError("rollout timed out before the recorded init clone finished")
+        return ""
+
+    monkeypatch.setattr(scripted_worker, "_command", command)
+    scripted_worker._patch_from_source(request, {"kind": "Deployment", "name": "api"})

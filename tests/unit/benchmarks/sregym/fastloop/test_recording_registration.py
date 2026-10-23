@@ -24,7 +24,7 @@ def test_recording_registrations_only_use_responder_and_reflector(tmp_path: Path
     assert {path.name for path in directory.glob("*.json")} == {"responder.json", "reflector.json"}
 
 
-def test_recording_and_scripted_registrations_cover_same_task_types(tmp_path: Path) -> None:
+def test_scripted_registrations_add_deterministic_health_refresh(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[5]
     live = recording_registrations(tmp_path, "worker:test")
     scripted = root / "benchmarks/sregym/adapter/scripted_registrations"
@@ -36,7 +36,12 @@ def test_recording_and_scripted_registrations_cover_same_task_types(tmp_path: Pa
             for capability in json.loads(path.read_text())["capabilities"]
         }
 
-    assert task_types(live) == task_types(scripted)
+    assert task_types(live) == {"incident-response", "outcome-reflection-direct-v1"}
+    assert task_types(scripted) == task_types(live) | {"health-judgment-direct-v1"}
+    health_judge = json.loads((scripted / "health-judge.json").read_text())
+    assert health_judge["kubernetes_job"]["command"][-1] == "health-judge"
+    assert health_judge["capabilities"][0]["request_type_url"].endswith(".HealthJudgeRequest")
+    assert health_judge["capabilities"][0]["result_type_url"].endswith(".HealthJudgeResult")
 
 
 def test_incident_drift_tokens_use_completed_investigations() -> None:

@@ -14,6 +14,7 @@ from benchmarks.sregym.protocol.injection import FaultComponent, InvalidInjectio
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
     from benchmarks.sregym.fastloop.baseline_recovery import ApplicationCluster
 
@@ -33,7 +34,18 @@ class WorkerRequester(Protocol):
 
 def _check_recovery(reply: dict[str, Any]) -> None:
     if reply.get("protocol_version") == 2 and reply.get("success") is not True:
-        raise FastloopFaultError("full recovery failed; warm lane cannot be reused")
+        # Harness exception text can contain credential-bearing commands. Retain
+        # only typed component identity and known lifecycle status for diagnosis.
+        failures = []
+        errors = reply.get("errors")
+        for error in errors if isinstance(errors, list) else []:
+            if not isinstance(error, dict):
+                continue
+            index, status = error.get("component_index"), error.get("status")
+            if type(index) is int and index >= 0 and status in ("error", "timeout"):
+                failures.append(f"component {index}: {status}")
+        details = f" ({'; '.join(failures)})" if failures else ""
+        raise FastloopFaultError(f"full recovery failed; warm lane cannot be reused{details}")
 
 
 def _utc(epoch: object) -> datetime:
@@ -85,6 +97,9 @@ class SregymFaultDriver:
         sleep: Callable[[float], None] = time.sleep,
         before_inject: Callable[[str], None] | None = None,
         require_full_cleanup: bool = False,
+        require_faulty_oracle: bool = False,
+        pre_repair_oracle_path: Path | None = None,
+        required_faulty_components: tuple[str, ...] = (),
     ) -> None:
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
@@ -92,6 +107,18 @@ class SregymFaultDriver:
             raise ValueError("health_poll_seconds must be positive")
         if require_full_cleanup and (not baseline or cluster is None):
             raise ValueError("full cleanup requires an application baseline and cluster")
+        if type(require_faulty_oracle) is not bool:
+            raise TypeError("require_faulty_oracle must be a boolean")
+        if not isinstance(required_faulty_components, tuple) or any(
+            not isinstance(name, str) or not name for name in required_faulty_components
+        ):
+            raise TypeError("required_faulty_components must be a tuple of nonempty names")
+        if required_faulty_components and not require_faulty_oracle:
+            raise ValueError("required components need require_faulty_oracle")
+        self._required_faulty_components = required_faulty_components
+        self._require_faulty_oracle = require_faulty_oracle
+        self._pre_repair_oracle_path = pre_repair_oracle_path
+        self.last_pre_repair_oracle: OracleVerdict | None = None
         self._require_full_cleanup = require_full_cleanup
         self.last_full_cleanup_verified = False
         self._worker = worker
@@ -112,6 +139,7 @@ class SregymFaultDriver:
         reply = self._worker.request("inject", problem_id=problem_id, timeout=WORKER_OP_TIMEOUT_SECONDS)
         self.last_components = [FaultComponent.model_validate(item) for item in reply.get("components", [])]
         check_injection(reply)
+        self._check_faulty_oracle()
         return _window(reply)
 
     def inject_composite(self, problem_ids: Sequence[str]) -> CompositeInjection:
@@ -159,7 +187,43 @@ class SregymFaultDriver:
                             f"composite injection failed at {problem_id}: {exc}; recovery failed: {recovery_error}"
                         ) from recovery_error
                 raise FastloopFaultError(f"composite injection failed at {problem_id}: {exc}") from exc
+        self._check_faulty_oracle()
         return CompositeInjection(faults=tuple(faults))
+
+    def _check_faulty_oracle(self) -> None:
+        if not self._require_faulty_oracle:
+            return
+        verdict = self.oracle()
+        self.last_pre_repair_oracle = verdict
+        if self._pre_repair_oracle_path is not None:
+            self._pre_repair_oracle_path.parent.mkdir(parents=True, exist_ok=True)
+            self._pre_repair_oracle_path.write_text(verdict.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+        def ungradable(value: Any) -> bool:
+            if isinstance(value, dict):
+                return bool(value.get("error") or value.get("infra_error")) or any(
+                    ungradable(v) for v in value.values()
+                )
+            if isinstance(value, list):
+                return any(ungradable(v) for v in value)
+            return False
+
+        components = verdict.details.get("oracles", [])
+        if not isinstance(components, list):
+            components = []
+        for name in self._required_faulty_components:
+            matches = [
+                component for component in components if isinstance(component, dict) and component.get("name") == name
+            ]
+            if len(matches) != 1 or matches[0].get("success") is not False:
+                raise InvalidInjectionError(
+                    {"reason": f"required component {name} did not grade faulty", "oracle": verdict.model_dump()}
+                )
+
+        if verdict.success or ungradable(verdict.details):
+            raise InvalidInjectionError(
+                {"reason": "pre-repair official oracle did not prove a fault", "oracle": verdict.model_dump()}
+            )
 
     def oracle(self, *, fault: int | None = None) -> OracleVerdict:
         args: dict[str, Any] = {} if fault is None else {"fault": fault}

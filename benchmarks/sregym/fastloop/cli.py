@@ -322,6 +322,20 @@ def _scaled_clock(scale: float) -> Clock:
     return Clock(sleep=lambda seconds: time.sleep(seconds * scale))
 
 
+def _accepted_manifest_paths(workspace: Path) -> tuple[str, ...]:
+    lock_path = workspace / ".sdo/rendered/lock.json"
+    if not lock_path.exists():
+        return ("kubernetes",)
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        paths = lock["manifest_paths"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"cannot read accepted deployment selection from {lock_path}") from exc
+    if not isinstance(paths, list) or any(not isinstance(path, str) or not path for path in paths):
+        raise ValueError(f"invalid accepted deployment selection in {lock_path}")
+    return tuple(paths)
+
+
 def _sdo_agent(
     args: argparse.Namespace,
     environment: FastloopEnvironment,
@@ -353,7 +367,7 @@ def _sdo_agent(
         controller_image=environment.images.controller,
         responder_image=environment.images.responder,
         validator_image=environment.images.validator,
-        deployed_manifest_paths=("kubernetes",),
+        deployed_manifest_paths=_accepted_manifest_paths(environment.workspace),
         repository_pvc="sdo-application-repository",
         credentials_secret="sdo-agent-credentials",
         model=args.model,
@@ -518,6 +532,7 @@ def _run(args: argparse.Namespace) -> int:
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         slot_offset=args.slot_offset,
+        cleanup_passes=args.cleanup_passes,
     )
     write_loop_manifest(config)
     with _worker(environment) as worker:
@@ -554,6 +569,11 @@ def _run(args: argparse.Namespace) -> int:
             health_poll_seconds=min(1.0, args.time_scale),
             before_inject=before_inject,
             require_full_cleanup=args.require_full_cleanup,
+            require_faulty_oracle=getattr(args, "require_faulty_oracle", False),
+            required_faulty_components=tuple(getattr(args, "require_faulty_component", [])),
+            pre_repair_oracle_path=results_dir / "pre-repair-oracle.json"
+            if getattr(args, "require_faulty_oracle", False)
+            else None,
         )
         config = replace(
             config,
@@ -919,7 +939,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--slot-offset", type=int, default=0, help="global index of the first incident")
+    run.add_argument(
+        "--require-faulty-oracle", action="store_true", help="require a faulty official oracle before resuming repair"
+    )
+    run.add_argument(
+        "--require-faulty-component",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="require this exact composite oracle component to grade faulty before repair (repeatable)",
+    )
     run.add_argument("--require-full-cleanup", action="store_true", help="require v2 recovery and application baseline")
+    run.add_argument(
+        "--cleanup-passes",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="verify full cleanup and the official recovery oracle twice when set to 2",
+    )
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
