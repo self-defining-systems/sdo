@@ -16,7 +16,7 @@ Before step 1, read the machine's host state (`~/.agent-state/hosts/<hostname>.m
 3. **Build images once** with `scripts/build_sdo_images.sh` and a tag unique to the frozen commit, without the scripted-worker switch. Run the image self-checks, then write a ready marker that other lanes can wait on.
 4. **Bring up the lane.** Delete only your own lane's cluster, then run `fastloop up` with the new image tag and a populated `--sregym-dir`; grading needs the applications checkout.
 5. **Credentials.** Start the keeper for the lane and confirm the agent credentials Secret exists before `run`.
-6. **Run the stream** with `fastloop run`, logging to a file. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
+6. **Run the stream** through the [detached launcher](../../../docs/testing-guide.md#detached-launches), wrapping `fastloop run` and reusing the lane record to adopt existing work. Add `--continue-on-error`, plus `--detection-timeout` for streams with latent faults.
 7. **Check early.** After the first incident of each kind, read its row and the controller log. On a plumbing failure, stop the run, save the evidence, and go back to [iterate-sdo](../iterate-sdo/SKILL.md).
 8. **Report** per incident against the baseline run of the same stream. The fields and their sources are in [references/report.md](references/report.md).
 9. **Clean up.** Kill only the processes you started, by exact PID; leave the cluster up when a rerun is planned.
