@@ -37,6 +37,17 @@ uv run pytest tests/ --cov=sdo
 (cd benchmarks/sregym/protocol/submission_go && go test -race ./...)
 ```
 
+`scripts/check_errors.sh` runs Ruff, Tach, the AST import and ownership checks in
+`tests/unit/test_architecture.py` (including facade imports), Pyright, Go core
+architecture checks, and benchmark Go compilation. It also checks proto drift
+when Buf is installed. The AST checks always run with Tach's pytest impact
+plugin disabled; this gate installs the `test` extra through `uv run --extra test`.
+To run just those checks:
+
+```bash
+uv run --extra test python -m pytest -q -p no:tach tests/unit/test_architecture.py
+```
+
 The proto gate runs `buf lint` and checks that committed Go/Python code matches
 regenerated output. The v1alpha1 schema may evolve freely, including breaking
 changes; compatibility with main is not a gate. Reserve deleted field numbers
