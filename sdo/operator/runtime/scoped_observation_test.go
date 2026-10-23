@@ -186,12 +186,12 @@ func TestScopedWrappersKeepDenialUnknown(t *testing.T) {
 			t.Fatalf("wrapper hid unavailable dependency: %T", view)
 		}
 	}
-	verdict := program.RunDiagnose(context.Background(), scopedIgnoringDiagnoser{}, recording, nil, time.Second)
+	verdict := program.RunDiagnose(context.Background(), scopedIgnoringDiagnoser{}, recording, program.Bindings{Objects: program.ObjectBindings{}}, time.Second)
 	if verdict.Result != program.Unknown {
 		t.Fatalf("ignored scoped error cleared diagnosis: %v", verdict)
 	}
 	replay := &sdktest.ReplayReadView{Snapshot: base, Calls: recording.Calls}
-	verdict = program.RunDiagnose(context.Background(), scopedIgnoringDiagnoser{}, replay, nil, time.Second)
+	verdict = program.RunDiagnose(context.Background(), scopedIgnoringDiagnoser{}, replay, program.Bindings{Objects: program.ObjectBindings{}}, time.Second)
 	if verdict.Result != program.Unknown {
 		t.Fatal("scoped failure did not replay")
 	}

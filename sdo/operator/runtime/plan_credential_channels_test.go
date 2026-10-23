@@ -17,7 +17,7 @@ func TestRV13LegacyEnvSecretKeyRefBypass(t *testing.T) {
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
 	e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	val := map[string]any{"name": "MODE", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "placeholder", "key": "placeholder"}}}
-	a := program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0]", Value: val, Reason: "probe"}
+	a := program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0]", Value: testPlanValue(val), Reason: "probe"}
 	_, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, program.Plan{Actions: []program.Action{a}}, false)
 	t.Logf("apply err=%v patches=%d", err, len(client.patches))
 	if err == nil && len(client.patches) > 0 {
@@ -32,7 +32,7 @@ func TestRV13LegacyEnvValueFromSubpath(t *testing.T) {
 	before.SetUID("u")
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
 	e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	a := program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0].valueFrom", Value: map[string]any{"secretKeyRef": map[string]any{"name": "placeholder", "key": "placeholder"}}, Reason: "probe"}
+	a := program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0].valueFrom", Value: testPlanValue(map[string]any{"secretKeyRef": map[string]any{"name": "placeholder", "key": "placeholder"}}), Reason: "probe"}
 	_, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, program.Plan{Actions: []program.Action{a}}, false)
 	t.Logf("apply err=%v patches=%d", err, len(client.patches))
 	if err == nil && len(client.patches) > 0 {
@@ -48,8 +48,8 @@ func TestPlanCredentialDeltaAllActionForms(t *testing.T) {
 	source := before.DeepCopy()
 	_ = unstructured.SetNestedSlice(source.Object, []any{map[string]any{"name": "app", "env": []any{channel}}}, "spec", "template", "spec", "containers")
 	for _, action := range []program.Action{
-		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0]", Value: channel},
-		program.SetField{Ref: ref, Path: "spec.template.spec.containers[name=app].env[name=MODE]", Value: channel},
+		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0]", Value: testPlanValue(channel)},
+		program.SetField{Ref: ref, Path: "spec.template.spec.containers[name=app].env[name=MODE]", Value: testPlanValue(channel)},
 		program.ReconcileFromSource{Ref: ref}, program.Rollback{Ref: ref, ToRevision: "previous"},
 	} {
 		// Exercise the shared post-image boundary directly too: named paths cannot
@@ -61,7 +61,7 @@ func TestPlanCredentialDeltaAllActionForms(t *testing.T) {
 	}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: source.DeepCopy()}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	_, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: 2}}}, false)
+	_, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(2)}}}, false)
 	if err != nil || len(client.patches) != 1 {
 		t.Fatalf("unrelated legacy repair refused: %v", err)
 	}

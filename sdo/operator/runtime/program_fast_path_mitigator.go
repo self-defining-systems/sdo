@@ -97,6 +97,16 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 				plan = decoded.Plan
 			}
 		}
+		if err == nil {
+			boundSnapshot := LiveReadView{DetectionContext: snapshot}
+			plan = program.BindPlanValues(plan, program.ValueInputs{Spec: p.Spec(), Bindings: bindings.Clone(), Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
+				object, err := boundSnapshot.snapshotObject(ref)
+				if err != nil || object == nil {
+					return nil, fmt.Errorf("program snapshot value object unavailable")
+				}
+				return object.Object, nil
+			}})
+		}
 		results <- outcome{plan: plan, err: err}
 	}()
 	select {

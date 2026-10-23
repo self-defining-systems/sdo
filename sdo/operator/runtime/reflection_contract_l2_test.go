@@ -115,9 +115,9 @@ func t1ArchivedVerdicts(t *testing.T, workspace, capture string, outcome *contra
 		if run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH {
 			continue
 		}
-		b := program.Bindings{}
+		b := program.Bindings{Objects: program.ObjectBindings{}}
 		for _, binding := range run.Bindings {
-			b[binding.Name] = objectRefState(binding.Object)
+			b.Objects[binding.Name] = objectRefState(binding.Object)
 		}
 		instances = append(instances, t1ReplayInstance{ID: run.ProgramId, Bindings: b})
 		ids[run.ProgramId] = true

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"google.golang.org/protobuf/types/known/structpb"
 	"sort"
 
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -11,14 +12,7 @@ import (
 
 func programRunContract(run ProgramRun) *contracts.ProgramRun {
 	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
-	keys := make([]string, 0, len(run.Bindings))
-	for key := range run.Bindings {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		result.Bindings = append(result.Bindings, &contracts.Binding{Name: key, Object: objectRefContract(run.Bindings[key])})
-	}
+	result.Bindings = programBindingsContract(run.Bindings)
 	for _, evidence := range run.Verdict.Evidence {
 		if evidence.Resource.Kind == "" {
 			result.Error = evidence.Observed
@@ -30,22 +24,13 @@ func programRunContract(run ProgramRun) *contracts.ProgramRun {
 
 func relationCoveredFindingContract(covered RelationCoveredFinding) *contracts.RelationCoveredFinding {
 	result := &contracts.RelationCoveredFinding{FindingFingerprint: covered.FindingFingerprint, ProgramId: covered.ProgramID}
-	keys := make([]string, 0, len(covered.Bindings))
-	for key := range covered.Bindings {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		result.Bindings = append(result.Bindings, &contracts.Binding{Name: key, Object: objectRefContract(covered.Bindings[key])})
-	}
+	result.Bindings = programBindingsContract(covered.Bindings)
 	return result
 }
 
 func relationCoveredFindingState(covered *contracts.RelationCoveredFinding) RelationCoveredFinding {
-	result := RelationCoveredFinding{FindingFingerprint: covered.GetFindingFingerprint(), ProgramID: covered.GetProgramId(), Bindings: program.Bindings{}}
-	for _, binding := range covered.GetBindings() {
-		result.Bindings[binding.GetName()] = objectRefState(binding.GetObject())
-	}
+	result := RelationCoveredFinding{FindingFingerprint: covered.GetFindingFingerprint(), ProgramID: covered.GetProgramId(), Bindings: program.Bindings{Objects: program.ObjectBindings{}}}
+	result.Bindings = programBindingsState(covered.GetBindings())
 	return result
 }
 
@@ -71,10 +56,7 @@ func verdictContract(verdict program.Verdict) *contracts.Verdict {
 }
 
 func programRunState(run *contracts.ProgramRun) ProgramRun {
-	bindings := program.Bindings{}
-	for _, binding := range run.GetBindings() {
-		bindings[binding.GetName()] = objectRefState(binding.GetObject())
-	}
+	bindings := programBindingsState(run.GetBindings())
 	verdict := program.Verdict{Question: run.GetVerdict().GetQuestion()}
 	switch run.GetVerdict().GetResult() {
 	case contracts.Verdict_RESULT_MATCH:
@@ -101,4 +83,40 @@ func toolCallContract(call ToolCall) *contracts.ProgramToolCall {
 
 func toolCallState(call *contracts.ProgramToolCall) ToolCall {
 	return ToolCall{Command: call.GetCommand(), At: controllerTime(call.GetAt()), RequestJSON: call.GetRequestJson(), ResponseJSON: call.GetResponseJson(), Error: call.GetError(), Summary: call.GetSummary()}
+}
+
+func programBindingsContract(bindings program.Bindings) []*contracts.Binding {
+	keys := make([]string, 0, len(bindings.Objects)+len(bindings.Values))
+	for key := range bindings.Objects {
+		keys = append(keys, key)
+	}
+	for key := range bindings.Values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]*contracts.Binding, 0, len(keys))
+	for _, key := range keys {
+		binding := &contracts.Binding{Name: key}
+		if ref, ok := bindings.Objects[key]; ok {
+			binding.Object = objectRefContract(ref)
+		} else {
+			binding.Value, _ = structpb.NewValue(bindings.Values[key])
+		}
+		result = append(result, binding)
+	}
+	return result
+}
+func programBindingsState(encoded []*contracts.Binding) program.Bindings {
+	bindings := program.Bindings{Objects: program.ObjectBindings{}}
+	for _, binding := range encoded {
+		if binding.GetValue() != nil {
+			if bindings.Values == nil {
+				bindings.Values = map[string]any{}
+			}
+			bindings.Values[binding.GetName()] = binding.GetValue().AsInterface()
+		} else {
+			bindings.Objects[binding.GetName()] = objectRefState(binding.GetObject())
+		}
+	}
+	return bindings
 }

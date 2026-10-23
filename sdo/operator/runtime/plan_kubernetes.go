@@ -109,7 +109,7 @@ func (c KubernetesPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid
 	if uid == "" || version == "" {
 		return fmt.Errorf("delete requires UID/version preconditions")
 	}
-	allowed := ref.Namespace != "" && ((ref.APIVersion == "v1" && (ref.Kind == "ConfigMap" || ref.Kind == "Service")) || (ref.APIVersion == "networking.k8s.io/v1" && ref.Kind == "NetworkPolicy"))
+	allowed := ref.Namespace != "" && ((ref.APIVersion == "v1" && (ref.Kind == "ConfigMap" || ref.Kind == "Service" || ref.Kind == "Pod")) || (ref.APIVersion == "networking.k8s.io/v1" && ref.Kind == "NetworkPolicy"))
 	allowed = allowed || (ref.Namespace == "" && ref.APIVersion == "admissionregistration.k8s.io/v1" && (ref.Kind == "MutatingWebhookConfiguration" || ref.Kind == "ValidatingWebhookConfiguration"))
 	if !allowed {
 		return fmt.Errorf("object delete kind/scope is unsupported")

@@ -233,9 +233,12 @@ func (p *PlanSafetyPolicy) enforceSourceAction(action program.Action, current, n
 			return fmt.Errorf("source-bound repair has no accepted object")
 		}
 		expected := current.DeepCopy()
-		a.Value = nil
-		a.ValueFromSource = true
-		if err := program.ApplySetFieldAction(expected.Object, a, source.Object); err != nil {
+		a.Value = program.FromSource(a.Ref, a.Path)
+		value, _, resolveErr := program.ResolveSetFieldValue(a, program.ValueInputs{SourceCommit: p.SourceCommit, Source: func(sdk.ObjectRef) (map[string]any, error) { return source.Object, nil }})
+		if resolveErr != nil {
+			return fmt.Errorf("source-bound repair value unavailable")
+		}
+		if err := program.ApplySetFieldAction(expected.Object, a, value); err != nil {
 			return fmt.Errorf("source-bound repair value unavailable")
 		}
 		if !planValuesEqual(expected.Object, next.Object) {
@@ -286,12 +289,11 @@ func planAuthorizationMode(action program.Action, sourcePolicy bool) string {
 	}
 	switch a := action.(type) {
 	case program.SetField:
-		if !structuredPlanAction(a) {
-			return "legacy-literal"
-		}
-		if a.ValueFromSource {
+
+		if a.Value.Origin() == program.SourceValue {
 			return "accepted-source"
 		}
+		return string(a.Value.Origin())
 	case *program.SetField:
 		if a != nil {
 			return planAuthorizationMode(*a, sourcePolicy)

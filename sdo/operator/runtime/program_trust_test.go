@@ -88,7 +88,7 @@ func verifiedTrustOutcome(t *testing.T, id, revision string) *contracts.OutcomeR
 func boundTrustOutcome(t *testing.T, kind, classification string, result program.Result) *contracts.OutcomeRecord {
 	t.Helper()
 	completed := time.Unix(100, 0).UTC()
-	bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
+	bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 	encode := func(value any) string {
 		data, err := json.Marshal(value)
 		if err != nil {
@@ -98,8 +98,8 @@ func boundTrustOutcome(t *testing.T, kind, classification string, result program
 	}
 	return &contracts.OutcomeRecord{
 		Classification: classification, SourceCommit: "tree-a",
-		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{objectRefContract(bindings["service"])}}},
-		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{objectRefContract(bindings["service"])}}},
+		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{objectRefContract(bindings.Objects["service"])}}},
+		RepairActions:       []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{objectRefContract(bindings.Objects["service"])}}},
 		ProgramRuns:         []*contracts.ProgramRun{programRunContract(ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}})},
 		PlanApplications:    []*contracts.PlanApplication{{ApplicationId: kind, Applied: true, VerificationCompleted: true, VerificationPassed: true, FinalEquivalenceVerified: proto.Bool(true), ProgramIds: []string{"targetport"}, CompletedAt: timestamppb.New(completed), Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
 		ProgramToolCalls: []*contracts.ProgramToolCall{
@@ -281,8 +281,8 @@ func TestProgramTrustConsumesRealResponderApplyEvidence(t *testing.T) {
 	for _, call := range loop.ToolCalls() {
 		outcome.ProgramToolCalls = append(outcome.ProgramToolCalls, toolCallContract(call))
 	}
-	outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{objectRefContract(run.Bindings["service"])}}}
-	outcome.RepairActions = []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{objectRefContract(run.Bindings["service"])}}}
+	outcome.ConfirmedRootCauses = []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{objectRefContract(run.Bindings.Objects["service"])}}}
+	outcome.RepairActions = []*contracts.RepairActionReceipt{{Success: true, Resources: []*contracts.ObjectRef{objectRefContract(run.Bindings.Objects["service"])}}}
 	if got := settledTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[run.ProgramID]; !got.Trusted || got.VerifiedSuccesses != 1 {
 		t.Fatalf("real successful apply earned no trust: %+v", got)
 	}
@@ -314,7 +314,7 @@ func oversizedTrustOutcome(t *testing.T, runs int) *contracts.OutcomeRecord {
 	bindings := apply.ProgramRuns[0].Bindings
 	apply.ProgramRuns = nil
 	for index := 0; index < runs; index++ {
-		other := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("other-%d", index)}}
+		other := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("other-%d", index)}}}
 		apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: fmt.Sprintf("other-program-%d", index), ProgramRevision: "revision-a", Bindings: other, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
 	}
 	apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.NoMatch, Evidence: []program.Evidence{{Resource: sdk.ObjectRef{Kind: "Service", Name: "api"}, Fact: bulk, Observed: bulk}}}})
@@ -369,7 +369,7 @@ func TestProgramTrustFailsClosedWhenRelevantRunsOverflow(t *testing.T) {
 	var applied []selectedPlan
 	apply.ProgramRuns = nil
 	for index := 0; index < 200; index++ {
-		bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("api-%d", index)}}
+		bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: fmt.Sprintf("api-%d", index)}}}
 		applied = append(applied, selectedPlan{programID: "targetport", bindings: bindings})
 		apply.ProgramRuns = append(apply.ProgramRuns, ProgramRun{ProgramID: "targetport", ProgramRevision: "revision-a", Bindings: bindings, Verdict: program.Verdict{Result: program.NoMatch}})
 	}
@@ -406,9 +406,9 @@ func TestTruncatedRecordKeepsDiagnosisError(t *testing.T) {
 func settleTestOutcome(outcome *contracts.OutcomeRecord) {
 	fixed := map[string]program.Result{}
 	for _, run := range outcome.GetProgramRuns() {
-		bindings := program.Bindings{}
+		bindings := program.Bindings{Objects: program.ObjectBindings{}}
 		for _, binding := range run.GetBindings() {
-			bindings[binding.GetName()] = objectRefState(binding.GetObject())
+			bindings.Objects[binding.GetName()] = objectRefState(binding.GetObject())
 		}
 		fixed[matchedViewKey(run.GetProgramId(), bindings)] = program.NoMatch
 	}

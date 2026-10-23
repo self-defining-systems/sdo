@@ -83,6 +83,12 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 			kind = "reconcile_from_source"
 		case program.Rollback, *program.Rollback:
 			kind = "rollback"
+		case program.DeletePod, *program.DeletePod:
+			kind = "delete_pod"
+		case program.ScaleWorkload, *program.ScaleWorkload:
+			kind = "scale_workload"
+		case program.Exec, *program.Exec:
+			kind = "exec"
 		case program.SetField, *program.SetField:
 			kind = "set_field"
 		case program.RestartRollout, *program.RestartRollout:
@@ -118,6 +124,12 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			action = &program.ReconcileFromSource{}
 		case "rollback":
 			action = &program.Rollback{}
+		case "delete_pod":
+			action = &program.DeletePod{}
+		case "scale_workload":
+			action = &program.ScaleWorkload{}
+		case "exec":
+			action = &program.Exec{}
 		case "set_field":
 			action = &program.SetField{}
 		case "restart_rollout":
@@ -139,6 +151,12 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 		case *program.ReconcileFromSource:
 			decoded = append(decoded, *value)
 		case *program.Rollback:
+			decoded = append(decoded, *value)
+		case *program.DeletePod:
+			decoded = append(decoded, *value)
+		case *program.ScaleWorkload:
+			decoded = append(decoded, *value)
+		case *program.Exec:
 			decoded = append(decoded, *value)
 		case *program.SetField:
 			decoded = append(decoded, *value)

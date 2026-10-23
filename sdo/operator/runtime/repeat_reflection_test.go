@@ -20,7 +20,7 @@ import (
 func TestCompositeRepairKeepsBoundSuccessWhileOtherFaultIsOpen(t *testing.T) {
 	loop, _ := trustedPortLoop(t, true, false, false)
 	ctx := context.Background()
-	bindings := program.Bindings{"service": loop.Request.Findings[0].PrimaryResource}
+	bindings := program.Bindings{Objects: program.ObjectBindings{"service": loop.Request.Findings[0].PrimaryResource}}
 	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: bindings})
 	applied := loop.Handle(ctx, ToolRequest{Command: "apply", PlanIDs: []string{planned.PlanID}})
 	if applied.Error != "" || applied.Healthy {
@@ -99,7 +99,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 		t.Fatal(err)
 	}
 	ref := &contracts.ObjectRef{ApiVersion: "v1", Kind: "Service", Namespace: "demo", Name: "front"}
-	bound := program.Bindings{"service": objectRefState(ref)}
+	bound := program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(ref)}}
 	outcome.RepairActions[0].Resources = []*contracts.ObjectRef{ref}
 	outcome.ProgramRuns[0].Bindings[0].Object = ref
 	for _, run := range outcome.ProgramRuns {

@@ -153,7 +153,7 @@ func TestHermeticFourIncidentTrustedFastPathCompletesWithoutResponderJob(t *test
 	if err != nil || result.ResolutionPath != "fast_path" || len(result.FastPathPrograms) != 1 || result.Usage.GetInputTokens() != 0 {
 		t.Fatalf("fast path result: %+v %v", result, err)
 	}
-	if len(result.FastPathRelationCoveredFindings) != 1 || result.FastPathRelationCoveredFindings[0].FindingFingerprint != FindingFingerprint(findings[2]) || result.FastPathRelationCoveredFindings[0].Bindings["deployment"].Name != "api" {
+	if len(result.FastPathRelationCoveredFindings) != 1 || result.FastPathRelationCoveredFindings[0].FindingFingerprint != FindingFingerprint(findings[2]) || result.FastPathRelationCoveredFindings[0].Bindings.Objects["deployment"].Name != "api" {
 		t.Fatalf("Service symptom relation not recorded: %+v", result.FastPathRelationCoveredFindings)
 	}
 	matchedSources := map[string]bool{}

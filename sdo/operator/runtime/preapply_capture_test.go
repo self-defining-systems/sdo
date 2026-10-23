@@ -76,7 +76,7 @@ func TestPreApplyCapturesLateFailureBeforeFirstMutation(t *testing.T) {
 			}
 			request := ToolRequest{Command: command}
 			if command == "apply" {
-				planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": ref}})
+				planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}})
 				if planned.Error != "" {
 					t.Fatal(planned.Error)
 				}
@@ -159,7 +159,7 @@ func TestTypedApplyCaptureFailureStillRepairsAndRecordsGap(t *testing.T) {
 	ctx := context.Background()
 	loop, client := trustedPortLoop(t, false, true, true)
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
-	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": ref}})
+	planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}})
 	if planned.Error != "" {
 		t.Fatal(planned.Error)
 	}

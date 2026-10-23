@@ -24,7 +24,7 @@ func learningTrustRepository(t *testing.T) (string, string) {
 	}
 	files[".sdo/corpus/learning/healthy.json"] = files[".sdo/corpus/learning/fixed.json"]
 	files[".sdo/corpus/learning/recordings.json"] = "[]"
-	labels := map[string]any{"bindings": program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}, "root_cause_program_ids": []string{"service-targetport-mismatch"}, "provenance": map[string]string{
+	labels := map[string]any{"bindings": program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}, "root_cause_program_ids": []string{"service-targetport-mismatch"}, "provenance": map[string]string{
 		"incident_id": "learning", "open_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(files[".sdo/corpus/learning/open.json"]))),
 		"fixed_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(files[".sdo/corpus/learning/fixed.json"]))),
 	}}

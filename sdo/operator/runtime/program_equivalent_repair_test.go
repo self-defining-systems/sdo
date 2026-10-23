@@ -20,7 +20,7 @@ func (sourceRepairProgram) Spec() program.ProgramSpec {
 }
 func (sourceRepairProgram) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
 	for _, s := range v.Services() {
-		if s.Name == b["service"].Name {
+		if s.Name == b.Objects["service"].Name {
 			if s.Spec.Ports[0].TargetPort.IntVal != 8080 {
 				return program.Verdict{Result: program.Match}, nil
 			}
@@ -34,7 +34,7 @@ func (p sourceRepairProgram) Mitigate(ctx context.Context, v program.ReadView, b
 	if err != nil || verdict.Result != program.Match {
 		return program.Plan{}, err
 	}
-	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: b["service"]}}}, nil
+	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: b.Objects["service"]}}}, nil
 }
 
 func TestCreditEquivalentSourceRepairIgnoresServerDefaultsAndUnownedFields(t *testing.T) {

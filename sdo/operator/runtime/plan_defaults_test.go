@@ -29,7 +29,7 @@ func TestPlanDeploymentRevisionAnnotationVerificationAndCompensation(t *testing.
 	proof := e.Safety.Objects[ref]
 	proof.UID = "u"
 	e.Safety.Objects[ref] = proof
-	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[name=api].args", Value: []string{"after"}}}}, false)
+	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[name=api].args", Value: testPlanValue([]string{"after"})}}}, false)
 	if err != nil || !result.VerificationPassed {
 		t.Fatalf("revision annotation broke verification: %v", err)
 	}

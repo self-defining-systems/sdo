@@ -38,7 +38,7 @@ func TestPlanSafetyReviewedControllerConfig(t *testing.T) {
 	}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}
 	executor := PlanExecutor{Client: client, Safety: policy, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: "after"}}}, false)
+	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("after")}}}, false)
 	if err != nil || !result.VerificationPassed {
 		t.Fatalf("configured structured action unavailable: %v", err)
 	}

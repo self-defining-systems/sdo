@@ -275,7 +275,7 @@ func TestResponderToolsAcceptCreateAndDelete(t *testing.T) {
 			e := PlanExecutor{Client: client, Source: source, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, registry, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, nil, e, 5)
 			loop.ReadView = func(sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{} }
-			planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: program.Bindings{"target": ref}})
+			planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: program.Bindings{Objects: program.ObjectBindings{"target": ref}}})
 			if planned.Error != "" || planned.PlanID == "" {
 				t.Fatalf("plan: %s", planned.Error)
 			}
