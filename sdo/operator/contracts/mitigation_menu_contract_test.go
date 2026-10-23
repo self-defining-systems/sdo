@@ -29,7 +29,7 @@ func TestMitigationSelectionValidationAndRoundTrip(t *testing.T) {
 	if !proto.Equal(message, decoded) {
 		t.Fatalf("selection changed across ProtoJSON: %s", raw)
 	}
-	for _, limit := range []uint32{0, 3, 100} {
+	for _, limit := range []uint32{0, 101} {
 		message.RoundLimit = limit
 		if err := protovalidate.Validate(message); err == nil {
 			t.Errorf("accepted round limit %d", limit)

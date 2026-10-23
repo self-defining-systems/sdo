@@ -614,6 +614,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
     program_guidance = (
+        "Pick from the mitigation menu when an option fits; if it fails, read the report and pick another "
+        "option or fix it directly in this same session. "
         "Start with ranked program verdicts and evidence in initial_program_runs. "
         "Treat a matching program's plan as a repair hypothesis when can_mitigate=true; "
         "a diagnosis-only program supplies evidence, "

@@ -71,7 +71,9 @@ def _parser() -> argparse.ArgumentParser:
             "The controller owns plans and authorization."
         ),
     )
-    mitigate.add_argument("--selection", type=Path, required=True, metavar="FILE")
+    mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")
+    mitigate.add_argument("--rounds", type=int, help="maximum rounds within the remaining incident allowance")
+    mitigate.add_argument("--selection", type=Path, metavar="FILE")
     report = commands.add_parser("report", help="retrieve a settled mitigation report")
     report.add_argument("attempt_id")
     report.add_argument("--incident-id", required=True)
@@ -116,7 +118,9 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
                 raise ValueError("duplicate binding name")
             request["bindings"] = bindings
     elif args.command == "mitigate":
-        request["selection"] = _selection(args.selection)
+        if bool(args.selection) == bool(args.option):
+            raise ValueError("choose an option or a selection file")
+        request["selection"] = _selection(args.selection) if args.selection else _option_selection(args)
     elif args.command == "report":
         if not args.attempt_id or not args.incident_id or not args.session_id or not 0 < args.epoch < 2**64:
             raise ValueError("report requires nonempty IDs and a positive uint64 epoch")
@@ -136,6 +140,45 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     return request
 
 
+def _option_selection(args: argparse.Namespace) -> dict[str, object]:
+    response = _exchange({"command": "menu"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+    menu = response.get("menu")
+    if response.get("error") or not isinstance(menu, dict):
+        raise ValueError("current mitigation menu unavailable")
+    options = [
+        option
+        for option in menu.get("options", [])
+        if args.option in (option.get("option_id"), option.get("program_id"))
+    ]
+    if len(options) != 1 or options[0].get("disabled_reason"):
+        raise ValueError("mitigation option unavailable or ambiguous")
+    option = options[0]
+    limit = int(menu["round_limit"])
+    rounds = args.rounds if args.rounds is not None else limit
+    if not 1 <= rounds <= limit:
+        raise ValueError("rounds exceed remaining incident allowance")
+    selection = {
+        key: menu[key]
+        for key in (
+            "version",
+            "incident_id",
+            "session_id",
+            "dispatch_epoch",
+            "menu_id",
+            "source_commit",
+            "scope_digest",
+            "policy_digest",
+        )
+    }
+    selection.update({key: option[key] for key in ("option_id", "program_revision", "dependency_revision")})
+    selection.update(
+        request_id="request-" + uuid.uuid4().hex,
+        round_limit=rounds,
+        bindings=option.get("bindings", menu.get("bindings", [])),
+    )
+    return selection
+
+
 def _selection(path: Path) -> dict[str, object]:
     # Keep help and all existing tools independent of protobuf startup costs.
     from google.protobuf.json_format import ParseError
@@ -148,7 +191,7 @@ def _selection(path: Path) -> dict[str, object]:
     except (OSError, UnicodeError, ValueError, ParseError) as exc:
         # Parser/validation errors may contain agent-supplied opaque values.
         raise ValueError(
-            "invalid mitigation selection; supply a complete version 1 selection with a round limit of 1 or 2"
+            "invalid mitigation selection; supply a complete version 1 selection within the incident round allowance"
         ) from exc
     return json.loads(to_canonical_json(selection))
 
@@ -182,10 +225,17 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
 
 
 def _act(args: argparse.Namespace) -> int:
+    token = ""
+    directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
     command = args.act_command[1:] if args.act_command[:1] == ["--"] else args.act_command
     try:
         if not command:
             raise ValueError("a command is required after --")
+        if os.environ.get("SDO_MITIGATION_SESSION") == "1":
+            owner = _exchange({"command": "act-start"}, directory)
+            if owner.get("error") or not owner.get("mutation_token"):
+                raise ValueError("controller mutation owner prohibits writes")
+            token = str(owner["mutation_token"])
         # Capture is evidence collection, not mutation authority. Keep repairs and
         # their receipts available even when the controller cannot capture.
         try:
@@ -194,9 +244,15 @@ def _act(args: argparse.Namespace) -> int:
                 raise ValueError(str(response["error"]))
         except (OSError, ValueError, TimeoutError) as exc:
             print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
-        return recorded_actions.run_and_record(
+        result = recorded_actions.run_and_record(
             command, args.resource, summary=args.summary, reversible=not args.irreversible
         )
+        if token:
+            finished = _exchange({"command": "act-finish", "mutation_token": token}, directory)
+            token = ""
+            if finished.get("error"):
+                raise ValueError("controller mutation owner expired or superseded")
+        return result
     except (OSError, ValueError, TimeoutError) as exc:
         print(f"sdo: {exc}", file=sys.stderr)
         return 2

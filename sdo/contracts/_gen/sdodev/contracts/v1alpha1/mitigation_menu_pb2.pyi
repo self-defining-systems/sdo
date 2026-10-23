@@ -44,15 +44,17 @@ class MitigationMenu(_message.Message):
     def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., dispatch_epoch: _Optional[int] = ..., menu_id: _Optional[str] = ..., source_commit: _Optional[str] = ..., scope_digest: _Optional[str] = ..., policy_digest: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., options: _Optional[_Iterable[_Union[MitigationOption, _Mapping]]] = ..., round_limit: _Optional[int] = ..., original_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., remaining_batches: _Optional[int] = ...) -> None: ...
 
 class MitigationOption(_message.Message):
-    __slots__ = ("option_id", "program_id", "program_revision", "dependency_revision", "effects", "disabled_reason", "reversible", "max_actions_per_round")
+    __slots__ = ("option_id", "program_id", "program_revision", "dependency_revision", "effects", "disabled_reason", "reversible", "max_actions_per_round", "bindings")
     class Effect(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         EFFECT_UNSPECIFIED: _ClassVar[MitigationOption.Effect]
         EFFECT_SCOPED_ROUTING_SET_FIELD: _ClassVar[MitigationOption.Effect]
         EFFECT_DEPLOYMENT_RESTART: _ClassVar[MitigationOption.Effect]
+        EFFECT_SDK_PLAN_ACTION: _ClassVar[MitigationOption.Effect]
     EFFECT_UNSPECIFIED: MitigationOption.Effect
     EFFECT_SCOPED_ROUTING_SET_FIELD: MitigationOption.Effect
     EFFECT_DEPLOYMENT_RESTART: MitigationOption.Effect
+    EFFECT_SDK_PLAN_ACTION: MitigationOption.Effect
     OPTION_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
@@ -61,6 +63,7 @@ class MitigationOption(_message.Message):
     DISABLED_REASON_FIELD_NUMBER: _ClassVar[int]
     REVERSIBLE_FIELD_NUMBER: _ClassVar[int]
     MAX_ACTIONS_PER_ROUND_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
     option_id: str
     program_id: str
     program_revision: str
@@ -69,7 +72,8 @@ class MitigationOption(_message.Message):
     disabled_reason: str
     reversible: bool
     max_actions_per_round: int
-    def __init__(self, option_id: _Optional[str] = ..., program_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., dependency_revision: _Optional[str] = ..., effects: _Optional[_Iterable[_Union[MitigationOption.Effect, str]]] = ..., disabled_reason: _Optional[str] = ..., reversible: _Optional[bool] = ..., max_actions_per_round: _Optional[int] = ...) -> None: ...
+    bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
+    def __init__(self, option_id: _Optional[str] = ..., program_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., dependency_revision: _Optional[str] = ..., effects: _Optional[_Iterable[_Union[MitigationOption.Effect, str]]] = ..., disabled_reason: _Optional[str] = ..., reversible: _Optional[bool] = ..., max_actions_per_round: _Optional[int] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ...) -> None: ...
 
 class MitigationSelection(_message.Message):
     __slots__ = ("version", "incident_id", "session_id", "dispatch_epoch", "request_id", "menu_id", "option_id", "program_revision", "dependency_revision", "source_commit", "scope_digest", "policy_digest", "bindings", "round_limit")

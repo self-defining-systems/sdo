@@ -1,4 +1,4 @@
-"""MI1 wire contracts: identity, two-round bounds and safe terminal evidence."""
+"""MI1 wire contracts: identity, bounded configurable rounds and safe terminal evidence."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def test_selection_rejects_missing_fence(field: str) -> None:
         contracts.validate(message)
 
 
-@pytest.mark.parametrize("limit", [0, 3, 100])
+@pytest.mark.parametrize("limit", [0, 101])
 def test_selection_rejects_out_of_slice_round_limits(limit: int) -> None:
     payload = selection_payload() | {"round_limit": limit}
     message = contracts.parse_json(json.dumps(payload), contracts.MitigationSelection())
@@ -122,3 +122,11 @@ def test_all_terminal_statuses_round_trip(status: str) -> None:
     )
     contracts.validate(message)
     assert contracts.parse_json(contracts.to_canonical_json(message), type(message)()) == message
+
+
+@pytest.mark.parametrize("limit", [3, 5, 7])
+def test_selection_wire_allows_controller_configured_round_cap(limit: int) -> None:
+    message = contracts.parse_json(
+        json.dumps(selection_payload() | {"round_limit": limit}), contracts.MitigationSelection()
+    )
+    contracts.validate(message)

@@ -115,6 +115,7 @@ func menuB3Loop(t *testing.T) (*ResponderLoop, *menuB3Cluster) {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}
 	loop.DiagnosisSettleDelay = time.Nanosecond
+	configureSyntheticMenu(t, loop, cluster)
 	return loop, cluster
 }
 func menuCall(t *testing.T, loop *ResponderLoop, payload map[string]any) map[string]any {

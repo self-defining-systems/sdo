@@ -258,7 +258,7 @@ func (j *selectionJournal) accept(ctx context.Context, menu *contracts.Mitigatio
 		return nil, false, errors.New("invalid menu")
 	}
 	source := s.SourceHistory[len(s.SourceHistory)-1]
-	if menu.IncidentId != s.IncidentId || menu.SessionId != s.SessionId || menu.DispatchEpoch != s.DispatchEpoch || menu.SourceCommit != source || !proto.Equal(menu.OriginalDeadline, s.OriginalDeadline) || selection.MenuId != menu.MenuId || selection.SourceCommit != source || selection.ScopeDigest != menu.ScopeDigest || selection.PolicyDigest != menu.PolicyDigest || selection.RoundLimit > menu.RoundLimit || !sameSelectionBindings(selection.Bindings, menu.Bindings) {
+	if menu.IncidentId != s.IncidentId || menu.SessionId != s.SessionId || menu.DispatchEpoch != s.DispatchEpoch || menu.SourceCommit != source || !proto.Equal(menu.OriginalDeadline, s.OriginalDeadline) || selection.MenuId != menu.MenuId || selection.SourceCommit != source || selection.ScopeDigest != menu.ScopeDigest || selection.PolicyDigest != menu.PolicyDigest || selection.RoundLimit > menu.RoundLimit {
 		return nil, false, errors.New("selection menu/revision/scope/policy fence mismatch")
 	}
 	var option *contracts.MitigationOption
@@ -270,6 +270,13 @@ func (j *selectionJournal) accept(ctx context.Context, menu *contracts.Mitigatio
 	}
 	if option == nil || option.DisabledReason != "" || len(option.Effects) == 0 || option.ProgramRevision != selection.ProgramRevision || option.DependencyRevision != selection.DependencyRevision {
 		return nil, false, errors.New("selection option disabled or revision mismatch")
+	}
+	bindings := option.Bindings
+	if len(bindings) == 0 {
+		bindings = menu.Bindings
+	}
+	if !sameSelectionBindings(selection.Bindings, bindings) {
+		return nil, false, errors.New("selection bindings mismatch")
 	}
 	if len(s.Attempts) >= 32 || selection.RoundLimit > s.TotalBatches-s.UsedBatches-s.ReservedBatches {
 		return nil, false, errors.New("selection incident budget exhausted")

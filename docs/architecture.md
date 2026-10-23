@@ -104,7 +104,7 @@ remains at the controller's storage edge; this read projection strictly decodes
 field types and rejects undefined lifecycle enums. Source-mode operator launches
 use a cached build, so observation polling does not repeatedly use `go run`.
 
-## Mitigation menu contract foundation
+## Mitigation menu
 
 `mitigation_menu.proto` defines version 1 menu, selection, report-query and
 terminal-report messages with generated Go/Python types. `sdo menu [PROGRAM]
@@ -112,12 +112,13 @@ terminal-report messages with generated Go/Python types. `sdo menu [PROGRAM]
 submits a complete selection JSON document with a stable `request_id` across
 retries. `sdo report ATTEMPT --incident-id ID --session-id ID --epoch N` requests
 the settled report. Transport filenames are independent of request identity.
-The CLI validates the selection shape, revision/session fences and one-or-two
-round bound; Go remains responsible for authorization and execution.
+`sdo mitigate OPTION [--rounds N]` builds a selection from the current menu.
+The existing `max-response-loops` setting is the single incident-wide round
+allowance, default 5; Go owns authorization, accounting and execution.
 
 The runtime now stores `SelectionLedger v1` in the incident tools-state
 ConfigMap through `StateStore` CAS, alongside the legacy counter journal.
-Acceptance reserves one or two batches atomically; normalized semantic request
+Acceptance reserves the selected remaining rounds atomically; normalized semantic request
 hashes exclude dispatch epoch. Adoption retains the logical/provider session,
 original deadline, incident budget, acceptance epochs and source history.
 Genesis imports legacy counters in the same CAS, avoiding an empty-budget
@@ -139,14 +140,19 @@ owner and reserved incident budget once a selection journal exists, with
 revalidation at each backend write. A durable write freeze still permits
 read-only report delivery; a local storage failure freezes that owner entirely.
 
-This remains an incomplete implementation: `menu` and `mitigate` execution are
-not enabled, and the dispatcher does not yet activate the worker recovery flag.
-Raw `act` mutation-gateway integration, health-refresh session continuity,
-causal-barrier wiring, closure handoff and guarded execution still gate enablement.
-Recovery without a current reader records an explicit observation failure,
-never successful verification. The executable B3 and credential fixtures in
-`runtime/mitigation_menu_slice1_test.go` therefore deliberately remain red.
-Existing sessions without a selection journal retain their capture-gap behavior.
+The responder loop lists accepted Mitigators and controller-built SDK plans.
+Every round starts from a direct causal observation in the same provider session.
+Options use the existing PlanExecutor, its receipts and rollback. A mandatory
+controller-owned safety configuration supplies complete dependencies, current
+reads, nonsecret provenance/admission authorization and independent health.
+Absent capabilities refuse before content reads; no production permissive
+fallback exists. The dispatcher activates session recovery only for configured
+loops. Recorded `act` holds the same mutation owner until completion; an absent
+completion prevents subsequent mutations. Menu receipts enter incident repair
+evidence without legacy PlanApplications or positive equivalence trust credit.
+B3 and Secret fixtures provide genuine synthetic adapters with unchanged
+assertions. Health-refresh continuity and production safety-policy provisioning
+still require integration; passing these fixtures does not establish stream readiness.
 
 `runtime/causal_barrier.go` supplies a separate direct-read component. It
 persists a unique attempt/round/phase/occurrence intent before collection and
@@ -161,14 +167,13 @@ any collection read; this component does not itself establish provenance.
 The component remains separate from diagnosis and restored-closure hooks until
 the scoped-observation changes are merged and those integrations are validated.
 
-The intended enabled scope is routing `SetField` and Deployment restart only.
-Before enabling either, the Go menu must enforce an explicit fail-closed Secret
-predicate on forward writes, compensation and all new evidence. Opaque content
-needs trusted provenance; resource kind or redaction does not establish safety.
-No global domain attestation or SEC2 dependency, new grants or credential fetches
-are authorized. This guarantee concerns the menu boundary; inherited shell and
-`act` confinement remains separate. Unproven quiescence of a previous worker
-freezes further writes and yields unknown/interrupted/timeout evidence.
+The option model carries a generic SDK-plan effect. Existing executor actions
+need no menu-specific vocabulary cases; each outgoing effect and compensation
+must pass the explicit fail-closed predicate. Opaque content requires independent
+provenance, including consumer/routing closure and admission. No new grants or
+credential fetches establish safety. This boundary does not claim global
+confinement of inherited shell access. Unproven old-worker quiescence freezes
+further writes with visible interrupted evidence.
 
 Terminal reports carry unique attempts, round/action identities, action state
 (`NOT_APPLIED`, `APPLIED`, `UNKNOWN`), compensation conflicts/residuals and
@@ -548,9 +553,9 @@ traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
 
 ## Component map
 
-The mitigation menu currently adds schema/CLI surface only; its runtime acceptance
-fixtures are red. The component responsible for later execution is the Go
-responder loop, not the Python CLI or benchmark adapter.
+The Go responder loop owns menu execution and durable settlement; the Python
+CLI submits selections. Production enablement requires independently provisioned
+safety capabilities; the benchmark adapter owns strict experiment receipts.
 
 | Capability | Repository implementation | Status | Evidence and limit |
 |---|---|---|---|
@@ -582,9 +587,9 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 
 ## Artifact ownership matrix
 
-Menu selections are agent requests, not durable artifact edits. Future menu
-ledgers and terminal reports belong to controller runtime state outside `.sdo/`;
-this contract foundation adds no writer or storage format to the active path.
+Menu selections are agent requests, not durable artifact edits. Selection
+ledgers and terminal reports belong to incident-scoped controller CAS state
+outside `.sdo/`; only the broker publishes derived incident outcomes.
 
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|

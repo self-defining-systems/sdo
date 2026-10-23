@@ -32,6 +32,7 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	MutationToken string                                 `json:"mutation_token,omitempty"`
 	Selection     *contracts.MitigationSelection         `json:"-"`
 	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
 	Checkpoint    *contracts.MitigationSessionCheckpoint `json:"-"`
@@ -44,6 +45,7 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	MutationToken string                       `json:"mutation_token,omitempty"`
 	Menu          *contracts.MitigationMenu    `json:"-"`
 	Report        *contracts.MitigationReport  `json:"-"`
 	Session       *contracts.MitigationSession `json:"-"`
@@ -102,6 +104,10 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	externalMutationToken           string
+	MenuConfig                      *ResponderMenuConfig
+	menu                            *contracts.MitigationMenu
+	menuEntries                     map[string]menuEntry
 	selectionStore                  StateStore
 	selection                       *selectionJournal
 	mutationOwner                   *mutationOwner
@@ -250,7 +256,22 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			return response
 		}
 	}
+	if l.externalMutationToken != "" {
+		switch request.Command {
+		case "mitigate", "apply", "rollback", "act-start":
+			response.Error = "recorded mutation still in progress"
+			return response
+		}
+	}
 	switch request.Command {
+	case "act-start":
+		l.startMenuAct(ctx, &response)
+	case "act-finish":
+		l.finishMenuAct(ctx, request.MutationToken, &response)
+	case "menu":
+		l.listMenu(ctx, request, &response)
+	case "mitigate":
+		l.mitigateMenu(ctx, request.Selection, &response)
 	case "session-open":
 		l.openMenuSession(ctx, &response)
 	case "session-checkpoint":

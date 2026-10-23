@@ -177,3 +177,49 @@ def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, 
     result = tools_cli.main(["act", "--resource", "Service/app/api", "--", "true"])
     assert result == 0
     assert seen == ["capture", "mutation"]
+
+
+def test_mitigate_option_uses_fresh_menu_and_incident_round_allowance(monkeypatch):
+    seen = []
+    menu = {
+        "version": 1,
+        "incident_id": "incident",
+        "session_id": "session",
+        "dispatch_epoch": "1",
+        "menu_id": "fresh-menu",
+        "source_commit": "source",
+        "scope_digest": "scope",
+        "policy_digest": "policy",
+        "round_limit": 4,
+        "remaining_batches": 4,
+        "bindings": [],
+        "options": [
+            {
+                "option_id": "route",
+                "program_id": "routing",
+                "program_revision": "revision",
+                "dependency_revision": "dependencies",
+                "bindings": [],
+            }
+        ],
+    }
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return {"menu": menu, "summary": "menu"} if request["command"] == "menu" else {"summary": "report"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["mitigate", "route", "--rounds", "3"]) == 0
+    assert [request["command"] for request in seen] == ["menu", "mitigate"]
+    assert seen[1]["selection"]["round_limit"] == 3
+    assert seen[1]["selection"]["menu_id"] == "fresh-menu"
+    assert seen[1]["selection"]["request_id"]
+
+
+def test_menu_session_act_refuses_when_owner_cannot_authorize(monkeypatch):
+    monkeypatch.setenv("SDO_MITIGATION_SESSION", "1")
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"error": "writes frozen"})
+    monkeypatch.setattr(
+        tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kw: pytest.fail("unauthorized mutation")
+    )
+    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 2

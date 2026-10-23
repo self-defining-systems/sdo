@@ -29,6 +29,8 @@ const (
 	MitigationOption_EFFECT_UNSPECIFIED              MitigationOption_Effect = 0
 	MitigationOption_EFFECT_SCOPED_ROUTING_SET_FIELD MitigationOption_Effect = 1
 	MitigationOption_EFFECT_DEPLOYMENT_RESTART       MitigationOption_Effect = 2
+	// Execution and supported action vocabulary belong to the plan executor.
+	MitigationOption_EFFECT_SDK_PLAN_ACTION MitigationOption_Effect = 3
 )
 
 // Enum value maps for MitigationOption_Effect.
@@ -37,11 +39,13 @@ var (
 		0: "EFFECT_UNSPECIFIED",
 		1: "EFFECT_SCOPED_ROUTING_SET_FIELD",
 		2: "EFFECT_DEPLOYMENT_RESTART",
+		3: "EFFECT_SDK_PLAN_ACTION",
 	}
 	MitigationOption_Effect_value = map[string]int32{
 		"EFFECT_UNSPECIFIED":              0,
 		"EFFECT_SCOPED_ROUTING_SET_FIELD": 1,
 		"EFFECT_DEPLOYMENT_RESTART":       2,
+		"EFFECT_SDK_PLAN_ACTION":          3,
 	}
 )
 
@@ -343,9 +347,10 @@ type MitigationOption struct {
 	DependencyRevision string                    `protobuf:"bytes,4,opt,name=dependency_revision,json=dependencyRevision,proto3" json:"dependency_revision,omitempty"`
 	Effects            []MitigationOption_Effect `protobuf:"varint,5,rep,packed,name=effects,proto3,enum=sdodev.contracts.v1alpha1.MitigationOption_Effect" json:"effects,omitempty"`
 	// A disabled option is descriptive only; it cannot authorize a selection.
-	DisabledReason     string `protobuf:"bytes,6,opt,name=disabled_reason,json=disabledReason,proto3" json:"disabled_reason,omitempty"`
-	Reversible         bool   `protobuf:"varint,7,opt,name=reversible,proto3" json:"reversible,omitempty"`
-	MaxActionsPerRound uint32 `protobuf:"varint,8,opt,name=max_actions_per_round,json=maxActionsPerRound,proto3" json:"max_actions_per_round,omitempty"`
+	DisabledReason     string     `protobuf:"bytes,6,opt,name=disabled_reason,json=disabledReason,proto3" json:"disabled_reason,omitempty"`
+	Reversible         bool       `protobuf:"varint,7,opt,name=reversible,proto3" json:"reversible,omitempty"`
+	MaxActionsPerRound uint32     `protobuf:"varint,8,opt,name=max_actions_per_round,json=maxActionsPerRound,proto3" json:"max_actions_per_round,omitempty"`
+	Bindings           []*Binding `protobuf:"bytes,9,rep,name=bindings,proto3" json:"bindings,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -434,6 +439,13 @@ func (x *MitigationOption) GetMaxActionsPerRound() uint32 {
 		return x.MaxActionsPerRound
 	}
 	return 0
+}
+
+func (x *MitigationOption) GetBindings() []*Binding {
+	if x != nil {
+		return x.Bindings
+	}
+	return nil
 }
 
 // request_id identifies the semantic request, independently of transport files.
@@ -1896,10 +1908,10 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\bbindings\x18\t \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12E\n" +
 	"\aoptions\x18\n" +
 	" \x03(\v2+.sdodev.contracts.v1alpha1.MitigationOptionR\aoptions\x12*\n" +
-	"\vround_limit\x18\v \x01(\rB\t\xbaH\x06*\x04\x18\x02(\x01R\n" +
+	"\vround_limit\x18\v \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\n" +
 	"roundLimit\x12O\n" +
 	"\x11original_deadline\x18\f \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\x10originalDeadline\x12+\n" +
-	"\x11remaining_batches\x18\r \x01(\rR\x10remainingBatches\"\xa2\x04\n" +
+	"\x11remaining_batches\x18\r \x01(\rR\x10remainingBatches\"\xff\x04\n" +
 	"\x10MitigationOption\x12$\n" +
 	"\toption_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\boptionId\x12&\n" +
 	"\n" +
@@ -1911,11 +1923,13 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\n" +
 	"reversible\x18\a \x01(\bR\n" +
 	"reversible\x12:\n" +
-	"\x15max_actions_per_round\x18\b \x01(\rB\a\xbaH\x04*\x02 \x00R\x12maxActionsPerRound\"d\n" +
+	"\x15max_actions_per_round\x18\b \x01(\rB\a\xbaH\x04*\x02 \x00R\x12maxActionsPerRound\x12>\n" +
+	"\bbindings\x18\t \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\"\x80\x01\n" +
 	"\x06Effect\x12\x16\n" +
 	"\x12EFFECT_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fEFFECT_SCOPED_ROUTING_SET_FIELD\x10\x01\x12\x1d\n" +
-	"\x19EFFECT_DEPLOYMENT_RESTART\x10\x02\"\xfe\x05\n" +
+	"\x19EFFECT_DEPLOYMENT_RESTART\x10\x02\x12\x1a\n" +
+	"\x16EFFECT_SDK_PLAN_ACTION\x10\x03\"\xfe\x05\n" +
 	"\x13MitigationSelection\x12!\n" +
 	"\aversion\x18\x01 \x01(\rB\a\xbaH\x04*\x02\b\x01R\aversion\x12(\n" +
 	"\vincident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -1934,7 +1948,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\fscope_digest\x18\v \x01(\tB\a\xbaH\x04r\x02\x10\x01R\vscopeDigest\x12,\n" +
 	"\rpolicy_digest\x18\f \x01(\tB\a\xbaH\x04r\x02\x10\x01R\fpolicyDigest\x12>\n" +
 	"\bbindings\x18\r \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12*\n" +
-	"\vround_limit\x18\x0e \x01(\rB\t\xbaH\x06*\x04\x18\x02(\x01R\n" +
+	"\vround_limit\x18\x0e \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\n" +
 	"roundLimit:p\xbaHm\x1ak\n" +
 	"$mitigation_selection.unique_bindings\x12\x1cbinding names must be unique\x1a%this.bindings.map(b, b.name).unique()\"\xe4\x01\n" +
 	"\x15MitigationReportQuery\x12!\n" +
@@ -1961,7 +1975,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12\x94\x01\n" +
 	"\ffailed_phase\x18\b \x01(\tBq\xbaHnrlR\x00R\n" +
 	"acceptanceR\tdiagnosisR\bplanningR\x06safetyR\aforwardR\fcompensationR\abarrierR\fverificationR\brecoveryR\aclosureR\vfailedPhase\x12R\n" +
-	"\x06rounds\x18\t \x03(\v20.sdodev.contracts.v1alpha1.MitigationRoundReportB\b\xbaH\x05\x92\x01\x02\x10\x02R\x06rounds\x12H\n" +
+	"\x06rounds\x18\t \x03(\v20.sdodev.contracts.v1alpha1.MitigationRoundReportB\b\xbaH\x05\x92\x01\x02\x10dR\x06rounds\x12H\n" +
 	"\bbarriers\x18\n" +
 	" \x03(\v2,.sdodev.contracts.v1alpha1.MitigationBarrierR\bbarriers\x12+\n" +
 	"\x11remaining_batches\x18\v \x01(\rR\x10remainingBatches\x12B\n" +
@@ -1980,7 +1994,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\x12STATUS_INTERRUPTED\x10\a\x12\x12\n" +
 	"\x0eSTATUS_TIMEOUT\x10\b\"\xcd\x03\n" +
 	"\x15MitigationRoundReport\x12*\n" +
-	"\vround_index\x18\x01 \x01(\rB\t\xbaH\x06*\x04\x18\x02(\x01R\n" +
+	"\vround_index\x18\x01 \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\n" +
 	"roundIndex\x12\"\n" +
 	"\bround_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\aroundId\x12L\n" +
 	"\aactions\x18\x03 \x03(\v22.sdodev.contracts.v1alpha1.MitigationActionReceiptR\aactions\x12@\n" +
@@ -2011,7 +2025,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"capture_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tcaptureId\x12&\n" +
 	"\n" +
 	"attempt_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tattemptId\x12(\n" +
-	"\vround_index\x18\x03 \x01(\rB\a\xbaH\x04*\x02\x18\x02R\n" +
+	"\vround_index\x18\x03 \x01(\rB\a\xbaH\x04*\x02\x18dR\n" +
 	"roundIndex\x12]\n" +
 	"\x05phase\x18\x04 \x01(\tBG\xbaHDrBR\fbefore_roundR\vafter_writeR\x12after_compensationR\brecoveryR\aclosureR\x05phase\x12'\n" +
 	"\n" +
@@ -2056,10 +2070,10 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\n" +
 	"attempt_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tattemptId\x122\n" +
 	"\x10acceptance_epoch\x18\x04 \x01(\x04B\a\xbaH\x042\x02 \x00R\x0facceptanceEpoch\x124\n" +
-	"\x10reserved_batches\x18\x05 \x01(\rB\t\xbaH\x06*\x04\x18\x02(\x01R\x0freservedBatches\x12'\n" +
+	"\x10reserved_batches\x18\x05 \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\x0freservedBatches\x12'\n" +
 	"\x0fcharged_batches\x18\x06 \x01(\rR\x0echargedBatches\x12D\n" +
 	"\aactions\x18\a \x03(\v2*.sdodev.contracts.v1alpha1.SelectionActionR\aactions\x12R\n" +
-	"\x06rounds\x18\b \x03(\v20.sdodev.contracts.v1alpha1.MitigationRoundReportB\b\xbaH\x05\x92\x01\x02\x10\x02R\x06rounds\x12H\n" +
+	"\x06rounds\x18\b \x03(\v20.sdodev.contracts.v1alpha1.MitigationRoundReportB\b\xbaH\x05\x92\x01\x02\x10dR\x06rounds\x12H\n" +
 	"\bbarriers\x18\t \x03(\v2,.sdodev.contracts.v1alpha1.MitigationBarrierR\bbarriers\x12C\n" +
 	"\x06report\x18\n" +
 	" \x01(\v2+.sdodev.contracts.v1alpha1.MitigationReportR\x06report\x123\n" +
@@ -2067,7 +2081,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\x0fclosure_started\x18\f \x01(\bR\x0eclosureStarted\x121\n" +
 	"\x14closure_acknowledged\x18\r \x01(\bR\x13closureAcknowledged\"\xe3\x01\n" +
 	"\x0fSelectionAction\x12*\n" +
-	"\vround_index\x18\x01 \x01(\rB\t\xbaH\x06*\x04\x18\x02(\x01R\n" +
+	"\vround_index\x18\x01 \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\n" +
 	"roundIndex\x122\n" +
 	"\x05phase\x18\x02 \x01(\tB\x1c\xbaH\x19r\x17R\aforwardR\fcompensationR\x05phase\x12T\n" +
 	"\areceipt\x18\x03 \x01(\v22.sdodev.contracts.v1alpha1.MitigationActionReceiptB\x06\xbaH\x03\xc8\x01\x01R\areceipt\x12\x1a\n" +
@@ -2150,36 +2164,37 @@ var file_sdodev_contracts_v1alpha1_mitigation_menu_proto_depIdxs = []int32{
 	4,  // 1: sdodev.contracts.v1alpha1.MitigationMenu.options:type_name -> sdodev.contracts.v1alpha1.MitigationOption
 	19, // 2: sdodev.contracts.v1alpha1.MitigationMenu.original_deadline:type_name -> google.protobuf.Timestamp
 	0,  // 3: sdodev.contracts.v1alpha1.MitigationOption.effects:type_name -> sdodev.contracts.v1alpha1.MitigationOption.Effect
-	18, // 4: sdodev.contracts.v1alpha1.MitigationSelection.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	1,  // 5: sdodev.contracts.v1alpha1.MitigationReport.status:type_name -> sdodev.contracts.v1alpha1.MitigationReport.Status
-	8,  // 6: sdodev.contracts.v1alpha1.MitigationReport.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
-	10, // 7: sdodev.contracts.v1alpha1.MitigationReport.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
-	20, // 8: sdodev.contracts.v1alpha1.MitigationReport.residuals:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	9,  // 9: sdodev.contracts.v1alpha1.MitigationRoundReport.actions:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
-	21, // 10: sdodev.contracts.v1alpha1.MitigationRoundReport.diagnosis:type_name -> sdodev.contracts.v1alpha1.Verdict
-	21, // 11: sdodev.contracts.v1alpha1.MitigationRoundReport.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
-	20, // 12: sdodev.contracts.v1alpha1.MitigationActionReceipt.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	0,  // 13: sdodev.contracts.v1alpha1.MitigationActionReceipt.effect:type_name -> sdodev.contracts.v1alpha1.MitigationOption.Effect
-	2,  // 14: sdodev.contracts.v1alpha1.MitigationActionReceipt.state:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt.State
-	2,  // 15: sdodev.contracts.v1alpha1.MitigationActionReceipt.compensation_state:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt.State
-	11, // 16: sdodev.contracts.v1alpha1.MitigationBarrier.observations:type_name -> sdodev.contracts.v1alpha1.MitigationObservation
-	19, // 17: sdodev.contracts.v1alpha1.MitigationBarrier.observed_at:type_name -> google.protobuf.Timestamp
-	17, // 18: sdodev.contracts.v1alpha1.MitigationBarrier.collections:type_name -> sdodev.contracts.v1alpha1.MitigationCollectionObservation
-	20, // 19: sdodev.contracts.v1alpha1.MitigationObservation.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	19, // 20: sdodev.contracts.v1alpha1.SelectionLedger.original_deadline:type_name -> google.protobuf.Timestamp
-	13, // 21: sdodev.contracts.v1alpha1.SelectionLedger.attempts:type_name -> sdodev.contracts.v1alpha1.SelectionAttempt
-	14, // 22: sdodev.contracts.v1alpha1.SelectionAttempt.actions:type_name -> sdodev.contracts.v1alpha1.SelectionAction
-	8,  // 23: sdodev.contracts.v1alpha1.SelectionAttempt.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
-	10, // 24: sdodev.contracts.v1alpha1.SelectionAttempt.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
-	7,  // 25: sdodev.contracts.v1alpha1.SelectionAttempt.report:type_name -> sdodev.contracts.v1alpha1.MitigationReport
-	9,  // 26: sdodev.contracts.v1alpha1.SelectionAction.receipt:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
-	19, // 27: sdodev.contracts.v1alpha1.MitigationSession.original_deadline:type_name -> google.protobuf.Timestamp
-	7,  // 28: sdodev.contracts.v1alpha1.MitigationSession.pending_reports:type_name -> sdodev.contracts.v1alpha1.MitigationReport
-	29, // [29:29] is the sub-list for method output_type
-	29, // [29:29] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	18, // 4: sdodev.contracts.v1alpha1.MitigationOption.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	18, // 5: sdodev.contracts.v1alpha1.MitigationSelection.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	1,  // 6: sdodev.contracts.v1alpha1.MitigationReport.status:type_name -> sdodev.contracts.v1alpha1.MitigationReport.Status
+	8,  // 7: sdodev.contracts.v1alpha1.MitigationReport.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
+	10, // 8: sdodev.contracts.v1alpha1.MitigationReport.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
+	20, // 9: sdodev.contracts.v1alpha1.MitigationReport.residuals:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	9,  // 10: sdodev.contracts.v1alpha1.MitigationRoundReport.actions:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
+	21, // 11: sdodev.contracts.v1alpha1.MitigationRoundReport.diagnosis:type_name -> sdodev.contracts.v1alpha1.Verdict
+	21, // 12: sdodev.contracts.v1alpha1.MitigationRoundReport.verification:type_name -> sdodev.contracts.v1alpha1.Verdict
+	20, // 13: sdodev.contracts.v1alpha1.MitigationActionReceipt.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	0,  // 14: sdodev.contracts.v1alpha1.MitigationActionReceipt.effect:type_name -> sdodev.contracts.v1alpha1.MitigationOption.Effect
+	2,  // 15: sdodev.contracts.v1alpha1.MitigationActionReceipt.state:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt.State
+	2,  // 16: sdodev.contracts.v1alpha1.MitigationActionReceipt.compensation_state:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt.State
+	11, // 17: sdodev.contracts.v1alpha1.MitigationBarrier.observations:type_name -> sdodev.contracts.v1alpha1.MitigationObservation
+	19, // 18: sdodev.contracts.v1alpha1.MitigationBarrier.observed_at:type_name -> google.protobuf.Timestamp
+	17, // 19: sdodev.contracts.v1alpha1.MitigationBarrier.collections:type_name -> sdodev.contracts.v1alpha1.MitigationCollectionObservation
+	20, // 20: sdodev.contracts.v1alpha1.MitigationObservation.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	19, // 21: sdodev.contracts.v1alpha1.SelectionLedger.original_deadline:type_name -> google.protobuf.Timestamp
+	13, // 22: sdodev.contracts.v1alpha1.SelectionLedger.attempts:type_name -> sdodev.contracts.v1alpha1.SelectionAttempt
+	14, // 23: sdodev.contracts.v1alpha1.SelectionAttempt.actions:type_name -> sdodev.contracts.v1alpha1.SelectionAction
+	8,  // 24: sdodev.contracts.v1alpha1.SelectionAttempt.rounds:type_name -> sdodev.contracts.v1alpha1.MitigationRoundReport
+	10, // 25: sdodev.contracts.v1alpha1.SelectionAttempt.barriers:type_name -> sdodev.contracts.v1alpha1.MitigationBarrier
+	7,  // 26: sdodev.contracts.v1alpha1.SelectionAttempt.report:type_name -> sdodev.contracts.v1alpha1.MitigationReport
+	9,  // 27: sdodev.contracts.v1alpha1.SelectionAction.receipt:type_name -> sdodev.contracts.v1alpha1.MitigationActionReceipt
+	19, // 28: sdodev.contracts.v1alpha1.MitigationSession.original_deadline:type_name -> google.protobuf.Timestamp
+	7,  // 29: sdodev.contracts.v1alpha1.MitigationSession.pending_reports:type_name -> sdodev.contracts.v1alpha1.MitigationReport
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_mitigation_menu_proto_init() }

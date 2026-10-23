@@ -2,21 +2,21 @@
 
 ## Implementation status
 
-The version 1 messages in `mitigation_menu.proto` and the `sdo menu`,
-`sdo mitigate --selection FILE` and `sdo report` CLI surface are a foundation.
-The runtime implements report retrieval and private session/checkpoint
-handshakes, with a generated `SelectionLedger` in the separate incident
-`*-tools-state` ConfigMap. `menu` and `mitigate` execution remain unavailable.
-The worker resume protocol is gated by `SDO_MITIGATION_SESSION=1`, which the
-dispatcher does not yet enable. Red B3 and credential acceptance fixtures
-identify the missing executor; passing ledger/session tests do not establish
-menu execution, causal freshness, credential safety or closure readiness.
+The Go responder loop serves `menu`, `mitigate` and immutable reports through
+the existing tools transport. `sdo mitigate OPTION [--rounds N]` selects from a
+fresh menu; complete JSON selections remain available for semantic retries.
+`MaxBatches` / `max-response-loops` is the single incident-wide allowance,
+default 5, shared with legacy apply and recorded act. Each round uses direct
+current observations in the original session. Controller-supplied safety and
+independent health capabilities are mandatory; missing capabilities refuse
+before reading content. Synthetic B3/Secret acceptance passes do not establish
+production policy provisioning, health-refresh continuity or live stream readiness.
 
 ## Identity and settlement
 
 - A selection binds incident, provider session, dispatch epoch, menu/option IDs,
   program/dependency revisions, accepted source, scope/policy digests, named
-  bindings and a round limit of one or two.
+  bindings and a round limit within the remaining configured incident allowance.
 - `request_id` is the semantic retry key, independent of the request filename.
   The canonical payload hash normalizes the transport epoch to a constant and
   sorts binding names; changing the transport epoch does not change semantics. Reusing a key for changed semantics must refuse.
@@ -45,9 +45,8 @@ the diagnosis/health dependency set. `open@detect` is not a substitute.
 Reports contain no raw Kubernetes pre-images or log, command or probe bodies.
 Verdict evidence still needs an independently checked nonsecret provenance
 boundary before serialization. Resource-kind filtering and redaction cannot
-prove content safe. Enable only scoped routing SetField and Deployment restart
-after forward/compensation/evidence safety validation; legacy reconcile and
-revision rollback remain disabled in the menu. This is the menu's guarantee,
+prove content safe. A generic SDK-plan effect delegates the vocabulary to the existing executor;
+every effect requires forward/compensation/evidence safety authorization. This is the menu's guarantee,
 not global confinement of inherited shell or `act` access.
 
 Menu reports are not legacy `PlanApplication` evidence and earn no positive
@@ -80,8 +79,9 @@ persisted transcript prefix on resume; a later append is allowed, replacement
 or truncation is not. Missing/changed checkpoints must interrupt visibly.
 The report outbox drains only after the original provider session acknowledges
 delivery; publication into a transport response file alone does not drain it.
-Raw `act` fencing, health-refresh continuity and fresh closure integration
-remain outstanding; do not interpret these records as proof they are wired.
+Recorded `act` holds the mutation gateway until command completion. A missing
+completion prevents subsequent writes. Health-refresh continuity and production
+policy provisioning remain outstanding; do not infer them from ledger receipts.
 
 ## Direct causal component
 
@@ -100,7 +100,8 @@ completion CAS. A failed completion exposes no usable verification view. The
 returned view contains the direct objects and rejects unlisted kinds; unavailable
 traffic observations cannot masquerade as healthy. Read authorization must be
 supplied by the caller before collection. These are causal checks, not proof of
-nonsecret provenance. The component is not yet wired through diagnosis or closure.
+nonsecret provenance. The menu uses the component before rounds, after writes, after compensation
+and for closure verification; it does not replace global controller closure guards.
 
 A resumed worker's turn timeout is the remaining original deadline; expiration
 does not allocate a fresh deadline. Journal integrity checks reject missing
