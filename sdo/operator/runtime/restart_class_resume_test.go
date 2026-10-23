@@ -21,7 +21,6 @@ import (
 // lock. Exercise RunWithOptions, its informer resume, lease, and maintenance
 // watcher, rather than calling Step to stand in for the resumed process.
 func TestRestartClassResumedControllerPublishesAfterACK(t *testing.T) {
-	t.Setenv("RT1_SLOT2_SOURCE_REPAIR", "1")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	root, proposals, _, _, coordinator := tracingFixture(t)
@@ -38,7 +37,7 @@ func TestRestartClassResumedControllerPublishesAfterACK(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "controller.json")
-	c := restartClassIncident(t, ctx, root, base.Commit, path, native)
+	c := restartClassIncident(t, ctx, restartClassSlot2World(), root, base.Commit, path, native)
 	effect, ok := c.PendingClosureEffect()
 	if !ok {
 		t.Fatal("missing closure")

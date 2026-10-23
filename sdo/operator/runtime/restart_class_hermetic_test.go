@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -32,17 +31,12 @@ type restartClassResponder struct {
 	t      *testing.T
 	health *chaosDetector
 	start  time.Time
+	world  restartClassWorld
 }
 
 func (r restartClassResponder) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
-	if os.Getenv("RT1_SLOT2_SOURCE_REPAIR") == "1" {
-		path := filepath.Join(request.RepositoryWorktree, "deploy/tracing.yaml")
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return IncidentResult{}, err
-		}
-		body := strings.Replace(string(raw), "metadata:\n", "metadata:\n  annotations:\n    sdo.dev/source-restoration: accepted-source\n", 1)
-		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+	if r.world.Edit != nil {
+		if err := r.world.Edit(r.t, request.RepositoryWorktree); err != nil {
 			return IncidentResult{}, err
 		}
 	} else {
@@ -62,7 +56,7 @@ func restartClassSnapshot() sdktest.Snapshot {
 // Start with real detection, broker workspace preparation, dispatch, scripted
 // source repair and independent controller clearing, rather than manufacturing
 // a frozen closure. The process sweep begins at its durable public effect.
-func restartClassIncident(t *testing.T, ctx context.Context, root, base, path string, native NativeIncidentBroker) *Controller {
+func restartClassIncident(t *testing.T, ctx context.Context, world restartClassWorld, root, base, path string, native NativeIncidentBroker) *Controller {
 	t.Helper()
 	start := time.Unix(1000, 0)
 	now := start
@@ -71,9 +65,10 @@ func restartClassIncident(t *testing.T, ctx context.Context, root, base, path st
 	health.active.set(true)
 	cfg := testControllerConfig()
 	cfg.SourceCommit, cfg.DeployedCommit = base, base
+	cfg.Namespace = world.Namespace
 	cfg.RepositoryWorktree = root
 	cfg.BatchDebounce = 0
-	c, err := NewController(cfg, []sdk.Detector{health}, staticProvider{snapshot: restartClassSnapshot()}, restartClassResponder{t: t, health: health, start: start}, start)
+	c, err := NewController(cfg, []sdk.Detector{health}, staticProvider{snapshot: restartClassSnapshot()}, restartClassResponder{t: t, health: health, start: start, world: world}, start)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,14 +155,15 @@ func TestRestartClassProcess(t *testing.T) {
 	defer cancel()
 	path, cut := os.Getenv("RT1_STATE"), os.Getenv("RT1_CUT")
 	proposals, ledger := os.Getenv("RT1_PROPOSALS"), os.Getenv("RT1_LEDGER")
+	world := restartClassWorldFromEnv(t, root)
 	native := restartClassNative(t, root, proposals, ledger)
-	coordinator, _ := crashCoordinator(t, root, proposals, path+".judge", "")
+	coordinator := world.Coordinator(t, root, proposals, path+".judge")
 	revision, err := memory.AcceptedHealthRevision(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if revision.NeedsRefresh {
-		if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: "tracing", Namespace: "demo"}, revision); err != nil {
+		if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: world.Application, Namespace: world.Namespace}, revision); err != nil {
 			t.Fatal(err)
 		}
 		revision, err = memory.AcceptedHealthRevision(ctx, root)
@@ -177,6 +173,7 @@ func TestRestartClassProcess(t *testing.T) {
 	}
 	cfg := testControllerConfig()
 	cfg.SourceCommit = revision.Commit
+	cfg.Namespace = world.Namespace
 	snapshot := restartClassSnapshot()
 	if os.Getenv("RT1_CHANGED_GENERATION") == "1" {
 		snapshot.Generation = "adopted-generation"
@@ -229,12 +226,14 @@ func TestRestartClassProcess(t *testing.T) {
 	id := os.Getenv("RT1_INCIDENT")
 	restartClassWriteReceipt(t, native, path+".ack-receipt", id)
 	crashAt(path, cut, "after-ack-before-publication")
-	replicas := int32(1)
-	live := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "jaeger", Namespace: "demo", Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}
-	source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}, DeployedCommit: os.Getenv("RT1_BASE")}
-	client := fake.NewSimpleClientset(live)
+	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths, DeployedCommit: os.Getenv("RT1_BASE")}
+	client := fake.NewSimpleClientset(world.Live(t, root, os.Getenv("RT1_BASE"))...)
 	c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
-		return (RenderedLockReconciler{Source: source, Client: client, Broker: native.Repository}).Reconcile(ctx, revision, "demo")
+		started := time.Now()
+		revision, err := (RenderedLockReconciler{Source: source, Client: client, Broker: native.Repository}).Reconcile(ctx, revision, world.Namespace)
+		// The adapter waits a bounded time for this publication; keep its cost visible.
+		_ = os.WriteFile(path+".reconcile", []byte(time.Since(started).String()), 0600)
+		return revision, err
 	}
 	var diagnostics []string
 	c.OnError = func(err error) { diagnostics = append(diagnostics, err.Error()) }
@@ -245,7 +244,7 @@ func TestRestartClassProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := nativeGit(t, root, "rev-parse", "HEAD")
-	if !source.LockCurrent(ctx, head, "demo") {
+	if !source.LockCurrent(ctx, head, world.Namespace) {
 		t.Fatalf("ACK completed but lock never published: %v", diagnostics)
 	}
 	crashAt(path, cut, "after-publication-before-teardown")
@@ -276,6 +275,124 @@ func restartClassWriteReceipt(t *testing.T, native NativeIncidentBroker, path, i
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// restartClassBoundary kills the controller at one durable boundary, restarts
+// it, and checks the restart-class invariants against the real broker, outcome
+// store and strict receipt. root is a prepared accepted checkout with a current
+// rendered lock at base.
+func restartClassBoundary(t *testing.T, ctx context.Context, world restartClassWorld, cut, directory, root, base string) {
+	t.Helper()
+	fixture := os.Getenv("RT1_CLOSEOUT_FIXTURE")
+	proposals, ledger := filepath.Join(directory, "proposals"), filepath.Join(directory, "ledger")
+	native := restartClassNative(t, root, proposals, ledger)
+	source := GitPlanSource{Repository: root, ManifestPaths: world.ManifestPaths, DeployedCommit: base}
+	if _, err := (RenderedLockReconciler{Source: source, Client: fake.NewSimpleClientset(world.Live(t, root, base)...), Broker: native.Repository}).Reconcile(ctx, base, world.Namespace); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "controller.json")
+	c := restartClassIncident(t, ctx, world, root, base, path, native)
+	id := c.pendingClosure.Request.IncidentID
+	if cut == "after-receipt-before-ack" {
+		// Isolate the receipt-durable boundary from the earlier lost-
+		// receipt boundary. Persist the real public completion before
+		// installing the successor's newly adopted health guard.
+		effect, ok := c.PendingClosureEffect()
+		if !ok {
+			t.Fatal("missing closure before durable receipt")
+		}
+		if err := c.ExecuteClosureEffect(ctx, effect); err != nil {
+			t.Fatal(err)
+		}
+		awaitBrokerResult(t, c.closureResults)
+		c.processBrokerCompletions()
+		if err := c.PersistState(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := []string{"RT1_ROOT=" + root, "RT1_PROPOSALS=" + proposals, "RT1_LEDGER=" + ledger, "RT1_STATE=" + path, "RT1_BASE=" + base, "RT1_INCIDENT=" + id}
+	run := func(cut string, changed bool) ([]byte, error) {
+		for adoption := 0; adoption < 3; adoption++ {
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRestartClassProcess$", "-test.timeout=45s")
+			command.Env = append(append(os.Environ(), env...), "RT1_CUT="+cut)
+			if changed {
+				command.Env = append(command.Env, "RT1_CHANGED_GENERATION=1")
+			}
+			output, err := command.CombinedOutput()
+			var exit *exec.ExitError
+			if errors.As(err, &exit) && exit.ExitCode() == 75 {
+				continue
+			}
+			return output, err
+		}
+		return nil, errors.New("controller exceeded two health adoptions")
+	}
+	output, err := run(cut, false)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("did not crash at %s: %v %s", cut, err, output)
+	}
+	status, ok := exit.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
+		t.Fatalf("wrong crash at %s: %v %s", cut, err, output)
+	}
+	marker, err := os.ReadFile(path + ".cut")
+	if err != nil || string(marker) != cut {
+		t.Fatalf("wrong durable cut %q: %v", marker, err)
+	}
+	if fixture != "" {
+		data, err := json.Marshal(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(fixture, "environment.json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	beforeLedger, err := native.readLedger(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeReceipt, err := wire.Canonical(beforeLedger.Receipt)
+	if beforeLedger.Receipt != nil && err != nil {
+		t.Fatal(err)
+	}
+	changed := cut == "after-effect-before-receipt" || cut == "after-receipt-before-ack"
+	if os.Getenv("SDO_RT1_STABLE_OBSERVATION") == "1" {
+		changed = false
+	}
+	if output, err := run("", changed); err != nil {
+		t.Fatalf("restart boundary=%s changed_generation=%t: %v\n%s", cut, changed, err, output)
+	}
+	// Count actual accepted source changes rather than counting broker calls:
+	// receipt replay is expected, a duplicate public source effect is forbidden.
+	count := nativeGit(t, root, "rev-list", "--count", base+"..HEAD", "--", world.EffectPath)
+	if count != "1" {
+		t.Fatalf("public repair effects=%s, want exactly one", count)
+	}
+	afterLedger, err := native.readLedger(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterReceipt, err := wire.Canonical(afterLedger.Receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeLedger.Receipt != nil && !bytes.Equal(beforeReceipt, afterReceipt) {
+		t.Fatal("restart changed the committed receipt")
+	}
+	outcome, err := memory.OpenReader(root).Get(ctx, id)
+	if err != nil || outcome.Record.GetClassification() != "success" || outcome.Record.GetRepairCommit() != afterLedger.ProposalCommit {
+		t.Fatalf("broker outcome missing or mismatched: %v", err)
+	}
+	raw, err := os.ReadFile(path + ".receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartClassStrictReceipt(t, ctx, raw)
+	reconcile, _ := os.ReadFile(path + ".reconcile")
+	t.Logf("boundary=%s changed_generation=%t public_effects=1 receipt=strict outcome=recorded lock_reconcile=%s", cut, changed, reconcile)
 }
 
 func TestRestartClassHermetic(t *testing.T) {
@@ -331,118 +448,9 @@ func TestRestartClassHermetic(t *testing.T) {
 			}
 			nativeGit(t, root, "add", "synthetic-asset.bin")
 			nativeGit(t, root, "commit", "-qm", "representative synthetic source inventory")
-			proposals, ledger := filepath.Join(directory, "proposals"), filepath.Join(directory, "ledger")
-			native := restartClassNative(t, root, proposals, ledger)
-			judge, _ := crashCoordinator(t, root, proposals, filepath.Join(t.TempDir(), "judge"), "")
+			judge, _ := crashCoordinator(t, root, filepath.Join(directory, "proposals"), filepath.Join(t.TempDir(), "judge"), "")
 			old := tracingRefresh(t, root, judge)
-			replicas := int32(1)
-			live := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "jaeger", Namespace: "demo", Generation: 1}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ObservedGeneration: 1, Replicas: 1, UpdatedReplicas: 1, ReadyReplicas: 1, AvailableReplicas: 1}}
-			source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}, DeployedCommit: old.Commit}
-			if _, err := (RenderedLockReconciler{Source: source, Client: fake.NewSimpleClientset(live), Broker: native.Repository}).Reconcile(ctx, old.Commit, "demo"); err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join(directory, "controller.json")
-			c := restartClassIncident(t, ctx, root, old.Commit, path, native)
-			id := c.pendingClosure.Request.IncidentID
-			if cut == "after-receipt-before-ack" {
-				// Isolate the receipt-durable boundary from the earlier lost-
-				// receipt boundary. Persist the real public completion before
-				// installing the successor's newly adopted health guard.
-				effect, ok := c.PendingClosureEffect()
-				if !ok {
-					t.Fatal("missing closure before durable receipt")
-				}
-				if err := c.ExecuteClosureEffect(ctx, effect); err != nil {
-					t.Fatal(err)
-				}
-				awaitBrokerResult(t, c.closureResults)
-				c.processBrokerCompletions()
-				if err := c.PersistState(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			env := []string{"RT1_ROOT=" + root, "RT1_PROPOSALS=" + proposals, "RT1_LEDGER=" + ledger, "RT1_STATE=" + path, "RT1_BASE=" + old.Commit, "RT1_INCIDENT=" + id}
-			run := func(cut string, changed bool) ([]byte, error) {
-				for adoption := 0; adoption < 3; adoption++ {
-					command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRestartClassProcess$", "-test.timeout=45s")
-					command.Env = append(append(os.Environ(), env...), "RT1_CUT="+cut)
-					if changed {
-						command.Env = append(command.Env, "RT1_CHANGED_GENERATION=1")
-					}
-					output, err := command.CombinedOutput()
-					var exit *exec.ExitError
-					if errors.As(err, &exit) && exit.ExitCode() == 75 {
-						continue
-					}
-					return output, err
-				}
-				return nil, errors.New("controller exceeded two health adoptions")
-			}
-			output, err := run(cut, false)
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) {
-				t.Fatalf("did not crash at %s: %v %s", cut, err, output)
-			}
-			status, ok := exit.Sys().(syscall.WaitStatus)
-			if !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
-				t.Fatalf("wrong crash at %s: %v %s", cut, err, output)
-			}
-			marker, err := os.ReadFile(path + ".cut")
-			if err != nil || string(marker) != cut {
-				t.Fatalf("wrong durable cut %q: %v", marker, err)
-			}
-			if fixture != "" {
-				data, err := json.Marshal(env)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(fixture, "environment.json"), data, 0600); err != nil {
-					t.Fatal(err)
-				}
-				return
-			}
-			beforeLedger, err := native.readLedger(id)
-			if err != nil {
-				t.Fatal(err)
-			}
-			beforeReceipt, err := wire.Canonical(beforeLedger.Receipt)
-			if beforeLedger.Receipt != nil && err != nil {
-				t.Fatal(err)
-			}
-			changed := cut == "after-effect-before-receipt" || cut == "after-receipt-before-ack"
-			if os.Getenv("SDO_RT1_STABLE_OBSERVATION") == "1" {
-				changed = false
-			}
-			if output, err := run("", changed); err != nil {
-				t.Fatalf("restart boundary=%s changed_generation=%t: %v\n%s", cut, changed, err, output)
-			}
-			// Count actual accepted source changes rather than counting broker calls:
-			// receipt replay is expected, a duplicate public source effect is forbidden.
-			count := nativeGit(t, root, "rev-list", "--count", old.Commit+"..HEAD", "--", "README.md")
-			if count != "1" {
-				t.Fatalf("public repair effects=%s, want exactly one", count)
-			}
-			afterLedger, err := native.readLedger(id)
-			if err != nil {
-				t.Fatal(err)
-			}
-			afterReceipt, err := wire.Canonical(afterLedger.Receipt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if beforeLedger.Receipt != nil && !bytes.Equal(beforeReceipt, afterReceipt) {
-				t.Fatal("restart changed the committed receipt")
-			}
-			outcome, err := memory.OpenReader(root).Get(ctx, id)
-			if err != nil || outcome.Record.GetClassification() != "success" || outcome.Record.GetRepairCommit() != afterLedger.ProposalCommit {
-				t.Fatalf("broker outcome missing or mismatched: %v", err)
-			}
-			raw, err := os.ReadFile(path + ".receipt")
-			if err != nil {
-				t.Fatal(err)
-			}
-			restartClassStrictReceipt(t, ctx, raw)
-			t.Logf("boundary=%s changed_generation=%t public_effects=1 receipt=strict outcome=recorded", cut, changed)
+			restartClassBoundary(t, ctx, restartClassTracingWorld(), cut, directory, root, old.Commit)
 		})
 	}
 	t.Logf("default restart sweep wall=%s", time.Since(started))
@@ -456,7 +464,7 @@ func TestRestartClassRefusesChangedObservationBeforeCommit(t *testing.T) {
 			root, proposals, _, _, coordinator := tracingFixture(t)
 			base := tracingRefresh(t, root, coordinator)
 			native := restartClassNative(t, root, proposals, t.TempDir())
-			c := restartClassIncident(t, ctx, root, base.Commit, filepath.Join(t.TempDir(), "controller.json"), native)
+			c := restartClassIncident(t, ctx, restartClassTracingWorld(), root, base.Commit, filepath.Join(t.TempDir(), "controller.json"), native)
 			rv6Guard(c, root, base.Commit)
 			id := c.pendingClosure.Request.IncidentID
 			if mutation == "generation" {
