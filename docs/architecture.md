@@ -106,83 +106,26 @@ use a cached build, so observation polling does not repeatedly use `go run`.
 
 ## Mitigation menu
 
-`mitigation_menu.proto` defines version 1 menu, selection, report-query and
-terminal-report messages with generated Go/Python types. `sdo menu [PROGRAM]
-[--bind NAME=Kind/ns/name]` requests options; `sdo mitigate --selection FILE`
-submits a complete selection JSON document with a stable `request_id` across
-retries. `sdo report ATTEMPT --incident-id ID --session-id ID --epoch N` requests
-the settled report. Transport filenames are independent of request identity.
-`sdo mitigate OPTION [--rounds N]` builds a selection from the current menu.
-The existing `max-response-loops` setting is the single incident-wide round
-allowance, default 5; Go owns authorization, accounting and execution.
+The menu is a convenience over direct commands. `sdo menu` lists accepted Mitigator programs with their
+declared object and value parameters and registered raw plan actions as generic one-action plans.
+`sdo mitigate OPTION [--NAME VALUE ...] [--rounds N]` runs the selected option through the ordinary
+`PlanExecutor` under the controller's existing RBAC and always-on executor checks. The option catalog
+comes from program and action registries, so adding an action requires no menu-specific execution case.
+The menu adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta
+preconditions. Direct commands and recorded `act` remain available in the same responder session.
 
-The runtime now stores `SelectionLedger v1` in the incident tools-state
-ConfigMap through `StateStore` CAS, alongside the legacy counter journal.
-Acceptance reserves the selected remaining rounds atomically; normalized semantic request
-hashes exclude dispatch epoch. Adoption retains the logical/provider session,
-original deadline, incident budget, acceptance epochs and source history.
-Genesis imports legacy counters in the same CAS, avoiding an empty-budget
-window during migration; inconsistent cross-record facts fail closed.
-Intent/completion receipts contain identities only, never pre-images. Settlement
-releases unused reservation once; uncertain calls spend the full reservation.
-Terminal reports are immutable and remain in an outbox until provider delivery
-is acknowledged. `sdo report` and private session/checkpoint handshakes use strict
-generated ProtoJSON, including uint64 epochs.
+Versioned generated menu/report contracts carry session, attempt, round and action identities.
+The tool response includes parameter schemas, what ran, per-action results, each value's provenance,
+and any error. Failed and successful reports return to the same responder session so it can choose
+another option or fix the problem directly. The incident allowance is at most five rounds, shared
+across options and ordinary plan batches; a smaller configured allowance remains effective.
+Private session/checkpoint messages retain provider identity for presentation, without mutation authority.
+There is no selection journal, report outbox or menu-specific restart/fencing guarantee.
 
-The worker has a gated same-session recovery path (`SDO_MITIGATION_SESSION=1`)
-which verifies a persisted provider transcript prefix before resuming Codex or
-Claude, includes pending reports in that session's prompt and acknowledges them
-after delivery. Every resumed turn uses the original deadline as its timeout.
-Missing checkpoints, changed identities and unproven old-owner
-quiescence fail visibly. The mutation-owner component drains complete calls
-before adoption; a failed drain freezes writes. Legacy apply/rollback share the
-owner and reserved incident budget once a selection journal exists, with
-revalidation at each backend write. A durable write freeze still permits
-read-only report delivery; a local storage failure freezes that owner entirely.
-
-The responder loop lists accepted Mitigators and controller-built SDK plans.
-Every round starts from a direct causal observation in the same provider session.
-Options use the existing PlanExecutor, its receipts and rollback. A mandatory
-controller-owned safety configuration supplies complete dependencies, current
-reads, nonsecret provenance/admission authorization and independent health.
-Absent capabilities refuse before content reads; no production permissive
-fallback exists. The dispatcher activates session recovery only for configured
-loops. Recorded `act` holds the same mutation owner until completion; an absent
-completion prevents subsequent mutations. Menu receipts enter incident repair
-evidence without legacy PlanApplications or positive equivalence trust credit.
-B3 and Secret fixtures provide genuine synthetic adapters with unchanged
-assertions. Health-refresh continuity and production safety-policy provisioning
-still require integration; passing these fixtures does not establish stream readiness.
-
-`runtime/causal_barrier.go` supplies a separate direct-read component. It
-persists a unique attempt/round/phase/occurrence intent before collection and
-marks it complete through CAS only after current reads, UID/owned-effect or
-absence checks, and a repeated source/scope/policy fence. Collection receipts
-retain opaque list versions and item counts, including empty collections.
-Verification receives the resulting current objects; unlisted kinds and
-unavailable traffic readers fail closed. The Kubernetes reader uses current
-namespaced lists, with no informer fallback, resourceVersion ordering or
-Secret API. A caller-supplied nonsecret authorization gate is mandatory before
-any collection read; this component does not itself establish provenance.
-The component remains separate from diagnosis and restored-closure hooks until
-the scoped-observation changes are merged and those integrations are validated.
-
-The option model carries a generic SDK-plan effect. Existing executor actions
-need no menu-specific vocabulary cases; each outgoing effect and compensation
-must pass the explicit fail-closed predicate. Opaque content requires independent
-provenance, including consumer/routing closure and admission. No new grants or
-credential fetches establish safety. This boundary does not claim global
-confinement of inherited shell access. Unproven old-worker quiescence freezes
-further writes with visible interrupted evidence.
-
-Terminal reports carry unique attempts, round/action identities, action state
-(`NOT_APPLIED`, `APPLIED`, `UNKNOWN`), compensation conflicts/residuals and
-causal barrier identities. They contain no pre-images or raw command/log/probe
-outputs. Wire validation cannot establish evidence provenance or causal health.
-Menu success is not a legacy plan application, independent incident closure,
-or positive program trust credit. The runtime must ship trust exclusion together
-with execution. See the [analysis reference](../.agents/skills/analyze-experiment/references/mitigation-menu.md)
-for how to interpret these receipts as implementation proceeds.
+Menu action receipts enter ordinary incident repair evidence. A terminal menu success is not independent
+broker closure or positive program trust credit. Controller health verification, broker ACK and the
+benchmark adapter's strict receipt remain separate evidence. See the
+[analysis reference](../.agents/skills/analyze-experiment/references/mitigation-menu.md).
 
 ## Benchmark fault and result boundary
 
@@ -555,9 +498,9 @@ traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
 
 ## Component map
 
-The Go responder loop owns menu execution and durable settlement; the Python
-CLI submits selections. Production enablement requires independently provisioned
-safety capabilities; the benchmark adapter owns strict experiment receipts.
+The Go responder loop owns convenience-menu execution through the ordinary PlanExecutor; the Python
+CLI submits options and parameters and receives reports in the same session. Existing controller RBAC
+and executor checks govern execution; the benchmark adapter owns strict experiment receipts.
 
 | Capability | Repository implementation | Status | Evidence and limit |
 |---|---|---|---|
@@ -589,9 +532,9 @@ SREGym harness. It uses the same production controller, broker and memory edge.
 
 ## Artifact ownership matrix
 
-Menu selections are agent requests, not durable artifact edits. Selection
-ledgers and terminal reports belong to incident-scoped controller CAS state
-outside `.sdo/`; only the broker publishes derived incident outcomes.
+Menu options and parameters are agent tool requests. Sessions and reports are presentation state;
+ordinary incident counters use the existing tools-state CAS document outside `.sdo/`.
+Only the broker publishes derived incident outcomes.
 
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|
@@ -654,25 +597,10 @@ Controller maintenance normally resets the configuration baseline after a planne
 
 Structured plan authority is supplied by administrator-owned controller launch configuration; see [the authority contract](plan-safety-authority.md). Approved fixture images and their separately pinned policy hash are independent of responder plans and dry-run output.
 
-The production `run.go` `LoopFactory` builds the menu when the controller process
-has `SDO_RESPONDER_MENU=1` (unset or `0` is off; other values refuse startup).
-It reuses `KubernetesCurrentReader` with the existing typed Kubernetes client,
-all twelve supported namespace collections, independently owned health detectors,
-and XV1's source-bound `PlanSafetyPolicy`. A named reviewed object does not grant
-collection-wide opaque-read permission. Trusted embedded controllers may supply
-existing `RuntimeOptions.MenuSafety` callbacks establishing collection/consumer
-closure and actual admission/routing enforcement; standalone launch inputs cannot
-supply that missing evidence. Without it, the menu lists catalog-only disabled
-options with `collection_consumer_admission_provenance_unavailable` (or
-`plan_safety_authority_unavailable` without current reviewed policy), and performs
-no menu reads or writes. These entries make no diagnosis claim. Existing direct
-repair remains available under the universal credential-delta check. This wiring
-alone therefore does not establish a reachable mitigation for a live stream.
+The production `run.go` `LoopFactory` enables the convenience menu when the controller process has
+`SDO_RESPONDER_MENU=1` (unset or `0` is off; other values refuse startup). The dispatcher advertises
+`SDO_MITIGATION_SESSION=1` only for enabled menus. No synthetic safety capabilities are supplied.
+Menu execution uses the same executor, source authority, health verifier and controller credentials
+as direct plan execution, with no additional menu preflight or read prerequisites.
 
-The adapter additionally refuses `CreateFromSource` effects before mutation with
-`created_identity_provenance_unavailable`: named source-image approval does not
-supply the new live UID capability this menu adapter needs. The SDK executor's
-existing source/create and named UID-delete semantics are unchanged. The menu
-preflights every planned effect before its first write, then checks again at
-execution and compensation.
 The reviewed mixed10 source policy is committed under `sdo/operator/config/plan-policies/`. The controller generates source-only structured action authority before responder dispatch from accepted renders and named incident resources, pins UIDs through metadata-only reads, and caches the incident epoch. Inherited numeric SetField literals retain their previous allowlist and universal credential-delta guard. Application JSON patch receipts record the authority class for analysis. See [plan authority](plan-safety-authority.md) for launch inputs and limitations.
