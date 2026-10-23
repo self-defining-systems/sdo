@@ -175,6 +175,9 @@ type Snapshot struct {
 	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
 	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
 	EventList         []corev1.Event                          `json:"events"`
+	// ObservedAtTime is when the live view was read; nil when unrecorded.
+	// It backs sdk.ObservationClock so age-based detectors replay exactly.
+	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
 }
@@ -203,6 +206,9 @@ func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutosc
 func (s Snapshot) Namespace() string
 
 func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
+
+func (s Snapshot) ObservedAt() time.Time
+    ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
 
 func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 

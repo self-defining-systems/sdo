@@ -19,6 +19,18 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     retained explicitly, so parsing the formatted value preserves every
     ObjectRef field.
 
+func ObservationTime(ctx DetectionContext) time.Time
+    ObservationTime returns the time a detection context describes. Detectors
+    that judge an age ("Pending longer than a minute", "restarted within five
+    minutes") must use it instead of time.Now, so Detect stays a pure function
+    of its snapshot and replays identically.
+
+    A context without a recorded clock falls back to the latest timestamp
+    recorded in its Pods, Deployments, ReplicaSets, and Events. That is a
+    deterministic lower bound on the real observation time, so an age derived
+    from it can only be underestimated: a grace period may elapse late, never
+    early. It is zero when the context records no time at all.
+
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -199,6 +211,13 @@ const (
 	ObjectRefMalformed ObjectRefErrorCode = "malformed_object_ref"
 	ObjectRefCompound  ObjectRefErrorCode = "compound_object_ref"
 )
+type ObservationClock interface {
+	ObservedAt() time.Time
+}
+    ObservationClock is implemented by detection contexts that record when their
+    objects were read. The controller stamps each snapshot once, when it builds
+    it, and corpus captures carry the stamp so replay sees the same time.
+
 type PersistencePolicy struct {
 	Firing   int
 	Clearing int
@@ -244,6 +263,108 @@ func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector
     NewReadyEndpointsDetector reports every Service with a selector that has
     no ready endpoint, unless every workload it selects is scaled to zero on
     purpose. ExternalName Services never have endpoints and are skipped.
+
+```
+
+```text
+package workloadhealth // import "sdo.dev/operator/sdk/workloadhealth"
+
+Package workloadhealth holds an app-agnostic health check over Kubernetes
+workload state: failed, stuck, crashing, or unready pods and Deployments that
+do not reach their desired availability. It reports workloads, not Services;
+servicehealth covers Services without ready endpoints.
+
+Every age is measured against sdk.ObservationTime, never the wall clock,
+so one snapshot always yields the same findings.
+
+CONSTANTS
+
+const (
+	// RulePodFailed: a pod reached phase Failed.
+	RulePodFailed = "workload-pod-failed"
+	// RulePodUnknown: the kubelet stopped reporting a pod (phase Unknown).
+	RulePodUnknown = "workload-pod-unknown"
+	// RulePodPending: a scheduled pod stayed Pending past PendingGrace.
+	RulePodPending = "workload-pod-pending"
+	// RulePodUnschedulable: a pod stayed Pending past PendingGrace because
+	// the scheduler found no node (PodScheduled=False, Unschedulable).
+	RulePodUnschedulable = "workload-pod-unschedulable"
+	// RuleCrashLooping: a container waits in CrashLoopBackOff.
+	RuleCrashLooping = "workload-container-crash-looping"
+	// RuleImagePull: a container waits in ImagePullBackOff or ErrImagePull.
+	RuleImagePull = "workload-container-image-pull-failing"
+	// RuleConfigError: a container cannot be created from its spec
+	// (CreateContainerConfigError, CreateContainerError, InvalidImageName).
+	RuleConfigError = "workload-container-config-error"
+	// RuleWaiting: a container waits for any other non-startup reason.
+	RuleWaiting = "workload-container-waiting"
+	// RuleOOMKilled: a container is, or within RestartWindow was, OOMKilled.
+	RuleOOMKilled = "workload-container-oom-killed"
+	// RuleTerminatedError: a container's current state is terminated with a
+	// reason other than Completed.
+	RuleTerminatedError = "workload-container-terminated-error"
+	// RuleNotReady: a running container of a Running pod is unready past
+	// NotReadyGrace after it started.
+	RuleNotReady = "workload-container-not-ready"
+	// RuleInitStuck: an init container has not completed within
+	// InitContainerGrace.
+	RuleInitStuck = "workload-init-container-stuck"
+	// RuleRestartChurn: a container restarted at least RestartThreshold times,
+	// last terminated within RestartWindow, and has not since run ready for
+	// NotReadyGrace.
+	RuleRestartChurn = "workload-container-restart-churn"
+	// RuleDeploymentUnavailable: a Deployment has fewer available replicas
+	// than desired past DeploymentGrace since its last progress, and no pod
+	// finding explains it.
+	RuleDeploymentUnavailable = "workload-deployment-unavailable"
+	// RuleProgressDeadlineExceeded: a Deployment reports Progressing=False
+	// with reason ProgressDeadlineExceeded.
+	RuleProgressDeadlineExceeded = "workload-deployment-progress-deadline-exceeded"
+)
+    Rule IDs are stable. A finding is emitted once per rule and primary
+    resource: the owning Deployment when its ReplicaSet chain resolves in the
+    snapshot, otherwise the Pod itself.
+
+
+FUNCTIONS
+
+func NewDetector(spec sdk.DetectorSpec) sdk.Detector
+    NewDetector returns the workload health detector with DefaultPolicy.
+
+func NewDetectorWithPolicy(spec sdk.DetectorSpec, policy Policy) (sdk.Detector, error)
+    NewDetectorWithPolicy returns the workload health detector with policy.
+
+func Watches() []sdk.WatchKind
+    Watches are the resources whose changes can change the verdict.
+
+
+TYPES
+
+type Policy struct {
+	// PendingGrace is how long a pod may stay Pending after creation.
+	PendingGrace time.Duration
+	// NotReadyGrace is how long a started container may stay unready, and
+	// how long a restarted container must run ready to count as recovered.
+	NotReadyGrace time.Duration
+	// InitContainerGrace is how long an init container may take.
+	InitContainerGrace time.Duration
+	// DeploymentGrace is how long a Deployment may stay below its desired
+	// availability after its last recorded progress.
+	DeploymentGrace time.Duration
+	// RestartWindow bounds how recent a last termination must be to count
+	// for restart churn and for a past OOM kill.
+	RestartWindow time.Duration
+	// RestartThreshold is the restart count at which recent restarts churn.
+	RestartThreshold int32
+}
+    Policy holds the detector's thresholds. All durations are measured against
+    the snapshot's observation time.
+
+func DefaultPolicy() Policy
+    DefaultPolicy returns the thresholds the generic health detector uses.
+
+func (p Policy) Validate() error
+    Validate rejects non-positive thresholds.
 
 ```
 

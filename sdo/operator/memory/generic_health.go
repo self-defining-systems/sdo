@@ -29,6 +29,9 @@ func PrepareHealth(root string) error {
 	if err := writeGenericDetector(root, endpoint, endpointSource()); err != nil {
 		return err
 	}
+	if err := writeGenericDetector(root, workloadManifest(), workloadSource()); err != nil {
+		return err
+	}
 	directory := filepath.Join(root, layout.TrafficWorkloadsDir)
 	entries, err := os.ReadDir(directory)
 	if os.IsNotExist(err) {
@@ -126,6 +129,9 @@ func genericPackage(id string) string {
 	if id == "service-endpoints" {
 		return "serviceendpoints"
 	}
+	if id == workloadHealthID {
+		return "workloads"
+	}
 	return "synthetic"
 }
 
@@ -156,6 +162,33 @@ func New() sdk.Detector {
 	})
 }
 `, genericSpec("service-endpoints"))
+}
+
+const workloadHealthID = "workload-health"
+
+// workloadManifest registers sdk/workloadhealth; its watches must equal
+// workloadhealth.Watches().
+func workloadManifest() layout.DetectorManifest {
+	return genericManifest(workloadHealthID, "15s", []layout.Watch{{APIVersion: "v1", Kind: "Pod"}, {APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "apps/v1", Kind: "ReplicaSet"}, {APIVersion: "v1", Kind: "Event"}})
+}
+
+func workloadSource() string {
+	return fmt.Sprintf(`package workloads
+
+import (
+	"time"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/workloadhealth"
+)
+
+func New() sdk.Detector {
+	return workloadhealth.NewDetector(sdk.DetectorSpec{
+		%s
+		Watches: workloadhealth.Watches(),
+		Interval: 15 * time.Second,
+	})
+}
+`, genericSpec(workloadHealthID))
 }
 
 func trafficSource(id, workload string, link bool) string {

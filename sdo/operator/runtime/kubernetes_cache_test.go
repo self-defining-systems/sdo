@@ -82,6 +82,28 @@ func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) 
 	}
 }
 
+func TestKubernetesCacheSnapshotsCarryTheirObservationTimeThroughTraffic(t *testing.T) {
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "pods", Interval: time.Second, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},
+		}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	snapshot, err := TrafficSnapshotProvider{Base: cache}.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock, ok := snapshot.(sdk.ObservationClock)
+	if !ok {
+		t.Fatalf("traffic snapshot %T must expose its observation time", snapshot)
+	}
+	if observed := clock.ObservedAt(); observed.Before(before) || observed.After(time.Now()) {
+		t.Fatalf("observation time %v outside the snapshot call", observed)
+	}
+}
+
 func TestKubernetesCacheRoutesEventsAndIgnoresUndeclaredAndInternalState(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	cache, err := NewKubernetesCache(KubernetesCacheConfig{
