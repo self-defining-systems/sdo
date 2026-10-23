@@ -336,6 +336,7 @@ Human-owned health objective:
 Authoritative objective SHA-256: {objective_digest}
 Copy this exact value into objective_digest and the detector's healthObjectiveDigest constant; do not recompute it.
 
+Current source inventory outranks old architecture when choosing health requirements.
 Published deployer assessment:
 {deployer.model_dump_json(indent=2)}
 

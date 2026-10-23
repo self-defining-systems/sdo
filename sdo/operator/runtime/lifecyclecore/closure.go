@@ -26,6 +26,7 @@ const (
 	Restart
 	ArchivesPersisted
 	AgentTimeout
+	Superseded
 )
 
 type RetryPolicy struct {
@@ -107,6 +108,17 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		next.FailedClosures = slices.DeleteFunc(next.FailedClosures, func(record *contracts.FailedIncidentClosure) bool {
 			return slices.Contains(event.ArchivedIncidentIDs, record.GetFailure().GetIncidentId())
 		})
+		return next, nil
+	}
+	if event.Kind == Superseded {
+		if pending == nil || phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
+			return next, nil
+		}
+		failure := &contracts.ClosureFailure{IncidentId: pending.GetRequest().GetIncidentId(), Attempts: 1, MaxAttempts: 1, LastError: event.Error, FirstFailedAt: timestamppb.New(event.At), LastFailedAt: timestamppb.New(event.At), Permanent: true, Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR, Action: "obsolete health evidence archived; investigate with the adopted health policy"}
+		next.ClosureFailure = failure
+		next.ClosureReceipt = nil
+		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_FAILED
+		next.FailedClosures = append(next.FailedClosures, &contracts.FailedIncidentClosure{Closure: proto.Clone(pending).(*contracts.IncidentClosure), Failure: proto.Clone(failure).(*contracts.ClosureFailure)})
 		return next, nil
 	}
 	receipt := next.GetClosureReceipt()

@@ -1,0 +1,8 @@
+# Match SREGym AstronomyShop.deploy() at the revision in pins.json.
+prometheus:
+  enabled: false
+components:
+  load-generator:
+    envOverrides:
+      - name: LOCUST_BROWSER_TRAFFIC_ENABLED
+        value: "false"

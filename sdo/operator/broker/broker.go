@@ -258,7 +258,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		if err := validate.Err(preflight); err != nil {
 			return err
 		}
-		if len(paths) == 0 {
+		if len(paths) == 0 && !(actor == HealthJudge && phase == InitialPhase && strings.HasPrefix(incidentID, "health-refresh-")) {
 			receipt = Receipt{IncidentID: incidentID, Phase: phase}
 			return nil
 		}
@@ -487,7 +487,7 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 		return Receipt{}, err
 	}
 	message := fmt.Sprintf("sdo(%s): validated %s\n\nSDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, phase, incidentID, actor, phase)
-	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "-m", message); err != nil {
+	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "--allow-empty", "-m", message); err != nil {
 		return Receipt{}, err
 	}
 	commit, err := gitText(ctx, stage, "rev-parse", "HEAD")

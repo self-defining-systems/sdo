@@ -64,6 +64,8 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
         replace(
             _install(tmp_path),
             healthy_baseline=True,
+            permissive_responder=True,
+            responder_namespaces=("policy-system",),
             max_response_loops=3,
             deployed_manifest_paths=("kubernetes",),
             program_fast_path=True,
@@ -78,6 +80,8 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert "recorded-actions" in calls[0]
     assert "--responder-env" in calls[0]
     assert "--late-findings" in calls[0]
+    assert "--permissive-responder" in calls[0]
+    assert calls[0][calls[0].index("--responder-namespace") + 1] == "policy-system"
     assert "--healthy-baseline" in calls[0]
     assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"

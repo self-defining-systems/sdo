@@ -39,12 +39,14 @@ def registered_faults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "benchmarks.sregym.fastloop.composite.composite_faults",
         lambda problem: (
-            FaultSpec("readiness", "geo"),
-            FaultSpec("configmap", "mongodb-rate"),
-            FaultSpec("network_policy", "recommendation"),
-        )
-        if problem == PROBLEM
-        else (),
+            (
+                FaultSpec("readiness", "geo"),
+                FaultSpec("configmap", "mongodb-rate"),
+                FaultSpec("network_policy", "recommendation"),
+            )
+            if problem == PROBLEM
+            else ()
+        ),
     )
 
 

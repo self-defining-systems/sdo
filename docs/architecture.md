@@ -227,6 +227,50 @@ The incident request is immutable once the responder launches, so a detector tha
 
 Incident responders never merge directly into the operational branch. The broker creates isolated worktrees, checks path ownership and append-only rules, runs repository and detector validation, and accepts only attributable commits. Two repair-evidence policies are supported. `commit` retains a proposal commit for every response, including an empty attribution commit. `recorded-actions` permits a live-only repair without a proposal commit when the responder returns a structured, successful action receipt; any repository changes are still validated and committed. In both modes the controller commits the authoritative outcome and reflection, and independently owned health detectors must verify recovery. The source deployer separately authors attributable deployment commits during the initial lifecycle. Health detectors remain judge-owned; responders may change responder-owned playbooks and incident detectors after closure.
 
+## Permissive responder installation
+
+The installer defaults to its existing namespaced grants. Disposable benchmark
+lanes can explicitly select `--permissive-responder`, with repeatable
+`--responder-namespace policy-system` for fault backends. The Go installer
+uses discovery only to select concrete resources from a reviewed built-in
+allowlist: core pods, services, endpoints and events; apps deployments,
+replicasets, statefulsets and daemonsets; discovery.k8s.io endpointslices; and
+networking.k8s.io networkpolicies. Added namespaced grants allow get/list/watch,
+plus delete on pods so their controller can recreate the same spec. No added
+subresources, logs, proxy, ConfigMaps, ServiceAccounts, Jobs, workload/Service
+writes, or RBAC writes are permitted. Custom API grants have an empty reviewed
+allowlist: discovery never automatically trusts a custom group, resource, kind
+or status endpoint, including in the application namespace.
+
+Cluster access to mutating/validating webhook configurations is limited to
+get/list/watch/delete. Deleting a bad webhook remains a repair for the selected
+TLS mismatch and backend outage faults; configuration writes and backend takeover
+are unavailable through added grants. Cluster-wide deletion is the chosen repair
+boundary and can remove protective webhooks; no admission-confinement guarantee
+is inferred from it.
+
+The option requires a separate control namespace and rejects foreign kube-*
+namespaces. The baseline repair Role is literally unchanged, including app
+PodSpec writes, helper Jobs, logs, ConfigMaps and exec/attach/port-forward.
+Those pre-existing indirect Secret paths remain available. Permissive mode adds
+no new Secret-data path under the reviewed built-in resource contract; it does
+not establish end-to-end Secret confidentiality or constrain ambient bindings.
+Other worker/controller grants retain their existing scope. Settings are bound
+to the installed Job, restored with namespace grants on reuse, and revoked on
+downgrade; reconciliation replaces old permissive Roles and ClusterRoles.
+Discovery refresh cannot widen grants beyond the reviewed allowlist. Benchmark
+capability policy and per-fault evidence stay under `benchmarks/sregym/`; they
+do not enter production worker tasks or prompts.
+
+Negative installer tests check the authorization prerequisites of each backend
+Secret path, webhook takeover and custom-controller path, with permitted repair
+operations as positive controls. The test authorizer resolves RoleBindings to
+Roles or ClusterRoles, ClusterRoleBindings, standard ServiceAccount group/User
+subjects, and resource/subresource wildcards within the generated Plan. It does
+not model ambient cluster bindings, ClusterRole aggregation, admission,
+non-resource requests or named-resource requests. These are permission-contract
+tests, not proof from a live cluster or a simulated Secret exfiltration.
+
 ## Controller/responder interaction
 
 The controller batches persistent findings into an incident request. The request includes the health objective path, architecture path, findings, surfaced playbooks, detector history, an isolated repository worktree, and the selected repair-evidence policy. A responder returns a structured result with diagnosis, applied playbooks, repository changes, and per-action receipts recording the target, timing, success, and reversibility of live mutations. Independent health detectors must clear after the response before closure. The controller also rechecks admitted owned-field drift on source-declared objects in the incident namespace against the current accepted source; a remaining live/source mismatch or a failed comparison keeps verification waiting. Restoring the admitted fields to source clears this gate even if unrelated, unadmitted fields differ. Unowned or undeclared changes do not acquire a closure blocker. If health or admitted source drift remains unresolved at the configured verification timeout, the controller closes the incident as `failed`, retaining the drift findings and events in the outcome. Late drift still attaches to the running responder through `attachDrift`, its moving incident view and the late-findings report. Terminal responder failures retain their existing failed closure path without treating unresolved drift as verified recovery.

@@ -59,6 +59,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
+	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
+	var responderNamespaces repeatable
+	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
@@ -113,8 +116,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		MaxResponseLoops: *maxResponseLoops,
 		ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		LateFindings:    *lateFindings,
-		HealthyBaseline: *healthyBaseline,
-		TimeoutSeconds:  int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
+		HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,

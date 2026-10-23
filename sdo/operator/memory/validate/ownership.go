@@ -150,7 +150,7 @@ func (s *run) ownership(ctx context.Context) error {
 func (s *run) ownershipPolicy(ctx context.Context) error {
 	actor, phase := s.req.Actor, s.req.Phase
 	manifests := changesManifests(s.changed)
-	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) {
+	if phase == InitialPhase && actor == HealthJudge && !changesDetectors(s.changed) && !healthRevalidation(s.req, s.changed) {
 		s.add(Ownership, Diagnostic{Rule: RuleInitialNeedsDetectors, Path: layout.DetectorsDir, Message: "the initial health-judge proposal must install detector manifests"})
 	}
 	if phase == InitialPhase && actor == Deployer && containsPath(s.changed, layout.ArchitectureFile) && len(s.changed) != 1 {

@@ -115,7 +115,7 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnost
 			return nil, errors.New("publication context differs from validation base")
 		}
 	}
-	if len(paths) == 0 && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
+	if len(paths) == 0 && !healthRevalidation(r, paths) && !(r.Phase == ReflectionPhase && r.Decision != nil && (r.Decision.GetLearningDecision() == "no_change" || r.Decision.GetLearningDecision() == "sdk_gap")) {
 		add(RuleEmptyDiff, "proposal has no changed files", "return no_change instead of publishing")
 	}
 	// Upkeep carries schema migrations; the independent health judge may
@@ -303,4 +303,23 @@ func PhaseDiagnostics(phase Phase) []Diagnostic {
 		return []Diagnostic{{Rule: RuleUnknownPhase, Message: fmt.Sprintf("unknown phase %q", phase), Hint: "phases are proposal, reflection, initial, and outcome"}}
 	}
 	return nil
+}
+
+// Only an input-bound judge refresh with existing health diagnostics may accept
+// a no-op. Static validation still checks the entire candidate and independent
+// compilation still runs before the broker records its acceptance commit.
+func healthRevalidation(r Request, paths []string) bool {
+	if len(paths) != 0 || r.Actor != HealthJudge || r.Phase != InitialPhase || r.Publication == nil || !strings.HasPrefix(r.Publication.IncidentID, "health-refresh-") {
+		return false
+	}
+	detectors, err := layout.ReadDetectors(filepath.Join(r.Root, layout.DiagnosticsDir))
+	if err != nil {
+		return false
+	}
+	for _, det := range detectors {
+		if det.Class == layout.ClassHealth {
+			return true
+		}
+	}
+	return false
 }

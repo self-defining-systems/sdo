@@ -136,6 +136,10 @@ func (s *run) load(ctx context.Context) error {
 			s.checkSecret(p)
 		}
 	}
+	// A judge refresh revalidates the existing policy even when no file changed.
+	if healthRevalidation(s.req, s.changed) {
+		s.memory = true
+	}
 	if !s.memory {
 		return nil
 	}

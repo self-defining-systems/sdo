@@ -9,11 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory"
 )
 
 // RunConfig binds a built application controller to its transport-neutral
@@ -35,6 +38,39 @@ type DiagnosticsProjection struct {
 // RunOnce builds the currently accepted diagnostics and runs one controller
 // process. The workspace remains intact until that process exits.
 func RunOnce(ctx context.Context, config RunConfig) error {
+	return runWithHealthRefresh(ctx, config, runOnce)
+}
+
+func runWithHealthRefresh(ctx context.Context, config RunConfig, run func(context.Context, RunConfig) error) error {
+	var deadline time.Time
+	if config.Controller != nil && config.Controller.GetDuration().AsDuration() > 0 {
+		deadline = time.Now().Add(config.Controller.GetDuration().AsDuration())
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+		config.Controller = proto.Clone(config.Controller).(*contractsv1alpha1.ControllerConfig)
+	}
+	for {
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return fmt.Errorf("health unverified: installation budget exhausted before controller launch: %w", context.DeadlineExceeded)
+			}
+			config.Controller.Duration = durationpb.New(remaining)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err := run(ctx, config)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == memory.HealthRefreshExitCode {
+			continue
+		}
+		return err
+	}
+}
+
+func runOnce(ctx context.Context, config RunConfig) error {
 	if config.Controller == nil {
 		return errors.New("controller config is required")
 	}
@@ -149,5 +185,8 @@ func controllerConfigJSON(config RunConfig, prober string, built provenance) ([]
 	launch.DiagnosticsFingerprint = built.Fingerprint
 	launch.ControllerArtifactDigest = built.ArtifactDigest
 	launch.ControllerRevision = built.Revision
+	// Tasks investigate the source compiled with this accepted policy; deployed
+	// identity remains separate evidence for image/rendered-lock comparisons.
+	launch.SourceCommit = built.Revision
 	return wire.Marshal(launch)
 }
