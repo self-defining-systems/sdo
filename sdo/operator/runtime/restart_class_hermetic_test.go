@@ -332,11 +332,28 @@ func TestRestartClassHermetic(t *testing.T) {
 			path := filepath.Join(directory, "controller.json")
 			c := restartClassIncident(t, ctx, root, old.Commit, path, native)
 			id := c.pendingClosure.Request.IncidentID
-			env := append(os.Environ(), "RT1_ROOT="+root, "RT1_PROPOSALS="+proposals, "RT1_LEDGER="+ledger, "RT1_STATE="+path, "RT1_BASE="+old.Commit, "RT1_INCIDENT="+id)
+			if cut == "after-receipt-before-ack" {
+				// Isolate the receipt-durable boundary from the earlier lost-
+				// receipt boundary. Persist the real public completion before
+				// installing the successor's newly adopted health guard.
+				effect, ok := c.PendingClosureEffect()
+				if !ok {
+					t.Fatal("missing closure before durable receipt")
+				}
+				if err := c.ExecuteClosureEffect(ctx, effect); err != nil {
+					t.Fatal(err)
+				}
+				awaitBrokerResult(t, c.closureResults)
+				c.processBrokerCompletions()
+				if err := c.PersistState(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env := []string{"RT1_ROOT=" + root, "RT1_PROPOSALS=" + proposals, "RT1_LEDGER=" + ledger, "RT1_STATE=" + path, "RT1_BASE=" + old.Commit, "RT1_INCIDENT=" + id}
 			run := func(cut string, changed bool) ([]byte, error) {
 				for adoption := 0; adoption < 3; adoption++ {
 					command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRestartClassProcess$", "-test.timeout=45s")
-					command.Env = append(append([]string{}, env...), "RT1_CUT="+cut)
+					command.Env = append(append(os.Environ(), env...), "RT1_CUT="+cut)
 					if changed {
 						command.Env = append(command.Env, "RT1_CHANGED_GENERATION=1")
 					}
@@ -381,6 +398,9 @@ func TestRestartClassHermetic(t *testing.T) {
 				t.Fatal(err)
 			}
 			changed := cut == "after-effect-before-receipt" || cut == "after-receipt-before-ack"
+			if os.Getenv("SDO_RT1_STABLE_OBSERVATION") == "1" {
+				changed = false
+			}
 			if output, err := run("", changed); err != nil {
 				t.Fatalf("restart boundary=%s changed_generation=%t: %v\n%s", cut, changed, err, output)
 			}

@@ -13,11 +13,23 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.adapter.persistent import _collect_settled_receipt, _rendered_lock_settled
+from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
 from benchmarks.sregym.protocol.native_receipt import native_production_receipt
 from tests.unit.benchmarks.sregym.adapter.test_persistent import FakeOps, _clock, _config
 
 ROOT = Path(__file__).resolve().parents[5]
+
+
+def source_lock_matches_repository(repository: Path) -> bool:
+    source_commit = json.loads((repository / ".sdo/rendered/lock.json").read_text())["source_commit"]
+    result = subprocess.run(
+        ["git", "diff", "--exit-code", source_commit, "HEAD", "--", ".", ":(exclude).sdo"],
+        cwd=repository,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def test_restart_class_ack_to_publication_uses_broker_owned_lock(tmp_path: Path) -> None:
@@ -44,7 +56,7 @@ def test_restart_class_ack_to_publication_uses_broker_owned_lock(tmp_path: Path)
     assert prepared.returncode == 0, prepared.stdout + prepared.stderr
     environment = dict(item.split("=", 1) for item in json.loads((fixture / "environment.json").read_text()))
     config = replace(_config(tmp_path), repository=fixture / "accepted")
-    assert not _rendered_lock_settled(config.repository), "fixture must stop after ACK and before publication"
+    assert not source_lock_matches_repository(config.repository), "fixture must stop after ACK and before publication"
 
     class NativeOps(FakeOps):
         def collect_receipt(self, config: Any, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
@@ -71,7 +83,7 @@ def test_restart_class_ack_to_publication_uses_broker_owned_lock(tmp_path: Path)
             resumed = subprocess.run(
                 ["go", "test", "-run", "^TestRestartClassProcess$", "-count=1", "-timeout=45s", "."],
                 cwd=ROOT / "sdo/operator/runtime",
-                env={**environment, "RT1_CUT": ""},
+                env={**os.environ, **environment, "RT1_CUT": ""},
                 capture_output=True,
                 text=True,
                 timeout=50,
@@ -84,7 +96,9 @@ def test_restart_class_ack_to_publication_uses_broker_owned_lock(tmp_path: Path)
     receipt = _collect_settled_receipt(
         ops, config, environment["RT1_INCIDENT"], tmp_path / "receipt", _clock(ops), timeout=5
     )
-    assert _rendered_lock_settled(config.repository), "ACK returned a strict receipt while source lock remained stale"
+    assert source_lock_matches_repository(config.repository), (
+        "ACK returned a strict receipt while source lock remained stale"
+    )
     assert receipt["native_ledger"]["acknowledged"] is True
     assert receipt["native_ledger"]["outcome_document"]["classification"] == "success"
     assert [event[0] for event in ops.events] == ["active", "paused"]
