@@ -50,6 +50,10 @@ bash scripts/format_code.sh
 bash scripts/check_errors.sh
 ```
 
+`check_errors.sh` includes the AST import and ownership checks in
+`tests/unit/test_architecture.py`, including the facade-import rule, alongside
+Ruff, Tach, Pyright, Go checks, and proto drift when Buf is installed.
+
 Use `uv` and `uv run ...` for Python. See [docs/testing-guide.md](docs/testing-guide.md) for focused Python and Go commands.
 
 ## Remote repository access

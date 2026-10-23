@@ -2,6 +2,7 @@
 # Check for static errors.  Covers:
 #   ruff  — syntax, undefined names, unused imports, style
 #   tach  — architectural module boundary contracts (tach.toml)
+#   arch  — AST facade imports and ownership rules (tests/unit/test_architecture.py)
 #   types — pyright (scripts/type_check.sh)
 #   go    — every Go main under benchmarks/ compiles (scripts/check_go_mains.sh)
 
@@ -25,6 +26,11 @@ fi
 
 echo "==> tach (module boundaries)"
 uv run tach check
+
+echo "==> architecture (AST import and ownership rules)"
+# These tests scan source files; Tach's import-based impact analysis cannot
+# determine which changes affect them, so always run the complete file.
+uv run --extra test python -m pytest -q -p no:tach tests/unit/test_architecture.py
 
 echo "==> types (scripts/type_check.sh)"
 "$SCRIPT_DIR/type_check.sh"
