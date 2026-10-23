@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -54,7 +53,7 @@ func TestProductionResponderMenuStreamFamilyParity(t *testing.T) {
 			if _, err := executor.Apply(context.Background(), loop.Request, program.Plan{Actions: []program.Action{action}}, true); err != nil {
 				t.Fatalf("direct refused fixture: %v", err)
 			}
-			loop.MenuConfig = productionResponderMenu(loop.Request, fake.NewSimpleClientset(), nil, policy, nil)
+			loop.MenuConfig = productionResponderMenu()
 			loop.Executor = executor
 			loop.MenuConfig.Plans = []ResponderMenuPlan{{ID: family, ProgramID: family, Plan: program.Plan{Actions: []program.Action{action}}}}
 			response := loop.Handle(context.Background(), ToolRequest{Command: "menu"})

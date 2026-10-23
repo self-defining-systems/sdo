@@ -32,7 +32,6 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-	MutationToken string                                 `json:"mutation_token,omitempty"`
 	Selection     *contracts.MitigationSelection         `json:"-"`
 	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
 	Checkpoint    *contracts.MitigationSessionCheckpoint `json:"-"`
@@ -45,7 +44,6 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
-	MutationToken string                       `json:"mutation_token,omitempty"`
 	Menu          *contracts.MitigationMenu    `json:"-"`
 	Report        *contracts.MitigationReport  `json:"-"`
 	Session       *contracts.MitigationSession `json:"-"`
@@ -104,16 +102,12 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
-	externalMutationToken           string
 	MenuConfig                      *ResponderMenuConfig
 	menu                            *contracts.MitigationMenu
 	menuEntries                     map[string]menuEntry
 	menuSession                     *contracts.MitigationSession
 	menuReports                     []*contracts.MitigationReport
 	menuRepairs                     []RepairActionReceipt
-	selectionStore                  StateStore
-	selection                       *selectionJournal
-	mutationOwner                   *mutationOwner
 	CheckHealth                     func(context.Context) error
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
@@ -259,18 +253,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			return response
 		}
 	}
-	if l.externalMutationToken != "" {
-		switch request.Command {
-		case "mitigate", "apply", "rollback", "act-start":
-			response.Error = "recorded mutation still in progress"
-			return response
-		}
-	}
+
 	switch request.Command {
-	case "act-start":
-		l.startMenuAct(ctx, &response)
-	case "act-finish":
-		l.finishMenuAct(ctx, request.MutationToken, &response)
 	case "menu":
 		l.listMenu(ctx, request, &response)
 	case "mitigate":
@@ -357,7 +341,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Source = object.Object
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
-		l.withSelectionOwner(ctx, &response, func(callCtx context.Context) { l.apply(callCtx, request, &response) })
+		l.apply(ctx, request, &response)
 	case "pre-apply":
 		if err := l.capturePreApply(ctx); err != nil {
 			response.Error = err.Error()
@@ -367,7 +351,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "verify":
 		l.verify(ctx, nil, &response)
 	case "rollback":
-		l.withSelectionOwner(ctx, &response, func(callCtx context.Context) { l.rollbackApplication(callCtx, request, &response) })
+		l.rollbackApplication(ctx, request, &response)
 	default:
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
@@ -678,12 +662,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
-	if l.selection != nil {
-		if err := l.selection.chargeLegacy(ctx); err != nil {
-			response.Error = err.Error()
-			return
-		}
-	}
+
 	// A missing capture is an evidence gap; it must not block the repair.
 	_ = l.capturePreApply(ctx)
 	l.batches++

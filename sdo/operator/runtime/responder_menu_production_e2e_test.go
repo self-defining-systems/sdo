@@ -90,7 +90,10 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(mount, "ledger"), SessionRoot: mount, Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(mount, "ledger"), SessionRoot: mount, Deriver: OutcomeDeriverFunc(func(ctx context.Context, closure IncidentClosure, repairCommit, backend, model string) (DerivedOutcome, error) {
+		t.Logf("closure evidence: status=%s repairs=%d plans=%d calls=%d dispatch_error=%s", closure.Result.Status, len(closure.Result.RepairActions), len(closure.Result.PlanApplications), len(closure.Result.ProgramToolCalls), closure.DispatchError)
+		return (ProtoOutcomeDeriver{}).Derive(ctx, closure, repairCommit, backend, model)
+	}), ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic fixture"}, nil
 	})}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "service-1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
@@ -249,7 +252,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 		t.Fatal(err)
 	}
 	if !ledger.Acknowledged || ledger.OutcomeDocument.Classification != "success" {
-		t.Fatal("production broker did not independently acknowledge success")
+		t.Fatalf("production broker closure: acknowledged=%t classification=%s; %s", ledger.Acknowledged, ledger.OutcomeDocument.Classification, logs)
 	}
 	ledgerJSON, err := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(ledger)
 	if err != nil {

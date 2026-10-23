@@ -21,19 +21,12 @@ func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request I
 	if err != nil {
 		return err
 	}
-	loop.selectionStore = store
-	if len(state.GetResponderToolStateJson()) > 0 && state.GetSelectionLedger() == nil {
+	if len(state.GetResponderToolStateJson()) > 0 {
 		if err := loop.restoreToolSnapshot(state.GetResponderToolStateJson()); err != nil {
 			return err
 		}
 	}
-	if err := loop.attachSelectionJournal(ctx, request, store, state, false); err != nil {
-		return err
-	}
 	loop.saveToolState = func(ctx context.Context, payload []byte) error {
-		if loop.selection != nil {
-			return loop.selection.persistLegacy(ctx, payload)
-		}
 		document := &contracts.ControllerState{Version: RuntimeStateVersion}
 		if state != nil {
 			document = proto.Clone(state).(*contracts.ControllerState)

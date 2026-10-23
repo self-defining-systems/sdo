@@ -561,7 +561,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				if menuEnabled == "1" {
-					loop.MenuConfig = productionResponderMenu(request, bootstrapProvider.Client, detectors, options.PlanSafety, nil)
+					loop.MenuConfig = productionResponderMenu()
 				}
 				loop.CheckHealth = func(ctx context.Context) error {
 					if controller != nil && controller.CheckHealth != nil {

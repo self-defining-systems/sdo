@@ -23,8 +23,8 @@ func (l *ResponderLoop) openDirectMenuSession(response *ToolResponse) {
 }
 
 func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, response *ToolResponse) {
-	if l.MenuConfig == nil || !l.MenuConfig.Direct {
-		l.legacyListMenu(ctx, request, response)
+	if l.MenuConfig == nil {
+		response.Error = "mitigation menu is disabled"
 		return
 	}
 	l.openDirectMenuSession(response)
@@ -58,7 +58,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		p := plan.Plan
 		entries[plan.ID] = menuEntry{programID: plan.ProgramID, bindings: cloneProgramBindings(plan.Bindings), plan: &p}
 	}
-	menu := &contracts.MitigationMenu{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, DispatchEpoch: 1, SourceCommit: l.Request.SourceCommit, ScopeDigest: "direct", PolicyDigest: "direct", RoundLimit: 5, RemainingBatches: 5, OriginalDeadline: timestamppb.New(l.Request.ResponseDeadline)}
+	menu := &contracts.MitigationMenu{Version: 1, IncidentId: l.Request.IncidentID, SessionId: l.sessionID, DispatchEpoch: 1, SourceCommit: l.Request.SourceCommit, ScopeDigest: "direct", PolicyDigest: "direct", RoundLimit: uint32(max(0, min(5, l.MaxBatches)-l.batches)), RemainingBatches: uint32(max(0, min(5, l.MaxBatches)-l.batches)), OriginalDeadline: timestamppb.New(l.Request.ResponseDeadline)}
 	ids := make([]string, 0, len(entries))
 	for id := range entries {
 		ids = append(ids, id)
@@ -78,8 +78,8 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 // Invoke the ordinary plan executor, under its existing credentials. Selection
 // metadata is descriptive; no ledger, fencing, provenance or menu preflight runs.
 func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, response *ToolResponse) {
-	if l.MenuConfig == nil || !l.MenuConfig.Direct {
-		l.legacyMitigateMenu(ctx, selection, response)
+	if l.MenuConfig == nil {
+		response.Error = "mitigation menu is disabled"
 		return
 	}
 	if selection == nil {
@@ -100,9 +100,14 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	if rounds > 5 {
 		rounds = 5
 	}
+	if rounds > uint32(max(0, min(5, l.MaxBatches)-l.batches)) {
+		response.Error = "response loop budget exhausted"
+		return
+	}
 	for round := uint32(1); round <= rounds; round++ {
 		rr := &contracts.MitigationRoundReport{RoundIndex: round, RoundId: fmt.Sprintf("%s-r%d", attempt, round)}
 		report.Rounds = append(report.Rounds, rr)
+		l.batches++
 		plan := program.Plan{}
 		var err error
 		if entry.plan != nil {
@@ -132,7 +137,6 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		started := time.Now().UTC()
 		result, applyErr := l.Executor.Apply(ctx, l.Request, plan, false)
 		completed := time.Now().UTC()
-		l.batches++
 		for index, patch := range result.Patches {
 			receipt := menuActionReceipt(menuActionID(attempt, round, index+1), patch.Ref)
 			receipt.State = contracts.MitigationActionReceipt_STATE_NOT_APPLIED
@@ -179,7 +183,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			break
 		}
 	}
-	report.RemainingBatches = uint32(max(0, l.MaxBatches-l.batches))
+	report.RemainingBatches = uint32(max(0, min(5, l.MaxBatches)-l.batches))
 	l.menuReports = append(l.menuReports, cloneSelectionReport(report))
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
