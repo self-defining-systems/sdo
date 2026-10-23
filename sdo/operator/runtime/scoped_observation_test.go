@@ -507,6 +507,15 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 			if err != nil || diff.Changed {
 				t.Fatalf("omitted defaults manufactured source drift: %v changed=%v", err, diff.Changed)
 			}
+			mixed := snapshot(10)
+			deniedTarget := target
+			deniedTarget.Name = "denied-policy"
+			mixed.ScopedSnapshot.Scope.Targets = append(mixed.ScopedSnapshot.Scope.Targets, deniedTarget)
+			mixed.ScopedSnapshot.Statuses = append(mixed.ScopedSnapshot.Statuses, sdk.ObservationStatus{Target: deniedTarget, State: "forbidden"})
+			view.DetectionContext = mixed
+			if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
+				t.Fatalf("another denied webhook blocked observed name's source comparison: %v", err)
+			}
 			before := scopedObjects(snapshot(10).ScopedSnapshot)[target.Key()]["policy"]
 			after := scopedObjects(snapshot(20).ScopedSnapshot)[target.Key()]["policy"]
 			view.DetectionContext = snapshot(20)

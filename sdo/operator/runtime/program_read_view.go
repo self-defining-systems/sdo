@@ -504,24 +504,20 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 			}
 		}
 	case "MutatingWebhookConfiguration":
-		items, err := source.MutatingWebhookConfigurations()
+		item, err := source.MutatingWebhookConfiguration(ref.Name)
 		if err != nil {
 			return nil, err
 		}
-		for _, o := range items {
-			if o.Name == ref.Name {
-				object = o
-			}
+		if item != nil {
+			object = item
 		}
 	case "ValidatingWebhookConfiguration":
-		items, err := source.ValidatingWebhookConfigurations()
+		item, err := source.ValidatingWebhookConfiguration(ref.Name)
 		if err != nil {
 			return nil, err
 		}
-		for _, o := range items {
-			if o.Name == ref.Name {
-				object = o
-			}
+		if item != nil {
+			object = item
 		}
 	}
 	if object == nil {
