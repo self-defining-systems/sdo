@@ -89,3 +89,5 @@ repaired, copies a fixed answer, or invents a successful connection. Other edits
 retain the ordinary no-external-observations post-plan policy.
 
 Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. Repairs must not add or change a channel; existing channels permit unrelated repairs.
+
+Dropping explicit token automount denial adds the default credential channel. Compensation may restore channels from its exact captured pre-image, while refusing channels absent from that baseline.
