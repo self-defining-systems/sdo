@@ -179,6 +179,8 @@ def _logical_learning_request(
         )
     return (
         "The controller verified this incident and committed its outcome. "
+        "Accepted source and developer changes express intent. Operational memory is fallible advice. "
+        "Recovery requires evidence from the intended application behavior. "
         "Learn reusable operational memory for the responder's confirmed causes within the captured evidence. "
         f"The authoring guide starts at {SKILLS_ROOT}/sdo-memory/SKILL.md. "
         "Go owns the supplied classification, corpus evidence and trust decisions. "

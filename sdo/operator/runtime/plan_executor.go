@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -71,10 +73,12 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
-	Client   PlanObjectClient
-	Source   PlanSource
-	Rollouts PlanRollouts
-	Verifier PlanVerifier
+	Client PlanObjectClient
+	Source PlanSource
+	// AcceptedRevision reads the controller-owned accepted head, never the agent checkout.
+	AcceptedRevision func() string
+	Rollouts         PlanRollouts
+	Verifier         PlanVerifier
 	// Observer, when set, is the cache the verifier reads; Apply waits for it to
 	// show the application's writes before verifying.
 	Observer WriteObserver
@@ -168,11 +172,17 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		originals[ref] = object.DeepCopy()
 		refs = append(refs, ref)
 	}
+	guarded := false
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
 		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
 		if actionErr != nil {
-			return result, actionErr
+			return result, fmt.Errorf("prepare learned repair: %w; investigate accepted source and intended application behavior", actionErr)
+		}
+		checked, guardErr := e.validateSourceRepair(ctx, incident, ref, originals[ref], current[ref], next)
+		guarded = guarded || checked
+		if guardErr != nil {
+			return result, guardErr
 		}
 		before, marshalErr := json.Marshal(current[ref].Object)
 		if marshalErr != nil {
@@ -211,6 +221,11 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 			result.Patches[index].Patch, patchErr = uidOnlyPlanPatch(patch.Patch, originals[patch.Ref])
 			if patchErr != nil {
 				return result, patchErr
+			}
+		}
+		if guarded {
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return result, err
 			}
 		}
 		pending := index
@@ -455,6 +470,85 @@ func planValueContains(live, applied any) bool {
 		return true
 	}
 	return planValuesEqual(applied, live)
+}
+
+// validateSourceRepair gates learned plans for objects with observed drift. Source
+// values come from the accepted manifest, never from historical/event display text.
+// Other repairs (including independently justified source edits) remain outside
+// this learned-plan boundary.
+func (e PlanExecutor) validateSourceRepair(ctx context.Context, incident IncidentRequest, ref sdk.ObjectRef, original, before, after *unstructured.Unstructured) (bool, error) {
+	events := append(append([]sdk.DriftEvent(nil), incident.DriftEvents...), driftEventsForFindings(nil, incident.Findings)...)
+	var fields []sdk.DriftField
+	for _, event := range events {
+		if event.Ref == ref {
+			fields = append(fields, event.Fields...)
+		}
+	}
+	if len(fields) == 0 {
+		return false, nil
+	}
+	refuse := func(reason string) (bool, error) {
+		return true, fmt.Errorf("learned repair of %s/%s refused: %s; investigate current application behavior and accepted source before repairing", ref.Kind, ref.Name, reason)
+	}
+	if e.Source == nil || incident.SourceCommit == "" {
+		return refuse("accepted source evidence is unavailable")
+	}
+	if err := e.validateAcceptedRevision(incident); err != nil {
+		return true, err
+	}
+	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	if err != nil {
+		return refuse(fmt.Sprintf("accepted source evidence: %v", err))
+	}
+	if source == nil || !samePlanRef(source, ref) {
+		return refuse("accepted source object is unavailable or mismatched")
+	}
+	accepted := flattenDriftObject(source)
+	observed := flattenDriftObject(original)
+	prior := flattenDriftObject(before)
+	next := flattenDriftObject(after)
+	paths := map[string]bool{}
+	for path := range prior {
+		paths[path] = true
+	}
+	for path := range next {
+		paths[path] = true
+	}
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	for _, path := range ordered {
+		previous, pok := prior[path]
+		proposed, nok := next[path]
+		if pok == nok && planValuesEqual(previous, proposed) {
+			continue
+		}
+		expected, known := accepted[path]
+		initial, existed := observed[path]
+		// Absent source fields may be API defaults, not observed source drift.
+		// Explicitly observed paths below still fail closed without a source value.
+		drifted := known && (!existed || !planValuesEqual(initial, expected))
+		// Retain observed paths even when a previous action or external writer
+		// already restored them. An aggregate action cannot evade a leaf guard.
+		for _, field := range fields {
+			if path == field.Path || strings.HasPrefix(path, field.Path+".") || strings.HasPrefix(path, field.Path+"[") {
+				drifted = true
+			}
+		}
+		if drifted && (!known || !nok || !planValuesEqual(proposed, expected)) {
+			return refuse(fmt.Sprintf("field %s must restore its accepted-source value at %s", path, incident.SourceCommit))
+		}
+	}
+	return true, nil
+}
+
+func (e PlanExecutor) validateAcceptedRevision(incident IncidentRequest) error {
+	if e.AcceptedRevision == nil || e.AcceptedRevision() != incident.SourceCommit {
+		return fmt.Errorf("learned repair refused: accepted revision changed or is unavailable; investigate and recompute the plan against current accepted source")
+	}
+	return nil
 }
 
 func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (*unstructured.Unstructured, error) {

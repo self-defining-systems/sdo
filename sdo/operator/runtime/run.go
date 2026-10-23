@@ -447,6 +447,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
+					AcceptedRevision: func() string {
+						if controller == nil {
+							return ""
+						}
+						return controller.CurrentAcceptedCommit()
+					},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				loop.CurrentEvidence = func() *IncidentRequest {

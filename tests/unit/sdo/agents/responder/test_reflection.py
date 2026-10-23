@@ -181,6 +181,9 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     (call,) = backend.calls
     assert call["mode"] == "fresh"
     prompt = str(call["prompt"])
+    assert "Accepted source and developer changes express intent." in prompt
+    assert "Operational memory is fallible advice." in prompt
+    assert "Recovery requires evidence from the intended application behavior." in prompt
     assert "artifact_proposal" not in prompt
     assert "broker independently validates" in prompt
     assert "draft-test" not in prompt

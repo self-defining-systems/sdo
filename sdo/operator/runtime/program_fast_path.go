@@ -233,7 +233,12 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		key := matchedViewKey(run.ProgramID, run.Bindings)
 		preview, cached := l.matchedPlans[key]
 		plan := preview.Plan
-		if !cached || l.matchedPlanErrors[key] != nil || plan.Validate() != nil || len(plan.Actions) == 0 {
+		if err := l.matchedPlanErrors[key]; err != nil {
+			refused := skip(FastPathSkipInvalidPlan)
+			refused.Summary = fmt.Sprintf("trusted program %s plan refused: %v", run.ProgramID, err)
+			return refused
+		}
+		if !cached || plan.Validate() != nil || len(plan.Actions) == 0 {
 			return skip(FastPathSkipInvalidPlan)
 		}
 		selectedPlans = append(selectedPlans, selectedPlan{programID: run.ProgramID, bindings: run.Bindings, plan: plan})

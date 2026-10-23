@@ -382,9 +382,9 @@ def _fired_evidence(playbook: WarmPlaybook) -> str:
     )
     return (
         f"- `{playbook.path}`: the finding(s) {findings} come from its validated incident detector. That evidence "
-        "already establishes the playbook's preconditions: do not re-diagnose them. The sanity check confirms the "
+        "supports the playbook's preconditions. Check them against accepted source and intended behavior. Confirm the "
         "specific finding evidence is still live (for example the missing resource is still absent and the "
-        "affected workload still fails); it replaces the playbook's own diagnosis steps.\n"
+        "affected workload still fails).\n"
     )
 
 
@@ -421,24 +421,19 @@ def _warm_instructions(playbooks: list[WarmPlaybook], namespace: str) -> str:
             section += f"--- Playbook script `{script_path}` ---\n{script_text.rstrip()}\n"
         sections.append(section)
     return (
-        "Warm path: validated incident memory matches this incident. "
-        f"The prior verified outcome(s) {', '.join(priors)} match this incident by exact fingerprint, and each "
-        "playbook below is owned by a responder-owned incident detector that SDO's commit broker validated "
-        "(matching and near-miss tests) and learned from a prior independently verified success. Do not re-read "
-        "the playbook, and do not explore the repository or cluster beyond what the steps below need.\n"
+        "Warm path: incident memory supplies repair hypotheses for this incident. "
+        f"Prior verified outcome(s): {', '.join(priors)}. Historical matches and detector validation do not "
+        "establish applicability to current accepted source.\n"
         f"Playbook evidence:\n{evidence}"
         "Fast procedure:\n"
-        "1. Run one combined sanity check: a single shell command covering the evidence above.\n"
-        "2. If it agrees, submit the diagnosis through any configured environment-specific channel, then apply the "
-        "playbook's repair exactly (use its scripts when present).\n"
-        "3. Run the playbook's verification and `python3 -m sdo.agents.responder.status_cli` together "
-        "in one command, then, "
-        "once it reports healthy, submit mitigation through any configured channel and return "
-        "the IncidentResult, listing the applied logical playbook ID in applied_playbooks.\n"
-        "Fall back to a full investigation only if the sanity check contradicts the playbook's preconditions, the "
-        "repair fails, or the verification fails; then treat relevant_outcomes as hypotheses and confirm "
-        "assumptions against live state. Investigate any other active finding the playbook's fault does not "
-        "explain normally.\n\n" + "\n".join(sections) + "\n"
+        "1. Run one combined sanity check of current evidence, accepted source and intended application behavior.\n"
+        "2. If the repair respects that intent, submit the diagnosis through any configured environment-specific "
+        "channel and apply the supported repair.\n"
+        "3. Verify intended application recovery independently. "
+        "Run the playbook's verification and `python3 -m sdo.agents.responder.status_cli` before "
+        "submitting mitigation and returning the IncidentResult with applied logical playbook IDs.\n"
+        "Investigate contradictions, missing evidence, failed repairs or failed verification. Investigate any "
+        "other active finding the playbook's fault does not explain.\n\n" + "\n".join(sections) + "\n"
     )
 
 
@@ -601,7 +596,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
     )
     program_guidance = (
         "Start with ranked program verdicts and evidence in initial_program_runs. "
-        "Prefer a matching program's plan when can_mitigate=true; a diagnosis-only program supplies evidence, "
+        "Treat a matching program's plan as a repair hypothesis when can_mitigate=true; "
+        "a diagnosis-only program supplies evidence, "
         "not a repair. Investigate Unknown or NeedsJudgement against current state and accepted source. "
         "The local sdo interface exposes concise capability help and resource argument schemas. "
         "Use that index instead of broad tool-catalog output. "
@@ -626,6 +622,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
     request_json = json.dumps(_prompt_request(request), indent=2)
     return (
         f"You are the SDO incident responder for incident {request.incident_id}.\n\n"
+        "Accepted source and developer changes express intent. Operational memory is fallible advice. "
+        "Recovery requires evidence from the intended application behavior. "
         f"Skill index: {SKILLS_ROOT}/sdo-memory/SKILL.md. Read relevant guidance once. "
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
         f"{strategy}"

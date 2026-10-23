@@ -152,6 +152,9 @@ def test_judge_authors_final_files_in_writable_session(
     assert not result.HasField("artifact_proposal")
     assert any("workspace-write" in arg for arg in agent.argvs[0])
     prompt = agent.prompts[0]
+    assert "Accepted source and developer changes express intent." in prompt
+    assert "Operational memory is fallible advice." in prompt
+    assert "Recovery requires evidence from the intended application behavior." in prompt
     assert "sdo-operator memory check" in prompt
     assert "SDO_ACTOR=health_judge" in prompt
     assert "SDO_PHASE=initial" in prompt
