@@ -35,7 +35,19 @@ type restartClassResponder struct {
 }
 
 func (r restartClassResponder) Dispatch(_ context.Context, request IncidentRequest) (IncidentResult, error) {
-	tracingWrite(r.t, request.RepositoryWorktree, "README.md", "accepted source restoration annotation\n")
+	if os.Getenv("RT1_SLOT2_SOURCE_REPAIR") == "1" {
+		path := filepath.Join(request.RepositoryWorktree, "deploy/tracing.yaml")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		body := strings.Replace(string(raw), "metadata:\n", "metadata:\n  annotations:\n    sdo.dev/source-restoration: accepted-source\n", 1)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			return IncidentResult{}, err
+		}
+	} else {
+		tracingWrite(r.t, request.RepositoryWorktree, "README.md", "accepted source restoration annotation\n")
+	}
 	r.health.active.set(false)
 	result := completedResult(request.IncidentID)
 	result.Timing = TimingMetrics{StartedAt: r.start.Add(2 * time.Second), CompletedAt: r.start.Add(3 * time.Second)}
