@@ -29,6 +29,7 @@ NON_APPLICATION_NAMESPACES = frozenset(
 WORKLOAD_KINDS = frozenset(
     {
         "Deployment",
+        "DaemonSet",
         "StatefulSet",
         "Service",
         "ConfigMap",
@@ -40,7 +41,7 @@ WORKLOAD_KINDS = frozenset(
     }
 )
 _RESOURCE_NAMES = (
-    "deployments,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,persistentvolumeclaims"
+    "deployments,daemonsets,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,persistentvolumeclaims"
 )
 
 
