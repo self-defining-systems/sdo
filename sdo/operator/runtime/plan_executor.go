@@ -322,7 +322,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			delete(restored.Object, field)
 		}
 	}
-	if err := validateCredentialChannelDelta(current, restored); err != nil {
+	if err := validateCredentialChannelDelta(patch.Before, restored); err != nil {
 		return err
 	}
 	from, _ := json.Marshal(current.Object)
