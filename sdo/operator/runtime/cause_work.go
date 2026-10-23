@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -66,7 +67,17 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			work.Resources = append(work.Resources, proto.Clone(ref).(*contracts.ObjectRef))
 		}
 		seen := map[string]bool{}
-		boundResources := []sdk.ObjectRef{}
+		addressedResources := []sdk.ObjectRef{}
+		matched := map[string]map[string]bool{}
+		for _, run := range outcome.GetProgramRuns() {
+			if run.GetVerdict().GetResult() == contracts.Verdict_RESULT_MATCH {
+				key := refinementBindingKey(run)
+				if matched[key] == nil {
+					matched[key] = map[string]bool{}
+				}
+				matched[key][run.GetProgramRevision()] = true
+			}
+		}
 		for _, run := range outcome.GetProgramRuns() {
 			if run.GetVerdict().GetResult() != contracts.Verdict_RESULT_MATCH {
 				continue
@@ -88,7 +99,7 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			}
 			seen[key] = true
 			for _, ref := range bindings {
-				boundResources = append(boundResources, ref)
+				addressedResources = append(addressedResources, ref)
 			}
 			item := &contracts.ReflectionWorkItem{ProgramId: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: programRunContract(ProgramRun{Bindings: bindings}).Bindings, Disposition: "question", Reason: "uncertain", Question: "What reusable relation, if any, does the evidence support for this cause?"}
 			switch fixed[key] {
@@ -110,11 +121,52 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 			}
 			work.Items = append(work.Items, item)
 		}
+		refinements := map[string]bool{}
+		for _, run := range outcome.GetProgramRuns() {
+			verdict := run.GetVerdict().GetResult()
+			if verdict != contracts.Verdict_RESULT_NO_MATCH && verdict != contracts.Verdict_RESULT_UNKNOWN {
+				continue
+			}
+			instance := refinementBindingKey(run)
+			key := fmt.Sprintf("%s/%s/%d", instance, run.GetProgramRevision(), verdict)
+			// A Match for this exact instance already has work above. In
+			// particular, its post-repair NoMatch is not missed coverage.
+			// Older and post-apply runs may omit the revision. An absent
+			// revision cannot establish that this is a different instance.
+			revisions := matched[instance]
+			if refinements[key] || (len(revisions) > 0 && (run.GetProgramRevision() == "" || revisions[""] || revisions[run.GetProgramRevision()])) {
+				continue
+			}
+			resources := []*contracts.ObjectRef{}
+			for _, resource := range cause.GetResources() {
+				ref := objectRefState(resource)
+				if written(ref) && slices.ContainsFunc(run.GetBindings(), func(binding *contracts.Binding) bool {
+					return sameResource(ref, objectRefState(binding.GetObject()))
+				}) && !slices.ContainsFunc(resources, func(other *contracts.ObjectRef) bool {
+					return sameResource(ref, objectRefState(other))
+				}) {
+					resources = append(resources, proto.Clone(resource).(*contracts.ObjectRef))
+					addressedResources = append(addressedResources, ref)
+				}
+			}
+			if len(resources) == 0 {
+				continue
+			}
+			refinements[key] = true
+			evaluation := proto.Clone(run).(*contracts.ProgramRun)
+			work.Items = append(work.Items, &contracts.ReflectionWorkItem{
+				ProgramId: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(),
+				Bindings: evaluation.Bindings, Resources: resources,
+				Disposition: "question", Reason: "program_refinement", EvidencePhase: "open",
+				Evaluation: evaluation,
+				Question:   fmt.Sprintf("Program %q evaluated this repaired cause object as %s. Using the incident capture as the positive case, extend or fix this program where the evidence supports it, or explain why its abstention should remain.", run.GetProgramId(), verdict),
+			})
+		}
 		seenWrites := map[sdk.ObjectRef]bool{}
 		for _, resource := range cause.GetResources() {
 			ref := objectRefState(resource)
 			ref.APIVersion = ""
-			if !seenWrites[ref] && written(ref) && !slices.ContainsFunc(boundResources, func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
+			if !seenWrites[ref] && written(ref) && !slices.ContainsFunc(addressedResources, func(bound sdk.ObjectRef) bool { return sameResource(bound, ref) }) {
 				seenWrites[ref] = true
 				work.Items = append(work.Items, &contracts.ReflectionWorkItem{Resources: []*contracts.ObjectRef{proto.Clone(resource).(*contracts.ObjectRef)}, Disposition: "question", Reason: "unbound_write", Question: "A repaired object in this confirmed cause had no matched program binding. What reusable relation is supported?"})
 			}
@@ -125,6 +177,14 @@ func classifyCauseWork(outcome *contracts.OutcomeRecord, fixed map[string]progra
 		result = append(result, work)
 	}
 	return result
+}
+
+func refinementBindingKey(run *contracts.ProgramRun) string {
+	bindings := program.Bindings{}
+	for _, binding := range run.GetBindings() {
+		bindings[binding.GetName()] = objectRefState(binding.GetObject())
+	}
+	return matchedViewKey(run.GetProgramId(), bindings)
 }
 
 // fixedCaptureVerdicts uses only the accepted deterministic registry and actual

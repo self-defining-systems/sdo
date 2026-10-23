@@ -163,11 +163,14 @@ message ReflectionWorkItem {
   repeated Binding bindings = 2;
   string disposition = 3 [(buf.validate.field).string = {in: ["covered", "false_match", "question"]}];
   string question = 4;
-  string reason = 5 [(buf.validate.field).string = {in: ["verified_equivalent_repair", "fixed_capture_match", "binding_not_written", "repair_equivalence_question", "unbound_write", "uncertain", "evidence_gap"]}];
+  string reason = 5 [(buf.validate.field).string = {in: ["verified_equivalent_repair", "fixed_capture_match", "binding_not_written", "repair_equivalence_question", "unbound_write", "uncertain", "evidence_gap", "program_refinement"]}];
   repeated ObjectRef resources = 6;
   string evidence_phase = 7 [(buf.validate.field).string = {in: ["", "open", "fixed"]}];
   string program_revision = 8;
   string capture_open_phase = 9 [(buf.validate.field).string = {in: ["", "detect", "pre-apply"]}];
+  // The observed abstention motivating a program_refinement question. This is
+  // evidence for review, not a settled positive corpus case or success credit.
+  ProgramRun evaluation = 10;
 }
 
 // Controller-settled learning evidence, persisted before the outcome commit.

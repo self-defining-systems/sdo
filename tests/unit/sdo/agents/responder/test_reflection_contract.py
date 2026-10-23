@@ -15,6 +15,7 @@ from sdo.contracts import (
     OutcomeRecord,
     ReflectionRequest,
     ReflectionResult,
+    Verdict,
     to_canonical_json,
 )
 from tests.structured_turns import ScriptedAgent, reply
@@ -35,6 +36,7 @@ class _Publisher:
         ("false_match", "fixed_capture_match", False),
         ("question", "binding_not_written", False),
         ("question", "repair_equivalence_question", False),
+        ("question", "program_refinement", False),
         ("question", "unbound_write", False),
         ("question", "uncertain", False),
         ("question", "evidence_gap", False),
@@ -73,6 +75,13 @@ def test_t1_work_reaches_scripted_session(tmp_path: Path, disposition: str, reas
     if reason == "evidence_gap":
         item.evidence_phase = "fixed"
         item.resources.add(kind="Service", namespace="app", name="api")
+    if reason == "program_refinement":
+        item.program_revision = "accepted-program-revision"
+        item.evaluation.program_id = marker
+        item.evaluation.program_revision = item.program_revision
+        item.evaluation.verdict.result = Verdict.RESULT_UNKNOWN
+        item.evaluation.error = "primitive observation unavailable"
+        item.evaluation.duration.FromMilliseconds(1)
 
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
@@ -107,4 +116,9 @@ def test_t1_work_reaches_scripted_session(tmp_path: Path, disposition: str, reas
     assert marker in prompt, f"session discarded controller-owned {disposition}/{reason} work"
     if disposition != "covered":
         assert item.question in prompt
+    if reason == "program_refinement":
+        assert '"evaluation": {' in prompt
+        assert '"result": "RESULT_UNKNOWN"' in prompt
+        assert item.program_revision in prompt
+        assert item.evaluation.error in prompt
     assert result.proposal_id == "t1-proposal"
