@@ -54,10 +54,26 @@ func TestProductionResponderMenuStreamFamilyParity(t *testing.T) {
 			if _, err := executor.Apply(context.Background(), loop.Request, program.Plan{Actions: []program.Action{action}}, true); err != nil {
 				t.Fatalf("direct refused fixture: %v", err)
 			}
-			config := productionResponderMenu(loop.Request, fake.NewSimpleClientset(), nil, policy, nil)
-			if reason := config.Refusal(); reason != "" {
-				t.Fatalf("direct accepted %s; menu refused: %s", family, reason)
+			loop.MenuConfig = productionResponderMenu(loop.Request, fake.NewSimpleClientset(), nil, policy, nil)
+			loop.Executor = executor
+			loop.MenuConfig.Plans = []ResponderMenuPlan{{ID: family, ProgramID: family, Plan: program.Plan{Actions: []program.Action{action}}}}
+			response := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+			if response.Error != "" || response.Menu == nil {
+				t.Fatalf("direct accepted %s; menu failed: %s", family, response.Error)
 			}
+			found := false
+			for _, option := range response.Menu.Options {
+				if option.OptionId == family {
+					found = true
+					if option.DisabledReason != "" {
+						t.Fatal("menu imposed an execution precondition")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("plan missing from menu")
+			}
+
 		})
 	}
 }

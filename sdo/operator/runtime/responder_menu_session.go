@@ -9,6 +9,10 @@ import (
 )
 
 func (l *ResponderLoop) openMenuSession(ctx context.Context, response *ToolResponse) {
+	if l.MenuConfig != nil && l.MenuConfig.Direct {
+		l.openDirectMenuSession(response)
+		return
+	}
 	if l.selection == nil {
 		// Publish current legacy facts before genesis, which imports them
 		// atomically. Never create a zero-counter ledger and migrate later.
@@ -37,6 +41,16 @@ func (l *ResponderLoop) openMenuSession(ctx context.Context, response *ToolRespo
 	response.Summary = "durable responder session"
 }
 func (l *ResponderLoop) checkpointMenuSession(ctx context.Context, checkpoint *contracts.MitigationSessionCheckpoint, response *ToolResponse) {
+	if l.MenuConfig != nil && l.MenuConfig.Direct {
+		l.openDirectMenuSession(response)
+		if checkpoint != nil {
+			l.menuSession.Provider = checkpoint.Provider
+			l.menuSession.ProviderSessionId = checkpoint.ProviderSessionId
+			l.menuSession.CheckpointDigest = checkpoint.CheckpointDigest
+			response.Session = proto.Clone(l.menuSession).(*contracts.MitigationSession)
+		}
+		return
+	}
 	if l.selection == nil || checkpoint == nil || wire.Validate(checkpoint) != nil {
 		response.Error = "invalid responder session checkpoint"
 		return
@@ -138,6 +152,18 @@ func (l *ResponderLoop) withSelectionOwner(ctx context.Context, response *ToolRe
 	}
 }
 func (l *ResponderLoop) selectionReport(ctx context.Context, query *contracts.MitigationReportQuery, response *ToolResponse) {
+	if l.MenuConfig != nil && l.MenuConfig.Direct {
+		if query != nil {
+			for _, report := range l.menuReports {
+				if report.AttemptId == query.AttemptId {
+					response.Report = cloneSelectionReport(report)
+					return
+				}
+			}
+		}
+		response.Error = "unknown mitigation report"
+		return
+	}
 	if l.selection == nil || query == nil || wire.Validate(query) != nil {
 		response.Error = "invalid selection report query"
 		return

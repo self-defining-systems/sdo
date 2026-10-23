@@ -108,6 +108,9 @@ type ResponderLoop struct {
 	MenuConfig                      *ResponderMenuConfig
 	menu                            *contracts.MitigationMenu
 	menuEntries                     map[string]menuEntry
+	menuSession                     *contracts.MitigationSession
+	menuReports                     []*contracts.MitigationReport
+	menuRepairs                     []RepairActionReceipt
 	selectionStore                  StateStore
 	selection                       *selectionJournal
 	mutationOwner                   *mutationOwner

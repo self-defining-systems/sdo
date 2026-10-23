@@ -37,7 +37,6 @@ type RuntimeOptions struct {
 	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
 	PlanSafety       *PlanSafetyPolicy
 	SourcePlanPolicy *SourcePlanPolicy
-	MenuSafety       *ResponderMenuSafety
 	Args             []string
 	Stdout           io.Writer
 	Stderr           io.Writer
@@ -562,7 +561,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				if menuEnabled == "1" {
-					loop.MenuConfig = productionResponderMenu(request, bootstrapProvider.Client, detectors, options.PlanSafety, options.MenuSafety)
+					loop.MenuConfig = productionResponderMenu(request, bootstrapProvider.Client, detectors, options.PlanSafety, nil)
 				}
 				loop.CheckHealth = func(ctx context.Context) error {
 					if controller != nil && controller.CheckHealth != nil {

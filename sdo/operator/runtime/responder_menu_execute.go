@@ -35,7 +35,7 @@ func menuActionReceipt(id string, ref sdk.ObjectRef) *contracts.MitigationAction
 func menuBindings(bindings program.Bindings) []*contracts.Binding {
 	return programRunContract(ProgramRun{Bindings: bindings}).Bindings
 }
-func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, response *ToolResponse) {
+func (l *ResponderLoop) legacyListMenu(ctx context.Context, request ToolRequest, response *ToolResponse) {
 	l.openMenuSession(ctx, response)
 	if response.Error != "" {
 		return
@@ -136,7 +136,7 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 		response.Summary += "; refused: " + refusal
 	}
 }
-func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, response *ToolResponse) {
+func (l *ResponderLoop) legacyMitigateMenu(ctx context.Context, selection *contracts.MitigationSelection, response *ToolResponse) {
 	if l.selection == nil {
 		response.Error = "open a mitigation menu first"
 		return

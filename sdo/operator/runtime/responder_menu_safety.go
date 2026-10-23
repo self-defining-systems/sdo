@@ -35,6 +35,8 @@ type ResponderMenuSafety struct {
 // health. Dependencies must cover every diagnosis, health and affected consumer.
 // Plans are controller-built SDK plans; workers cannot submit arbitrary actions.
 type ResponderMenuConfig struct {
+	// Direct selects the convenience menu; legacy evidence fields are unused.
+	Direct bool
 	// Refusal supplies a content-free reason before any collection is fetched.
 	Refusal      func() string
 	Reader       DirectObservationReader
@@ -52,7 +54,7 @@ type ResponderMenuPlan struct {
 }
 
 func (c *ResponderMenuConfig) valid() bool {
-	return c != nil && c.Reader != nil && len(c.Dependencies) > 0 && c.Healthy != nil && c.Safety != nil && c.Safety.Digest != "" && c.Safety.AuthorizeRead != nil && c.Safety.AuthorizeObject != nil && c.Safety.AuthorizeEffect != nil
+	return c != nil && c.Direct || c != nil && c.Reader != nil && len(c.Dependencies) > 0 && c.Healthy != nil && c.Safety != nil && c.Safety.Digest != "" && c.Safety.AuthorizeRead != nil && c.Safety.AuthorizeObject != nil && c.Safety.AuthorizeEffect != nil
 }
 func (s *ResponderMenuSafety) object(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) error {
 	if object == nil || ref.Kind == "Secret" || object.GetKind() == "Secret" || s.AuthorizeObject == nil {

@@ -13,6 +13,9 @@ import (
 func (l *ResponderLoop) MenuRepairActions() []RepairActionReceipt {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.MenuConfig != nil && l.MenuConfig.Direct {
+		return append([]RepairActionReceipt(nil), l.menuRepairs...)
+	}
 	if l.selection == nil {
 		return nil
 	}

@@ -94,34 +94,15 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic fixture"}, nil
 	})}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "service-1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
-	approved := []*unstructured.Unstructured{}
-	for _, port := range []int{9999, 7777, 8080} {
-		image := service.DeepCopy()
-		image.Spec.Ports[0].TargetPort = intstr.FromInt(port)
-		object, err := planUnstructured(image, menuService)
-		if err != nil {
-			t.Fatal(err)
-		}
-		approved = append(approved, object)
+	policyPath, err := filepath.Abs("../config/plan-policies/mixed10.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	policy := fixturePlanSafety(t, menuService, approved...)
-	policy.SourceCommit = revision
-	evidence := &ResponderMenuSafety{Digest: "synthetic-complete-namespace-review", AuthorizeRead: func(_ context.Context, kind sdk.WatchKind) error {
-		if kind.Namespace != "app" || !causalSupportedKind(kind) {
-			return errMenuSafety
-		}
-		return nil
-	}, AuthorizeObject: func(_ context.Context, ref sdk.ObjectRef, _ *unstructured.Unstructured) error {
-		if ref != menuService {
-			return errMenuSafety
-		}
-		return nil
-	}, AuthorizeEffect: func(_ context.Context, ref sdk.ObjectRef, _, _ *unstructured.Unstructured) error {
-		if ref != menuService {
-			return errMenuSafety
-		}
-		return nil
-	}}
+	t.Setenv("SDO_PLAN_SOURCE_POLICY_FILE", policyPath)
+	policyBytes, err := os.ReadFile(os.Getenv("SDO_PLAN_SOURCE_POLICY_FILE"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	bad, good := productionMenuProgram{"try-wrong-port", 7777}, productionMenuProgram{"restore-route", 8080}
 	registry, err := program.NewRegistry([]program.Diagnoser{bad, good}, []program.Mitigator{bad, good})
 	if err != nil {
@@ -158,7 +139,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	done := make(chan error, 1)
 	start := time.Now().UTC()
 	go func() {
-		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--diagnosis-settle-delay", "1ns", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, PlanSafety: policy, MenuSafety: evidence, NativeBroker: native, Stdout: writer, Stderr: writer})
+		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--plan-source-policy-json", string(policyBytes), "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--diagnosis-settle-delay", "1ns", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
 	}()
 	t.Cleanup(func() {
 		cancel()
