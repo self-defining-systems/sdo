@@ -104,7 +104,7 @@ func TestCredentialPaths(t *testing.T) {
 			proxy.Close()
 			store.Close()
 			if err != nil || string(body) != tc.body || res.StatusCode != tc.status {
-				t.Fatal("pass-through changed")
+				t.Fatalf("pass-through changed: status=%d want=%d bytes=%d want=%d read error=%v", res.StatusCode, tc.status, len(body), len(tc.body), err)
 			}
 			if storedCanary(t, dir) {
 				t.Error("synthetic credential reached storage")

@@ -28,6 +28,12 @@ type Recorder interface {
 // headers even for POST. The production adapter disables keepalives for writes.
 func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, recorder Recorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The transport can still be probing the request body for EOF when an
+		// upstream response arrives. HTTP/1's default response flush drains and
+		// closes that same body, racing the probe and aborting response copying.
+		// HTTP/2 already permits concurrent reads and writes; custom writers may
+		// not expose this optional control.
+		_ = http.NewResponseController(w).EnableFullDuplex()
 		e := requestEvent(r)
 		record := func(event apihistory.Event, body []byte) {
 			if recorder != nil {
