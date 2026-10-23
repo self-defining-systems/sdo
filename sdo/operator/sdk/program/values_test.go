@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"os/exec"
+	"reflect"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"strings"
 	"testing"
 	"testing/quick"
-	"time"
 )
 
 func TestValueRequiresProvenance(t *testing.T) {
@@ -46,15 +44,17 @@ func TestValueParameterKinds(t *testing.T) {
 	}
 }
 
+// An untyped Go constant is assignable only to basic or interface types, so a
+// struct-typed SetField.Value rejects raw literals at compile time. Checking the
+// field type replaces a `go build` subprocess that raced a fixed timeout on a
+// cold build cache.
 func TestSetFieldLiteralDoesNotCompile(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "go", "build", "./testdata/literal").CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatal(ctx.Err())
+	field, ok := reflect.TypeOf(program.SetField{}).FieldByName("Value")
+	if !ok {
+		t.Fatal("SetField has no Value field")
 	}
-	if err == nil || !strings.Contains(string(output), "cannot use 8080") || !strings.Contains(string(output), "program.Value") {
-		t.Fatalf("expected typed literal compile failure, got %v: %s", err, output)
+	if field.Type != reflect.TypeOf(program.Value{}) || field.Type.Kind() != reflect.Struct {
+		t.Fatalf("SetField.Value is %s (%s); a raw literal would compile", field.Type, field.Type.Kind())
 	}
 }
 
