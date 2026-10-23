@@ -112,7 +112,8 @@ identities and contradictory action facts. A persisted write prohibition allows
 read-only report redelivery after another restart; it differs from the local
 storage-failure fence, which cannot safely continue that owner.
 
-The menu shares XV1's `planSecretPredicate`; independent content, consumer and
+The menu calls the plan path's single credential/identity post-image delta predicate
+regardless of action path spelling; independent content, consumer and
 admission authorization remains mandatory around it. A successful scripted
 hermetic controller/Job/broker run proves interface wiring and can produce a
 strict benchmark receipt; it does not prove real-cluster admission or policy provisioning.

@@ -23,7 +23,7 @@ func (c *menuPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *
 	if _, err := l.menuSnapshot(ctx); err != nil {
 		return nil, errMenuSafety
 	}
-	if l.MenuConfig.Safety.object(ctx, ref, object) != nil || l.MenuConfig.Safety.AuthorizeEffect(ctx, ref, nil, object.DeepCopy()) != nil {
+	if c.validatePostImage(ctx, nil, object) != nil || l.MenuConfig.Safety.object(ctx, ref, object) != nil || l.MenuConfig.Safety.AuthorizeEffect(ctx, ref, nil, object.DeepCopy()) != nil {
 		return nil, errMenuSafety
 	}
 	if _, err := c.Get(ctx, ref); !apierrors.IsNotFound(err) {

@@ -14,11 +14,13 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 type menuHealthDetector struct{}
@@ -43,6 +45,19 @@ func TestResponderMenuScriptedControllerStrictReceiptRoundThree(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	template, cluster := menuThirdRound(t)
+	// An indexed env slot intentionally exercises the historical spelling bypass.
+	// Placeholder-only fixture: no Secret object is fetched or credential exists.
+	containers, _, _ := unstructured.NestedSlice(cluster.objects[menuDeployment].Object, "spec", "template", "spec", "containers")
+	containers[0].(map[string]any)["env"] = []any{map[string]any{"name": "SYNTHETIC_FLAG", "value": "placeholder"}}
+	_ = unstructured.SetNestedSlice(cluster.objects[menuDeployment].Object, containers, "spec", "template", "spec", "containers")
+	configureSyntheticMenu(t, template, cluster)
+	programs := []menuB3Program{{"restart-only"}, {"routing-then-restart"}, {"secret-env-index"}}
+	var registryErr error
+	template.Programs, registryErr = program.NewRegistry([]program.Diagnoser{programs[0], programs[1], programs[2]}, []program.Mitigator{programs[0], programs[1]})
+	if registryErr != nil {
+		t.Fatal(registryErr)
+	}
+	template.MenuConfig.Plans = []ResponderMenuPlan{{ID: "secret-env-index", ProgramID: "secret-env-index", Bindings: map[string]sdk.ObjectRef{"service": menuService, "deployment": menuDeployment}, Plan: program.Plan{Actions: []program.Action{program.SetField{Ref: menuDeployment, Path: "spec.template.spec.containers[0].env[0]", Value: map[string]any{"name": "SYNTHETIC_FLAG", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "placeholder", "key": "placeholder"}}}}}}}}
 	mount := t.TempDir()
 	accepted := nativeRepository(t)
 	repository, err := broker.New(accepted, filepath.Join(mount, "proposals"), func(context.Context, string, []string) error { return nil })
@@ -135,6 +150,7 @@ func TestResponderMenuScriptedControllerStrictReceiptRoundThree(t *testing.T) {
 	}
 	var scripted struct {
 		SessionID string `json:"session_id"`
+		Refused   string `json:"refused"`
 		First     string `json:"first"`
 		Second    string `json:"second"`
 		Rounds    int    `json:"rounds"`
@@ -142,8 +158,11 @@ func TestResponderMenuScriptedControllerStrictReceiptRoundThree(t *testing.T) {
 	if err := json.Unmarshal(output, &scripted); err != nil {
 		t.Fatalf("script result: %v %s", err, output)
 	}
-	if scripted.First != "STATUS_UNRESOLVED" || scripted.Second != "STATUS_SUCCESS" || scripted.Rounds != 3 {
+	if scripted.Refused != "STATUS_REFUSED" || scripted.First != "STATUS_UNRESOLVED" || scripted.Second != "STATUS_SUCCESS" || scripted.Rounds != 3 {
 		t.Fatalf("menu did not traverse failed report to third-round success: %s", output)
+	}
+	if cluster.forbiddenReads != 0 || len(cluster.patches) != 5 {
+		t.Fatal("Secret negative case read opaque content or performed an extra mutation")
 	}
 	result := completedResult(loop.Request.IncidentID)
 	result.ResponderSessionID = scripted.SessionID
@@ -224,7 +243,7 @@ func TestResponderMenuScriptedControllerStrictReceiptRoundThree(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("scripted e2e PASS: first=%s, second=%s, second-option rounds=%d, incident rounds=%d, %s", scripted.First, scripted.Second, scripted.Rounds, closure.Result.ResponseLoopsUsed, strings.TrimSpace(string(strictOutput)))
+	t.Logf("scripted e2e PASS: indexed-env=%s, first=%s, second=%s, second-option rounds=%d, incident rounds=%d, %s", scripted.Refused, scripted.First, scripted.Second, scripted.Rounds, closure.Result.ResponseLoopsUsed, strings.TrimSpace(string(strictOutput)))
 }
 
 const menuScriptedPython = `import io, json, os, shlex, sys
@@ -243,17 +262,21 @@ def command(option, rounds):
     assert code == 0, text
     response = json.loads(text.splitlines()[0])
     return response["report"]
+refused = command("secret-env-index", 1)
+assert refused["status"] == "STATUS_REFUSED" and refused["failed_phase"] == "planning", refused
+assert refused["reason_code"] == "plan_preflight_refused", refused
+assert not any(r.get("actions") for r in refused.get("rounds", [])), refused
 first = command("restart-only", 1)
 assert first["status"] == "STATUS_UNRESOLVED", first
 second = command("routing-then-restart", 3)
 assert second["status"] == "STATUS_SUCCESS" and len(second["rounds"]) == 3, second
-assert first["session_id"] == second["session_id"]
+assert refused["session_id"] == first["session_id"] == second["session_id"]
 assert first["attempt_id"] != second["attempt_id"]
 assert [r["round_index"] for r in second["rounds"]] == [1,2,3]
 assert all(r["barrier_ids"] for r in second["rounds"])
 turn.finish("same responder session observed first failure and verified the alternate option")
-summary = dict(session_id=rollout.session_id, first=first["status"], second=second["status"], rounds=len(second["rounds"]))
-(directory / "scripted-report.json").write_text(json.dumps(dict(summary=summary, first=first, second=second)))
+summary = dict(session_id=rollout.session_id, refused=refused["status"], first=first["status"], second=second["status"], rounds=len(second["rounds"]))
+(directory / "scripted-report.json").write_text(json.dumps(dict(summary=summary, refused=refused, first=first, second=second)))
 print(json.dumps(summary))
 `
 const menuStrictPython = `import json, sys

@@ -56,9 +56,9 @@ func (s *ResponderMenuSafety) object(ctx context.Context, ref sdk.ObjectRef, obj
 	if object == nil || ref.Kind == "Secret" || object.GetKind() == "Secret" || s.AuthorizeObject == nil {
 		return errMenuSafety
 	}
-	// Share the executor's structural Secret predicate. Exact nonsecret content,
-	// consumer closure and admission remain mandatory independent capabilities.
-	if planSecretPredicate(object) != nil || s.AuthorizeObject(ctx, ref, object.DeepCopy()) != nil {
+	// Exact nonsecret content, consumer closure and admission require trusted
+	// provenance. Effects use the executor's single image-delta predicate below.
+	if s.AuthorizeObject(ctx, ref, object.DeepCopy()) != nil {
 		return errMenuSafety
 	}
 	return nil
@@ -169,7 +169,7 @@ func (c *menuPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return errMenuSafety
 	}
 	after := &unstructured.Unstructured{}
-	if json.Unmarshal(merged, &after.Object) != nil || l.MenuConfig.Safety.object(ctx, ref, after) != nil || l.MenuConfig.Safety.AuthorizeEffect(ctx, ref, before.DeepCopy(), after.DeepCopy()) != nil {
+	if json.Unmarshal(merged, &after.Object) != nil || c.validatePostImage(ctx, before, after) != nil || l.MenuConfig.Safety.object(ctx, ref, after) != nil || l.MenuConfig.Safety.AuthorizeEffect(ctx, ref, before.DeepCopy(), after.DeepCopy()) != nil {
 		return errMenuSafety
 	}
 	id := ""
@@ -204,6 +204,17 @@ func (c *menuPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return err
 	}
 	return l.selection.completeAction(ctx, c.attempt, id, c.phase == "compensation", string(live.GetUID()), live.GetResourceVersion())
+}
+
+// The plan path owns credential/identity delta semantics for every action.
+// Path spellings and the structured/legacy distinction never grant an exemption.
+func (c *menuPlanClient) validatePostImage(ctx context.Context, before, after *unstructured.Unstructured) error {
+	if before == nil {
+		before = &unstructured.Unstructured{Object: map[string]any{}}
+	}
+	executor := c.loop.Executor
+	executor.Client = c
+	return executor.validateCredentialDelta(ctx, before, after)
 }
 
 func (c *menuPlanClient) TokenlessServiceAccount(ctx context.Context, ref sdk.ObjectRef) (string, error) {
