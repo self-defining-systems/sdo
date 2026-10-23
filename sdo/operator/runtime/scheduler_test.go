@@ -65,3 +65,19 @@ func equalStrings(left []string, right []string) bool {
 	}
 	return true
 }
+
+func TestSchedulerDefaultEventNamespaceRemainsApplicationLocal(t *testing.T) {
+	watches := []sdk.WatchKind{{APIVersion: "v1", Kind: "Service", Namespace: "demo"}}
+	event := sdk.WatchKind{APIVersion: "v1", Kind: "Service"}
+	if !watchesEventInNamespace(watches, event, "demo") {
+		t.Fatal("synthetic app event did not match local watch")
+	}
+	watches[0].Namespace = "foreign"
+	if watchesEventInNamespace(watches, event, "demo") {
+		t.Fatal("synthetic event matched foreign watch")
+	}
+	webhook := sdk.WatchKind{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration"}
+	if !watchesEventInNamespace([]sdk.WatchKind{webhook}, webhook, "demo") {
+		t.Fatal("cluster event acquired an app namespace")
+	}
+}

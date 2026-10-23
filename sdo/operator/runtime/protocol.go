@@ -52,22 +52,24 @@ type PriorOutcomeEvidence struct {
 }
 
 type IncidentRequest struct {
-	SchemaVersion        string
-	Application          string
-	Namespace            string
-	IncidentID           string
-	Findings             []sdk.Finding
-	DriftEvents          []sdk.DriftEvent
-	DetectorHistory      []DetectorEvaluation
-	SurfacedPlaybooks    []SurfacedPlaybook
-	RelevantOutcomes     []PriorOutcomeEvidence
-	SourceCommit         string
-	DeployedCommit       string
-	RepositoryWorktree   string
-	RepositoryBaseCommit string
-	ResponseDeadline     time.Time
-	CancellationToken    string
-	RepairPolicy         string
+	// ObservationGeneration binds the incident to accepted scope and installer policy.
+	ObservationGeneration string
+	SchemaVersion         string
+	Application           string
+	Namespace             string
+	IncidentID            string
+	Findings              []sdk.Finding
+	DriftEvents           []sdk.DriftEvent
+	DetectorHistory       []DetectorEvaluation
+	SurfacedPlaybooks     []SurfacedPlaybook
+	RelevantOutcomes      []PriorOutcomeEvidence
+	SourceCommit          string
+	DeployedCommit        string
+	RepositoryWorktree    string
+	RepositoryBaseCommit  string
+	ResponseDeadline      time.Time
+	CancellationToken     string
+	RepairPolicy          string
 	// StateChanges is the application's configuration diff against its last
 	// healthy baseline when the incident opened; nil without a baseline.
 	StateChanges       *StateChanges
@@ -175,10 +177,12 @@ type LateFindingsPull struct {
 }
 
 type IncidentClosure struct {
-	Request             IncidentRequest
-	Result              *IncidentResult
-	DispatchError       string
-	FinalDetectorStates []DetectorEvaluation
+	// ObservationGeneration identifies the scope used for independent verification.
+	ObservationGeneration string
+	Request               IncidentRequest
+	Result                *IncidentResult
+	DispatchError         string
+	FinalDetectorStates   []DetectorEvaluation
 	// IncidentDetectorStates is the latest post-response evaluation of each
 	// non-health detector that raised a finding in this incident. It is
 	// learning evidence for the broker, not a closure gate.

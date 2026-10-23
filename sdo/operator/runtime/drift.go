@@ -66,8 +66,22 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 	view := c.drift.View(snapshot)
 	classifier := DriftClassifier{Programs: c.drift.Programs, Deadline: c.drift.Deadline}
 	for _, change := range changes {
+		object := change.New
+		if object == nil {
+			object = change.Old
+		}
+		if object != nil {
+			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
+			if ref.Namespace != view.Namespace() && !driftRefAllowed(view, ref) {
+				if scopedRefDeclared(view, ref) {
+					c.retryDrift(change)
+				}
+				continue
+			}
+		}
 		event, runs, err := classifier.Classify(ctx, change, view, now)
 		if err != nil {
+			c.retryDrift(change)
 			if c.OnError != nil {
 				c.OnError(err)
 			}
@@ -185,7 +199,7 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 		return nil, nil, nil
 	}
 	ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
-	if ref.Namespace != view.Namespace() || ref.Name == "" {
+	if !driftRefAllowed(view, ref) || ref.Name == "" {
 		return nil, nil, nil
 	}
 	event, _, err := c.classifyFields(ctx, change, view, now)
@@ -219,7 +233,7 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 		return nil, nil, nil
 	}
 	ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
-	if ref.Namespace != view.Namespace() || ref.Name == "" {
+	if !driftRefAllowed(view, ref) || ref.Name == "" {
 		return nil, nil, nil
 	}
 	// Foreign admission is independent of field-manager attribution. Restrict
@@ -230,7 +244,7 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 			return nil, nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
 		}
 		if diff.SourceAbsent {
-			if !diff.Changed {
+			if !diff.Changed && change.New != nil {
 				return nil, nil, nil
 			}
 			paths := make([]string, 0)
@@ -244,6 +258,10 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 				Fields: []sdk.DriftField{{Path: "spec", Old: foreignDriftSpec(change.Old), New: foreignDriftSpec(change.New)}},
 			}
 			return event, nil, nil
+		}
+
+		if (sdk.ObservationTarget{Kind: ref.Kind}).Cluster() && diff.Changed {
+			return &sdk.DriftEvent{Ref: ref, Source: "accepted scoped configuration", ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained, Fields: scopedDriftFields(change)}, nil, nil
 		}
 	}
 	owner := change.Old
@@ -303,24 +321,34 @@ func (c DriftClassifier) classifyFields(ctx context.Context, change ObjectChange
 // The allowlist grows only with an impact argument and controller-churn tests.
 func foreignDriftCandidate(change ObjectChange) bool {
 	object := change.New
+	if object == nil {
+		if change.Old == nil || !(sdk.ObservationTarget{Kind: change.Old.GetKind()}).Cluster() {
+			return false
+		}
+		object = change.Old
+	}
 	if !foreignDriftKind(object) {
 		return false
 	}
 	if metav1.GetControllerOf(object) != nil {
 		return false
 	}
-	return change.Old == nil || !reflect.DeepEqual(change.Old.Object["spec"], object.Object["spec"])
+	return change.Old == nil || change.New == nil || foreignDriftSpec(change.Old) != foreignDriftSpec(change.New)
 }
 
 func foreignDriftKind(object *unstructured.Unstructured) bool {
-	return object != nil && object.GetAPIVersion() == "networking.k8s.io/v1" && object.GetKind() == "NetworkPolicy"
+	return object != nil && (object.GetAPIVersion() == "networking.k8s.io/v1" && object.GetKind() == "NetworkPolicy" || object.GetAPIVersion() == "admissionregistration.k8s.io/v1" && (object.GetKind() == "MutatingWebhookConfiguration" || object.GetKind() == "ValidatingWebhookConfiguration"))
 }
 
 func foreignDriftSpec(object *unstructured.Unstructured) string {
 	if object == nil {
 		return ""
 	}
-	encoded, err := json.Marshal(object.Object["spec"])
+	value := object.Object["spec"]
+	if (sdk.ObservationTarget{Kind: object.GetKind()}).Cluster() {
+		value = object.Object["webhooks"]
+	}
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return ""
 	}
@@ -363,7 +391,7 @@ func flattenDriftObject(object *unstructured.Unstructured) map[string]any {
 			result[path] = typed
 		}
 	}
-	for _, key := range []string{"spec", "data", "binaryData"} {
+	for _, key := range []string{"spec", "data", "binaryData", "webhooks"} {
 		if value, ok := object.Object[key]; ok {
 			walk(key, value)
 		}
@@ -594,4 +622,58 @@ func (c *Controller) observeUnexplainedDrift(now time.Time, finding sdk.Finding)
 	changes := c.tracker.Observe(now, finding.DetectorID, findings)
 	c.recordEvaluation(finding.DetectorID, now, findings)
 	c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder}, now, findings, changes)
+}
+
+func driftRefAllowed(view program.ReadView, ref sdk.ObjectRef) bool {
+	if ref.Namespace == view.Namespace() {
+		return true
+	}
+	scoped, ok := view.(interface{ ScopedRefAllowed(sdk.ObjectRef) bool })
+	return ok && scoped.ScopedRefAllowed(ref)
+}
+
+func scopedDriftFields(change ObjectChange) []sdk.DriftField {
+	before, after := flattenDriftObject(change.Old), flattenDriftObject(change.New)
+	keys := map[string]bool{}
+	for k := range before {
+		keys[k] = true
+	}
+	for k := range after {
+		keys[k] = true
+	}
+	ordered := []string{}
+	for k := range keys {
+		if !reflect.DeepEqual(before[k], after[k]) {
+			ordered = append(ordered, k)
+		}
+	}
+	sort.Strings(ordered)
+	fields := []sdk.DriftField{}
+	for _, k := range ordered {
+		if len(fields) == maxDriftFields {
+			break
+		}
+		a, _ := json.Marshal(before[k])
+		b, _ := json.Marshal(after[k])
+		fields = append(fields, sdk.DriftField{Path: k, Old: bounded(string(a)), New: bounded(string(b))})
+	}
+	return fields
+}
+
+func (c *Controller) retryDrift(change ObjectChange) {
+	if queue, ok := c.drift.Events.(interface{ RetryObjectChange(ObjectChange) }); ok {
+		queue.RetryObjectChange(change)
+	}
+}
+func scopedRefDeclared(view any, ref sdk.ObjectRef) bool {
+	t := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
+	if t.Cluster() {
+		t.Name = ref.Name
+	}
+	for _, status := range sdk.ScopedSource(view).ObservationStatuses() {
+		if status.Target == t {
+			return true
+		}
+	}
+	return false
 }

@@ -336,12 +336,39 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
 		return err
 	}
-	for _, role := range append(p.ControlRoles, p.AppRoles...) {
+	if err := i.reconcileObservationGrants(ctx, cfg, p); err != nil {
+		return err
+	}
+	for _, role := range p.ObservationClusterRoles {
+		prior, err := i.Client.RbacV1().ClusterRoles().Get(ctx, role.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = i.Client.RbacV1().ClusterRoles().Create(ctx, role, metav1.CreateOptions{})
+		} else if err == nil {
+			role.ResourceVersion = prior.ResourceVersion
+			_, err = i.Client.RbacV1().ClusterRoles().Update(ctx, role, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return err
+		}
+	}
+	for _, binding := range p.ObservationClusterBindings {
+		prior, err := i.Client.RbacV1().ClusterRoleBindings().Get(ctx, binding.Name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			_, err = i.Client.RbacV1().ClusterRoleBindings().Create(ctx, binding, metav1.CreateOptions{})
+		} else if err == nil {
+			binding.ResourceVersion = prior.ResourceVersion
+			_, err = i.Client.RbacV1().ClusterRoleBindings().Update(ctx, binding, metav1.UpdateOptions{})
+		}
+		if err != nil {
+			return err
+		}
+	}
+	for _, role := range append(append(p.ControlRoles, p.AppRoles...), p.ObservationRoles...) {
 		if err := i.upsertRole(ctx, role); err != nil {
 			return err
 		}
 	}
-	for _, binding := range append(p.ControlBindings, p.AppBindings...) {
+	for _, binding := range append(append(p.ControlBindings, p.AppBindings...), p.ObservationBindings...) {
 		if err := i.upsertBinding(ctx, binding); err != nil {
 			return err
 		}

@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -173,7 +174,14 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 
 	var replayNotes []sdktest.MitigationReplayResult
+	var ceiling sdk.ObservationScope
+	appNamespace := ""
+	if publication != nil {
+		ceiling = publication.ObservationCeiling
+		appNamespace = publication.ApplicationNamespace
+	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
+		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
 		MitigationReplayNotes: &replayNotes,
 		Root:                  absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,
 		OperatorRoot: operatorRootDefault(getenv), HealthyBaseline: getenv("SDO_HEALTHY_BASELINE"),

@@ -1,6 +1,12 @@
 package sdktest
 
 import (
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
+
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
@@ -194,6 +200,11 @@ func LoadCorpusCase(dir string) (CorpusCase, error) {
 			return c, fmt.Errorf("corpus %s: %w", path, err)
 		}
 	}
+	for _, snapshot := range []Snapshot{c.Open, c.Fixed, c.Healthy} {
+		if err := snapshot.ValidateObservation(); err != nil {
+			return c, err
+		}
+	}
 	c.Open.SourceName, c.Fixed.SourceName, c.Healthy.SourceName = "open.json", "fixed.json", "healthy.json"
 	return c, nil
 }
@@ -263,7 +274,44 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 	recorder := &RecordingReadView{ReadView: view}
 	for _, call := range calls {
 		var args []json.RawMessage
-		if err := json.Unmarshal(call.Arguments, &args); err != nil || len(args) == 0 {
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid %s recording arguments", call.Method)
+		}
+
+		switch call.Method {
+		case "ScopedDeployments", "ScopedServices", "ScopedEndpoints", "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("invalid scoped recording arguments")
+			}
+			var namespace string
+			if err := json.Unmarshal(args[0], &namespace); err != nil {
+				return nil, err
+			}
+			switch call.Method {
+			case "ScopedDeployments":
+				_, _ = recorder.ScopedDeployments(namespace)
+			case "ScopedServices":
+				_, _ = recorder.ScopedServices(namespace)
+			case "ScopedEndpoints":
+				_, _ = recorder.ScopedEndpoints(namespace)
+			case "MutatingWebhookConfiguration":
+				_, _ = recorder.MutatingWebhookConfiguration(namespace)
+			case "ValidatingWebhookConfiguration":
+				_, _ = recorder.ValidatingWebhookConfiguration(namespace)
+			}
+			continue
+		case "MutatingWebhookConfigurations", "ValidatingWebhookConfigurations":
+			if len(args) != 0 {
+				return nil, fmt.Errorf("invalid scoped webhook recording arguments")
+			}
+			if call.Method == "MutatingWebhookConfigurations" {
+				_, _ = recorder.MutatingWebhookConfigurations()
+			} else {
+				_, _ = recorder.ValidatingWebhookConfigurations()
+			}
+			continue
+		}
+		if len(args) == 0 {
 			return nil, fmt.Errorf("invalid %s recording arguments", call.Method)
 		}
 		var ref sdk.ObjectRef
@@ -317,4 +365,94 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 	}
 	return recorder.Calls, nil
+}
+
+func (v *RecordingReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
+	v.record("ScopedDeployments", []any{namespace}, result, err)
+	return result, err
+}
+
+func (v *RecordingReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
+	v.record("ScopedServices", []any{namespace}, result, err)
+	return result, err
+}
+
+func (v *RecordingReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
+	v.record("ScopedEndpoints", []any{namespace}, result, err)
+	return result, err
+}
+
+func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
+	v.record("MutatingWebhookConfigurations", []any{}, result, err)
+	return result, err
+}
+
+func (v *RecordingReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
+	v.record("ValidatingWebhookConfigurations", []any{}, result, err)
+	return result, err
+}
+
+func (v *RecordingReadView) ObservationStatuses() []sdk.ObservationStatus {
+	return sdk.ScopedSource(v.ReadView).ObservationStatuses()
+}
+func (v *RecordingReadView) ObservationGeneration() string {
+	return sdk.ScopedSource(v.ReadView).ObservationGeneration()
+}
+
+func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
+	return v.Snapshot.ScopedSnapshot.ScopedDeployments(namespace)
+}
+
+func (v *ReplayReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
+	return v.Snapshot.ScopedSnapshot.ScopedServices(namespace)
+}
+
+func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
+	return v.Snapshot.ScopedSnapshot.ScopedEndpoints(namespace)
+}
+
+func (v *ReplayReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
+	return v.Snapshot.ScopedSnapshot.MutatingWebhookConfigurations()
+}
+
+func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
+	return v.Snapshot.ScopedSnapshot.ValidatingWebhookConfigurations()
+}
+
+func (v *RecordingReadView) ObservedAt() time.Time {
+	if clock, ok := v.ReadView.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
+func (v *RecordingReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	if source, ok := v.ReadView.(traffic.Source); ok {
+		return source.TrafficWindow(name)
+	}
+	return traffic.Window{}, false
+}
+
+func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
+		return source.ServiceReachability()
+	}
+	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
+	v.record("MutatingWebhookConfiguration", []any{name}, result, err)
+	return result, err
+}
+
+func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
+	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
+	v.record("ValidatingWebhookConfiguration", []any{name}, result, err)
+	return result, err
 }

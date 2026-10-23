@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -64,7 +65,12 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		SchemaIdentity: sdkSchemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
 	}
-	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, broker.JobValidator(validation))
+	ceiling, policyErr := observation.CeilingFromEnvironment()
+	if policyErr != nil {
+		return lifecycle.Result{}, policyErr
+	}
+
+	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, broker.JobValidator(validation), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace})
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
