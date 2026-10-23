@@ -60,6 +60,16 @@ const MaintenanceConfigMap = "sdo-controller-maintenance"
 // SetMaintenance pauses observation during a planned application redeploy.
 // A new generation on resume makes the controller relist application state.
 func SetMaintenance(ctx context.Context, client kubernetes.Interface, namespace string, paused bool, generation string) error {
+	return SetMaintenanceWithOptions(ctx, client, namespace, paused, generation, MaintenanceOptions{})
+}
+
+// MaintenanceOptions distinguishes a redeploy from a temporary observation barrier.
+type MaintenanceOptions struct {
+	PreserveBaseline bool
+}
+
+// SetMaintenanceWithOptions can retain the last healthy baseline across a pause.
+func SetMaintenanceWithOptions(ctx context.Context, client kubernetes.Interface, namespace string, paused bool, generation string, options MaintenanceOptions) error {
 	if client == nil {
 		return errors.New("Kubernetes client is required")
 	}
@@ -75,6 +85,9 @@ func SetMaintenance(ctx context.Context, client kubernetes.Interface, namespace 
 	}
 	configMaps := client.CoreV1().ConfigMaps(namespace)
 	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMap, Namespace: namespace}, Data: map[string]string{"state": state, "generation": generation}}
+	if paused && options.PreserveBaseline {
+		want.Data["preserve_baseline"] = "true"
+	}
 	prior, err := configMaps.Get(ctx, MaintenanceConfigMap, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = configMaps.Create(ctx, want, metav1.CreateOptions{})

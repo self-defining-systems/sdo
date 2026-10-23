@@ -13,7 +13,9 @@ class _Inner:
     def __init__(self, events: list[str]) -> None:
         self.events = events
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         self.events.append(f"{'pause' if paused else 'resume'}:{generation}")
 
     def inject_after_resume(

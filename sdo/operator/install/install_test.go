@@ -228,6 +228,17 @@ func TestMaintenanceRequiresGenerationAndRecordsState(t *testing.T) {
 	}
 }
 
+func TestMaintenancePreservesBaselineOnlyWhenExplicitlyRequested(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	if err := SetMaintenanceWithOptions(ctx, client, "demo-sdo", true, "barrier", MaintenanceOptions{PreserveBaseline: true}); err != nil { t.Fatal(err) }
+	cm, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, MaintenanceConfigMap, metav1.GetOptions{})
+	if err != nil || cm.Data["preserve_baseline"] != "true" { t.Fatalf("observation barrier not retained: %v %v", cm, err) }
+	if err := SetMaintenance(ctx, client, "demo-sdo", true, "redeploy"); err != nil { t.Fatal(err) }
+	cm, err = client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, MaintenanceConfigMap, metav1.GetOptions{})
+	if err != nil || cm.Data["preserve_baseline"] != "" { t.Fatalf("redeploy inherited preservation: %v %v", cm, err) }
+}
+
 func TestPrepareSeedsInitialCheckoutWithoutStartingController(t *testing.T) {
 	cfg := testConfig()
 	client := fake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cfg.CredentialsSecret, Namespace: cfg.ControlNamespace}})

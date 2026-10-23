@@ -27,3 +27,8 @@ func TestParseMaintenanceRequiresExplicitGeneration(t *testing.T) {
 		t.Fatal("missing generation accepted")
 	}
 }
+
+func TestParseMaintenanceObservationBarrier(t *testing.T) {
+	config, err := ParseMaintenanceLaunch([]string{"maintenance", "--control-namespace", "sdo", "--paused", "--preserve-baseline", "--generation", "barrier"})
+	if err != nil || !config.Paused || !config.PreserveBaseline { t.Fatalf("lost observation barrier: %+v %v", config, err) }
+}

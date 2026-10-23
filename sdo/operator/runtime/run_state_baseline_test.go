@@ -105,6 +105,14 @@ func frontendEndpoints(ready int) *corev1.Endpoints {
 // 13d5613, run.go's start context stopped the tracker's informers once Start
 // returned, so the diff stayed frozen at the startup state and was empty.
 func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
+	testRunAttachesStateChanges(t, false)
+}
+
+func TestRunPreservesStateChangesAcrossObservationBarrier(t *testing.T) {
+	testRunAttachesStateChanges(t, true)
+}
+
+func testRunAttachesStateChanges(t *testing.T, observationBarrier bool) {
 	objects := hotelObjects()
 	objects = append(objects, frontendEndpoints(1))
 	for index := range readyFrontend() {
@@ -164,6 +172,16 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	})
 	// Outlive the start deadline, so a tracker still bound to it has stopped.
 	time.Sleep(4 * startTimeout)
+	if observationBarrier {
+		_, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMapName, Namespace: hotel+"-sdo"},
+			Data: map[string]string{"state": "paused", "generation": "barrier", "preserve_baseline": "true"},
+		}, metav1.CreateOptions{})
+		if err != nil { t.Fatal(err) }
+		eventually(t, "observation pause acknowledgement", func() bool {
+			return lines.has(`{"controller_maintenance":"paused"`)
+		})
+	}
 
 	service, err := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
 	if err != nil {
@@ -176,6 +194,12 @@ func TestRunAttachesStateChangesMadeAfterStartupToIncident(t *testing.T) {
 	// The endpoints controller empties the Service's endpoints.
 	if _, err := client.CoreV1().Endpoints(hotel).Update(ctx, frontendEndpoints(0), metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
+	}
+	if observationBarrier {
+		cm, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Get(ctx, MaintenanceConfigMapName, metav1.GetOptions{})
+		if err != nil { t.Fatal(err) }
+		cm.Data = map[string]string{"state": "active", "generation": "barrier-resumed"}
+		if _, err := client.CoreV1().ConfigMaps(hotel+"-sdo").Update(ctx, cm, metav1.UpdateOptions{}); err != nil { t.Fatal(err) }
 	}
 
 	var request IncidentRequest

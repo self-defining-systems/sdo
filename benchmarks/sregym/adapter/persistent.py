@@ -230,7 +230,9 @@ class ClusterOps(Protocol):
 
     def install(self, config: RuntimeConfig) -> bool: ...
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None: ...
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None: ...
 
     def runtime_state(self, control_namespace: str) -> dict[str, Any]: ...
 
@@ -322,12 +324,15 @@ class KubectlClusterOps:
         sync_existing(native)
         return install_existing(native).reused
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         kubeconfig = os.getenv("KUBECONFIG", "").strip()
         go_set_maintenance(
             control_namespace,
             paused=paused,
             generation=generation,
+            preserve_baseline=preserve_baseline,
             kubeconfig=Path(kubeconfig).resolve() if kubeconfig else None,
         )
 
@@ -1237,7 +1242,7 @@ def inject_while_paused(
     """Keep partial injector writes behind maintenance until v2 validity is known."""
     clock = clock or Clock()
     paused = f"{generation}-validating-injection"
-    ops.set_maintenance(control, paused=True, generation=paused)
+    ops.set_maintenance(control, paused=True, generation=paused, preserve_baseline=True)
     wait_for_maintenance_ack(ops, control, paused, clock)
     inject()  # failure intentionally leaves maintenance paused
     ops.set_maintenance(control, paused=False, generation=f"{generation}-injected")

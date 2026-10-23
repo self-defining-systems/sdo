@@ -674,10 +674,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	stopState := func() {
 		if stateTracker != nil {
-			// A maintenance window may redeploy the application, so the old
-			// baseline no longer describes it.
+			// Redeploy maintenance adopts new state. An observation barrier
+			// retains the prior baseline so changes remain visible on resume.
 			stateTracker.Stop()
-			stateTracker.Reset()
+			if !desired.PreserveBaseline {
+				stateTracker.Reset()
+			}
 		}
 	}
 	if options.NativeBroker != nil {

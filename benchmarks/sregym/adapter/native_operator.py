@@ -291,6 +291,7 @@ def set_maintenance(
     *,
     paused: bool,
     generation: str,
+    preserve_baseline: bool = False,
     kubeconfig: Path | None = None,
 ) -> None:
     if not control_namespace.strip() or not generation.strip():
@@ -298,6 +299,8 @@ def set_maintenance(
     if kubeconfig is not None and not kubeconfig.is_absolute():
         raise ValueError("kubeconfig path must be absolute")
     args = ["--control-namespace", control_namespace, f"--paused={str(paused).lower()}", "--generation", generation]
+    if preserve_baseline:
+        args.append("--preserve-baseline")
     if kubeconfig is not None:
         args.extend(("--kubeconfig", str(kubeconfig)))
     output = execute_operator("maintenance", args, timeout=120)

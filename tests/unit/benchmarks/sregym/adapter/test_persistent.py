@@ -132,7 +132,9 @@ class FakeOps:
         self.events.append(("install", control))
         return False
 
-    def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+    def set_maintenance(
+        self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+    ) -> None:
         mode = "paused" if paused else "active"
         self.events.append((mode, control_namespace))
         self.logs[control_namespace].append(
@@ -458,7 +460,9 @@ def test_recreated_namespace_regains_controller_access_before_resume_and_injecti
             elapsed[0] += 2
             return reused
 
-        def set_maintenance(self, control_namespace: str, *, paused: bool, generation: str) -> None:
+        def set_maintenance(
+            self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
+        ) -> None:
             if not paused:
                 assert self.grants_present, "recreated app namespace has no controller RBAC"
             super().set_maintenance(control_namespace, paused=paused, generation=generation)
@@ -1486,3 +1490,18 @@ def test_validity_barrier_keeps_invalid_partial_injection_unobservable_to_respon
     with pytest.raises(InvalidInjectionError):
         inject_while_paused(ops, control, "validity", invalid, clock=_clock(ops))
     assert ops.events == [("paused", control)]
+
+
+def test_valid_injection_barrier_retains_the_healthy_observation_baseline() -> None:
+    from benchmarks.sregym.adapter.persistent import inject_while_paused
+
+    class BarrierOps(FakeOps):
+        def set_maintenance(self, control_namespace, *, paused, generation, preserve_baseline=False):
+            if paused:
+                assert preserve_baseline, "a valid fault must survive the observation pause"
+            super().set_maintenance(control_namespace, paused=paused, generation=generation)
+
+    ops = BarrierOps()
+    ops.logs["hotel-sdo"] = []
+    inject_while_paused(ops, "hotel-sdo", "valid", lambda: None, clock=_clock(ops))
+    assert ops.events == [("paused", "hotel-sdo"), ("active", "hotel-sdo")]

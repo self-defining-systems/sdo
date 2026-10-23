@@ -32,6 +32,8 @@ const (
 type MaintenanceState struct {
 	Paused     bool
 	Generation string
+	// PreserveBaseline suspends observation without adopting changes made while paused.
+	PreserveBaseline bool
 }
 
 // Record is the controller log line that announces the mode it operates under.
@@ -66,7 +68,11 @@ func (w MaintenanceWatcher) Read(ctx context.Context) (MaintenanceState, error) 
 	case "", maintenanceStateActive:
 		return MaintenanceState{Generation: generation}, nil
 	case maintenanceStatePaused:
-		return MaintenanceState{Paused: true, Generation: generation}, nil
+		preserve := strings.TrimSpace(configMap.Data["preserve_baseline"])
+		if preserve != "" && preserve != "false" && preserve != "true" {
+			return MaintenanceState{}, fmt.Errorf("invalid preserve_baseline %q", preserve)
+		}
+		return MaintenanceState{Paused: true, Generation: generation, PreserveBaseline: preserve == "true"}, nil
 	default:
 		return MaintenanceState{}, fmt.Errorf(
 			"maintenance ConfigMap %s/%s has unsupported state %q",
