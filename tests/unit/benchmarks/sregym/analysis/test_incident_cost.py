@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import replace
-from pathlib import Path  # noqa: TC003 -- fixtures build real paths at runtime
+from pathlib import Path
 
 import pytest
 import yaml
@@ -973,3 +973,49 @@ def test_native_receipt_responder_usage_comes_from_the_ledger_closure_result() -
     usage = receipt_responder_usage(receipt)
     assert (usage.input_tokens, usage.cached_input_tokens, usage.output_tokens) == (1000, 800, 50)
     assert receipt_responder_usage({}).input_tokens == 0
+
+
+def test_command_execution_events_supply_the_mutation_floor(tmp_path: Path) -> None:
+    """Synthetic completed-item events use execution times, not the later export timestamp."""
+    rollout = Path(__file__).parent / "fixtures" / "command_execution.jsonl"
+    injected = 1790510410.0
+    assert first_mutation_at([rollout], after=injected) == pytest.approx(injected + 20, rel=0, abs=0.001)
+    assert last_mutation_done_at([rollout], after=injected, before=injected + 60) == pytest.approx(
+        injected + 38, rel=0, abs=0.001
+    )
+    # The completed record can be exported after submission; cap the command at the POST.
+    assert last_mutation_done_at([rollout], after=injected, before=injected + 25) == pytest.approx(
+        injected + 25, rel=0, abs=0.001
+    )
+    results = tmp_path / "exp" / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results"
+    _timing_csv(
+        results,
+        fault_injected_at=injected,
+        diagnosis_submitted_at=injected + 10,
+        TTL=50,
+        mitigation_submitted_at=injected + 60,
+    )
+    target = results / "codex" / PROBLEM_A / "run_1" / "sessions" / "rollout-events.jsonl"
+    target.parent.mkdir(parents=True)
+    target.write_text(rollout.read_text(encoding="utf-8"), encoding="utf-8")
+    (run,) = load_codex_runs(tmp_path / "exp")
+    assert run.verdict.judge_excluded_seconds == pytest.approx(20)
+    assert run.verdict.ttm_seconds == pytest.approx(38)
+
+
+@pytest.mark.parametrize("invalid", ["missing-start", "reversed-clock", "incomplete", "not-command"])
+def test_mutation_floor_ignores_incomplete_or_malformed_command_items(tmp_path: Path, invalid: str) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "command_execution.jsonl"
+    record = json.loads(fixture.read_text(encoding="utf-8").splitlines()[2])
+    if invalid == "missing-start":
+        record["payload"].pop("started_at_ms")
+    elif invalid == "reversed-clock":
+        record["payload"]["completed_at_ms"] = record["payload"]["started_at_ms"] - 1
+    elif invalid == "incomplete":
+        record["payload"]["type"] = "item_started"
+    else:
+        record["payload"]["item"]["type"] = "AgentMessage"
+    rollout = tmp_path / "rollout-malformed.jsonl"
+    rollout.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    assert first_mutation_at([rollout], after=1790510410.0) is None
+    assert last_mutation_done_at([rollout], after=1790510410.0, before=1790510470.0) is None
