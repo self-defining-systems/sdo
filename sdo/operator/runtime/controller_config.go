@@ -68,6 +68,9 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 		}
 	}
 
+	str("--plan-source-policy-json", config.GetPlanSourcePolicyJson())
+	str("--plan-safety-policy-json", config.GetPlanSafetyPolicyJson())
+	str("--plan-safety-policy-sha256", config.GetPlanSafetyPolicySha256())
 	str("--namespace", config.GetNamespace())
 	str("--control-namespace", config.GetControlNamespace())
 	str("--app-root", config.GetAppRoot())

@@ -11,13 +11,29 @@ package program // import "sdo.dev/operator/sdk/program"
 FUNCTIONS
 
 func ApplySetField(object map[string]any, path string, value any) error
-    ApplySetField mutates an object using the plan executor's field-path
-    semantics.
+    ApplySetField mutates one field. Named list selectors must resolve uniquely.
+
+func ApplySetFieldAction(current map[string]any, a SetField, source map[string]any) error
+    ApplySetFieldAction resolves an optional accepted-source value and updates
+    one typed field or document entry. The caller owns source trust and write
+    safety.
 
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector
     DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
 
+func ExpandedSetField(f SetField) bool
+    ExpandedSetField reports whether an action uses the structured vocabulary.
+
+func FieldValue(object map[string]any, path string) (any, error)
+    FieldValue resolves numeric indexes, unique [name=NAME] list identities and
+    bracketed ConfigMap keys. It does not invent missing intermediate objects.
+
 func ValidateBindings(spec ProgramSpec, b Bindings) error
+func ValidateSetField(f SetField) error
+    ValidateSetField checks the explicit path allowlist and Kubernetes schema
+    kind. An absent API version retains legacy program validation; executors
+    require it.
+
 
 TYPES
 
@@ -26,6 +42,20 @@ type Action interface {
 }
 
 type Bindings map[string]sdk.ObjectRef
+
+type CreateFromSource struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+    CreateFromSource restores a missing named object from accepted source.
+
+type DeleteObject struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+    DeleteObject irreversibly deletes a named object absent from accepted
+    source. Its receipt retains a nonsecret preimage; compensation never
+    recreates it.
 
 type Diagnoser interface {
 	Spec() ProgramSpec
@@ -127,6 +157,12 @@ type SetField struct {
 	Path   string
 	Value  any
 	Reason string
+	// ValueFromSource resolves the field against the incident-bound accepted manifest.
+	ValueFromSource bool
+	// DocumentFormat and DocumentPath select a JSON/YAML entry in one ConfigMap key.
+	// JSON edits preserve untouched number tokens; serialization may normalize formatting.
+	DocumentFormat string
+	DocumentPath   []string
 }
 
 type Verdict struct {

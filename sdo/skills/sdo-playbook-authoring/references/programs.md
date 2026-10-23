@@ -1,7 +1,7 @@
 # Direct program authoring
 
 Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a bound resource view;
-mitigation returns typed actions. Shared read helpers come from the diagnostics module's library packages.
+mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
@@ -29,9 +29,17 @@ Unknown; empty or absent observations never prove success or refusal.
 ## Source restoration
 
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
+Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
+ConfigMap JSON/YAML entries preserve unrelated values. Use ValueFromSource for an accepted-source field value,
+and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects need
+current controller-owned nonsecret provenance; accepted Git origin alone supplies no clearance.
 ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
 produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
-replay remains mandatory. SetField-only plans must replay to NoMatch after applying their patches.
+replay remains mandatory. Literal SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
+CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes only
+an explicitly allowed named object proven absent from that source; disclose deletion as irreversible, retain
+its nonsecret receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
+and live verification requires direct current UID/absence evidence plus independent health checks.
 Never delete a valid mitigator merely to eliminate a skipped-effect note.
 
 ## Routing
@@ -62,3 +70,25 @@ recordings. Only those flags permit a decline for missing recordings: use the ty
 canonical "evidence gap" reason, with details in the summary. A truncated read or a recorded error does not
 establish absence. The per-incident ledger records the number of distinct missing resource/phase observations;
 a flag alone does not prove that learning is blocked.
+
+Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. A repair must not add or change a credential channel; existing channels permit unrelated legacy repairs. Compensation may restore channels from the exact captured pre-image, while refusing any channel absent from that image.
+
+Compensation attempts every reversible write even when a plan also deleted an object or another restore failed. The delete remains explicitly irreversible and not restored; it never triggers recreation.
+
+Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse. A named webhook RBAC grant alone supplies no plan authorization.
+
+Write verification and compensation compare plan-owned fields and current UID, while checking the full live credential predicate. API defaults and the Deployment revision annotation do not invalidate an otherwise approved effect.
+
+HPA, PDB and named webhook effects require a direct current read. An unwatched kind stays unknown unless that read proves the effect and the verifier has no cached input for the kind; watched kinds still wait for their cache barrier.
+
+A cluster-scoped webhook delete proves source absence through the application’s current accepted render selection. Missing or stale lock evidence refuses; the installer’s exact-name webhook grant remains required.
+
+Credential safety also refuses deprecated identity aliases and unconfined storage. Pod and CronJob templates need explicit token automount disablement; dropping that denial restores the default token mount and counts as a credential-channel addition. NetworkPolicy repairs admit only bounded namespace-local pod-label peers; allow-all and cross-namespace routes refuse.
+
+JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.
+
+The source-only stream policy derives structured repair values and creates from accepted source, and grants deletes only to individually named incident resources with pinned UIDs. Unversioned detector references resolve only through the explicit allowed kinds. Legacy numeric SetField literals retain their existing allowlist and credential-delta check. Application patch receipts label these as `accepted-source`, `incident-named-delete`, or `legacy-literal`.
+
+Webhook namespace selectors may confine admission to the application. Network peer confinement is checked on NetworkPolicy rules.
+
+Source policy inventory uses render-lock identities and filters allowed kinds before reading source content; a missing lock entry alone never proves deletion eligibility.

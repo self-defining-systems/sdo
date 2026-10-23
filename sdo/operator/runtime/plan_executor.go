@@ -41,10 +41,17 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
-	Ref    sdk.ObjectRef
-	Patch  json.RawMessage
-	Before *unstructured.Unstructured
-	After  *unstructured.Unstructured
+	Authorization string
+	// DirectReadConfirmed is process-local proof, never restored from a receipt.
+	DirectReadConfirmed bool `json:"-"`
+	Operation           string
+	Irreversible        bool
+	Structured          bool
+	SourceCommit        string
+	Ref                 sdk.ObjectRef
+	Patch               json.RawMessage
+	Before              *unstructured.Unstructured
+	After               *unstructured.Unstructured
 }
 
 type PlanPreImage struct {
@@ -70,11 +77,15 @@ type PlanApplicationResult struct {
 	Patches                  []PlanPatch
 	Duration                 time.Duration
 	PreImages                []PlanPreImage
+	ObjectEffects            []PlanObjectEffect
 }
 
 type PlanExecutor struct {
 	Client PlanObjectClient
 	Source PlanSource
+	// Safety is trusted controller-owned provenance for structured actions.
+	Safety          *PlanSafetyPolicy
+	SourceAuthority *SourcePlanAuthority
 	// AcceptedRevision reads the controller-owned accepted head, never the agent checkout.
 	AcceptedRevision func() string
 	Rollouts         PlanRollouts
@@ -92,6 +103,18 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if e.SourceAuthority != nil {
+		for _, action := range plan.Actions {
+			if structuredPlanAction(action) {
+				e.Safety, err = e.SourceAuthority.Policy(ctx, incident)
+				if err != nil {
+					return PlanApplicationResult{Plan: plan, DryRun: dryRun}, err
+				}
+				break
+			}
+		}
+	}
+
 	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
 		result, err = e.applyOnce(ctx, incident, plan, dryRun)
 		if err == nil || result.Applied || !apierrors.IsConflict(err) {
@@ -102,6 +125,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 }
 
 func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if hasObjectActions(plan) {
+		return e.applyObjectPlan(ctx, incident, plan, dryRun)
+	}
 	started := time.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
 	writesLanded := false
@@ -122,7 +148,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 			defer cancel()
 			if rollbackErr := e.rollback(recoveryCtx, &result); rollbackErr != nil {
 				result.RollbackError = rollbackErr.Error()
-				result.RollingBack = true
+				result.RollingBack = result.RollbackCompleted < len(result.ActionsApplied)
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
 			} else {
 				result.RolledBack = true
@@ -160,12 +186,28 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if _, exists := current[ref]; exists {
 			continue
 		}
+		if structuredPlanRef(plan, ref) {
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return result, err
+			}
+			if err := e.Safety.authorizeRead(ref, incident.SourceCommit, e.safetyNow()); err != nil {
+				return result, err
+			}
+		}
 		object, getErr := e.Client.Get(ctx, ref)
 		if getErr != nil {
 			return result, fmt.Errorf("read pre-image of %s/%s: %w", ref.Kind, ref.Name, getErr)
 		}
 		if object == nil || !samePlanRef(object, ref) {
 			return result, fmt.Errorf("pre-image does not match %s/%s", ref.Kind, ref.Name)
+		}
+		if structuredPlanRef(plan, ref) {
+			if object.GetUID() == "" {
+				return result, fmt.Errorf("plan safety: live UID is required")
+			}
+			if err := e.Safety.checkObject(object, ref); err != nil {
+				return result, err
+			}
 		}
 		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
 		current[ref] = object.DeepCopy()
@@ -175,9 +217,14 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	guarded := false
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
-		next, actionErr := e.prepareAction(ctx, incident, action, current[ref])
+		next, actionErr := e.prepareAction(ctx, incident, action, current[ref], structuredPlanRef(plan, ref))
 		if actionErr != nil {
 			return result, fmt.Errorf("prepare learned repair: %w; investigate accepted source and intended application behavior", actionErr)
+		}
+		if structuredPlanRef(plan, ref) {
+			if err := e.Safety.checkObject(next, ref); err != nil {
+				return result, err
+			}
 		}
 		checked, guardErr := e.validateSourceRepair(ctx, incident, ref, originals[ref], current[ref], next)
 		guarded = guarded || checked
@@ -200,7 +247,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if patchErr != nil {
 			return result, patchErr
 		}
-		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy()})
+		result.Patches = append(result.Patches, PlanPatch{Authorization: planAuthorizationMode(action, e.SourceAuthority != nil), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
 		current[ref] = next
 	}
 	// Rollback and write reconciliation compare after-images with live values, so
@@ -223,6 +270,17 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 				return result, patchErr
 			}
 		}
+		if patch.Structured {
+			if err := e.Safety.authorizeRead(patch.Ref, incident.SourceCommit, e.safetyNow()); err != nil {
+				return result, err
+			}
+			if err := e.Safety.checkObject(patch.After, patch.Ref); err != nil {
+				return result, err
+			}
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return result, err
+			}
+		}
 		if guarded {
 			if err := e.validateAcceptedRevision(incident); err != nil {
 				return result, err
@@ -242,6 +300,10 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
 			result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		}
+		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{result.Patches[index]}}); err != nil {
+			return result, err
+		}
+		result.Patches[index].DirectReadConfirmed = patch.Structured
 	}
 	writesLanded = true
 	result.Applied = true
@@ -267,6 +329,10 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 
 // rollback advances the caller's result even when compensation stops partway.
 func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplicationResult) error {
+	if e.Safety == nil && e.SourceAuthority != nil {
+		e.Safety = e.SourceAuthority.cachedPolicy()
+	}
+
 	if application.RolledBack {
 		return nil
 	}
@@ -274,20 +340,49 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		return errors.New("plan object client is required")
 	}
 	application.RollingBack = true
-	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
-		if index >= len(application.Patches) {
-			return errors.New("rollback requires in-process field writes")
+	var irreversible error
+	// Keep irreversible effects disclosed even when resuming a completed walk.
+	for i := 0; i < len(application.ActionsApplied) && i < len(application.Patches); i++ {
+		patch := application.Patches[i]
+		if patch.Operation == "delete" {
+			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible deletion of %s/%s was not restored; never auto-recreate", patch.Ref.Kind, patch.Ref.Name))
 		}
-		patch := application.Patches[index]
-		if patch.Before == nil || patch.After == nil {
-			return errors.New("rollback requires before and after images")
-		}
-		if err := e.restoreAction(ctx, patch); err != nil {
-			return err
-		}
-		application.RollbackCompleted++
 	}
-	application.RollingBack = false
+
+	// RollbackCompleted checkpoints only the contiguous processed suffix. If a
+	// step fails, still attempt every earlier write; idempotent restores safely
+	// revisit those successes on retry without skipping the failed step.
+	contiguous := true
+	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
+		restoreErr := func() error {
+			if index >= len(application.Patches) {
+				return errors.New("rollback requires in-process field writes")
+			}
+			patch := application.Patches[index]
+			if patch.Operation == "delete" {
+				return nil
+			}
+			if patch.Operation == "create" {
+				return e.restoreCreatedObject(ctx, patch)
+			}
+			if patch.Before == nil || patch.After == nil {
+				return errors.New("rollback requires before and after images")
+			}
+			return e.restoreAction(ctx, patch)
+		}()
+		if restoreErr != nil {
+			irreversible = errors.Join(irreversible, restoreErr)
+			contiguous = false
+		} else if contiguous {
+			application.RollbackCompleted++
+		}
+	}
+	application.RollingBack = application.RollbackCompleted < len(application.ActionsApplied)
+	if irreversible != nil {
+		application.RollbackError = irreversible.Error()
+		return irreversible
+	}
+
 	application.RolledBack = true
 	application.RollbackError = ""
 	return nil
@@ -311,9 +406,19 @@ func (e PlanExecutor) restoreAction(ctx context.Context, patch PlanPatch) error 
 }
 
 func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) error {
+	if patch.Structured {
+		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
+			return err
+		}
+	}
 	current, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil {
 		return err
+	}
+	if patch.Structured {
+		if err := e.Safety.checkObservedObject(current, patch.After, patch.Ref, false); err != nil {
+			return err
+		}
 	}
 	if current.GetUID() != patch.Before.GetUID() {
 		return fmt.Errorf("rollback conflict: %s/%s was recreated", patch.Ref.Kind, patch.Ref.Name)
@@ -333,6 +438,14 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			delete(restored.Object, field)
 		}
 	}
+	if patch.Structured {
+		if err := e.Safety.checkObservedObject(restored, patch.Before, patch.Ref, false); err != nil {
+			return err
+		}
+	}
+	if err := validateCredentialChannelDelta(patch.Before, restored); err != nil {
+		return err
+	}
 	from, _ := json.Marshal(current.Object)
 	to, _ := json.Marshal(restored.Object)
 	delta, err := jsonpatch.CreateMergePatch(from, to)
@@ -346,8 +459,36 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 	if err != nil {
 		return err
 	}
+	if patch.Structured {
+		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
+			return err
+		}
+		if err := e.validateAcceptedRevision(IncidentRequest{SourceCommit: patch.SourceCommit}); err != nil {
+			return err
+		}
+		// Restoring the captured pre-image does not require a new account grant.
+		// The channel subset check above refuses anything absent from that image.
+
+	}
 	if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
 		return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
+	}
+	if patch.Structured {
+		observed, err := e.Client.Get(ctx, patch.Ref)
+		if err != nil {
+			return fmt.Errorf("compensation observation unknown")
+		}
+		if err := e.Safety.checkObject(observed, patch.Ref); err != nil {
+			return err
+		}
+		if observed.GetUID() != current.GetUID() {
+			return fmt.Errorf("compensation observation unknown: UID changed")
+		}
+		for _, field := range []string{"spec", "data", "binaryData"} {
+			if !planValuesEqual(observed.Object[field], restored.Object[field]) {
+				return fmt.Errorf("compensation observation unknown: restored fields differ")
+			}
+		}
 	}
 	return nil
 }
@@ -551,7 +692,15 @@ func (e PlanExecutor) validateAcceptedRevision(incident IncidentRequest) error {
 	return nil
 }
 
-func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentRequest, action program.Action, current *unstructured.Unstructured, safe bool) (prepared *unstructured.Unstructured, prepareErr error) {
+	defer func() {
+		if prepareErr == nil {
+			prepareErr = e.validateCredentialDelta(ctx, current, prepared)
+			if prepareErr == nil {
+				prepareErr = e.Safety.enforceSourceAction(action, current, prepared)
+			}
+		}
+	}()
 	next := current.DeepCopy()
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
@@ -562,6 +711,11 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
+		if safe {
+			if err := e.Safety.checkObject(source, a.Ref); err != nil {
+				return nil, err
+			}
+		}
 		return sourceFields(next, source, a.Ref)
 	case program.Rollback:
 		if e.Source == nil || a.ToRevision == "" {
@@ -571,19 +725,40 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if err != nil {
 			return nil, err
 		}
+		if safe {
+			if err := e.Safety.checkObject(previous, a.Ref); err != nil {
+				return nil, err
+			}
+		}
 		return sourceFields(next, previous, a.Ref)
 	case program.SetField:
-		encoded, err := json.Marshal(a.Value)
+		var source map[string]any
+		if a.ValueFromSource {
+			if e.Source == nil || incident.SourceCommit == "" {
+				return nil, errors.New("accepted source is required")
+			}
+			if err := e.validateAcceptedRevision(incident); err != nil {
+				return nil, err
+			}
+			accepted, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, a.Ref)
+			if err != nil {
+				return nil, errors.New("accepted source lookup failed")
+			}
+			if err := e.Safety.checkObject(accepted, a.Ref); err != nil {
+				return nil, err
+			}
+			source = accepted.Object
+		}
+		err := program.ApplySetFieldAction(next.Object, a, source)
 		if err != nil {
 			return nil, err
 		}
-		var value any
-		if err := json.Unmarshal(encoded, &value); err != nil {
-			return nil, err
+		if a.Path == "spec.template.spec.serviceAccountName" {
+			if err := e.validateServiceAccount(ctx, a.Ref, next); err != nil {
+				return nil, err
+			}
 		}
-		if err := program.ApplySetField(next.Object, a.Path, value); err != nil {
-			return nil, err
-		}
+
 	case program.RestartRollout:
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
 			return nil, errors.New("RestartRollout requires an apps/v1 Deployment")
@@ -599,22 +774,22 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if a == nil {
 			return nil, errors.New("nil reconcile action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	case *program.Rollback:
 		if a == nil {
 			return nil, errors.New("nil rollback action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	case *program.SetField:
 		if a == nil {
 			return nil, errors.New("nil SetField action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	case *program.RestartRollout:
 		if a == nil {
 			return nil, errors.New("nil restart action")
 		}
-		return e.prepareAction(ctx, incident, *a, current)
+		return e.prepareAction(ctx, incident, *a, current, safe)
 	default:
 		return nil, fmt.Errorf("unsupported plan action %T", action)
 	}
@@ -635,6 +810,18 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := action.(type) {
+	case program.CreateFromSource:
+		return a.Ref, nil
+	case program.DeleteObject:
+		return a.Ref, nil
+	case *program.CreateFromSource:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.DeleteObject:
+		if a != nil {
+			return a.Ref, nil
+		}
 	case program.ReconcileFromSource:
 		return a.Ref, nil
 	case program.Rollback:
@@ -666,7 +853,8 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 }
 
 func validatePlanRef(ref sdk.ObjectRef) error {
-	if ref.APIVersion == "" || ref.Kind == "" || ref.Namespace == "" || ref.Name == "" {
+	clusterDelete := ref.APIVersion == "admissionregistration.k8s.io/v1" && (ref.Kind == "MutatingWebhookConfiguration" || ref.Kind == "ValidatingWebhookConfiguration") && ref.Namespace == ""
+	if ref.APIVersion == "" || ref.Kind == "" || (!clusterDelete && ref.Namespace == "") || ref.Name == "" {
 		return fmt.Errorf("plan action requires a namespaced object reference: %+v", ref)
 	}
 	return nil
