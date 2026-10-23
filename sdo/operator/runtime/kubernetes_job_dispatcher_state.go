@@ -10,8 +10,8 @@ import (
 
 // restoreToolState uses the same CAS ConfigMap state edge as the controller.
 // A separate incident-scoped state document avoids racing observation-state
-// saves while a responder Job uses tools. Selection facts and provider identity
-// survive source adoption; prepared plans and pre-images are never restored.
+// saves while a responder Job uses tools. Counters, session presentation and menu
+// reports survive a controller restart; prepared plans and pre-images are never restored.
 func (d KubernetesJobDispatcher) restoreToolState(ctx context.Context, request IncidentRequest, loop *ResponderLoop) error {
 	if d.Client == nil {
 		return nil

@@ -91,6 +91,10 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	report, err = menuExecutionJSON(report, r.MenuExecution)
+	if err != nil {
+		return nil, err
+	}
 	session, err := toolContractJSON(r.Session)
 	if err != nil {
 		return nil, err

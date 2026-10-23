@@ -100,3 +100,57 @@ func TestResponderMenuRendersDeclaredParameters(t *testing.T) {
 		}
 	}
 }
+
+func TestResponderMenuFailedVerificationRetainsApplicationForExplicitRollback(t *testing.T) {
+	loop, cluster := menuB3Loop(t)
+	loop.Request.RepairPolicy = "recorded-actions"
+	loop.Executor.Verifier = planFakeVerifier{false}
+	menu := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	executed := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: plainProgramOption(t, menu.Menu, 1), RoundLimit: 1}})
+	if executed.Report == nil || executed.Report.Status != contracts.MitigationReport_STATUS_UNRESOLVED {
+		t.Fatalf("want failed health report: %v", executed)
+	}
+	if executed.ApplicationID == "" {
+		t.Fatal("fully applied menu option omitted rollback application ID")
+	}
+	ports, _, _ := unstructuredPorts(cluster.objects[menuService].Object)
+	if ports[0].(map[string]any)["targetPort"] != float64(8080) {
+		t.Fatal("failed verification automatically undid the option")
+	}
+	rolled := loop.Handle(context.Background(), ToolRequest{Command: "rollback", ApplicationID: executed.ApplicationID})
+	if rolled.Error != "" {
+		t.Fatal(rolled.Error)
+	}
+	ports, _, _ = unstructuredPorts(cluster.objects[menuService].Object)
+	if ports[0].(map[string]any)["targetPort"] != float64(9999) {
+		t.Fatal("explicit rollback did not restore the pre-image")
+	}
+	for _, receipt := range loop.MenuRepairActions() {
+		if receipt.Success {
+			t.Fatal("rolled-back menu action retained success credit")
+		}
+	}
+}
+
+func TestResponderMenuSessionAndReportsSurviveToolRestore(t *testing.T) {
+	loop, _ := menuB3Loop(t)
+	loop.Request.RepairPolicy = "recorded-actions"
+	loop.Executor.Verifier = planFakeVerifier{true}
+	var saved []byte
+	loop.saveToolState = func(_ context.Context, payload []byte) error { saved = append([]byte(nil), payload...); return nil }
+	listing := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	execution := loop.Handle(context.Background(), ToolRequest{Command: "mitigate", Selection: &contracts.MitigationSelection{OptionId: plainProgramOption(t, listing.Menu, 1), RoundLimit: 1}})
+	replacement := NewResponderLoop(loop.Request, loop.Programs, loop.Provider, loop.Detectors, loop.Executor, 5)
+	replacement.MenuConfig = productionResponderMenu()
+	if err := replacement.restoreToolSnapshot(saved); err != nil {
+		t.Fatal(err)
+	}
+	opened := replacement.Handle(context.Background(), ToolRequest{Command: "session-open"})
+	if opened.Session.SessionId != listing.Menu.SessionId || replacement.LoopsUsed() != 1 {
+		t.Fatal("controller restart changed the session or reset rounds")
+	}
+	report := replacement.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: execution.Report.AttemptId}})
+	if report.Report == nil || len(report.MenuExecution) != 1 || report.MenuExecution[0].Plan == nil || len(replacement.MenuRepairActions()) != 1 {
+		t.Fatal("controller restart lost report or repair evidence")
+	}
+}

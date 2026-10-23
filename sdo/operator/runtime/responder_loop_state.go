@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 // responderToolState retains limits and revision-bound outcomes, never prepared
 // plans or mutation/rollback records. Version 1 journals are read only for these
 // facts; their application fields are deliberately ignored.
 type responderToolState struct {
+	SessionID      string
+	MenuSession    *contracts.MitigationSession
+	MenuReports    []*contracts.MitigationReport
+	MenuRepairs    []RepairActionReceipt
+	MenuExecutions map[string][]MenuRoundExecution
 	Version        int
 	IncidentID     string
 	SourceCommit   string
@@ -22,7 +28,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{Version: 2, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -42,6 +48,16 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	if state.Batches < 0 || state.MaxBatches < 0 {
 		return fmt.Errorf("invalid responder attempt budget")
 	}
+	if state.MenuSession != nil && (state.MenuSession.IncidentId != l.Request.IncidentID || state.MenuSession.SessionId != state.SessionID) {
+		return fmt.Errorf("responder menu session does not match incident")
+	}
+	if state.SessionID != "" {
+		l.sessionID = state.SessionID
+	}
+	l.menuSession = state.MenuSession
+	l.menuReports = state.MenuReports
+	l.menuRepairs = state.MenuRepairs
+	l.menuExecutions = state.MenuExecutions
 	l.batches = state.Batches
 	if state.MaxBatches > 0 && state.MaxBatches < l.MaxBatches {
 		l.MaxBatches = state.MaxBatches

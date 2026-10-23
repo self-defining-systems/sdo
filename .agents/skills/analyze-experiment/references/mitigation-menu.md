@@ -18,9 +18,13 @@ value is required to interpret these facts.
 Reports return into the same responder session. A failed option may be followed by
 another option or direct repair. Up to five rounds share the incident allowance across
 options and ordinary plan batches; smaller configured limits remain effective.
-Counters use the existing tools-state persistence. Session/checkpoint messages are
-presentation state, not mutation authority. There is no menu ledger, outbox or durable
-report-redelivery guarantee; historical ledger fields are retired on this path.
+Session identity, reports, repair receipts and counters use the existing tool-state snapshot.
+Session/checkpoint messages remain presentation state, not mutation authority. There is no
+menu ledger, report outbox or automatic replay; historical ledger fields are retired on this path.
+Fully applied options that fail verification remain applied. Each execution identifies its
+application and states whether changes remain, with the error and compensation status.
+The existing explicit rollback command works for in-process menu applications; rollback
+preimages are never persisted or restored. Only partial write failures auto-compensate.
 
 Menu action receipts enter `IncidentResult.repair_actions` with action identity,
 resources, timing, details and success. Menu reports are not legacy PlanApplication

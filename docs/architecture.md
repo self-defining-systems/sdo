@@ -120,7 +120,12 @@ and any error. Failed and successful reports return to the same responder sessio
 another option or fix the problem directly. The incident allowance is at most five rounds, shared
 across options and ordinary plan batches; a smaller configured allowance remains effective.
 Private session/checkpoint messages retain provider identity for presentation, without mutation authority.
-There is no selection journal, report outbox or menu-specific restart/fencing guarantee.
+Session presentation, reports, repair receipts and counters survive through the existing tool-state
+snapshot. There is no selection journal, report outbox or menu-specific mutation fence. In-process
+applications retain preimages for explicit `rollback`; preimages are never restored or replayed.
+A fully applied option that fails verification remains in place. Its report identifies the application,
+states whether changes remain and exposes the error; only a partial write failure triggers the
+ordinary executor's automatic compensation.
 
 Menu action receipts enter ordinary incident repair evidence. A terminal menu success is not independent
 broker closure or positive program trust credit. Controller health verification, broker ACK and the

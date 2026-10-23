@@ -114,6 +114,8 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		rr := &contracts.MitigationRoundReport{RoundIndex: round, RoundId: fmt.Sprintf("%s-r%d", attempt, round)}
 		report.Rounds = append(report.Rounds, rr)
 		l.batches++
+		// Preserve the ordinary incident counter before a potentially lost reply.
+		_ = l.persistToolState(ctx)
 		plan := program.Plan{}
 		var err error
 		if entry.action != nil {
@@ -142,9 +144,28 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			rr.Verification = menuErrorVerdict(err)
 			break
 		}
+		applicationID := fmt.Sprintf("%s-r%d", attempt, round)
+		description := MenuRoundExecution{RoundIndex: round, ApplicationID: applicationID, Plan: &contracts.Plan{Rationale: plan.Rationale}}
+		for _, action := range plan.Actions {
+			converted, convertErr := planActionProto(action)
+			if convertErr == nil {
+				description.Plan.Actions = append(description.Plan.Actions, converted)
+			}
+		}
 		started := time.Now().UTC()
 		result, applyErr := l.Executor.Apply(ctx, l.Request, plan, false)
 		completed := time.Now().UTC()
+		if result.Applied || result.PendingAction != nil {
+			l.applications[applicationID] = result
+			response.ApplicationID = applicationID
+		}
+		description.ChangesRemain = result.Applied && !result.RolledBack
+		description.RolledBack = result.RolledBack
+		description.Pending = result.PendingAction != nil
+		if applyErr != nil {
+			description.Error = boundedToolText(applyErr.Error())
+		}
+		response.MenuExecution = append(response.MenuExecution, description)
 		for index, patch := range result.Patches {
 			receipt := menuActionReceipt(menuActionID(attempt, round, index+1), patch.Ref)
 			receipt.State = contracts.MitigationActionReceipt_STATE_NOT_APPLIED
@@ -194,6 +215,10 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	}
 	report.RemainingBatches = uint32(max(0, min(5, l.MaxBatches)-l.batches))
 	l.menuReports = append(l.menuReports, cloneSelectionReport(report))
+	if l.menuExecutions == nil {
+		l.menuExecutions = map[string][]MenuRoundExecution{}
+	}
+	l.menuExecutions[attempt] = response.MenuExecution
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
 }

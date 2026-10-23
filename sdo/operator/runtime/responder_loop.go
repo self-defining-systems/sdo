@@ -45,6 +45,7 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	MenuExecution  []MenuRoundExecution         `json:"-"`
 	MenuParameters map[string][]MenuParameter   `json:"-"`
 	Menu           *contracts.MitigationMenu    `json:"-"`
 	Report         *contracts.MitigationReport  `json:"-"`
@@ -109,6 +110,7 @@ type ResponderLoop struct {
 	menuEntries                     map[string]menuEntry
 	menuSession                     *contracts.MitigationSession
 	menuReports                     []*contracts.MitigationReport
+	menuExecutions                  map[string][]MenuRoundExecution
 	menuRepairs                     []RepairActionReceipt
 	CheckHealth                     func(context.Context) error
 	CurrentEvidence                 func() *IncidentRequest
@@ -903,6 +905,7 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 		application.RollbackError = rollbackErr.Error()
 	}
 	l.applications[request.ApplicationID] = application
+	l.updateMenuRollback(request.ApplicationID, application)
 	for i := range l.applicationsLog {
 		if l.applicationsLog[i].ID == request.ApplicationID {
 			l.applicationsLog[i].Result = application
