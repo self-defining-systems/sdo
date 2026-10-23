@@ -1492,3 +1492,18 @@ def test_teardown_preserves_pending_state_when_controller_inventory_fails(tmp_pa
     assert not any(event[0] == "delete" for event in ops.events)
     assert PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel"].pending is not None
     assert not (tmp_path / "s0" / "agent" / REJECTED_RECEIPT_FILENAME).exists()
+
+
+def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp_path: Path) -> None:
+    inputs = _inputs(tmp_path, "s0")
+    ops = FakeOps()
+
+    def interrupted() -> bool:
+        state = PersistentState.load(inputs.state_path)
+        assert state.controllers == {}
+        assert state.cleanup_targets["hotel"].control_namespace == "hotel-sdo"
+        raise RuntimeError("launcher killed during installation")
+
+    with pytest.raises(RuntimeError, match="launcher killed"):
+        run_persistent_stage(inputs, ops=ops, run_lifecycle=interrupted, inject=lambda: None, clock=_clock(ops))
+    assert PersistentState.load(inputs.state_path).cleanup_targets["hotel"].namespace == "hotel"

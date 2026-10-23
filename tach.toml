@@ -81,6 +81,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.runner"
 depends_on = [
+    "benchmarks.sregym.adapter",
     "benchmarks.sregym.protocol",
 ]
 

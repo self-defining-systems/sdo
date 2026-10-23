@@ -444,7 +444,15 @@ def export_runtime_artifacts(config: NativeInstallConfig, output_dir: Path) -> P
     return expected
 
 
+def _record_launch(config: NativeInstallConfig) -> None:
+    from benchmarks.sregym.adapter.persistent import record_cleanup_target
+
+    kubeconfig = str(config.kubeconfig) if config.kubeconfig else os.getenv("KUBECONFIG")
+    record_cleanup_target(config.namespace, config.control_namespace, kubeconfig)
+
+
 def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
+    _record_launch(config)
     args = config.common_args()
     args.extend(("--repair-policy", config.repair_policy))
     args.extend(("--late-findings", config.late_findings))
@@ -508,6 +516,7 @@ def inspect_existing(config: NativeInstallConfig) -> NativeExistingReceipt:
 
 
 def launch_host(config: NativeHostConfig) -> dict[str, Any]:
+    _record_launch(config.install)
     args = config.install.common_args()
     args.extend(("--late-findings", config.install.late_findings))
     args.extend(("--reflection-session", config.install.reflection_session))
@@ -543,3 +552,21 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
         if not isinstance(value.get(field), str) or not re.fullmatch(r"[0-9a-f]{40}", value[field]):
             raise NativeOperatorError(f"Go host receipt lacks {field}")
     return value
+
+
+def stop_runtime(
+    control_namespace: str, *, kubeconfig: str | None = None, inspect: bool = False
+) -> dict[str, list[str]]:
+    """Delegate production runtime ownership to the Go operator, including deletion verification."""
+    args = ["--control-namespace", control_namespace, "--timeout", "60s"]
+    if kubeconfig:
+        args.extend(("--kubeconfig", kubeconfig))
+    if inspect:
+        args.append("--inspect")
+    result = json.loads(execute_operator("stop", args, timeout=75))
+    if not isinstance(result, dict) or any(
+        not isinstance(result.get(key), list) or any(not isinstance(item, str) for item in result[key])
+        for key in ("removed", "leftovers")
+    ):
+        raise NativeOperatorError("Go stop returned an invalid runtime inventory")
+    return result
