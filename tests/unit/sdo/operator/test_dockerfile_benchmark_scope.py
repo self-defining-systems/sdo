@@ -40,6 +40,16 @@ ALLOWED_FASTLOOP_FILES = {
     "benchmarks/sregym/fastloop/file_edits.py",
     "benchmarks/sregym/fastloop/recording_worker.py",
 }
+SCRIPTED_REPLAY_FILES = {
+    "benchmarks/sregym/adapter/scripted_worker.py",
+    "benchmarks/sregym/adapter/scripted_replay.py",
+    "benchmarks/sregym/adapter/scripted_replay_catalog.py",
+}
+SCRIPTED_PACKAGE_FILES = {
+    "benchmarks/__init__.py",
+    "benchmarks/sregym/__init__.py",
+    "benchmarks/sregym/adapter/__init__.py",
+}
 SCRIPTED_PROGRAM_FILES = {
     "benchmarks/sregym/fastloop/scripted_program/README.md",
     "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
@@ -138,7 +148,8 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
     scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
-    assert scripted == {"benchmarks/sregym/adapter/scripted_worker.py", *SCRIPTED_PROGRAM_FILES}
+    assert scripted == SCRIPTED_REPLAY_FILES | SCRIPTED_PROGRAM_FILES
+    assert SCRIPTED_REPLAY_FILES.isdisjoint(copied)
     guard_build = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "submission-guard-build"))
     assert guard_build == {
         "benchmarks/sregym/protocol/submission_go/go.mod",
@@ -165,9 +176,10 @@ def test_scripted_test_wrapper_adds_only_the_scripted_codex_and_nothing_from_exp
 
     assert leaked == set(), f"the :assure scripted wrapper would copy answer-key paths: {sorted(leaked)}"
     assert copied, "the scripted wrapper copies nothing"
-    assert all(path.startswith(SCRIPTED_ALLOWANCES) for path in copied), (
-        f"the scripted wrapper should add only {SCRIPTED_ALLOWANCES}, not {sorted(copied)}"
-    )
+    assert all(
+        path.startswith(SCRIPTED_ALLOWANCES) or path in SCRIPTED_REPLAY_FILES | SCRIPTED_PACKAGE_FILES
+        for path in copied
+    ), f"the scripted wrapper should add only {SCRIPTED_ALLOWANCES}, not {sorted(copied)}"
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == {
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
@@ -232,7 +244,7 @@ def test_sregym_responder_copy_matches_exactly_what_its_entry_points_import() ->
 def test_scripted_worker_stage_contains_only_its_entry_point_and_program() -> None:
     copied = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert copied == {
-        "benchmarks/sregym/adapter/scripted_worker.py",
+        *SCRIPTED_REPLAY_FILES,
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
         "benchmarks/sregym/fastloop/scripted_program/mitigate.go",
