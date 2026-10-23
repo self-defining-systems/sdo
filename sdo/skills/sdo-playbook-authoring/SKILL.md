@@ -6,6 +6,8 @@ description: Learn or refine reusable playbooks and deterministic Go programs fr
 # Authoring a playbook
 
 A playbook captures a verified failure mechanism and repair for reuse on different resources.
+Accepted Mitigators become responder menu options. Write each as a self-contained push-button option: group
+actions that must run together, and make its diagnosis and failure context specific enough for a useful report.
 The installed `sdo-memory` skill defines ownership, logical IDs and the generated decision/tool contract.
 
 1. Compare the confirmed mechanism and repair with accepted playbooks. Refine one when only identity or a

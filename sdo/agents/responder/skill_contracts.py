@@ -28,6 +28,13 @@ async def render_contract() -> str:
         "The worker task/result envelopes are transport-owned and are never authored by the model. "
         "The check_memory tool accepts the decision fields directly and writes the CLI file.\n\n"
         f"```json\n{json.dumps(schema, indent=2)}\n```",
+        "## Mitigation menu and responder continuity\n\n"
+        "Accepted Mitigators become menu options. Author each as a self-contained push-button repair, "
+        "grouping actions that must run together and supplying specific, nonsecret failure context. "
+        "The responder may read a failed option report and choose another option or repair directly in the "
+        "same session. Every round starts from a fresh cluster observation and shares the configured "
+        "incident allowance, which defaults to five rounds. An intermediate failure is not an independent "
+        "incident outcome or permission to reset the session or allowance.",
         "## Supported open phase selections\n\n"
         + "\n".join(
             f"- When captured, filename: open@{phase}.json; provenance open_at: {phase}."

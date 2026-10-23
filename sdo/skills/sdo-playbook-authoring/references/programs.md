@@ -4,6 +4,13 @@ Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a
 mitigation returns typed actions. Shared read helpers come from the diagnostics module's library packages.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
+Accepted Mitigators become selectable options in the responder menu. Reflection should author each as a
+self-contained push-button repair, grouping actions that must run together into one plan. Make preconditions,
+action reasons and failure context specific so the controller can report the failed phase, applied effects and
+safe changes. Keep credential or opaque content out of that context. A responder may observe the report and
+select another option or repair directly in the same session; do not assume one attempted option ends the
+incident. Each round uses a fresh observation within the shared incident allowance.
+
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
 The worker's authoring reference tool supplies the current worked routing example alongside this guide.

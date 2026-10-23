@@ -81,6 +81,10 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 }
 ```
 
+## Mitigation menu and responder continuity
+
+Accepted Mitigators become menu options. Author each as a self-contained push-button repair, grouping actions that must run together and supplying specific, nonsecret failure context. The responder may read a failed option report and choose another option or repair directly in the same session. Every round starts from a fresh cluster observation and shares the configured incident allowance, which defaults to five rounds. An intermediate failure is not an independent incident outcome or permission to reset the session or allowance.
+
 ## Supported open phase selections
 
 - When captured, filename: open@detect.json; provenance open_at: detect.
