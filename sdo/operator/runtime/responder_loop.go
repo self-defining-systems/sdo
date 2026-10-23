@@ -477,6 +477,9 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 		if err := json.Unmarshal(data, &captured); err != nil {
 			return nil, err
 		}
+		if observationGeneration(captured) != observationGeneration(snapshot) {
+			return nil, fmt.Errorf("observation scope changed; open capture is historical evidence only")
+		}
 		snapshot = captured
 	}
 	view := l.ReadView(snapshot)

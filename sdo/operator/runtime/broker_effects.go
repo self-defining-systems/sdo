@@ -82,6 +82,15 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
+	// Always refresh accepted scope here: restore and leadership adoption can
+	// retain a success verified before a policy update, even without a Step.
+	snapshot, err := c.provider.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("verify closure observation scope: %w", err)
+	}
+	if effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
+		return fmt.Errorf("observation scope changed; pending closure %s is superseded and requires fresh verification", effect.Closure.Request.IncidentID)
+	}
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
 		return err

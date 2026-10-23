@@ -335,7 +335,7 @@ class OperationalArtifactProposal(_message.Message):
     def __init__(self, detectors: _Optional[_Iterable[_Union[ProposedDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[ProposedPlaybook, _Mapping]]] = ..., traffic_generators: _Optional[_Iterable[_Union[ProposedTrafficGenerator, _Mapping]]] = ..., traffic_workloads: _Optional[_Iterable[_Union[_traffic_pb2.TrafficWorkload, _Mapping]]] = ..., delete_detector_ids: _Optional[_Iterable[str]] = ..., delete_playbook_ids: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class IncidentRequest(_message.Message):
-    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "fast_path_summary", "prepared_agent_task")
+    __slots__ = ("schema_version", "application", "namespace", "incident_id", "findings", "detector_history", "surfaced_playbooks", "relevant_outcomes", "source_commit", "deployed_commit", "repository_worktree", "repository_base_commit", "response_deadline", "cancellation_token", "repair_policy", "state_changes", "memory_snapshot", "initial_program_runs", "max_response_loops", "drift_events", "fast_path_summary", "prepared_agent_task", "observation_generation")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     APPLICATION_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
@@ -358,6 +358,7 @@ class IncidentRequest(_message.Message):
     DRIFT_EVENTS_FIELD_NUMBER: _ClassVar[int]
     FAST_PATH_SUMMARY_FIELD_NUMBER: _ClassVar[int]
     PREPARED_AGENT_TASK_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_GENERATION_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     application: str
     namespace: str
@@ -380,7 +381,8 @@ class IncidentRequest(_message.Message):
     drift_events: _containers.RepeatedCompositeFieldContainer[DriftEvent]
     fast_path_summary: str
     prepared_agent_task: str
-    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., fast_path_summary: _Optional[str] = ..., prepared_agent_task: _Optional[str] = ...) -> None: ...
+    observation_generation: str
+    def __init__(self, schema_version: _Optional[str] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., detector_history: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., surfaced_playbooks: _Optional[_Iterable[_Union[SurfacedPlaybook, _Mapping]]] = ..., relevant_outcomes: _Optional[_Iterable[_Union[PriorOutcomeEvidence, _Mapping]]] = ..., source_commit: _Optional[str] = ..., deployed_commit: _Optional[str] = ..., repository_worktree: _Optional[str] = ..., repository_base_commit: _Optional[str] = ..., response_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cancellation_token: _Optional[str] = ..., repair_policy: _Optional[str] = ..., state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., memory_snapshot: _Optional[_Union[OperationalMemorySnapshot, _Mapping]] = ..., initial_program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., max_response_loops: _Optional[int] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., fast_path_summary: _Optional[str] = ..., prepared_agent_task: _Optional[str] = ..., observation_generation: _Optional[str] = ...) -> None: ...
 
 class RootCauseEvidence(_message.Message):
     __slots__ = ("kind", "source", "observation")
@@ -617,7 +619,7 @@ class DetectorTimelineEntry(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbook_ids: _Optional[_Iterable[str]] = ..., first_activated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_seen_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., relation: _Optional[str] = ..., activations: _Optional[int] = ...) -> None: ...
 
 class IncidentClosure(_message.Message):
-    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers")
+    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
@@ -634,6 +636,7 @@ class IncidentClosure(_message.Message):
     VERIFIED_AT_FIELD_NUMBER: _ClassVar[int]
     HEALTH_CLEARED_AT_FIELD_NUMBER: _ClassVar[int]
     CLEANED_HELPERS_FIELD_NUMBER: _ClassVar[int]
+    OBSERVATION_GENERATION_FIELD_NUMBER: _ClassVar[int]
     request: IncidentRequest
     result: IncidentResult
     dispatch_error: str
@@ -650,4 +653,5 @@ class IncidentClosure(_message.Message):
     verified_at: _timestamp_pb2.Timestamp
     health_cleared_at: _timestamp_pb2.Timestamp
     cleaned_helpers: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ...) -> None: ...
+    observation_generation: str
+    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ...) -> None: ...

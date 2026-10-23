@@ -186,7 +186,8 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
 	result := &contracts.IncidentRequest{
-		SchemaVersion: request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
+		ObservationGeneration: request.ObservationGeneration,
+		SchemaVersion:         request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
 		IncidentId: request.IncidentID, Findings: make([]*contracts.Finding, 0, len(request.Findings)),
 		DetectorHistory: evaluationsContract(request.DetectorHistory), SurfacedPlaybooks: make([]*contracts.SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)),
 		RelevantOutcomes: make([]*contracts.PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)),
@@ -402,7 +403,8 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	// whole memory snapshot) that every later reader of the closure would otherwise copy.
 	request.PreparedAgentTask = ""
 	message := &contracts.IncidentClosure{
-		Request: request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
+		ObservationGeneration: closure.ObservationGeneration,
+		Request:               request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
 		IncidentDetectorStates:              evaluationsContract(closure.IncidentDetectorStates),
 		IncidentDetectorFiredBeforeDispatch: closure.IncidentDetectorFiredBeforeDispatch,
 		IncidentDetectorFiredAfterDispatch:  closure.IncidentDetectorFiredAfterDispatch,
@@ -499,7 +501,8 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		return nil
 	}
 	result := &IncidentRequest{
-		SchemaVersion: message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
+		ObservationGeneration: message.GetObservationGeneration(),
+		SchemaVersion:         message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
 		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
@@ -573,7 +576,8 @@ func optionalTimeState(at *timestamppb.Timestamp) *time.Time {
 
 func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 	closure := IncidentClosure{
-		DispatchError: message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
+		ObservationGeneration: message.GetObservationGeneration(),
+		DispatchError:         message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
 		IncidentDetectorStates:              evaluationsState(message.GetIncidentDetectorStates()),
 		DetectorTimeline:                    detectorTimelineState(message.GetDetectorTimeline()),
 		IncidentDetectorFiredBeforeDispatch: message.GetIncidentDetectorFiredBeforeDispatch(),
