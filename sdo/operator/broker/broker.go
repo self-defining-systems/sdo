@@ -478,7 +478,7 @@ func (b *Broker) locked(fn func() error) error {
 }
 
 func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string) (Receipt, error) {
-	if err := addIgnoredProgramMemory(ctx, stage, nil); err != nil {
+	if err := addIgnoredOperationalMemory(ctx, stage, nil); err != nil {
 		return Receipt{}, err
 	}
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
@@ -579,7 +579,7 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	if _, err := run("add", "-A"); err != nil {
 		return "", err
 	}
-	if err := addIgnoredProgramMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
+	if err := addIgnoredOperationalMemory(ctx, root, []string{"GIT_INDEX_FILE=" + index}); err != nil {
 		return "", err
 	}
 	tree, err := run("write-tree")
@@ -592,8 +592,8 @@ func ProposalTreeDigest(ctx context.Context, checkout string) (string, error) {
 	return tree, nil
 }
 
-func addIgnoredProgramMemory(ctx context.Context, root string, env []string) error {
-	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir} {
+func addIgnoredOperationalMemory(ctx context.Context, root string, env []string) error {
+	for _, part := range []string{layout.LibrariesDir, layout.CorpusDir, layout.RenderedDir} {
 		path := filepath.Join(root, part)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
@@ -603,7 +603,7 @@ func addIgnoredProgramMemory(ctx context.Context, root string, env []string) err
 			return err
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("program memory root must be a directory: %s", path)
+			return fmt.Errorf("operational memory root must be a directory: %s", path)
 		}
 		if _, err := runGitEnv(ctx, root, env, "add", "-f", "--all", "--", part); err != nil {
 			return err

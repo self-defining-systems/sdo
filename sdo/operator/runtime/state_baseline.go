@@ -225,6 +225,29 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	return changes
 }
 
+// recordDeployedImage fills the FX1 image store from an independently observed
+// completed rollout. A fresh tracker is used for lock construction, keeping the
+// healthy configuration-diff baseline and its settle lifecycle independent.
+func (t *StateTracker) recordDeployedImage(ref sdk.ObjectRef, container string, init bool, image, tree string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.images == nil {
+		t.images = &stateSnapshot{objects: map[string]objectState{}}
+	}
+	key := ref.Kind + "/" + ref.Name
+	state := t.images.objects[key]
+	if state == nil {
+		state = objectState{}
+		t.images.objects[key] = state
+	}
+	prefix := "container"
+	if init {
+		prefix = "initContainer"
+	}
+	state[prefix+"["+container+"].image"] = image
+	state["template.sourceTree"] = tree
+}
+
 // BaselineImage returns the image recorded before the current incident changed a workload.
 func (t *StateTracker) BaselineImage(ref sdk.ObjectRef, container string, init bool) (string, bool) {
 	t.mu.Lock()

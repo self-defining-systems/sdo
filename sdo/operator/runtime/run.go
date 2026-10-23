@@ -680,6 +680,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			stateTracker.Reset()
 		}
 	}
+	if options.NativeBroker != nil {
+		reconciler := RenderedLockReconciler{Source: planSource, Client: bootstrapProvider.Client, Broker: options.NativeBroker.Repository}
+		controller.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
+			return reconciler.Reconcile(ctx, revision, *namespace)
+		}
+	}
 	persistControllerState := func() {
 		if err := controller.PersistState(ctx); err != nil {
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)

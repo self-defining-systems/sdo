@@ -28,7 +28,7 @@ Production code must not import from SREGym packages. Benchmark adapters may imp
 
 ## SDO invariants
 
-- `.sdo/` contains the five durable artifact classes: goal, architecture, playbooks, diagnostics, and outcomes.
+- `.sdo/` contains the six durable artifact classes: goal, architecture, playbooks, diagnostics, outcomes, and rendered deployments.
 - Artifact ownership is enforced by the Go commit broker. Agents edit files in isolated checkouts; only validated commits reach the operational branch.
 - The health judge owns health detectors. Responders may add or refine incident detectors and playbooks after independently verified outcomes.
 - Detector runtime code is deterministic Go using `sdo/operator/sdk`; it must not call an LLM or inspect benchmark verdicts.

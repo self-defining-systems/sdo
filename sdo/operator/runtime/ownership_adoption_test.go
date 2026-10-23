@@ -346,7 +346,8 @@ func TestControllerAdoptsAvailableObjectsWithExplicitRenderGap(t *testing.T) {
 	controller, api, _, closeServer := adoptionController(t, 8080)
 	defer closeServer()
 	source, _, commit, _, _ := acceptedSourceDeployment(t, true)
-	source.Images = nil // A cold process has no healthy workload image evidence yet.
+	source.Images = nil // Cold readers must retain the durable lock.
+	commit = removeWorkloadLock(t, source, commit)
 	controller.config.SourceCommit = commit
 	controller.drift.Source = source
 	api.service.Spec.Selector = map[string]string{"app": "api"}

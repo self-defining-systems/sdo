@@ -148,13 +148,15 @@ type Controller struct {
 	timeline      []DetectorTimelineEntry
 	stateRestored bool
 
-	OnError          func(error)
-	OnResult         func(IncidentResult)
-	OnEvaluation     func([]sdk.Finding)
-	OnIncidentClosed func(IncidentClosure)
-	OnClosureFailed  func(ClosureFailure)
-	CanAct           func() bool
-	GuardAction      func(context.Context) (context.Context, context.CancelFunc, error)
+	// ReconcileRendered is the Go-only deployment lock publication edge.
+	ReconcileRendered func(context.Context, string) (string, error)
+	OnError           func(error)
+	OnResult          func(IncidentResult)
+	OnEvaluation      func([]sdk.Finding)
+	OnIncidentClosed  func(IncidentClosure)
+	OnClosureFailed   func(ClosureFailure)
+	CanAct            func() bool
+	GuardAction       func(context.Context) (context.Context, context.CancelFunc, error)
 	// now overrides the wall clock for closure and dispatch retry backoff in
 	// tests.
 	now func() time.Time
@@ -255,6 +257,28 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.processDispatchCompletions(now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()
+	c.mu.Lock()
+	reconcileReady := !c.incidentOpen && (c.broker == nil || !c.closureBlocksNextLocked())
+	c.mu.Unlock()
+	if c.ReconcileRendered != nil && reconcileReady {
+		actionCtx, cancel, err := c.actionContext(ctx)
+		revision := c.CurrentAcceptedCommit()
+		if err == nil {
+			revision, err = c.ReconcileRendered(actionCtx, revision)
+			cancel()
+		}
+		if err != nil {
+			if c.OnError != nil {
+				c.OnError(fmt.Errorf("reconcile rendered lock: %w", err))
+			}
+		}
+		if revision != c.CurrentAcceptedCommit() {
+			c.mu.Lock()
+			c.config.SourceCommit = revision
+			c.adoptionNeeded = true
+			c.mu.Unlock()
+		}
+	}
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange

@@ -62,3 +62,27 @@ SetField replay retains original direct-Pod TCP observations only when the full
 captured Pod object is unchanged. It never reuses Service probes or fixed answers
 to prove an effect. The installed routing example exercises this stricter
 predicate and complete repair-to-NoMatch replay through the shared compiler gate.
+
+## Rendered deployment lock (LK1, phase 1)
+
+New controllers publish the sixth artifact class at `.sdo/rendered/`: version-1
+`lock.json` indexes namespace-scoped objects, source commit, selected manifest
+paths, normalized YAML filenames and SHA-256 hashes, plus named regular/init
+container digests. A failed object has an explicit `error` entry. Only Go writes
+these files, through the broker after rollout observation and fresh-render checks.
+
+For post-memory-commit rendering failures, compare the Git tree of
+`.sdo/rendered/` before and after the `.sdo/` publication. It must be identical;
+the lock's `source_commit` need not equal the operational head. Compare application
+inputs outside `.sdo/` before calling a lock stale. Other application changes
+invalidate evidence until the completed deployment receives a new lock.
+`AcceptedManifest(s)`, adoption, drift and `sdo source` read this accepted snapshot.
+A cold restart no longer needs the former in-memory healthy image baseline.
+
+Missing lock/indexed YAML, hash mismatch and per-object `error` mean evidence
+gap, never absence or health. Inspect successful objects and retryable adoption
+coverage separately: a consul image gap must not suppress reservation Service
+drift. Lock publication uses an attributed `SDO-Actor: controller`,
+`SDO-Phase: rendered` broker commit; a crash before it leaves a gap and retries
+rollout observation, while a crash after it carries the accepted lock forward.
+No phase-2 diff, quarantine or revalidation behavior is implied.
