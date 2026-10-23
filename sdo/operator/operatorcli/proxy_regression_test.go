@@ -84,6 +84,7 @@ func TestCredentialPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.Header().Set("Authorization", "Bearer "+canary)
 				w.WriteHeader(tc.status)
@@ -310,6 +311,7 @@ func TestExecDryRunCannotHideFirstMutation(t *testing.T) {
 			dir := t.TempDir()
 			store, _ := apihistory.Open(dir, "synthetic", apihistory.Limits{})
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				if strings.HasSuffix(r.URL.Path, "/"+subresource) {
 					w.WriteHeader(200)
 					return
@@ -355,7 +357,10 @@ func TestSaturatedRecorderDoesNotDelayLargeForwarding(t *testing.T) {
 	for range 500 {
 		store.Record(apihistory.Event{Phase: "end", Verb: "get"}, nil)
 	}
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, payload) }))
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, payload)
+	}))
 	defer up.Close()
 	u, _ := url.Parse(up.URL)
 	proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
@@ -422,7 +427,7 @@ func TestStateMatchesExplicitGroupResourceAndListScope(t *testing.T) {
 // Reviewed projections are exercised through the HTTP proxy and persisted store,
 // for both objects and lists. Everything here is minimal synthetic test data.
 func TestOperationalFieldAllowlist(t *testing.T) {
-	container := `{"name":"web","image":"example.invalid/web:v1","ports":[{"name":"http","containerPort":8080,"protocol":"TCP"}],"readinessProbe":{"httpGet":{"path":"/ready","port":"http","scheme":"HTTP"},"initialDelaySeconds":2,"periodSeconds":3,"timeoutSeconds":1,"successThreshold":1,"failureThreshold":2},"livenessProbe":{"exec":{}},"startupProbe":{"tcpSocket":{"port":8080}},"resources":{"requests":{"cpu":"100m","memory":"32Mi"},"limits":{"cpu":"1","memory":"64Mi"}},"env":[{"name":"MODE","valueFrom":{"secretKeyRef":{"name":"settings","key":"mode","optional":false}}}],"envFrom":[{"configMapRef":{"name":"settings","optional":true}}],"volumeMounts":[{"name":"config"}]}`
+	container := `{"name":"web","image":"example.invalid/web:v1","ports":[{"name":"http","containerPort":8080,"protocol":"TCP"}],"readinessProbe":{"httpGet":{"port":"http","scheme":"HTTP"},"initialDelaySeconds":2,"periodSeconds":3,"timeoutSeconds":1,"successThreshold":1,"failureThreshold":2},"livenessProbe":{"exec":{}},"startupProbe":{"tcpSocket":{"port":8080}},"resources":{"requests":{"cpu":"100m","memory":"32Mi"},"limits":{"cpu":"1","memory":"64Mi"}},"env":[{"name":"MODE","valueFrom":{"secretKeyRef":{"name":"settings","key":"mode","optional":false}}}],"envFrom":[{"configMapRef":{"name":"settings","optional":true}}],"volumeMounts":[{"name":"config"}]}`
 	podSpec := `{"nodeName":"node-a","containers":[` + container + `],"initContainers":[` + container + `],"volumes":[{"name":"config"}]}`
 	conditions := `[{"type":"Ready","status":"False","reason":"ContainersNotReady"}]`
 	workload := `{"spec":{"replicas":2,"selector":{"matchLabels":{"app":""},"matchExpressions":[{"key":"tier","operator":"In"}]},"template":{"metadata":{"labels":{"app":""}},"spec":` + podSpec + `}},"status":{"replicas":2,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"conditions":` + conditions + `}}`
@@ -520,7 +525,10 @@ func TestOperationalFieldAllowlist(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(raw) }))
+				up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(raw)
+				}))
 				defer up.Close()
 				u, _ := url.Parse(up.URL)
 				proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
@@ -619,6 +627,7 @@ func TestEvidenceRewindsOperationalFieldsBeforeFirstMutation(t *testing.T) {
 	for _, tc := range []struct{ kind, path, before, after string }{
 		{"Service", "/api/v1/namespaces/app/p", `"spec":{"ports":[{"port":80,"targetPort":8080}]}`, `"spec":{"ports":[{"port":80,"targetPort":9090}]}`},
 		{"Deployment", "/apis/apps/v1/namespaces/app/p", `"spec":{"template":{"spec":{"containers":[{"name":"web","image":"example.invalid/web:old"}]}}}`, `"spec":{"template":{"spec":{"containers":[{"name":"web","image":"example.invalid/web:new"}]}}}`},
+		{"Pod", "/api/v1/namespaces/app/p", `"spec":{"containers":[{"name":"web","image":"example.invalid/web:old","ports":[{"containerPort":8080}],"readinessProbe":{"httpGet":{"port":8080,"scheme":"HTTP"},"periodSeconds":5}}],"initContainers":[{"name":"init","image":"example.invalid/init:old","ports":[{"containerPort":9090}],"startupProbe":{"tcpSocket":{"port":9090},"timeoutSeconds":2}}]},"status":{"conditions":[{"type":"Ready","status":"False","reason":"ReadinessGatesNotReady"}],"initContainerStatuses":[{"name":"init","image":"example.invalid/init:old","ready":false,"restartCount":2,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"Error","exitCode":1}}}]}`, `"spec":{"containers":[{"name":"web","image":"example.invalid/web:new","ports":[{"containerPort":8181}],"readinessProbe":{"httpGet":{"port":8181,"scheme":"HTTPS"},"periodSeconds":10}}],"initContainers":[{"name":"init","image":"example.invalid/init:new","ports":[{"containerPort":9191}],"startupProbe":{"tcpSocket":{"port":9191},"timeoutSeconds":3}}]},"status":{"conditions":[{"type":"Ready","status":"True","reason":"ContainersReady"}],"initContainerStatuses":[{"name":"init","image":"example.invalid/init:new","ready":true,"restartCount":2,"state":{"terminated":{"reason":"Completed","exitCode":0}}}]}`},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
 			dir := t.TempDir()
@@ -629,10 +638,13 @@ func TestEvidenceRewindsOperationalFieldsBeforeFirstMutation(t *testing.T) {
 			version, resource := "v1", "services"
 			if tc.kind == "Deployment" {
 				version, resource = "apps/v1", "deployments"
+			} else if tc.kind == "Pod" {
+				version, resource = "v1", "pods"
 			}
 			path := strings.TrimSuffix(tc.path, "p") + resource + "/p"
 			var changed atomic.Bool
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				if r.Method == "PATCH" {
 					changed.Store(true)
 				}
@@ -676,7 +688,7 @@ func TestEvidenceRewindsOperationalFieldsBeforeFirstMutation(t *testing.T) {
 				if err := json.Unmarshal([]byte("{"+want+"}"), &expected); err != nil {
 					t.Fatal(err)
 				}
-				if !reflect.DeepEqual(result.LastObserved["spec"], expected["spec"]) || !result.Unknown || result.LastObserved["redacted"] != true {
+				if !reflect.DeepEqual(result.LastObserved["spec"], expected["spec"]) || !reflect.DeepEqual(result.LastObserved["status"], expected["status"]) || !result.Unknown || result.LastObserved["redacted"] != true {
 					t.Errorf("wrong historical operational fields: %s", &out)
 				}
 			}

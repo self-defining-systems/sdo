@@ -56,15 +56,32 @@ payloads remain key names with empty values and no added labels. Service
 `spec.clusterIPPresent` and Pod `status.podIPPresent` are derived booleans, not IPs.
 Endpoints subsets and EndpointSlice objects expose `readyAddressCount` and
 `notReadyAddressCount` (unspecified EndpointSlice readiness counts as ready).
-Annotations, env values, command/args, probe exec commands/headers/hosts, mount
-paths and all messages stay opaque. Unknown fields and wrong JSON leaf shapes
+Annotations, env values, command/args, probe exec commands/headers/hosts, all HTTP
+probe paths (including segments, queries and fragments), mount paths and messages
+stay opaque. Probe handler kind, port, scheme and timing remain visible. Image
+references are parsed and normalized; invalid strings and URL credentials, queries
+and fragments are omitted, while valid repository/tag/digest identifiers remain.
+Condition, current/previous container-state and Event reasons outside the finite
+reviewed vocabulary become `redacted`; this marker does not identify the omitted
+reason. Constrained enums, quantities, CIDRs, named ports, timestamps and
+downward-API expressions are validated/canonicalized. Bulk env references expose
+only name/optional. Identifier names, label/selector keys, reference names/keys and
+valid image identifiers are an accepted disclosure policy, not proof that a
+user-chosen identifier cannot encode a secret. Existing blobs keep the policy of
+the writer that recorded them. Unknown fields and wrong JSON leaf shapes
 are dropped. Every projected object keeps `redacted: true`; absence of a field
 must not be read as evidence of its absence in Kubernetes. Label/selector keys
 alone cannot establish selector equality or backend membership. Older blobs may
-have only identity/key names; no store format migration is required. See
+have only identity/key names; no store format migration is required. Readiness
+gates, restartable-init semantics, exact probe requests/commands and individual
+endpoint identities remain unavailable, so these fields cannot fully explain
+every readiness failure. See
 `sdo/operator/apihistory/projection.go` for the enforced per-kind allowlist and exclusions. Controller snapshot projection is
 independent. Unknown representations, log bodies and streaming payloads retain
-envelopes only. Request bodies and headers are never stored; upstream error
+envelopes only. Body recording requires declared `application/json` (optionally
+UTF-8 charset) and absent/identity content encoding; unknown or protobuf MIME and
+compressed encodings remain unavailable even with JSON-shaped bytes. Request
+bodies and headers are never stored; upstream error
 logger text is discarded.
 
 Default incident limits are 64 MiB and 10,000 envelopes, with a queue bounded by 1,024 entries / 8 MiB

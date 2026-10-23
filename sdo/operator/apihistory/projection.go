@@ -7,7 +7,8 @@ import (
 )
 
 // History has its own positive allowlist, independent of controller snapshots.
-// A reviewed leaf accepts only its JSON scalar type; objects and arrays never
+// Identifiers use the documented disclosure policy; constrained string leaves
+// are validated by projection_leaves.go. Objects and arrays never
 // pass through wholesale. Adding a Kubernetes API field cannot widen storage.
 // Omitted fields remain opaque under the root redacted marker.
 type projection func(any) (any, bool)
@@ -16,12 +17,6 @@ type projectionFields map[string]projection
 func textField(v any) (any, bool)   { s, ok := v.(string); return s, ok }
 func numberField(v any) (any, bool) { n, ok := v.(float64); return n, ok }
 func boolField(v any) (any, bool)   { b, ok := v.(bool); return b, ok }
-func numberOrText(v any) (any, bool) {
-	if s, ok := textField(v); ok {
-		return s, true
-	}
-	return numberField(v)
-}
 func object(fields projectionFields) projection {
 	return func(v any) (any, bool) {
 		input, ok := v.(map[string]any)
@@ -86,14 +81,18 @@ func presence(fields projectionFields, source, target string) projection {
 
 var labelSelector = object(projectionFields{
 	"matchLabels":      keyNames,
-	"matchExpressions": array(object(projectionFields{"key": textField, "operator": textField})),
+	"matchExpressions": array(object(projectionFields{"key": textField, "operator": enumField("In", "NotIn", "Exists", "DoesNotExist")})),
 })
-var conditionFields = array(object(projectionFields{"type": textField, "status": textField, "reason": textField}))
+var conditionFields = array(object(projectionFields{"type": textField, "status": enumField("True", "False", "Unknown"), "reason": reasonField}))
 var referenceFields = object(projectionFields{"name": textField, "key": textField, "optional": boolField})
-var portFields = array(object(projectionFields{"name": textField, "port": numberField, "protocol": textField}))
+var bulkReferenceFields = object(projectionFields{"name": textField, "optional": boolField})
+var portFields = array(object(projectionFields{"name": textField, "port": numberField, "protocol": protocolField}))
+
+// HTTP request targets are opaque, including pathname segments, queries and
+// fragments. Keep handler kind, port, scheme and timing only.
 var probeFields = object(projectionFields{
-	"httpGet":             object(projectionFields{"path": textField, "port": numberOrText, "scheme": textField}),
-	"tcpSocket":           object(projectionFields{"port": numberOrText}),
+	"httpGet":             object(projectionFields{"port": portField, "scheme": enumField("HTTP", "HTTPS")}),
+	"tcpSocket":           object(projectionFields{"port": portField}),
 	"grpc":                object(projectionFields{"port": numberField}),
 	"exec":                object(projectionFields{}), // Handler presence only, never its command.
 	"initialDelaySeconds": numberField, "timeoutSeconds": numberField, "periodSeconds": numberField,
@@ -102,18 +101,18 @@ var probeFields = object(projectionFields{
 
 // CPU/memory/storage are reviewed resource names; arbitrary extended-resource
 // names and future resource-map values do not enter this projection.
-var resourceQuantities = object(projectionFields{"cpu": numberOrText, "memory": numberOrText, "ephemeral-storage": numberOrText, "storage": numberOrText})
+var resourceQuantities = object(projectionFields{"cpu": quantityField, "memory": quantityField, "ephemeral-storage": quantityField, "storage": quantityField})
 var containerFields = array(object(projectionFields{
-	"name": textField, "image": textField,
-	"ports":          array(object(projectionFields{"name": textField, "containerPort": numberField, "hostPort": numberField, "protocol": textField})),
+	"name": textField, "image": imageField,
+	"ports":          array(object(projectionFields{"name": textField, "containerPort": numberField, "hostPort": numberField, "protocol": protocolField})),
 	"readinessProbe": probeFields, "livenessProbe": probeFields, "startupProbe": probeFields,
 	"resources": object(projectionFields{"requests": resourceQuantities, "limits": resourceQuantities}),
 	"env": array(object(projectionFields{"name": textField, "valueFrom": object(projectionFields{
 		"secretKeyRef": referenceFields, "configMapKeyRef": referenceFields,
-		"fieldRef":         object(projectionFields{"apiVersion": textField, "fieldPath": textField}),
-		"resourceFieldRef": object(projectionFields{"containerName": textField, "resource": textField, "divisor": numberOrText}),
+		"fieldRef":         object(projectionFields{"apiVersion": enumField("v1"), "fieldPath": fieldPathField}),
+		"resourceFieldRef": object(projectionFields{"containerName": textField, "resource": resourceField, "divisor": quantityField}),
 	})})),
-	"envFrom":      array(object(projectionFields{"secretRef": referenceFields, "configMapRef": referenceFields})),
+	"envFrom":      array(object(projectionFields{"secretRef": bulkReferenceFields, "configMapRef": bulkReferenceFields})),
 	"volumeMounts": array(object(projectionFields{"name": textField})),
 }))
 var podSpecFields = object(projectionFields{
@@ -127,23 +126,23 @@ var workloadStatus = object(projectionFields{
 	"fullyLabeledReplicas": numberField, "conditions": conditionFields,
 })
 var containerState = object(projectionFields{
-	"waiting":    object(projectionFields{"reason": textField}),
+	"waiting":    object(projectionFields{"reason": reasonField}),
 	"running":    object(projectionFields{}),
-	"terminated": object(projectionFields{"reason": textField, "exitCode": numberField}),
+	"terminated": object(projectionFields{"reason": reasonField, "exitCode": numberField}),
 })
 var containerStatuses = array(object(projectionFields{
-	"name": textField, "image": textField, "ready": boolField, "restartCount": numberField,
+	"name": textField, "image": imageField, "ready": boolField, "restartCount": numberField,
 	"state": containerState, "lastState": containerState,
 }))
 var objectReference = object(projectionFields{"kind": textField, "namespace": textField, "name": textField, "apiVersion": textField})
-var metricTarget = object(projectionFields{"type": textField, "value": numberOrText, "averageValue": numberOrText, "averageUtilization": numberField})
+var metricTarget = object(projectionFields{"type": enumField("Utilization", "Value", "AverageValue"), "value": quantityField, "averageValue": quantityField, "averageUtilization": numberField})
 var metricIdentifier = object(projectionFields{"name": textField, "selector": labelSelector})
 var scalingRules = object(projectionFields{
-	"stabilizationWindowSeconds": numberField, "selectPolicy": textField,
-	"policies": array(object(projectionFields{"type": textField, "value": numberField, "periodSeconds": numberField})),
+	"stabilizationWindowSeconds": numberField, "selectPolicy": enumField("Max", "Min", "Disabled"),
+	"policies": array(object(projectionFields{"type": enumField("Pods", "Percent"), "value": numberField, "periodSeconds": numberField})),
 })
 var metricFields = array(object(projectionFields{
-	"type":              textField,
+	"type":              enumField("Resource", "ContainerResource", "Pods", "Object", "External"),
 	"resource":          object(projectionFields{"name": textField, "target": metricTarget}),
 	"containerResource": object(projectionFields{"name": textField, "container": textField, "target": metricTarget}),
 	"pods":              object(projectionFields{"metric": metricIdentifier, "target": metricTarget}),
@@ -152,9 +151,9 @@ var metricFields = array(object(projectionFields{
 }))
 var networkPeers = array(object(projectionFields{
 	"podSelector": labelSelector, "namespaceSelector": labelSelector,
-	"ipBlock": object(projectionFields{"cidr": textField, "except": array(textField)}),
+	"ipBlock": object(projectionFields{"cidr": cidrField, "except": array(cidrField)}),
 }))
-var networkPorts = array(object(projectionFields{"protocol": textField, "port": numberOrText, "endPort": numberField}))
+var networkPorts = array(object(projectionFields{"protocol": protocolField, "port": portField, "endPort": numberField}))
 
 func endpointSubset(v any) (any, bool) {
 	value, ok := object(projectionFields{"ports": portFields})(v)
@@ -197,34 +196,34 @@ func endpointSliceCounts(v any) (any, bool) {
 // Every retained nested field is enumerated here or in the shared shapes above.
 var operationalFields = map[string]projectionFields{
 	"Service": {"spec": presence(projectionFields{
-		"type": textField, "selector": keyNames,
-		"ports": array(object(projectionFields{"name": textField, "port": numberField, "targetPort": numberOrText, "protocol": textField, "nodePort": numberField})),
+		"type": enumField("ClusterIP", "NodePort", "LoadBalancer", "ExternalName"), "selector": keyNames,
+		"ports": array(object(projectionFields{"name": textField, "port": numberField, "targetPort": portField, "protocol": protocolField, "nodePort": numberField})),
 	}, "clusterIP", "clusterIPPresent")},
 	"Deployment": {"spec": object(projectionFields{
-		"replicas": numberField, "strategy": object(projectionFields{"type": textField}), "selector": labelSelector, "template": templateFields,
+		"replicas": numberField, "strategy": object(projectionFields{"type": enumField("Recreate", "RollingUpdate")}), "selector": labelSelector, "template": templateFields,
 	}), "status": workloadStatus},
 	"StatefulSet": {"spec": object(projectionFields{
-		"replicas": numberField, "updateStrategy": object(projectionFields{"type": textField}), "selector": labelSelector, "template": templateFields,
+		"replicas": numberField, "updateStrategy": object(projectionFields{"type": enumField("OnDelete", "RollingUpdate")}), "selector": labelSelector, "template": templateFields,
 	}), "status": workloadStatus},
 	"ReplicaSet": {"spec": object(projectionFields{"replicas": numberField, "selector": labelSelector, "template": templateFields}), "status": workloadStatus},
 	"Pod": {"spec": podSpecFields, "status": presence(projectionFields{
-		"phase": textField, "conditions": conditionFields, "containerStatuses": containerStatuses, "initContainerStatuses": containerStatuses,
+		"phase": enumField("Pending", "Running", "Succeeded", "Failed", "Unknown"), "conditions": conditionFields, "containerStatuses": containerStatuses, "initContainerStatuses": containerStatuses,
 	}, "podIP", "podIPPresent")},
 	"Endpoints":     {"subsets": array(endpointSubset)},
 	"EndpointSlice": {"ports": portFields},
-	"Event": {"type": textField, "reason": textField, "involvedObject": objectReference, "count": numberField,
-		"firstTimestamp": textField, "lastTimestamp": textField, "eventTime": textField,
-		"series": object(projectionFields{"count": numberField, "lastObservedTime": textField})},
+	"Event": {"type": enumField("Normal", "Warning"), "reason": reasonField, "involvedObject": objectReference, "count": numberField,
+		"firstTimestamp": timestampField, "lastTimestamp": timestampField, "eventTime": timestampField,
+		"series": object(projectionFields{"count": numberField, "lastObservedTime": timestampField})},
 	"HorizontalPodAutoscaler": {"spec": object(projectionFields{
 		"scaleTargetRef": objectReference, "minReplicas": numberField, "maxReplicas": numberField,
 		"targetCPUUtilizationPercentage": numberField, // autoscaling/v1
 		"metrics":                        metricFields, "behavior": object(projectionFields{"scaleUp": scalingRules, "scaleDown": scalingRules}),
 	})},
 	"PodDisruptionBudget": {"spec": object(projectionFields{
-		"minAvailable": numberOrText, "maxUnavailable": numberOrText, "selector": labelSelector, "unhealthyPodEvictionPolicy": textField,
+		"minAvailable": percentOrNumber, "maxUnavailable": percentOrNumber, "selector": labelSelector, "unhealthyPodEvictionPolicy": enumField("IfHealthyBudget", "AlwaysAllow"),
 	})},
 	"NetworkPolicy": {"spec": object(projectionFields{
-		"podSelector": labelSelector, "policyTypes": array(textField),
+		"podSelector": labelSelector, "policyTypes": array(enumField("Ingress", "Egress")),
 		"ingress": array(object(projectionFields{"from": networkPeers, "ports": networkPorts})),
 		"egress":  array(object(projectionFields{"to": networkPeers, "ports": networkPorts})),
 	})},

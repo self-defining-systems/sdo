@@ -257,10 +257,27 @@ keys with empty values; selector expressions retain keys/operators, never values
 Service clusterIP and Pod podIP become presence booleans; endpoint addresses become
 ready/not-ready counts. Secret/ConfigMap payloads remain key names only. All
 annotations, environment values, commands/arguments (including probe exec), probe
-headers/hosts, mount paths and messages stay opaque under an explicit `redacted`
-marker. Unknown fields and wrong JSON shapes cannot widen the allowlist. The
+headers/hosts and all HTTP probe paths (including pathname segments, queries and
+fragments), mount paths and messages stay opaque under an explicit `redacted`
+marker. Probe handler kind, port, scheme and timing remain visible. Image strings
+are parsed and normalized as named container references; invalid references, URL
+schemes, userinfo, queries and fragments are omitted, while valid repository, tag
+and digest identifiers remain visible. Conditions, current/previous container
+states and Events retain only the finite reason vocabulary in
+[projection_leaves.go](../sdo/operator/apihistory/projection_leaves.go); other string
+reasons become `redacted`. Closed enums, quantities, CIDRs, named ports, timestamps
+and downward-API expressions are validated, with canonical quantities, CIDRs and
+UTC timestamps. Bulk env references expose name/optional, never a key selector.
+Identity names, label/selector keys, reference names/keys and valid image
+identifiers are an accepted disclosure boundary: user-chosen identifiers can
+encode secrets, so this is not a universal credential-absence guarantee. These
+rules apply to new recordings; existing blobs retain their original projection.
+Unknown fields and wrong JSON shapes cannot widen the allowlist. The
 enforced field-by-field allowlist is in [projection.go](../sdo/operator/apihistory/projection.go). Unsupported representations,
-all log bodies, watches and connection payloads retain envelopes only. Headers
+all log bodies, watches and connection payloads retain envelopes only. Body
+capture requires declared `application/json` (optionally UTF-8 charset) and absent
+or identity `Content-Encoding`; other declarations remain metadata-only even if
+the bytes look like JSON. Forwarded status, headers and bytes are unchanged. Headers
 and request bodies are never recorded; the reverse proxy discards upstream error
 logger text, including body-copy errors.
 
