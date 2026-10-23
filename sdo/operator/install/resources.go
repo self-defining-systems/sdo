@@ -20,6 +20,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
@@ -37,7 +38,14 @@ const (
 )
 
 type Config struct {
-	ObservationCeiling                              sdk.ObservationScope
+	ResponderMenu        bool
+	PlanSourcePolicyJSON string
+	// PlanSafetyPolicyJSON and its reviewer-pinned hash are controller-only authority.
+	PlanSafetyPolicyJSON   string
+	PlanSafetyPolicySHA256 string
+	ObservationCeiling     sdk.ObservationScope
+	// PlanWebhookNames authorizes only named, independently reviewed webhook deletions.
+	PlanWebhookNames                                []string
 	Namespace, ControlNamespace, Application        string
 	ControllerImage, ResponderImage, ValidatorImage string
 	RepositoryPVC, CredentialsSecret, Model         string
@@ -116,6 +124,24 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if c.PlanSourcePolicyJSON != "" && (len(c.PlanSourcePolicyJSON) > 65536 || !json.Valid([]byte(c.PlanSourcePolicyJSON))) {
+		return errors.New("invalid source plan policy JSON")
+	}
+	if c.PlanSourcePolicyJSON != "" && c.PlanSafetyPolicyJSON != "" {
+		return errors.New("plan safety authority supplied twice")
+	}
+	if c.PlanSafetyPolicyJSON != "" || c.PlanSafetyPolicySHA256 != "" {
+		sum := sha256.Sum256([]byte(c.PlanSafetyPolicyJSON))
+		if len(c.PlanSafetyPolicyJSON) > 1024*1024 || c.PlanSafetyPolicySHA256 != hex.EncodeToString(sum[:]) {
+			return errors.New("reviewed plan safety policy hash mismatch or size limit")
+		}
+	}
+
+	for _, name := range c.planWebhookNames() {
+		if len(validation.IsDNS1123Subdomain(name)) > 0 {
+			return fmt.Errorf("invalid named plan webhook")
+		}
+	}
 	if err := c.ObservationCeiling.Validate(); err != nil {
 		return err
 	}
@@ -297,6 +323,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		return Plan{}, err
 	}
 	addObservationGrants(&plan, c)
+	addPlanWebhookGrants(c, &plan)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -312,6 +339,12 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		}
 		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
 	}
+	if len(c.planWebhookNames()) > 0 {
+		if plan.Job.Spec.Template.Annotations == nil {
+			plan.Job.Spec.Template.Annotations = map[string]string{}
+		}
+		plan.Job.Spec.Template.Annotations[PlanWebhookGrantAnnotation] = "configured"
+	}
 	fingerprintJob := plan.Job.DeepCopy()
 	fingerprintJob.Annotations = nil
 	encoded, err := json.Marshal(fingerprintJob)
@@ -326,6 +359,9 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 func programApplyRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		rule("", []string{"services"}, "get", "patch"),
+		rule("", []string{"serviceaccounts"}, "get"),
+		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "patch"),
+		rule("policy", []string{"poddisruptionbudgets"}, "get", "patch"),
 		rule("apps", []string{"deployments", "statefulsets", "daemonsets"}, "get", "patch"),
 		rule("apps", []string{"replicasets", "controllerrevisions"}, "get", "list"),
 	}
@@ -399,6 +435,12 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
 	}
+	if c.PlanSourcePolicyJSON != "" {
+		args = append(args, "--plan-source-policy-json", c.PlanSourcePolicyJSON)
+	}
+	if c.PlanSafetyPolicyJSON != "" || c.PlanSafetyPolicySHA256 != "" {
+		args = append(args, "--plan-safety-policy-json", c.PlanSafetyPolicyJSON, "--plan-safety-policy-sha256", c.PlanSafetyPolicySHA256)
+	}
 	if c.ProgramFastPath {
 		args = append(args, "--program-fast-path")
 	}
@@ -467,11 +509,16 @@ func controllerJob(c Config) *batchv1.Job {
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
 	policyJSON, _ := json.Marshal(c.ObservationCeiling)
+	menu := "0"
+	if c.ResponderMenu {
+		menu = "1"
+	}
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,
 		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: c.CredentialsSecret}}}},
 		Env: []corev1.EnvVar{
+			{Name: "SDO_RESPONDER_MENU", Value: menu},
 			{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"},
 			{Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"},
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},

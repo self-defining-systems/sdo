@@ -215,6 +215,11 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 		return Result{}, errors.New("completed installation requires repository synchronization")
 	}
 	if prior != nil {
+		if prior.Spec.Template.Annotations[PlanWebhookGrantAnnotation] != "" {
+			if err := i.removeUnconfiguredPlanWebhookGrant(ctx, cfg); err != nil {
+				return Result{}, err
+			}
+		}
 		if err := i.removeStalePermissiveGrants(ctx, cfg, prior); err != nil {
 			return Result{}, err
 		}

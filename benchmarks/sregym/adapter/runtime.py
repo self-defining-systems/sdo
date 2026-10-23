@@ -159,6 +159,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
         deployed_manifest_paths=config.deployed_manifest_paths,
+        seed_broker_root=Path(os.environ["SDO_SEED_BROKER_ROOT"]) if os.getenv("SDO_SEED_BROKER_ROOT") else None,
     )
 
 

@@ -34,7 +34,18 @@ class WorkerRequester(Protocol):
 
 def _check_recovery(reply: dict[str, Any]) -> None:
     if reply.get("protocol_version") == 2 and reply.get("success") is not True:
-        raise FastloopFaultError("full recovery failed; warm lane cannot be reused")
+        # Harness exception text can contain credential-bearing commands. Retain
+        # only typed component identity and known lifecycle status for diagnosis.
+        failures = []
+        errors = reply.get("errors")
+        for error in errors if isinstance(errors, list) else []:
+            if not isinstance(error, dict):
+                continue
+            index, status = error.get("component_index"), error.get("status")
+            if type(index) is int and index >= 0 and status in ("error", "timeout"):
+                failures.append(f"component {index}: {status}")
+        details = f" ({'; '.join(failures)})" if failures else ""
+        raise FastloopFaultError(f"full recovery failed; warm lane cannot be reused{details}")
 
 
 def _utc(epoch: object) -> datetime:
