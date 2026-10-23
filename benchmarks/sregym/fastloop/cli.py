@@ -545,6 +545,10 @@ def _run(args: argparse.Namespace) -> int:
             health_poll_seconds=min(1.0, args.time_scale),
             before_inject=before_inject,
             require_full_cleanup=args.require_full_cleanup,
+            require_faulty_oracle=getattr(args, "require_faulty_oracle", False),
+            pre_repair_oracle_path=results_dir / "pre-repair-oracle.json"
+            if getattr(args, "require_faulty_oracle", False)
+            else None,
         )
         config = replace(
             config,
@@ -910,6 +914,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("-n", "--incidents", type=int, default=1)
     run.add_argument("--slot-offset", type=int, default=0, help="global index of the first incident")
+    run.add_argument(
+        "--require-faulty-oracle", action="store_true", help="require a faulty official oracle before resuming repair"
+    )
     run.add_argument("--require-full-cleanup", action="store_true", help="require v2 recovery and application baseline")
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")

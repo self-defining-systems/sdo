@@ -367,3 +367,51 @@ def test_full_cleanup_requires_v2_success_and_baseline_reconciliation(reply: dic
 def test_full_cleanup_rejects_missing_baseline_before_injection() -> None:
     with pytest.raises(ValueError, match="baseline"):
         SregymFaultDriver(FakeWorker(), namespace="app", require_full_cleanup=True)
+
+
+@pytest.mark.parametrize(
+    ("success", "details"),
+    [(True, {}), (False, {"infra_error": "oracle unavailable"}), (False, {"oracles": [{"error": "query failed"}]})],
+)
+def test_rehearsal_rejects_unproven_fault_before_responder(success, details) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {"kind": "composition", "success": success, "details": details}
+            return super().request(op, timeout=timeout, **args)
+
+    with pytest.raises(InvalidInjectionError, match="injection_invalid"):
+        SregymFaultDriver(Worker(), namespace="app", require_faulty_oracle=True).inject("composite")
+
+
+def test_rehearsal_accepts_faulty_official_oracle() -> None:
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {"kind": "composition", "success": False, "details": {"oracles": [{"success": False}]}}
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(Worker(), namespace="app", require_faulty_oracle=True)
+    driver.inject("composite")
+    assert driver.last_pre_repair_oracle is not None
+    assert not driver.last_pre_repair_oracle.success
+
+
+def test_composite_rehearsal_checks_oracle_after_all_injections() -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            reply = super().request(op, timeout=timeout, **args)
+            if op == "inject":
+                index = sum(name == "inject" for name, _ in self.requests) - 1
+                return {**reply, "fault": index, "faults": [index]}
+            return reply
+
+    worker = Worker()
+    driver = SregymFaultDriver(worker, namespace="app", require_faulty_oracle=True)
+    with pytest.raises(InvalidInjectionError):
+        driver.inject_composite(["one", "two"])
+    assert [op for op, _ in worker.requests] == ["inject", "inject", "oracle"]

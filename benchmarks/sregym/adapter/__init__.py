@@ -50,8 +50,12 @@ if TYPE_CHECKING:
         RuntimeConfig,
         native_install_config,
     )
+    from benchmarks.sregym.adapter.scripted_replay import replay_recorded_repair
+    from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
 _EXPORTS: dict[str, str] = {
+    "replay_recorded_repair": "scripted_replay",
+    "SCRIPTED_REPLAY_SLOTS": "scripted_replay_catalog",
     "bind_state": "processes",
     "runtime_config_payload": "persistent",
     "runtime_config_from_payload": "persistent",
@@ -90,6 +94,8 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "replay_recorded_repair",
+    "SCRIPTED_REPLAY_SLOTS",
     "bind_state",
     "runtime_config_payload",
     "runtime_config_from_payload",

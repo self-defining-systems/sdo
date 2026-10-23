@@ -22,6 +22,7 @@ from google.protobuf import json_format
 from sdo.agents.responder import (
     KubernetesResultPublisher,
     ReflectionTurn,
+    recorded_actions,
     run_reflection_task,
     run_worker_task,
 )
@@ -115,8 +116,8 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
     )
     if kind == "Deployment":
         _command(
-            ["kubectl", "-n", request.namespace, "rollout", "status", f"deployment/{name}", "--timeout=120s"],
-            timeout=130,
+            ["kubectl", "-n", request.namespace, "rollout", "status", f"deployment/{name}", "--timeout=600s"],
+            timeout=610,
         )
 
 
@@ -270,6 +271,31 @@ def _assess_policy_drift(request: IncidentRequest, event: DriftEvent, label: Dri
 
 
 def scripted_responder(request: IncidentRequest) -> IncidentResult:
+    if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
+        from .scripted_replay import replay_recorded_repair as replay
+
+        def run(command: str, *, timeout: float = 300) -> tuple[int, str]:
+            completed = subprocess.run(
+                ["/bin/sh", "-c", command],
+                cwd=request.repository_worktree,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            return completed.returncode, completed.stdout + completed.stderr
+
+        recorded_actions.reset()
+        result = replay(
+            run,
+            int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"]),
+            json_format.MessageToDict(request, preserving_proto_field_name=True),
+            Path(request.repository_worktree),
+        )
+        result["schema_version"] = "sdo.dev/v1alpha1"
+        response = json_format.ParseDict(result, IncidentResult())
+        recorded_actions.merge_into(response)
+        return response
     started = _now()
     diagnosis = _tool("diagnose")
     plan_ids, programs = _matched_plans(diagnosis)
@@ -527,6 +553,13 @@ def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
 
 class ScriptedReflector:
     def resume(self, **kwargs: Any) -> ReflectionTurn:
+        if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
+            return ReflectionTurn(
+                summary="Recorded source restoration has no generalized program fixture",
+                learning_decision="no_change",
+                no_change_reason="Rehearsal verifies closure without inventing reusable memory",
+                playbook_ids=[],
+            )
         worktree = Path(kwargs["worktree"])
         incident = str(kwargs["incident_id"])
         capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))

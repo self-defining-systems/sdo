@@ -49,3 +49,47 @@ def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> No
     assert "--file " + str(ROOT / "benchmarks/sregym/Dockerfile.worker") in scripted[0]
     assert "--target scripted-worker" in scripted[0]
     assert "--build-arg SDO_RESPONDER_IMAGE=sdo-responder:level1" in scripted[0]
+
+
+def test_scripted_image_copy_set_can_import_both_replay_entry_points(tmp_path: Path) -> None:
+    """Model Docker COPY against an empty filesystem; no Docker/cluster is used."""
+    import shlex
+    import shutil
+    import sys
+
+    dockerfile = ROOT / "benchmarks/sregym/assurance/Dockerfile.scripted"
+    for line in dockerfile.read_text().splitlines():
+        if not line.startswith("COPY ") or "--from=" in line:
+            continue
+        *sources, destination = shlex.split(line)[1:]
+        target = tmp_path / destination.lstrip("/")
+        for source in sources:
+            source_path = ROOT / source
+            if source_path.is_dir():
+                shutil.copytree(source_path, target, dirs_exist_ok=True)
+            else:
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, target / source_path.name)
+    # The production base supplies these packages and installed dependencies.
+    (tmp_path / "opt/sdo").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "opt/sdo/sdo").symlink_to(ROOT / "sdo", target_is_directory=True)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import scripted_codex.cli; import benchmarks.sregym.adapter.scripted_worker as worker; "
+            "from pathlib import Path; Path(worker.__file__).relative_to(Path.cwd()); "
+            "from benchmarks.sregym.adapter import SCRIPTED_REPLAY_SLOTS; assert len(SCRIPTED_REPLAY_SLOTS) == 10",
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": f"{tmp_path}/opt/sdo:{tmp_path}/opt/sdo-scripted"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    worker = (ROOT / "benchmarks/sregym/Dockerfile.worker").read_text()
+    production, scripted = worker.split("AS scripted-worker", 1)
+    assert "scripted_replay_catalog.py" not in production
+    assert "scripted_replay.py" in scripted
+    assert "scripted_replay_catalog.py" in scripted
