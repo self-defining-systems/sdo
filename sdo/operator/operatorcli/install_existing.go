@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -124,12 +125,17 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *programTrustThreshold < 1 {
 		return InstallExistingConfig{}, errors.New("program trust threshold must be positive")
 	}
+	menu := os.Getenv("SDO_RESPONDER_MENU")
+	if menu != "" && menu != "0" && menu != "1" {
+		return InstallExistingConfig{}, errors.New("SDO_RESPONDER_MENU must be 0 or 1")
+	}
 	config := install.Config{
 		Namespace: *namespace, ControlNamespace: *controlNamespace, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxResponseLoops:     *maxResponseLoops,
+		ResponderMenu:        menu == "1",
 		PlanSourcePolicyJSON: sourcePolicyInput, PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		LateFindings:    *lateFindings,

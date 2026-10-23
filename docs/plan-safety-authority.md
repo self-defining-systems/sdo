@@ -20,6 +20,8 @@ RH3B/ST3 launch input: set `SDO_PLAN_SOURCE_POLICY_FILE` to the absolute path of
 
 After loading this policy, controller startup logs `plan_source_policy_loaded: true`, application/create/delete kind counts, and the document's SHA-256. It logs no policy values or object images. Launch preparation can exercise this startup path offline and assert a non-empty reviewed policy before Kubernetes setup; absent or invalid authority emits no successful load event.
 
+For the stream menu, `install-existing` forwards the host's `SDO_RESPONDER_MENU=1` into the controller Pod environment. Unset/`0` installs an explicit `0`; other values fail before resource application. This environment setting participates in the install fingerprint so enabling the menu cannot reuse an installation with the menu disabled.
+
 Generation runs when the controller constructs the incident responder loop, before responder plan output exists. A metadata-only identity epoch is cached for that incident; later requests and dry runs cannot refresh UIDs. The generator uses no fault catalog or benchmark verdict. The committed namespace/kind/name configuration is the reviewed authority; a launch hash is only transport integrity, since an administrator able to edit launch configuration controls both bytes and hash. Credential-bearing or otherwise forbidden source/live images continue to refuse even within the configured namespaces.
 
 Policy generation enumerates render-lock identities without loading arbitrary rendered objects, filters the explicit kinds, and reads only eligible source objects. It never expands into a Secret-content inventory. Lock omission merely nominates a delete candidate; the executor still requires authoritative accepted-source absence before the write.
