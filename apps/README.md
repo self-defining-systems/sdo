@@ -6,6 +6,7 @@ Some applications also participate in SREGym or deployment experiments. Applicat
 
 ## Applications
 
+- [astronomy_shop](./astronomy_shop)
 - [deathstarbench/hotelReservation](./deathstarbench/hotelReservation)
 - [deathstarbench/mediaMicroservices](./deathstarbench/mediaMicroservices)
 - [deathstarbench/socialNetwork](./deathstarbench/socialNetwork)
