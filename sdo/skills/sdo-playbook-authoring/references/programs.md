@@ -82,3 +82,5 @@ Write verification and compensation compare plan-owned fields and current UID, w
 HPA, PDB and named webhook effects require a direct current read. An unwatched kind stays unknown unless that read proves the effect and the verifier has no cached input for the kind; watched kinds still wait for their cache barrier.
 
 A cluster-scoped webhook delete proves source absence through the application’s current accepted render selection. Missing or stale lock evidence refuses; the installer’s exact-name webhook grant remains required.
+
+Credential safety also refuses deprecated identity aliases and unconfined storage. Pod and CronJob templates need explicit token automount disablement. NetworkPolicy repairs admit only bounded namespace-local pod-label peers; allow-all and cross-namespace routes refuse.
