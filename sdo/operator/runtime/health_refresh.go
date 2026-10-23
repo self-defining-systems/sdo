@@ -148,6 +148,25 @@ func (c *Controller) discardRestoredHealthObservations(now time.Time) {
 	c.forgetGate()
 }
 
+// prepareHealthEffects retires obsolete investigations at every driver entry,
+// including startup and maintenance pauses. It never evaluates application
+// detectors, and retirement must be durable before any effect is authorized.
+func (c *Controller) prepareHealthEffects(ctx context.Context, now time.Time) error {
+	if c.CheckHealth == nil {
+		return nil
+	}
+	if err := c.CheckHealth(ctx); err != nil {
+		if !errors.Is(err, ErrStaleHealthInvestigation) {
+			return err
+		}
+		if err := c.supersedeStaleHealth(ctx, now); err != nil {
+			return err
+		}
+		return c.CheckHealth(ctx)
+	}
+	return nil
+}
+
 // supersedeStaleHealth terminally archives obsolete evidence without submitting
 // a repair or a successful outcome. The archive outbox is persisted before new
 // incident effects can run. Late responder/broker completions no longer match.

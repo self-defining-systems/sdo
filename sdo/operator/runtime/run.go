@@ -749,6 +749,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			fmt.Fprintf(stderr, "persist controller state: %v\n", err)
 		}
 	}
+	if err := controller.prepareHealthEffects(runCtx, time.Now().UTC()); err != nil {
+		return err
+	}
 	if !desired.Paused {
 		kubernetesCache.Start(runCtx)
 		cacheStarted = true
@@ -775,7 +778,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return err
 		}
 	}
-	if err := executePendingEffects(runCtx, controller); err != nil {
+	if err := executeStartupEffects(runCtx, controller, desired.Paused); err != nil {
 		if runCtx.Err() != nil {
 			return nil
 		}
@@ -1260,13 +1263,19 @@ func defaultIdentity() string {
 	return hostname + "-" + strconv.Itoa(os.Getpid())
 }
 
+// executeStartupEffects keeps restored responder work pending during a pause.
+func executeStartupEffects(ctx context.Context, controller *Controller, paused bool) error {
+	if paused {
+		return executePausedEffects(ctx, controller)
+	}
+	return executePendingEffects(ctx, controller)
+}
+
 // executePausedEffects runs only operational-memory effects: a paused
 // controller neither prepares nor dispatches a responder.
 func executePausedEffects(ctx context.Context, controller *Controller) (err error) {
-	if controller.CheckHealth != nil {
-		if err := controller.CheckHealth(ctx); err != nil {
-			return err
-		}
+	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+		return err
 	}
 	defer func() {
 		if errors.Is(err, ErrEffectNotDurable) {
@@ -1289,10 +1298,8 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 }
 
 func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
-	if controller.CheckHealth != nil {
-		if err := controller.CheckHealth(ctx); err != nil {
-			return err
-		}
+	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+		return err
 	}
 	// A failed state write leaves effects pending for the next successful save.
 	defer func() {

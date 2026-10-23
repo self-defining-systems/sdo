@@ -267,7 +267,7 @@ func TestSR2dCrashProcess(t *testing.T) {
 	crashAt(state, cut, "before-adoption")
 	controller := crashController(t, root, receipt.Commit, state, cut)
 	crashAt(state, cut, "after-adoption")
-	if err := controller.Step(context.Background(), time.Unix(1000, 0).Add(time.Hour), nil); err != nil {
+	if err := executeStartupEffects(context.Background(), controller, true); err != nil {
 		t.Fatal(err)
 	}
 	t.Fatal("crash boundary was not reached")
@@ -457,6 +457,21 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 					t.Fatalf("stale ack: %v", err)
 				}
 			}
+			evaluations := 0
+			restarted.OnEvaluation = func([]sdk.Finding) { evaluations++ }
+			if err := executeStartupEffects(ctx, restarted, true); err != nil {
+				if timedOut(err) {
+					return
+				}
+				t.Fatalf("paused startup blocked recovery: %v", err)
+			}
+			if evaluations != 0 || restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 {
+				t.Fatal("paused recovery evaluated application or retained obsolete effects")
+			}
+			persisted, _, err := store.Load(ctx)
+			if err != nil || len(persisted.GetFailedClosures()) != 1 || !strings.Contains(persisted.GetClosureFailure().GetLastError(), "fresh investigation") {
+				t.Fatalf("paused startup missing durable visible failure: %v %v", persisted, err)
+			}
 			if err := restarted.Step(ctx, time.Unix(1000, 0).Add(time.Hour), nil); err != nil {
 				if timedOut(err) {
 					return
@@ -466,11 +481,13 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			if restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 || len(restarted.history) == 0 {
 				t.Fatal("obsolete evidence blocked evaluation or reached broker")
 			}
-			persisted, _, err := store.Load(ctx)
-			if err != nil || len(persisted.GetFailedClosures()) != 1 || !strings.Contains(persisted.GetClosureFailure().GetLastError(), "fresh investigation") {
-				t.Fatalf("missing durable visible failure: %v %v", persisted, err)
-			}
 			again := crashController(t, root, current.Commit, state, "")
+			if err := executeStartupEffects(ctx, again, true); err != nil {
+				if timedOut(err) {
+					return
+				}
+				t.Fatalf("terminal failure blocked another paused startup: %v", err)
+			}
 			if err := again.Step(ctx, time.Unix(1000, 0).Add(2*time.Hour), nil); err != nil || again.incidentOpen || again.closureBlocksNextLocked() {
 				if timedOut(err) {
 					return
