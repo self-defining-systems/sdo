@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", type=Path)
     parser.add_argument("--helpers", type=Path, help="JSON map of helper name to foreground argv; never persisted")
+    parser.add_argument("--detached-owner", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--guard", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -86,7 +87,9 @@ def main(argv: list[str] | None = None) -> int:
         for name, cmd in helpers.items()
     ):
         parser.error("helpers must map distinct names to nonempty foreground argv lists")
-    if os.getppid() == 1:
+    if args.detached_owner and sys.stdin.readline() != "go\n":
+        raise RuntimeError("detached launch record was not published")
+    if not args.detached_owner and os.getppid() == 1:
         raise RuntimeError("launcher invoker exited before lifetime tracking was established")
     register(state, ProcessRef.capture(os.getpid(), "launcher"), new_run=True)
     os.environ["SDO_RUN_REGISTRY_STATE"] = str(state)
@@ -110,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         # uv keeps a wrapper PID exposed by exec-based shell launchers. Watch
         # that wrapper too, without binding detached Python launches to a shell.
         parent_pid = os.getppid()
-        wrapper = Path(f"/proc/{parent_pid}/exe").readlink().name == "uv"
+        wrapper = not args.detached_owner and Path(f"/proc/{parent_pid}/exe").readlink().name == "uv"
         invoker = ProcessRef.capture(parent_pid, "invoker") if wrapper else None
         json.dump(
             {"command": command, "helpers": helpers, "invoker": invoker.model_dump() if invoker else None},

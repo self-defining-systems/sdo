@@ -32,7 +32,7 @@ The exact flags for tiers 0–1 are in [the testing guide](../../../docs/testing
 ## Rules
 
 - Before a live run, gates 0 and 1 must pass on the exact commit the images are built from.
-- Run live work from a frozen, detached worktree, so edits on the integration branch cannot change code under a running experiment.
+- Run live work from a frozen, detached worktree through the [detached launcher](../../../docs/testing-guide.md#detached-launches); adopt the shared lane record after an agent restart.
 - Before trusting a skip or a silent no-op, make it observable. A decision point that returns without a recorded reason (fast-path skip, drift deferral, learning failure) is a bug.
 - Scripted agents prove plumbing, not learning: they return hand-written verdicts and programs. Claim that SDO learned something only from a live run.
 - Make tests hermetic: no dependence on exported cluster prefixes, host paths or a warm cluster.
