@@ -35,6 +35,8 @@ import (
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
 	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
+	// PlanExecConfig supplies the existing controller transport; nil refuses Exec.
+	PlanExecConfig   *rest.Config
 	PlanSafety       *PlanSafetyPolicy
 	SourcePlanPolicy *SourcePlanPolicy
 	Args             []string
@@ -561,6 +563,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
+
 					AcceptedRevision: func() string {
 						if controller == nil {
 							return ""
