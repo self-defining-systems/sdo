@@ -325,7 +325,7 @@ func TestReject(t *testing.T){t.Fatal("sentinel detector failure")}
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
- return program.Plan{Actions:[]program.Action{program.SetField{Ref:b["service"],Path:"spec.ports[0].targetPort",Value:9999}}},nil
+ return program.Plan{Actions:[]program.Action{program.SetField{Ref:b.Objects["service"],Path:"spec.ports[0].targetPort",Value:program.FromObserved(b.Objects["service"],"spec.ports[0].targetPort")}}},nil
 }
 `, 0644)
 		}, []string{"program.mitigation-not-repaired"}, false},
@@ -335,7 +335,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 import ("context"; "sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
- return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b["service"]}}},nil
+ return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"]}}},nil
 }
 `, 0644)
 		}, nil, true},

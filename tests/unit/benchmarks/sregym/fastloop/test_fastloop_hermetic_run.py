@@ -67,9 +67,9 @@ func main() {
 		panic(err)
 	}
 	view := &sdktest.ReplayReadView{Snapshot: snapshot}
-	bindings := program.Bindings{
-		"service": sdk.ObjectRef{Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
-	}
+	bindings := program.Bindings{Objects: program.ObjectBindings{
+		"service": sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
+	}}
 	candidate := targetport.Program{}
 	verdict, err := candidate.Diagnose(context.Background(), view, bindings)
 	if err != nil {
@@ -86,8 +86,21 @@ func main() {
 	if !ok {
 		panic("expected SetField")
 	}
+	value, _, err := program.ResolveValue(action.Value, program.ValueInputs{Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
+        for _, pod := range snapshot.Pods() {
+            if ref.Kind == "Pod" && pod.Namespace == ref.Namespace && pod.Name == ref.Name {
+                raw, err := json.Marshal(pod)
+                if err != nil { return nil, err }
+                var object map[string]any
+                err = json.Unmarshal(raw, &object)
+                return object, err
+            }
+        }
+        return nil, os.ErrNotExist
+    }})
+    if err != nil { panic(err) }
 	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"result": verdict.Result, "path": action.Path, "value": action.Value,
+		"result": verdict.Result, "path": action.Path, "value": value,
 	}); err != nil {
 		panic(err)
 	}
@@ -165,6 +178,7 @@ class Application:
             {
                 "metadata": {
                     "name": f"{name}-pod",
+                    "resourceVersion": "hermetic-1",
                     "namespace": NAMESPACE,
                     "labels": service["spec"]["selector"],
                 },
@@ -377,7 +391,9 @@ class Controller(FakeOps):
                 runs = [
                     {
                         "program_id": scripted_worker.PROGRAM_ID,
-                        "bindings": {"service": {"kind": "Service", "namespace": NAMESPACE, "name": "geo"}},
+                        "bindings": {
+                            "objects": {"service": {"kind": "Service", "namespace": NAMESPACE, "name": "geo"}}
+                        },
                         "verdict": {"result": self.sweep_result["result"]},
                     }
                 ]
