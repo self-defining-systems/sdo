@@ -231,15 +231,32 @@ Incident responders never merge directly into the operational branch. The broker
 The installer defaults to its existing namespaced grants. Disposable benchmark
 lanes can explicitly select `--permissive-responder`, with repeatable
 `--responder-namespace policy-system` for fault backends. The Go installer
-enumerates namespaced API resources, including custom resources, and grants the
-responder broad access in those namespaces plus mutating/validating webhook
-configuration access. It requires a separate control namespace. Secret APIs,
-ServiceAccount token creation, impersonation, and RBAC bind/escalate remain
-excluded; there is no cluster-admin binding or subtractive wildcard rule.
-Workload restarts can consume already rotated Secrets. The controller and other
-worker grants retain their existing scope. Settings are bound to the installed
-Job, restored with namespace grants on reuse, and revoked on downgrade. New API
-resources require another install/inspection to refresh discovery. Benchmark
+enumerates concrete namespaced API resources, including custom resources and
+their subresources, and grants get/list/watch/create/update/patch/delete/
+deletecollection in the app and selected backend namespaces. Cluster access to
+mutating/validating webhook configurations is limited to get/list/watch/delete;
+create/update/patch could register a Secret-observing AdmissionReview endpoint,
+and RBAC cannot constrain webhook rules or destinations.
+
+Permissive discovery excludes Secret APIs and their subresources, TokenRequests,
+exec, attach, port-forward, ephemeral containers, CSRs/signers and nodes/proxy.
+Its explicit verb list excludes bind, escalate and impersonate for every API;
+RBAC writes remain subject to the apiserver's privilege-escalation checks.
+It requires a separate control namespace and rejects foreign kube-* namespaces.
+The baseline repair Role is literally unchanged, including app-namespace
+PodSpec writes, helper Jobs, logs, ConfigMaps and exec/attach/port-forward.
+Those pre-existing indirect Secret paths remain available. Discovery does not
+extend the streaming grant to backend namespaces.
+
+Broad backend workload/ServiceAccount/configuration writes, logs/proxy reads,
+takeover of an existing Secret-observing webhook's backend, and custom resources
+whose controllers may copy Secrets are accepted additional indirect paths for
+disposable benchmark repairs. This permission mode is not
+an end-to-end Secret confidentiality boundary. Other worker/controller grants
+retain their existing scope. Settings are bound to the installed Job, restored
+with namespace grants on reuse, and revoked on downgrade; reconciliation replaces
+old permissive Roles and ClusterRoles. New APIs require another install/inspection
+to refresh discovery. Benchmark
 capability policy and per-fault evidence stay under `benchmarks/sregym/`; they
 do not enter production worker tasks or prompts.
 

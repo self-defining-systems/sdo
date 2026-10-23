@@ -47,8 +47,8 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 			return fmt.Errorf("discover responder API resources: %w", err)
 		}
 		for _, r := range list.APIResources {
-			base, _, _ := strings.Cut(r.Name, "/")
-			if !r.Namespaced || base == "secrets" || r.Name == "serviceaccounts/token" {
+			verbs := permissiveResourceVerbs(gv.Group, r.Name)
+			if !r.Namespaced || len(verbs) == 0 {
 				continue
 			}
 			key := gv.Group + "/" + r.Name
@@ -56,12 +56,6 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 				continue
 			}
 			seen[key] = true
-			verbs := []string{"*"}
-			if gv.Group == "rbac.authorization.k8s.io" || (gv.Group == "" && base == "serviceaccounts") {
-				// Do not grant bind/escalate: the apiserver's privilege escalation
-				// checks must continue to prevent the responder acquiring Secret reads.
-				verbs = []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"}
-			}
 			rules = append(rules, rule(gv.Group, []string{r.Name}, verbs...))
 		}
 	}
@@ -79,7 +73,7 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		p.AppBindings = append(p.AppBindings, binding(ns, name, "sdo-responder", c.controlNamespace()))
 	}
 	p.ClusterRoles = append(p.ClusterRoles, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: []rbacv1.PolicyRule{
-		rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "*"),
+		rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "get", "list", "watch", "delete"),
 	}})
 	p.ClusterBindings = append(p.ClusterBindings, &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -87,6 +81,27 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-responder", Namespace: c.controlNamespace()}},
 	})
 	return nil
+}
+
+// Keep broad repair verbs on concrete discovered resources, without granting
+// identity/escalation verbs through a wildcard. This constrains only additional
+// grants: the baseline app repair Role remains unchanged. Workload writes and
+// controllers behind custom APIs can still expose Secrets indirectly.
+func permissiveResourceVerbs(group, resource string) []string {
+	base, _, _ := strings.Cut(resource, "/")
+	if base == "secrets" || group == "certificates.k8s.io" {
+		return nil
+	}
+	if group == "" {
+		switch resource {
+		case "pods/exec", "pods/attach", "pods/portforward", "pods/ephemeralcontainers", "serviceaccounts/token", "nodes/proxy":
+			return nil
+		}
+	}
+	if group == "admissionregistration.k8s.io" && (resource == "mutatingwebhookconfigurations" || resource == "validatingwebhookconfigurations") {
+		return []string{"get", "list", "watch", "delete"}
+	}
+	return []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"}
 }
 
 func (i Installer) resources(c Config) (Plan, error) {
