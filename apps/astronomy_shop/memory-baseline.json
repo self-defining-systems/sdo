@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "floor_mib": 128,
+  "headroom_multiplier": 2,
+  "rounding_mib": 64,
+  "measurement": {
+    "lane": "luna-pilot-52",
+    "date": "2026-10-23",
+    "chart_commit": "7d7b074714345a0c282b0be75af7a2c504b44c95",
+    "window_minutes": 90,
+    "users": 10,
+    "browser_traffic": false,
+    "peak_definition": "maximum of Prometheus container working set and total usage over 90 minutes, and live cgroup v2 memory.peak; zero for completed init containers without retained samples"
+  },
+  "containers": [
+    {
+      "kind": "DaemonSet",
+      "workload": "otel-collector-agent",
+      "container": "opentelemetry-collector",
+      "init": false,
+      "stock_limit_mib": 200,
+      "observed_peak_bytes": 209436672
+    },
+    {
+      "kind": "Deployment",
+      "workload": "grafana",
+      "container": "grafana-sc-alerts",
+      "init": false,
+      "stock_limit_mib": 100,
+      "observed_peak_bytes": 101232640
+    },
+    {
+      "kind": "Deployment",
+      "workload": "grafana",
+      "container": "grafana-sc-dashboard",
+      "init": false,
+      "stock_limit_mib": 100,
+      "observed_peak_bytes": 99418112
+    },
+    {
+      "kind": "Deployment",
+      "workload": "grafana",
+      "container": "grafana-sc-datasources",
+      "init": false,
+      "stock_limit_mib": 100,
+      "observed_peak_bytes": 99459072
+    },
+    {
+      "kind": "Deployment",
+      "workload": "grafana",
+      "container": "grafana",
+      "init": false,
+      "stock_limit_mib": 175,
+      "observed_peak_bytes": 185171968
+    },
+    {
+      "kind": "Deployment",
+      "workload": "jaeger",
+      "container": "jaeger",
+      "init": false,
+      "stock_limit_mib": 600,
+      "observed_peak_bytes": 21368832
+    },
+    {
+      "kind": "Deployment",
+      "workload": "accounting",
+      "container": "accounting",
+      "init": false,
+      "stock_limit_mib": 120,
+      "observed_peak_bytes": 189509632
+    },
+    {
+      "kind": "Deployment",
+      "workload": "accounting",
+      "container": "wait-for-kafka",
+      "init": true,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 0
+    },
+    {
+      "kind": "Deployment",
+      "workload": "ad",
+      "container": "ad",
+      "init": false,
+      "stock_limit_mib": 300,
+      "observed_peak_bytes": 277868544
+    },
+    {
+      "kind": "Deployment",
+      "workload": "cart",
+      "container": "cart",
+      "init": false,
+      "stock_limit_mib": 160,
+      "observed_peak_bytes": 66457600
+    },
+    {
+      "kind": "Deployment",
+      "workload": "cart",
+      "container": "wait-for-valkey-cart",
+      "init": true,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 0
+    },
+    {
+      "kind": "Deployment",
+      "workload": "checkout",
+      "container": "checkout",
+      "init": false,
+      "stock_limit_mib": 20,
+      "observed_peak_bytes": 21008384
+    },
+    {
+      "kind": "Deployment",
+      "workload": "checkout",
+      "container": "wait-for-kafka",
+      "init": true,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 0
+    },
+    {
+      "kind": "Deployment",
+      "workload": "currency",
+      "container": "currency",
+      "init": false,
+      "stock_limit_mib": 20,
+      "observed_peak_bytes": 6791168
+    },
+    {
+      "kind": "Deployment",
+      "workload": "email",
+      "container": "email",
+      "init": false,
+      "stock_limit_mib": 100,
+      "observed_peak_bytes": 67526656
+    },
+    {
+      "kind": "Deployment",
+      "workload": "flagd",
+      "container": "flagd",
+      "init": false,
+      "stock_limit_mib": 75,
+      "observed_peak_bytes": 58318848
+    },
+    {
+      "kind": "Deployment",
+      "workload": "flagd",
+      "container": "flagd-ui",
+      "init": false,
+      "stock_limit_mib": 250,
+      "observed_peak_bytes": 251977728
+    },
+    {
+      "kind": "Deployment",
+      "workload": "flagd",
+      "container": "init-config",
+      "init": true,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 0
+    },
+    {
+      "kind": "Deployment",
+      "workload": "fraud-detection",
+      "container": "fraud-detection",
+      "init": false,
+      "stock_limit_mib": 300,
+      "observed_peak_bytes": 296206336
+    },
+    {
+      "kind": "Deployment",
+      "workload": "fraud-detection",
+      "container": "wait-for-kafka",
+      "init": true,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 0
+    },
+    {
+      "kind": "Deployment",
+      "workload": "frontend",
+      "container": "frontend",
+      "init": false,
+      "stock_limit_mib": 250,
+      "observed_peak_bytes": 110575616
+    },
+    {
+      "kind": "Deployment",
+      "workload": "frontend-proxy",
+      "container": "frontend-proxy",
+      "init": false,
+      "stock_limit_mib": 65,
+      "observed_peak_bytes": 67964928
+    },
+    {
+      "kind": "Deployment",
+      "workload": "image-provider",
+      "container": "image-provider",
+      "init": false,
+      "stock_limit_mib": 50,
+      "observed_peak_bytes": 8523776
+    },
+    {
+      "kind": "Deployment",
+      "workload": "kafka",
+      "container": "kafka",
+      "init": false,
+      "stock_limit_mib": 600,
+      "observed_peak_bytes": 580599808
+    },
+    {
+      "kind": "Deployment",
+      "workload": "llm",
+      "container": "llm",
+      "init": false,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 81944576
+    },
+    {
+      "kind": "Deployment",
+      "workload": "load-generator",
+      "container": "load-generator",
+      "init": false,
+      "stock_limit_mib": 1500,
+      "observed_peak_bytes": 90128384
+    },
+    {
+      "kind": "Deployment",
+      "workload": "load-generator",
+      "container": "locust-exporter",
+      "init": false,
+      "stock_limit_mib": 64,
+      "observed_peak_bytes": 27291648
+    },
+    {
+      "kind": "Deployment",
+      "workload": "payment",
+      "container": "payment",
+      "init": false,
+      "stock_limit_mib": 140,
+      "observed_peak_bytes": 109518848
+    },
+    {
+      "kind": "Deployment",
+      "workload": "postgresql",
+      "container": "postgresql",
+      "init": false,
+      "stock_limit_mib": 100,
+      "observed_peak_bytes": 103563264
+    },
+    {
+      "kind": "Deployment",
+      "workload": "product-catalog",
+      "container": "product-catalog",
+      "init": false,
+      "stock_limit_mib": 20,
+      "observed_peak_bytes": 20971520
+    },
+    {
+      "kind": "Deployment",
+      "workload": "product-reviews",
+      "container": "product-reviews",
+      "init": false,
+      "stock_limit_mib": 100,
+      "observed_peak_bytes": 90091520
+    },
+    {
+      "kind": "Deployment",
+      "workload": "quote",
+      "container": "quote",
+      "init": false,
+      "stock_limit_mib": 40,
+      "observed_peak_bytes": 25899008
+    },
+    {
+      "kind": "Deployment",
+      "workload": "recommendation",
+      "container": "recommendation",
+      "init": false,
+      "stock_limit_mib": 500,
+      "observed_peak_bytes": 58785792
+    },
+    {
+      "kind": "Deployment",
+      "workload": "shipping",
+      "container": "shipping",
+      "init": false,
+      "stock_limit_mib": 20,
+      "observed_peak_bytes": 30273536
+    },
+    {
+      "kind": "Deployment",
+      "workload": "valkey-cart",
+      "container": "valkey-cart",
+      "init": false,
+      "stock_limit_mib": 20,
+      "observed_peak_bytes": 19718144
+    },
+    {
+      "kind": "StatefulSet",
+      "workload": "opensearch",
+      "container": "opensearch",
+      "init": false,
+      "stock_limit_mib": 1100,
+      "observed_peak_bytes": 1153433600
+    },
+    {
+      "kind": "StatefulSet",
+      "workload": "opensearch",
+      "container": "configfile",
+      "init": true,
+      "stock_limit_mib": 0,
+      "observed_peak_bytes": 0
+    }
+  ]
+}

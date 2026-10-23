@@ -70,7 +70,7 @@ def test_astronomy_baseline_resources_and_metrics_match_running_components() -> 
     objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
     indexed = {(o["kind"], o["metadata"]["name"]): o for o in objects}
     expected = {
-        ("accounting", "accounting"): "256Mi",
+        ("accounting", "accounting"): "384Mi",
         ("shipping", "shipping"): "128Mi",
         ("flagd", "flagd-ui"): "512Mi",
     }
@@ -141,3 +141,50 @@ def test_astronomy_renderer_preserves_baseline_policy(tmp_path, monkeypatch) -> 
     for o in output:
         if o["kind"] == "Service" and o["metadata"]["name"] in {"opensearch", "opensearch-headless"}:
             assert {p["port"] for p in o["spec"]["ports"]} == {9200, 9300}
+
+
+def test_astronomy_memory_rule_covers_every_container_and_preserves_requests() -> None:
+    """All application/telemetry/init containers receive measured headroom."""
+    import copy
+    import math
+
+    spec = importlib.util.spec_from_file_location("astronomy_memory_render", APP / "render.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    policy = json.loads((APP / "memory-baseline.json").read_text())
+    measurements = {(r["kind"], r["workload"], r["container"], r["init"]): r for r in policy["containers"]}
+    objects = list(yaml.safe_load_all((APP / "kubernetes/astronomy-shop.yaml").read_text()))
+    seen = set()
+    for obj in objects:
+        if obj["kind"] not in {"Deployment", "StatefulSet", "DaemonSet"}:
+            continue
+        stock = copy.deepcopy(obj)
+        for group in ("containers", "initContainers"):
+            for c in stock["spec"]["template"]["spec"].get(group, []):
+                key = (obj["kind"], obj["metadata"]["name"], c["name"], group == "initContainers")
+                row = measurements[key]
+                seen.add(key)
+                resources = c.setdefault("resources", {})
+                if row["stock_limit_mib"]:
+                    resources.setdefault("limits", {})["memory"] = f"{row['stock_limit_mib']}Mi"
+                else:
+                    resources.get("limits", {}).pop("memory", None)
+        before = copy.deepcopy(stock)
+        module.prepare_baseline(stock)
+        for group in ("containers", "initContainers"):
+            actual = stock["spec"]["template"]["spec"].get(group, [])
+            original = before["spec"]["template"]["spec"].get(group, [])
+            checked_in = obj["spec"]["template"]["spec"].get(group, [])
+            for c, prior, checked in zip(actual, original, checked_in, strict=True):
+                row = measurements[obj["kind"], obj["metadata"]["name"], c["name"], group == "initContainers"]
+                expected = max(
+                    128, row["stock_limit_mib"], math.ceil(2 * row["observed_peak_bytes"] / (64 * 2**20)) * 64
+                )
+                assert c["resources"]["limits"]["memory"] == f"{expected}Mi", (obj["metadata"]["name"], c["name"])
+                assert checked["resources"]["limits"]["memory"] == f"{expected}Mi"
+                assert c["resources"].get("requests") == prior["resources"].get("requests")
+                assert c["resources"]["limits"].get("cpu") == prior["resources"].get("limits", {}).get("cpu")
+    assert seen == set(measurements)
+    assert len(seen) == 37

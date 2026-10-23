@@ -1,6 +1,7 @@
 """Render pinned chart inputs into SDO's plain Kubernetes source manifests."""
 
 import json
+import math
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -8,15 +9,31 @@ from typing import Any
 import yaml
 
 
+MEMORY_BASELINE = json.loads((Path(__file__).resolve().parent / "memory-baseline.json").read_text())
+MEMORY_PEAKS = {(r["kind"], r["workload"], r["container"], r["init"]): r["observed_peak_bytes"]
+                for r in MEMORY_BASELINE["containers"]}
+
+
 def prepare_baseline(obj: dict[str, Any]) -> None:
     """Keep the pinned chart's declared baseline consistent with its images."""
     kind, name = obj["kind"], obj["metadata"]["name"]
-    if kind == "Deployment":
-        limits = {("accounting", "accounting"): "256Mi", ("shipping", "shipping"): "128Mi",
-                  ("flagd", "flagd-ui"): "512Mi"}
-        for container in obj["spec"]["template"]["spec"]["containers"]:
-            if memory := limits.get((name, container["name"])):
-                container["resources"]["limits"]["memory"] = memory
+    if kind in {"Deployment", "StatefulSet", "DaemonSet"}:
+        for group in ("containers", "initContainers"):
+            for container in obj["spec"]["template"]["spec"].get(group, []):
+                key = (kind, name, container["name"], group == "initContainers")
+                if key not in MEMORY_PEAKS:
+                    raise ValueError(f"memory baseline measurement required for {key}")
+                resources = container.get("resources") or {}
+                container["resources"] = resources
+                limits = resources.setdefault("limits", {})
+                stock = limits.get("memory", "0Mi")
+                if not stock.endswith("Mi"):
+                    raise ValueError(f"expected pinned chart memory in Mi for {key}: {stock}")
+                quantum = MEMORY_BASELINE["rounding_mib"]
+                headroom = math.ceil(
+                    MEMORY_BASELINE["headroom_multiplier"] * MEMORY_PEAKS[key] / (quantum * 2**20)
+                ) * quantum
+                limits["memory"] = f'{max(int(stock[:-2]), MEMORY_BASELINE["floor_mib"], headroom)}Mi'
     if kind == "ConfigMap" and name == "otel-collector-agent":
         config = yaml.safe_load(obj["data"]["relay"])
         readers = config["service"]["telemetry"]["metrics"]["readers"]
