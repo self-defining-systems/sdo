@@ -141,3 +141,23 @@ func (v Verdict) Validate() error
 
 ```
 
+```text
+package routing // import "sdo.dev/operator/sdk/routing"
+
+Package routing proposes narrow targetPort repairs from observed Pod listeners.
+
+TYPES
+
+type Program struct{}
+    Program diagnoses and proposes a repair for a single numeric TCP targetPort.
+    It requires successful listener probes and failed probes of the current
+    port.
+
+func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error)
+
+func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error)
+
+func (Program) Spec() program.ProgramSpec
+
+```
+

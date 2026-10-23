@@ -623,6 +623,23 @@ func (p Policy) Validate() error
 ```
 
 ```text
+package observe // import "sdo.dev/operator/sdk/observe"
+
+Package observe provides snapshot-only candidate symptom detectors. Candidates
+do not attribute causes or certify health recovery.
+
+FUNCTIONS
+
+func NewDetector(spec sdk.DetectorSpec, kind string) sdk.Detector
+    NewDetector observes candidate symptoms for Service, Deployment, ConfigMap,
+    or NetworkPolicy. The caller owns policy, playbooks and provenance in spec.
+    NetworkPolicy candidates merely identify existing policies, not harmful
+    ones. Unsupported kinds produce no findings. Findings bind the candidate as
+    target.
+
+```
+
+```text
 package traffic // import "sdo.dev/operator/sdk/traffic"
 
 Package traffic is SDO's app-agnostic synthetic-traffic health machinery.
