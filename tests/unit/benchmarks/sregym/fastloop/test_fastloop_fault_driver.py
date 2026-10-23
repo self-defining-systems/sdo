@@ -433,3 +433,36 @@ def test_composite_rehearsal_checks_oracle_after_all_injections() -> None:
     with pytest.raises(InvalidInjectionError):
         driver.inject_composite(["one", "two"])
     assert [op for op, _ in worker.requests] == ["inject", "inject", "oracle"]
+
+
+@pytest.mark.parametrize("valkey_success", [True, False, None])
+def test_required_component_fault_cannot_be_masked_by_another_fault(valkey_success) -> None:
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    class Worker(FakeWorker):
+        def request(self, op, *, timeout=0, **args):
+            if op == "oracle":
+                return {
+                    "kind": "composition",
+                    "success": False,
+                    "details": {
+                        "oracles": [
+                            {"name": "fault_0:ReadinessProbeMisconfiguration", "success": False},
+                            {"name": "fault_1:ValkeyMemoryDisruption", "success": valkey_success},
+                        ]
+                    },
+                }
+            return super().request(op, timeout=timeout, **args)
+
+    driver = SregymFaultDriver(
+        Worker(),
+        namespace="app",
+        require_faulty_oracle=True,
+        required_faulty_components=("fault_1:ValkeyMemoryDisruption",),
+    )
+    if valkey_success is False:
+        driver.inject("composite")
+    else:
+        with pytest.raises(InvalidInjectionError) as error:
+            driver.inject("composite")
+        assert "required component fault_1:ValkeyMemoryDisruption" in error.value.details["reason"]

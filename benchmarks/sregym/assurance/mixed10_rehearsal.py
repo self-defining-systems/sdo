@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def runner_arguments(slot: int, run_dir: Path, output: Path) -> list[str]:
     directive_for(slot)  # Validate even for dry runs.
-    return [
+    arguments = [
         "run",
         "--run-dir",
         str(run_dir),
@@ -63,6 +63,10 @@ def runner_arguments(slot: int, run_dir: Path, output: Path) -> list[str]:
         "--diagnosis-grading",
         "off",
     ]
+
+    if slot == 6:
+        arguments.extend(["--require-faulty-component", "fault_1:ValkeyMemoryDisruption"])
+    return arguments
 
 
 def prepare(slot: int, output: Path) -> None:

@@ -88,6 +88,7 @@ class SregymFaultDriver:
         require_full_cleanup: bool = False,
         require_faulty_oracle: bool = False,
         pre_repair_oracle_path: Path | None = None,
+        required_faulty_components: tuple[str, ...] = (),
     ) -> None:
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
@@ -97,6 +98,13 @@ class SregymFaultDriver:
             raise ValueError("full cleanup requires an application baseline and cluster")
         if type(require_faulty_oracle) is not bool:
             raise TypeError("require_faulty_oracle must be a boolean")
+        if not isinstance(required_faulty_components, tuple) or any(
+            not isinstance(name, str) or not name for name in required_faulty_components
+        ):
+            raise TypeError("required_faulty_components must be a tuple of nonempty names")
+        if required_faulty_components and not require_faulty_oracle:
+            raise ValueError("required components need require_faulty_oracle")
+        self._required_faulty_components = required_faulty_components
         self._require_faulty_oracle = require_faulty_oracle
         self._pre_repair_oracle_path = pre_repair_oracle_path
         self.last_pre_repair_oracle: OracleVerdict | None = None
@@ -188,6 +196,18 @@ class SregymFaultDriver:
             if isinstance(value, list):
                 return any(ungradable(v) for v in value)
             return False
+
+        components = verdict.details.get("oracles", [])
+        if not isinstance(components, list):
+            components = []
+        for name in self._required_faulty_components:
+            matches = [
+                component for component in components if isinstance(component, dict) and component.get("name") == name
+            ]
+            if len(matches) != 1 or matches[0].get("success") is not False:
+                raise InvalidInjectionError(
+                    {"reason": f"required component {name} did not grade faulty", "oracle": verdict.model_dump()}
+                )
 
         if verdict.success or ungradable(verdict.details):
             raise InvalidInjectionError(

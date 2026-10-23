@@ -506,3 +506,11 @@ def test_slot_nine_retries_pending_pod_only_after_old_affinity_pod_is_gone(
     result = replay(scheduling, 9, {"incident_id": "test", "namespace": "social-network"}, tmp_path)
     assert result["status"] == "completed"
     assert reads == 3
+
+
+def test_as3_slot_six_requires_valkey_fault_before_repair(tmp_path: Path) -> None:
+    from benchmarks.sregym.assurance.mixed10_rehearsal import runner_arguments
+    from benchmarks.sregym.fastloop.cli import build_parser
+
+    args = build_parser().parse_args(runner_arguments(6, tmp_path, tmp_path / "output"))
+    assert args.require_faulty_component == ["fault_1:ValkeyMemoryDisruption"]
