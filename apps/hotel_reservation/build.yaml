@@ -1,0 +1,19 @@
+version: 1
+app:
+  name: Hotel Reservation
+  filter: hotel_reservation
+source:
+  path: ../deathstarbench/hotelReservation
+  url: git@gitlab.cs.washington.edu:shli/deathstarbench.git
+  ref: c29e5b264fc242b077cfec199fa7fe16c962d469
+image_tag: '{tag}'
+images:
+- name: yinfangchen/hotelreservation
+  context: .
+  dockerfile: Dockerfile
+deployment:
+  kind: manifest
+  path: kubernetes
+  namespace: hotel-reservation
+  url: git@gitlab.cs.washington.edu:shli/deathstarbench.git
+  ref: c29e5b264fc242b077cfec199fa7fe16c962d469

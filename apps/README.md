@@ -17,3 +17,5 @@ Some applications also participate in SREGym or deployment experiments. Applicat
 - [teastore](./teastore)
 - [teastore-saga](./teastore-saga)
 - [train-ticket](./train-ticket)
+
+Benchmark source-build declarations and usage are documented in [BUILD_DECLARATIONS.md](BUILD_DECLARATIONS.md).
