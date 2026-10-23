@@ -18,7 +18,7 @@ func SchemaIdentity(operatorRoot string) (string, error) {
 		return "", err
 	}
 	var files []string
-	for _, packageName := range []string{"sdk", "builder", "memory/validate"} {
+	for _, packageName := range []string{"sdk", "builder", "memory/validate", "memory/observation"} {
 		packageRoot := filepath.Join(root, packageName)
 		before := len(files)
 		err = filepath.WalkDir(packageRoot, func(path string, entry fs.DirEntry, walkErr error) error {

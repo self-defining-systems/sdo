@@ -507,3 +507,29 @@ nonzero for cleanup errors. Start ticks, boot ID and UID are checked before
 signalling: a reused PID never authorizes a signal. Keep the record and logs
 after completion; the next launch replaces a stale record. The printed
 `persistent abort --state ...` command remains available as well.
+
+### Runtime CI shards
+
+The controller matrix runs the runtime module in eight test-name partitions:
+`reflection`, `contracts`, `rendered`, `simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition locally
+with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
+root. Each shard first discovers the compiled tests across `./...`, including
+examples and fuzz seed tests, then requires every eligible name to match exactly
+one pattern in `scripts/test_runtime_shard.py`. Missing/overlapping patterns fail
+CI before execution. Replay, chaos, and explorer tests retain their dedicated jobs.
+All nested scenarios and simulation seeds run unchanged, with race instrumentation,
+`-parallel=2`, and the existing ten-minute package timeout. The `controller` matrix
+remains a dependency of the stable `Required PR CI` aggregate.
+
+For per-test timing, the shard runner emits `go test -json` events. To profile the
+unsharded suite with the same exclusions:
+
+```bash
+(cd sdo/operator/runtime && go test -race -count=1 -json -parallel=2 \
+  -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...) > runtime-timing.json
+```
+
+Rebalance the name patterns using top-level `pass` event `Elapsed` values. Keep the
+matrix shard values in sync; `tests/unit/sdo/operator/test_runtime_shards.py` checks
+that contract. New test names are discovered automatically and must still pass the
+exactly-once guard.

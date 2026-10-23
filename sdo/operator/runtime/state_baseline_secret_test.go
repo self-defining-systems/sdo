@@ -168,9 +168,15 @@ func TestStateBaselineNeverReceivesOrStoresSecretData(t *testing.T) {
 	tracker.Observe(now.Add(time.Second), true)
 	api.assertRequests(t, true)
 	tracker.mu.Lock()
-	stored, err := json.Marshal([]any{tracker.baseline.objects, tracker.candidate.objects, tracker.images.objects, tracker.snapshotLocked(now).objects, tracker.informers["Secret"].GetStore().List()})
+	defer tracker.mu.Unlock()
+	// Image evidence is populated only by explicit deployment records, not
+	// healthy observations. An absent image store has no data to inspect.
+	var images map[string]objectState
+	if tracker.images != nil {
+		images = tracker.images.objects
+	}
+	stored, err := json.Marshal([]any{tracker.baseline.objects, tracker.candidate.objects, images, tracker.snapshotLocked(now).objects, tracker.informers["Secret"].GetStore().List()})
 	state := tracker.baseline.objects["Secret/credentials"]
-	tracker.mu.Unlock()
 	if err != nil {
 		t.Fatal("cannot encode baseline/cache")
 	}

@@ -89,6 +89,17 @@ are outside this reset. Older run directories without an application snapshot
 use fault-only recovery and mark `cleanup_skipped_reason` in each incident row.
 `cleanup_deleted_counts` and `cleanup_restored` show what was reset.
 
+Seed restoration requires the harness's `seed-compatible/v1` recovery contract,
+including when `--require-full-cleanup` is omitted. One `SregymFaultDriver.recover()`
+call resets external fault state through the harness, restores every captured
+application namespace, requests post-seed client refresh, then waits for health
+and rollouts. This restores credential faults to the seed's backend state before
+reapplying manifests and refreshes database connections afterward. It is safe to
+retry the whole operation after a manifest or refresh failure. Failed or timed-out
+cleanup stops slot reuse; successful reset alone does not verify full cleanup.
+Older harness pins must be updated before seed-based cleanup can run. The benchmark
+adapter never reads Secret contents or implements database credential resets.
+
 # Scripted SDO loop (kind, no LLM)
 
 Level 1 exercises both scripted worker entry points with a fake Kubernetes API:

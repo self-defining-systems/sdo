@@ -12,6 +12,7 @@ import (
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/memory/observation"
 )
 
 // OperateConfig is the typed, in-cluster bootstrap launch contract. The
@@ -146,6 +147,10 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if control == "" {
 		control = *namespace
 	}
+	ceiling, err := observation.CeilingFromEnvironment()
+	if err != nil {
+		return OperateConfig{}, err
+	}
 	config := OperateConfig{
 		Lifecycle: lifecycle.Config{
 			OperationID: *operationID, Application: *application, Namespace: *namespace,
@@ -154,7 +159,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			MaxAttempts:  *maxAttempts,
 		},
 		Install: install.Config{
-			Namespace: *namespace, ControlNamespace: control, Application: *application,
+			ObservationCeiling: ceiling,
+			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,

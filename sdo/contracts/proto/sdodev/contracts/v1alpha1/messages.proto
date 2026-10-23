@@ -108,6 +108,8 @@ message StateChange {
   string name = 2 [(buf.validate.field).string.min_len = 1];
   string change = 3 [(buf.validate.field).string = {in: ["added", "removed", "modified"]}];
   repeated StateFieldChange fields = 4;
+ optional string api_version = 5;
+ optional string namespace = 6;
 }
 
 message StateChanges {
@@ -239,6 +241,7 @@ message IncidentRequest {
   repeated DriftEvent drift_events = 23;
   string fast_path_summary = 24;
   string prepared_agent_task = 25;
+  string observation_generation = 26;
 }
 
 message RootCauseEvidence {
@@ -462,4 +465,5 @@ message IncidentClosure {
   reserved "observed_state_changes";
   reserved "detector_review_required_at", "detector_review_reason";
   repeated string cleaned_helpers = 19;
+  string observation_generation = 20;
 }

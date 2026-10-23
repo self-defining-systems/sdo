@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"encoding/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -37,6 +39,7 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")
+	ceilingJSON := flags.String("observation-ceiling-json", "", "installer-owned observation ceiling JSON")
 	namespace := flags.String("namespace", "", "application namespace")
 	control := flags.String("control-namespace", "", "operator namespace")
 	application := flags.String("application", "", "application identity")
@@ -144,8 +147,20 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if *kubeconfig != "" && !filepath.IsAbs(*kubeconfig) {
 		return HostConfig{}, errors.New("kubeconfig path must be absolute")
 	}
+	var ceiling sdk.ObservationScope
+	if *ceilingJSON != "" {
+		decoder := json.NewDecoder(strings.NewReader(*ceilingJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&ceiling); err != nil {
+			return HostConfig{}, err
+		}
+		if err := ceiling.Validate(); err != nil {
+			return HostConfig{}, err
+		}
+	}
 	config := install.Config{
-		Namespace: *namespace, ControlNamespace: *control, Application: *application,
+		ObservationCeiling: ceiling,
+		Namespace:          *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		ValidatorImage: *validatorImage, BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,

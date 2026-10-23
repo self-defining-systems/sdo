@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/worker_registry"
 )
@@ -55,7 +56,12 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		OnPhase:         recordClosurePhase,
 		IsolationProof:  &broker.IsolationProof{},
 	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
+	ceiling, policyErr := observation.CeilingFromEnvironment()
+	if policyErr != nil {
+		return nil, nil, policyErr
+	}
+
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/observation"
 )
 
 // memoryMigrationOperationID names the accepted Upkeep migration for the
@@ -69,5 +70,10 @@ func openMigrationBroker(config *contracts.ControllerConfig) (lifecycle.Proposal
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),
 	}
-	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job))
+	ceiling, policyErr := observation.CeilingFromEnvironment()
+	if policyErr != nil {
+		return nil, policyErr
+	}
+
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), broker.JobValidator(job), broker.ObservationPolicy{Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 }

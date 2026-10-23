@@ -235,7 +235,7 @@ func NewController(
 	}
 	sort.Strings(healthDetectorIDs)
 	return &Controller{
-		config: config, startedAt: start, scheduler: NewScheduler(detectors, start), detectors: byID,
+		config: config, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker:    tracker,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
@@ -322,7 +322,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.mu.Unlock()
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		findings, detectErr := detector.Detect(ctx, snapshot)
+		findings, detectErr := sdk.DetectObserved(ctx, detector, snapshot)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
@@ -521,6 +521,13 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if !c.batcher.Ready(now) {
 		return nil
 	}
+	if snapshot == nil {
+		var err error
+		snapshot, err = c.provider.Snapshot(ctx)
+		if err != nil {
+			return fmt.Errorf("bind incident observation scope: %w", err)
+		}
+	}
 	batch := c.batcher.DrainReady(now)
 	if len(batch) == 0 {
 		return nil
@@ -532,6 +539,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		sortFindings(batch)
 	}
 	request := c.incidentRequest(now, batch)
+	request.ObservationGeneration = observationGeneration(snapshot)
 	if c.config.CorpusSessionRoot != "" {
 		c.captureOpenDetect(ctx, snapshot, request)
 	}
@@ -954,13 +962,26 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	c.mu.Unlock()
+	if snapshot == nil {
+		var err error
+		snapshot, err = c.provider.Snapshot(ctx)
+		if err != nil {
+			c.reportBrokerError("verify observation scope", err)
+			return
+		}
+	}
+	generation := observationGeneration(snapshot)
 	driftClear := c.verifyClosureDrift(ctx, now, snapshot)
 	c.mu.Lock()
 	finalStates, healthVerified := c.finalVerificationStates()
-	verified := healthVerified && driftClear
+	scopeCurrent := c.currentIncidentRequest.ObservationGeneration == generation
+	verified := healthVerified && driftClear && scopeCurrent
+	if !scopeCurrent {
+		c.dispatchError = "observation scope changed; incident evidence superseded"
+	}
 	// A terminal dispatch failure already closes as failed once health permits
 	// it. Unresolved drift must not delay it or count as verified recovery.
-	terminalFailure := healthVerified && c.dispatchError != ""
+	terminalFailure := !scopeCurrent || (healthVerified && c.dispatchError != "")
 	if !verified {
 		// One timeout bounds how long a stuck incident can block the stream. It
 		// closes as a normal failed incident: with no final detector states
@@ -1020,7 +1041,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	closure := IncidentClosure{
-		Request: *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
+		ObservationGeneration: generation,
+		Request:               *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
 		IncidentDetectorStates: c.incidentDetectorStates(),
 		FinalStateChanges:      finalChanges,

@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -139,7 +140,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		"",
 		"namespace holding the controller's Lease, state, maintenance ConfigMap, and responder Jobs; defaults to --namespace",
 	)
-	appRoot := flags.String("app-root", "", "application repository root")
+	appRoot := flags.String("app-root", "", "accepted application repository root")
 	application := flags.String("application", "", "application identity; defaults to repository directory name")
 	sourceCommit := flags.String("source-commit", "", "source repository commit; defaults to git HEAD")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit; defaults to source commit")
@@ -373,8 +374,21 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *controlNamespace == *namespace {
 		stateConfigMapName = controllerStateConfigMap
 	}
+	ceiling, err := observation.CeilingFromEnvironment()
+	if err != nil {
+		return err
+	}
+	scope, scopeCommit, err := observation.Accepted(ctx, resolvedRoot)
+	if err != nil {
+		return err
+	}
+	if err = scope.Within(ceiling); err != nil {
+		return err
+	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
-		Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
+		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
+			return observation.Accepted(ctx, resolvedRoot)
+		}, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -458,7 +472,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				return fmt.Errorf("create Secret metadata client: %w", err)
 			}
 		}
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		stateTracker = NewStateTracker(StateTrackerConfig{Scope: scope, Ceiling: ceiling, Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
 	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
@@ -1204,11 +1219,11 @@ func evaluateOnce(
 	flags.SetOutput(stderr)
 	namespace := flags.String("namespace", "", "Kubernetes namespace to observe")
 	application := flags.String("application", "", "application identity")
-	flags.String("app-root", "", "application repository root")
+	appRoot := flags.String("app-root", "", "accepted application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
 	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
-	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -1222,6 +1237,22 @@ func evaluateOnce(
 		kubernetesProvider, err := core.NewKubernetesSnapshotProvider(*namespace)
 		if err != nil {
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
+		}
+		if *appRoot != "" {
+			scope, revision, err := observation.Accepted(ctx, *appRoot)
+			if err != nil {
+				return err
+			}
+			ceiling, err := observation.CeilingFromEnvironment()
+			if err != nil {
+				return err
+			}
+			if err = scope.Within(ceiling); err != nil {
+				return err
+			}
+			kubernetesProvider.Scope = scope
+			kubernetesProvider.Ceiling = ceiling
+			kubernetesProvider.Generation = revision
 		}
 		provider = kubernetesProvider
 	}
