@@ -71,7 +71,7 @@ canonical "evidence gap" reason, with details in the summary. A truncated read o
 establish absence. The per-incident ledger records the number of distinct missing resource/phase observations;
 a flag alone does not prove that learning is blocked.
 
-Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. A repair must not add or change a credential channel; existing channels permit unrelated legacy repairs.
+Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. A repair must not add or change a credential channel; existing channels permit unrelated legacy repairs. Compensation may restore channels from the exact captured pre-image, while refusing any channel absent from that image.
 
 Compensation attempts every reversible write even when a plan also deleted an object or another restore failed. The delete remains explicitly irreversible and not restored; it never triggers recreation.
 
