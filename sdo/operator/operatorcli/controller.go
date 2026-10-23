@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.3b71c625add862dd"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.147178e25f41190f"
 
 type repeatable []string
 
@@ -64,6 +64,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxFollowUps := flags.Int("max-follow-ups", 0, "maximum follow-up responders")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
@@ -130,7 +131,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ExitAfterClosure: *exitAfterClosure,
 		ProberImage:      *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
-		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline,
+		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
 		DriftTokensPerHour: *driftTokensPerHour,
 		ProgramMinDuration: durationpb.New(*programMinDuration),

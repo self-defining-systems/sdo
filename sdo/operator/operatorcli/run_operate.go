@@ -68,6 +68,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	if err != nil {
 		return lifecycle.Result{}, fmt.Errorf("open accepted repository broker: %w", err)
 	}
+	// The generic metrics detectors are installed only where a metrics source
+	// is configured; the judge's own check and the broker must agree.
+	repository.MetricsDetectors = config.Install.MetricsURL != ""
 	buildBackend := deployment.KubernetesBuildBackend{
 		Client: client, Namespace: control, RepositoryPVC: config.Install.RepositoryPVC,
 		ProposalRoot: config.WorktreeRoot, RepositoryPVCSubPath: proposalSubPath,
@@ -89,6 +92,9 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 			"SDO_AGENT_PROVIDER": config.Install.AgentProvider, "SDO_LIFECYCLE_MODEL": config.Install.Model,
 			"SDO_DEPLOYMENT_MODEL": config.Install.Model, "CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude",
 		},
+	}
+	if config.Install.MetricsURL != "" {
+		workers.Environment[memoryMetricsEnv] = "1"
 	}
 	installer := lifecycle.NativeInstallAdapter{
 		Strategy: lifecycle.KubernetesInstallStrategy{Installer: install.Installer{Client: client}},

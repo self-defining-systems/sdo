@@ -12,6 +12,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -36,6 +37,10 @@ type Snapshot struct {
 	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
+	// Metrics holds frozen metric query results by query ID.
+	Metrics map[string]metrics.Result `json:"-"`
+	// Alerts holds the frozen alerts of the evaluation cycle.
+	Alerts *metrics.AlertsResult `json:"-"`
 }
 
 // ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
@@ -83,6 +88,20 @@ func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
 func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool) {
 	window, ok := s.Traffic[workload]
 	return window, ok
+}
+
+// MetricResult implements metrics.Source.
+func (s Snapshot) MetricResult(id string) (metrics.Result, bool) {
+	result, ok := s.Metrics[id]
+	return result, ok
+}
+
+// AlertsResult implements metrics.AlertSource.
+func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool) {
+	if s.Alerts == nil {
+		return metrics.AlertsResult{}, false
+	}
+	return *s.Alerts, true
 }
 
 func (s Snapshot) Namespace() string {

@@ -47,7 +47,7 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 		return nil, err
 	}
 	if len(diagnostics) == 0 && request.Actor == HealthJudge && request.Phase == InitialPhase {
-		if err := memory.PrepareHealth(request.Root); err != nil {
+		if err := memory.PrepareHealthWith(request.Root, memory.HealthOptions{Metrics: request.MetricsDetectors}); err != nil {
 			return []Diagnostic{{Rule: RuleGenericHealth, Path: layout.DiagnosticsDir, Message: err.Error(), Hint: "preserve Go-owned generic detectors and valid final workload files"}}, nil
 		}
 		// Validate the prepared tree too; publication gates and compilation

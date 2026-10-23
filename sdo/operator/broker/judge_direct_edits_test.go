@@ -202,3 +202,25 @@ func TestJudgeCheckDoesNotOverwriteAuthoredGenericPolicy(t *testing.T) {
 		t.Fatalf("authored file overwritten: %s %v", after, err)
 	}
 }
+
+func TestJudgeBootstrapInstallsMetricsAlertsDetectorOnlyWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	alerts := ".sdo/diagnostics/detectors/health/metrics-alerts/manifest.yaml"
+	for _, enabled := range []bool{false, true} {
+		b, root := judgeBroker(t)
+		b.MetricsDetectors = enabled
+		proposal, err := b.CreateProposalForPhase(ctx, "judge-metrics", InitialPhase)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fakeJudgeEdits(t, proposal.Path)
+		receipt, err := b.Publish(ctx, "judge-metrics", HealthJudge, InitialPhase)
+		if err != nil {
+			t.Fatalf("enabled=%v: %v", enabled, err)
+		}
+		_, statErr := os.Stat(filepath.Join(root, alerts))
+		if installed := statErr == nil; installed != enabled || slices.Contains(receipt.ChangedPaths, alerts) != enabled {
+			t.Fatalf("enabled=%v but installed=%v (receipt %v)", enabled, installed, receipt.ChangedPaths)
+		}
+	}
+}

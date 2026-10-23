@@ -39,6 +39,10 @@ HEADER
         echo '```text'
         go doc ./traffic
         echo '```'
+        echo
+        echo '```text'
+        go doc -all ./metrics
+        echo '```'
     fi
 }
 

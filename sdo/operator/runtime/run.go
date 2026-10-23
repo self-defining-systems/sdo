@@ -239,6 +239,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	)
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
+	metricsURL := flags.String(
+		"metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle",
+	)
+	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url, read on every request")
 	cleanResponderHelpers := flags.Bool(
 		"clean-responder-helpers", true,
 		"delete pods and Jobs labelled "+ResponderHelperLabel+"=true once the responder completes",
@@ -452,6 +456,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
 	}
+	snapshotProvider, metricsObserver, err := withMetrics(snapshotProvider, detectors, *metricsURL, *metricsTokenFile, false)
+	if err != nil {
+		return err
+	}
 	jobEnvironment, err := parseResponderEnvironment(responderEnvironment)
 	if err != nil {
 		return err
@@ -659,6 +667,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	cacheStarted := false
 	if err := encoder.Encode(desired.Record()); err != nil {
 		fmt.Fprintln(stderr, err)
+	}
+	if metricsObserver != nil {
+		if err := encoder.Encode(map[string]any{"metrics": metricsObserver.Summary()}); err != nil {
+			fmt.Fprintln(stderr, err)
+		}
 	}
 	// startTraffic makes sure the prober runs, clears its observations, and
 	// waits briefly for a first sample of every scenario, so the next
@@ -1220,6 +1233,8 @@ func evaluateOnce(
 	application := flags.String("application", "", "application identity")
 	flags.String("app-root", "", "application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
+	metricsTokenFile := flags.String("metrics-token-file", "", "file holding a bearer token for --metrics-url")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -1265,6 +1280,10 @@ func evaluateOnce(
 	}
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {
 		provider = trafficProvider
+	}
+	provider, _, err := withMetrics(provider, detectors, *metricsURL, *metricsTokenFile, true)
+	if err != nil {
+		return err
 	}
 	start := time.Now().UTC()
 	controller, err := NewController(ControllerConfig{
