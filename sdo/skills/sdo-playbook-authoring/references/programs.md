@@ -144,3 +144,10 @@ Source policy inventory uses render-lock identities and filters allowed kinds be
 `spec.template.spec.dnsPolicy` is a schema-checked SetField path for Deployment and StatefulSet source
 restoration. A DNS policy repair does not remove an injected dnsConfig; if that field was absent from
 accepted source, report the missing removal capability rather than inventing an empty source value.
+
+Promoted snapshot-only detectors preserve the configured scoped observation source; an undeclared or
+unavailable foreign read remains Unknown. They still cannot perform live logs, probes or source diffs.
+
+A missing final `env[name=NAME]` SetField target may insert the accepted EnvVar with the same name, including
+when the env list was omitted. Existing entries must be unique; a different value name or missing parent
+container refuses. This preserves unrelated entries and does not change credential-channel authorization.

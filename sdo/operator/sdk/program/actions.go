@@ -119,7 +119,8 @@ func FieldValue(object map[string]any, path string) (any, error) {
 	return current, nil
 }
 
-// ApplySetField mutates one field. Named list selectors must resolve uniquely.
+// ApplySetField mutates one field. Named list selectors must resolve uniquely,
+// except a missing final env[name=NAME] can insert an entry with that same name.
 func ApplySetField(object map[string]any, path string, value any) error {
 	parts, err := parseFieldPath(path)
 	if err != nil {
@@ -150,6 +151,37 @@ func ApplySetField(object map[string]any, path string, value any) error {
 	}
 	if last.key == "data" && m[last.key] == nil {
 		m[last.key] = map[string]any{}
+	}
+	if last.key == "env" && strings.HasPrefix(last.selector, "name=") {
+		entry, ok := value.(map[string]any)
+		name := strings.TrimPrefix(last.selector, "name=")
+		if !ok || name == "" || entry["name"] != name {
+			return fmt.Errorf("env entry must preserve its named identity")
+		}
+		var items []any
+		if m[last.key] != nil {
+			var list bool
+			items, list = m[last.key].([]any)
+			if !list {
+				return fmt.Errorf("env field is not a list")
+			}
+		}
+		count, index := 0, -1
+		for i, item := range items {
+			if object, ok := item.(map[string]any); ok && object["name"] == name {
+				count++
+				index = i
+			}
+		}
+		if count > 1 {
+			return fmt.Errorf("named list identity must match at most once")
+		}
+		if count == 0 {
+			m[last.key] = append(items, value)
+		} else {
+			items[index] = value
+		}
+		return nil
 	}
 	if mapping, ok := m[last.key].(map[string]any); ok {
 		mapping[last.selector] = value
