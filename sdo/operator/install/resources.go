@@ -326,6 +326,9 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 func programApplyRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		rule("", []string{"services"}, "get", "patch"),
+		rule("", []string{"serviceaccounts"}, "get"),
+		rule("autoscaling", []string{"horizontalpodautoscalers"}, "get", "patch"),
+		rule("policy", []string{"poddisruptionbudgets"}, "get", "patch"),
 		rule("apps", []string{"deployments", "statefulsets", "daemonsets"}, "get", "patch"),
 		rule("apps", []string{"replicasets", "controllerrevisions"}, "get", "list"),
 	}

@@ -34,10 +34,12 @@ import (
 
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
-	Args     []string
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Provider SnapshotProvider
+	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
+	PlanSafety *PlanSafetyPolicy
+	Args       []string
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Provider   SnapshotProvider
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
@@ -503,7 +505,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource,
+					Client: TypedPlanClient{Client: bootstrapProvider.Client}, Source: planSource, Safety: options.PlanSafety,
 					AcceptedRevision: func() string {
 						if controller == nil {
 							return ""

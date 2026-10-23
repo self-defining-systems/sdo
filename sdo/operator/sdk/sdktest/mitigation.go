@@ -40,8 +40,15 @@ func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (Mi
 		return result, fmt.Errorf("program.mitigation-unreplayable: invalid plan: %w", err)
 	}
 	for _, action := range plan.Actions {
-		switch action.(type) {
-		case program.SetField, *program.SetField:
+		switch a := action.(type) {
+		case program.SetField:
+			if a.ValueFromSource {
+				result.Effects = append(result.Effects, "accepted-source SetField")
+			}
+		case *program.SetField:
+			if a != nil && a.ValueFromSource {
+				result.Effects = append(result.Effects, "accepted-source SetField")
+			}
 		default:
 			result.Effects = append(result.Effects, fmt.Sprintf("%T", action))
 		}
@@ -94,7 +101,7 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 		if err != nil {
 			return err
 		}
-		if err := program.ApplySetField(object, field.Path, field.Value); err != nil {
+		if err := program.ApplySetFieldAction(object, field, nil); err != nil {
 			return fmt.Errorf("program.mitigation-unreplayable: %w", err)
 		}
 		after, err := json.Marshal(object)
