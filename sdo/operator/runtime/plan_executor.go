@@ -330,35 +330,41 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible deletion of %s/%s was not restored; never auto-recreate", patch.Ref.Kind, patch.Ref.Name))
 		}
 	}
+
+	// RollbackCompleted checkpoints only the contiguous processed suffix. If a
+	// step fails, still attempt every earlier write; idempotent restores safely
+	// revisit those successes on retry without skipping the failed step.
+	contiguous := true
 	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
-		if index >= len(application.Patches) {
-			return errors.New("rollback requires in-process field writes")
-		}
-		patch := application.Patches[index]
-		if patch.Operation == "delete" {
-			application.RollbackCompleted++
-			continue
-		}
-		if patch.Operation == "create" {
-			if err := e.restoreCreatedObject(ctx, patch); err != nil {
-				return err
+		restoreErr := func() error {
+			if index >= len(application.Patches) {
+				return errors.New("rollback requires in-process field writes")
 			}
+			patch := application.Patches[index]
+			if patch.Operation == "delete" {
+				return nil
+			}
+			if patch.Operation == "create" {
+				return e.restoreCreatedObject(ctx, patch)
+			}
+			if patch.Before == nil || patch.After == nil {
+				return errors.New("rollback requires before and after images")
+			}
+			return e.restoreAction(ctx, patch)
+		}()
+		if restoreErr != nil {
+			irreversible = errors.Join(irreversible, restoreErr)
+			contiguous = false
+		} else if contiguous {
 			application.RollbackCompleted++
-			continue
 		}
-		if patch.Before == nil || patch.After == nil {
-			return errors.New("rollback requires before and after images")
-		}
-		if err := e.restoreAction(ctx, patch); err != nil {
-			return err
-		}
-		application.RollbackCompleted++
 	}
-	application.RollingBack = false
+	application.RollingBack = application.RollbackCompleted < len(application.ActionsApplied)
 	if irreversible != nil {
 		application.RollbackError = irreversible.Error()
 		return irreversible
 	}
+
 	application.RolledBack = true
 	application.RollbackError = ""
 	return nil
