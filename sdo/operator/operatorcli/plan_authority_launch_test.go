@@ -3,6 +3,8 @@ package operatorcli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"sdo.dev/operator/install"
 	"strings"
 	"testing"
@@ -47,6 +49,34 @@ func TestPlanReviewedAuthoritySurvivesEveryProductionLaunch(t *testing.T) {
 			if c.PlanSafetyPolicyJSON != raw || c.PlanSafetyPolicySHA256 != hash || len(c.PlanWebhookNames) != 1 || c.PlanWebhookNames[0] != "fixture.example.invalid" {
 				t.Fatal("reviewed authority or exact-name webhook grant lost")
 			}
+			policyPath, err := filepath.Abs("../config/plan-policies/mixed10.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			policyBytes, err := os.ReadFile(policyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("SDO_PLAN_SOURCE_POLICY_FILE", policyPath)
+			sourceArgs := args[:indexOf(args, "--plan-safety-policy-json")]
+			switch command {
+			case "host":
+				launch, e := ParseHostLaunch(sourceArgs)
+				c = launch.Install
+				err = e
+			case "operate":
+				launch, e := ParseOperateLaunch(sourceArgs)
+				c = launch.Install
+				err = e
+			default:
+				launch, e := ParseInstallExistingLaunch(sourceArgs)
+				c = launch.Install
+				err = e
+			}
+			if err != nil || c.PlanSourcePolicyJSON != string(policyBytes) {
+				t.Fatalf("committed source policy file did not reach launch: %v", err)
+			}
+
 		})
 	}
 }

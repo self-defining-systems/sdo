@@ -52,6 +52,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed accepted-source and incident policy JSON")
+	planSourceFile := flags.String("plan-source-policy-file", "", "reviewed source policy file; defaults to SDO_PLAN_SOURCE_POLICY_FILE")
 	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
 	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
 	var planWebhookNames repeatable
@@ -76,6 +78,10 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "manifest path selected by the accepted deployment")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
+	}
+	sourcePolicyInput, sourcePolicyErr := readSourcePolicyInput(*planSourceFile, *planSourceJSON)
+	if sourcePolicyErr != nil {
+		return InstallExistingConfig{}, sourcePolicyErr
 	}
 	if flags.NArg() != 0 {
 		return InstallExistingConfig{}, fmt.Errorf("unexpected install-existing arguments: %v", flags.Args())
@@ -119,7 +125,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
 		MaxResponseLoops:     *maxResponseLoops,
-		PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
+		PlanSourcePolicyJSON: sourcePolicyInput, PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		LateFindings:    *lateFindings,
 		HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,

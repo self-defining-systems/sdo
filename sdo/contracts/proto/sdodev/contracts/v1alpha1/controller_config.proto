@@ -134,4 +134,6 @@ message ControllerConfig {
   // Never populate these fields from responder, plan, or dry-run output.
   string plan_safety_policy_json = 72;
   string plan_safety_policy_sha256 = 73;
+  // Reviewed source-only policy; generated per incident, never from plans.
+  string plan_source_policy_json = 74;
 }

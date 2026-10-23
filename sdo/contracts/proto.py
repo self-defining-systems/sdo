@@ -87,6 +87,9 @@ Verdict = program_pb2.Verdict
 Evidence = program_pb2.Evidence
 Plan = program_pb2.Plan
 Action = program_pb2.Action
+CreateFromSource = program_pb2.CreateFromSource
+DeleteObject = program_pb2.DeleteObject
+PlanObjectEffect = program_pb2.PlanObjectEffect
 ReconcileFromSource = program_pb2.ReconcileFromSource
 Rollback = program_pb2.Rollback
 SetField = program_pb2.SetField
@@ -308,6 +311,9 @@ __all__ = [
     "HealthJudgeResult",
     "SourceResource",
     "RepairActionReceipt",
+    "CreateFromSource",
+    "DeleteObject",
+    "PlanObjectEffect",
     "ReconcileFromSource",
     "RestartRollout",
     "Rollback",

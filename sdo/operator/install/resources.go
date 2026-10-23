@@ -38,6 +38,7 @@ const (
 )
 
 type Config struct {
+	PlanSourcePolicyJSON string
 	// PlanSafetyPolicyJSON and its reviewer-pinned hash are controller-only authority.
 	PlanSafetyPolicyJSON   string
 	PlanSafetyPolicySHA256 string
@@ -122,6 +123,12 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if c.PlanSourcePolicyJSON != "" && (len(c.PlanSourcePolicyJSON) > 65536 || !json.Valid([]byte(c.PlanSourcePolicyJSON))) {
+		return errors.New("invalid source plan policy JSON")
+	}
+	if c.PlanSourcePolicyJSON != "" && c.PlanSafetyPolicyJSON != "" {
+		return errors.New("plan safety authority supplied twice")
+	}
 	if c.PlanSafetyPolicyJSON != "" || c.PlanSafetyPolicySHA256 != "" {
 		sum := sha256.Sum256([]byte(c.PlanSafetyPolicyJSON))
 		if len(c.PlanSafetyPolicyJSON) > 1024*1024 || c.PlanSafetyPolicySHA256 != hex.EncodeToString(sum[:]) {
@@ -129,7 +136,7 @@ func (c Config) validate() error {
 		}
 	}
 
-	for _, name := range c.PlanWebhookNames {
+	for _, name := range c.planWebhookNames() {
 		if len(validation.IsDNS1123Subdomain(name)) > 0 {
 			return fmt.Errorf("invalid named plan webhook")
 		}
@@ -331,7 +338,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		}
 		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
 	}
-	if len(c.PlanWebhookNames) > 0 {
+	if len(c.planWebhookNames()) > 0 {
 		if plan.Job.Spec.Template.Annotations == nil {
 			plan.Job.Spec.Template.Annotations = map[string]string{}
 		}
@@ -426,6 +433,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
+	}
+	if c.PlanSourcePolicyJSON != "" {
+		args = append(args, "--plan-source-policy-json", c.PlanSourcePolicyJSON)
 	}
 	if c.PlanSafetyPolicyJSON != "" || c.PlanSafetyPolicySHA256 != "" {
 		args = append(args, "--plan-safety-policy-json", c.PlanSafetyPolicyJSON, "--plan-safety-policy-sha256", c.PlanSafetyPolicySHA256)

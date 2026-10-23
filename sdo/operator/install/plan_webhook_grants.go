@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -14,10 +15,10 @@ const PlanWebhookGrantAnnotation = "sdo.dev/named-plan-webhooks"
 
 func planWebhookGrantName(namespace string) string { return "sdo-plan-webhooks-" + namespace }
 func addPlanWebhookGrants(c Config, p *Plan) {
-	if len(c.PlanWebhookNames) == 0 {
+	if len(c.planWebhookNames()) == 0 {
 		return
 	}
-	names := slices.Clone(c.PlanWebhookNames)
+	names := slices.Clone(c.planWebhookNames())
 	slices.Sort(names)
 	names = slices.Compact(names)
 	r := rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "get", "delete")
@@ -28,7 +29,7 @@ func addPlanWebhookGrants(c Config, p *Plan) {
 }
 
 func (i Installer) removeUnconfiguredPlanWebhookGrant(ctx context.Context, c Config) error {
-	if len(c.PlanWebhookNames) > 0 {
+	if len(c.planWebhookNames()) > 0 {
 		return nil
 	}
 	name := planWebhookGrantName(c.controlNamespace())
@@ -39,4 +40,20 @@ func (i Installer) removeUnconfiguredPlanWebhookGrant(ctx context.Context, c Con
 		return fmt.Errorf("revoke named plan webhook role: %w", err)
 	}
 	return nil
+}
+
+// Source-policy webhook RBAC is administrator configuration, never incident or
+// responder output. Incident authority still requires exact UID and absence.
+func (c Config) planWebhookNames() []string {
+	names := slices.Clone(c.PlanWebhookNames)
+	if c.PlanSourcePolicyJSON != "" {
+		var source struct {
+			Names []string `json:"webhook_names"`
+		}
+		if json.Unmarshal([]byte(c.PlanSourcePolicyJSON), &source) == nil {
+			names = append(names, source.Names...)
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names)
 }

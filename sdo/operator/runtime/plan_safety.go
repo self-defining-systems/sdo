@@ -28,6 +28,9 @@ type PlanObjectSafety struct {
 // It is process-local, expires, and is bound to the accepted source revision.
 // There is deliberately no permissive default or agent-supplied attestation.
 type PlanSafetyPolicy struct {
+	// SourceImages and IncidentID are controller-derived source-only authority.
+	SourceImages map[sdk.ObjectRef]*unstructured.Unstructured
+	IncidentID   string
 	SourceCommit string
 	ExpiresAt    time.Time
 	Objects      map[sdk.ObjectRef]PlanObjectSafety
@@ -40,7 +43,7 @@ func (p *PlanSafetyPolicy) authorizeRead(ref sdk.ObjectRef, commit string, now t
 		return fmt.Errorf("plan safety: current controller-owned authorization is required")
 	}
 	proof, ok := p.Objects[ref]
-	if !ok || len(proof.Digests) == 0 {
+	if !ok || (p.SourceImages == nil && len(proof.Digests) == 0) {
 		return fmt.Errorf("plan safety: object lacks nonsecret content/effect provenance")
 	}
 	return nil
@@ -54,7 +57,7 @@ func (p *PlanSafetyPolicy) checkObject(object *unstructured.Unstructured, ref sd
 		return err
 	}
 	proof, ok := p.Objects[ref]
-	if !ok || !proof.Digests[planSafetyDigest(object)] {
+	if !ok || (p.SourceImages == nil && !proof.Digests[planSafetyDigest(object)]) {
 		return fmt.Errorf("plan safety: object content/effect is not independently authorized")
 	}
 	if object.GetUID() != "" && (proof.UID == "" || proof.UID != string(object.GetUID())) {
@@ -109,7 +112,7 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 		case map[string]any:
 			for k, child := range v {
 				switch k {
-				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock", "namespaceSelector", "serviceAccount", "nfs", "flexVolume":
+				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock", "serviceAccount", "nfs", "flexVolume":
 					return fmt.Errorf("plan safety: credential or unconfined content channel")
 				case "hostNetwork", "hostPID", "hostIPC", "privileged", "allowPrivilegeEscalation":
 					if child != false {

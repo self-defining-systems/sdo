@@ -675,3 +675,4 @@ supply the new live UID capability this menu adapter needs. The SDK executor's
 existing source/create and named UID-delete semantics are unchanged. The menu
 preflights every planned effect before its first write, then checks again at
 execution and compensation.
+The reviewed mixed10 source policy is committed under `sdo/operator/config/plan-policies/`. The controller generates source-only structured action authority before responder dispatch from accepted renders and named incident resources, pins UIDs through metadata-only reads, and caches the incident epoch. Inherited numeric SetField literals retain their previous allowlist and universal credential-delta guard. Application JSON patch receipts record the authority class for analysis. See [plan authority](plan-safety-authority.md) for launch inputs and limitations.

@@ -38,6 +38,31 @@ func TestOperateJobPreservesReviewedPlanAuthority(t *testing.T) {
 	if controller.Controller.PlanSafetyPolicyJson != raw || controller.Controller.PlanSafetyPolicySha256 != hash {
 		t.Fatal("controller child dropped authority")
 	}
+	sourceCfg := cfg
+	sourceCfg.PlanSafetyPolicyJSON = ""
+	sourceCfg.PlanSafetyPolicySHA256 = ""
+	sourceCfg.PlanSourcePolicyJSON = `{"version":1,"authority":"accepted-source-and-incident","applications":{"app":"app"},"field_repairs":"accepted-source-only","create_kinds":["v1/ConfigMap"],"delete_kinds":["networking.k8s.io/v1/NetworkPolicy"],"ttl_seconds":3600}`
+	sourceJob, err := install.OperateJob(sourceCfg, "healthy", "source-fixture", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceLaunch, err := operatorcli.ParseOperateLaunch(sourceJob.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceLaunch.Install.AcceptedCommit = cfg.AcceptedCommit
+	sourcePlan, err := install.Resources(sourceLaunch.Install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceController, _, err := operatorcli.ParseControllerLaunch(sourcePlan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceController.Controller.PlanSourcePolicyJson != sourceCfg.PlanSourcePolicyJSON {
+		t.Fatal("controller lost source policy authority")
+	}
+
 	cfg.PlanSafetyPolicySHA256 = strings.Repeat("0", 64)
 	if _, err := install.Resources(cfg); err == nil {
 		t.Fatal("installer accepted bytes outside reviewer pin")

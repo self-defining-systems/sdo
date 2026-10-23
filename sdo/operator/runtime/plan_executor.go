@@ -41,6 +41,7 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
+	Authorization string
 	// DirectReadConfirmed is process-local proof, never restored from a receipt.
 	DirectReadConfirmed bool `json:"-"`
 	Operation           string
@@ -83,7 +84,8 @@ type PlanExecutor struct {
 	Client PlanObjectClient
 	Source PlanSource
 	// Safety is trusted controller-owned provenance for structured actions.
-	Safety *PlanSafetyPolicy
+	Safety          *PlanSafetyPolicy
+	SourceAuthority *SourcePlanAuthority
 	// AcceptedRevision reads the controller-owned accepted head, never the agent checkout.
 	AcceptedRevision func() string
 	Rollouts         PlanRollouts
@@ -101,6 +103,18 @@ type PlanExecutor struct {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if e.SourceAuthority != nil {
+		for _, action := range plan.Actions {
+			if structuredPlanAction(action) {
+				e.Safety, err = e.SourceAuthority.Policy(ctx, incident)
+				if err != nil {
+					return PlanApplicationResult{Plan: plan, DryRun: dryRun}, err
+				}
+				break
+			}
+		}
+	}
+
 	for attempt := 0; attempt < maxRestoreAttempts; attempt++ {
 		result, err = e.applyOnce(ctx, incident, plan, dryRun)
 		if err == nil || result.Applied || !apierrors.IsConflict(err) {
@@ -233,7 +247,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if patchErr != nil {
 			return result, patchErr
 		}
-		result.Patches = append(result.Patches, PlanPatch{Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
+		result.Patches = append(result.Patches, PlanPatch{Authorization: planAuthorizationMode(action, e.SourceAuthority != nil), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
 		current[ref] = next
 	}
 	// Rollback and write reconciliation compare after-images with live values, so
@@ -315,6 +329,10 @@ func (e PlanExecutor) Rollback(ctx context.Context, application PlanApplicationR
 
 // rollback advances the caller's result even when compensation stops partway.
 func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplicationResult) error {
+	if e.Safety == nil && e.SourceAuthority != nil {
+		e.Safety = e.SourceAuthority.cachedPolicy()
+	}
+
 	if application.RolledBack {
 		return nil
 	}
@@ -678,6 +696,9 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 	defer func() {
 		if prepareErr == nil {
 			prepareErr = e.validateCredentialDelta(ctx, current, prepared)
+			if prepareErr == nil {
+				prepareErr = e.Safety.enforceSourceAction(action, current, prepared)
+			}
 		}
 	}()
 	next := current.DeepCopy()
