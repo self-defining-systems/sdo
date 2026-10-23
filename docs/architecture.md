@@ -1,5 +1,7 @@
 # SDO architecture
 
+The deterministic SDK supplies shared snapshot candidate detectors in `sdk/observe` and observed-listener target-port diagnosis and plan proposals in `sdk/routing`. Applications import these helpers instead of copying them into per-app `.sdo/lib/`; app policy, provenance, bindings and app-specific helpers remain in operational memory. This does not share agent-learned code across repositories or change the memory layout. Promotion of the `repair` helper is deferred until XV1 settles its action vocabulary.
+
 This document describes the production boundaries implemented in this repository and the separate SREGym benchmark boundary. It does not treat historical deployment experiments as production features.
 
 ## End-to-end lifecycle
