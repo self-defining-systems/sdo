@@ -510,8 +510,8 @@ after completion; the next launch replaces a stale record. The printed
 
 ### Runtime CI shards
 
-The controller matrix runs the runtime module in four test-name partitions:
-`reflection`, `rendered`, `simulation`, and `remaining`. Run a partition locally
+The controller matrix runs the runtime module in eight test-name partitions:
+`reflection`, `contracts`, `rendered`, `simulation`, `schedules`, `corpus`, `recovery`, and `remaining`. Run a partition locally
 with `python3 scripts/test_runtime_shard.py --shard reflection` from the repository
 root. Each shard first discovers the compiled tests across `./...`, including
 examples and fuzz seed tests, then requires every eligible name to match exactly

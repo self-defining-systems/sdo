@@ -16,9 +16,19 @@ import subprocess
 from pathlib import Path
 
 PATTERNS = {
-    "reflection": r"^(Test(?:[A-G]|Reflection|RegisteredReflection)|Fuzz[A-M]|Example(?:[A-M_]|$))",
-    "rendered": r"^(Test(?:[H-P]|Rendered|SimRendered)|Fuzz[N-Z]|Example[N-Z])",
-    "simulation": r"^Test(?:Q|R(?!eflection|egisteredReflection|endered)|Sim(?!Rendered))",
+    "reflection": r"^TestReflectionDirectFilesCLIAndBroker$",
+    "contracts": (
+        r"^(Test(?:[A-G]|Reflection(?!DirectFilesCLIAndBroker$)|RegisteredReflection|HermeticFastloopRealGoGate$)"
+        r"|Fuzz[A-M]|Example(?:[A-M_]|$))"
+    ),
+    "rendered": r"^(Test(?!(?:HermeticFastloopRealGoGate)$)(?:[H-P]|Rendered|SimRendered)|Fuzz[N-Z]|Example[N-Z])",
+    "simulation": r"^TestSim[A-M]",
+    "schedules": r"^TestSimSchedule",
+    "corpus": r"^TestRejectedRepeatCorpusFallsBackToReflectionWorker$",
+    "recovery": (
+        r"^Test(?:Q|R(?!eflection|egisteredReflection|endered|ejectedRepeatCorpusFallsBackToReflectionWorker$)"
+        r"|Sim(?!Rendered|Schedule)(?:[N-Z]|$))"
+    ),
     "remaining": r"^Test(?:S(?!im)|[T-Z])",
 }
 DEDICATED = re.compile(r"^Test(?:Replay|Chaos|Exhaustive|Explorer)")

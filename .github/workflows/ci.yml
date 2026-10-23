@@ -230,6 +230,10 @@ jobs:
             directory: sdo/operator/runtime
             go-version: "1.26.8"
             shard: reflection
+          - module: runtime-contracts
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: contracts
           - module: runtime-rendered
             directory: sdo/operator/runtime
             go-version: "1.26.8"
@@ -238,6 +242,18 @@ jobs:
             directory: sdo/operator/runtime
             go-version: "1.26.8"
             shard: simulation
+          - module: runtime-schedules
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: schedules
+          - module: runtime-corpus
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: corpus
+          - module: runtime-recovery
+            directory: sdo/operator/runtime
+            go-version: "1.26.8"
+            shard: recovery
           - module: runtime-remaining
             directory: sdo/operator/runtime
             go-version: "1.26.8"
