@@ -186,3 +186,37 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestMetricsURLIsForwardedAcrossOperateAndControllerJobsOnlyWhenSet(t *testing.T) {
+	cfg := install.Config{Namespace: "demo", Application: "demo", ControllerImage: "controller:test", ResponderImage: "responder:test", ValidatorImage: "validator:test", RepositoryPVC: "repository", CredentialsSecret: "credentials", Model: "gpt-test", AcceptedCommit: strings.Repeat("a", 40), TimeoutSeconds: 60, NativeCommand: []string{"/usr/local/bin/sdo-operator"}, BuildKitImage: "moby/buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "registry-push"}
+	operate, err := install.OperateJob(cfg, "healthy", "operation-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{operate.Spec.Template.Spec.Containers[0].Args, plan.Job.Spec.Template.Spec.Containers[0].Args} {
+		if contains(args, "--metrics-url") {
+			t.Fatalf("the default install must not mention metrics: %v", args)
+		}
+	}
+	cfg.MetricsURL = "http://prometheus.monitoring:9090"
+	operate, err = install.OperateJob(cfg, "healthy", "operation-1", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operateLaunch, err := operatorcli.ParseOperateLaunch(operate.Spec.Template.Spec.Containers[0].Args)
+	if err != nil || operateLaunch.Install.MetricsURL != cfg.MetricsURL {
+		t.Fatalf("operate child lost the metrics URL: %+v, %v", operateLaunch.Install, err)
+	}
+	plan, err = install.Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerLaunch, _, err := operatorcli.ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil || controllerLaunch.Controller.GetMetricsUrl() != cfg.MetricsURL {
+		t.Fatalf("controller child lost the metrics URL: %+v, %v", controllerLaunch.Controller, err)
+	}
+}

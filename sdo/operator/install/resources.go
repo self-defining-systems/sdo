@@ -23,6 +23,8 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
+	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/sdk"
 )
 
 const (
@@ -35,6 +37,7 @@ const (
 )
 
 type Config struct {
+	ObservationCeiling                              sdk.ObservationScope
 	Namespace, ControlNamespace, Application        string
 	ControllerImage, ResponderImage, ValidatorImage string
 	RepositoryPVC, CredentialsSecret, Model         string
@@ -63,9 +66,14 @@ type Config struct {
 	ReuseExisting, WaitForCompletion                bool
 	PermissiveResponder                             bool
 	ResponderNamespaces                             []string
+	MetricsURL                                      string
 }
 
 type Plan struct {
+	ObservationRoles             []*rbacv1.Role
+	ObservationBindings          []*rbacv1.RoleBinding
+	ObservationClusterRoles      []*rbacv1.ClusterRole
+	ObservationClusterBindings   []*rbacv1.ClusterRoleBinding
 	Namespace                    *corev1.Namespace
 	PVC                          *corev1.PersistentVolumeClaim
 	ServiceAccounts              []*corev1.ServiceAccount
@@ -108,6 +116,9 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if err := c.ObservationCeiling.Validate(); err != nil {
+		return err
+	}
 	for name, value := range map[string]string{"namespace": c.Namespace, "control namespace": c.controlNamespace(), "application": c.Application, "repository PVC": c.RepositoryPVC, "credentials Secret": c.CredentialsSecret} {
 		if !namespaceName.MatchString(value) {
 			return fmt.Errorf("%s must be a Kubernetes DNS label: %q", name, value)
@@ -192,6 +203,9 @@ func (c Config) validate() error {
 		if !found || !environmentName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
 			return fmt.Errorf("invalid responder environment %q", value)
 		}
+		if name == observation.CeilingEnvironment {
+			return errors.New("observation ceiling is installer-owned")
+		}
 		if name == "SDO_LATE_FINDINGS" {
 			return errors.New("duplicate SDO_LATE_FINDINGS responder setting; use LateFindings")
 		}
@@ -221,8 +235,11 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control}})
 	}
 	controllerRules := []rbacv1.PolicyRule{
+		// Kubernetes RBAC cannot distinguish metadata-only reads from full objects.
+		// The baseline negotiates metadata strictly and never needs Secret get.
+		rule("", []string{"secrets"}, "list", "watch"),
 		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("", []string{"services", "pods", "endpoints", "events", "secrets"}, "get", "list", "watch"),
+		rule("", []string{"services", "pods", "endpoints", "events"}, "get", "list", "watch"),
 		rule("", []string{"pods/log"}, "get"),
 		rule("", []string{"pods", "services"}, "create", "delete"),
 		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
@@ -252,6 +269,10 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 			if r.APIGroups[0] == "coordination.k8s.io" || r.APIGroups[0] == "batch" {
 				continue
 			}
+			if len(r.Resources) == 1 && r.Resources[0] == "secrets" {
+				readRules = append(readRules, r)
+				continue
+			}
 			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
 		}
 		readRules = append(readRules, programApplyRules()...)
@@ -275,6 +296,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	if err := addPermissiveGrants(c, &plan, resources); err != nil {
 		return Plan{}, err
 	}
+	addObservationGrants(&plan, c)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -403,6 +425,9 @@ func controllerJob(c Config) *batchv1.Job {
 	if c.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
 	}
+	if c.MetricsURL != "" {
+		args = append(args, "--metrics-url", c.MetricsURL)
+	}
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())
 	}
@@ -441,6 +466,7 @@ func controllerJob(c Config) *batchv1.Job {
 		Resources:       limits("10m", "16Mi", "100m", "64Mi"),
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
+	policyJSON, _ := json.Marshal(c.ObservationCeiling)
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,
@@ -451,6 +477,7 @@ func controllerJob(c Config) *batchv1.Job {
 			{Name: "TMPDIR", Value: "/workspace/.sdo-runtime/build/tmp"},
 			{Name: "GOTMPDIR", Value: "/workspace/.sdo-runtime/build/go-tmp"},
 			{Name: "GOCACHE", Value: "/workspace/.sdo-runtime/build/go-cache"},
+			{Name: observation.CeilingEnvironment, Value: string(policyJSON)},
 			{Name: "SDO_GO_CACHE_SEED", Value: "/go/build-cache"},
 			{Name: "SDO_TURN_USAGE_LOG", Value: "/workspace/.sdo-runtime/usage/controller-turns.jsonl"},
 			{Name: "SDO_CONTROLLER_JOB", Value: ControllerJobName},

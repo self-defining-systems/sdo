@@ -209,7 +209,14 @@ class Worker:
                 "success": all(self.app.objects[key] == self.app.baseline[key] for key in selected),
             }
         if op == "recover":
-            return {"seconds": 0.001}
+            return {
+                "seconds": 0.001,
+                "protocol_version": 2,
+                "recovery_contract": "seed-compatible/v1",
+                "success": True,
+            }
+        if op == "refresh":
+            return {"protocol_version": 2, "recovery_contract": "seed-compatible/v1", "success": True}
         if op == "health":
             return {"healthy": self.app.healthy()}
         raise AssertionError(op)

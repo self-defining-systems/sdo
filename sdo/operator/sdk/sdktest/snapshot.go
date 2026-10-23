@@ -12,30 +12,35 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/traffic"
 )
 
 type Snapshot struct {
 	// SourceName names the file a loaded snapshot came from, for messages.
-	SourceName        string                                  `json:"-"`
-	NamespaceName     string                                  `json:"namespace"`
-	ConfigMapList     []corev1.ConfigMap                      `json:"configMaps"`
-	ServiceList       []corev1.Service                        `json:"services"`
-	PodList           []corev1.Pod                            `json:"pods"`
-	DeploymentList    []appsv1.Deployment                     `json:"deployments"`
-	StatefulSetList   []appsv1.StatefulSet                    `json:"statefulSets"`
-	ReplicaSetList    []appsv1.ReplicaSet                     `json:"replicaSets"`
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
-	PDBList           []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
-	EndpointList      []corev1.Endpoints                      `json:"endpoints"`
-	EndpointSliceList []discoveryv1.EndpointSlice             `json:"endpointSlices"`
-	NetworkPolicyList []networkingv1.NetworkPolicy            `json:"networkPolicies"`
-	EventList         []corev1.Event                          `json:"events"`
-	// ObservedAtTime is when the live view was read; nil when unrecorded.
-	// It backs sdk.ObservationClock so age-based detectors replay exactly.
-	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
+	SourceName         string `json:"-"`
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+	NamespaceName      string                                  `json:"namespace"`
+	ConfigMapList      []corev1.ConfigMap                      `json:"configMaps"`
+	ServiceList        []corev1.Service                        `json:"services"`
+	PodList            []corev1.Pod                            `json:"pods"`
+	DeploymentList     []appsv1.Deployment                     `json:"deployments"`
+	StatefulSetList    []appsv1.StatefulSet                    `json:"statefulSets"`
+	ReplicaSetList     []appsv1.ReplicaSet                     `json:"replicaSets"`
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler `json:"horizontalPodAutoscalers"`
+	PDBList            []policyv1.PodDisruptionBudget          `json:"podDisruptionBudgets"`
+	EndpointList       []corev1.Endpoints                      `json:"endpoints"`
+	EndpointSliceList  []discoveryv1.EndpointSlice             `json:"endpointSlices"`
+	NetworkPolicyList  []networkingv1.NetworkPolicy            `json:"networkPolicies"`
+	EventList          []corev1.Event                          `json:"events"`
+	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
+	// Metrics holds frozen metric query results by query ID.
+	Metrics map[string]metrics.Result `json:"-"`
+	// Alerts holds the frozen alerts of the evaluation cycle.
+	Alerts *metrics.AlertsResult `json:"-"`
 }
 
 // ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
@@ -83,6 +88,20 @@ func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
 func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool) {
 	window, ok := s.Traffic[workload]
 	return window, ok
+}
+
+// MetricResult implements metrics.Source.
+func (s Snapshot) MetricResult(id string) (metrics.Result, bool) {
+	result, ok := s.Metrics[id]
+	return result, ok
+}
+
+// AlertsResult implements metrics.AlertSource.
+func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool) {
+	if s.Alerts == nil {
+		return metrics.AlertsResult{}, false
+	}
+	return *s.Alerts, true
 }
 
 func (s Snapshot) Namespace() string {

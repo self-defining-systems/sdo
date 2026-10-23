@@ -22,11 +22,16 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
 type KubernetesCacheConfig struct {
+	Now                func() time.Time
+	AcceptedScope      func(context.Context) (sdk.ObservationScope, string, error)
+	Scope, Ceiling     sdk.ObservationScope
+	Generation         string
 	Namespace          string
 	Client             kubernetes.Interface
 	StateConfigMapName string
@@ -48,8 +53,14 @@ type ObjectChange struct {
 // would either drop kinds on overflow or delay a ConfigMap delete behind a
 // backlog of unrelated Pod events.
 type KubernetesCache struct {
-	config   KubernetesCacheConfig
-	declared map[string]sdk.WatchKind
+	scopedRetries    map[string]scopedRetry
+	scopedLastStatus map[string]sdk.ObservationStatus
+	scopedMu         sync.Mutex
+	scopedPrevious   map[string]map[string]*unstructured.Unstructured
+	scopedStatuses   map[string]string
+	scopedTracker    *StateTracker
+	config           KubernetesCacheConfig
+	declared         map[string]sdk.WatchKind
 
 	// informerMu guards the live informer generation. Stop and Resync replace
 	// it so a redeployed application namespace is observed through a fresh
@@ -69,6 +80,9 @@ type KubernetesCache struct {
 }
 
 func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) (*KubernetesCache, error) {
+	if err := config.Scope.Within(config.Ceiling); err != nil {
+		return nil, err
+	}
 	if config.Namespace == "" {
 		return nil, fmt.Errorf("namespace is required")
 	}
@@ -81,12 +95,19 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 	declared := make(map[string]sdk.WatchKind)
 	for _, detector := range detectors {
 		for _, watch := range detector.Spec().Watches {
-			if watch.Namespace != "" && watch.Namespace != config.Namespace {
+			if !config.Scope.AllowsWatch(watch, config.Namespace) {
 				return nil, fmt.Errorf("watch namespace %q does not match cache namespace %q", watch.Namespace, config.Namespace)
 			}
 			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind ||
 				watch.APIVersion == servicehealth.ReachabilityWatch.APIVersion && watch.Kind == servicehealth.ReachabilityWatch.Kind {
 				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
+				continue
+			}
+			if watch.Namespace != "" && watch.Namespace != config.Namespace || (sdk.ObservationTarget{Kind: watch.Kind}).Cluster() {
+				continue
+			}
+			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
+				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
 			}
 			watch.Namespace = config.Namespace
@@ -250,7 +271,24 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 }
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC()}
+	c.scopedMu.Lock()
+	defer c.scopedMu.Unlock()
+	if c.config.AcceptedScope != nil {
+		scope, revision, err := c.config.AcceptedScope(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err = scope.Within(c.config.Ceiling); err != nil {
+			return nil, err
+		}
+		c.reconcileScope(scope, revision)
+	}
+	scoped, err := c.readScoped(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.observeScoped(scoped)
+	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC(), ScopedSnapshot: scoped}
 	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)

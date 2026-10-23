@@ -165,7 +165,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	start := time.Unix(0, 0)
 	controller, err := NewController(
 		testControllerConfig(),
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		start,
@@ -209,7 +209,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 
 	restored, err := NewController(
 		testControllerConfig(),
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		start,
@@ -245,7 +245,7 @@ func TestClosureReceiptPersistsBeforeIdempotentAcknowledgmentClearsClosure(t *te
 	}
 	recovered, err := NewController(
 		testControllerConfig(),
-		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault"))},
+		[]sdk.Detector{controllerDetector("fault", time.Second, stateFinding("fault")), controllerDetector("health", time.Second, sdk.Finding{})},
 		staticProvider{snapshot: sdktest.Snapshot{}},
 		&recordingDispatcher{requests: make(chan IncidentRequest, 1)},
 		start,

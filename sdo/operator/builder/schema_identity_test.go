@@ -9,6 +9,7 @@ import (
 func TestSchemaIdentityUsesNativeGoBuilderSources(t *testing.T) {
 	root := t.TempDir()
 	for path, content := range map[string]string{
+		"memory/observation/scope.go": "package observation\n",
 		"memory/validate/validate.go": "package validate\n",
 		"sdk/detector.go":             "package sdk\n",
 		"builder/native.go":           "package builder\n",
@@ -42,7 +43,7 @@ func TestSchemaIdentityMatchesCommittedSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const expected = "sdo.dev/v1alpha1+sdk.e30bf2ee21a82e8d"
+	const expected = "sdo.dev/v1alpha1+sdk.64a38b763d9d58fa"
 	if identity != expected {
 		t.Fatalf("SDK schema identity drifted: got %s, expected %s", identity, expected)
 	}

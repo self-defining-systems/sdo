@@ -15,7 +15,9 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
@@ -25,8 +27,11 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
-	Namespace string
-	Client    kubernetes.Interface
+	Scope      sdk.ObservationScope
+	Ceiling    sdk.ObservationScope
+	Generation string
+	Namespace  string
+	Client     kubernetes.Interface
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -59,6 +64,25 @@ func NewKubernetesClient() (kubernetes.Interface, error) {
 		return nil, fmt.Errorf("create kubernetes client: %w", err)
 	}
 	return client, nil
+}
+
+// NewKubernetesMetadataClient creates a metadata-only decoder using the same
+// Kubernetes configuration and rate limits as the controller's typed clients.
+// Callers must set a strict PartialObjectMetadata Accept header per request.
+func NewKubernetesMetadataClient() (rest.Interface, error) {
+	config, err := kubernetesConfig()
+	if err != nil {
+		return nil, err
+	}
+	if err := applyClientRateLimits(config, os.LookupEnv); err != nil {
+		return nil, err
+	}
+	config = metadata.ConfigFor(config)
+	config.ContentType = "application/json"
+	config.AcceptContentTypes = "application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1"
+	config.GroupVersion = &schema.GroupVersion{Version: "v1"}
+	config.APIPath = "/api"
+	return rest.RESTClientFor(config)
 }
 
 func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -119,7 +143,12 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		return DetectionSnapshot{}, fmt.Errorf("list events: %w", err)
 	}
 
+	scoped, err := ObserveScoped(ctx, p.Client, p.Scope, p.Ceiling, p.Generation)
+	if err != nil {
+		return nil, err
+	}
 	return DetectionSnapshot{
+		ScopedSnapshot:    scoped,
 		NamespaceName:     namespace,
 		ConfigMapList:     configMaps.Items,
 		ServiceList:       services.Items,
@@ -139,19 +168,20 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 }
 
 type DetectionSnapshot struct {
-	NamespaceName     string
-	ConfigMapList     []corev1.ConfigMap
-	ServiceList       []corev1.Service
-	PodList           []corev1.Pod
-	DeploymentList    []appsv1.Deployment
-	ReplicaSetList    []appsv1.ReplicaSet
-	StatefulSetList   []appsv1.StatefulSet
-	HPAList           []autoscalingv2.HorizontalPodAutoscaler
-	PDBList           []policyv1.PodDisruptionBudget
-	EndpointList      []corev1.Endpoints
-	EndpointSliceList []discoveryv1.EndpointSlice
-	NetworkPolicyList []networkingv1.NetworkPolicy
-	EventList         []corev1.Event
+	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
+	NamespaceName      string
+	ConfigMapList      []corev1.ConfigMap
+	ServiceList        []corev1.Service
+	PodList            []corev1.Pod
+	DeploymentList     []appsv1.Deployment
+	ReplicaSetList     []appsv1.ReplicaSet
+	StatefulSetList    []appsv1.StatefulSet
+	HPAList            []autoscalingv2.HorizontalPodAutoscaler
+	PDBList            []policyv1.PodDisruptionBudget
+	EndpointList       []corev1.Endpoints
+	EndpointSliceList  []discoveryv1.EndpointSlice
+	NetworkPolicyList  []networkingv1.NetworkPolicy
+	EventList          []corev1.Event
 	// TrafficWindows holds synthetic-traffic observations by workload name.
 	TrafficWindows map[string]traffic.Window
 	// ObservedAtTime is when the snapshot was read. Detectors read it through

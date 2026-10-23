@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"sdo.dev/operator/sdk"
 )
@@ -53,10 +54,12 @@ type StateFieldChange struct {
 // StateChange is one application object that differs from the healthy
 // baseline.
 type StateChange struct {
-	Kind   string
-	Name   string
-	Change string
-	Fields []StateFieldChange
+	APIVersion string
+	Namespace  string
+	Kind       string
+	Name       string
+	Change     string
+	Fields     []StateFieldChange
 }
 
 // StateChanges is the application namespace's configuration diff against its
@@ -82,8 +85,12 @@ type StateBaseline interface {
 
 // StateTrackerConfig configures a StateTracker.
 type StateTrackerConfig struct {
-	Client    kubernetes.Interface
-	Namespace string
+	Scope, Ceiling sdk.ObservationScope
+	Client         kubernetes.Interface
+	// MetadataClient is required to observe Secrets. Without it Secrets are
+	// unobserved; the typed Client is never used as a fallback.
+	MetadataClient rest.Interface
+	Namespace      string
 	// Settle defaults to DefaultStateSettle.
 	Settle time.Duration
 }
@@ -106,7 +113,9 @@ type trackedKind struct {
 // that commonly carry faults and diffs them in memory, so a diff costs
 // milliseconds and never calls the API server at dispatch.
 type StateTracker struct {
-	config StateTrackerConfig
+	scoped          sdk.ScopedSnapshot
+	scopedBaselined map[string]bool
+	config          StateTrackerConfig
 
 	mu         sync.Mutex
 	cancel     context.CancelFunc
@@ -137,6 +146,20 @@ func (t *StateTracker) Start(ctx context.Context) error {
 	started := map[string]cache.SharedIndexInformer{}
 	unobserved := []string{}
 	for _, kind := range trackedKinds {
+		if kind.kind == "Secret" {
+			if t.config.MetadataClient == nil {
+				unobserved = append(unobserved, kind.kind)
+				continue
+			}
+			if _, err := t.listSecretMetadata(ctx, metav1.ListOptions{Limit: 1}); err != nil {
+				unobserved = append(unobserved, kind.kind)
+				continue
+			}
+			informer := t.secretMetadataInformer(runCtx)
+			started[kind.kind] = informer
+			go informer.Run(runCtx.Done())
+			continue
+		}
 		if err := kind.probe(ctx, t.config.Client, t.config.Namespace); err != nil {
 			unobserved = append(unobserved, kind.kind)
 			continue
@@ -194,19 +217,23 @@ func (t *StateTracker) Observe(now time.Time, healthy bool) {
 	if t.informers == nil {
 		return
 	}
-	if !healthy {
+	if !healthy || !t.scopedCompleteLocked() {
 		t.candidate = nil
 		return
 	}
 	switch {
 	case t.baseline == nil:
 		t.baseline = t.snapshotLocked(now)
-		t.images = t.baseline
+		t.scopedBaselined = map[string]bool{}
+		for _, status := range t.scoped.Statuses {
+			if status.State == sdk.ObservationObserved {
+				t.scopedBaselined[status.Target.Key()] = true
+			}
+		}
 	case t.candidate == nil:
 		t.candidate = t.snapshotLocked(now)
 	case now.Sub(t.candidate.at) >= t.config.Settle:
 		t.baseline = t.candidate
-		t.images = t.baseline
 		t.candidate = t.snapshotLocked(now)
 	}
 }
@@ -221,6 +248,12 @@ func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	current := t.snapshotLocked(now)
 	changes := diffStates(t.baseline, current)
 	changes.UnobservedKinds = append([]string(nil), t.unobserved...)
+	for _, status := range t.scoped.Statuses {
+		if status.State != sdk.ObservationObserved {
+			changes.UnobservedKinds = append(changes.UnobservedKinds, status.Target.Key())
+		}
+	}
+	sort.Strings(changes.UnobservedKinds)
 	return changes
 }
 
@@ -286,6 +319,25 @@ func (t *StateTracker) snapshotLocked(now time.Time) *stateSnapshot {
 			}
 		}
 	}
+	for target, objects := range scopedObjects(t.scoped) {
+		for name, object := range objects {
+			snapshot.objects["@"+target+"/"+name] = scopedState(object)
+		}
+	}
+	// During a gap retain the baseline without manufacturing removals.
+	if t.baseline != nil {
+		for _, status := range t.scoped.Statuses {
+			if status.State == sdk.ObservationObserved {
+				continue
+			}
+			prefix := "@" + status.Target.Key() + "/"
+			for key, state := range t.baseline.objects {
+				if strings.HasPrefix(key, prefix) {
+					snapshot.objects[key] = state
+				}
+			}
+		}
+	}
 	return snapshot
 }
 
@@ -315,6 +367,14 @@ func diffStates(baseline *stateSnapshot, current *stateSnapshot) *StateChanges {
 		after, hasAfter := current.objects[key]
 		kind, name, _ := strings.Cut(key, "/")
 		change := StateChange{Kind: kind, Name: name}
+		if strings.HasPrefix(key, "@") {
+			parts := strings.Split(strings.TrimPrefix(key, "@"), "/")
+			last := len(parts) - 1
+			change.Name = parts[last]
+			change.Kind = parts[last-3]
+			change.Namespace = parts[last-2]
+			change.APIVersion = strings.Join(parts[:last-3], "/")
+		}
 		switch {
 		case !hadBefore:
 			change.Change = StateChangeAdded
@@ -441,17 +501,7 @@ var trackedKinds = []trackedKind{
 		},
 		state: configMapState,
 	},
-	{
-		kind: "Secret",
-		informer: func(f informers.SharedInformerFactory) cache.SharedIndexInformer {
-			return f.Core().V1().Secrets().Informer()
-		},
-		probe: func(ctx context.Context, c kubernetes.Interface, ns string) error {
-			_, err := c.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{Limit: 1})
-			return err
-		},
-		state: secretState,
-	},
+	{kind: "Secret", state: secretState},
 	{
 		kind: "Role",
 		informer: func(f informers.SharedInformerFactory) cache.SharedIndexInformer {
@@ -570,17 +620,14 @@ func configMapState(object any) (string, objectState, bool) {
 	return configMap.Name, state, true
 }
 
+// PartialObjectMetadata omits Secret type and data key names. Do not fetch
+// either, or inspect annotations (which may embed a complete applied Secret).
 func secretState(object any) (string, objectState, bool) {
-	secret, ok := object.(*corev1.Secret)
-	if !ok || sdoOwned(secret.ObjectMeta) || secret.Type == corev1.SecretTypeServiceAccountToken ||
-		secret.Type == "helm.sh/release.v1" {
+	secret, ok := object.(*metav1.PartialObjectMetadata)
+	if !ok || sdoOwned(secret.ObjectMeta) {
 		return "", nil, false
 	}
-	state := objectState{"type": string(secret.Type)}
-	for key, value := range secret.Data {
-		state["data["+key+"]"] = digest(value)
-	}
-	return secret.Name, state, true
+	return secret.Name, objectState{"uid": string(secret.UID), "resourceVersion": secret.ResourceVersion}, true
 }
 
 func roleState(object any) (string, objectState, bool) {
@@ -777,4 +824,61 @@ func bounded(value string) string {
 		return value
 	}
 	return value[:maxRenderedValue-len("...")] + "..." + " (" + digest([]byte(value)) + ")"
+}
+
+func (t *StateTracker) UpdateScoped(s sdk.ScopedSnapshot) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.scoped.Generation != s.Generation {
+		t.candidate = nil
+	}
+	allowed := map[string]bool{}
+	for _, target := range s.Scope.Targets {
+		allowed[target.Key()] = true
+	}
+	if t.scopedBaselined == nil {
+		t.scopedBaselined = map[string]bool{}
+	}
+	for key := range t.scopedBaselined {
+		if !allowed[key] {
+			delete(t.scopedBaselined, key)
+			if t.baseline != nil {
+				for objectKey := range t.baseline.objects {
+					if strings.HasPrefix(objectKey, "@"+key+"/") {
+						delete(t.baseline.objects, objectKey)
+					}
+				}
+			}
+		}
+	}
+	if t.baseline != nil {
+		for key, objects := range scopedObjects(s) {
+			if t.scopedBaselined[key] {
+				continue
+			}
+			for name, o := range objects {
+				t.baseline.objects["@"+key+"/"+name] = scopedState(o)
+			}
+			t.scopedBaselined[key] = true
+		}
+	}
+	t.scoped = s
+	t.config.Scope = s.Scope
+	if !t.scopedCompleteLocked() {
+		t.candidate = nil
+	}
+}
+func (t *StateTracker) scopedCompleteLocked() bool {
+	if len(t.config.Scope.Targets) == 0 {
+		return true
+	}
+	if len(t.scoped.Statuses) != len(t.config.Scope.Targets) {
+		return false
+	}
+	for _, status := range t.scoped.Statuses {
+		if status.State != sdk.ObservationObserved {
+			return false
+		}
+	}
+	return true
 }

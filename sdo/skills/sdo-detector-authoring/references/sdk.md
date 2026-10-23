@@ -8,6 +8,12 @@ Current Go APIs follow.
 package sdk // import "sdo.dev/operator/sdk"
 
 
+CONSTANTS
+
+const MaxObservationObjects = 500
+const MaxObservationTargets = 32
+const ObservationObserved = "observed"
+
 FUNCTIONS
 
 func CanonicalObjectKind(raw string) string
@@ -31,6 +37,19 @@ func ObservationTime(ctx DetectionContext) time.Time
     from it can only be underestimated: a grace period may elapse late, never
     early. It is zero when the context records no time at all.
 
+func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment
+    Foreign projections use an allowlist. No environment, commands, arguments,
+    annotations, probes, volumes, Secret references or arbitrary status
+    messages.
+
+func ProjectForeignEndpoints(o corev1.Endpoints) corev1.Endpoints
+func ProjectForeignService(o corev1.Service) corev1.Service
+func ProjectMutatingWebhook(o admissionv1.MutatingWebhookConfiguration) admissionv1.MutatingWebhookConfiguration
+func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.Unstructured, error)
+    ProjectObservationObject uses exactly the SDK projection for source and
+    drift.
+
+func ProjectValidatingWebhook(o admissionv1.ValidatingWebhookConfiguration) admissionv1.ValidatingWebhookConfiguration
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -177,6 +196,10 @@ type Finding struct {
 	Metadata          map[string]any       `json:"metadata,omitempty"`
 }
 
+func DetectObserved(ctx context.Context, detector Detector, view DetectionContext) ([]Finding, error)
+    DetectObserved prevents an unreadable declared dependency from clearing a
+    finding, even if the detector ignores an accessor error.
+
 type FindingSeverity string
 
 const (
@@ -236,6 +259,42 @@ type ObservationClock interface {
     objects were read. The controller stamps each snapshot once, when it builds
     it, and corpus captures carry the stamp so replay sees the same time.
 
+type ObservationScope struct {
+	Version int                 `json:"version" yaml:"version"`
+	Targets []ObservationTarget `json:"targets" yaml:"targets"`
+}
+    ObservationScope is also the installer ceiling. A zero ceiling authorizes no
+    additional observation, regardless of the service account's ambient grants.
+
+func (s ObservationScope) Allows(t ObservationTarget) bool
+
+func (s ObservationScope) AllowsWatch(w WatchKind, app string) bool
+
+func (s ObservationScope) Identity() string
+
+func (s ObservationScope) Validate() error
+
+func (s ObservationScope) Within(ceiling ObservationScope) error
+
+type ObservationStatus struct {
+	Target ObservationTarget `json:"target"`
+	State  string            `json:"state"`
+	Reason string            `json:"reason,omitempty"`
+}
+
+type ObservationTarget struct {
+	APIVersion string `json:"api_version" yaml:"api_version"`
+	Kind       string `json:"kind" yaml:"kind"`
+	Namespace  string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Name       string `json:"name,omitempty" yaml:"name,omitempty"`
+}
+    ObservationTarget is a qualified read grant. Cluster webhooks require one
+    explicit name per target; namespace targets cover only the declared kind.
+
+func (t ObservationTarget) Cluster() bool
+
+func (t ObservationTarget) Key() string
+
 type PersistencePolicy struct {
 	Firing   int
 	Clearing int
@@ -249,6 +308,60 @@ type PersistencePolicy struct {
 	// while a persistent fault still fires once both conditions hold.
 	MinDuration time.Duration
 }
+
+type ScopedObservationSource interface {
+	ScopedDeployments(string) ([]appsv1.Deployment, error)
+	ScopedServices(string) ([]corev1.Service, error)
+	ScopedEndpoints(string) ([]corev1.Endpoints, error)
+	MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+	ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
+	MutatingWebhookConfiguration(string) (*admissionv1.MutatingWebhookConfiguration, error)
+	ValidatingWebhookConfiguration(string) (*admissionv1.ValidatingWebhookConfiguration, error)
+	ObservationStatuses() []ObservationStatus
+	ObservationGeneration() string
+}
+    ScopedObservationSource is optional; legacy accessors remain application
+    local.
+
+func ScopedSource(view any) ScopedObservationSource
+    ScopedSource returns a failing source when an optional interface is absent.
+
+type ScopedSnapshot struct {
+	Version     int                                          `json:"version"`
+	Scope       ObservationScope                             `json:"scope"`
+	Generation  string                                       `json:"generation"`
+	Statuses    []ObservationStatus                          `json:"statuses"`
+	Deployments []appsv1.Deployment                          `json:"deployments,omitempty"`
+	Services    []corev1.Service                             `json:"services,omitempty"`
+	Endpoints   []corev1.Endpoints                           `json:"endpoints,omitempty"`
+	Mutating    []admissionv1.MutatingWebhookConfiguration   `json:"mutating_webhooks,omitempty"`
+	Validating  []admissionv1.ValidatingWebhookConfiguration `json:"validating_webhooks,omitempty"`
+}
+    ScopedSnapshot is the versioned, credential-free replay representation.
+    Accessors project again so even manually constructed replay fixtures cannot
+    accidentally expose fields excluded by the public scoped API.
+
+func (s ScopedSnapshot) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
+
+func (s ScopedSnapshot) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
+func (s ScopedSnapshot) ObservationGeneration() string
+
+func (s ScopedSnapshot) ObservationStatuses() []ObservationStatus
+
+func (s ScopedSnapshot) ScopedDeployments(ns string) ([]appsv1.Deployment, error)
+
+func (s ScopedSnapshot) ScopedEndpoints(ns string) ([]corev1.Endpoints, error)
+
+func (s ScopedSnapshot) ScopedServices(ns string) ([]corev1.Service, error)
+
+func (s ScopedSnapshot) ValidateObservation() error
+    ValidateObservation checks the persisted replay version and coverage
+    envelope.
+
+func (s ScopedSnapshot) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error)
+
+func (s ScopedSnapshot) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
 type WatchKind struct {
 	APIVersion string
@@ -608,4 +721,265 @@ type Window struct{ ... }
 type Workload struct{ ... }
     func ParseWorkloadJSON(data []byte) (Workload, error)
 type WorkloadScenario struct{ ... }
+```
+
+```text
+package metrics // import "sdo.dev/operator/sdk/metrics"
+
+Package metrics lets deterministic detectors judge high-level application
+metrics (for example from Prometheus) without doing any I/O. A detector declares
+the queries it needs; the controller runtime evaluates each once per evaluation
+cycle at a single timestamp and freezes the results into the detection snapshot,
+exactly as it does for synthetic traffic.
+
+CONSTANTS
+
+const (
+	DefaultNamespaceLabel  = "namespace"
+	DefaultDeploymentLabel = "deployment"
+	DefaultPodLabel        = "pod"
+	DefaultServiceLabel    = "service"
+)
+    Default label names, which match kube-state-metrics and Prometheus
+    Kubernetes service discovery.
+
+const (
+	// MaxQueries bounds the distinct queries one controller evaluates per cycle.
+	MaxQueries = 32
+	// MaxExprBytes bounds one PromQL expression.
+	MaxExprBytes = 4096
+	// MaxRange and MaxRangePoints bound a range query's window and sample count.
+	MaxRange       = 24 * time.Hour
+	MaxRangePoints = 1000
+	// MaxSeries and MaxSamples bound what one query result may freeze into a snapshot.
+	MaxSeries  = 1000
+	MaxSamples = MaxSeries * 100
+	// MaxAlerts bounds the alerts one evaluation cycle may freeze.
+	MaxAlerts = 5000
+)
+const APIVersion = "sdo.dev/v1alpha1"
+    APIVersion is the API group of the pseudo-kinds the SDK adds for
+    non-Kubernetes inputs.
+
+const AlertFiringState = "firing"
+    AlertFiringState is the only alert state that reports; pending alerts have
+    not yet held for their rule's duration.
+
+const AlertRulePrefix = "alert."
+    AlertRulePrefix prefixes the rule ID of each alert finding
+    ("alert.<alertname>").
+
+const ThresholdRulePrefix = "metric-threshold."
+    ThresholdRulePrefix prefixes the rule ID of each threshold finding.
+
+
+VARIABLES
+
+var Watch = sdk.WatchKind{APIVersion: APIVersion, Kind: "Metrics"}
+    Watch is the pseudo-kind metrics detectors declare. The controller runtime
+    never emits it: metric results are fetched when a detector is due, so a
+    metrics detector runs on its Interval.
+
+
+FUNCTIONS
+
+func ConsumesAlerts(detectors []sdk.Detector) bool
+    ConsumesAlerts reports whether any detector evaluates alerts.
+
+func FormatValue(value float64) string
+    FormatValue renders a sample value the way Prometheus does ("NaN", "+Inf").
+
+func LabelString(labels map[string]string) string
+    LabelString renders labels sorted by name as `{a="1", b="2"}`.
+
+func NewAlertsDetector(spec sdk.DetectorSpec, mapping LabelMapping) sdk.Detector
+    NewAlertsDetector returns a detector that reports every firing alert
+    whose namespace label (mapping.Namespace, default "namespace") names the
+    application namespace, one finding per alert. It filters on nothing else:
+    the alert rules, not this detector, decide what is worth firing. Pending
+    alerts are ignored, and alerts without a namespace label are ignored but
+    counted in each finding's metadata. Alerts that could not be read are a
+    detector error, never a clear.
+
+func NewThresholdDetector(spec sdk.DetectorSpec, rules []ThresholdRule) sdk.Detector
+    NewThresholdDetector returns a detector that compares the frozen result
+    of each rule's query with its threshold. Every violating series is one
+    finding whose evidence is the query, value, threshold and labels. A query
+    the metrics source could not answer is a detector error, never a clear:
+    an unobservable metric must not close an incident or open one.
+
+    An invalid configuration makes Detect fail and Validate report why.
+
+func ValidateDetector(detector sdk.Detector) error
+    ValidateDetector checks one detector's metrics configuration. Detectors that
+    consume no metrics are valid.
+
+func ValidateQueries(queries []Query) error
+    ValidateQueries checks a set of queries for one controller: each valid,
+    IDs unique, and the count bounded.
+
+
+TYPES
+
+type Alert struct {
+	Labels      map[string]string `json:"labels"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	// State is "firing" or "pending".
+	State    string    `json:"state"`
+	ActiveAt time.Time `json:"activeAt,omitempty"`
+	Value    string    `json:"value,omitempty"`
+}
+    Alert is one alert as the Prometheus alerts API reports it.
+
+func (a Alert) Name() string
+    Name is the alert's rule name.
+
+type AlertConsumer interface {
+	ConsumesAlerts() bool
+}
+    AlertConsumer is implemented by detectors that evaluate firing alerts.
+
+type AlertSource interface {
+	AlertsResult() (AlertsResult, bool)
+}
+    AlertSource is implemented by detection contexts that carry frozen alerts.
+
+type AlertsResult struct {
+	ObservedAt time.Time `json:"observedAt"`
+	Alerts     []Alert   `json:"alerts,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+    AlertsResult is every alert the source reported at ObservedAt, frozen for
+    one evaluation cycle. A non-empty Error means the alerts could not be read.
+
+func AlertsFrom(ctx sdk.DetectionContext) (AlertsResult, bool)
+    AlertsFrom returns the frozen alerts, when the context carries them.
+
+type Comparison string
+    Comparison says when a value violates its threshold.
+
+const (
+	Greater        Comparison = ">"
+	GreaterOrEqual Comparison = ">="
+	Less           Comparison = "<"
+	LessOrEqual    Comparison = "<="
+	Equal          Comparison = "=="
+	NotEqual       Comparison = "!="
+)
+func (c Comparison) Holds(value float64, threshold float64) bool
+    Holds reports whether value violates threshold. NaN is no observation,
+    so no comparison holds for it.
+
+type Consumer interface {
+	MetricQueries() []Query
+}
+    Consumer is implemented by detectors that evaluate metric queries.
+    The controller runtime evaluates exactly the queries its detectors declare.
+
+type LabelMapping struct {
+	Namespace  string `json:"namespace,omitempty"`
+	Deployment string `json:"deployment,omitempty"`
+	Pod        string `json:"pod,omitempty"`
+	Service    string `json:"service,omitempty"`
+}
+    LabelMapping names the metric labels that identify Kubernetes objects.
+    An empty field takes its default.
+
+type Query struct {
+	ID   string `json:"id"`
+	Expr string `json:"expr"`
+	// Range, when positive, makes the query a range query.
+	Range time.Duration `json:"range,omitempty"`
+	// Step is the range query resolution; zero derives it from Range.
+	Step time.Duration `json:"step,omitempty"`
+}
+    Query is one PromQL query a detector consumes. Without Range it is an
+    instant query evaluated at the cycle's timestamp; with Range it is a range
+    query over the Range ending at that timestamp.
+
+func Queries(detectors []sdk.Detector) ([]Query, error)
+    Queries returns the distinct queries the detectors consume, sorted by ID.
+    Detectors that declare the same ID with different definitions conflict.
+
+func (q Query) EffectiveStep() time.Duration
+    EffectiveStep is Step, or for a range query without one a sixtieth of Range
+    (at least a second).
+
+func (q Query) Validate() error
+    Validate checks one query in isolation.
+
+type Reduction string
+    Reduction collapses a series' samples to the one value a rule compares.
+    Instant results have one sample, so every reduction agrees on them.
+
+const (
+	ReduceLast Reduction = "last"
+	ReduceMin  Reduction = "min"
+	ReduceMax  Reduction = "max"
+	ReduceAvg  Reduction = "avg"
+)
+type Result struct {
+	Query      Query     `json:"query"`
+	ObservedAt time.Time `json:"observedAt"`
+	Series     []Series  `json:"series,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+    Result is one query's frozen outcome at ObservedAt. A non-empty Error means
+    the metrics source could not answer: that is neither healthy nor firing.
+
+func ResultFrom(ctx sdk.DetectionContext, id string) (Result, bool)
+    ResultFrom returns the frozen result of query id, when the context carries
+    it.
+
+type Sample struct {
+	At    time.Time
+	Value float64
+}
+    Sample is one value at one time. Values may be NaN or infinite, which JSON
+    carries as strings, as Prometheus does.
+
+func (s Sample) MarshalJSON() ([]byte, error)
+
+func (s *Sample) UnmarshalJSON(data []byte) error
+
+type Series struct {
+	Labels  map[string]string `json:"labels"`
+	Samples []Sample          `json:"samples"`
+}
+    Series is one labelled time series. An instant query yields one sample.
+
+func (s Series) Last() (Sample, bool)
+    Last is the series' newest sample.
+
+type Source interface {
+	MetricResult(id string) (Result, bool)
+}
+    Source is implemented by detection contexts that carry frozen metric
+    results. The controller runtime's snapshots implement it.
+
+type ThresholdRule struct {
+	// RuleID names the rule; it defaults to the query ID, so two rules over
+	// one query need explicit, distinct IDs.
+	RuleID    string
+	Query     Query
+	Op        Comparison
+	Threshold float64
+	// Reduce picks the value of a range result; it defaults to the last sample.
+	Reduce Reduction
+	// Labels maps series labels to Kubernetes objects.
+	Labels LabelMapping
+	// Severity defaults to critical.
+	Severity sdk.FindingSeverity
+	// Description explains what the metric means in a finding's summary.
+	Description string
+}
+    ThresholdRule fires a finding for every series of Query whose reduced value
+    violates Threshold.
+
+type Validator interface {
+	Validate() error
+}
+    Validator is implemented by metrics detectors that can check their own
+    configuration, so a mistake surfaces in tests rather than at runtime.
+
 ```

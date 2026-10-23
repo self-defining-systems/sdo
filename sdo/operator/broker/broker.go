@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/rendered"
+	"sdo.dev/operator/sdk"
 )
 
 // Actor and Phase are defined by the validator, which owns the ownership
@@ -75,14 +76,21 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
-	target        string
-	workspaceRoot string
-	validator     Validator
+	// MetricsDetectors installs the optional generic metrics detectors when
+	// the health judge's initial memory is accepted. Set it only where a
+	// metrics source is configured.
+	MetricsDetectors bool
+
+	observationCeiling   sdk.ObservationScope
+	applicationNamespace string
+	target               string
+	workspaceRoot        string
+	validator            Validator
 }
 
 // New requires the workspace root to be outside the accepted repository.
 // The worker must receive only Proposal.Path, never target or workspaceRoot.
-func New(target, workspaceRoot string, validator Validator) (*Broker, error) {
+func New(target, workspaceRoot string, validator Validator, policy ...ObservationPolicy) (*Broker, error) {
 	if target == "" || workspaceRoot == "" {
 		return nil, errors.New("target and workspace root are required")
 	}
@@ -118,7 +126,19 @@ func New(target, workspaceRoot string, validator Validator) (*Broker, error) {
 	if repositoryRoot != absoluteTarget {
 		return nil, errors.New("accepted repository path must be its Git root")
 	}
-	return &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator}, nil
+	b := &Broker{target: absoluteTarget, workspaceRoot: absoluteWorkspaces, validator: validator}
+	if len(policy) > 1 {
+		return nil, errors.New("one observation policy is required")
+	}
+	if len(policy) == 1 {
+		if err := policy[0].Ceiling.Validate(); err != nil {
+			return nil, err
+		}
+		b.observationCeiling = policy[0].Ceiling
+		b.observationCeiling.Targets = append([]sdk.ObservationTarget(nil), policy[0].Ceiling.Targets...)
+		b.applicationNamespace = policy[0].ApplicationNamespace
+	}
+	return b, nil
 }
 
 func (b *Broker) CreateProposal(ctx context.Context, incidentID string) (Proposal, error) {
@@ -169,7 +189,7 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 			return err
 		}
 		proposal = Proposal{IncidentID: incidentID, Path: checkout, BaseCommit: base}
-		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID}); err != nil {
+		if err := validate.WritePublicationContext(ctx, checkout, validate.PublicationContext{BaseCommit: base, IncidentID: incidentID, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace}); err != nil {
 			return err
 		}
 		data, err := json.Marshal(proposal)
@@ -251,7 +271,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		// Validate before copying so invalid filesystem shapes also receive the
 		// shared diagnostics. Recheck the frozen private clone with the real runner.
-		preflight, err := checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
+		preflight, err := b.checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
 		if err != nil {
 			return err
 		}
@@ -287,7 +307,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		diagnostics, err := checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision)
+		diagnostics, err := b.checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision)
 		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
 		}
@@ -672,4 +692,10 @@ func safeParents(root, path string) error {
 func within(root, path string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))))
+}
+
+// ObservationPolicy is supplied only by the trusted installer host.
+type ObservationPolicy struct {
+	Ceiling              sdk.ObservationScope
+	ApplicationNamespace string
 }
