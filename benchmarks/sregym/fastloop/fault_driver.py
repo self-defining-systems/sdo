@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 HEALTH_POLL_SECONDS = 1.0
 #: The oracle waits up to 60 s for rollouts itself; injection and recovery wait on rollouts too.
 WORKER_OP_TIMEOUT_SECONDS = 900.0
+SEED_RECOVERY_CONTRACT = "seed-compatible/v1"
 
 
 class FastloopFaultError(RuntimeError):
@@ -32,9 +33,7 @@ class WorkerRequester(Protocol):
 
 def _check_recovery(reply: dict[str, Any]) -> None:
     if reply.get("protocol_version") == 2 and reply.get("success") is not True:
-        raise FastloopFaultError(
-            f"full recovery {reply.get('status')}: pending={reply.get('pending')}; errors={reply.get('errors')}"
-        )
+        raise FastloopFaultError("full recovery failed; warm lane cannot be reused")
 
 
 def _utc(epoch: object) -> datetime:
@@ -180,7 +179,11 @@ class SregymFaultDriver:
         return float(seconds)
 
     def recover(self) -> float:
-        """Recover faults, restore the application baseline, then wait for health and rollouts."""
+        """Reset faults for seed reuse, restore manifests, refresh clients, and verify health.
+
+        Retrying this entire operation is safe after a partial manifest restore or client refresh.
+        The harness owns credential resets; this adapter never reads credential material.
+        """
 
         started = self._monotonic()
         self.last_cleanup = RecoveryCleanup()
@@ -189,6 +192,16 @@ class SregymFaultDriver:
         if self._require_full_cleanup and reply.get("protocol_version") != 2:
             raise FastloopFaultError("full cleanup requires protocol v2 recovery")
         _check_recovery(reply)
+        seed_compatible = (
+            reply.get("protocol_version") == 2
+            and reply.get("success") is True
+            and reply.get("recovery_contract") == SEED_RECOVERY_CONTRACT
+            and not reply.get("pending")
+            and not reply.get("errors")
+        )
+        restoring_seed = self._baselines is not None and self._cluster is not None
+        if (self._require_full_cleanup or restoring_seed) and not seed_compatible:
+            raise FastloopFaultError("full cleanup requires seed-compatible/v1 recovery; update the SREGym harness")
         if self._baselines is not None and self._cluster is not None:
             for baseline in self._baselines:
                 cleaned = reconcile_application(self._cluster, baseline, baseline.namespace)
@@ -199,6 +212,16 @@ class SregymFaultDriver:
                 )
         else:
             self.last_cleanup.skipped_reason = "application baseline unavailable"
+        if seed_compatible:
+            refreshed = self._worker.request("refresh", timeout=WORKER_OP_TIMEOUT_SECONDS)
+            if (
+                refreshed.get("protocol_version") != 2
+                or refreshed.get("recovery_contract") != SEED_RECOVERY_CONTRACT
+                or refreshed.get("success") is not True
+                or refreshed.get("pending")
+                or refreshed.get("errors")
+            ):
+                raise FastloopFaultError("full cleanup client refresh failed; warm lane cannot be reused")
         deadline = started + self._health_timeout
         health: dict[str, Any] = {}
         unready_rollouts: list[str] = []
@@ -210,6 +233,7 @@ class SregymFaultDriver:
                     self.last_full_cleanup_verified = (
                         reply.get("protocol_version") == 2
                         and reply.get("success") is True
+                        and seed_compatible
                         and self.last_cleanup.skipped_reason is None
                     )
                     return self._monotonic() - started
