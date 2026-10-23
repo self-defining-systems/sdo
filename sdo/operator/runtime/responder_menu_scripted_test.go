@@ -192,7 +192,7 @@ func TestResponderMenuScriptedControllerStrictReceiptRoundThree(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatalf("controller did not independently close menu repair: dispatch=%s, done=%t, error=%s", controller.dispatchState, controller.responderDone, controller.dispatchError)
 	}
-	if closure.Result == nil || len(closure.Result.PlanApplications) != 0 || len(closure.Result.RepairActions) == 0 || closure.Result.ResponseLoopsUsed != 4 {
+	if closure.Result == nil || len(closure.Result.PlanApplications) != 0 || len(closure.Result.RepairActions) == 0 || closure.Result.ResponseLoopsUsed != 5 {
 		t.Fatalf("menu repair evidence crossed trust path or lost incident budget: %+v", closure.Result)
 	}
 	receipt, err := native.ProcessClosure(ctx, closure)
@@ -266,10 +266,11 @@ refused = command("secret-env-index", 1)
 assert refused["status"] == "STATUS_REFUSED" and refused["failed_phase"] == "planning", refused
 assert refused["reason_code"] == "plan_preflight_refused", refused
 assert not any(r.get("actions") for r in refused.get("rounds", [])), refused
+assert refused["remaining_batches"] == 4, refused
 first = command("restart-only", 1)
-assert first["status"] == "STATUS_UNRESOLVED", first
+assert first["status"] == "STATUS_UNRESOLVED" and first["remaining_batches"] == 3, first
 second = command("routing-then-restart", 3)
-assert second["status"] == "STATUS_SUCCESS" and len(second["rounds"]) == 3, second
+assert second["status"] == "STATUS_SUCCESS" and len(second["rounds"]) == 3 and second.get("remaining_batches", 0) == 0, second
 assert refused["session_id"] == first["session_id"] == second["session_id"]
 assert first["attempt_id"] != second["attempt_id"]
 assert [r["round_index"] for r in second["rounds"]] == [1,2,3]

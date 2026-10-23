@@ -208,6 +208,8 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 			fail(contracts.MitigationReport_STATUS_UNRESOLVED, "barrier", "fresh_observation_unavailable")
 			break
 		}
+		// A completed fresh observation starts a round, even when preflight refuses.
+		*used = round
 		rr := &contracts.MitigationRoundReport{RoundIndex: round, RoundId: fmt.Sprintf("%s-round-%d", attempt.AttemptId, round), BarrierIds: []string{observation.Receipt.CaptureId}}
 		report.Rounds = append(report.Rounds, rr)
 		view := menuReadView{DetectionContext: observation.View}
@@ -279,7 +281,6 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 			priorAbsence = before.Receipt.CaptureId
 			rr.BarrierIds = append(rr.BarrierIds, priorAbsence)
 		}
-		*used = round
 		result, applyErr := executor.Apply(roundCtx, l.Request, plan, false)
 		applications = append(applications, result)
 		clients = append(clients, client)

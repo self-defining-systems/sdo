@@ -6,7 +6,8 @@ The Go responder loop serves `menu`, `mitigate` and immutable reports through
 the existing tools transport. `sdo mitigate OPTION [--rounds N]` selects from a
 fresh menu; complete JSON selections remain available for semantic retries.
 `MaxBatches` / `max-response-loops` is the single incident-wide allowance,
-default 5, shared with legacy apply and recorded act. Each round uses direct
+default 5, shared with legacy apply and recorded act. A round that reaches a fresh
+observation spends allowance even when its plan is refused before an effect. Each round uses direct
 current observations in the original session. Controller-supplied safety and
 independent health capabilities are mandatory; missing capabilities refuse
 before reading content. Synthetic B3/Secret acceptance passes do not establish
