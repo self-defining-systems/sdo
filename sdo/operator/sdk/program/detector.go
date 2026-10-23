@@ -19,6 +19,9 @@ type programDetector struct {
 
 // DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector {
+	if spec.Playbooks == nil {
+		spec.Playbooks = []string{p.Spec().ID}
+	}
 	return programDetector{program: p, locate: locate, spec: spec}
 }
 
@@ -27,7 +30,8 @@ func (d programDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {
 	findings := make([]sdk.Finding, 0)
 	for _, bindings := range d.locate(snapshot) {
-		verdict := RunDiagnose(ctx, d.program, snapshotReadView{snapshot}, bindings, 10*time.Second)
+		view := snapshotReadView{DetectionContext: snapshot, ScopedObservationSource: sdk.ScopedSource(snapshot)}
+		verdict := RunDiagnose(ctx, d.program, view, bindings, 10*time.Second)
 		if verdict.Result != Match {
 			continue
 		}
@@ -46,13 +50,16 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 			DetectorID: d.spec.ID, RuleID: d.spec.ID, Status: sdk.FindingActive,
 			Severity: d.spec.Batching.Severity, Summary: d.program.Spec().ID,
 			Evidence: strings.Join(parts, "; "), PrimaryResource: primary,
-			Playbooks: []string{d.spec.ID}, ParameterBindings: bindings.Objects,
+			Playbooks: append([]string(nil), d.spec.Playbooks...), ParameterBindings: bindings.Objects,
 		})
 	}
 	return findings, nil
 }
 
-type snapshotReadView struct{ sdk.DetectionContext }
+type snapshotReadView struct {
+	sdk.DetectionContext
+	sdk.ScopedObservationSource
+}
 
 func (snapshotReadView) Logs(sdk.ObjectRef, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("logs unavailable in detector context")

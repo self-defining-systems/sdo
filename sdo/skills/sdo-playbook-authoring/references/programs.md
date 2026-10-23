@@ -4,6 +4,11 @@ Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a
 mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
+Snapshot-only detectors may import their application's playbook package and promote its Diagnoser with
+`program.DetectorFromProgram`. Set `DetectorSpec.Playbooks` to the actual logical playbook IDs; detector IDs
+may differ. Findings preserve those declared references. Tests may import application playbooks to exercise
+their public contracts; production helper and playbook packages cannot import other playbook packages.
+
 Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
 Declare object and typed value parameters and group related actions into one plan. Raw registered actions
 also appear as generic one-action plans. The ordinary PlanExecutor runs them with the controller's existing
@@ -135,3 +140,14 @@ The source-only stream policy derives structured repair values and creates from 
 Webhook namespace selectors may confine admission to the application. Network peer confinement is checked on NetworkPolicy rules.
 
 Source policy inventory uses render-lock identities and filters allowed kinds before reading source content; a missing lock entry alone never proves deletion eligibility.
+
+`spec.template.spec.dnsPolicy` is a schema-checked SetField path for Deployment and StatefulSet source
+restoration. A DNS policy repair does not remove an injected dnsConfig; if that field was absent from
+accepted source, report the missing removal capability rather than inventing an empty source value.
+
+Promoted snapshot-only detectors preserve the configured scoped observation source; an undeclared or
+unavailable foreign read remains Unknown. They still cannot perform live logs, probes or source diffs.
+
+A missing final `env[name=NAME]` SetField target may insert the accepted EnvVar with the same name, including
+when the env list was omitted. Existing entries must be unique; a different value name or missing parent
+container refuses. This preserves unrelated entries and does not change credential-channel authorization.

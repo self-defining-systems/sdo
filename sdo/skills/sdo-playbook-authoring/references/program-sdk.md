@@ -11,7 +11,9 @@ package program // import "sdo.dev/operator/sdk/program"
 FUNCTIONS
 
 func ApplySetField(object map[string]any, path string, value any) error
-    ApplySetField mutates one field. Named list selectors must resolve uniquely.
+    ApplySetField mutates one field. Named list selectors must resolve uniquely,
+    except a missing final env[name=NAME] can insert an entry with that same
+    name.
 
 func ApplySetFieldAction(current map[string]any, a SetField, value any) error
     ApplySetFieldAction applies an already resolved value. The controller
