@@ -192,3 +192,22 @@ func TestCommittedMixed10SourcePolicyScope(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamPolicyAllowsNamespaceConfinedNamedWebhookDelete(t *testing.T) {
+	cfg, _ := LoadSourcePlanPolicy(`{"version":1,"authority":"accepted-source-and-incident","applications":{"fixture":"app"},"field_repairs":"accepted-source-only","create_kinds":[],"delete_kinds":["admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration"],"webhook_names":["pod-policy.validation.k8s.io"],"ttl_seconds":3600}`)
+	ref := sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingWebhookConfiguration", Name: "pod-policy.validation.k8s.io"}
+	object := planObject(ref, nil)
+	delete(object.Object, "spec")
+	object.SetUID("webhook-uid")
+	object.SetResourceVersion("1")
+	object.Object["webhooks"] = []any{map[string]any{"name": "fixture.example.invalid", "namespaceSelector": map[string]any{"matchLabels": map[string]any{"kubernetes.io/metadata.name": "app"}}, "clientConfig": map[string]any{"service": map[string]any{"namespace": "app", "name": "fixture"}}, "rules": []any{map[string]any{"resources": []any{"pods"}}}}}
+	source := sourcePolicyFixture{}
+	authority := &SourcePlanAuthority{Config: cfg, Source: source, UID: func(context.Context, sdk.ObjectRef) (types.UID, error) { return "webhook-uid", nil }}
+	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}
+	e := PlanExecutor{Client: client, Source: source, SourceAuthority: authority, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+	incident := IncidentRequest{IncidentID: "fixture", Application: "fixture", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions", Findings: []sdk.Finding{{PrimaryResource: ref}}}
+	result, err := e.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false)
+	if err != nil || !result.VerificationPassed || client.deletes != 1 {
+		t.Fatalf("namespace-confined named webhook could not execute: %v", err)
+	}
+}

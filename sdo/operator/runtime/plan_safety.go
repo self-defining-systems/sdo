@@ -112,7 +112,7 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 		case map[string]any:
 			for k, child := range v {
 				switch k {
-				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock", "namespaceSelector", "serviceAccount", "nfs", "flexVolume":
+				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock", "serviceAccount", "nfs", "flexVolume":
 					return fmt.Errorf("plan safety: credential or unconfined content channel")
 				case "hostNetwork", "hostPID", "hostIPC", "privileged", "allowPrivilegeEscalation":
 					if child != false {

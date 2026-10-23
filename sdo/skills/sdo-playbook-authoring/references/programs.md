@@ -88,3 +88,5 @@ Credential safety also refuses deprecated identity aliases and unconfined storag
 JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.
 
 The source-only stream policy derives structured repair values and creates from accepted source, and grants deletes only to individually named incident resources with pinned UIDs. Legacy numeric SetField literals retain their existing allowlist and credential-delta check. Application patch receipts label these as `accepted-source`, `incident-named-delete`, or `legacy-literal`.
+
+Webhook namespace selectors may confine admission to the application. Network peer confinement is checked on NetworkPolicy rules.
