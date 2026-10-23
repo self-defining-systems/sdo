@@ -31,7 +31,7 @@ func (c healthGuardedPlanClient) Exec(ctx context.Context, ref sdk.ObjectRef, co
 	}
 	client, ok := c.PlanObjectClient.(PlanExecClient)
 	if !ok {
-		return 0, fmt.Errorf("plan client does not support output-free exec")
+		return 0, fmt.Errorf("%w: plan client does not support output-free exec", errPlanExecRefused)
 	}
 	return client.Exec(ctx, ref, container, command)
 }
