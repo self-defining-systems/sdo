@@ -87,3 +87,5 @@ replay can retain already observed direct-Pod TCP inputs when the complete Pod
 snapshot is unchanged. It never reuses a Service probe as proof that routing was
 repaired, copies a fixed answer, or invents a successful connection. Other edits
 retain the ordinary no-external-observations post-plan policy.
+
+Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. Repairs must not add or change a channel; existing channels permit unrelated repairs.
