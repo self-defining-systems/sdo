@@ -90,8 +90,9 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
     (tmp_path / "application_workspace").mkdir()
 
     class Worker:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+        def __init__(self, *_args: object, **kwargs: Any) -> None:
+            # Kubernetes caches KUBECONFIG at import time, before the cluster op.
+            assert kwargs["env"]["KUBECONFIG"] == str(tmp_path / "kubeconfigs/worker_0.kubeconfig")
 
         def __enter__(self) -> Worker:
             return self

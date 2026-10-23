@@ -231,7 +231,13 @@ def _up(args: argparse.Namespace) -> int:
     )
     worker = SregymWorker(
         worker_argv(placeholder.sregym_dir, private_tmp=private_tmp),
-        env={**worker_env, "PYTHONPATH": str(REPO_ROOT), "PYTHONUNBUFFERED": "1"},
+        env={
+            **worker_env,
+            # kubernetes.config freezes its default path when the child imports it.
+            "KUBECONFIG": str(placeholder.kubeconfig),
+            "PYTHONPATH": str(REPO_ROOT),
+            "PYTHONUNBUFFERED": "1",
+        },
         log_path=run_dir / "worker.log",
     )
     with worker:

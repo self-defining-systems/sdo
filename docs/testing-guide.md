@@ -365,3 +365,15 @@ ordering, and 1 ms pacing outside the measured pair. The acceptance threshold is
 admission and gap assertions continue to run under `-race`.
 
 Record-admission latency also uses 50 warmups and 200 paced normal-build samples, with a 10 ms p95 limit. Its metadata-only omission, bounded admission and dropped/incomplete checks remain in the race suite.
+
+SREGym discovery and worker contract tests use the pinned harness and its application
+charts without Kubernetes or model calls. Before running them in a fresh checkout,
+initialize both repository edges:
+
+```bash
+git submodule update --init third_party/sregym
+git -C third_party/sregym submodule update --init SREGym-applications
+```
+
+The Python unit-test CI job initializes these application sources explicitly so
+the discovery gate runs instead of silently skipping its cross-repository checks.
