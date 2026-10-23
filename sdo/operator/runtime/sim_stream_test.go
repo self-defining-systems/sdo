@@ -52,6 +52,8 @@ type simWorld struct {
 	client     *fake.Clientset
 	restarts   int
 	storeFails int
+	detectors  []sdk.Detector
+	configure  func(*Controller)
 
 	outcomes *memory.JSONStore
 
@@ -258,9 +260,16 @@ func (w *simWorld) injectStoreFaults(p float64) {
 // startController builds a controller over the durable state store, as a fresh
 // process would, restoring whatever the previous one persisted.
 func (w *simWorld) startController() {
-	controller, err := NewController(w.config, []sdk.Detector{fastloopDetector{}}, w.cache, w.responder, w.clock.now)
+	detectors := w.detectors
+	if detectors == nil {
+		detectors = []sdk.Detector{fastloopDetector{}}
+	}
+	controller, err := NewController(w.config, detectors, w.cache, w.responder, w.clock.now)
 	if err != nil {
 		w.t.Fatal(err)
+	}
+	if w.configure != nil {
+		w.configure(controller)
 	}
 	controller.now = w.clock.Now
 	controller.dispatchJitter = w.rng.Float64

@@ -614,7 +614,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	second, secondDispatch, secondRequest := fastloopGateIncident(t, ctx, client, native, accepted, captureRoot, "fastloop-second", start.Add(2*time.Second), true, func(controller *Controller) {
 		controller.driftEvents = append([]sdk.DriftEvent(nil), driftEventsState(exportState(t, first).DriftEvents)...)
 		controller.ConfigureDrift(DriftControllerConfig{ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Events: &fixedObjectChanges{changes: []ObjectChange{change}}, Programs: registry, View: func(snapshot sdk.DetectionContext) program.ReadView {
-			return driftReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}, diff: program.Diff{Changed: true}}
+			return serviceDriftView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}}
 		}, BatchWindow: time.Nanosecond})
 	})
 	if len(secondRequest.DriftEvents) != 1 || secondRequest.DriftEvents[0].Ref.Name != "peer" || secondRequest.DriftEvents[0].Classification != sdk.DriftFault || secondRequest.DriftEvents[0].ProgramID != "service-targetport-mismatch" {
