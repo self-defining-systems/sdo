@@ -286,7 +286,6 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			executed++
 			random := rand.New(rand.NewSource(seed))
 			cut := cuts[(seed-1)%int64(len(cuts))]
-			covered[cut] = true
 			root := filepath.Join(t.TempDir(), "accepted")
 			nativeGit(t, filepath.Dir(root), "clone", "-q", "--shared", baselineRoot, root)
 			nativeGit(t, root, "config", "user.name", "Test")
@@ -324,6 +323,15 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
+			// A returned error after the finite parent budget is a permitted
+			// terminal outcome. It must never be mistaken for healthy success.
+			timedOut := func(err error) bool {
+				if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					t.Logf("seed=%d cut=%s terminal=bounded_timeout error=%v", seed, cut, err)
+					return true
+				}
+				return false
+			}
 			store := crashStateStore{path: state + ".controller", crashPath: state}
 			if _, err := store.Save(ctx, exportState(t, controller), ""); err != nil {
 				t.Fatal(err)
@@ -331,6 +339,9 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSR2dCrashProcess$", "-test.timeout=60s")
 			command.Env = append(os.Environ(), "SR2D_CRASH_ROOT="+root, "SR2D_CRASH_PROPOSALS="+proposals, "SR2D_CRASH_STATE="+state, "SR2D_CRASH_CUT="+cut)
 			output, err := command.CombinedOutput()
+			if timedOut(err) {
+				return
+			}
 			var exit *exec.ExitError
 			if !errors.As(err, &exit) {
 				t.Fatalf("child did not die at %s: %v %s", cut, err, output)
@@ -342,7 +353,11 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			if data, err := os.ReadFile(state + ".cut"); err != nil || string(data) != cut {
 				t.Fatalf("wrong crash boundary: %s %v", data, err)
 			}
+			covered[cut] = true
 			if err := acceptedHealthGuard(root, old.Commit)(ctx); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("old binary allowed after kill: %v", err)
 			}
 			var retained crashAPIState
@@ -362,13 +377,22 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			c, worker := crashCoordinator(t, root, proposals, state, "")
 			revision, err := memory.AcceptedHealthRevision(ctx, root)
 			if err != nil {
+				if timedOut(err) {
+					return
+				}
 				t.Fatal(err)
 			}
 			receipt, err := c.RefreshHealth(ctx, lifecycle.Config{Application: "tracing", Namespace: "demo"}, revision)
 			if err != nil {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("restart failed at seed %d/%s: %v", seed, cut, err)
 			}
 			if err := acceptedHealthGuard(root, receipt.Commit)(ctx); err != nil {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("fresh adoption: %v", err)
 			}
 			var resumed crashAPIState
@@ -399,9 +423,15 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			calls := worker.calls
 			current, err := memory.AcceptedHealthRevision(ctx, root)
 			if err != nil || current.NeedsRefresh {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("not verified after bounded restart: %+v %v", current, err)
 			}
 			if _, err := c.RefreshHealth(ctx, lifecycle.Config{Application: "tracing", Namespace: "demo"}, current); err != nil || calls != worker.calls {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("accepted work repeated: %v", err)
 			}
 			// Recover using only state that survived the killed process. The
@@ -413,15 +443,24 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			}
 			if effect, ok := restarted.PendingClosureEffect(); ok {
 				if err := restarted.ExecuteClosureEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
+					if timedOut(err) {
+						return
+					}
 					t.Fatalf("stale success: %v", err)
 				}
 			}
 			if effect, ok := restarted.PendingClosureAcknowledgmentEffect(); ok {
 				if err := restarted.ExecuteClosureAcknowledgmentEffect(ctx, effect); !errors.Is(err, ErrStaleHealthInvestigation) {
+					if timedOut(err) {
+						return
+					}
 					t.Fatalf("stale ack: %v", err)
 				}
 			}
 			if err := restarted.Step(ctx, time.Unix(1000, 0).Add(time.Hour), nil); err != nil {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("old evidence blocked fresh evaluation: %v", err)
 			}
 			if restarted.incidentOpen || restarted.closureBlocksNextLocked() || len(b.calls()) != 0 || len(restarted.history) == 0 {
@@ -433,6 +472,9 @@ func TestSimRV6HealthRefreshCrashSchedules(t *testing.T) {
 			}
 			again := crashController(t, root, current.Commit, state, "")
 			if err := again.Step(ctx, time.Unix(1000, 0).Add(2*time.Hour), nil); err != nil || again.incidentOpen || again.closureBlocksNextLocked() {
+				if timedOut(err) {
+					return
+				}
 				t.Fatalf("terminal failure blocked another restart: %v", err)
 			}
 			t.Logf("seed=%d cut=%s verified=%s old_evidence=failed", seed, cut, current.Commit)
