@@ -27,13 +27,17 @@ def main() -> int:
         )
 
     def extended_handle(self: Any, request: dict[str, Any]) -> dict[str, Any]:
-        if request.get("op") == "deploy" and "astronomy_shop" in str(request.get("problem_id", "")):
+        astronomy = (
+            request.get("op") == "deploy"
+            and self._problem_factory(str(request["problem_id"])).namespace == "astronomy-shop"
+        )
+        if astronomy:
             prepare_astronomy()
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
             return self._grade(problem)
         reply = handle(self, request)
-        if request.get("op") == "deploy" and "astronomy_shop" in str(request.get("problem_id", "")):
+        if astronomy:
             from pathlib import Path
 
             from benchmarks.sregym.adapter import route_astronomy_traces
