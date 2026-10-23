@@ -14,6 +14,7 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -27,6 +28,18 @@ func TestKubernetesCacheRoutesSyntheticTrafficNotificationsWithoutAnInformer(t *
 	}
 	cache.Notify(traffic.Watch)
 	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: traffic.Watch.APIVersion, Kind: traffic.Watch.Kind, Namespace: "demo"})
+}
+
+func TestKubernetesCacheRoutesServiceReachabilityNotificationsWithoutAnInformer(t *testing.T) {
+	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "service-reachability", Interval: time.Second, Watches: servicehealth.ReachabilityWatches(),
+		}}})
+	if err != nil {
+		t.Fatalf("the reachability watch must not require an informer: %v", err)
+	}
+	cache.Notify(servicehealth.ReachabilityWatch)
+	awaitWatchEvent(t, cache, sdk.WatchKind{APIVersion: servicehealth.ReachabilityWatch.APIVersion, Kind: servicehealth.ReachabilityWatch.Kind, Namespace: "demo"})
 }
 
 func TestKubernetesCacheUsesDeclaredInformerUnionWithoutRelisting(t *testing.T) {

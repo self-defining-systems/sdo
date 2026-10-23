@@ -253,16 +253,139 @@ const (
 	RuleSelectorMatchesNoPods = "service-selector-matches-no-pods"
 	RuleNoReadyEndpoints      = "service-has-no-ready-endpoints"
 )
+const (
+	// RuleServicePortUnreachable reports a Service whose ready backends do
+	// not accept fresh TCP connections on one or more Service ports.
+	RuleServicePortUnreachable = "service-port-unreachable"
+
+	DefaultReachabilityInterval = 10 * time.Second
+	DefaultReachabilityTimeout  = 1 * time.Second
+	// DefaultReachabilityFailures consecutive failed dials, at least two
+	// intervals apart end to end, report a port.
+	DefaultReachabilityFailures = 3
+	// MaxReachabilityTargets bounds the dialed Service ports per namespace.
+	MaxReachabilityTargets = 64
+)
+
+VARIABLES
+
+var ReachabilityWatch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "ServiceReachability"}
+    ReachabilityWatch is emitted by the controller runtime when new dial samples
+    may change a verdict; it is not a Kubernetes kind.
+
 
 FUNCTIONS
 
 func EndpointWatches() []sdk.WatchKind
     EndpointWatches are the resources whose changes can change the verdict.
 
+func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector
+    NewReachabilityDetector reports every eligible Service that has a ready
+    selected pod while the last Failures fresh TCP dials of one of its ports,
+    all made after the Service gained that ready backend, failed. A prior
+    successful dial is not required: a port that never accepted a connection
+    while its pods report Ready is exactly the fault this detects. Without dial
+    observations in the context it reports nothing.
+
 func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector
     NewReadyEndpointsDetector reports every Service with a selector that has
     no ready endpoint, unless every workload it selects is scaled to zero on
     purpose. ExternalName Services never have endpoints and are skipped.
+
+func ReachabilityEligible(service corev1.Service) bool
+    ReachabilityEligible reports whether a Service is dialed: it has a
+    cluster IP that load-balances to selected pods. ExternalName Services
+    are DNS aliases, headless Services resolve to pod IPs without targetPort
+    translation, selector-less Services have hand-managed backends, and Services
+    SDO creates for itself are not the application's.
+
+func ReachabilityWatches() []sdk.WatchKind
+    ReachabilityWatches are the kinds whose changes can change the verdict.
+
+
+TYPES
+
+type DialErrorClass string
+    DialErrorClass classifies a failed dial.
+
+const (
+	DialRefused     DialErrorClass = "refused"
+	DialTimeout     DialErrorClass = "timeout"
+	DialDNS         DialErrorClass = "dns"
+	DialReset       DialErrorClass = "reset"
+	DialUnreachable DialErrorClass = "unreachable"
+	DialOther       DialErrorClass = "other"
+)
+type DialSample struct {
+	At       time.Time      `json:"at"`
+	Duration time.Duration  `json:"durationNs"`
+	OK       bool           `json:"ok"`
+	Class    DialErrorClass `json:"class,omitempty"`
+	Error    string         `json:"error,omitempty"`
+}
+    DialSample is one fresh TCP dial of a target.
+
+type ProberIdentity struct {
+	Namespace string            `json:"namespace,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+    ProberIdentity is where the dials come from, so NetworkPolicy admission can
+    be evaluated against it.
+
+type ReachabilityConsumer interface {
+	ConsumesServiceReachability() bool
+}
+    ReachabilityConsumer marks detectors that need dial observations, so the
+    controller runs the reachability observer only when one is installed.
+
+type ReachabilitySource interface {
+	ServiceReachability() (ReachabilityWindow, bool)
+}
+    ReachabilitySource is implemented by detection contexts that carry dial
+    observations. The controller runtime's snapshots implement it.
+
+type ReachabilityTarget struct {
+	Service  string `json:"service"`
+	Port     int32  `json:"port"`
+	PortName string `json:"portName,omitempty"`
+}
+    ReachabilityTarget is one TCP port of one Service, dialed through cluster
+    DNS.
+
+func ReachabilityTargets(ctx sdk.DetectionContext) ([]ReachabilityTarget, int)
+    ReachabilityTargets derives the dial targets from a namespace snapshot:
+    every TCP port of every eligible Service, sorted by Service and port,
+    at most MaxReachabilityTargets. It also returns how many were omitted.
+
+func (t ReachabilityTarget) ID() string
+    ID names the target.
+
+type ReachabilityWindow struct {
+	ObservedAt time.Time            `json:"observedAt"`
+	Interval   time.Duration        `json:"intervalNs"`
+	Timeout    time.Duration        `json:"timeoutNs"`
+	Failures   int                  `json:"failures"`
+	Targets    []TargetObservations `json:"targets"`
+	// Omitted counts derived targets beyond MaxReachabilityTargets.
+	Omitted int            `json:"omitted,omitempty"`
+	Prober  ProberIdentity `json:"prober"`
+	// LoadError is set when the prober could not be read.
+	LoadError string `json:"loadError,omitempty"`
+}
+    ReachabilityWindow is what the controller has observed at ObservedAt.
+
+func ReachabilityFrom(ctx sdk.DetectionContext) (ReachabilityWindow, bool)
+    ReachabilityFrom returns the dial observations, when the context carries
+    them.
+
+type TargetObservations struct {
+	Target  ReachabilityTarget `json:"target"`
+	Samples []DialSample       `json:"samples"`
+	// LastSuccess is the latest successful dial the controller has seen, which
+	// may be older than every retained sample.
+	LastSuccess *time.Time `json:"lastSuccess,omitempty"`
+}
+    TargetObservations are one target's recent samples, oldest first.
 
 ```
 

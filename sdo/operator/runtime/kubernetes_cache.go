@@ -22,6 +22,7 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -83,8 +84,9 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			if watch.Namespace != "" && watch.Namespace != config.Namespace {
 				return nil, fmt.Errorf("watch namespace %q does not match cache namespace %q", watch.Namespace, config.Namespace)
 			}
-			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind {
-				// Synthetic-traffic results arrive through Notify, not an informer.
+			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind ||
+				watch.APIVersion == servicehealth.ReachabilityWatch.APIVersion && watch.Kind == servicehealth.ReachabilityWatch.Kind {
+				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
 				continue
 			}
 			watch.Namespace = config.Namespace

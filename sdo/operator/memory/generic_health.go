@@ -14,6 +14,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/servicehealth"
 )
 
 // PrepareHealth is the explicit Go bootstrap step shared by memory check and
@@ -30,6 +31,9 @@ func PrepareHealth(root string) error {
 		return err
 	}
 	if err := writeGenericDetector(root, workloadManifest(), workloadSource()); err != nil {
+		return err
+	}
+	if err := writeGenericDetector(root, genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()); err != nil {
 		return err
 	}
 	directory := filepath.Join(root, layout.TrafficWorkloadsDir)
@@ -126,13 +130,47 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 }
 
 func genericPackage(id string) string {
-	if id == "service-endpoints" {
+	switch id {
+	case "service-endpoints":
 		return "serviceendpoints"
-	}
-	if id == workloadHealthID {
+	case "service-reachability":
+		return "servicereachability"
+	case workloadHealthID:
 		return "workloads"
 	}
 	return "synthetic"
+}
+
+// reachabilityWatches mirrors servicehealth.ReachabilityWatches, which the
+// generated detector's Spec must equal field for field.
+func reachabilityWatches() []layout.Watch {
+	watches := make([]layout.Watch, 0)
+	for _, watch := range servicehealth.ReachabilityWatches() {
+		watches = append(watches, layout.Watch{APIVersion: watch.APIVersion, Kind: watch.Kind})
+	}
+	return watches
+}
+
+// reachabilitySource installs the Service reachability probe for every
+// application: its targets come from the Service objects at runtime, so no
+// health-judge authoring is needed.
+func reachabilitySource() string {
+	return fmt.Sprintf(`package servicereachability
+
+import (
+	"time"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
+)
+
+func New() sdk.Detector {
+	return servicehealth.NewReachabilityDetector(sdk.DetectorSpec{
+		%s
+		Watches: servicehealth.ReachabilityWatches(),
+		Interval: 10 * time.Second,
+	})
+}
+`, genericSpec("service-reachability"))
 }
 
 func genericSpec(id string) string {
