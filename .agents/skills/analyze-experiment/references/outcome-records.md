@@ -59,4 +59,15 @@ Structured plan effects (XV1): `SetField.value_from_source` resolves at the inci
 
 Object lifecycle receipts add `PlanApplication.object_effects`: operation, ref, server UID, state (`not_applied`/`applied`/`unknown`), confirmed direct observation, and irreversibility. A delete includes an authorized nonsecret `deleted_pre_image` for inspection only; it is never a restart mutation journal or recreation authority. Create ownership requires its server UID receipt; an identical object after a lost create reply is still unknown. Successful API deletion without confirmed named absence is not verified repair. These effects report `skipped_unreplayable_effect` in corpus replay and earn no origin credit.
 
-Plan application JSON patch receipts carry `Authorization`: `accepted-source` for structured source-only effects, `incident-named-delete` for individually named UID-pinned source-absent deletes, and `legacy-literal` for the inherited SetField allowlist. A literal matching source still records `accepted-source` when admitted through the structured source policy. These labels classify authority, not independent health verification or trust credit.
+Plan application JSON patch receipts carry `Authorization`: `accepted-source` for structured source-only effects, `incident-named-delete` for individually named UID-pinned source-absent deletes, and `parameter` or `observed` for provenance-typed values on the inherited narrow SetField allowlist. A declared value matching source still records `accepted-source` when admitted through the structured source policy. These labels classify authority, not independent health verification or trust credit.
+
+
+Plan applications now expose `action_reports`: each report names its action index, status (`prepared`,
+`applied`, `refused`, or `unknown`), and value provenance. Source values retain `source_commit`, reference and
+field path; observed values retain the invocation snapshot's `resource_version`, reference and path; scalar
+parameters retain their declaration name. Reports contain no resolved value. Exec reports only `exit_code`,
+never stdout/stderr; a refusal or unknown outcome is not verification evidence. DeletePod records an
+irreversible named UID effect without a Pod body or recreation authority. ScaleWorkload verifies replicas
+through a direct read. Captured snapshots preserve resourceVersions for observed-value provenance while
+stripping UID and write metadata. Program bindings now separate `objects` and scalar `values`; object-only
+historical corpus bindings remain readable. These receipts describe evidence, never restart mutation journals.

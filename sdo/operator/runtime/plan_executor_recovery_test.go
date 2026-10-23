@@ -31,7 +31,7 @@ func TestPlanExecutorCompensatesSecondPatchFailure(t *testing.T) {
 			ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
 			client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"replicas": float64(1)})}}, failRollback: failRollback}
 			executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-			result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(2)}, program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(3)}}}, false)
+			result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(2))}, program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(3))}}}, false)
 			if err == nil || !result.Applied || len(result.ActionsApplied) != 1 {
 				t.Fatalf("partial application lost: %+v, %v", result, err)
 			}
@@ -82,7 +82,7 @@ func TestPlanExecutorRollbackPreservesUnrelatedFieldsAndRejectsConflicts(t *test
 			before.SetResourceVersion("1")
 			client := &concurrentPlanClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
 			executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-			result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe.periodSeconds", Value: float64(5)}}}, false)
+			result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe.periodSeconds", Value: testPlanValue(float64(5))}}}, false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,7 +118,7 @@ func TestResponderLoopExposesPartialApplicationWhenCompensationFails(t *testing.
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	client := &failingBatchClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"ports": []any{map[string]any{"targetPort": float64(9999)}}})}}, failRollback: true}
 	loop := recoveryLoop(t, client)
-	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}, program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8081}}}}
+	loop.plans["two-actions"] = selectedPlan{id: "two-actions", programID: "targetport", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}, program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8081)}}}}
 	response := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"two-actions"}})
 	if response.Error == "" || response.ApplicationID == "" {
 		t.Fatalf("lost partial rollback handle: %+v", response)
@@ -169,7 +169,7 @@ func TestPlanExecutorAppliesRepeatedWritesToOneObjectDespiteInterveningVersionBu
 	object.SetResourceVersion("1")
 	client := statusBumpingClient{&concurrentPlanClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-	plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(2)}, program.SetField{Ref: ref, Path: "spec.replicas", Value: float64(3)}}}
+	plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(2))}, program.SetField{Ref: ref, Path: "spec.replicas", Value: testPlanValue(float64(3))}}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
 	if err != nil || !result.Applied || len(result.ActionsApplied) != 2 {
 		t.Fatalf("second write to the same object failed: %+v %v", result, err)
@@ -181,7 +181,7 @@ func TestPlanExecutorRollbackRestoresAddedObjectsThatTheServerDefaulted(t *testi
 	const probe = "spec.template.spec.containers.0.readinessProbe"
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: planObject(ref, map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "api", "image": "v1"}}}}})}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
-	plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe", Value: map[string]any{"httpGet": map[string]any{"path": "/"}}}}}
+	plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe", Value: testPlanValue(map[string]any{"httpGet": map[string]any{"path": "/"}})}}}
 	result, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions"}, plan, false)
 	if err != nil {
 		t.Fatal(err)

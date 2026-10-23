@@ -15,7 +15,7 @@ func TestUnreplayableMitigatorPassesDiagnosisGateWithTypedNote(t *testing.T) {
 import ("context";"sdo.dev/operator/sdk/program")
 func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindings)(program.Plan,error){
  verdict,err:=p.Diagnose(ctx,v,b);if err!=nil || verdict.Result!=program.Match{return program.Plan{},err}
- return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b["service"]}}},nil
+ return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"]}}},nil
 }
 `
 	if err := os.WriteFile(path, []byte(source), 0644); err != nil {

@@ -31,7 +31,7 @@ func TestPlanExecutorStructuredSourceAndDocument(t *testing.T) {
 	after.Object["data"].(map[string]any)["flags.json"] = `{"gc":false,"unrelated":7}`
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
 	executor := PlanExecutor{Client: client, Source: planFakeSource{source: accepted}, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, accepted, after)}
-	action := program.SetField{Ref: ref, Path: "data[flags.json]", DocumentFormat: "json", DocumentPath: []string{"gc"}, ValueFromSource: true}
+	action := program.SetField{Ref: ref, Path: "data[flags.json]", DocumentFormat: "json", DocumentPath: []string{"gc"}, Value: program.FromSource(ref, "data[flags.json]")}
 	result, err := executor.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, program.Plan{Actions: []program.Action{action}}, false)
 	if err != nil || !result.VerificationPassed {
 		t.Fatalf("apply: %v", err)
@@ -52,7 +52,7 @@ func TestPlanExecutorStructuredSourceAndDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	decoded := planApplicationState(proto).Result.Plan.Actions[0].(program.SetField)
-	if !decoded.ValueFromSource || len(decoded.DocumentPath) != 1 {
+	if decoded.Value.Origin() != program.SourceValue || len(decoded.DocumentPath) != 1 {
 		t.Fatal("source selector lost across contract")
 	}
 	if err := executor.Rollback(context.Background(), result); err != nil {
@@ -67,7 +67,7 @@ func TestPlanExecutorStructuredRefusesBeforeOpaqueRead(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "flags"}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}
 	executor := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: "safe"}}}, false)
+	_, err := executor.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("safe")}}}, false)
 	if err == nil || !strings.Contains(err.Error(), "safety") {
 		t.Fatalf("must refuse for missing safety evidence before Get: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestPlanExecutorStructuredObservationRejectsMissingEffect(t *testing.T) {
 	after := before.DeepCopy()
 	after.Object["data"].(map[string]any)["key"] = "after"
 	executor := PlanExecutor{Client: ignoreStructuredPatch{&planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, after)}
-	result, err := executor.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: "after"}}}, false)
+	result, err := executor.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("after")}}}, false)
 	if err == nil || result.VerificationPassed {
 		t.Fatal("unobserved write reported success")
 	}
@@ -186,11 +186,10 @@ func TestPlanExecutorStructuredFieldFamilies(t *testing.T) {
 			}
 			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
 			e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, after)}
-			// Selector is existing vocabulary: ValueFromSource also exercises source resolution.
-			a := program.SetField{Ref: ref, Path: c.path, Value: c.value}
+			// Selector is existing vocabulary: FromSource also exercises source resolution.
+			a := program.SetField{Ref: ref, Path: c.path, Value: testPlanValue(c.value)}
 			if !program.ExpandedSetField(a) {
-				a.Value = nil
-				a.ValueFromSource = true
+				a.Value = program.FromSource(a.Ref, a.Path)
 				e.Source = planFakeSource{source: after}
 			}
 			result, err := e.Apply(context.Background(), IncidentRequest{RepairPolicy: "recorded-actions", SourceCommit: "accepted"}, program.Plan{Actions: []program.Action{a}}, false)
@@ -234,7 +233,7 @@ func TestPlanExecutorServiceAccountMustAlreadyExistAndBeTokenless(t *testing.T) 
 			safety := fixturePlanSafety(t, ref, before, after)
 			safety.ServiceAccounts = map[sdk.ObjectRef]string{account: "account-uid"}
 			e := PlanExecutor{Client: planIdentityTestClient{objects, TypedPlanClient{Client: client}}, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: safety}
-			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.serviceAccountName", Value: "existing"}}}, false)
+			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.serviceAccountName", Value: testPlanValue("existing")}}}, false)
 			if (err == nil) != tc.want || (!tc.want && (result.Applied || len(objects.patches) > 0)) {
 				t.Fatalf("applied=%v err=%v", result.Applied, err)
 			}
@@ -260,7 +259,7 @@ func FuzzStructuredFieldPathAndSecretPredicate(f *testing.F) {
 			t.Skip()
 		}
 		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "placeholder"}
-		if (program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: path, Value: "placeholder"}}}).Validate() == nil {
+		if (program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: path, Value: testPlanValue("placeholder")}}}).Validate() == nil {
 			t.Fatal("Secret field accepted")
 		}
 		object := planObject(sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "fixture"}, map[string]any{"template": map[string]any{"spec": map[string]any{"automountServiceAccountToken": false, "envFrom": []any{map[string]any{"secretRef": map[string]any{"name": path}}}}}})
@@ -289,7 +288,7 @@ func TestPlanExecutorStructuredYAMLAndMissingKey(t *testing.T) {
 			after.Object["data"].(map[string]any)["flags"] = want
 			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
 			e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, after)}
-			a := program.SetField{Ref: ref, Path: "data[flags]", DocumentFormat: format, DocumentPath: []string{"gc"}, Value: false}
+			a := program.SetField{Ref: ref, Path: "data[flags]", DocumentFormat: format, DocumentPath: []string{"gc"}, Value: testPlanValue(false)}
 			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{a}}, false)
 			if err != nil || !result.VerificationPassed {
 				t.Fatal(err)
@@ -307,7 +306,7 @@ func TestPlanExecutorStructuredYAMLAndMissingKey(t *testing.T) {
 	after.Object["data"] = map[string]any{"missing": "safe"}
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
 	e := PlanExecutor{Client: client, Source: planFakeSource{source: after}, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, after)}
-	if result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[missing]", ValueFromSource: true}}}, false); err != nil || !result.VerificationPassed {
+	if result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[missing]", Value: program.FromSource(ref, "data[missing]")}}}, false); err != nil || !result.VerificationPassed {
 		t.Fatal(err)
 	}
 }
@@ -321,7 +320,7 @@ type structuredFixtureProgram struct {
 }
 
 func (p structuredFixtureProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "synthetic-structured", Params: []program.ParamSpec{{Name: "target", Kind: program.Kind(p.ref.Kind), Required: true}}}
+	return program.ProgramSpec{ID: "synthetic-structured", Params: []program.ParamSpec{{Name: "target", Kind: program.Kind(p.ref.Kind), Required: true}, {Name: "value", ValueKind: program.StringValue, Default: p.want}}}
 }
 func (p structuredFixtureProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
 	value, err := program.FieldValue(p.client.objects[p.ref].Object, p.path)
@@ -343,7 +342,7 @@ func TestResponderToolsAcceptStructuredSetField(t *testing.T) {
 	after := before.DeepCopy()
 	after.Object["data"].(map[string]any)["key"] = "after"
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
-	p := structuredFixtureProgram{action: program.SetField{Ref: ref, Path: "data[key]", Value: "after"}, client: client, ref: ref, want: "after", path: "data[key]"}
+	p := structuredFixtureProgram{action: program.SetField{Ref: ref, Path: "data[key]", Value: program.FromParam("value")}, client: client, ref: ref, want: "after", path: "data[key]"}
 	registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +350,7 @@ func TestResponderToolsAcceptStructuredSetField(t *testing.T) {
 	e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, after)}
 	loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, registry, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, nil, e, 5)
 	loop.ReadView = func(sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{} }
-	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: program.Bindings{"target": ref}})
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: program.Bindings{Objects: program.ObjectBindings{"target": ref}}})
 	if planned.Error != "" || planned.PlanID == "" {
 		t.Fatalf("plan: %s", planned.Error)
 	}
@@ -373,7 +372,7 @@ func TestPlanExecutorStructuredVerifiesEachWriteAtItsBoundary(t *testing.T) {
 	after.Object["data"].(map[string]any)["key"] = "after"
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
 	e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, intermediate, after)}
-	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: "intermediate"}, program.SetField{Ref: ref, Path: "data[key]", Value: "after"}}}, false)
+	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("intermediate")}, program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("after")}}}, false)
 	if err != nil || !result.VerificationPassed || len(client.patches) != 2 {
 		t.Fatalf("ordered writes: %v", err)
 	}

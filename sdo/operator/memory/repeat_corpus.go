@@ -65,12 +65,12 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 					continue
 				}
 				for _, candidate := range []program.Bindings{previous.Peers, previous.Bindings} {
-					if len(candidate) != len(binding) || maps.Equal(candidate, binding) {
+					if len(candidate.Objects) != len(binding.Objects) || candidate.Equal(binding) {
 						continue
 					}
 					valid := true
-					for name, ref := range binding {
-						peer, ok := candidate[name]
+					for name, ref := range binding.Objects {
+						peer, ok := candidate.Objects[name]
 						valid = valid && ok && peer.Kind == ref.Kind
 					}
 					if valid {
@@ -78,11 +78,11 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 						break
 					}
 				}
-				if peers != nil {
+				if peers.Objects != nil {
 					break
 				}
 			}
-			if peers == nil {
+			if peers.Objects == nil {
 				return nil, fmt.Errorf("no captured accepted healthy peer for program %s", id)
 			}
 			encoded, _ := json.Marshal(binding)

@@ -31,7 +31,7 @@ func TestSelectProgramCandidatesOnlyDiagnosesAffectedBindings(t *testing.T) {
 	}
 	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}}, {ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "app"}}}}}
 	got := SelectProgramCandidatesWithOptions(context.Background(), registry, view, nil, CandidateOptions{Deadline: time.Second, Affected: []sdk.ObjectRef{{Kind: "Service", Namespace: "app", Name: "api"}}})
-	if len(got) != 1 || got[0].Bindings["service"].Name != "api" {
+	if len(got) != 1 || got[0].Bindings.Objects["service"].Name != "api" {
 		t.Fatalf("unaffected binding diagnosed: %+v", got)
 	}
 }
@@ -58,7 +58,7 @@ func TestSelectProgramCandidatesPreservesFindingAssociationsForOneBinding(t *tes
 func TestSelectProgramCandidatesSweepsUnnamedResourceAndDeduplicates(t *testing.T) {
 	geo := sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "geo"}
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-		if b["service"].Name == geo.Name {
+		if b.Objects["service"].Name == geo.Name {
 			return program.Verdict{Result: program.Match}
 		}
 		return program.Verdict{Result: program.NoMatch}
@@ -68,7 +68,7 @@ func TestSelectProgramCandidatesSweepsUnnamedResourceAndDeduplicates(t *testing.
 	}
 	view := &sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "search", Namespace: "app"}}, {ObjectMeta: metav1.ObjectMeta{Name: "geo", Namespace: "app"}}}}}
 	runs := SelectProgramCandidates(context.Background(), registry, view, []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "search"}}}, time.Second)
-	if len(runs) != 2 || runs[0].Bindings["service"].Name != geo.Name || runs[0].Verdict.Result != program.Match || runs[0].BindingSource != "sweep" {
+	if len(runs) != 2 || runs[0].Bindings.Objects["service"].Name != geo.Name || runs[0].Verdict.Result != program.Match || runs[0].BindingSource != "sweep" {
 		t.Fatalf("sweep and rank: %+v", runs)
 	}
 	if runs[1].BindingSource != "finding" {
@@ -107,7 +107,7 @@ func TestSelectProgramCandidatesSweepLimitAndDeadline(t *testing.T) {
 
 func TestSelectProgramCandidatesSweepsRequiredKindPair(t *testing.T) {
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "pair", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "deployment", Kind: "Deployment", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-		if b["service"].Name == "geo" && b["deployment"].Name == "geo" {
+		if b.Objects["service"].Name == "geo" && b.Objects["deployment"].Name == "geo" {
 			return program.Verdict{Result: program.Match}
 		}
 		return program.Verdict{Result: program.NoMatch}
@@ -123,9 +123,9 @@ func TestSelectProgramCandidatesSweepsRequiredKindPair(t *testing.T) {
 }
 
 func TestProgramRunBindingSourceSurvivesContractRoundTrip(t *testing.T) {
-	run := ProgramRun{ProgramID: "targetport", BindingSource: "sweep", Bindings: program.Bindings{"service": {Kind: "Service", Namespace: "app", Name: "geo"}}, Verdict: program.Verdict{Result: program.Match}}
+	run := ProgramRun{ProgramID: "targetport", BindingSource: "sweep", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": {Kind: "Service", Namespace: "app", Name: "geo"}}}, Verdict: program.Verdict{Result: program.Match}}
 	got := programRunState(programRunContract(run))
-	if got.BindingSource != "sweep" || got.Bindings["service"].Name != "geo" {
+	if got.BindingSource != "sweep" || got.Bindings.Objects["service"].Name != "geo" {
 		t.Fatalf("contract round trip: %+v", got)
 	}
 }
@@ -141,7 +141,7 @@ func TestSelectProgramCandidatesBindsEveryResourceAssignmentAndRanks(t *testing.
 	second := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "two"}
 	registry, err := program.NewRegistry([]program.Diagnoser{
 		candidateProgram{spec: program.ProgramSpec{ID: "pair", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}, {Name: "deployment", Kind: "Deployment", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-			if b["deployment"].Name == "two" {
+			if b.Objects["deployment"].Name == "two" {
 				return program.Verdict{Result: program.Match}
 			}
 			return program.Verdict{Result: program.NoMatch}
@@ -152,7 +152,7 @@ func TestSelectProgramCandidatesBindsEveryResourceAssignmentAndRanks(t *testing.
 		t.Fatal(err)
 	}
 	got := SelectProgramCandidates(context.Background(), registry, &sdktest.ReplayReadView{}, []sdk.Finding{{Status: sdk.FindingActive, PrimaryResource: service, RelatedResources: []sdk.ObjectRef{first, second}}}, time.Second)
-	if len(got) != 2 || got[0].ProgramID != "pair" || got[0].Verdict.Result != program.Match || got[0].Bindings["deployment"] != second || got[1].Bindings["deployment"] != first {
+	if len(got) != 2 || got[0].ProgramID != "pair" || got[0].Verdict.Result != program.Match || got[0].Bindings.Objects["deployment"] != second || got[1].Bindings.Objects["deployment"] != first {
 		t.Fatalf("candidate assignments and rank: %#v", got)
 	}
 }
@@ -201,7 +201,7 @@ func TestSelectProgramCandidatesUsesDistinctResourcesForSameKindRoles(t *testing
 		t.Fatalf("distinct assignments: %+v", runs)
 	}
 	for _, run := range runs {
-		if run.Bindings["from"] == run.Bindings["to"] {
+		if run.Bindings.Objects["from"] == run.Bindings.Objects["to"] {
 			t.Fatalf("duplicate resource: %+v", run)
 		}
 	}
@@ -217,7 +217,7 @@ func TestSweepAllowsUnboundOptionalParameter(t *testing.T) {
 	if len(runs) != 1 || runs[0].Verdict.Result != program.Match {
 		t.Fatalf("optional binding discarded sweep: %+v", runs)
 	}
-	if _, bound := runs[0].Bindings["peer"]; bound {
+	if _, bound := runs[0].Bindings.Objects["peer"]; bound {
 		t.Fatal("bound absent optional peer")
 	}
 }
@@ -227,7 +227,7 @@ func TestControllerSweepVisitsTwoHundredBindingsAcrossRestarts(t *testing.T) {
 	var mu sync.Mutex
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "many", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
 		mu.Lock()
-		seen[b["service"].Name] = true
+		seen[b.Objects["service"].Name] = true
 		mu.Unlock()
 		return program.Verdict{Result: program.NoMatch}
 	}}}, nil)
@@ -280,7 +280,7 @@ func TestPeriodicSweepReachesServiceSixtyFour(t *testing.T) {
 		services[i].ObjectMeta = metav1.ObjectMeta{Name: fmt.Sprintf("service-%03d", i), Namespace: "app"}
 	}
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-		if b["service"].Name == "service-064" {
+		if b.Objects["service"].Name == "service-064" {
 			return program.Verdict{Result: program.Match}
 		}
 		return program.Verdict{Result: program.NoMatch}
@@ -319,7 +319,7 @@ func TestSweepIncludesOptionalPeerAndUnboundAssignment(t *testing.T) {
 	}
 	bound, unbound := false, false
 	for _, run := range runs {
-		if _, ok := run.Bindings["peer"]; ok {
+		if _, ok := run.Bindings.Objects["peer"]; ok {
 			bound = true
 		} else {
 			unbound = true

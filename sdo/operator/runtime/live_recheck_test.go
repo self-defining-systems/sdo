@@ -209,7 +209,7 @@ func TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles(t *testing.T) {
 			loop, kube := trustedPortLoop(t, false, true, true)
 			dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
 			attachRecoveryStore(t, dispatcher, loop)
-			bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
+			bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 			planned := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: bindings})
 			if planned.Error != "" {
 				t.Fatal(planned.Error)
@@ -288,7 +288,7 @@ func TestResponderFailedVerificationIsRecordedAndLeftInPlace(t *testing.T) {
 				}
 				loop.Programs = registry
 			}
-			bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
+			bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 			planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: bindings})
 			if planned.Error != "" {
 				t.Fatal(planned.Error)

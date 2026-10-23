@@ -22,7 +22,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -62,7 +61,7 @@ func t1Write(t *testing.T, root, name string, raw []byte) {
 func t1Outcome(t *testing.T, revision string) *contracts.OutcomeRecord {
 	t.Helper()
 	at := timestamppb.New(time.Unix(100, 0))
-	bound := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
+	bound := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 	// Hand-written controller transcript: an open Match, selected plan, completed
 	// apply and binding-scoped post-apply NoMatch, plus affirmative final proof.
 	return &contracts.OutcomeRecord{
@@ -71,7 +70,7 @@ func t1Outcome(t *testing.T, revision string) *contracts.OutcomeRecord {
 		ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "wrong target port", Resources: []*contracts.ObjectRef{t1Ref("api")}}},
 		RepairActions:       []*contracts.RepairActionReceipt{{Target: "Service/app/api", Summary: "restore target port", Details: "set targetPort to accepted value", StartedAt: at, CompletedAt: at, ActionId: "sdo-program-apply-1", Kind: "program-plan", Success: true, Resources: []*contracts.ObjectRef{t1Ref("api")}}},
 		ProgramRuns:         []*contracts.ProgramRun{{ProgramId: t1Program, ProgramRevision: revision, Duration: durationpb.New(time.Millisecond), Bindings: []*contracts.Binding{{Name: "service", Object: t1Ref("api")}}, Verdict: &contracts.Verdict{Result: contracts.Verdict_RESULT_MATCH}}},
-		PlanApplications:    []*contracts.PlanApplication{{Plan: &contracts.Plan{Rationale: "restore accepted target port", Actions: []*contracts.Action{{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: t1Ref("api"), Path: "spec.ports[0].targetPort", Value: structpb.NewNumberValue(8080), Reason: "restore accepted field"}}}}}, ApplicationId: "apply-1", ProgramIds: []string{t1Program}, Applied: true, CompletedAt: at, VerificationCompleted: true, VerificationPassed: true, FinalEquivalenceVerified: proto.Bool(true), Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
+		PlanApplications:    []*contracts.PlanApplication{{Plan: &contracts.Plan{Rationale: "restore accepted target port", Actions: []*contracts.Action{{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: t1Ref("api"), Path: "spec.ports[0].targetPort", Value: &contracts.PlanValue{Origin: &contracts.PlanValue_Parameter{Parameter: "target-port"}}, Reason: "restore accepted field"}}}}}, ApplicationId: "apply-1", ProgramIds: []string{t1Program}, Applied: true, CompletedAt: at, VerificationCompleted: true, VerificationPassed: true, FinalEquivalenceVerified: proto.Bool(true), Verification: &contracts.Verdict{Result: contracts.Verdict_RESULT_NO_MATCH}}},
 		ProgramToolCalls: []*contracts.ProgramToolCall{
 			{Command: "plan", At: timestamppb.New(time.Unix(99, 0)), RequestJson: string(t1JSON(t, ToolRequest{Command: "plan", ProgramID: t1Program, Bindings: bound})), ResponseJson: `{"command":"plan","plan_id":"plan-1"}`},
 			{Command: "apply", At: timestamppb.New(time.Unix(101, 0)), RequestJson: `{"command":"apply","plan_ids":["plan-1"]}`, ResponseJson: string(t1JSON(t, ToolResponse{Command: "apply", ApplicationID: "apply-1", ProgramRuns: []ProgramRun{{ProgramID: t1Program, ProgramRevision: revision, Bindings: bound, Verdict: program.Verdict{Result: program.NoMatch}}}}))},
@@ -134,7 +133,7 @@ func (d t1Diagnoser) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: d.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
 func (d t1Diagnoser) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	diff, err := v.DiffAgainstSource(b["service"])
+	diff, err := v.DiffAgainstSource(b.Objects["service"])
 	result := program.NoMatch
 	if diff.Changed {
 		result = program.Match
@@ -212,7 +211,7 @@ func TestT1ClassificationMatrix(t *testing.T) {
 			}
 			fixed := map[string]program.Result{}
 			if c.fixed != "" {
-				fixed[matchedViewKey(t1Program, program.Bindings{"service": objectRefState(t1Ref("api"))})] = c.fixed
+				fixed[matchedViewKey(t1Program, program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(t1Ref("api"))}})] = c.fixed
 			}
 			work := classifyCauseWork(o, fixed)
 			capture := t.TempDir()
@@ -601,7 +600,7 @@ func TestT1FixedReplayIsIndependentOfProgramOrder(t *testing.T) {
 			}
 			verdicts := fixedCaptureVerdicts(ctx, o, registry, capture)
 			for _, run := range o.ProgramRuns {
-				key := matchedViewKey(run.ProgramId, program.Bindings{"service": objectRefState(t1Ref("api"))})
+				key := matchedViewKey(run.ProgramId, program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(t1Ref("api"))}})
 				if verdicts[key] != program.Match {
 					t.Errorf("program %s lost shared immutable observation: %s", run.ProgramId, verdicts[key])
 				}
@@ -660,5 +659,5 @@ const t1ProgramSource = `package contractrepair
 import ("context"; "sdo.dev/operator/sdk/program")
 type Program struct{}
 func (Program) Spec() program.ProgramSpec {return program.ProgramSpec{ID:"contract-repair",Params:[]program.ParamSpec{{Name:"service",Kind:"Service",Required:true}}}}
-func (Program) Diagnose(_ context.Context, v program.ReadView,b program.Bindings)(program.Verdict,error){d,e:=v.DiffAgainstSource(b["service"]);r:=program.NoMatch;if d.Changed {r=program.Match};return program.Verdict{Result:r},e}
+func (Program) Diagnose(_ context.Context, v program.ReadView,b program.Bindings)(program.Verdict,error){d,e:=v.DiffAgainstSource(b.Objects["service"]);r:=program.NoMatch;if d.Changed {r=program.Match};return program.Verdict{Result:r},e}
 `

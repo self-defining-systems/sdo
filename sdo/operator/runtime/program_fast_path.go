@@ -100,7 +100,7 @@ func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust 
 	for _, finding := range uncovered {
 		matched := false
 		for _, run := range selected {
-			for _, bound := range run.Bindings {
+			for _, bound := range run.Bindings.Objects {
 				if !fastPathDirectlyRelated(view, finding.PrimaryResource, bound) {
 					continue
 				}

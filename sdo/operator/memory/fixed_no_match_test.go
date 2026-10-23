@@ -19,7 +19,7 @@ func TestFixedNoMatchEvidenceUsesExactFixedCaptureAndNoTrustLabel(t *testing.T) 
 			if err := os.WriteFile(filepath.Join(capture, "open@"+phase+"-recordings.json"), []byte("[]"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			instances := map[string][]program.Bindings{"routing": {{"service": {Kind: "Service", Namespace: "app", Name: "api"}}}}
+			instances := map[string][]program.Bindings{"routing": {{Objects: program.ObjectBindings{"service": {Kind: "Service", Namespace: "app", Name: "api"}}}}}
 			origins := map[string]string{CapturedInstanceKey("routing", instances["routing"][0]): phase}
 			paths, err := RecordFixedNoMatchCorpus(root, capture, "incident", instances, origins)
 			if err != nil || len(paths) != 5 {

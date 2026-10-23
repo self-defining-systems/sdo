@@ -39,8 +39,8 @@ func checkRetainedDrift(ctx context.Context, retained []sdk.Finding, view progra
 			id := strings.TrimPrefix(finding.DetectorID, "drift.")
 			if registry != nil {
 				if p, ok := registry.Diagnoser(id); ok {
-					verdict := program.RunDiagnose(ctx, p, view, finding.ParameterBindings, deadline)
-					runs = append(runs, ProgramRun{ProgramID: id, Bindings: finding.ParameterBindings, Verdict: verdict})
+					verdict := program.RunDiagnose(ctx, p, view, program.Bindings{Objects: finding.ParameterBindings}, deadline)
+					runs = append(runs, ProgramRun{ProgramID: id, Bindings: program.Bindings{Objects: finding.ParameterBindings}, Verdict: verdict})
 					clear = verdict.Result == program.NoMatch
 				}
 			}

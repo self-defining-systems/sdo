@@ -55,7 +55,7 @@ func (p compiledForeignInvariant) Diagnose(ctx context.Context, view program.Rea
 		return program.Verdict{}, err
 	}
 	recording := &sdktest.RecordingReadView{ReadView: view}
-	if _, err := recording.DiffAgainstSource(bindings["policy"]); err != nil {
+	if _, err := recording.DiffAgainstSource(bindings.Objects["policy"]); err != nil {
 		return program.Verdict{}, err
 	}
 	for _, service := range view.Services() {
@@ -244,7 +244,7 @@ func TestForeignNetworkPolicyInvariantNearMisses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			view := LiveReadView{DetectionContext: policyWorkloadSnapshot(tc.policies...), Source: source, SourceCommit: commit}
-			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}})
+			verdict, err := learned.Diagnose(context.Background(), view, program.Bindings{Objects: program.ObjectBindings{"policy": {APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "deny"}}})
 			if err != nil || verdict.Result != tc.want {
 				t.Fatalf("verdict=%+v error=%v", verdict, err)
 			}

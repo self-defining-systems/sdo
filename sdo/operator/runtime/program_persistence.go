@@ -17,7 +17,7 @@ func (c *Controller) observeProgramRuns(now time.Time, event *sdk.DriftEvent, ru
 		id := "drift." + run.ProgramID
 		var prior *FindingState
 		for _, state := range c.tracker.states {
-			if state.DetectorID == id && bindingKey(state.Finding.ParameterBindings) == bindingKey(run.Bindings) {
+			if state.DetectorID == id && bindingKey(program.Bindings{Objects: state.Finding.ParameterBindings}) == bindingKey(run.Bindings) {
 				prior = state
 				break
 			}
@@ -39,15 +39,15 @@ func (c *Controller) observeProgramRuns(now time.Time, event *sdk.DriftEvent, ru
 		if run.Verdict.Result == program.Match {
 			observation := event
 			if observation == nil {
-				refs := make([]string, 0, len(run.Bindings))
-				for name := range run.Bindings {
+				refs := make([]string, 0, len(run.Bindings.Objects))
+				for name := range run.Bindings.Objects {
 					refs = append(refs, name)
 				}
 				sort.Strings(refs)
 				if len(refs) == 0 {
 					continue
 				}
-				observation = &sdk.DriftEvent{Ref: run.Bindings[refs[0]], Source: "periodic program sweep", ObservedAt: now.UTC(), Classification: sdk.DriftFault, ProgramID: run.ProgramID}
+				observation = &sdk.DriftEvent{Ref: run.Bindings.Objects[refs[0]], Source: "periodic program sweep", ObservedAt: now.UTC(), Classification: sdk.DriftFault, ProgramID: run.ProgramID}
 			}
 			finding = c.programFinding(*observation, run)
 		} else if prior != nil {
@@ -131,7 +131,7 @@ func (c *Controller) confirmPrograms(ctx context.Context, now time.Time, view pr
 			c.tracker.states[key].LastObservedAt = now
 			continue
 		}
-		run := ProgramRun{ProgramID: id, Bindings: state.Finding.ParameterBindings, BindingSource: "hint"}
+		run := ProgramRun{ProgramID: id, Bindings: program.Bindings{Objects: state.Finding.ParameterBindings}, BindingSource: "hint"}
 		run.Verdict = program.RunDiagnose(ctx, diagnoser, view, run.Bindings, c.drift.Deadline)
 		c.observeProgramRuns(now, nil, []ProgramRun{run})
 	}

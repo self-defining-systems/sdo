@@ -33,7 +33,7 @@ func (s sourcePolicyFixture) AcceptedManifests(context.Context, string, string) 
 	}
 	return s.accepted, nil
 }
-func TestStreamSourcePolicyEnforcesSourceAndPreservesLegacyLiterals(t *testing.T) {
+func TestStreamSourcePolicyEnforcesSourceAndDeclaredParameters(t *testing.T) {
 	cfg, err := LoadSourcePlanPolicy(`{"version":1,"authority":"accepted-source-and-incident","applications":{"fixture":"app"},"field_repairs":"accepted-source-only","create_kinds":["v1/ConfigMap","v1/Service"],"delete_kinds":["networking.k8s.io/v1/NetworkPolicy"],"ttl_seconds":3600}`)
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestStreamSourcePolicyEnforcesSourceAndPreservesLegacyLiterals(t *testing.T
 	}{
 		{"source", "spec.template.spec.containers[name=api].args", []string{"source"}, true},
 		{"structured literal refused", "spec.template.spec.containers[name=api].args", []string{"unreviewed"}, false},
-		{"legacy resource literal remains", "spec.template.spec.containers[0].resources.limits", map[string]any{"memory": "128Mi"}, true},
+		{"declared resource parameter remains", "spec.template.spec.containers[0].resources.limits.memory", "128Mi", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := accepted.DeepCopy()
@@ -59,17 +59,17 @@ func TestStreamSourcePolicyEnforcesSourceAndPreservesLegacyLiterals(t *testing.T
 			_ = unstructured.SetNestedSlice(before.Object, []any{map[string]any{"name": "api", "args": []any{"broken"}, "resources": map[string]any{"limits": map[string]any{"memory": "64Mi"}}}}, "spec", "template", "spec", "containers")
 			client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
 			e := PlanExecutor{Client: client, Source: source, SourceAuthority: authority, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-			result, err := e.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: test.path, Value: test.value}}}, false)
+			result, err := e.Apply(context.Background(), incident, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: test.path, Value: testPlanValue(test.value)}}}, false)
 			if (err == nil) != test.allowed || (!test.allowed && len(client.patches) != 0) {
 				t.Fatalf("allowed=%v err=%v", test.allowed, err)
 			}
 			if test.allowed {
 				mode := "accepted-source"
-				if test.name == "legacy resource literal remains" {
-					mode = "legacy-literal"
+				if test.name == "declared resource parameter remains" {
+					mode = "parameter"
 				}
 				if result.Patches[0].Authorization != mode {
-					t.Fatal("literal/source authority split was not recorded")
+					t.Fatal("parameter/source authority split was not recorded")
 				}
 			}
 			if test.allowed && (!result.VerificationPassed || len(client.patches) != 1) {

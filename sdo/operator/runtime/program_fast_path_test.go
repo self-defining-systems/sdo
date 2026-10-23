@@ -25,7 +25,7 @@ import (
 
 func TestHandwrittenFastPathCoverageDeduplicatesMatches(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
-	bindings := program.Bindings{"workload": ref}
+	bindings := program.Bindings{Objects: program.ObjectBindings{"workload": ref}}
 	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}}
 	findings := []sdk.Finding{{Fingerprint: "deployment", PrimaryResource: ref}, {Fingerprint: "hint", PrimaryResource: ref}, {Fingerprint: "service", PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 	runs := []ProgramRun{{ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: "deployment", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}, {ProgramID: "repair", ProgramRevision: "revision-a", FindingFingerprint: "hint", Bindings: bindings, Verdict: program.Verdict{Result: program.Match}}}
@@ -50,7 +50,7 @@ func TestHandwrittenFastPathCoverageDeduplicatesMatches(t *testing.T) {
 
 func TestFastPathRelationCoverageUsesSnapshotObjects(t *testing.T) {
 	bound := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
-	run := ProgramRun{ProgramID: "repair", ProgramRevision: "rev", FindingFingerprint: "deployment", Bindings: program.Bindings{"workload": bound}, Verdict: program.Verdict{Result: program.Match}}
+	run := ProgramRun{ProgramID: "repair", ProgramRevision: "rev", FindingFingerprint: "deployment", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": bound}}, Verdict: program.Verdict{Result: program.Match}}
 	trust := map[string]ProgramTrust{"repair": {Trusted: true, VerifiedSuccesses: 3, LastChange: "rev"}}
 	controller := true
 	snapshot := sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}}}}}}, ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}}, ReplicaSetList: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api", Controller: &controller}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "api-rs", Controller: &controller}}}}}}
@@ -75,7 +75,7 @@ func TestFastPathRelationCoverageForStatefulSetAndPolicyNearMisses(t *testing.T)
 	controller := true
 	bound := sdk.ObjectRef{Kind: "StatefulSet", Namespace: "app", Name: "database"}
 	snapshot := sdktest.Snapshot{NamespaceName: "app", StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}, Spec: appsv1.StatefulSetSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "database"}}}}}}, ReplicaSetList: []appsv1.ReplicaSet{{ObjectMeta: metav1.ObjectMeta{Name: "database-rs", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "database", Controller: &controller}}}}}, PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "database-0", Namespace: "app", OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "database", Controller: &controller}}}}}, HPAList: []autoscalingv2.HorizontalPodAutoscaler{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}, Spec: autoscalingv2.HorizontalPodAutoscalerSpec{ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{Kind: "StatefulSet", Name: "database"}}}}, PDBList: []policyv1.PodDisruptionBudget{{ObjectMeta: metav1.ObjectMeta{Name: "database", Namespace: "app"}, Spec: policyv1.PodDisruptionBudgetSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "database"}}}}}}
-	run := ProgramRun{ProgramID: "repair", ProgramRevision: "rev", FindingFingerprint: "workload", Bindings: program.Bindings{"workload": bound}, Verdict: program.Verdict{Result: program.Match}}
+	run := ProgramRun{ProgramID: "repair", ProgramRevision: "rev", FindingFingerprint: "workload", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": bound}}, Verdict: program.Verdict{Result: program.Match}}
 	trust := map[string]ProgramTrust{"repair": {Trusted: true, VerifiedSuccesses: 3, LastChange: "rev"}}
 	for _, kind := range []string{"Pod", "ReplicaSet", "HorizontalPodAutoscaler", "PodDisruptionBudget"} {
 		name := "database"

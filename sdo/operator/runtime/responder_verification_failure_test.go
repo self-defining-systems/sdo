@@ -27,7 +27,7 @@ func TestResponderFailedHealthSurvivesRestart(t *testing.T) {
 			loop, kube := trustedPortLoop(t, false, false, false)
 			dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
 			attachRecoveryStore(t, dispatcher, loop)
-			bindings := program.Bindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}
+			bindings := program.Bindings{Objects: program.ObjectBindings{"service": {APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}}}
 			first := loop.Handle(ctx, ToolRequest{Command: "plan", ProgramID: "service-targetport-mismatch", Bindings: bindings})
 			if first.Error != "" {
 				t.Fatal(first.Error)

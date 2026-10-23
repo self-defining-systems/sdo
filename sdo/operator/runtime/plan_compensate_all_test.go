@@ -46,7 +46,7 @@ func TestPlanCompensationAttemptsEveryReversibleWrite(t *testing.T) {
 			safety.Objects[ref] = proof.Objects[ref]
 		}
 		objects[ref] = before
-		actions = append(actions, program.SetField{Ref: ref, Path: "data[key]", Value: "after"})
+		actions = append(actions, program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("after")})
 	}
 	np := sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "foreign"}
 	object := planObject(np, map[string]any{"podSelector": map[string]any{}})

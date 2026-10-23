@@ -53,7 +53,7 @@ func (scenarioPortProgram) Spec() program.ProgramSpec {
 }
 func (scenarioPortProgram) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
 	for _, s := range v.Services() {
-		if s.Name == b["service"].Name {
+		if s.Name == b.Objects["service"].Name {
 			if s.Spec.Ports[0].TargetPort.IntVal == 9999 {
 				return program.Verdict{Result: program.Match}, nil
 			}
@@ -371,7 +371,7 @@ func TestWatchEventTransientMidRolloutProgramNeverFires(t *testing.T) {
 		current := provider.snapshot.(sdktest.Snapshot)
 		service := current.ServiceList[0]
 		pod := current.PodList[0]
-		if b["service"].Name == service.Name && pod.Labels["app"] == service.Spec.Selector["app"] && pod.Spec.Containers[0].Ports[0].ContainerPort != service.Spec.Ports[0].TargetPort.IntVal {
+		if b.Objects["service"].Name == service.Name && pod.Labels["app"] == service.Spec.Selector["app"] && pod.Spec.Containers[0].Ports[0].ContainerPort != service.Spec.Ports[0].TargetPort.IntVal {
 			return program.Verdict{Result: program.Match}
 		}
 		return program.Verdict{Result: program.NoMatch}

@@ -41,7 +41,7 @@ func TestPlanExecutorSourceAuthority(t *testing.T) {
 				executor.Source = planFakeSource{source: source}
 			}
 			incident := IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", DriftEvents: []sdk.DriftEvent{{Ref: ref, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", New: "9999", Source: "8083"}}}}}
-			plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: tc.target}}}
+			plan := program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(tc.target)}}}
 			result, err := executor.Apply(context.Background(), incident, plan, false)
 			if tc.wantError {
 				if err == nil || len(client.patches) != 0 || result.Applied {
@@ -75,13 +75,13 @@ func TestPlanExecutorSourceAuthorityValidatesWholePlan(t *testing.T) {
 	for _, shape := range []string{"later action", "restored then stale", "aggregate", "rollback", "finding metadata", "dry run"} {
 		t.Run(shape, func(t *testing.T) {
 			e, i, ref, c := sourceAuthorityFixture(t)
-			stale := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 9100}
-			actions := []program.Action{program.SetField{Ref: ref, Path: "spec.selector.app", Value: "other"}, stale}
+			stale := program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(9100)}
+			actions := []program.Action{program.SetField{Ref: ref, Path: "spec.selector.app", Value: testPlanValue("other")}, stale}
 			switch shape {
 			case "restored then stale":
-				actions = []program.Action{program.SetField{Ref: ref, Path: stale.Path, Value: 8083}, stale}
+				actions = []program.Action{program.SetField{Ref: ref, Path: stale.Path, Value: testPlanValue(8083)}, stale}
 			case "aggregate":
-				actions = []program.Action{&program.SetField{Ref: ref, Path: "spec.ports", Value: []any{map[string]any{"port": 80, "targetPort": 9100}}}}
+				actions = []program.Action{&program.SetField{Ref: ref, Path: "spec.ports", Value: testPlanValue([]any{map[string]any{"port": 80, "targetPort": 9100}})}}
 			case "rollback":
 				actions = []program.Action{program.Rollback{Ref: ref, ToRevision: "old"}, stale}
 			case "finding metadata":
@@ -127,7 +127,7 @@ func TestPlanExecutorSourceAuthorityEvidenceAndRevision(t *testing.T) {
 			case "source read error":
 				e.Source = authorityErrorSource{}
 			}
-			result, err := e.Apply(context.Background(), i, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8083}}}, false)
+			result, err := e.Apply(context.Background(), i, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8083)}}}, false)
 			if err == nil || result.Applied || len(c.patches) != 0 || !strings.Contains(err.Error(), "investigate") {
 				t.Fatalf("%s: result=%+v err=%v writes=%d", mode, result, err, len(c.patches))
 			}
@@ -143,7 +143,7 @@ func (authorityErrorSource) AcceptedManifest(context.Context, string, sdk.Object
 
 func TestPlanExecutorSourceAuthorityAllowsUnrelatedRepair(t *testing.T) {
 	e, i, ref, c := sourceAuthorityFixture(t)
-	result, err := e.Apply(context.Background(), i, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.selector.app", Value: "other"}}}, false)
+	result, err := e.Apply(context.Background(), i, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.selector.app", Value: testPlanValue("other")}}}, false)
 	if err != nil || !result.Applied || len(c.patches) != 1 {
 		t.Fatalf("unrelated repair: %+v %v", result, err)
 	}
@@ -166,7 +166,7 @@ func TestPlanExecutorSourceAuthorityGuardsResponderAndFastPath(t *testing.T) {
 				}
 			} else {
 				// Preview and apply each validate; a previously stored plan cannot bypass it.
-				loop.plans["stale"] = selectedPlan{programID: "service-targetport-mismatch", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 8080}}}}
+				loop.plans["stale"] = selectedPlan{programID: "service-targetport-mismatch", plan: program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: testPlanValue(8080)}}}}
 				response := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"stale"}})
 				if !strings.Contains(response.Error, "investigate") {
 					t.Fatalf("no investigation feedback: %+v", response)
@@ -215,10 +215,10 @@ func TestPlanExecutorSourceAuthoritySidecarEvidence(t *testing.T) {
 					e := PlanExecutor{Client: c, Source: planFakeSource{source: fixture.Source}, AcceptedRevision: func() string { return fixture.Revision }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
 					i := IncidentRequest{SourceCommit: fixture.Revision, RepairPolicy: "recorded-actions", DriftEvents: []sdk.DriftEvent{fixture.Drift}}
 					a := fixture.Action
-					if !planValuesEqual(a.Value, 9100) {
+					if a.Value.Origin() != program.ParameterValue {
 						t.Fatalf("archived learned action changed: %+v", a)
 					}
-					a.Value = target
+					a.Value = testPlanValue(target)
 					result, err := e.Apply(context.Background(), i, program.Plan{Actions: []program.Action{a}}, false)
 					if target == 9100 {
 						if err == nil || len(c.patches) != 0 || result.Applied {

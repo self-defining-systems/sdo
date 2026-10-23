@@ -106,7 +106,7 @@ func TestRefinementQuestionDoesNotTreatPostRepairNoMatchAsMissedCoverage(t *test
 			fixed.ProgramRevision = revision
 			fixed.Verdict.Result = contracts.Verdict_RESULT_NO_MATCH
 			outcome.ProgramRuns = append(outcome.ProgramRuns, fixed)
-			key := matchedViewKey(t1Program, program.Bindings{"service": objectRefState(t1Ref("api"))})
+			key := matchedViewKey(t1Program, program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(t1Ref("api"))}})
 			work := classifyCauseWork(outcome, map[string]program.Result{key: program.NoMatch})
 			if len(work[0].Items) != 1 || work[0].Items[0].Reason == "program_refinement" {
 				t.Fatalf("post-repair abstention must retain existing matched work only: %v", work)

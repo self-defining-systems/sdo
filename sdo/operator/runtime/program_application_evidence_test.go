@@ -41,7 +41,7 @@ func toolCall(t *testing.T, at time.Time, request ToolRequest, response ToolResp
 func verifiedRepeat(t *testing.T) *contracts.OutcomeRecord {
 	t.Helper()
 	applied := time.Unix(1_700_000_100, 0)
-	bindings := program.Bindings{"service": {Kind: "Service", Namespace: "default", Name: "reservation"}}
+	bindings := program.Bindings{Objects: program.ObjectBindings{"service": {Kind: "Service", Namespace: "default", Name: "reservation"}}}
 	return &contracts.OutcomeRecord{
 		Classification: "success",
 		RepairActions: []*contracts.RepairActionReceipt{
