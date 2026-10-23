@@ -78,3 +78,5 @@ Compensation restores reversible writes even when a plan also deleted an object.
 Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse.
 
 Write verification and compensation compare plan-owned fields and current UID, while checking the full live credential predicate. API defaults and the Deployment revision annotation do not invalidate an otherwise approved effect.
+
+HPA, PDB and named webhook effects require a direct current read. An unwatched kind stays unknown unless that read proves the effect and the verifier has no cached input for the kind; watched kinds still wait for their cache barrier.

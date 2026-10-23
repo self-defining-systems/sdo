@@ -288,6 +288,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 				patch.After.SetResourceVersion(live.GetResourceVersion())
 			}
 		}
+		patch.DirectReadConfirmed = true
 	}
 	complete = true
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {

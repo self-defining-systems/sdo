@@ -36,6 +36,11 @@ func (e PlanExecutor) awaitObserved(ctx context.Context, patches []PlanPatch) er
 	}
 	writes := make([]ObservedWrite, 0, len(patches))
 	for _, patch := range patches {
+		// These kinds have no cached verifier input: HPA/PDB snapshots list the
+		// API currently; scoped webhook reads are direct. Keep watched barriers.
+		if mode, ok := e.Observer.(interface{ DirectPlanReadSuffices(sdk.ObjectRef) bool }); ok && patch.DirectReadConfirmed && mode.DirectPlanReadSuffices(patch.Ref) {
+			continue
+		}
 		if patch.Operation == "delete" {
 			writes = append(writes, ObservedWrite{Ref: patch.Ref, UID: string(patch.Before.GetUID()), Absent: true, Strict: true})
 			continue
@@ -91,7 +96,11 @@ func (c *KubernetesCache) observed(writes []ObservedWrite) bool {
 			}
 			continue
 		}
-		stored, exists, err := informer.GetStore().GetByKey(write.Ref.Namespace + "/" + write.Ref.Name)
+		key := write.Ref.Name
+		if write.Ref.Namespace != "" {
+			key = write.Ref.Namespace + "/" + key
+		}
+		stored, exists, err := informer.GetStore().GetByKey(key)
 		if write.Absent {
 			if err != nil || exists {
 				return false
@@ -118,4 +127,19 @@ func resourceVersionAtLeast(have, want string) bool {
 		return have == want
 	}
 	return h >= w
+}
+
+// DirectPlanReadSuffices only exempts known uncached kinds after the executor
+// has independently proved the current effect. Unknown and watched kinds wait.
+func (c *KubernetesCache) DirectPlanReadSuffices(ref sdk.ObjectRef) bool {
+	c.informerMu.RLock()
+	defer c.informerMu.RUnlock()
+	if _, watched := c.informers[ref.APIVersion+"/"+ref.Kind]; watched {
+		return false
+	}
+	switch ref.APIVersion + "/" + ref.Kind {
+	case "autoscaling/v2/HorizontalPodAutoscaler", "policy/v1/PodDisruptionBudget", "admissionregistration.k8s.io/v1/MutatingWebhookConfiguration", "admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration":
+		return true
+	}
+	return false
 }

@@ -41,14 +41,16 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
-	Operation    string
-	Irreversible bool
-	Structured   bool
-	SourceCommit string
-	Ref          sdk.ObjectRef
-	Patch        json.RawMessage
-	Before       *unstructured.Unstructured
-	After        *unstructured.Unstructured
+	// DirectReadConfirmed is process-local proof, never restored from a receipt.
+	DirectReadConfirmed bool `json:"-"`
+	Operation           string
+	Irreversible        bool
+	Structured          bool
+	SourceCommit        string
+	Ref                 sdk.ObjectRef
+	Patch               json.RawMessage
+	Before              *unstructured.Unstructured
+	After               *unstructured.Unstructured
 }
 
 type PlanPreImage struct {
@@ -287,6 +289,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{result.Patches[index]}}); err != nil {
 			return result, err
 		}
+		result.Patches[index].DirectReadConfirmed = patch.Structured
 	}
 	writesLanded = true
 	result.Applied = true
