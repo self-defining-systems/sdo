@@ -80,9 +80,14 @@ func planSafetyDigest(object *unstructured.Unstructured) string {
 	if annotations := copy.GetAnnotations(); len(annotations) > 0 {
 		values := map[string]any{}
 		for k, v := range annotations {
+			if k == "deployment.kubernetes.io/revision" && copy.GetKind() == "Deployment" {
+				continue
+			}
 			values[k] = v
 		}
-		metadata["annotations"] = values
+		if len(values) > 0 {
+			metadata["annotations"] = values
+		}
 	}
 	copy.Object["metadata"] = metadata
 	canonicalizePlanObject(copy)
@@ -104,7 +109,7 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 		case map[string]any:
 			for k, child := range v {
 				switch k {
-				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock":
+				case "envFrom", "secretKeyRef", "imagePullSecrets", "secret", "secretRef", "secretName", "projected", "csi", "hostPath", "persistentVolumeClaim", "ipBlock", "namespaceSelector", "serviceAccount", "nfs", "flexVolume":
 					return fmt.Errorf("plan safety: credential or unconfined content channel")
 				case "hostNetwork", "hostPID", "hostIPC", "privileged", "allowPrivilegeEscalation":
 					if child != false {
@@ -127,6 +132,47 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 	if err := visit(object.Object); err != nil {
 		return err
 	}
+	if object.GetKind() == "NetworkPolicy" {
+		for direction, key := range map[string]string{"ingress": "from", "egress": "to"} {
+			rules, found, err := unstructured.NestedSlice(object.Object, "spec", direction)
+			if err != nil {
+				return fmt.Errorf("plan safety: unknown network policy rules")
+			}
+			if !found {
+				continue
+			}
+			for _, item := range rules {
+				rule, ok := item.(map[string]any)
+				if !ok {
+					return fmt.Errorf("plan safety: unknown network policy rule")
+				}
+				peers, ok := rule[key].([]any)
+				if !ok || len(peers) == 0 {
+					return fmt.Errorf("plan safety: allow-all network policy routing is forbidden")
+				}
+				for _, item := range peers {
+					peer, ok := item.(map[string]any)
+					if !ok || len(peer) != 1 {
+						return fmt.Errorf("plan safety: unconfined network policy peer")
+					}
+					selector, ok := peer["podSelector"].(map[string]any)
+					if !ok {
+						return fmt.Errorf("plan safety: namespace-local pod selector required")
+					}
+					labels, ok := selector["matchLabels"].(map[string]any)
+					if !ok || len(labels) == 0 || len(selector) != 1 {
+						return fmt.Errorf("plan safety: bounded pod labels required")
+					}
+					for _, label := range labels {
+						if _, ok := label.(string); !ok {
+							return fmt.Errorf("plan safety: invalid pod label selector")
+						}
+					}
+				}
+			}
+		}
+	}
+
 	if object.GetKind() == "Service" {
 		typ, _, _ := unstructured.NestedString(object.Object, "spec", "type")
 		external, _, _ := unstructured.NestedString(object.Object, "spec", "externalName")
@@ -173,6 +219,18 @@ func planSecretPredicate(object *unstructured.Unstructured) error {
 			return fmt.Errorf("plan safety: explicit token automount disablement is required")
 		}
 	}
+	for _, path := range [][]string{{"spec"}, {"spec", "jobTemplate", "spec", "template", "spec"}} {
+		if object.GetKind() != "Pod" && len(path) == 1 {
+			continue
+		}
+		if object.GetKind() != "CronJob" && len(path) > 1 {
+			continue
+		}
+		pod, found, err := unstructured.NestedMap(object.Object, path...)
+		if err != nil || !found || pod["automountServiceAccountToken"] != false {
+			return fmt.Errorf("plan safety: explicit token automount disablement is required")
+		}
+	}
 	return nil
 }
 
@@ -199,6 +257,29 @@ func (e PlanExecutor) validateServiceAccount(ctx context.Context, ref sdk.Object
 	uid, err := reader.TokenlessServiceAccount(ctx, account)
 	if err != nil || uid != expected {
 		return fmt.Errorf("plan safety: existing tokenless service account identity is unproven")
+	}
+	return nil
+}
+
+// checkObservedObject authorizes the independently approved image and applies
+// the hard predicate to the complete live object. Callers separately compare
+// the fields their plan owns; API defaults and controller metadata are unowned.
+func (p *PlanSafetyPolicy) checkObservedObject(live, approved *unstructured.Unstructured, ref sdk.ObjectRef, created bool) error {
+	if live == nil || approved == nil || !samePlanRef(live, ref) {
+		return fmt.Errorf("plan safety: observed identity is unavailable")
+	}
+	if err := planSecretPredicate(live); err != nil {
+		return err
+	}
+	expected := approved.DeepCopy()
+	if created {
+		expected.SetUID("")
+	}
+	if err := p.checkObject(expected, ref); err != nil {
+		return err
+	}
+	if !created && (live.GetUID() == "" || string(live.GetUID()) != p.Objects[ref].UID) {
+		return fmt.Errorf("plan safety: observed UID changed")
 	}
 	return nil
 }

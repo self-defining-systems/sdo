@@ -288,6 +288,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 				patch.After.SetResourceVersion(live.GetResourceVersion())
 			}
 		}
+		patch.DirectReadConfirmed = true
 	}
 	complete = true
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
@@ -308,7 +309,21 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident IncidentRequest, action program.Action, before *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	ref, _ := planActionRef(action)
 	proof := e.Safety.Objects[ref]
-	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	var source *unstructured.Unstructured
+	var err error
+	if ref.Namespace == "" {
+		// Cluster absence is anchored to the application's current accepted render
+		// selection, never an empty-namespace lock or a failed source lookup.
+		scoped, ok := e.Source.(interface {
+			AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
+		})
+		if !ok || incident.Namespace == "" {
+			return nil, fmt.Errorf("cluster object action requires application-scoped accepted source evidence")
+		}
+		source, err = scoped.AcceptedScopedManifest(ctx, incident.SourceCommit, incident.Namespace, ref)
+	} else {
+		source, err = e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	}
 	if objectActionOperation(action) == "delete" {
 		if !proof.DeleteAllowed {
 			return nil, fmt.Errorf("plan safety: irreversible delete effect is not authorized")
@@ -386,9 +401,7 @@ func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) 
 	if patch.After.GetUID() == "" || live.GetUID() != patch.After.GetUID() {
 		return fmt.Errorf("create observation unknown: UID changed or unavailable")
 	}
-	approved := live.DeepCopy()
-	approved.SetUID("")
-	if err := e.Safety.checkObject(approved, patch.Ref); err != nil {
+	if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, true); err != nil {
 		return err
 	}
 	for _, field := range []string{"spec", "data", "binaryData"} {
@@ -420,10 +433,14 @@ func (e PlanExecutor) restoreCreatedObject(ctx context.Context, patch PlanPatch)
 	if patch.After == nil || patch.After.GetUID() == "" || live.GetUID() != patch.After.GetUID() {
 		return fmt.Errorf("create compensation UID conflict")
 	}
-	approved := live.DeepCopy()
-	approved.SetUID("")
-	if err := e.Safety.checkObject(approved, patch.Ref); err != nil {
+	if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, true); err != nil {
 		return err
+	}
+	// Do not delete a create whose source-owned fields were changed by another writer.
+	for _, field := range []string{"spec", "data", "binaryData"} {
+		if expected, exists := patch.After.Object[field]; exists && !planValueContains(live.Object[field], expected) {
+			return fmt.Errorf("create compensation conflict: source-owned fields changed")
+		}
 	}
 	if err := client.Delete(ctx, patch.Ref, live.GetUID(), live.GetResourceVersion()); err != nil {
 		return fmt.Errorf("create compensation delete failed")

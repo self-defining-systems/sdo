@@ -38,7 +38,10 @@ const (
 )
 
 type Config struct {
-	ObservationCeiling sdk.ObservationScope
+	// PlanSafetyPolicyJSON and its reviewer-pinned hash are controller-only authority.
+	PlanSafetyPolicyJSON   string
+	PlanSafetyPolicySHA256 string
+	ObservationCeiling     sdk.ObservationScope
 	// PlanWebhookNames authorizes only named, independently reviewed webhook deletions.
 	PlanWebhookNames                                []string
 	Namespace, ControlNamespace, Application        string
@@ -416,6 +419,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
+	}
+	if c.PlanSafetyPolicyJSON != "" || c.PlanSafetyPolicySHA256 != "" {
+		args = append(args, "--plan-safety-policy-json", c.PlanSafetyPolicyJSON, "--plan-safety-policy-sha256", c.PlanSafetyPolicySHA256)
 	}
 	if c.ProgramFastPath {
 		args = append(args, "--program-fast-path")

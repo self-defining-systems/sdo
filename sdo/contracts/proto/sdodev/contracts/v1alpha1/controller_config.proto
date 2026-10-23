@@ -130,4 +130,8 @@ message ControllerConfig {
   // token and requires metrics_url.
   string metrics_url = 70;
   string metrics_token_file = 71;
+  // Independently reviewed fixture policy, pinned by administrator launch config.
+  // Never populate these fields from responder, plan, or dry-run output.
+  string plan_safety_policy_json = 72;
+  string plan_safety_policy_sha256 = 73;
 }

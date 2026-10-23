@@ -30,6 +30,9 @@ func credentialChannels(object *unstructured.Unstructured) map[string]bool {
 	visit = func(value any, path string) {
 		switch v := value.(type) {
 		case map[string]any:
+			if _, pod := v["containers"]; pod && v["automountServiceAccountToken"] != false {
+				result[path+"/implicit-service-account-token"] = true
+			}
 			for key, child := range v {
 				blocked := false
 				switch key {

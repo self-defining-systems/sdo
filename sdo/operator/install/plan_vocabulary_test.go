@@ -69,3 +69,19 @@ func TestProgramWebhookGrantIsNamedAndSecretFree(t *testing.T) {
 		}
 	}
 }
+
+func TestControllerJobCarriesReviewedPlanAuthority(t *testing.T) {
+	c := testConfig()
+	c.PlanSafetyPolicyJSON = `{"version":1}`
+	c.PlanSafetyPolicySHA256 = "reviewer-pinned-hash"
+	args := controllerJob(c).Spec.Template.Spec.Containers[0].Args
+	found := map[string]string{}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--plan-safety-policy-json" || args[i] == "--plan-safety-policy-sha256" {
+			found[args[i]] = args[i+1]
+		}
+	}
+	if found["--plan-safety-policy-json"] != c.PlanSafetyPolicyJSON || found["--plan-safety-policy-sha256"] != c.PlanSafetyPolicySHA256 {
+		t.Fatal("installer lost reviewed controller policy")
+	}
+}

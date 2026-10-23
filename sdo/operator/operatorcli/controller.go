@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.21e2244eb4889f48"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.d5163fd0ea52b075"
 
 type repeatable []string
 
@@ -66,6 +66,8 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
+	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
@@ -110,6 +112,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		*application = filepath.Base(*app)
 	}
 	launch := &contracts.ControllerConfig{
+		PlanSafetyPolicyJson: *planSafetyJSON, PlanSafetyPolicySha256: *planSafetySHA,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
 		DeployedManifestPaths: deployedManifestPaths,

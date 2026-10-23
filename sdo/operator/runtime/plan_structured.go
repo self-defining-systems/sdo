@@ -50,7 +50,7 @@ func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApp
 		if err != nil {
 			return fmt.Errorf("structured write observation unknown: current read failed")
 		}
-		if err := e.Safety.checkObject(live, patch.Ref); err != nil {
+		if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, false); err != nil {
 			return err
 		}
 		if live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {

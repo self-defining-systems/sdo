@@ -80,4 +80,16 @@ a flag alone does not prove that learning is blocked.
 
 Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. A repair must not add or change a credential channel; existing channels permit unrelated legacy repairs.
 
-Compensation restores reversible writes even when a plan also deleted an object. The delete remains explicitly irreversible and not restored; it never triggers recreation.
+Compensation attempts every reversible write even when a plan also deleted an object or another restore failed. The delete remains explicitly irreversible and not restored; it never triggers recreation.
+
+Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse.
+
+Write verification and compensation compare plan-owned fields and current UID, while checking the full live credential predicate. API defaults and the Deployment revision annotation do not invalidate an otherwise approved effect.
+
+HPA, PDB and named webhook effects require a direct current read. An unwatched kind stays unknown unless that read proves the effect and the verifier has no cached input for the kind; watched kinds still wait for their cache barrier.
+
+A cluster-scoped webhook delete proves source absence through the application’s current accepted render selection. Missing or stale lock evidence refuses; the installer’s exact-name webhook grant remains required.
+
+Credential safety also refuses deprecated identity aliases and unconfined storage. Pod and CronJob templates need explicit token automount disablement. NetworkPolicy repairs admit only bounded namespace-local pod-label peers; allow-all and cross-namespace routes refuse.
+
+JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.

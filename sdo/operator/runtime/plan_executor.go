@@ -41,14 +41,16 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
-	Operation    string
-	Irreversible bool
-	Structured   bool
-	SourceCommit string
-	Ref          sdk.ObjectRef
-	Patch        json.RawMessage
-	Before       *unstructured.Unstructured
-	After        *unstructured.Unstructured
+	// DirectReadConfirmed is process-local proof, never restored from a receipt.
+	DirectReadConfirmed bool `json:"-"`
+	Operation           string
+	Irreversible        bool
+	Structured          bool
+	SourceCommit        string
+	Ref                 sdk.ObjectRef
+	Patch               json.RawMessage
+	Before              *unstructured.Unstructured
+	After               *unstructured.Unstructured
 }
 
 type PlanPreImage struct {
@@ -287,6 +289,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{result.Patches[index]}}); err != nil {
 			return result, err
 		}
+		result.Patches[index].DirectReadConfirmed = patch.Structured
 	}
 	writesLanded = true
 	result.Applied = true
@@ -327,35 +330,41 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible deletion of %s/%s was not restored; never auto-recreate", patch.Ref.Kind, patch.Ref.Name))
 		}
 	}
+
+	// RollbackCompleted checkpoints only the contiguous processed suffix. If a
+	// step fails, still attempt every earlier write; idempotent restores safely
+	// revisit those successes on retry without skipping the failed step.
+	contiguous := true
 	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
-		if index >= len(application.Patches) {
-			return errors.New("rollback requires in-process field writes")
-		}
-		patch := application.Patches[index]
-		if patch.Operation == "delete" {
-			application.RollbackCompleted++
-			continue
-		}
-		if patch.Operation == "create" {
-			if err := e.restoreCreatedObject(ctx, patch); err != nil {
-				return err
+		restoreErr := func() error {
+			if index >= len(application.Patches) {
+				return errors.New("rollback requires in-process field writes")
 			}
+			patch := application.Patches[index]
+			if patch.Operation == "delete" {
+				return nil
+			}
+			if patch.Operation == "create" {
+				return e.restoreCreatedObject(ctx, patch)
+			}
+			if patch.Before == nil || patch.After == nil {
+				return errors.New("rollback requires before and after images")
+			}
+			return e.restoreAction(ctx, patch)
+		}()
+		if restoreErr != nil {
+			irreversible = errors.Join(irreversible, restoreErr)
+			contiguous = false
+		} else if contiguous {
 			application.RollbackCompleted++
-			continue
 		}
-		if patch.Before == nil || patch.After == nil {
-			return errors.New("rollback requires before and after images")
-		}
-		if err := e.restoreAction(ctx, patch); err != nil {
-			return err
-		}
-		application.RollbackCompleted++
 	}
-	application.RollingBack = false
+	application.RollingBack = application.RollbackCompleted < len(application.ActionsApplied)
 	if irreversible != nil {
 		application.RollbackError = irreversible.Error()
 		return irreversible
 	}
+
 	application.RolledBack = true
 	application.RollbackError = ""
 	return nil
@@ -389,7 +398,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		return err
 	}
 	if patch.Structured {
-		if err := e.Safety.checkObject(current, patch.Ref); err != nil {
+		if err := e.Safety.checkObservedObject(current, patch.After, patch.Ref, false); err != nil {
 			return err
 		}
 	}
@@ -412,7 +421,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		}
 	}
 	if patch.Structured {
-		if err := e.Safety.checkObject(restored, patch.Ref); err != nil {
+		if err := e.Safety.checkObservedObject(restored, patch.Before, patch.Ref, false); err != nil {
 			return err
 		}
 	}
