@@ -127,17 +127,33 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 	flipService := simServiceName(1 + w.rng.IntN(simStreamServices-1))
 	runTask := func(task *menuSimTask, failAll bool) {
 		request := task.request
-		loop := NewResponderLoop(request, registry, w.cache, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: w.kube, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: w.cache}, Observer: w.cache, Now: w.clock.Now}, 5)
-		loop.MenuConfig = productionResponderMenu()
-		loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
-			return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
+		var saved []byte
+		var lostReplySnapshot []byte
+		newLoop := func() *ResponderLoop {
+			loop := NewResponderLoop(request, registry, w.cache, []sdk.Detector{fastloopDetector{}}, PlanExecutor{Client: w.kube, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{fastloopDetector{}}, Provider: w.cache}, Observer: w.cache, Now: w.clock.Now}, 5)
+			loop.MenuConfig = productionResponderMenu()
+			loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
+				return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
+			}
+			loop.DiagnosisSettleDelay = time.Nanosecond
+			loop.saveToolState = func(_ context.Context, payload []byte) error { saved = append([]byte(nil), payload...); return nil }
+			return loop
 		}
-		loop.DiagnosisSettleDelay = time.Nanosecond
+		loop := newLoop()
+		restoreLoop := func(snapshot []byte) {
+			replacement := newLoop()
+			if err := replacement.restoreToolSnapshot(snapshot); err != nil {
+				t.Fatal(err)
+			}
+			loop = replacement
+		}
+
 		if schedule == "restart-mid-option" && !interrupted {
 			w.kube.beforeWrite = append(w.kube.beforeWrite, func() {
 				writes++
 				if !interrupted && writes == restartWrite {
 					interrupted = true
+					lostReplySnapshot = append([]byte(nil), saved...)
 					restart()
 				}
 			})
@@ -172,6 +188,13 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			if response.Report == nil {
 				t.Fatalf("missing typed report: %s", response.Error)
 			}
+			if len(lostReplySnapshot) > 0 {
+				// The effect may have landed but its reply and latest report
+				// were lost. Restore only the ordinary snapshot, never replay.
+				restoreLoop(lostReplySnapshot)
+				lostReplySnapshot = nil
+				continue
+			}
 			task.reports = append(task.reports, response.Report)
 			task.sessions[response.Report.SessionId] = true
 			if round == 0 && response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS {
@@ -180,6 +203,7 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			if schedule == "restart-between" && round == badRounds-1 && !interrupted {
 				interrupted = true
 				restart()
+				restoreLoop(saved)
 			}
 			if response.Report.Status == contracts.MitigationReport_STATUS_SUCCESS {
 				break

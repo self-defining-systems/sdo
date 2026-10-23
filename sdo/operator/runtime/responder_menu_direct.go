@@ -164,11 +164,11 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			report.FailedPhase = "planning"
 			report.ReasonCode = "direct_plan_failed"
 			rr.Verification = verdictContract(program.Verdict{Result: program.Unknown})
-			response.MenuExecution = append(response.MenuExecution, MenuRoundExecution{RoundIndex: round, Error: boundedToolText(err.Error())})
+			response.MenuExecution = append(response.MenuExecution, MenuRoundExecution{OptionID: selection.OptionId, ProgramID: entry.programID, RoundIndex: round, Error: boundedToolText(err.Error())})
 			break
 		}
 		applicationID := fmt.Sprintf("%s-r%d", attempt, round)
-		description := MenuRoundExecution{RoundIndex: round, ApplicationID: applicationID, Plan: &contracts.Plan{Rationale: plan.Rationale}}
+		description := MenuRoundExecution{OptionID: selection.OptionId, ProgramID: entry.programID, RoundIndex: round, ApplicationID: applicationID, Plan: &contracts.Plan{Rationale: plan.Rationale}}
 		for _, action := range plan.Actions {
 			converted, convertErr := planActionProto(action)
 			if convertErr == nil {
@@ -243,7 +243,7 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 	if l.menuExecutions == nil {
 		l.menuExecutions = map[string][]MenuRoundExecution{}
 	}
-	l.menuExecutions[attempt] = response.MenuExecution
+	l.menuExecutions[attempt] = cloneMenuExecution(response.MenuExecution)
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
 }

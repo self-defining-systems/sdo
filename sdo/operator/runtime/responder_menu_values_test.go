@@ -113,3 +113,17 @@ func TestResponderMenuPlanningErrorReturnsTypedError(t *testing.T) {
 		t.Fatal("planning error lost context or performed a write")
 	}
 }
+
+func TestResponderMenuReportNamesSelectedOption(t *testing.T) {
+	loop, _ := menuB3Loop(t)
+	loop.Request.RepairPolicy = "recorded-actions"
+	loop.Executor.Verifier = planFakeVerifier{true}
+	listing := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	option := plainProgramOption(t, listing.Menu, 1)
+	response := menuCall(t, loop, map[string]any{"command": "mitigate", "selection": map[string]any{"option_id": option, "round_limit": 1}})
+	report := response["report"].(map[string]any)
+	execution := report["execution"].([]any)[0].(map[string]any)
+	if execution["option_id"] != option || execution["program_id"] != "routing-then-restart" {
+		t.Fatal("execution report does not say which option ran")
+	}
+}

@@ -130,6 +130,13 @@ func TestResponderMenuFailedVerificationRetainsApplicationForExplicitRollback(t 
 			t.Fatal("rolled-back menu action retained success credit")
 		}
 	}
+	if !executed.MenuExecution[0].ChangesRemain {
+		t.Fatal("rollback mutated an already returned report snapshot")
+	}
+	after := loop.Handle(context.Background(), ToolRequest{Command: "report", ReportQuery: &contracts.MitigationReportQuery{AttemptId: executed.Report.AttemptId}})
+	if len(after.MenuExecution) != 1 || after.MenuExecution[0].ChangesRemain || !after.MenuExecution[0].RolledBack {
+		t.Fatal("report retained stale effects after explicit rollback")
+	}
 }
 
 func TestResponderMenuSessionAndReportsSurviveToolRestore(t *testing.T) {

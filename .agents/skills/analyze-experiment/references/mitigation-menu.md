@@ -25,6 +25,7 @@ Fully applied options that fail verification remain applied. Each execution iden
 application and states whether changes remain, with the error and compensation status.
 The existing explicit rollback command works for in-process menu applications; rollback
 preimages are never persisted or restored. Only partial write failures auto-compensate.
+A report query reflects a later explicit rollback; already returned response snapshots stay stable.
 
 Menu action receipts enter `IncidentResult.repair_actions` with action identity,
 resources, timing, details and success. Menu reports are not legacy PlanApplication

@@ -3,6 +3,8 @@ package runtime
 import (
 	"encoding/json"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+	"sdo.dev/operator/sdk/program"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
@@ -10,6 +12,8 @@ import (
 // MenuRoundExecution describes execution without retaining resolved values or
 // rollback preimages in the tool report. Application IDs use ordinary rollback.
 type MenuRoundExecution struct {
+	OptionID      string             `json:"option_id"`
+	ProgramID     string             `json:"program_id"`
 	ActionResults []PlanActionReport `json:"action_results,omitempty"`
 	RoundIndex    uint32             `json:"round_index"`
 	ApplicationID string             `json:"application_id,omitempty"`
@@ -64,4 +68,23 @@ func (r *MenuRoundExecution) UnmarshalJSON(data []byte) error {
 		}
 	}
 	return nil
+}
+
+func cloneMenuExecution(executions []MenuRoundExecution) []MenuRoundExecution {
+	out := append([]MenuRoundExecution(nil), executions...)
+	for i := range out {
+		if out[i].Plan != nil {
+			out[i].Plan = proto.Clone(out[i].Plan).(*contracts.Plan)
+		}
+		out[i].ActionResults = append([]PlanActionReport(nil), out[i].ActionResults...)
+		for j := range out[i].ActionResults {
+			action := &out[i].ActionResults[j]
+			action.Values = append([]program.ValueProvenance(nil), action.Values...)
+			if action.ExitCode != nil {
+				code := *action.ExitCode
+				action.ExitCode = &code
+			}
+		}
+	}
+	return out
 }
