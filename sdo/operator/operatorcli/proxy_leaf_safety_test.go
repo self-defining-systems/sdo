@@ -11,8 +11,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -86,10 +88,26 @@ func recordRetainedLeaf(t *testing.T, path, method, body, contentType, encoding 
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, cmd := range [][]string{{"history"}, {"state", "Pod/app/p", "--at", time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)}} {
+		var out bytes.Buffer
+		if err := operatorcli.RunEvidence(cmd, func(string) string { return dir }, &out); err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(out.Bytes(), []byte(retainedLeafCanary)) {
+			t.Error("credential reached offline CLI")
+		}
+	}
 	var projected []byte
 	for _, e := range h.Events {
 		if e.BodyHash != "" {
 			projected = h.Body(e)
+			var out bytes.Buffer
+			if err := operatorcli.RunEvidence([]string{"show", "--event", fmt.Sprint(e.Sequence)}, func(string) string { return dir }, &out); err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(out.Bytes(), []byte(retainedLeafCanary)) {
+				t.Error("credential reached evidence show")
+			}
 		}
 	}
 	if bytes.Contains(projected, []byte(retainedLeafCanary)) {
