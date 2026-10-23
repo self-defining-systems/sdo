@@ -120,6 +120,19 @@ def test_modified_deployment_is_restored_and_named() -> None:
     assert cleanup.restored == ["Deployment/mongodb-geo"]
 
 
+def test_deleted_application_daemonset_is_restored() -> None:
+    cluster = FakeCluster()
+    original = obj("DaemonSet", "collector", spec={"selector": {"matchLabels": {"app": "collector"}}})
+    cluster.add(original)
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.objects.clear()
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cluster.objects[("hotel", "DaemonSet", "collector")] == original
+    assert cleanup.restored == ["DaemonSet/collector"]
+
+
 def test_control_namespace_objects_are_untouched() -> None:
     cluster = FakeCluster()
     baseline = capture_application_baseline(cluster, "hotel")
