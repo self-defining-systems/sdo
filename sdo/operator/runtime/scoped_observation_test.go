@@ -81,7 +81,10 @@ func TestScopedAvailabilitySeededDenialRegrant(t *testing.T) {
 				}
 				tracker.Observe(now.Add(time.Duration(i+1)*time.Minute), true)
 				changes := tracker.Changes(now)
-				if len(changes.Changes) != 0 || len(changes.UnobservedKinds) != 1 {
+				// Without a metadata client, Secret observation remains unavailable.
+				deniedTarget := sdk.ObservationTarget{APIVersion: "apps/v1", Kind: "Deployment", Namespace: ns}
+				if len(changes.Changes) != 0 || len(changes.UnobservedKinds) != 2 ||
+					changes.UnobservedKinds[0] != "Secret" || changes.UnobservedKinds[1] != deniedTarget.Key() {
 					t.Fatalf("gap fabricated drift: %+v", changes)
 				}
 			}
