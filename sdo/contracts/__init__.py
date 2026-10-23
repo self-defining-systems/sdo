@@ -74,6 +74,8 @@ from sdo.contracts.proto import (
     MitigationReportQuery,
     MitigationRoundReport,
     MitigationSelection,
+    MitigationSession,
+    MitigationSessionCheckpoint,
     NativeProductionReceipt,
     NativeReceiptResult,
     ObjectRef,
@@ -135,6 +137,8 @@ from sdo.contracts.proto import (
 )
 
 __all__ = [
+    "MitigationSession",
+    "MitigationSessionCheckpoint",
     "MitigationMenu",
     "MitigationOption",
     "MitigationSelection",

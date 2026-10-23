@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -33,23 +34,29 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-	Command       string           `json:"command"`
-	Ref           *sdk.ObjectRef   `json:"ref,omitempty"`
-	ProgramID     string           `json:"program_id,omitempty"`
-	Bindings      program.Bindings `json:"bindings,omitempty"`
-	PlanIDs       []string         `json:"plan_ids,omitempty"`
-	ApplicationID string           `json:"application_id,omitempty"`
+	Selection     *contracts.MitigationSelection         `json:"-"`
+	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
+	Checkpoint    *contracts.MitigationSessionCheckpoint `json:"-"`
+	Command       string                                 `json:"command"`
+	Ref           *sdk.ObjectRef                         `json:"ref,omitempty"`
+	ProgramID     string                                 `json:"program_id,omitempty"`
+	Bindings      program.Bindings                       `json:"bindings,omitempty"`
+	PlanIDs       []string                               `json:"plan_ids,omitempty"`
+	ApplicationID string                                 `json:"application_id,omitempty"`
 }
 
 type ToolResponse struct {
-	Command       string         `json:"command"`
-	Source        map[string]any `json:"source,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Summary       string         `json:"summary"`
-	PlanID        string         `json:"plan_id,omitempty"`
-	ApplicationID string         `json:"application_id,omitempty"`
-	Patches       []PlanPatch    `json:"patches,omitempty"`
-	ProgramRuns   []ProgramRun   `json:"program_runs,omitempty"`
+	Menu          *contracts.MitigationMenu    `json:"-"`
+	Report        *contracts.MitigationReport  `json:"-"`
+	Session       *contracts.MitigationSession `json:"-"`
+	Command       string                       `json:"command"`
+	Source        map[string]any               `json:"source,omitempty"`
+	Error         string                       `json:"error,omitempty"`
+	Summary       string                       `json:"summary"`
+	PlanID        string                       `json:"plan_id,omitempty"`
+	ApplicationID string                       `json:"application_id,omitempty"`
+	Patches       []PlanPatch                  `json:"patches,omitempty"`
+	ProgramRuns   []ProgramRun                 `json:"program_runs,omitempty"`
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -97,6 +104,9 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	selectionStore                  StateStore
+	selection                       *selectionJournal
+	mutationOwner                   *mutationOwner
 	CheckHealth                     func(context.Context) error
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
@@ -236,13 +246,19 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
-	if l.CheckHealth != nil {
+	if l.CheckHealth != nil && request.Command != "session-open" && request.Command != "session-checkpoint" && request.Command != "report" {
 		if err := l.CheckHealth(ctx); err != nil {
 			response.Error = err.Error()
 			return response
 		}
 	}
 	switch request.Command {
+	case "session-open":
+		l.openMenuSession(ctx, &response)
+	case "session-checkpoint":
+		l.checkpointMenuSession(ctx, request.Checkpoint, &response)
+	case "report":
+		l.selectionReport(ctx, request.ReportQuery, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
@@ -319,7 +335,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Source = object.Object
 		response.Summary = fmt.Sprintf("rendered source for %s/%s", request.Ref.Kind, request.Ref.Name)
 	case "apply":
-		l.apply(ctx, request, &response)
+		l.withSelectionOwner(ctx, &response, func(callCtx context.Context) { l.apply(callCtx, request, &response) })
 	case "pre-apply":
 		if err := l.capturePreApply(ctx); err != nil {
 			response.Error = err.Error()
@@ -329,38 +345,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "verify":
 		l.verify(ctx, nil, &response)
 	case "rollback":
-		application, ok := l.applications[request.ApplicationID]
-		if !ok {
-			response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
-			break
-		}
-		executor := l.Executor
-		reconciled, err := executor.Reconcile(ctx, application)
-		if err != nil {
-			response.Error = err.Error()
-			break
-		}
-		application = reconciled
-		rollbackErr := executor.rollback(ctx, &application)
-		if rollbackErr != nil {
-			application.RollbackError = rollbackErr.Error()
-		}
-		l.applications[request.ApplicationID] = application
-		for i := range l.applicationsLog {
-			if l.applicationsLog[i].ID == request.ApplicationID {
-				l.applicationsLog[i].Result = application
-				l.applicationsLog[i].RolledBack = application.RolledBack
-				l.applicationsLog[i].RollbackError = application.RollbackError
-			}
-		}
-		if rollbackErr != nil {
-			response.Error = rollbackErr.Error()
-			break
-		}
-		l.verify(ctx, nil, &response)
-		if response.Error == "" {
-			response.Summary = "application rolled back and verified"
-		}
+		l.withSelectionOwner(ctx, &response, func(callCtx context.Context) { l.rollbackApplication(callCtx, request, &response) })
 	default:
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
@@ -681,6 +666,12 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		selected = append(selected, plan)
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
+	if l.selection != nil {
+		if err := l.selection.chargeLegacy(ctx); err != nil {
+			response.Error = err.Error()
+			return
+		}
+	}
 	// A missing capture is an evidence gap; it must not block the repair.
 	_ = l.capturePreApply(ctx)
 	l.batches++
@@ -899,4 +890,39 @@ func onlyUnrelatedFindings(applied []selectedPlan, findings []sdk.Finding) bool 
 		}
 	}
 	return true
+}
+
+func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	application, ok := l.applications[request.ApplicationID]
+	if !ok {
+		response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
+		return
+	}
+	executor := l.Executor
+	reconciled, err := executor.Reconcile(ctx, application)
+	if err != nil {
+		response.Error = err.Error()
+		return
+	}
+	application = reconciled
+	rollbackErr := executor.rollback(ctx, &application)
+	if rollbackErr != nil {
+		application.RollbackError = rollbackErr.Error()
+	}
+	l.applications[request.ApplicationID] = application
+	for i := range l.applicationsLog {
+		if l.applicationsLog[i].ID == request.ApplicationID {
+			l.applicationsLog[i].Result = application
+			l.applicationsLog[i].RolledBack = application.RolledBack
+			l.applicationsLog[i].RollbackError = application.RollbackError
+		}
+	}
+	if rollbackErr != nil {
+		response.Error = rollbackErr.Error()
+		return
+	}
+	l.verify(ctx, nil, response)
+	if response.Error == "" {
+		response.Summary = "application rolled back and verified"
+	}
 }

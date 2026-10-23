@@ -102,6 +102,8 @@ MitigationRoundReport = mitigation_menu_pb2.MitigationRoundReport
 MitigationActionReceipt = mitigation_menu_pb2.MitigationActionReceipt
 MitigationBarrier = mitigation_menu_pb2.MitigationBarrier
 MitigationObservation = mitigation_menu_pb2.MitigationObservation
+MitigationSession = mitigation_menu_pb2.MitigationSession
+MitigationSessionCheckpoint = mitigation_menu_pb2.MitigationSessionCheckpoint
 
 ControllerConfig = controller_config_pb2.ControllerConfig
 
@@ -191,6 +193,8 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "MitigationSession",
+    "MitigationSessionCheckpoint",
     "MitigationMenu",
     "MitigationOption",
     "MitigationSelection",

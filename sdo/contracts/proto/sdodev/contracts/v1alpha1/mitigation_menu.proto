@@ -163,3 +163,80 @@ message MitigationObservation {
   bool confirmed_absent = 4;
   bool effect_confirmed = 5;
 }
+
+// Controller-owned selection facts. Never persists plans, pre-images or raw
+// API errors. The separate incident CAS document survives source adoption.
+message SelectionLedger {
+  option (buf.validate.message).cel = {
+    id: "selection_ledger.budget"
+    message: "used and reserved batches cannot exceed the incident budget"
+    expression: "this.used_batches + this.reserved_batches <= this.total_batches"
+  };
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  google.protobuf.Timestamp original_deadline = 4 [(buf.validate.field).required = true];
+  uint64 dispatch_epoch = 5 [(buf.validate.field).uint64.gt = 0];
+  repeated string source_history = 6;
+  uint32 total_batches = 7 [(buf.validate.field).uint32 = {gt: 0, lte: 100}];
+  uint32 used_batches = 8;
+  uint32 reserved_batches = 9;
+  string provider = 10 [(buf.validate.field).string = {in: ["", "codex", "claude"]}];
+  string provider_session_id = 11;
+  string checkpoint_digest = 12;
+  repeated SelectionAttempt attempts = 13 [(buf.validate.field).repeated.max_items = 32];
+  bool writes_frozen = 14;
+  bool owner_quiescent = 15;
+  bool closed = 16;
+}
+
+message SelectionAttempt {
+  string request_id = 1 [(buf.validate.field).string.min_len = 1];
+  string payload_hash = 2 [(buf.validate.field).string.len = 64];
+  string attempt_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 acceptance_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  uint32 reserved_batches = 5 [(buf.validate.field).uint32 = {gte: 1, lte: 2}];
+  uint32 charged_batches = 6;
+  repeated SelectionAction actions = 7;
+  repeated MitigationRoundReport rounds = 8 [(buf.validate.field).repeated.max_items = 2];
+  repeated MitigationBarrier barriers = 9;
+  MitigationReport report = 10;
+  bool delivery_acknowledged = 11;
+  bool closure_started = 12;
+  bool closure_acknowledged = 13;
+}
+
+// complete=false is an uncertain request, even if an API reply was lost.
+// phase distinguishes independent forward and compensation intents.
+message SelectionAction {
+  uint32 round_index = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 2}];
+  string phase = 2 [(buf.validate.field).string = {in: ["forward", "compensation"]}];
+  MitigationActionReceipt receipt = 3 [(buf.validate.field).required = true];
+  bool complete = 4;
+}
+
+// Private worker/controller handshake before menu acceptance. The checkpoint
+// digest identifies a persisted provider transcript prefix in the session PVC.
+message MitigationSessionCheckpoint {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  string provider = 5 [(buf.validate.field).string = {in: ["codex", "claude"]}];
+  string provider_session_id = 6 [(buf.validate.field).string.min_len = 1];
+  string checkpoint_digest = 7 [(buf.validate.field).string.len = 64];
+  repeated string acknowledged_attempt_ids = 8;
+}
+
+message MitigationSession {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  google.protobuf.Timestamp original_deadline = 5 [(buf.validate.field).required = true];
+  string provider = 6;
+  string provider_session_id = 7;
+  string checkpoint_digest = 8;
+  repeated MitigationReport pending_reports = 9;
+  bool writes_frozen = 10;
+}

@@ -115,12 +115,33 @@ the settled report. Transport filenames are independent of request identity.
 The CLI validates the selection shape, revision/session fences and one-or-two
 round bound; Go remains responsible for authorization and execution.
 
-This is a contract foundation: the runtime currently refuses these commands as
-unknown. The executable B3 and credential fixtures in
-`runtime/mitigation_menu_slice1_test.go` deliberately remain red until the
-durable ledger, session resume, fencing, current-read barriers and guarded
-executor land. No menu effect is enabled by these contracts. Existing
-`diagnose/plan/apply`, `sdo act` and capture-gap behavior continue as before.
+The runtime now stores `SelectionLedger v1` in the incident tools-state
+ConfigMap through `StateStore` CAS, alongside the legacy counter journal.
+Acceptance reserves one or two batches atomically; normalized semantic request
+hashes exclude dispatch epoch. Adoption retains the logical/provider session,
+original deadline, incident budget, acceptance epochs and source history.
+Intent/completion receipts contain identities only, never pre-images. Settlement
+releases unused reservation once; uncertain calls spend the full reservation.
+Terminal reports are immutable and remain in an outbox until provider delivery
+is acknowledged. `sdo report` and private session/checkpoint handshakes use strict
+generated ProtoJSON, including uint64 epochs.
+
+The worker has a gated same-session recovery path (`SDO_MITIGATION_SESSION=1`)
+which verifies a persisted provider transcript prefix before resuming Codex or
+Claude, includes pending reports in that session's prompt and acknowledges them
+after delivery. Missing checkpoints, changed identities and unproven old-owner
+quiescence fail visibly. The mutation-owner component drains complete calls
+before adoption; a failed drain freezes writes. Legacy apply/rollback share the
+owner and reserved incident budget once a selection journal exists.
+
+This remains an incomplete implementation: `menu` and `mitigate` execution are
+not enabled, and the dispatcher does not yet activate the worker recovery flag.
+Raw `act` mutation-gateway integration, health-refresh session continuity,
+causal barriers, closure handoff and guarded execution still gate enablement.
+Recovery without a current reader records an explicit observation failure,
+never successful verification. The executable B3 and credential fixtures in
+`runtime/mitigation_menu_slice1_test.go` therefore deliberately remain red.
+Existing sessions without a selection journal retain their capture-gap behavior.
 
 The intended enabled scope is routing `SetField` and Deployment restart only.
 Before enabling either, the Go menu must enforce an explicit fail-closed Secret

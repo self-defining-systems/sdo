@@ -139,7 +139,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if !l.CorpusReplayPassed {
 		return skip(FastPathSkipCorpusReplay)
 	}
-	if l.batches > 0 {
+	if l.batches > 0 || l.selection != nil {
 		return skip(FastPathSkipResponseStarted)
 	}
 	// Only immutable capability and trust can rule out a future settled match.

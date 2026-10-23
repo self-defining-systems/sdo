@@ -9,6 +9,7 @@ import "sdodev/contracts/v1alpha1/messages.proto";
 import "sdodev/contracts/v1alpha1/outcome.proto";
 import "sdodev/contracts/v1alpha1/worker.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
+import "sdodev/contracts/v1alpha1/mitigation_menu.proto";
 
 option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
 
@@ -176,6 +177,8 @@ message ControllerState {
   // An outbox of failures not yet confirmed in the per-incident archive. The
   // ConfigMap edge archives these before the main CAS and omits them there.
   repeated FailedIncidentClosure failed_closures = 36;
+  // Separate incident-scoped CAS document; retained across source adoption.
+  SelectionLedger selection_ledger = 37;
   reserved 32, 33;
   reserved "drift_investigation", "drift_admission";
 }

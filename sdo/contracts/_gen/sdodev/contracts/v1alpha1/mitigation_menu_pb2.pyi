@@ -252,3 +252,125 @@ class MitigationObservation(_message.Message):
     confirmed_absent: bool
     effect_confirmed: bool
     def __init__(self, resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., uid: _Optional[str] = ..., resource_version: _Optional[str] = ..., confirmed_absent: _Optional[bool] = ..., effect_confirmed: _Optional[bool] = ...) -> None: ...
+
+class SelectionLedger(_message.Message):
+    __slots__ = ("version", "incident_id", "session_id", "original_deadline", "dispatch_epoch", "source_history", "total_batches", "used_batches", "reserved_batches", "provider", "provider_session_id", "checkpoint_digest", "attempts", "writes_frozen", "owner_quiescent", "closed")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    ORIGINAL_DEADLINE_FIELD_NUMBER: _ClassVar[int]
+    DISPATCH_EPOCH_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_HISTORY_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    USED_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    RESERVED_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    CHECKPOINT_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
+    WRITES_FROZEN_FIELD_NUMBER: _ClassVar[int]
+    OWNER_QUIESCENT_FIELD_NUMBER: _ClassVar[int]
+    CLOSED_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    incident_id: str
+    session_id: str
+    original_deadline: _timestamp_pb2.Timestamp
+    dispatch_epoch: int
+    source_history: _containers.RepeatedScalarFieldContainer[str]
+    total_batches: int
+    used_batches: int
+    reserved_batches: int
+    provider: str
+    provider_session_id: str
+    checkpoint_digest: str
+    attempts: _containers.RepeatedCompositeFieldContainer[SelectionAttempt]
+    writes_frozen: bool
+    owner_quiescent: bool
+    closed: bool
+    def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., original_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatch_epoch: _Optional[int] = ..., source_history: _Optional[_Iterable[str]] = ..., total_batches: _Optional[int] = ..., used_batches: _Optional[int] = ..., reserved_batches: _Optional[int] = ..., provider: _Optional[str] = ..., provider_session_id: _Optional[str] = ..., checkpoint_digest: _Optional[str] = ..., attempts: _Optional[_Iterable[_Union[SelectionAttempt, _Mapping]]] = ..., writes_frozen: _Optional[bool] = ..., owner_quiescent: _Optional[bool] = ..., closed: _Optional[bool] = ...) -> None: ...
+
+class SelectionAttempt(_message.Message):
+    __slots__ = ("request_id", "payload_hash", "attempt_id", "acceptance_epoch", "reserved_batches", "charged_batches", "actions", "rounds", "barriers", "report", "delivery_acknowledged", "closure_started", "closure_acknowledged")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_HASH_FIELD_NUMBER: _ClassVar[int]
+    ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTANCE_EPOCH_FIELD_NUMBER: _ClassVar[int]
+    RESERVED_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    CHARGED_BATCHES_FIELD_NUMBER: _ClassVar[int]
+    ACTIONS_FIELD_NUMBER: _ClassVar[int]
+    ROUNDS_FIELD_NUMBER: _ClassVar[int]
+    BARRIERS_FIELD_NUMBER: _ClassVar[int]
+    REPORT_FIELD_NUMBER: _ClassVar[int]
+    DELIVERY_ACKNOWLEDGED_FIELD_NUMBER: _ClassVar[int]
+    CLOSURE_STARTED_FIELD_NUMBER: _ClassVar[int]
+    CLOSURE_ACKNOWLEDGED_FIELD_NUMBER: _ClassVar[int]
+    request_id: str
+    payload_hash: str
+    attempt_id: str
+    acceptance_epoch: int
+    reserved_batches: int
+    charged_batches: int
+    actions: _containers.RepeatedCompositeFieldContainer[SelectionAction]
+    rounds: _containers.RepeatedCompositeFieldContainer[MitigationRoundReport]
+    barriers: _containers.RepeatedCompositeFieldContainer[MitigationBarrier]
+    report: MitigationReport
+    delivery_acknowledged: bool
+    closure_started: bool
+    closure_acknowledged: bool
+    def __init__(self, request_id: _Optional[str] = ..., payload_hash: _Optional[str] = ..., attempt_id: _Optional[str] = ..., acceptance_epoch: _Optional[int] = ..., reserved_batches: _Optional[int] = ..., charged_batches: _Optional[int] = ..., actions: _Optional[_Iterable[_Union[SelectionAction, _Mapping]]] = ..., rounds: _Optional[_Iterable[_Union[MitigationRoundReport, _Mapping]]] = ..., barriers: _Optional[_Iterable[_Union[MitigationBarrier, _Mapping]]] = ..., report: _Optional[_Union[MitigationReport, _Mapping]] = ..., delivery_acknowledged: _Optional[bool] = ..., closure_started: _Optional[bool] = ..., closure_acknowledged: _Optional[bool] = ...) -> None: ...
+
+class SelectionAction(_message.Message):
+    __slots__ = ("round_index", "phase", "receipt", "complete")
+    ROUND_INDEX_FIELD_NUMBER: _ClassVar[int]
+    PHASE_FIELD_NUMBER: _ClassVar[int]
+    RECEIPT_FIELD_NUMBER: _ClassVar[int]
+    COMPLETE_FIELD_NUMBER: _ClassVar[int]
+    round_index: int
+    phase: str
+    receipt: MitigationActionReceipt
+    complete: bool
+    def __init__(self, round_index: _Optional[int] = ..., phase: _Optional[str] = ..., receipt: _Optional[_Union[MitigationActionReceipt, _Mapping]] = ..., complete: _Optional[bool] = ...) -> None: ...
+
+class MitigationSessionCheckpoint(_message.Message):
+    __slots__ = ("version", "incident_id", "session_id", "dispatch_epoch", "provider", "provider_session_id", "checkpoint_digest", "acknowledged_attempt_ids")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    DISPATCH_EPOCH_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    CHECKPOINT_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    ACKNOWLEDGED_ATTEMPT_IDS_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    incident_id: str
+    session_id: str
+    dispatch_epoch: int
+    provider: str
+    provider_session_id: str
+    checkpoint_digest: str
+    acknowledged_attempt_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., dispatch_epoch: _Optional[int] = ..., provider: _Optional[str] = ..., provider_session_id: _Optional[str] = ..., checkpoint_digest: _Optional[str] = ..., acknowledged_attempt_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class MitigationSession(_message.Message):
+    __slots__ = ("version", "incident_id", "session_id", "dispatch_epoch", "original_deadline", "provider", "provider_session_id", "checkpoint_digest", "pending_reports", "writes_frozen")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    DISPATCH_EPOCH_FIELD_NUMBER: _ClassVar[int]
+    ORIGINAL_DEADLINE_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    CHECKPOINT_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    PENDING_REPORTS_FIELD_NUMBER: _ClassVar[int]
+    WRITES_FROZEN_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    incident_id: str
+    session_id: str
+    dispatch_epoch: int
+    original_deadline: _timestamp_pb2.Timestamp
+    provider: str
+    provider_session_id: str
+    checkpoint_digest: str
+    pending_reports: _containers.RepeatedCompositeFieldContainer[MitigationReport]
+    writes_frozen: bool
+    def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., dispatch_epoch: _Optional[int] = ..., original_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., provider: _Optional[str] = ..., provider_session_id: _Optional[str] = ..., checkpoint_digest: _Optional[str] = ..., pending_reports: _Optional[_Iterable[_Union[MitigationReport, _Mapping]]] = ..., writes_frozen: _Optional[bool] = ...) -> None: ...
