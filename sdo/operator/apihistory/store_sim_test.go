@@ -327,3 +327,105 @@ func TestSimHistoryLostEnvelopesWithFailedManifest(t *testing.T) {
 		t.Fatalf("seed=81 schedule=write-error,manifest-error,exit,read: lost envelopes certified complete: %+v", h.Manifest)
 	}
 }
+
+// Schedule bytes select a combined fault mask, queue/event/byte budgets, then a
+// prefix cut. The writer runs normally: all fault operations precede admission.
+func runHistoryFaultSchedule(t *testing.T, seed int64, schedule []byte) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(seed))
+	schedule = schedule[:min(len(schedule), 5)]
+	choose := func(i, n int) int {
+		if i < len(schedule) {
+			return int(schedule[i]) % n
+		}
+		return rng.Intn(n)
+	}
+	mask := choose(0, 8)
+	dir := filepath.Join(t.TempDir(), "history")
+	lease, err := BeginWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := Limits{Queue: 1 + choose(1, 32), Events: uint64(1 + choose(2, 64)), Bytes: int64(1+choose(3, 256)) * 256}
+	s, err := Open(dir, "synthetic", limits)
+	if err != nil {
+		lease.Close()
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mask&1 != 0 {
+		must(s.file.Close())
+	}
+	if mask&2 != 0 {
+		must(os.Mkdir(filepath.Join(dir, "manifest.tmp"), 0700))
+	}
+	if mask&4 != 0 {
+		must(os.Remove(filepath.Join(dir, "blobs")))
+	}
+	cut := 1 + choose(4, 16)
+	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < cut; i++ {
+		id := fmt.Sprint(i)
+		event := Event{RequestID: id, Phase: "start", Started: clock.Add(time.Duration(i) * time.Second), Verb: "post"}
+		s.Record(event, nil)
+		if i != cut-1 {
+			event.Phase = "end"
+			event.Finished = event.Started.Add(time.Millisecond)
+			s.Record(event, []byte(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"}}`))
+		}
+	}
+	s.Close()
+	must(lease.Close())
+	h, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every prefix has one unfinished request; even simultaneous append/manifest
+	// failures must not resurrect the initial complete manifest after writer exit.
+	if h.Manifest.Complete {
+		t.Fatalf("seed=%d schedule=%x mask=%d cut=%d false completeness: %+v", seed, schedule, mask, cut, h.Manifest)
+	}
+	if h.Manifest.Bytes > limits.Bytes || h.Manifest.Events > limits.Events {
+		t.Fatalf("seed=%d caps exceeded", seed)
+	}
+	if s.queuedBytes.Load() != 0 {
+		t.Fatal("queue reservation leaked")
+	}
+	if mask&2 != 0 {
+		must(os.Remove(filepath.Join(dir, "manifest.tmp")))
+	}
+	must(os.MkdirAll(filepath.Join(dir, "blobs"), 0700))
+	s, err = Open(dir, "synthetic", limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	h, err = Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Manifest.Complete || h.Manifest.Epoch != 2 {
+		t.Fatalf("restart certified failed prefix: %+v", h.Manifest)
+	}
+	if h.Manifest.Bytes > limits.Bytes || h.Manifest.Events > limits.Events {
+		t.Fatal("restart exceeded cap")
+	}
+}
+func TestSimHistoryFaultSchedule(t *testing.T) {
+	for _, seed := range historySimSeeds(t) {
+		for mask := byte(0); mask < 8; mask++ {
+			t.Run(fmt.Sprintf("%d/%d", seed, mask), func(t *testing.T) { runHistoryFaultSchedule(t, seed, []byte{mask, 31, 63, 255, 7}) })
+		}
+	}
+}
+func FuzzHistoryStorageSchedule(f *testing.F) {
+	f.Add(int64(81), []byte{3, 31, 63, 255, 0})
+	f.Add(int64(1), []byte{7, 0, 0, 0, 15})
+	f.Add(int64(135), []byte{0, 31, 63, 255, 15})
+	f.Fuzz(func(t *testing.T, seed int64, schedule []byte) { runHistoryFaultSchedule(t, seed, schedule) })
+}

@@ -158,6 +158,19 @@ func runEvidenceSchedule(t *testing.T, seed int64, schedule []byte) {
 			}
 		}
 		if !state.ObservedAt.IsZero() {
+			history, err := apihistory.Read(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provenance := false
+			for _, event := range history.Events {
+				if event.Sequence == state.Event && event.Finished.Equal(state.ObservedAt) && event.Group == "" && event.Resource == "pods" && !event.DryRun && event.Subresource == "" {
+					provenance = true
+				}
+			}
+			if !provenance {
+				t.Fatalf("invalid event provenance: %s", raw)
+			}
 			found := false
 			for _, o := range observations {
 				if o.at.Equal(state.ObservedAt) && o.absent == state.ObservedAbsent {
@@ -190,7 +203,7 @@ func runEvidenceSchedule(t *testing.T, seed int64, schedule []byte) {
 			}
 		}
 	}
-	for _, i := range rng.Perm(len(operations)) {
+	for admitted, i := range rng.Perm(len(operations)) {
 		op := operations[i]
 		store.Record(op.start, nil)
 		store.Record(op.end, op.body)
@@ -218,14 +231,30 @@ func runEvidenceSchedule(t *testing.T, seed int64, schedule []byte) {
 				t.Fatal("show borrowed another envelope")
 			}
 		}
+		// Keep the exact-state oracle independent of projection admission loss.
+		// Reads above observe arbitrary in-flight cuts; this barrier releases
+		// the next operation only when both current envelopes are visible.
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			history, err := apihistory.Read(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(history.Events) == 2*(admitted+1) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("seed=%d schedule=%x recording stalled", seed, schedule)
+			}
+			time.Sleep(time.Millisecond)
+		}
 	}
 	store.Close()
 	h, err := apihistory.Read(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Admission can drop projections under load; it must advertise the gap. The
-	// exact latest oracle below applies only to fully retained schedules.
+	// The admission barriers make every scheduled observation available here.
 	if h.Manifest.Complete {
 		for i := 0; i < 80; i++ {
 			check(base.Add(time.Duration(i)*time.Second), true)
@@ -241,8 +270,8 @@ func runEvidenceSchedule(t *testing.T, seed int64, schedule []byte) {
 		if state.ObservedAt.After(firstMutation) {
 			t.Fatal("borrowed post-mutation result")
 		}
-	} else if h.Manifest.Dropped == 0 {
-		t.Fatalf("unexpected completeness loss: %+v", h.Manifest)
+	} else {
+		t.Fatalf("seed=%d schedule=%x controlled recording lost completeness: %+v", seed, schedule, h.Manifest)
 	}
 	// CLI reads must preserve every stored byte.
 	snapshot := func() map[string]string {
@@ -268,7 +297,17 @@ func runEvidenceSchedule(t *testing.T, seed int64, schedule []byte) {
 	}
 	before := snapshot()
 	for _, selector := range []string{"Pod/app/p", "Pod.other.example/app/p", "Pod/app/never", "Pod/other/p"} {
-		readCLI("state", selector, "--at", base.Add(100*time.Second).Format(time.RFC3339Nano))
+		raw := readCLI("state", selector, "--at", base.Add(100*time.Second).Format(time.RFC3339Nano))
+		var state observedState
+		if err := json.Unmarshal(raw, &state); err != nil {
+			t.Fatal(err)
+		}
+		if selector == "Pod.other.example/app/p" && !state.ObservedAt.IsZero() {
+			t.Fatalf("borrowed API group: %s", raw)
+		}
+		if selector == "Pod/app/never" && len(state.LastObserved) > 0 {
+			t.Fatalf("borrowed object: %s", raw)
+		}
 	}
 	after := snapshot()
 	if len(before) != len(after) {

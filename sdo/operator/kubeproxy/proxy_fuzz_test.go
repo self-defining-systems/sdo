@@ -101,6 +101,21 @@ func simForward(t *testing.T, recorder Recorder, method, path string, status, ch
 		}()
 		New(upstream, transport, transport, recorder).ServeHTTP(out, req)
 	}()
+	if fault != 1 {
+		if out.Code != status || !bytes.Equal(out.Body.Bytes(), payload) {
+			t.Errorf("upstream status/bytes changed: status=%d want=%d bytes=%d want=%d", out.Code, status, out.Body.Len(), len(payload))
+		}
+		for key, values := range (http.Header{"Content-Type": {"application/json"}, "X-Upstream": {"first", "second"}, "Set-Cookie": {"a=one", "b=two"}}) {
+			if !reflect.DeepEqual(out.Header().Values(key), values) {
+				t.Errorf("upstream header %s changed", key)
+			}
+		}
+		if aborted != (fault == 2) {
+			t.Errorf("body failure changed: aborted=%v fault=%d", aborted, fault)
+		}
+	} else if out.Code != http.StatusBadGateway {
+		t.Errorf("reset status=%d", out.Code)
+	}
 	if calls.Load() != 1 {
 		t.Fatalf("%s retried %d times", method, calls.Load())
 	}
@@ -125,7 +140,7 @@ func runProxySchedule(t *testing.T, seed int64, schedule []byte) {
 	limits := apihistory.Limits{Queue: 1 + choice(0, 32), Events: uint64(8 + choice(1, 80)), Bytes: int64(2048 + choice(2, 16000))}
 	methods := []string{"GET", "GET", "GET", "PATCH", "POST", "POST", "GET", "GET", "POST", "GET"}
 	paths := []string{"/api/v1/namespaces/app/pods/p", "/api/v1/namespaces/app/pods?limit=1&continue=DP1_SYNTHETIC_QUERY_CANARY", "/api/v1/namespaces/app/pods?labelSelector=private%3DDP1_SYNTHETIC_QUERY_CANARY", "/api/v1/namespaces/app/pods/p?dryRun=All", "/api/v1/namespaces/app/pods", "/api/v1/namespaces/app/pods/p?dryRun=All", "/api/v1/namespaces/app/pods?watch=true", "/api/v1/namespaces/app/pods/p/log?follow=true", "/api/v1/namespaces/app/pods/p/exec?dryRun=All&command=DP1_SYNTHETIC_QUERY_CANARY", "/api/v1/watch/namespaces/app/pods"}
-	statuses := []int{200, 201, 204, 400, 404, 409, 429, 500, 503}
+	statuses := []int{200, 201, 202, 400, 404, 409, 429, 500, 503}
 	for epoch := 0; epoch < 2; epoch++ {
 		lease, err := apihistory.BeginWriter(dir)
 		if err != nil {
