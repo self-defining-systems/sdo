@@ -392,3 +392,24 @@ func TestSelectionLedgerMigratesLegacyBudgetInTheGenesisCAS(t *testing.T) {
 		t.Fatal("legacy migration did not share the genesis CAS")
 	}
 }
+
+func TestSelectionLedgerTerminalRetryRemainsReadOnlyWhenFrozen(t *testing.T) {
+	ctx := context.Background()
+	journal, _, menu, selection := selectionLedgerFixture(t)
+	attempt, _, err := journal.accept(ctx, menu, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := journal.settle(ctx, attempt.AttemptId, &contracts.MitigationReport{Version: 1, IncidentId: selection.IncidentId, SessionId: selection.SessionId, RequestId: selection.RequestId, AttemptId: attempt.AttemptId, AcceptanceEpoch: attempt.AcceptanceEpoch, Status: contracts.MitigationReport_STATUS_UNRESOLVED}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.adopt(ctx, "source-b", false); err != nil {
+		t.Fatal(err)
+	}
+	selection.DispatchEpoch = 2
+	retried, retry, err := journal.accept(ctx, nil, selection)
+	if err != nil || !retry || retried == nil || !proto.Equal(retried.Report, report) {
+		t.Fatal("frozen retry lost immutable report")
+	}
+}

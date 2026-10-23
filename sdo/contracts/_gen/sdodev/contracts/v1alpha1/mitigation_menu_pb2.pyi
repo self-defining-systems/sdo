@@ -194,7 +194,7 @@ class MitigationRoundReport(_message.Message):
     def __init__(self, round_index: _Optional[int] = ..., round_id: _Optional[str] = ..., actions: _Optional[_Iterable[_Union[MitigationActionReceipt, _Mapping]]] = ..., diagnosis: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., verification: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., barrier_ids: _Optional[_Iterable[str]] = ..., independently_healthy: _Optional[bool] = ..., original_findings_clear: _Optional[bool] = ...) -> None: ...
 
 class MitigationActionReceipt(_message.Message):
-    __slots__ = ("action_id", "resource", "effect", "state", "uid", "resource_version", "compensation_state", "rollback_conflict")
+    __slots__ = ("action_id", "resource", "effect", "state", "uid", "resource_version", "compensation_state", "rollback_conflict", "action_kind", "changed_fields")
     class State(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         STATE_UNSPECIFIED: _ClassVar[MitigationActionReceipt.State]
@@ -213,6 +213,8 @@ class MitigationActionReceipt(_message.Message):
     RESOURCE_VERSION_FIELD_NUMBER: _ClassVar[int]
     COMPENSATION_STATE_FIELD_NUMBER: _ClassVar[int]
     ROLLBACK_CONFLICT_FIELD_NUMBER: _ClassVar[int]
+    ACTION_KIND_FIELD_NUMBER: _ClassVar[int]
+    CHANGED_FIELDS_FIELD_NUMBER: _ClassVar[int]
     action_id: str
     resource: _common_pb2.ObjectRef
     effect: MitigationOption.Effect
@@ -221,7 +223,9 @@ class MitigationActionReceipt(_message.Message):
     resource_version: str
     compensation_state: MitigationActionReceipt.State
     rollback_conflict: bool
-    def __init__(self, action_id: _Optional[str] = ..., resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., effect: _Optional[_Union[MitigationOption.Effect, str]] = ..., state: _Optional[_Union[MitigationActionReceipt.State, str]] = ..., uid: _Optional[str] = ..., resource_version: _Optional[str] = ..., compensation_state: _Optional[_Union[MitigationActionReceipt.State, str]] = ..., rollback_conflict: _Optional[bool] = ...) -> None: ...
+    action_kind: str
+    changed_fields: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, action_id: _Optional[str] = ..., resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., effect: _Optional[_Union[MitigationOption.Effect, str]] = ..., state: _Optional[_Union[MitigationActionReceipt.State, str]] = ..., uid: _Optional[str] = ..., resource_version: _Optional[str] = ..., compensation_state: _Optional[_Union[MitigationActionReceipt.State, str]] = ..., rollback_conflict: _Optional[bool] = ..., action_kind: _Optional[str] = ..., changed_fields: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class MitigationBarrier(_message.Message):
     __slots__ = ("capture_id", "attempt_id", "round_index", "phase", "occurrence", "observations", "observed_at", "complete", "collections")

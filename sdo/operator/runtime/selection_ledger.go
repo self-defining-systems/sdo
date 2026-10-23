@@ -231,9 +231,6 @@ func (j *selectionJournal) accept(ctx context.Context, menu *contracts.Mitigatio
 	if err != nil {
 		return nil, false, err
 	}
-	if err := j.writable(selection.DispatchEpoch); err != nil {
-		return nil, false, err
-	}
 	if err := j.currentEpochLocked(ctx, selection.DispatchEpoch); err != nil {
 		return nil, false, err
 	}
@@ -250,6 +247,9 @@ func (j *selectionJournal) accept(ctx context.Context, menu *contracts.Mitigatio
 			}
 			return proto.Clone(a).(*contracts.SelectionAttempt), true, nil
 		}
+	}
+	if err := j.writable(selection.DispatchEpoch); err != nil {
+		return nil, false, err
 	}
 	if s.ProviderSessionId == "" || s.CheckpointDigest == "" {
 		return nil, false, errors.New("provider checkpoint required before selection acceptance")

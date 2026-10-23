@@ -29,7 +29,8 @@ production policy provisioning, health-refresh continuity or live stream readine
   Pending selections need a ledger lookup, not a fabricated terminal success.
 - Action receipts distinguish `STATE_NOT_APPLIED`, `STATE_APPLIED` and
   `STATE_UNKNOWN`; compensation state, conflicts and residual resource refs
-  are separate. Unknown never proves no effect or successful restoration.
+  are separate. `action_kind` and `changed_fields` name safe changes without
+  storing field values. Unknown never proves no effect or successful restoration.
 - Terminal reports must be durable before publication; replacement workers
   redeliver the identical report into the resumed session. Missing or
   unresumable checkpoints mean visible interruption, not a fresh session.
@@ -68,7 +69,8 @@ history entry does not prove a new investigation or a fresh verification.
 
 A recovered action without completion is `STATE_UNKNOWN`; never replay it or
 infer absence from a lost reply. Unknown calls charge the entire reservation.
-Current recovery without a direct-reader callback settles `STATUS_INTERRUPTED`
+Configured menu recovery captures direct read-only evidence even while the
+replacement is frozen. Recovery without a direct-reader callback settles `STATUS_INTERRUPTED`
 with `recovery_observation_unavailable`. This is visible failure, not a passing
 barrier. `writes_frozen` survives adoption with unproven quiescence; legacy
 apply/rollback gates cannot authorize writes in that state.
@@ -109,3 +111,8 @@ reservation totals, duplicate IDs, future acceptance epochs, incomplete provider
 identities and contradictory action facts. A persisted write prohibition allows
 read-only report redelivery after another restart; it differs from the local
 storage-failure fence, which cannot safely continue that owner.
+
+The menu shares XV1's `planSecretPredicate`; independent content, consumer and
+admission authorization remains mandatory around it. A successful scripted
+hermetic controller/Job/broker run proves interface wiring and can produce a
+strict benchmark receipt; it does not prove real-cluster admission or policy provisioning.

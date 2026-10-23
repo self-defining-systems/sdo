@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"testing"
@@ -104,5 +105,88 @@ func TestResponderMenuConfiguredIncidentRoundCap(t *testing.T) {
 	response := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
 	if response.Menu == nil || response.Menu.RoundLimit != 5 {
 		t.Fatalf("default incident cap must be five: %+v", response.Menu)
+	}
+}
+
+func TestResponderMenuConfiguredCapSurvivesAlternateOptions(t *testing.T) {
+	template, cluster := menuB3Loop(t)
+	loop := NewResponderLoop(template.Request, template.Programs, cluster, nil, template.Executor, 3)
+	loop.MenuConfig = template.MenuConfig
+	loop.selectionStore = &selectionTestStore{}
+	opened := loop.Handle(context.Background(), ToolRequest{Command: "session-open"})
+	if opened.Error != "" {
+		t.Fatal(opened.Error)
+	}
+	if err := loop.selection.checkpoint(context.Background(), "codex", "synthetic-session", "synthetic-checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 3; round++ {
+		response := menuCall(t, loop, map[string]any{"command": "menu"})
+		menu := response["menu"].(map[string]any)
+		if menu["round_limit"] != float64(3-round) {
+			t.Fatal("remaining allowance did not follow the single incident cap")
+		}
+		result := menuCall(t, loop, menuSelection(t, menu, "restart-only", 1, fmt.Sprintf("bounded-%d", round)))
+		if result["report"] == nil {
+			t.Fatalf("missing report: %+v", result)
+		}
+	}
+	writes := len(cluster.patches)
+	response := loop.Handle(context.Background(), ToolRequest{Command: "menu"})
+	if response.Menu.RemainingBatches != 0 || len(response.Menu.Options) == 0 || response.Menu.Options[0].DisabledReason != "incident_budget_exhausted" || len(cluster.patches) != writes {
+		t.Fatal("alternate options reset configured cap")
+	}
+}
+func TestResponderMenuActLeaseExcludesOtherMutations(t *testing.T) {
+	loop, _ := menuB3Loop(t)
+	acquired := loop.Handle(context.Background(), ToolRequest{Command: "act-start"})
+	if acquired.Error != "" || acquired.MutationToken == "" {
+		t.Fatal("missing mutation owner")
+	}
+	blocked := loop.Handle(context.Background(), ToolRequest{Command: "apply", PlanIDs: []string{"unused"}})
+	if blocked.Error != "recorded mutation still in progress" {
+		t.Fatal("parallel mutation escaped external owner")
+	}
+	if result := loop.Handle(context.Background(), ToolRequest{Command: "act-finish", MutationToken: acquired.MutationToken}); result.Error != "" {
+		t.Fatal(result.Error)
+	}
+	if loop.LoopsUsed() != 1 {
+		t.Fatal("recorded fallback did not share incident allowance")
+	}
+}
+
+func TestResponderMenuRecoveryCapturesCurrentReadOnlyEvidence(t *testing.T) {
+	loop, cluster := menuB3Loop(t)
+	response := menuCall(t, loop, map[string]any{"command": "menu"})
+	payload, _ := json.Marshal(menuSelection(t, response["menu"].(map[string]any), "routing-then-restart", 3, "recovery-observation"))
+	var request ToolRequest
+	if err := json.Unmarshal(payload, &request); err != nil {
+		t.Fatal(err)
+	}
+	attempt, _, err := loop.selection.accept(context.Background(), loop.menu, request.Selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := loop.selectionStore.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := NewResponderLoop(loop.Request, loop.Programs, cluster, nil, loop.Executor, 99)
+	replacement.MenuConfig = loop.MenuConfig
+	if err := replacement.attachSelectionJournal(context.Background(), loop.Request, loop.selectionStore, state, false); err != nil {
+		t.Fatal(err)
+	}
+	restored, _ := selectionAttempt(replacement.selection.snapshot(), attempt.AttemptId)
+	if restored.Report == nil || restored.Report.Status != contracts.MitigationReport_STATUS_INTERRUPTED {
+		t.Fatal("recovery did not visibly settle interruption")
+	}
+	found := false
+	for _, barrier := range restored.Report.Barriers {
+		if barrier.Phase == "recovery" && barrier.Complete {
+			found = true
+		}
+	}
+	if !found || len(cluster.patches) != 0 {
+		t.Fatal("recovery omitted direct observation or replayed mutations")
 	}
 }

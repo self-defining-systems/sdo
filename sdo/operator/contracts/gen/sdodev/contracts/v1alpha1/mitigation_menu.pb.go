@@ -942,8 +942,11 @@ type MitigationActionReceipt struct {
 	ResourceVersion   string                        `protobuf:"bytes,6,opt,name=resource_version,json=resourceVersion,proto3" json:"resource_version,omitempty"`
 	CompensationState MitigationActionReceipt_State `protobuf:"varint,7,opt,name=compensation_state,json=compensationState,proto3,enum=sdodev.contracts.v1alpha1.MitigationActionReceipt_State" json:"compensation_state,omitempty"`
 	RollbackConflict  bool                          `protobuf:"varint,8,opt,name=rollback_conflict,json=rollbackConflict,proto3" json:"rollback_conflict,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Controller-derived action and field names, never values or raw API text.
+	ActionKind    string   `protobuf:"bytes,9,opt,name=action_kind,json=actionKind,proto3" json:"action_kind,omitempty"`
+	ChangedFields []string `protobuf:"bytes,10,rep,name=changed_fields,json=changedFields,proto3" json:"changed_fields,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MitigationActionReceipt) Reset() {
@@ -1030,6 +1033,20 @@ func (x *MitigationActionReceipt) GetRollbackConflict() bool {
 		return x.RollbackConflict
 	}
 	return false
+}
+
+func (x *MitigationActionReceipt) GetActionKind() string {
+	if x != nil {
+		return x.ActionKind
+	}
+	return ""
+}
+
+func (x *MitigationActionReceipt) GetChangedFields() []string {
+	if x != nil {
+		return x.ChangedFields
+	}
+	return nil
 }
 
 // Identity and causal proof only; never full Kubernetes objects or log bodies.
@@ -2003,7 +2020,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\vbarrier_ids\x18\x06 \x03(\tR\n" +
 	"barrierIds\x123\n" +
 	"\x15independently_healthy\x18\a \x01(\bR\x14independentlyHealthy\x126\n" +
-	"\x17original_findings_clear\x18\b \x01(\bR\x15originalFindingsClear\"\xf7\x04\n" +
+	"\x17original_findings_clear\x18\b \x01(\bR\x15originalFindingsClear\"\xc9\x05\n" +
 	"\x17MitigationActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12H\n" +
 	"\bresource\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\bresource\x12V\n" +
@@ -2014,7 +2031,11 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"\x03uid\x18\x05 \x01(\tR\x03uid\x12)\n" +
 	"\x10resource_version\x18\x06 \x01(\tR\x0fresourceVersion\x12q\n" +
 	"\x12compensation_state\x18\a \x01(\x0e28.sdodev.contracts.v1alpha1.MitigationActionReceipt.StateB\b\xbaH\x05\x82\x01\x02\x10\x01R\x11compensationState\x12+\n" +
-	"\x11rollback_conflict\x18\b \x01(\bR\x10rollbackConflict\"[\n" +
+	"\x11rollback_conflict\x18\b \x01(\bR\x10rollbackConflict\x12)\n" +
+	"\vaction_kind\x18\t \x01(\tB\b\xbaH\x05r\x03\x18\x80\x01R\n" +
+	"actionKind\x12%\n" +
+	"\x0echanged_fields\x18\n" +
+	" \x03(\tR\rchangedFields\"[\n" +
 	"\x05State\x12\x15\n" +
 	"\x11STATE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11STATE_NOT_APPLIED\x10\x01\x12\x11\n" +

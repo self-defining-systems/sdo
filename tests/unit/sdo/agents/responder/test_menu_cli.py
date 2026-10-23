@@ -51,7 +51,7 @@ def test_mitigate_cli_retries_the_same_semantic_selection(tmp_path, monkeypatch)
 @pytest.mark.parametrize(
     "change",
     [
-        {"round_limit": 3},
+        {"round_limit": 101},
         {"session_id": ""},
         {"dispatch_epoch": 0},
         {"actions": [{"delete": "Secret/app/token"}]},

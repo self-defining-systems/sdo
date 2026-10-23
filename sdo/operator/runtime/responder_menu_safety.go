@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -182,6 +183,8 @@ func (c *menuPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		}
 	}
 	receipt := menuActionReceipt(id, ref)
+	receipt.ActionKind = "sdk-plan-patch"
+	receipt.ChangedFields = menuChangedFields(patch)
 	if err := l.selection.beginAction(ctx, c.attempt, c.round, c.phase, receipt); err != nil {
 		return err
 	}
@@ -201,4 +204,64 @@ func (c *menuPlanClient) TokenlessServiceAccount(ctx context.Context, ref sdk.Ob
 		return "", errMenuSafety
 	}
 	return inspector.TokenlessServiceAccount(ctx, ref)
+}
+
+// Source lookup stays behind the same provenance gate as live pre-image reads.
+type menuPlanSource struct {
+	PlanSource
+	client *menuPlanClient
+}
+
+func (s menuPlanSource) AcceptedManifest(ctx context.Context, commit string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if ref.Kind == "Secret" || ref.Namespace != s.client.loop.Request.Namespace || s.client.loop.MenuConfig.Safety.AuthorizeRead(ctx, sdk.WatchKind{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}) != nil {
+		return nil, errMenuSafety
+	}
+	object, err := s.PlanSource.AcceptedManifest(ctx, commit, ref)
+	if err != nil {
+		return nil, errMenuSafety
+	}
+	if s.client.loop.MenuConfig.Safety.object(ctx, ref, object) != nil {
+		return nil, errMenuSafety
+	}
+	return object, nil
+}
+func (s menuPlanSource) Revision(ctx context.Context, ref sdk.ObjectRef, revision string) (*unstructured.Unstructured, error) {
+	if ref.Kind == "Secret" || ref.Namespace != s.client.loop.Request.Namespace || s.client.loop.MenuConfig.Safety.AuthorizeRead(ctx, sdk.WatchKind{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}) != nil {
+		return nil, errMenuSafety
+	}
+	object, err := s.PlanSource.Revision(ctx, ref, revision)
+	if err != nil {
+		return nil, errMenuSafety
+	}
+	if s.client.loop.MenuConfig.Safety.object(ctx, ref, object) != nil {
+		return nil, errMenuSafety
+	}
+	return object, nil
+}
+func menuChangedFields(patch []byte) []string {
+	var values map[string]any
+	if json.Unmarshal(patch, &values) != nil {
+		return nil
+	}
+	var fields []string
+	var visit func(map[string]any, string)
+	visit = func(values map[string]any, prefix string) {
+		for key, value := range values {
+			if prefix == "" && key == "metadata" {
+				continue
+			}
+			path := key
+			if prefix != "" {
+				path = prefix + "." + key
+			}
+			if nested, ok := value.(map[string]any); ok {
+				visit(nested, path)
+			} else {
+				fields = append(fields, path)
+			}
+		}
+	}
+	visit(values, "")
+	sort.Strings(fields)
+	return fields
 }

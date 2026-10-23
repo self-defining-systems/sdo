@@ -145,6 +145,9 @@ message MitigationActionReceipt {
   string resource_version = 6;
   State compensation_state = 7 [(buf.validate.field).enum.defined_only = true];
   bool rollback_conflict = 8;
+  // Controller-derived action and field names, never values or raw API text.
+  string action_kind = 9 [(buf.validate.field).string.max_len = 128];
+  repeated string changed_fields = 10;
 }
 
 // Identity and causal proof only; never full Kubernetes objects or log bodies.

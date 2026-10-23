@@ -87,9 +87,19 @@ func (l *ResponderLoop) attachSelectionJournal(ctx context.Context, request Inci
 	if err := journal.adopt(ctx, request.SourceCommit, quiescent); err != nil {
 		return err
 	}
-	// Until the direct observation component is wired, missing fresh evidence is
-	// an explicit failure. It never authorizes closure or automatic replay.
-	if err := journal.recover(ctx, nil); err != nil {
+	l.selection = journal
+	var verify func(context.Context, *contracts.SelectionAttempt) (*contracts.MitigationBarrier, error)
+	if l.MenuConfig.valid() {
+		verify = func(ctx context.Context, attempt *contracts.SelectionAttempt) (*contracts.MitigationBarrier, error) {
+			barrier := l.menuBarrier()
+			// Recovery observes even a frozen owner. A read receipt cannot grant
+			// mutation permission or turn interruption into successful closure.
+			barrier.CheckFence = func(ctx context.Context) error { return journal.currentEpoch(ctx, journal.snapshot().DispatchEpoch) }
+			observation, err := barrier.Capture(ctx, attempt.AttemptId, 0, "recovery", nil)
+			return observation.Receipt, err
+		}
+	}
+	if err := journal.recover(ctx, verify); err != nil {
 		return err
 	}
 	s := journal.snapshot()

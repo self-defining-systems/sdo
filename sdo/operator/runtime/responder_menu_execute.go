@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -138,7 +139,9 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		}
 	}
 	report.WritesFrozen = l.selection.snapshot().WritesFrozen
-	settled, err := l.selection.settle(context.WithoutCancel(ctx), attempt.AttemptId, report, used)
+	settleCtx, cancelSettlement := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancelSettlement()
+	settled, err := l.selection.settle(settleCtx, attempt.AttemptId, report, used)
 	if err != nil {
 		response.Error = "mitigation settlement unavailable; writes prohibited"
 		return
@@ -170,6 +173,10 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 	}
 	if !l.MenuConfig.valid() {
 		fail(contracts.MitigationReport_STATUS_REFUSED, "safety", "safety_capability_unavailable")
+		return nil
+	}
+	if selection.PolicyDigest != l.MenuConfig.Safety.Digest || selection.ScopeDigest != menuDigest(l.MenuConfig.Dependencies) || selection.SourceCommit != l.Request.SourceCommit {
+		fail(contracts.MitigationReport_STATUS_SUPERSEDED, "acceptance", "menu_scope_or_policy_changed")
 		return nil
 	}
 	entry, ok := l.menuEntries[selection.OptionId]
@@ -221,7 +228,9 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 				fail(contracts.MitigationReport_STATUS_REFUSED, "planning", "mitigator_unavailable")
 				break
 			}
-			plan, err = l.runMitigator(roundCtx, entry.programID, mitigator, view, entry.bindings)
+			l.mu.Unlock()
+			plan, err = runBoundedMitigator(roundCtx, mitigator, view, entry.bindings, l.deadline())
+			l.mu.Lock()
 		}
 		if err != nil || plan.Validate() != nil || len(plan.Actions) == 0 || len(plan.Actions) > 32 {
 			cancel()
@@ -231,6 +240,9 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 		client := &menuPlanClient{PlanObjectClient: l.Executor.Client, loop: l, attempt: attempt.AttemptId, round: round, phase: "forward", receipts: map[string]string{}}
 		executor := l.Executor
 		executor.Client = client
+		if executor.Source != nil {
+			executor.Source = menuPlanSource{PlanSource: executor.Source, client: client}
+		}
 		// Existing rollout waiting remains in use. Menu verification below uses the
 		// direct barrier rather than the executor's potentially stale cache/verifier.
 		executor.Observer = nil
@@ -289,6 +301,8 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 		}
 		fail(contracts.MitigationReport_STATUS_UNRESOLVED, "verification", "round_limit_reached")
 	}
+	settlingCtx, cancelSettling := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelSettling()
 	// Ordinary failure uses the existing guarded rollback, with the predicate
 	// evaluated again at every compensation patch. Different cause retains repairs.
 	if report.Status != contracts.MitigationReport_STATUS_SUCCESS && report.Status != contracts.MitigationReport_STATUS_DIFFERENT_CAUSE {
@@ -305,19 +319,28 @@ func (l *ResponderLoop) executeMenu(ctx context.Context, selection *contracts.Mi
 			}
 			executor := l.Executor
 			executor.Client = client
+			if executor.Source != nil {
+				executor.Source = menuPlanSource{PlanSource: executor.Source, client: client}
+			}
 			if result.Applied && !result.RolledBack {
-				if _, err := l.menuSnapshot(ctx); err != nil {
+				if _, err := l.menuSnapshot(settlingCtx); err != nil {
 					for _, patch := range result.Patches {
 						report.Residuals = append(report.Residuals, planRefProto(patch.Ref))
 					}
 					continue
 				}
-				if err := executor.Rollback(ctx, result); err != nil {
+				if err := executor.Rollback(settlingCtx, result); err != nil {
 					for _, patch := range result.Patches {
 						report.Residuals = append(report.Residuals, planRefProto(patch.Ref))
 					}
 				}
-				_, _ = barrier.Capture(ctx, attempt.AttemptId, client.round, "after_compensation", nil)
+				if _, err := barrier.Capture(settlingCtx, attempt.AttemptId, client.round, "after_compensation", nil); err != nil {
+					report.FailedPhase = "compensation"
+					report.ReasonCode = "compensation_observation_unavailable"
+					for _, patch := range result.Patches {
+						report.Residuals = append(report.Residuals, planRefProto(patch.Ref))
+					}
+				}
 			}
 		}
 	}
@@ -335,9 +358,16 @@ func (l *ResponderLoop) menuFindingsClear(ctx context.Context, view sdk.Detectio
 			clear = false
 		}
 	}()
+	covered := map[string]bool{}
 	for _, detector := range l.Detectors {
+		covered[detector.Spec().ID] = true
 		findings, err := detector.Detect(ctx, view)
 		if err != nil || len(findings) > 0 {
+			return false
+		}
+	}
+	for _, finding := range l.Request.Findings {
+		if finding.DetectorID != "" && !strings.HasPrefix(finding.DetectorID, "drift.") && !covered[finding.DetectorID] {
 			return false
 		}
 	}

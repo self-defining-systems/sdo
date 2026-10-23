@@ -1,7 +1,7 @@
 package runtime
 
-// Executable MI1 acceptance fixtures. These intentionally remain red until the
-// durable menu executor is wired; an unknown command is not a safety refusal.
+// Executable MI1 acceptance assertions. Synthetic durable/provenance adapters
+// wire the real menu interfaces; an unknown command is not a safety refusal.
 // All workloads, images and canaries in this file are synthetic.
 import (
 	"context"
