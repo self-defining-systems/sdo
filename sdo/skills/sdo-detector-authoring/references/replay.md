@@ -180,6 +180,10 @@ type Snapshot struct {
 	ObservedAtTime *time.Time `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"-"`
+	// Metrics holds frozen metric query results by query ID.
+	Metrics map[string]metrics.Result `json:"-"`
+	// Alerts holds the frozen alerts of the evaluation cycle.
+	Alerts *metrics.AlertsResult `json:"-"`
 }
 
 func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, error)
@@ -190,6 +194,9 @@ func LoadSnapshots(dir string) ([]Snapshot, error)
     one Snapshot (see the json tags on Snapshot), returned in file-name order.
     An empty directory or a file with unknown fields is an error, so a baseline
     that silently stops checking anything cannot pass.
+
+func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
+    AlertsResult implements metrics.AlertSource.
 
 func (s Snapshot) ConfigMaps() []corev1.ConfigMap
 
@@ -202,6 +209,9 @@ func (s Snapshot) Endpoints() []corev1.Endpoints
 func (s Snapshot) Events() []corev1.Event
 
 func (s Snapshot) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+
+func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
+    MetricResult implements metrics.Source.
 
 func (s Snapshot) Namespace() string
 

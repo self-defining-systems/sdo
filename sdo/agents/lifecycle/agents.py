@@ -166,6 +166,15 @@ when the same scenarios recover. Every scenario must therefore succeed against t
    edge. Do not encode any particular cause of an unreachable edge.
 Omit synthetic traffic only for an application that serves no HTTP."""
 
+#: Metrics are an optional detector input, present only when an operator configured a metrics source.
+METRICS_AUTHORING = """Metrics (optional input). Only when the controller has a metrics source (a Prometheus URL the
+operator configured) may a health detector also judge application metrics: import "sdo.dev/operator/sdk/metrics",
+declare `Watches: []sdk.WatchKind{metrics.Watch}`, and build it with `metrics.NewThresholdDetector(spec, rules)`.
+Each rule names a query ID and a PromQL expression you ground in metrics the application actually exports, a
+comparison, a threshold, and the label names that identify its Deployment, Pod or Service. The controller runs
+each query once per cycle; the detector never does I/O, and an unreachable source is a detector error, not a
+clear. Never assume a metrics source: without one, omit these detectors."""
+
 
 class LifecycleAgentBackend(Protocol):
     def run_deployer(
@@ -416,6 +425,7 @@ literal string "default" in detector source. Use DetectionContext.Namespace() wh
 checking for a required resource that is absent, and use each observed object's Namespace for resources that exist.
 
 {TRAFFIC_AUTHORING}
+{METRICS_AUTHORING}
 Write traffic generator Go and workload YAML files directly in their final directories.
 The shared memory check installs and checks the generic detector for each health-probe or link-probe workload.
 It compiles and tests the complete candidate, including the health detector and traffic generators.

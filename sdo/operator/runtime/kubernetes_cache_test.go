@@ -14,9 +14,20 @@ import (
 	ktesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
+
+func TestKubernetesCacheDeclaresTheMetricsWatchWithoutAnInformer(t *testing.T) {
+	_, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
+		[]sdk.Detector{scheduledDetector{spec: sdk.DetectorSpec{
+			ID: "metrics", Interval: time.Second, Watches: []sdk.WatchKind{metrics.Watch},
+		}}})
+	if err != nil {
+		t.Fatalf("a metrics watch must not require an informer: %v", err)
+	}
+}
 
 func TestKubernetesCacheRoutesSyntheticTrafficNotificationsWithoutAnInformer(t *testing.T) {
 	cache, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "demo", Client: fake.NewSimpleClientset()},
