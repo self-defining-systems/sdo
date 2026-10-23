@@ -198,7 +198,7 @@ func tracingProbe(t *testing.T, root, live string, wantFiring bool) {
 	source := fmt.Sprintf(`package generated
 import("context";"testing";appsv1 "k8s.io/api/apps/v1";metav1 "k8s.io/apimachinery/pkg/apis/meta/v1";"sdo.dev/operator/sdk/sdktest")
 func TestTracingCapture(t *testing.T){snapshot:=sdktest.Snapshot{NamespaceName:"demo",DeploymentList:[]appsv1.Deployment{{ObjectMeta:metav1.ObjectMeta{Name:%q,Namespace:"demo"}}}}
- for _,d:=range All(){if d.Spec().ID!="health-objective"{continue};findings,err:=d.Detect(context.Background(),snapshot);if err!=nil || (len(findings)>0)!=%t {t.Fatalf("unexpected tracing health: %%+v %%v",findings,err)}}}
+ count:=0; for _,d:=range All(){if d.Spec().ID!="health-objective"{continue};count++;findings,err:=d.Detect(context.Background(),snapshot);if err!=nil || (len(findings)>0)!=%t {t.Fatalf("unexpected tracing health: %%+v %%v",findings,err)}};if count!=1 {t.Fatalf("executed %%d health-objective detectors, want 1",count)}}
 `, live, wantFiring)
 	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
 		t.Fatal(err)
