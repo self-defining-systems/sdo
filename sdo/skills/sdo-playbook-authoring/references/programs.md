@@ -4,6 +4,14 @@ Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a
 mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
+Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
+Declare object and typed value parameters and group related actions into one plan. Raw registered actions
+also appear as generic one-action plans. The ordinary PlanExecutor runs them with the controller's existing
+RBAC and always-on checks; the menu adds no ledger, fence, quiescence or provenance precondition.
+The same responder session receives what ran, per-action results, value provenance and errors and may
+choose another option or repair directly. Up to five rounds share the incident allowance. Intermediate
+reports are not independent outcomes or program trust credit.
+
 A program directory contains diagnose.go, optional mitigate.go, Go tests and a README with responder ownership,
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
 The worker's authoring reference tool supplies the current worked routing example alongside this guide.

@@ -785,3 +785,19 @@ def test_a_claude_turn_outside_a_git_checkout_still_runs(tmp_path: Path) -> None
     )
 
     assert json.loads(turn.output_json) == {"answer": "ok"}
+
+
+@pytest.mark.parametrize("provider", AGENT_PROVIDERS)
+def test_provider_session_is_checkpointed_while_the_turn_is_running(provider: str, tmp_path: Path) -> None:
+    sessions: list[str] = []
+    turn, _ = _run(provider, tmp_path, on_session_started=sessions.append)
+    assert sessions == [turn.session_id]
+
+
+@pytest.mark.parametrize("provider", AGENT_PROVIDERS)
+def test_failed_session_checkpoint_aborts_the_turn(provider: str, tmp_path: Path) -> None:
+    def refuse(_session: str) -> None:
+        raise RuntimeError("checkpoint persistence unavailable")
+
+    with pytest.raises(RuntimeError, match="checkpoint persistence unavailable"):
+        _run(provider, tmp_path, on_session_started=refuse)

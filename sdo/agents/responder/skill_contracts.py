@@ -28,6 +28,16 @@ async def render_contract() -> str:
         "The worker task/result envelopes are transport-owned and are never authored by the model. "
         "The check_memory tool accepts the decision fields directly and writes the CLI file.\n\n"
         f"```json\n{json.dumps(schema, indent=2)}\n```",
+        "## Mitigation menu and responder continuity\n\n"
+        "The menu is a convenience over direct commands. It lists accepted Mitigators with their declared "
+        "object and value parameters, plus registered raw actions as one-action plans. Execution uses the "
+        "ordinary PlanExecutor under existing controller RBAC and always-on executor checks. "
+        "It adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta "
+        "preconditions. Reports return what ran, per-action results, value provenance and any error to the "
+        "same responder session, with up to five rounds per incident. Pick from the menu when an option "
+        "fits; if it fails, read the report and pick another or fix it directly. Author Mitigators as "
+        "self-contained repairs with declared parameters and specific failure context. Intermediate reports "
+        "are not independent incident outcomes or program trust credit.",
         "## Supported open phase selections\n\n"
         + "\n".join(
             f"- When captured, filename: open@{phase}.json; provenance open_at: {phase}."

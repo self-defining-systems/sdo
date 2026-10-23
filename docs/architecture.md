@@ -108,6 +108,34 @@ remains at the controller's storage edge; this read projection strictly decodes
 field types and rejects undefined lifecycle enums. Source-mode operator launches
 use a cached build, so observation polling does not repeatedly use `go run`.
 
+## Mitigation menu
+
+The menu is a convenience over direct commands. `sdo menu` lists accepted Mitigator programs with their
+declared object and value parameters and registered raw plan actions as generic one-action plans.
+`sdo mitigate OPTION [--NAME VALUE ...] [--rounds N]` runs the selected option through the ordinary
+`PlanExecutor` under the controller's existing RBAC and always-on executor checks. The option catalog
+comes from program and action registries, so adding an action requires no menu-specific execution case.
+The menu adds no selection ledger, fences, quiescence, provenance, health-reader or credential-delta
+preconditions. Direct commands and recorded `act` remain available in the same responder session.
+
+Versioned generated menu/report contracts carry session, attempt, round and action identities.
+The tool response includes parameter schemas, what ran, per-action results, each value's provenance,
+and any error. Failed and successful reports return to the same responder session so it can choose
+another option or fix the problem directly. The incident allowance is at most five rounds, shared
+across options and ordinary plan batches; a smaller configured allowance remains effective.
+Private session/checkpoint messages retain provider identity for presentation, without mutation authority.
+Session presentation, reports, repair receipts and counters survive through the existing tool-state
+snapshot. There is no selection journal, report outbox or menu-specific mutation fence. In-process
+applications retain preimages for explicit `rollback`; preimages are never restored or replayed.
+A fully applied option that fails verification remains in place. Its report identifies the application,
+states whether changes remain and exposes the error; only a partial write failure triggers the
+ordinary executor's automatic compensation.
+
+Menu action receipts enter ordinary incident repair evidence. A terminal menu success is not independent
+broker closure or positive program trust credit. Controller health verification, broker ACK and the
+benchmark adapter's strict receipt remain separate evidence. See the
+[analysis reference](../.agents/skills/analyze-experiment/references/mitigation-menu.md).
+
 ## Benchmark fault and result boundary
 
 `benchmarks/sregym/faults/description.py` owns the versioned
@@ -489,6 +517,10 @@ traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
 
 ## Component map
 
+The Go responder loop owns convenience-menu execution through the ordinary PlanExecutor; the Python
+CLI submits options and parameters and receives reports in the same session. Existing controller RBAC
+and executor checks govern execution; the benchmark adapter owns strict experiment receipts.
+
 | Capability | Repository implementation | Status | Evidence and limit |
 |---|---|---|---|
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
@@ -518,6 +550,10 @@ The toy real-cluster validation tier keeps reusable application and fault code i
 SREGym harness. It uses the same production controller, broker and memory edge.
 
 ## Artifact ownership matrix
+
+Menu options and parameters are agent tool requests. Sessions and reports are presentation state;
+ordinary incident counters use the existing tools-state CAS document outside `.sdo/`.
+Only the broker publishes derived incident outcomes.
 
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|
@@ -585,4 +621,11 @@ The complete native receipt may reach the broker ledger before the controller pe
 A complete authenticated native receipt is recovered as an existing decision. Its replay does not re-run the pre-commit observation-generation check or independent closure decision after adoption, because source publication itself changes that generation. The health guard and durable effect identity still apply; incomplete receipts use the ordinary fresh-observation path.
 Structured plan authority is supplied by administrator-owned controller launch configuration; see [the authority contract](plan-safety-authority.md). Approved fixture images and their separately pinned policy hash are independent of responder plans and dry-run output.
 
+The production `run.go` `LoopFactory` enables the convenience menu when the controller process has
+`SDO_RESPONDER_MENU=1` (unset or `0` is off; other values refuse startup). The dispatcher advertises
+`SDO_MITIGATION_SESSION=1` only for enabled menus. No synthetic safety capabilities are supplied.
+Menu execution uses the same executor, source authority, health verifier and controller credentials
+as direct plan execution, with no additional menu preflight or read prerequisites.
+
 The reviewed mixed10 source policy is committed under `sdo/operator/config/plan-policies/`. The controller generates source-only structured action authority before responder dispatch from accepted renders and named incident resources, pins UIDs through metadata-only reads, and caches the incident epoch. Narrow SetField paths use declared parameters, retaining the previous path allowlist and universal credential-delta guard. The legacy literal path is removed. Application JSON patch receipts record the authority class for analysis. See [plan authority](plan-safety-authority.md) for launch inputs and limitations.
+

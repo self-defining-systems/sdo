@@ -9,7 +9,10 @@ Memory records the health goal, accepted architecture, reusable playbooks and di
 Read it freely; edit only the artifact classes and proposal checkout your task authorizes.
 
 1. Identify artifacts by logical ID from the supplied memory snapshot or memory inventory. Read the matching
-   playbook before applying it and confirm its diagnosis against current resources.
+   playbook before applying it and confirm its diagnosis against current resources. Prefer a fitting mitigation
+   menu option; after a failure, read its report and choose another option or repair directly in the same
+   session. The menu is a convenience over direct commands, using the ordinary executor and existing RBAC,
+   with up to five rounds per incident and no menu-specific preconditions.
 2. Bind resource roles from the finding. Authored prose and results use logical IDs and role placeholders;
    physical storage paths belong only to checkout editing and tooling.
 3. For authorized reflection, start with the installed `sdo-playbook-authoring` skill; for detector changes,

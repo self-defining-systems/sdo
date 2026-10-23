@@ -36,14 +36,13 @@ import (
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
 	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
-	PlanSafety *PlanSafetyPolicy
-	// PlanExecConfig supplies the existing controller transport; nil refuses Exec.
-	PlanExecConfig   *rest.Config
+	PlanSafety       *PlanSafetyPolicy
 	SourcePlanPolicy *SourcePlanPolicy
 	Args             []string
 	Stdout           io.Writer
 	Stderr           io.Writer
 	Provider         SnapshotProvider
+
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
@@ -51,6 +50,8 @@ type RuntimeOptions struct {
 	// MetadataClient replaces the Secret metadata transport in embedded runs.
 	// When Client is supplied without it, Secrets remain unobserved.
 	MetadataClient rest.Interface
+	// PlanExecConfig reuses controller credentials for ordinary pod exec.
+	PlanExecConfig *rest.Config
 	// StateBaselineStartTimeout bounds the state tracker's RBAC probes and
 	// initial sync; zero means defaultStateBaselineStartTimeout.
 	StateBaselineStartTimeout time.Duration
@@ -259,6 +260,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		options.PlanSafety = reviewed
 	}
 
+	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
+	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
+		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
+	}
+
 	if policy := options.SourcePlanPolicy; policy != nil && len(policy.Applications) > 0 {
 		raw := []byte(*planSourceJSON)
 		if len(raw) == 0 {
@@ -379,6 +385,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		leaseClient, err = core.NewKubernetesClient()
 		if err != nil {
 			return fmt.Errorf("create dedicated leader-election client: %w", err)
+		}
+	}
+	planExecConfig := options.PlanExecConfig
+	if planExecConfig == nil && options.Client == nil {
+		planExecConfig, err = responderPlanExecConfig()
+		if err != nil {
+			return fmt.Errorf("load plan exec client configuration: %w", err)
 		}
 	}
 	stateStartTimeout := options.StateBaselineStartTimeout
@@ -566,7 +579,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					policyCancel()
 				}
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: options.PlanExecConfig}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
+					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
+
 					AcceptedRevision: func() string {
 						if controller == nil {
 							return ""
@@ -575,6 +589,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
+				if menuEnabled == "1" {
+					loop.MenuConfig = productionResponderMenu()
+				}
 				loop.CheckHealth = func(ctx context.Context) error {
 					if controller != nil && controller.CheckHealth != nil {
 						if err := controller.CheckHealth(ctx); err != nil {

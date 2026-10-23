@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -47,6 +47,7 @@ from agentshim import (
     CodexSandboxConfig,
     OutputSchema,
     SandboxConfig,
+    SessionStarted,
     TokenUsage,
     ToolCall,
     TurnRequest,
@@ -172,8 +173,11 @@ def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
 class _ShellCommandRecorder:
     commands: list[str] = field(default_factory=list[str])
     tool_calls: int = 0
+    on_session_started: Callable[[str], None] | None = None
 
     def on_event(self, event: AgentEvent) -> None:
+        if isinstance(event, SessionStarted) and self.on_session_started is not None:
+            self.on_session_started(event.session_id)
         if not isinstance(event, ToolCall):
             return
         self.tool_calls += 1
@@ -199,6 +203,7 @@ def run_structured_turn(
     executor: CommandExecutor | None = None,
     mcp_servers: Sequence[McpServer] = (),
     environment: Mapping[str, str] | None = None,
+    on_session_started: Callable[[str], None] | None = None,
 ) -> StructuredTurn:
     """Run one structured turn, fresh or resumed, and return its output.
 
@@ -223,7 +228,7 @@ def run_structured_turn(
         raise ValueError("a Codex workspace-write turn cannot be resumed: its session lives in a per-turn CODEX_HOME")
 
     workspace = Path(cwd).resolve()
-    recorder = _ShellCommandRecorder()
+    recorder = _ShellCommandRecorder(on_session_started=on_session_started)
     started = time.monotonic()
     try:
         with ExitStack() as turn_scope:

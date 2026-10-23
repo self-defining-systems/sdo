@@ -177,3 +177,64 @@ def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, 
     result = tools_cli.main(["act", "--resource", "Service/app/api", "--", "true"])
     assert result == 0
     assert seen == ["capture", "mutation"]
+
+
+def test_mitigate_option_uses_fresh_menu_and_incident_round_allowance(monkeypatch):
+    seen = []
+    menu = {
+        "version": 1,
+        "incident_id": "incident",
+        "session_id": "session",
+        "dispatch_epoch": "1",
+        "menu_id": "fresh-menu",
+        "source_commit": "source",
+        "scope_digest": "scope",
+        "policy_digest": "policy",
+        "round_limit": 4,
+        "remaining_batches": 4,
+        "bindings": [],
+        "options": [
+            {
+                "option_id": "route",
+                "program_id": "routing",
+                "program_revision": "revision",
+                "dependency_revision": "dependencies",
+                "bindings": [],
+            }
+        ],
+    }
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return {"menu": menu, "summary": "menu"} if request["command"] == "menu" else {"summary": "report"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["mitigate", "route", "--rounds", "3"]) == 0
+    assert [request["command"] for request in seen] == ["menu", "mitigate"]
+    assert seen[1]["selection"]["round_limit"] == 3
+    assert seen[1]["selection"]["option_id"] == "route"
+    assert seen[1]["selection"]["request_id"]
+
+
+def test_mitigate_passes_named_parameters_for_controller_schema_parsing(monkeypatch):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        if request["command"] == "menu":
+            return {"menu": {"round_limit": 5, "options": [{"option_id": "ScaleWorkload"}]}}
+        return {"summary": "report"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["mitigate", "ScaleWorkload", "--ref", "Deployment/app/api", "--replicas", "3"]) == 0
+    assert seen[-1]["parameters"] == {"ref": "Deployment/app/api", "replicas": "3"}
+    assert seen[-1]["selection"]["round_limit"] == 1
+
+
+def test_menu_does_not_gate_direct_act(monkeypatch):
+    monkeypatch.setenv("SDO_MITIGATION_SESSION", "1")
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _directory: seen.append(request["command"]) or {})
+    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kwargs: 0)
+    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 0
+    assert seen == ["pre-apply"]

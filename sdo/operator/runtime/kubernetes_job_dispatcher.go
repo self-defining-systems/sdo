@@ -261,6 +261,9 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		go func() { _ = server.Serve(toolCtx) }()
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		if loop.MenuConfig.valid() {
+			environment["SDO_MITIGATION_SESSION"] = "1"
+		}
 	}
 	executor := worker_registry.KubernetesExecutor{
 		Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, APIProxyImage: d.APIProxyImage,
@@ -296,6 +299,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			result.ProgramRuns = loop.ProgramRuns()
 			fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		}
+		result.RepairActions = append(result.RepairActions, loop.MenuRepairActions()...)
 		result.ProgramFailureSignals = loop.FailureSignals()
 		result.ResponseLoopsUsed = loop.LoopsUsed()
 		result.ResolutionPath = "responder"

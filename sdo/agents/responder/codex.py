@@ -16,6 +16,7 @@ from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection import INCIDENT_REASONING_EFFORT
 from sdo.agents.responder.result_output import parse_incident_result
+from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
     branch_correction,
@@ -78,8 +79,15 @@ def execute_incident(
             raise ResponderExecutionError(f"unsupported agent provider {selected_provider!r}")
         model = model or os.getenv(MODEL_ENV["responder"]) or None
     prompt = _responder_prompt(request)
-    recorded_actions.reset()
-    resume_session_id: str | None = None
+    try:
+        recovery = open_recovery(request.incident_id, selected_provider)
+        resume_session_id = recovery.resume_session_id() if recovery is not None else None
+    except SessionRecoveryError as exc:
+        raise ResponderExecutionError(str(exc)) from exc
+    if resume_session_id is None:
+        recorded_actions.reset()
+    if recovery is not None:
+        prompt += recovery.recovered_prompt()
     corrected_branch = False
     while True:
         try:
@@ -90,10 +98,14 @@ def execute_incident(
                 access="danger-full-access",
                 model=model,
                 reasoning_effort=INCIDENT_REASONING_EFFORT,
+                timeout_seconds=recovery.remaining_seconds() if recovery is not None else None,
                 resume_session_id=resume_session_id,
                 executor=executor,
+                on_session_started=recovery.checkpoint if recovery is not None else None,
                 **session_turn_options(selected_provider, Path(request.repository_worktree)),
             )
+        except SessionRecoveryError as exc:
+            raise ResponderExecutionError(str(exc)) from exc
         except StructuredTurnError as exc:
             raise ResponderExecutionError(f"{selected_provider} responder failed: {exc}") from exc
         try:
@@ -109,6 +121,11 @@ def execute_incident(
             prompt = branch_correction("incident_result")
         except (OSError, ValueError) as exc:
             raise ResponderExecutionError(f"invalid {selected_provider} incident result: {exc}") from exc
+    try:
+        if recovery is not None:
+            recovery.acknowledge_reports()
+    except SessionRecoveryError as exc:
+        raise ResponderExecutionError(str(exc)) from exc
     try:
         recorded_actions.merge_into(result)
     except recorded_actions.RecordedActionsError as exc:
@@ -597,6 +614,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Report applied playbooks by logical playbook_id, with no repository memory paths. "
     )
     program_guidance = (
+        "Pick from the mitigation menu when an option fits; if it fails, read the report and pick another "
+        "option or fix it directly in this same session. "
         "Start with ranked program verdicts and evidence in initial_program_runs. "
         "Treat a matching program's plan as a repair hypothesis when can_mitigate=true; "
         "a diagnosis-only program supplies evidence, "

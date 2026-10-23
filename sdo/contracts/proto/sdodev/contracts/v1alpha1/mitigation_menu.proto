@@ -1,0 +1,259 @@
+syntax = "proto3";
+
+package sdodev.contracts.v1alpha1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/common.proto";
+import "sdodev/contracts/v1alpha1/program.proto";
+
+option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1";
+
+// Menu safety is limited to Go menu effects and their evidence. This contract
+// confers no grants and makes no claim about inherited shell/act confinement.
+// The controller must validate provenance, scope, policy and freshness before
+// exposing any menu or report. Passing wire validation is never authorization.
+message MitigationMenu {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  string menu_id = 5 [(buf.validate.field).string.min_len = 1];
+  string source_commit = 6 [(buf.validate.field).string.min_len = 1];
+  string scope_digest = 7 [(buf.validate.field).string.min_len = 1];
+  string policy_digest = 8 [(buf.validate.field).string.min_len = 1];
+  repeated Binding bindings = 9;
+  repeated MitigationOption options = 10;
+  uint32 round_limit = 11 [(buf.validate.field).uint32 = {gte: 1, lte: 100}];
+  google.protobuf.Timestamp original_deadline = 12 [(buf.validate.field).required = true];
+  uint32 remaining_batches = 13;
+}
+
+message MitigationOption {
+  enum Effect {
+    EFFECT_UNSPECIFIED = 0;
+    EFFECT_SCOPED_ROUTING_SET_FIELD = 1;
+    EFFECT_DEPLOYMENT_RESTART = 2;
+    // Execution and supported action vocabulary belong to the plan executor.
+    EFFECT_SDK_PLAN_ACTION = 3;
+  }
+  string option_id = 1 [(buf.validate.field).string.min_len = 1];
+  string program_id = 2 [(buf.validate.field).string.min_len = 1];
+  string program_revision = 3 [(buf.validate.field).string.min_len = 1];
+  string dependency_revision = 4 [(buf.validate.field).string.min_len = 1];
+  repeated Effect effects = 5 [(buf.validate.field).repeated.items.enum = {defined_only: true, not_in: [0]}];
+  // A disabled option is descriptive only; it cannot authorize a selection.
+  string disabled_reason = 6 [(buf.validate.field).string.max_len = 256];
+  bool reversible = 7;
+  uint32 max_actions_per_round = 8 [(buf.validate.field).uint32.gt = 0];
+  repeated Binding bindings = 9;
+}
+
+// request_id identifies the semantic request, independently of transport files.
+// The canonical payload hash includes every field except dispatch_epoch.
+// Identical retries return pending or the immutable terminal report; a reused
+// ID with different content is refused. Bindings are a name-keyed set.
+message MitigationSelection {
+  option (buf.validate.message).cel = {
+    id: "mitigation_selection.unique_bindings"
+    message: "binding names must be unique"
+    expression: "this.bindings.map(b, b.name).unique()"
+  };
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  string request_id = 5 [(buf.validate.field).string.min_len = 1];
+  string menu_id = 6 [(buf.validate.field).string.min_len = 1];
+  string option_id = 7 [(buf.validate.field).string.min_len = 1];
+  string program_revision = 8 [(buf.validate.field).string.min_len = 1];
+  string dependency_revision = 9 [(buf.validate.field).string.min_len = 1];
+  string source_commit = 10 [(buf.validate.field).string.min_len = 1];
+  string scope_digest = 11 [(buf.validate.field).string.min_len = 1];
+  string policy_digest = 12 [(buf.validate.field).string.min_len = 1];
+  repeated Binding bindings = 13;
+  uint32 round_limit = 14 [(buf.validate.field).uint32 = {gte: 1, lte: 100}];
+}
+
+message MitigationReportQuery {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  string attempt_id = 5 [(buf.validate.field).string.min_len = 1];
+}
+
+// A terminal attempt report, never a plan application or positive trust input.
+// Persist before reply publication; recovery redelivers the same report into
+// the resumed provider session. There are no pre-images or opaque raw outputs.
+message MitigationReport {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_SUCCESS = 1;
+    STATUS_REFUSED = 2;
+    STATUS_EXECUTION_ERROR = 3;
+    STATUS_UNRESOLVED = 4;
+    STATUS_DIFFERENT_CAUSE = 5;
+    STATUS_SUPERSEDED = 6;
+    STATUS_INTERRUPTED = 7;
+    STATUS_TIMEOUT = 8;
+  }
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  string request_id = 4 [(buf.validate.field).string.min_len = 1];
+  string attempt_id = 5 [(buf.validate.field).string.min_len = 1];
+  // Immutable epoch of acceptance, even when a replacement owner adopts it.
+  uint64 acceptance_epoch = 6 [(buf.validate.field).uint64.gt = 0];
+  Status status = 7 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  string failed_phase = 8 [(buf.validate.field).string = {in: ["", "acceptance", "diagnosis", "planning", "safety", "forward", "compensation", "barrier", "verification", "recovery", "closure"]}];
+  repeated MitigationRoundReport rounds = 9 [(buf.validate.field).repeated.max_items = 100];
+  repeated MitigationBarrier barriers = 10;
+  uint32 remaining_batches = 11;
+  repeated ObjectRef residuals = 12;
+  // Controller-defined reason code, never an API error containing raw content.
+  string reason_code = 13 [(buf.validate.field).string = {max_len: 128, pattern: "^[a-z0-9_]*$"}];
+  // No further mutations (including fallback) until the old owner is quiescent.
+  bool writes_frozen = 14;
+}
+
+message MitigationRoundReport {
+  uint32 round_index = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 100}];
+  string round_id = 2 [(buf.validate.field).string.min_len = 1];
+  repeated MitigationActionReceipt actions = 3;
+  // Only provenance-approved, bounded evidence may enter these verdicts.
+  Verdict diagnosis = 4;
+  Verdict verification = 5;
+  repeated string barrier_ids = 6;
+  bool independently_healthy = 7;
+  bool original_findings_clear = 8;
+}
+
+message MitigationActionReceipt {
+  enum State {
+    STATE_UNSPECIFIED = 0;
+    STATE_NOT_APPLIED = 1;
+    STATE_APPLIED = 2;
+    STATE_UNKNOWN = 3;
+  }
+  string action_id = 1 [(buf.validate.field).string.min_len = 1];
+  ObjectRef resource = 2 [(buf.validate.field).required = true];
+  MitigationOption.Effect effect = 3 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  State state = 4 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  string uid = 5;
+  // Opaque identity token: never compare resourceVersions numerically.
+  string resource_version = 6;
+  State compensation_state = 7 [(buf.validate.field).enum.defined_only = true];
+  bool rollback_conflict = 8;
+  // Controller-derived action and field names, never values or raw API text.
+  string action_kind = 9 [(buf.validate.field).string.max_len = 128];
+  repeated string changed_fields = 10;
+}
+
+// Identity and causal proof only; never full Kubernetes objects or log bodies.
+message MitigationBarrier {
+  string capture_id = 1 [(buf.validate.field).string.min_len = 1];
+  string attempt_id = 2 [(buf.validate.field).string.min_len = 1];
+  uint32 round_index = 3 [(buf.validate.field).uint32.lte = 100];
+  string phase = 4 [(buf.validate.field).string = {in: ["before_round", "after_write", "after_compensation", "recovery", "closure"]}];
+  uint32 occurrence = 5 [(buf.validate.field).uint32.gt = 0];
+  repeated MitigationObservation observations = 6;
+  google.protobuf.Timestamp observed_at = 7 [(buf.validate.field).required = true];
+  bool complete = 8;
+  repeated MitigationCollectionObservation collections = 9;
+}
+
+message MitigationObservation {
+  ObjectRef resource = 1 [(buf.validate.field).required = true];
+  string uid = 2;
+  string resource_version = 3;
+  bool confirmed_absent = 4;
+  bool effect_confirmed = 5;
+}
+
+// Controller-owned selection facts. Never persists plans, pre-images or raw
+// API errors. The separate incident CAS document survives source adoption.
+message SelectionLedger {
+  option (buf.validate.message).cel = {
+    id: "selection_ledger.budget"
+    message: "used and reserved batches cannot exceed the incident budget"
+    expression: "this.used_batches + this.reserved_batches <= this.total_batches"
+  };
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  google.protobuf.Timestamp original_deadline = 4 [(buf.validate.field).required = true];
+  uint64 dispatch_epoch = 5 [(buf.validate.field).uint64.gt = 0];
+  repeated string source_history = 6;
+  uint32 total_batches = 7 [(buf.validate.field).uint32 = {gt: 0, lte: 100}];
+  uint32 used_batches = 8;
+  uint32 reserved_batches = 9;
+  string provider = 10 [(buf.validate.field).string = {in: ["", "codex", "claude"]}];
+  string provider_session_id = 11;
+  string checkpoint_digest = 12;
+  repeated SelectionAttempt attempts = 13 [(buf.validate.field).repeated.max_items = 32];
+  bool writes_frozen = 14;
+  bool owner_quiescent = 15;
+  bool closed = 16;
+}
+
+message SelectionAttempt {
+  string request_id = 1 [(buf.validate.field).string.min_len = 1];
+  string payload_hash = 2 [(buf.validate.field).string.len = 64];
+  string attempt_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 acceptance_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  uint32 reserved_batches = 5 [(buf.validate.field).uint32 = {gte: 1, lte: 100}];
+  uint32 charged_batches = 6;
+  repeated SelectionAction actions = 7;
+  repeated MitigationRoundReport rounds = 8 [(buf.validate.field).repeated.max_items = 100];
+  repeated MitigationBarrier barriers = 9;
+  MitigationReport report = 10;
+  bool delivery_acknowledged = 11;
+  bool closure_started = 12;
+  bool closure_acknowledged = 13;
+}
+
+// complete=false is an uncertain request, even if an API reply was lost.
+// phase distinguishes independent forward and compensation intents.
+message SelectionAction {
+  uint32 round_index = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 100}];
+  string phase = 2 [(buf.validate.field).string = {in: ["forward", "compensation"]}];
+  MitigationActionReceipt receipt = 3 [(buf.validate.field).required = true];
+  bool complete = 4;
+}
+
+// Private worker/controller handshake before menu acceptance. The checkpoint
+// digest identifies a persisted provider transcript prefix in the session PVC.
+message MitigationSessionCheckpoint {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  string provider = 5 [(buf.validate.field).string = {in: ["codex", "claude"]}];
+  string provider_session_id = 6 [(buf.validate.field).string.min_len = 1];
+  string checkpoint_digest = 7 [(buf.validate.field).string.len = 64];
+  repeated string acknowledged_attempt_ids = 8;
+}
+
+message MitigationSession {
+  uint32 version = 1 [(buf.validate.field).uint32.const = 1];
+  string incident_id = 2 [(buf.validate.field).string.min_len = 1];
+  string session_id = 3 [(buf.validate.field).string.min_len = 1];
+  uint64 dispatch_epoch = 4 [(buf.validate.field).uint64.gt = 0];
+  google.protobuf.Timestamp original_deadline = 5 [(buf.validate.field).required = true];
+  string provider = 6;
+  string provider_session_id = 7;
+  string checkpoint_digest = 8;
+  repeated MitigationReport pending_reports = 9;
+  bool writes_frozen = 10;
+}
+
+// Empty collections still need direct-read receipts. The opaque list version
+// records read identity only and must never be ordered against write versions.
+message MitigationCollectionObservation {
+  string api_version = 1 [(buf.validate.field).string.min_len = 1];
+  string kind = 2 [(buf.validate.field).string.min_len = 1];
+  string namespace = 3 [(buf.validate.field).string.min_len = 1];
+  string resource_version = 4 [(buf.validate.field).string.min_len = 1];
+  uint32 item_count = 5;
+}
