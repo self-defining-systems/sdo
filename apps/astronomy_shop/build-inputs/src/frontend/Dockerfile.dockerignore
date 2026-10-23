@@ -1,0 +1,13 @@
+# Build context for the pinned frontend Dockerfile. See apps/BUILD_INPUTS.md in SDO.
+**
+!src/
+src/*
+!src/frontend/
+!src/frontend/**
+src/*/README.md
+src/*/Dockerfile
+src/*/*/Dockerfile
+src/currency/client.js
+src/currency/node_modules/
+src/frontend/node_modules/
+src/shipping/target/
