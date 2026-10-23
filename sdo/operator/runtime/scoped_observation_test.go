@@ -518,6 +518,27 @@ func TestScopedWebhookDefaultsChangedThenRestored(t *testing.T) {
 			if err != nil || !diff.Changed || driftFieldsRestored(diff, []sdk.DriftEvent{*event}) {
 				t.Fatal("changed default appeared restored")
 			}
+			// Exercise the controller's independent closure gate after health clears.
+			f := newClosureDriftFixture(t, true, true, "app")
+			f.c.currentIncidentRequest.Findings = []sdk.Finding{{DetectorID: "drift.unexplained", Status: sdk.FindingActive, PrimaryResource: ref, Metadata: map[string]any{"drift_event": *event}}}
+			current := snapshot(20)
+			f.c.drift.View = func(sdk.DetectionContext) program.ReadView {
+				return LiveReadView{DetectionContext: current, Source: source, SourceCommit: commit}
+			}
+			f.step(t, 1)
+			if len(f.closed) != 0 {
+				t.Fatal("health clearance closed an unchanged foreign webhook finding")
+			}
+			current.ScopedSnapshot.Statuses[0].State = "forbidden"
+			f.step(t, 2)
+			if len(f.closed) != 0 {
+				t.Fatal("unreadable foreign webhook established closure")
+			}
+			current = snapshot(10)
+			f.step(t, 3)
+			if len(f.closed) != 1 || closureOutcome(t, f.closed[0]) != "success" {
+				t.Fatal("restored foreign webhook did not independently verify")
+			}
 			view.DetectionContext = snapshot(10)
 			diff, err = view.DiffAgainstSource(ref)
 			if err != nil || diff.Changed {

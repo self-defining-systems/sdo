@@ -21,11 +21,11 @@ func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snap
 	active := map[string][]sdk.Finding{}
 	errors := map[string]error{}
 	for _, finding := range findings {
-		if !strings.HasPrefix(finding.DetectorID, "drift.") || finding.PrimaryResource.Namespace != c.config.Namespace {
+		if !strings.HasPrefix(finding.DetectorID, "drift.") {
 			continue
 		}
 		events := driftEventsForFindings(nil, []sdk.Finding{finding})
-		// Foreign-object and unowned program matches have no admitted source fields.
+		// Unowned program matches have no admitted source fields.
 		// Learned watch matches retain owned-field evidence when they have it.
 		if len(events) != 1 || len(events[0].Fields) == 0 || events[0].Source == "absent from accepted source" {
 			continue
