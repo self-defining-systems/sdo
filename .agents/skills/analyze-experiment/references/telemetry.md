@@ -45,11 +45,73 @@ store is outside `.sdo/`; it is neither accepted memory nor replay evidence.
 Envelopes identify epoch, request, start/end time, verb, GVR, namespace, name,
 subresource, status, opaque resourceVersion and optional body hash. Hashes cover
 projected bytes. A proxy-specific strict projection retains reviewed object
-identity, pagination presence, and Secret/ConfigMap key names with empty values.
-All other values, specs, statuses, labels, annotations and diagnostic text are
-opaque with explicit redaction markers. Controller snapshot projection is
+identity and pagination presence plus a positive per-kind operational allowlist:
+Service ports/type; workload replicas, rollout type, template container images,
+ports, probe shapes, resource budgets and reference names; Pod conditions,
+readiness, restart/state reasons and exit codes; endpoint ready/not-ready address
+counts and ports; Event type/reason/object/count/timestamps; and reviewed HPA,
+PDB and NetworkPolicy spec structure. Label and match-label selector values become
+empty strings; selector expressions expose only keys/operators. Secret/ConfigMap
+payloads remain key names with empty values and no added labels. Service
+`spec.clusterIPPresent` and Pod `status.podIPPresent` are derived booleans, not IPs.
+Endpoints subsets and EndpointSlice objects expose `readyAddressCount` and
+`notReadyAddressCount` (unspecified EndpointSlice readiness counts as ready).
+Annotation contents, env values, command/args, probe exec commands/headers/hosts, all HTTP
+probe paths (including segments, queries and fragments), mount paths and messages
+stay opaque. Probe handler kind, port, scheme and timing remain visible. Image
+references are parsed and normalized; invalid strings and URL credentials, queries
+and fragments are omitted, while valid repository/tag/digest identifiers remain.
+Condition, current/previous container-state and Event reasons outside the finite
+reviewed vocabulary become `redacted`; this marker does not identify the omitted
+reason. Constrained enums, quantities, CIDRs, named ports, timestamps and
+downward-API expressions are validated/canonicalized. Bulk env references expose
+only name/optional. Identifier names, label/selector keys, reference names/keys and
+valid image identifiers are an accepted disclosure policy, not proof that a
+user-chosen identifier cannot encode a secret. Existing blobs keep the policy of
+the writer that recorded them. The single field-to-grammar table is
+`sdo/operator/apihistory/identifiers.go`; the full per-field disclosure table is
+in `docs/architecture.md`. Names/reference names/node names use DNS-1123
+subdomains (Service object names use DNS-1035 labels); namespaces, container,
+volume and Service/endpoint port names use DNS-1123 labels. Container named ports
+and string target/probe/network-policy ports use Kubernetes named-port validation
+(15 characters with a letter). Label/selector keys, referenced annotation keys,
+Pod custom condition types and HPA metric/resource names use qualified names.
+Data/reference keys use ConfigMap key validation; env names and reference kinds
+use conservative C identifiers. Reference apiVersion is a DNS-1035 version label
+with an optional DNS-1123 group prefix. Invalid leaves and keys are omitted.
+Workload condition types retain only `Available`, `Progressing`, `ReplicaFailure`;
+other types become `redacted`, including token-shaped custom types. Pod custom
+conditions remain useful only when their types satisfy qualified-name syntax.
+Custom HPA metrics/resources also require qualified-name syntax even when the
+API server accepts broader strings. HPA target/described-object references expose
+apiVersion/kind/name, never an invented namespace.
+
+Request group/version/resource/namespace/name/subresource segments have the same
+explicit DNS grammars described in the architecture table. Invalid request
+names/subresources and nondecimal resource versions become field-separated
+HMAC-SHA256 tokens (`opaque:` prefix), keyed randomly per history. The private
+0600 `identity.key` preserves equality across recorder restarts; separate histories
+produce different tokens. Numeric resource versions and valid request identifiers
+(including known subresources) remain visible. Altered request identity makes the
+envelope partial. Tokens allow equality comparisons, not recovery of raw text or
+resource-version ordering; never interpret a missing identity as a wider scope.
+Referenced annotation keys may appear through validated downward-API field paths,
+without disclosing annotation contents.
+
+Unknown fields and wrong JSON leaf shapes
+are dropped. Every projected object keeps `redacted: true`; absence of a field
+must not be read as evidence of its absence in Kubernetes. Label/selector keys
+alone cannot establish selector equality or backend membership. Older blobs may
+have only identity/key names; no store format migration is required. Readiness
+gates, restartable-init semantics, exact probe requests/commands and individual
+endpoint identities remain unavailable, so these fields cannot fully explain
+every readiness failure. See
+`sdo/operator/apihistory/projection.go` for the enforced per-kind allowlist and exclusions. Controller snapshot projection is
 independent. Unknown representations, log bodies and streaming payloads retain
-envelopes only. Request bodies and headers are never stored; upstream error
+envelopes only. Body recording requires declared `application/json` (optionally
+UTF-8 charset) and absent/identity content encoding; unknown or protobuf MIME and
+compressed encodings remain unavailable even with JSON-shaped bytes. Request
+bodies and headers are never stored; upstream error
 logger text is discarded.
 
 Default incident limits are 64 MiB and 10,000 envelopes, with a queue bounded by 1,024 entries / 8 MiB

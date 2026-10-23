@@ -13,7 +13,11 @@ require (
 	sdo.dev/operator/sdk v0.0.0
 )
 
-require sigs.k8s.io/yaml v1.3.0 // indirect
+require (
+	github.com/distribution/reference v0.6.0 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	sigs.k8s.io/yaml v1.3.0 // indirect
+)
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2 // indirect

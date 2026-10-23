@@ -3,6 +3,7 @@ package operatorcli_test
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -12,7 +13,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,6 +84,7 @@ func TestCredentialPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.Header().Set("Authorization", "Bearer "+canary)
 				w.WriteHeader(tc.status)
@@ -307,6 +311,7 @@ func TestExecDryRunCannotHideFirstMutation(t *testing.T) {
 			dir := t.TempDir()
 			store, _ := apihistory.Open(dir, "synthetic", apihistory.Limits{})
 			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
 				if strings.HasSuffix(r.URL.Path, "/"+subresource) {
 					w.WriteHeader(200)
 					return
@@ -352,7 +357,10 @@ func TestSaturatedRecorderDoesNotDelayLargeForwarding(t *testing.T) {
 	for range 500 {
 		store.Record(apihistory.Event{Phase: "end", Verb: "get"}, nil)
 	}
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, payload) }))
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, payload)
+	}))
 	defer up.Close()
 	u, _ := url.Parse(up.URL)
 	proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
@@ -411,6 +419,278 @@ func TestStateMatchesExplicitGroupResourceAndListScope(t *testing.T) {
 			}
 			if bytes.Contains(out.Bytes(), []byte(`"last_observed"`)) != tc.positive || bytes.Contains(out.Bytes(), []byte(`"observed_absent":true`)) != tc.absent {
 				t.Fatalf("incorrect identity or scope: %s", &out)
+			}
+		})
+	}
+}
+
+// Reviewed projections are exercised through the HTTP proxy and persisted store,
+// for both objects and lists. Everything here is minimal synthetic test data.
+func TestOperationalFieldAllowlist(t *testing.T) {
+	container := `{"name":"web","image":"example.invalid/web:v1","ports":[{"name":"http","containerPort":8080,"protocol":"TCP"}],"readinessProbe":{"httpGet":{"port":"http","scheme":"HTTP"},"initialDelaySeconds":2,"periodSeconds":3,"timeoutSeconds":1,"successThreshold":1,"failureThreshold":2},"livenessProbe":{"exec":{}},"startupProbe":{"tcpSocket":{"port":8080}},"resources":{"requests":{"cpu":"100m","memory":"32Mi"},"limits":{"cpu":"1","memory":"64Mi"}},"env":[{"name":"MODE","valueFrom":{"secretKeyRef":{"name":"settings","key":"mode","optional":false}}}],"envFrom":[{"configMapRef":{"name":"settings","optional":true}}],"volumeMounts":[{"name":"config"}]}`
+	podSpec := `{"nodeName":"node-a","containers":[` + container + `],"initContainers":[` + container + `],"volumes":[{"name":"config"}]}`
+	conditions := `[{"type":"Ready","status":"False","reason":"ContainersNotReady"}]`
+	workload := `{"spec":{"replicas":2,"selector":{"matchLabels":{"app":""},"matchExpressions":[{"key":"tier","operator":"In"}]},"template":{"metadata":{"labels":{"app":""}},"spec":` + podSpec + `}},"status":{"replicas":2,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"conditions":[{"type":"Available","status":"False","reason":"MinimumReplicasUnavailable"}]}}`
+	for _, tc := range []struct{ kind, version, resource, want string }{
+		{"Service", "v1", "services", `{"spec":{"type":"ClusterIP","selector":{"app":""},"ports":[{"name":"http","port":80,"targetPort":"http","protocol":"TCP","nodePort":30080}],"clusterIPPresent":true}}`},
+		{"Deployment", "apps/v1", "deployments", workload},
+		{"StatefulSet", "apps/v1", "statefulsets", workload},
+		{"ReplicaSet", "apps/v1", "replicasets", workload},
+		{"Pod", "v1", "pods", `{"spec":` + podSpec + `,"status":{"phase":"Running","podIPPresent":true,"conditions":` + conditions + `,"containerStatuses":[{"name":"web","image":"example.invalid/web:v1","ready":false,"restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"Error","exitCode":1}}}],"initContainerStatuses":[{"name":"init","image":"example.invalid/init:v1","ready":true,"restartCount":0,"state":{"terminated":{"reason":"Completed","exitCode":0}}}]}}`},
+		{"Endpoints", "v1", "endpoints", `{"subsets":[{"readyAddressCount":2,"notReadyAddressCount":1,"ports":[{"name":"http","port":8080,"protocol":"TCP"}]}]}`},
+		{"EndpointSlice", "discovery.k8s.io/v1", "endpointslices", `{"readyAddressCount":2,"notReadyAddressCount":1,"ports":[{"name":"http","port":8080,"protocol":"TCP"}]}`},
+		{"Event", "v1", "events", `{"type":"Warning","reason":"BackOff","involvedObject":{"kind":"Pod","namespace":"app","name":"p","apiVersion":"v1"},"count":3,"firstTimestamp":"2026-01-01T00:00:00Z","lastTimestamp":"2026-01-01T00:01:00Z","eventTime":"2026-01-01T00:01:00Z","series":{"count":2,"lastObservedTime":"2026-01-01T00:01:00Z"}}`},
+		{"HorizontalPodAutoscaler", "autoscaling/v2", "horizontalpodautoscalers", `{"spec":{"scaleTargetRef":{"apiVersion":"apps/v1","kind":"Deployment","name":"web"},"minReplicas":1,"maxReplicas":4,"metrics":[{"type":"Resource","resource":{"name":"cpu","target":{"type":"Utilization","averageUtilization":70}}}],"behavior":{"scaleUp":{"stabilizationWindowSeconds":30,"selectPolicy":"Max","policies":[{"type":"Pods","value":2,"periodSeconds":60}]}}}}`},
+		{"PodDisruptionBudget", "policy/v1", "poddisruptionbudgets", `{"spec":{"minAvailable":"50%","maxUnavailable":1,"unhealthyPodEvictionPolicy":"IfHealthyBudget","selector":{"matchLabels":{"app":""}}}}`},
+		{"NetworkPolicy", "networking.k8s.io/v1", "networkpolicies", `{"spec":{"podSelector":{"matchLabels":{"app":""}},"policyTypes":["Ingress","Egress"],"ingress":[{"from":[{"namespaceSelector":{"matchLabels":{"team":""}},"podSelector":{"matchLabels":{"app":""}},"ipBlock":{"cidr":"192.0.2.0/24","except":["192.0.2.1/32"]}}],"ports":[{"protocol":"TCP","port":"http","endPort":8081}]}],"egress":[{"to":[{"ipBlock":{"cidr":"198.51.100.0/24"}}],"ports":[{"port":443}]}]}}`},
+		{"Secret", "v1", "secrets", `{"data":{"token":""},"stringData":{"token":""},"binaryData":{"token":""}}`},
+		{"ConfigMap", "v1", "configmaps", `{"data":{"token":""},"stringData":{"token":""},"binaryData":{"token":""}}`},
+	} {
+		for _, list := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/list=%t", tc.kind, list), func(t *testing.T) {
+				var want map[string]any
+				if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+					t.Fatal(err)
+				}
+				if tc.kind == "Deployment" {
+					want["spec"].(map[string]any)["strategy"] = map[string]any{"type": "RollingUpdate"}
+				}
+				if tc.kind == "StatefulSet" {
+					want["spec"].(map[string]any)["updateStrategy"] = map[string]any{"type": "RollingUpdate"}
+				}
+				want["apiVersion"], want["kind"], want["redacted"] = tc.version, tc.kind, true
+				meta := map[string]any{"name": "p", "namespace": "app", "resourceVersion": "1"}
+				if tc.kind != "Secret" && tc.kind != "ConfigMap" {
+					meta["labels"] = map[string]any{"app": ""}
+				}
+				if tc.kind == "Pod" {
+					meta["ownerReferences"] = []any{map[string]any{"kind": "ReplicaSet", "name": "web"}}
+				}
+				want["metadata"] = meta
+				b, _ := json.Marshal(want)
+				var input map[string]any
+				json.Unmarshal(b, &input)
+				// Every kind, including unsupported placements, gets every excluded
+				// channel. Recursing also protects templates, init containers,
+				// conditions, previous termination state, and probe exec handlers.
+				poisonExcludedFields(input)
+				// Also exercise all credential channels on kinds whose real API
+				// has no pod spec: an unreviewed spec must stay wholly opaque.
+				spec, ok := input["spec"].(map[string]any)
+				if !ok {
+					spec = map[string]any{}
+					input["spec"] = spec
+				}
+				if _, exists := spec["containers"]; !exists {
+					spec["containers"] = []any{map[string]any{
+						"name": "excluded", "env": []any{map[string]any{"name": "TOKEN", "value": canary}},
+						"command": []any{canary}, "args": []any{canary},
+						"readinessProbe": map[string]any{"exec": map[string]any{"command": []any{canary}}},
+					}}
+				}
+				switch tc.kind {
+				case "Service":
+					input["spec"].(map[string]any)["clusterIP"] = "192.0.2.10"
+				case "Pod":
+					input["status"].(map[string]any)["podIP"] = "192.0.2.20"
+				case "Endpoints":
+					subset := input["subsets"].([]any)[0].(map[string]any)
+					subset["addresses"] = []any{map[string]any{"ip": "192.0.2.1"}, map[string]any{"ip": "192.0.2.2"}}
+					subset["notReadyAddresses"] = []any{map[string]any{"ip": "192.0.2.3"}}
+				case "EndpointSlice":
+					input["endpoints"] = []any{map[string]any{"addresses": []any{"192.0.2.1", "192.0.2.2"}, "conditions": map[string]any{"ready": true}}, map[string]any{"addresses": []any{"192.0.2.3"}, "conditions": map[string]any{"ready": false}}}
+				}
+				// Derived presence/count fields must come from the real fields.
+				delete(input, "readyAddressCount")
+				delete(input, "notReadyAddressCount")
+				if spec, ok := input["spec"].(map[string]any); ok {
+					delete(spec, "clusterIPPresent")
+				}
+				if status, ok := input["status"].(map[string]any); ok {
+					delete(status, "podIPPresent")
+				}
+				if subsets, ok := input["subsets"].([]any); ok {
+					for _, s := range subsets {
+						delete(s.(map[string]any), "readyAddressCount")
+						delete(s.(map[string]any), "notReadyAddressCount")
+					}
+				}
+				var payload any = input
+				if list {
+					payload = map[string]any{"apiVersion": tc.version, "kind": tc.kind + "List", "items": []any{input}}
+				}
+				raw, _ := json.Marshal(payload)
+				dir := t.TempDir()
+				store, err := apihistory.Open(dir, "synthetic", apihistory.Limits{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.Write(raw)
+				}))
+				defer up.Close()
+				u, _ := url.Parse(up.URL)
+				proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
+				path := "/api/" + tc.version + "/namespaces/app/" + tc.resource
+				if strings.Contains(tc.version, "/") {
+					path = "/apis/" + tc.version + "/namespaces/app/" + tc.resource
+				}
+				if !list {
+					path += "/p"
+				}
+				res, err := proxy.Client().Get(proxy.URL + path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(res.Body)
+				res.Body.Close()
+				proxy.Close()
+				store.Close()
+				if err != nil || !bytes.Equal(body, raw) {
+					t.Fatal("pass-through changed")
+				}
+				if storedCanary(t, dir) {
+					t.Error("excluded field canary reached persisted files")
+				}
+				h, err := apihistory.Read(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got map[string]any
+				for _, e := range h.Events {
+					if e.BodyHash != "" {
+						if err := json.Unmarshal(h.Body(e), &got); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if list && got != nil {
+					got = got["items"].([]any)[0].(map[string]any)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("projection mismatch\ngot: %v\nwant: %v", got, want)
+				}
+			})
+		}
+	}
+}
+
+func poisonExcludedFields(v any) {
+	switch x := v.(type) {
+	case []any:
+		for _, child := range x {
+			poisonExcludedFields(child)
+		}
+	case map[string]any:
+		for key, child := range x {
+			switch key {
+			case "labels", "matchLabels", "data", "stringData", "binaryData":
+				for k := range child.(map[string]any) {
+					child.(map[string]any)[k] = canary
+				}
+			case "selector":
+				values := child.(map[string]any)
+				if _, structured := values["matchLabels"]; structured {
+					poisonExcludedFields(child)
+				} else {
+					for k := range values {
+						values[k] = canary
+					}
+				}
+			default:
+				poisonExcludedFields(child)
+			}
+		}
+		for _, key := range []string{"annotation", "message", "unknownFutureField", "host", "mountPath", "subPath", "prefix", "containerID", "imageID"} {
+			x[key] = canary
+		}
+		x["annotations"] = map[string]any{"auth": canary}
+		x["command"], x["args"] = []any{canary}, []any{canary}
+		if _, exists := x["operator"]; exists {
+			x["values"] = []any{canary}
+		}
+		if _, exists := x["status"]; !exists {
+			x["status"] = map[string]any{"message": canary}
+		}
+		x["httpHeaders"] = []any{map[string]any{"name": "Authorization", "value": canary}}
+		if _, exists := x["valueFrom"]; exists {
+			x["value"] = canary
+		}
+		if _, exists := x["env"]; !exists {
+			x["env"] = []any{map[string]any{"name": "EXCLUDED", "value": canary}}
+		}
+	}
+}
+
+func TestEvidenceRewindsOperationalFieldsBeforeFirstMutation(t *testing.T) {
+	for _, tc := range []struct{ kind, path, before, after string }{
+		{"Service", "/api/v1/namespaces/app/p", `"spec":{"ports":[{"port":80,"targetPort":8080}]}`, `"spec":{"ports":[{"port":80,"targetPort":9090}]}`},
+		{"Deployment", "/apis/apps/v1/namespaces/app/p", `"spec":{"template":{"spec":{"containers":[{"name":"web","image":"example.invalid/web:old"}]}}}`, `"spec":{"template":{"spec":{"containers":[{"name":"web","image":"example.invalid/web:new"}]}}}`},
+		{"Pod", "/api/v1/namespaces/app/p", `"spec":{"containers":[{"name":"web","image":"example.invalid/web:old","ports":[{"containerPort":8080}],"readinessProbe":{"httpGet":{"port":8080,"scheme":"HTTP"},"periodSeconds":5}}],"initContainers":[{"name":"init","image":"example.invalid/init:old","ports":[{"containerPort":9090}],"startupProbe":{"tcpSocket":{"port":9090},"timeoutSeconds":2}}]},"status":{"conditions":[{"type":"Ready","status":"False","reason":"ReadinessGatesNotReady"}],"initContainerStatuses":[{"name":"init","image":"example.invalid/init:old","ready":false,"restartCount":2,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"Error","exitCode":1}}}]}`, `"spec":{"containers":[{"name":"web","image":"example.invalid/web:new","ports":[{"containerPort":8181}],"readinessProbe":{"httpGet":{"port":8181,"scheme":"HTTPS"},"periodSeconds":10}}],"initContainers":[{"name":"init","image":"example.invalid/init:new","ports":[{"containerPort":9191}],"startupProbe":{"tcpSocket":{"port":9191},"timeoutSeconds":3}}]},"status":{"conditions":[{"type":"Ready","status":"True","reason":"ContainersReady"}],"initContainerStatuses":[{"name":"init","image":"example.invalid/init:new","ready":true,"restartCount":2,"state":{"terminated":{"reason":"Completed","exitCode":0}}}]}`},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			dir := t.TempDir()
+			store, err := apihistory.Open(dir, "synthetic", apihistory.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			version, resource := "v1", "services"
+			if tc.kind == "Deployment" {
+				version, resource = "apps/v1", "deployments"
+			} else if tc.kind == "Pod" {
+				version, resource = "v1", "pods"
+			}
+			path := strings.TrimSuffix(tc.path, "p") + resource + "/p"
+			var changed atomic.Bool
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == "PATCH" {
+					changed.Store(true)
+				}
+				fields := tc.before
+				if changed.Load() {
+					fields = tc.after
+				}
+				fmt.Fprintf(w, `{"apiVersion":%q,"kind":%q,"metadata":{"name":"p","namespace":"app"},%s}`, version, tc.kind, fields)
+			}))
+			defer up.Close()
+			u, _ := url.Parse(up.URL)
+			proxy := httptest.NewServer(kubeproxy.New(u, http.DefaultTransport, http.DefaultTransport, store))
+			for _, method := range []string{"GET", "PATCH", "GET"} {
+				req, _ := http.NewRequest(method, proxy.URL+path, nil)
+				res, err := proxy.Client().Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				io.Copy(io.Discard, res.Body)
+				res.Body.Close()
+			}
+			proxy.Close()
+			store.Close()
+			for _, cut := range []string{"before-first-mutation", time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)} {
+				var out bytes.Buffer
+				if err := operatorcli.RunEvidence([]string{"state", tc.kind + "/app/p", "--at", cut}, func(string) string { return dir }, &out); err != nil {
+					t.Fatal(err)
+				}
+				want := tc.before
+				if cut != "before-first-mutation" {
+					want = tc.after
+				}
+				var result struct {
+					LastObserved map[string]any `json:"last_observed"`
+					Unknown      bool           `json:"unknown"`
+				}
+				if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+					t.Fatal(err)
+				}
+				var expected map[string]any
+				if err := json.Unmarshal([]byte("{"+want+"}"), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(result.LastObserved["spec"], expected["spec"]) || !reflect.DeepEqual(result.LastObserved["status"], expected["status"]) || !result.Unknown || result.LastObserved["redacted"] != true {
+					t.Errorf("wrong historical operational fields: %s", &out)
+				}
 			}
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -73,6 +74,8 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			}
 			mode := "json"
 			switch {
+			case !supportedRepresentation(res.Header):
+				mode = "metadata"
 			case e.Verb == "watch":
 				mode = "metadata"
 			case e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward":
@@ -84,6 +87,9 @@ func New(upstream *url.URL, readTransport, writeTransport http.RoundTripper, rec
 			}
 			if mode == "metadata" {
 				end.Omission = "redacted_stream_metadata_only"
+				if !supportedRepresentation(res.Header) {
+					end.Omission = "unsupported_representation"
+				}
 				if e.Subresource == "log" {
 					end.Omission = "redacted_log_metadata_only"
 				}
@@ -217,4 +223,23 @@ func (b *captureBody) Close() error { err := b.ReadCloser.Close(); b.complete();
 func queryTrue(r *http.Request, name string) bool {
 	value, _ := strconv.ParseBool(r.URL.Query().Get(name))
 	return value
+}
+
+// Only declared JSON with identity encoding reaches the body projector. Header
+// values are inspected in memory, never persisted or echoed in diagnostics.
+func supportedRepresentation(header http.Header) bool {
+	if len(header.Values("Content-Type")) != 1 {
+		return false
+	}
+	mediaType, params, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return false
+	}
+	for key, value := range params {
+		if key != "charset" || !strings.EqualFold(value, "utf-8") {
+			return false
+		}
+	}
+	encodings := header.Values("Content-Encoding")
+	return len(encodings) == 0 || (len(encodings) == 1 && strings.EqualFold(strings.TrimSpace(encodings[0]), "identity"))
 }

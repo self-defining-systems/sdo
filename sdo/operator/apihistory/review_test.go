@@ -8,13 +8,13 @@ import (
 	"testing"
 )
 
-func TestCredentialCapableFieldsAreMetadataOnly(t *testing.T) {
+func TestCredentialCapableFieldsStayOpaque(t *testing.T) {
 	const canary = "KP2B_SYNTHETIC_CREDENTIAL_CANARY"
 	for _, raw := range []string{
 		`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"c","annotations":{"auth":"` + canary + `"},"labels":{"free":"` + canary + `"}},"data":{"certificate":"` + canary + `"},"binaryData":{"key":"` + canary + `"}}`,
 		`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"},"spec":{"containers":[{"name":"c","command":["` + canary + `"],"args":["` + canary + `"],"env":[{"name":"MODE","value":"` + canary + `"}]}]},"status":{"message":"` + canary + `"}}`,
 		`{"apiVersion":"v1","kind":"Secret","metadata":{"annotations":{"auth":"` + canary + `"}},"data":{"x":"` + canary + `"},"stringData":{"x":"` + canary + `"}}`,
-		`{"apiVersion":"v1","kind":"Event","message":"` + canary + `","reason":"` + canary + `"}`,
+		`{"apiVersion":"v1","kind":"Event","message":"` + canary + `","reason":"BackOff"}`,
 		`{"apiVersion":"v1","kind":"PodList","metadata":{"continue":"` + canary + `"},"items":[{"metadata":{"name":"p","annotations":{"auth":"` + canary + `"}},"status":{"message":"` + canary + `"}}]}`,
 		"Authorization: Bearer " + canary,
 		strings.Repeat("x", MaxLogBytes) + canary,
