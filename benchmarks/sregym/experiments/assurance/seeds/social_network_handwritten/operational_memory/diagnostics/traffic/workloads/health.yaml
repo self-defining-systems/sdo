@@ -1,0 +1,12 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: health
+purpose: health-probe
+ratePerSecond: 3
+scenarios:
+  - id: landing-page
+    weight: 1
+  - id: home-timeline-read
+    weight: 1
+  - id: user-timeline-read
+    weight: 1

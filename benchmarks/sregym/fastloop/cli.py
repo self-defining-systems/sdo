@@ -497,6 +497,7 @@ def _run(args: argparse.Namespace) -> int:
         results_path=results_dir / INCIDENTS_FILENAME,
         stream=stream,
         continue_on_error=args.continue_on_error,
+        slot_offset=args.slot_offset,
     )
     with _worker(environment) as worker:
         worker_ready = time.monotonic()
@@ -509,6 +510,8 @@ def _run(args: argparse.Namespace) -> int:
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
+        if baseline is None and args.require_full_cleanup:
+            raise ValueError("full cleanup requires an application baseline")
         if baseline is None:
             logger.warning(
                 "application baseline absent in %s; recovery will use the older fault-only path",
@@ -529,6 +532,7 @@ def _run(args: argparse.Namespace) -> int:
             health_timeout_seconds=args.health_timeout * args.time_scale,
             health_poll_seconds=min(1.0, args.time_scale),
             before_inject=before_inject,
+            require_full_cleanup=args.require_full_cleanup,
         )
         config = replace(
             config,
@@ -893,6 +897,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="clear ownership immediately before this standalone targetPort target to test periodic sweeps",
     )
     run.add_argument("-n", "--incidents", type=int, default=1)
+    run.add_argument("--slot-offset", type=int, default=0, help="global index of the first incident")
+    run.add_argument("--require-full-cleanup", action="store_true", help="require v2 recovery and application baseline")
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
@@ -1013,6 +1019,8 @@ def _replay(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = build_parser().parse_args(argv)
+    if getattr(args, "slot_offset", 0) < 0:
+        raise SystemExit("--slot-offset must be non-negative")
     if getattr(args, "incidents", 1) < 1:
         raise SystemExit("--incidents must be positive")
     return int(args.handler(args))

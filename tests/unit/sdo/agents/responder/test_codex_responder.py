@@ -273,11 +273,11 @@ def test_exact_match_on_incident_detector_inlines_playbook_and_fast_procedure(tm
     assert "Restore `<MISSING_CONFIG_MAP>` from source" in prompt
     assert "verify.sh" in prompt
     assert 'kubectl -n "$1" get configmap geo-config' in prompt
-    assert "already establishes the playbook's preconditions" in prompt
+    assert "Check them against accepted source and intended behavior" in prompt
     assert "one combined sanity check" in prompt
-    assert "replaces the playbook's own diagnosis steps" in prompt
+    assert "do not re-diagnose them" not in prompt
     assert "has not fired" not in prompt
-    assert "full investigation only if" in prompt
+    assert "Investigate contradictions, missing evidence" in prompt
     assert "Confirm a surfaced playbook against live state before applying it" not in prompt
     # The learned playbook owns the repair; SDO adds no fault-specific repair tip of its own.
     assert "mount backoff" not in prompt
@@ -294,9 +294,19 @@ def test_registered_but_not_fired_incident_detector_gets_precondition_sanity_che
     assert "namespace `hotel-reservation`" in prompt
     assert "Run `verify.sh` inside that check" in prompt
     assert "one combined sanity check" in prompt
-    assert "contradicts the playbook's preconditions" in prompt
+    assert "accepted source and intended application behavior" in prompt
     assert "already establishes the playbook's preconditions" not in prompt
     assert "Confirm a surfaced playbook against live state before applying it" not in prompt
+
+
+def test_warm_path_limits_checks_to_repair_evidence_and_accepted_source_values(tmp_path: Path) -> None:
+    for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path)):
+        prompt = _responder_prompt(request)
+
+        assert (
+            "Check only the evidence the repair needs and the accepted-source values it would write, then act" in prompt
+        )
+        assert "Explore the repository or cluster further only to resolve a contradiction" in prompt
 
 
 def test_cold_prompt_is_unchanged_without_exact_incident_detector_match(tmp_path: Path) -> None:
@@ -635,7 +645,7 @@ def test_prompt_marks_known_program_capabilities(can_mitigate: bool | None) -> N
         assert view["capability"] == "diagnosis-and-mitigation"
     else:
         assert view["capability"] == "unknown"
-    assert "matching program's plan when can_mitigate=true" in prompt
+    assert "matching program's plan as a repair hypothesis when can_mitigate=true" in prompt
     assert "concise capability help" in prompt
     assert "--bind" not in prompt
     assert "Use that index instead of broad tool-catalog output" in prompt
@@ -658,3 +668,14 @@ def test_prompt_names_the_evidence_source_forms_without_promising_checks() -> No
 
     assert "`Kind/name` or `Kind/namespace/name`" in prompt
     assert "SDO checks" not in prompt
+
+
+def test_memory_matches_do_not_override_accepted_source(tmp_path: Path) -> None:
+    for request in (_warm_request(tmp_path), _not_yet_fired_request(tmp_path), _request()):
+        prompt = _responder_prompt(request)
+        assert "Accepted source and developer changes express intent." in prompt
+        assert "Operational memory is fallible advice." in prompt
+        assert "Recovery requires evidence from the intended application behavior." in prompt
+        assert "repair exactly" not in prompt
+        assert "do not explore the repository or cluster" not in prompt
+        assert "Prefer a matching program's plan" not in prompt

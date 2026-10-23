@@ -1,0 +1,66 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: links
+purpose: link-probe
+description: Fresh TCP dial of every service-to-service dependency the deployed configuration declares.
+links:
+  - from: frontend-proxy
+    to: frontend
+    port: 8080
+  - from: frontend-proxy
+    to: image-provider
+    port: 8081
+  - from: frontend
+    to: ad
+    port: 8080
+  - from: frontend
+    to: cart
+    port: 8080
+  - from: frontend
+    to: checkout
+    port: 8080
+  - from: frontend
+    to: currency
+    port: 8080
+  - from: frontend
+    to: product-catalog
+    port: 8080
+  - from: frontend
+    to: product-reviews
+    port: 3551
+  - from: frontend
+    to: recommendation
+    port: 8080
+  - from: frontend
+    to: shipping
+    port: 8080
+  - from: checkout
+    to: cart
+    port: 8080
+  - from: checkout
+    to: currency
+    port: 8080
+  - from: checkout
+    to: email
+    port: 8080
+  - from: checkout
+    to: payment
+    port: 8080
+  - from: checkout
+    to: product-catalog
+    port: 8080
+  - from: checkout
+    to: shipping
+    port: 8080
+  - from: recommendation
+    to: product-catalog
+    port: 8080
+  - from: product-reviews
+    to: product-catalog
+    port: 8080
+  - from: product-reviews
+    to: llm
+    port: 8000
+  - from: shipping
+    to: quote
+    port: 8080

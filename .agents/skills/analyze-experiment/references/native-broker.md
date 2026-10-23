@@ -2,6 +2,14 @@
 
 ## Broker incident ledger
 
+Source repairs can invalidate workload image evidence: all non-`.sdo` inputs
+participate in source identity. Reconciliation publishes a current rendered lock
+with per-workload gaps; unrelated objects and confirmed absences remain readable.
+Count gaps separately from valid objects and incident outcomes. Memory-only
+reflection preserves the lock. Rollout annotations and live images cannot restore
+authority; fresh trusted deployment evidence and reconciliation are required.
+A current gapped lock persists until source inputs change again.
+
 For active Go runs, inspect the configured runtime `LedgerRoot` and the Go broker workspace root. The broker stages trusted source deployment evidence before publishing source, then reconciles that evidence to the attributed accepted commit after a crash. The evidence binds the candidate Git tree, strategy, immutable image digests, resource IDs, and observed ready revision; agent claims and annotations alone are not authoritative.
 
 Ledger files under `.git/sdo-broker/` and the controller's runtime-state ConfigMap are canonical ProtoJSON of `BrokerLedger` and `ControllerState` (`controller_state.proto`): snake_case keys, empty and zero fields omitted (so a missing key means the zero value), RFC3339 timestamps, enums as names, and the closure as an `IncidentClosure`. The Go structs carry no JSON tags, so pre-cutover ledgers with legacy keys (for example `playbooks` or `path` in place of `playbook_ids`) are not readable by the current tools. `reflection_rejections` lists each broker rejection of a reflection proposal (`attempt`, typed `diagnostics` of `rule`/`path`/`line`/`message`/`hint`, `rejected_at`); Go re-dispatches reflection with the previous rejection's diagnostics up to twice, and `reflection_rejected` marks the terminal rejection after the bound (the closure completes with no reflection commit). Current native ledgers use `reflection_rejections`, `reflection_rejected`,

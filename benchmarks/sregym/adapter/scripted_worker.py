@@ -360,6 +360,48 @@ def scripted_responder(request: IncidentRequest) -> IncidentResult:
             break
         time.sleep(5)
     healthy = bool(verification.get("healthy"))
+    if healthy and os.environ.get("SDO_SCRIPTED_SOURCE_REPAIR") == "1":
+        # A harmless source addition exercises accepted SOURCE publication.
+        # Keep it once per repository so the next incident tests the resulting
+        # lock rather than invalidating it again with another fixture change.
+        path = Path(request.repository_worktree) / "kubernetes/verification-policy.yaml"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "ConfigMap",
+                        "metadata": {"name": "verification-policy", "namespace": request.namespace},
+                        "data": {"verification": "independent-health"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            action_start = _now()
+            _command(["kubectl", "-n", request.namespace, "apply", "-f", str(path)])
+            repairs.append(
+                {
+                    "action_id": f"source-{len(repairs) + 1}",
+                    "kind": "kubectl-apply",
+                    "target": "ConfigMap/verification-policy",
+                    "resources": [
+                        {
+                            "api_version": "v1",
+                            "kind": "ConfigMap",
+                            "namespace": request.namespace,
+                            "name": "verification-policy",
+                        }
+                    ],
+                    "summary": "Recorded scripted verification policy in source",
+                    "details": "Applied the source-backed scripted gate ConfigMap",
+                    "started_at": action_start,
+                    "completed_at": _now(),
+                    "success": True,
+                    "reversible": True,
+                }
+            )
     causes = [
         {
             "summary": finding.summary,
@@ -474,6 +516,15 @@ def _captured_policy_pair(capture: Path, open_at: str) -> tuple[str, str] | None
     return None
 
 
+def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
+    with tempfile.TemporaryDirectory(prefix="sdo-scripted-decision-") as directory:
+        decision = Path(directory) / "decision.json"
+        decision.write_text(
+            json.dumps({"learning_decision": "updated", "proposed_artifact_ids": playbook_ids}), encoding="utf-8"
+        )
+        _command(["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180)
+
+
 class ScriptedReflector:
     def resume(self, **kwargs: Any) -> ReflectionTurn:
         worktree = Path(kwargs["worktree"])
@@ -493,6 +544,33 @@ class ScriptedReflector:
             )
         pair = policy_pair or _captured_pair(capture, open_at)
         if pair is None:
+            if os.environ.get("SDO_SCRIPTED_MEMORY_CHANGE") == "1":
+                # Exercise real memory publication even when this repair has
+                # no program fixture. This adds no diagnosis or trust credit.
+                notes_id = "verified-repair-notes"
+                books = worktree / ".sdo/playbooks"
+                notes = books / notes_id / "README.md"
+                notes.parent.mkdir(parents=True, exist_ok=True)
+                if not notes.exists():
+                    notes.write_text(
+                        f"---\nschema_version: 1\nowner: responder\nfault_class: {notes_id}\n"
+                        f"originating_incident: {incident}\n---\n# Verification observations\n\n"
+                        "Verify <RESOURCE_NAME> against accepted source after each repair.\n",
+                        encoding="utf-8",
+                    )
+                with notes.open("a", encoding="utf-8") as stream:
+                    stream.write(f"\n- Independent health verification completed for incident {incident}.\n")
+                index = books / "README.md"
+                body = index.read_text(encoding="utf-8") if index.exists() else "# Operational playbooks\n"
+                link = f"- [{notes_id}]({notes_id}/README.md)"
+                if link not in body:
+                    index.write_text(body.rstrip() + "\n\n" + link + "\n", encoding="utf-8")
+                _check_reflection(worktree, [notes_id])
+                return ReflectionTurn(
+                    summary="Recorded an independently verified repair without a program fixture",
+                    learning_decision="updated",
+                    playbook_ids=[notes_id],
+                )
             return ReflectionTurn(
                 summary="No captured target port repair",
                 learning_decision="no_change",
@@ -570,14 +648,7 @@ class ScriptedReflector:
             ),
             encoding="utf-8",
         )
-        with tempfile.TemporaryDirectory(prefix="sdo-scripted-decision-") as directory:
-            decision = Path(directory) / "decision.json"
-            decision.write_text(
-                json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [program_id]}), encoding="utf-8"
-            )
-            _command(
-                ["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)], timeout=180
-            )
+        _check_reflection(worktree, [program_id])
         return ReflectionTurn(
             summary=f"Compiled {program_id} program from captured repair",
             learning_decision="updated",

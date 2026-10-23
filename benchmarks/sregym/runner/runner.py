@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from benchmarks.sregym.adapter import bind_state
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
 from benchmarks.sregym.protocol.infrastructure import has_injection_evidence, infrastructure_error
 from benchmarks.sregym.runner.experiment import (
@@ -178,6 +179,7 @@ def run_single_experiment(
         source=source,
     )
 
+    bind_state(exp_dir / _PERSISTENT_STATE_FILENAME)
     _verify_sregym(sregym_dir)
 
     cli_args = config_to_main_args(config, exp_dir, tasklist_path)
@@ -552,10 +554,10 @@ def run_pipeline(
         hook_env = config_to_env(hook_exp, project_root)
         before_hook, after_hook = _load_agent_hooks(hook_exp.agent, project_root)
 
+    persistent_state = pipeline_dir / _PERSISTENT_STATE_FILENAME
+    bind_state(persistent_state)
     if before_hook:
         _run_hook(before_hook, hook_env, "before_benchmark", project_root)
-
-    persistent_state = pipeline_dir / _PERSISTENT_STATE_FILENAME
     # Stages whose strict receipts are written by the next stage's drain or by teardown.
     deferred_receipt_stages: list[tuple[int, Path]] = []
     pipeline_succeeded = False

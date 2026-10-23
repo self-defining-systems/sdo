@@ -521,6 +521,9 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 	}...)
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
+			// Each verdict owns its repositories and captures; only the compiled
+			// CLI and read-only healthy baseline are shared. CI caps -parallel=2.
+			t.Parallel()
 			root := copyParityTree(t)
 			put(t, root, "app.txt", "base\n", 0o644)
 			runGit(t, root, "init", "-q")

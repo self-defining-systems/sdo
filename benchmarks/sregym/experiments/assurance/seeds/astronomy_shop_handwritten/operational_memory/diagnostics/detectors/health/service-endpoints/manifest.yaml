@@ -1,0 +1,26 @@
+apiVersion: sdo.dev/v1alpha1
+kind: DetectorManifest
+sdkVersion: v0.1
+id: service-endpoints
+constructor: New
+class: health
+owner: health_judge
+watches:
+    - apiVersion: v1
+      kind: Service
+    - apiVersion: v1
+      kind: Endpoints
+    - apiVersion: v1
+      kind: Pod
+    - apiVersion: apps/v1
+      kind: Deployment
+interval: 15s
+persistence:
+    firing: 2
+    clearing: 2
+batching:
+    severity: critical
+    debounce: 500ms
+possiblePlaybooks:
+    - health-objective
+originatingCommit: lifecycle-bootstrap
