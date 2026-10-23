@@ -101,7 +101,7 @@ func (r RenderedLockReconciler) Reconcile(ctx context.Context, revision, namespa
 		if deployedIdentity == "" {
 			deployedIdentity = r.Source.DeployedCommit
 		}
-		same, identityErr := r.Source.SameInputs(ctx, deployedIdentity, revision)
+		same, identityErr := r.Source.SameWorkloadInputs(ctx, deployedIdentity, revision, object, proofs)
 		if identityErr != nil || !same {
 			// Accepted source repairs can invalidate an existing workload's
 			// deployment evidence. Keep that loss explicit and object-scoped:
@@ -145,6 +145,7 @@ func (r RenderedLockReconciler) Reconcile(ctx context.Context, revision, namespa
 		}
 	}
 	source := r.Source
+	source.Evidence = proofs
 	source.Images = evidence
 	source.Digests = digests
 	source.Gaps = gaps

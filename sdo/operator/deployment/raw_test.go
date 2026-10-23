@@ -77,6 +77,9 @@ spec:
 	if len(receipt.ContainerImages) != 1 || receipt.ContainerImages[0].Name != "app" || receipt.ContainerImages[0].Init || receipt.ProposalTreeDigest != tree || len(receipt.ManifestPaths) != 1 || receipt.ManifestPaths[0] != "deployment.yaml" || !strings.Contains(backend.applied, tree) || !strings.Contains(backend.applied, "registry.example/app@sha256:") {
 		t.Fatalf("unbound deployment: %+v, %s", receipt, backend.applied)
 	}
+	if got := receipt.ContainerImages[0].Inputs; got.SourceImage != "registry.example/app:staging" || got.ContextPath != "." || got.DockerfilePath != "Dockerfile" {
+		t.Fatalf("lost build declaration: %+v", got)
+	}
 	for _, args := range [][]string{{"add", "-A"}, {"commit", "-qm", "accepted source"}} {
 		if output, err := exec.Command("git", append([]string{"-C", checkout}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, output)
