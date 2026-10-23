@@ -460,7 +460,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}, *maxResponseLoops)
 				loop.CheckHealth = func(ctx context.Context) error {
 					if controller != nil && controller.CheckHealth != nil {
-						return controller.CheckHealth(ctx)
+						if err := controller.CheckHealth(ctx); err != nil {
+							return err
+						}
+					}
+					if launchConfig != nil {
+						return checkInvestigationHealth(ctx, resolvedRoot, request.SourceCommit, launchConfig.GetControllerRevision())
 					}
 					return nil
 				}

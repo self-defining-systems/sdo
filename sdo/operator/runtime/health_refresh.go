@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
 )
 
@@ -43,6 +44,9 @@ func acceptedHealthGuard(root, compiledRevision string) func(context.Context) er
 // frozen closures, and the retained closure awaiting acknowledgment.
 func controllerHealthGuard(c *Controller, root, compiled string) func(context.Context) error {
 	policy := acceptedHealthGuard(root, compiled)
+	c.checkInvestigationHealth = func(ctx context.Context, revision string) error {
+		return checkInvestigationHealth(ctx, root, revision, compiled)
+	}
 	return func(ctx context.Context) error {
 		if err := policy(ctx); err != nil {
 			return err
@@ -142,4 +146,70 @@ func (c *Controller) discardRestoredHealthObservations(now time.Time) {
 	c.history = history
 	c.mu.Unlock()
 	c.forgetGate()
+}
+
+// supersedeStaleHealth terminally archives obsolete evidence without submitting
+// a repair or a successful outcome. The archive outbox is persisted before new
+// incident effects can run. Late responder/broker completions no longer match.
+func (c *Controller) supersedeStaleHealth(ctx context.Context, now time.Time) error {
+	if c.checkInvestigationHealth == nil {
+		return ErrStaleHealthInvestigation
+	}
+	c.mu.Lock()
+	retire := func(closure *IncidentClosure) error {
+		projected, err := incidentClosureContract(*closure)
+		if err != nil {
+			return err
+		}
+		if _, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected}); err != nil {
+			return err
+		}
+		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Superseded, At: now, Error: ErrStaleHealthInvestigation.Error()})
+		return err
+	}
+	var err error
+	if c.pendingClosure != nil && c.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED {
+		err = c.checkInvestigationHealth(ctx, c.pendingClosure.Request.SourceCommit)
+		if errors.Is(err, ErrStaleHealthInvestigation) {
+			_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Superseded, At: now, Error: ErrStaleHealthInvestigation.Error()})
+		}
+	}
+	if err == nil && c.currentIncidentRequest != nil {
+		err = c.checkInvestigationHealth(ctx, c.currentIncidentRequest.SourceCommit)
+		if errors.Is(err, ErrStaleHealthInvestigation) {
+			detected := c.incidentDetectedAt
+			if detected.IsZero() {
+				detected = now
+			}
+			dispatched := c.incidentDispatchedAt
+			if dispatched.IsZero() {
+				dispatched = now
+			}
+			closure := &IncidentClosure{Request: *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult), DispatchError: ErrStaleHealthInvestigation.Error(), DetectedAt: detected, DispatchedAt: dispatched, ResponderCompletedAt: now, VerifiedAt: now}
+			err = retire(closure)
+			if err == nil {
+				c.incidentOpen, c.responderDone = false, false
+				c.currentIncidentRequest, c.currentIncidentResult = nil, nil
+				c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
+				c.dispatchError = ""
+				c.incidentDetectedAt, c.incidentDispatchedAt, c.responderCompletedAt = time.Time{}, time.Time{}, time.Time{}
+				c.incidentFindingKeys, c.cleanedHelpers = nil, nil
+			}
+		}
+	}
+	failure := cloneClosureFailure(c.closureFailure)
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if err := c.PersistState(ctx); err != nil {
+		return err
+	}
+	if failure != nil {
+		c.reportBrokerError("supersede stale health investigation", *failure)
+		if c.OnClosureFailed != nil {
+			c.OnClosureFailed(*failure)
+		}
+	}
+	return nil
 }

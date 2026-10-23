@@ -149,7 +149,8 @@ type Controller struct {
 	stateRestored bool
 
 	// CheckHealth refuses evaluation and effects while accepted health policy is stale.
-	CheckHealth func(context.Context) error
+	CheckHealth              func(context.Context) error
+	checkInvestigationHealth func(context.Context, string) error
 	// ReconcileRendered is the Go-only deployment lock publication edge.
 	ReconcileRendered func(context.Context, string) (string, error)
 	OnError           func(error)
@@ -258,7 +259,15 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
 	if c.CheckHealth != nil {
 		if err := c.CheckHealth(ctx); err != nil {
-			return err
+			if !errors.Is(err, ErrStaleHealthInvestigation) {
+				return err
+			}
+			if err := c.supersedeStaleHealth(ctx, now); err != nil {
+				return err
+			}
+			if err := c.CheckHealth(ctx); err != nil {
+				return err
+			}
 		}
 	}
 	c.processDispatchCompletions(now)
