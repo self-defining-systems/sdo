@@ -88,9 +88,21 @@ func (s Source) BuildLock(ctx context.Context, revision, namespace string) (Snap
 		object, err := s.renderDocument(ctx, o.Object, tree, ref, ref.Kind+"/"+ref.Name)
 		if err == nil {
 			entry.Images, err = containerImages(object)
+			for i := range entry.Images {
+				image := &entry.Images[i]
+				if s.Digests != nil {
+					if digest, ok := s.Digests.BaselineImage(ref, image.Name, image.Init); ok {
+						image.Digest = digest
+					}
+				}
+				if !immutableImage.MatchString(image.Digest) {
+					err = fmt.Errorf("%w: %s/%s container %s needs a deployed digest", ErrEvidenceGap, ref.Kind, ref.Name, image.Name)
+				}
+			}
 		}
 		if err != nil {
 			entry.Error = err.Error()
+			entry.Images = nil
 		} else {
 			data, err := yaml.Marshal(object.Object)
 			if err != nil {
@@ -118,7 +130,7 @@ func containerImages(o *unstructured.Unstructured) ([]ContainerImage, error) {
 			container, _ := raw.(map[string]any)
 			image, _ := container["image"].(string)
 			name, _ := container["name"].(string)
-			if name == "" || !immutableImage.MatchString(image) {
+			if name == "" || image == "" {
 				return nil, fmt.Errorf("%w: %s/%s container %s needs a deployed digest", ErrEvidenceGap, o.GetKind(), o.GetName(), name)
 			}
 			images = append(images, ContainerImage{Name: name, Init: field == "initContainers", Digest: image})
@@ -175,8 +187,17 @@ func (s Snapshot) Validate(ctx context.Context, repository, revision string) err
 		if err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(images, entry.Images) {
-			return errors.New("lock container digests differ from object")
+		if len(images) != len(entry.Images) {
+			return errors.New("lock container inventory differs from object")
+		}
+		for i, image := range images {
+			recorded := entry.Images[i]
+			if image.Name != recorded.Name || image.Init != recorded.Init || !immutableImage.MatchString(recorded.Digest) {
+				return errors.New("invalid named container digest in lock")
+			}
+			if immutableImage.MatchString(image.Digest) && image.Digest != recorded.Digest {
+				return errors.New("immutable object image differs from lock digest")
+			}
 		}
 		tree := actual.GetAnnotations()["sdo.dev/source-tree"]
 		if tree != "" {

@@ -30,9 +30,11 @@ type SourceImages interface {
 
 // Source reads durable accepted locks and prepares controller-owned renders.
 type Source struct {
-	Gaps          map[sdk.ObjectRef]string
-	Repository    string
-	Images        SourceImages
+	Gaps       map[sdk.ObjectRef]string
+	Repository string
+	Images     SourceImages
+	// Digests records pull identities separately when applied references are mutable.
+	Digests       SourceImages
 	ManifestPaths []string
 	// DeployedCommit binds healthy image evidence for legacy deployments that
 	// predate source-tree annotations. It is the trusted deployed revision,

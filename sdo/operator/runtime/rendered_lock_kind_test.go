@@ -238,7 +238,12 @@ spec:
 				t.Fatal(err)
 			}
 		}
-		controller.OnIncidentClosed = func(IncidentClosure) { closed++ }
+		controller.OnIncidentClosed = func(closure IncidentClosure) {
+			if len(closure.FinalDetectorStates) == 0 {
+				t.Errorf("incident closed without independent verification: %+v", closure.IncidentDetectorStates)
+			}
+			closed++
+		}
 		live, err := client.CoreV1().Services("lk1").Get(ctx, "api", metav1.GetOptions{})
 		if err != nil {
 			t.Fatal(err)

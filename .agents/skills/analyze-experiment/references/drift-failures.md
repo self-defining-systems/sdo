@@ -68,7 +68,9 @@ predicate and complete repair-to-NoMatch replay through the shared compiler gate
 New controllers publish the sixth artifact class at `.sdo/rendered/`: version-1
 `lock.json` indexes namespace-scoped objects, source commit, selected manifest
 paths, normalized YAML filenames and SHA-256 hashes, plus named regular/init
-container digests. A failed object has an explicit `error` entry. Only Go writes
+container digests. YAML retains the applied image reference, including an existing
+mutable tag; compare its separate index digest to runtime image identity rather
+than treating tag-versus-digest spelling as spec drift. A failed object has an explicit `error` entry. Only Go writes
 these files, through the broker after rollout observation and fresh-render checks.
 
 For post-memory-commit rendering failures, compare the Git tree of

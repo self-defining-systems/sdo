@@ -42,6 +42,7 @@ func (r RenderedLockReconciler) Reconcile(ctx context.Context, revision, namespa
 	}
 	// Reuse FX1's image evidence store, independently of the live diff baseline.
 	evidence := NewStateTracker(StateTrackerConfig{Namespace: namespace})
+	digests := NewStateTracker(StateTrackerConfig{Namespace: namespace})
 	gaps := map[sdk.ObjectRef]string{}
 	for _, object := range objects {
 		ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: namespace, Name: object.GetName()}
@@ -115,6 +116,7 @@ func (r RenderedLockReconciler) Reconcile(ctx context.Context, revision, namespa
 				c := raw.(map[string]any)
 				name, _ := c["name"].(string)
 				image, _ := c["image"].(string)
+				imageReference := image
 				if !strings.Contains(image, "@sha256:") {
 					image, err = r.podDigest(ctx, namespace, selector, tree, name, field == "initContainers", image)
 					if err != nil {
@@ -122,12 +124,14 @@ func (r RenderedLockReconciler) Reconcile(ctx context.Context, revision, namespa
 						continue
 					}
 				}
-				evidence.recordDeployedImage(ref, name, field == "initContainers", image, tree)
+				evidence.recordDeployedImage(ref, name, field == "initContainers", imageReference, tree)
+				digests.recordDeployedImage(ref, name, field == "initContainers", image, tree)
 			}
 		}
 	}
 	source := r.Source
 	source.Images = evidence
+	source.Digests = digests
 	source.Gaps = gaps
 	snapshot, err := source.BuildLock(ctx, revision, namespace)
 	if err != nil {

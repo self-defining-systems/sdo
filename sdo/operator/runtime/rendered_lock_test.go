@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk/sdktest"
 	"strings"
 	"testing"
@@ -315,5 +318,87 @@ func TestRenderedLockPublicationWaitsForClosureAcknowledgment(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("lock publication did not resume after closure acknowledgment: %d", calls)
+	}
+}
+
+func TestRenderedLockMutableImageReferencesDoNotCreateDrift(t *testing.T) {
+	source, _, _, _, service := acceptedSourceDeployment(t, true)
+	path := filepath.Join(source.Repository, "consul.yaml")
+	manifest := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consul
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: consul}
+  template:
+    metadata:
+      labels: {app: consul}
+    spec:
+      initContainers:
+      - name: setup
+        image: example/setup:latest
+      containers:
+      - name: consul
+        image: consul:1.15
+`
+	if err := os.WriteFile(path, []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, source.Repository, "add", "consul.yaml")
+	nativeGit(t, source.Repository, "commit", "-qm", "synthetic mutable deployment")
+	revision := nativeGit(t, source.Repository, "rev-parse", "HEAD")
+	tree := nativeGit(t, source.Repository, "rev-parse", "HEAD^{tree}")
+	source.Images = nil
+	source.DeployedCommit = revision
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"}
+	raw, err := source.Revision(context.Background(), ref, revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := deployment.RenderManifest(raw.Object, "app", tree, nil); err != nil {
+		t.Fatal(err)
+	}
+	live := &appsv1.Deployment{}
+	if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(raw.Object, live); err != nil {
+		t.Fatal(err)
+	}
+	live.Generation = 1
+	live.Status.ObservedGeneration = 1
+	live.Status.ReadyReplicas = 1
+	live.Status.UpdatedReplicas = 1
+	live.Status.AvailableReplicas = 1
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "consul-pod", Namespace: "app", Labels: map[string]string{"app": "consul"}, Annotations: map[string]string{"sdo.dev/source-tree": tree}}, Spec: live.Spec.Template.Spec, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "consul", ImageID: "docker-pullable://consul@sha256:" + strings.Repeat("b", 64)}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "setup", ImageID: "docker-pullable://example/setup@sha256:" + strings.Repeat("a", 64)}}}}
+	authority, err := broker.New(source.Repository, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err = (RenderedLockReconciler{Source: source, Client: fake.NewSimpleClientset(live, pod, service), Broker: authority}).Reconcile(context.Background(), revision, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*live}}, Source: source, SourceCommit: revision}
+	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
+		t.Fatalf("deployed mutable references created false drift: %+v %v", diff, err)
+	}
+	for _, init := range []bool{false, true} {
+		changed := live.DeepCopy()
+		if init {
+			changed.Spec.Template.Spec.InitContainers[0].Image = "example/setup:changed"
+		} else {
+			changed.Spec.Template.Spec.Containers[0].Image = "consul:changed"
+		}
+		view.DetectionContext = sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*changed}}
+		if diff, err := view.DiffAgainstSource(ref); err != nil || !diff.Changed {
+			t.Fatalf("changed image reference disappeared (init=%t): %+v %v", init, diff, err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(source.Repository, rendered.LockPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "consul@sha256:"+strings.Repeat("b", 64)) || !strings.Contains(string(data), "example/setup@sha256:"+strings.Repeat("a", 64)) {
+		t.Fatalf("per-container digests were not recorded: %s", data)
 	}
 }
