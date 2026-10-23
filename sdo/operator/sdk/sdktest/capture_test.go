@@ -37,7 +37,7 @@ func TestCaptureSnapshotBoundsNamespaceAndRedactsEnvironment(t *testing.T) {
 	var _ sdk.DetectionContext = captured
 }
 
-func TestCaptureSnapshotDropsKubernetesWriteMetadata(t *testing.T) {
+func TestCaptureSnapshotRetainsObservationVersionWithoutWriteAuthority(t *testing.T) {
 	view := Snapshot{NamespaceName: "app", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{
 		Name: "api", Namespace: "app", ResourceVersion: "123", UID: "opaque", Generation: 7,
 		ManagedFields: []metav1.ManagedFieldsEntry{{Manager: strings.Repeat("manager", 1000)}},
@@ -48,7 +48,7 @@ func TestCaptureSnapshotDropsKubernetesWriteMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := captured.PodList[0].ObjectMeta
-	if got.ResourceVersion != "" || got.UID != "" || got.Generation != 0 || len(got.ManagedFields) != 0 || got.Annotations["kubectl.kubernetes.io/last-applied-configuration"] != "" || got.Annotations["kept"] != "value" {
+	if got.ResourceVersion != "123" || got.UID != "" || got.Generation != 0 || len(got.ManagedFields) != 0 || got.Annotations["kubectl.kubernetes.io/last-applied-configuration"] != "" || got.Annotations["kept"] != "value" {
 		t.Fatalf("capture metadata: %+v", got)
 	}
 	if view.PodList[0].ResourceVersion != "123" {
