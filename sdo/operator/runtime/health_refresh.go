@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/types"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
@@ -33,6 +34,35 @@ func acceptedHealthGuard(root, compiledRevision string) func(context.Context) er
 		}
 		if accepted.NeedsRefresh || accepted.SourceInputs != built.SourceInputs || accepted.Objective != built.Objective || accepted.DetectorRevision != built.DetectorRevision {
 			return memory.ErrHealthRefreshRequired
+		}
+		return nil
+	}
+}
+
+// controllerHealthGuard applies the same evidence binding to live investigations,
+// frozen closures, and the retained closure awaiting acknowledgment.
+func controllerHealthGuard(c *Controller, root, compiled string) func(context.Context) error {
+	policy := acceptedHealthGuard(root, compiled)
+	return func(ctx context.Context) error {
+		if err := policy(ctx); err != nil {
+			return err
+		}
+		c.mu.Lock()
+		request := cloneIncidentRequest(c.currentIncidentRequest)
+		pending := cloneIncidentClosure(c.pendingClosure)
+		phase := c.closureState
+		receipt := cloneClosureReceipt(c.closureReceipt)
+		c.mu.Unlock()
+		if request != nil {
+			if err := checkInvestigationHealth(ctx, root, request.SourceCommit, compiled); err != nil {
+				return err
+			}
+		}
+		if pending != nil && phase != contracts.ClosureState_CLOSURE_STATE_FAILED {
+			return checkInvestigationHealth(ctx, root, pending.Request.SourceCommit, compiled)
+		}
+		if receipt != nil && pending == nil {
+			return ErrStaleHealthInvestigation
 		}
 		return nil
 	}

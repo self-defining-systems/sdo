@@ -531,19 +531,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	if launchConfig != nil {
-		policyGuard := acceptedHealthGuard(resolvedRoot, launchConfig.GetControllerRevision())
-		controller.CheckHealth = func(ctx context.Context) error {
-			if err := policyGuard(ctx); err != nil {
-				return err
-			}
-			controller.mu.Lock()
-			request := cloneIncidentRequest(controller.currentIncidentRequest)
-			controller.mu.Unlock()
-			if request != nil {
-				return checkInvestigationHealth(ctx, resolvedRoot, request.SourceCommit, launchConfig.GetControllerRevision())
-			}
-			return nil
-		}
+		controller.CheckHealth = controllerHealthGuard(controller, resolvedRoot, launchConfig.GetControllerRevision())
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
