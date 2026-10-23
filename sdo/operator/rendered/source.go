@@ -36,7 +36,7 @@ type Source struct {
 	// Digests records pull identities separately when applied references are mutable.
 	Digests       SourceImages
 	ManifestPaths []string
-	// DeployedCommit binds healthy image evidence for legacy deployments that
+	// DeployedCommit binds explicit image evidence for legacy deployments that
 	// predate source-tree annotations. It is the trusted deployed revision,
 	// never the advancing operational-memory head.
 	DeployedCommit string
@@ -155,6 +155,9 @@ func (s Source) renderDocument(ctx context.Context, document map[string]any, tre
 	}
 	missingImage := false
 	_, _, err := RenderManifest(document, ref.Namespace, renderTree, func(kind, name, container string, init bool, sourceImage string) string {
+		if immutableImage.MatchString(sourceImage) {
+			return sourceImage
+		}
 		if useImages {
 			if image, ok := s.Images.BaselineImage(sdk.ObjectRef{APIVersion: ref.APIVersion, Kind: kind, Namespace: ref.Namespace, Name: name}, container, init); ok {
 				return image
@@ -169,7 +172,7 @@ func (s Source) renderDocument(ctx context.Context, document map[string]any, tre
 		return nil, fmt.Errorf("render accepted manifest %s: %w", path, err)
 	}
 	if missingImage {
-		return nil, fmt.Errorf("deployed image for %s/%s is unavailable from the healthy baseline", ref.Kind, ref.Name)
+		return nil, fmt.Errorf("deployed image for %s/%s is unavailable from trusted deployment evidence", ref.Kind, ref.Name)
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {

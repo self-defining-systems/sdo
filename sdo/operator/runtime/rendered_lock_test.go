@@ -39,6 +39,7 @@ func TestRenderedLockAfterRolloutAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	commit = publishTestDeploymentEvidence(t, authority, source, deployed, nil)
 	reconciler := RenderedLockReconciler{Source: source, Client: client, Broker: authority}
 	if _, err := reconciler.Reconcile(context.Background(), commit, "app"); err == nil {
 		t.Fatal("lock written before rollout observation")
@@ -62,11 +63,8 @@ func TestRenderedLockAfterRolloutAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := object.MarshalJSON()
-	if !strings.Contains(string(data), "example/setup@sha256:"+strings.Repeat("a", 64)) {
-		t.Fatalf("init digest missing: %s", data)
-	}
-	if !strings.Contains(string(data), "consul@sha256:"+strings.Repeat("b", 64)) {
-		t.Fatalf("container digest missing: %s", data)
+	if !strings.Contains(string(data), "example/setup@sha256:"+strings.Repeat("a", 64)) || !strings.Contains(string(data), "consul@sha256:"+strings.Repeat("b", 64)) {
+		t.Fatalf("trusted regular/init apply images missing: %s", data)
 	}
 	// Lost reply after Git publication: retrying the pre-lock revision recovers
 	// the accepted lock instead of generating another commit or stalling.
@@ -138,7 +136,22 @@ func seedRenderedLock(t *testing.T, source GitPlanSource, revision, namespace st
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshot.Validate(context.Background(), source.Repository, revision); err != nil {
+	proof := rendered.DeploymentEvidence{SourceTree: revision}
+	for _, entry := range snapshot.Lock.Objects {
+		if entry.Error != "" {
+			continue
+		}
+		for _, image := range entry.Images {
+			applied := image.Digest
+			if source.Images != nil {
+				if value, ok := source.Images.BaselineImage(entry.Ref, image.Name, image.Init); ok {
+					applied = value
+				}
+			}
+			proof.Images = append(proof.Images, rendered.DeployedImage{Ref: entry.Ref, Name: image.Name, Init: image.Init, Applied: applied, Digest: image.Digest})
+		}
+	}
+	if err := snapshot.ValidateWithEvidence(context.Background(), source.Repository, revision, []rendered.DeploymentEvidence{proof}); err != nil {
 		t.Fatal(err)
 	}
 	if err := snapshot.Write(source.Repository); err != nil {
@@ -374,6 +387,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
+	revision = publishTestDeploymentEvidence(t, authority, source, live, pod)
 	revision, err = (RenderedLockReconciler{Source: source, Client: fake.NewSimpleClientset(live, pod, service), Broker: authority}).Reconcile(context.Background(), revision, "app")
 	if err != nil {
 		t.Fatal(err)
@@ -401,4 +415,58 @@ spec:
 	if !strings.Contains(string(data), "consul@sha256:"+strings.Repeat("b", 64)) || !strings.Contains(string(data), "example/setup@sha256:"+strings.Repeat("a", 64)) {
 		t.Fatalf("per-container digests were not recorded: %s", data)
 	}
+}
+
+// publishTestDeploymentEvidence represents the trusted deployer boundary: the
+// fixture's supplied apply/rollout images are persisted via real source acceptance.
+// It must be called before any injected mutation, never from the reconciler.
+func publishTestDeploymentEvidence(t *testing.T, authority *broker.Broker, source GitPlanSource, live *appsv1.Deployment, pod *corev1.Pod) string {
+	t.Helper()
+	ctx := context.Background()
+	proposal, err := authority.CreateProposalForPhase(ctx, "fixture-deployment", broker.InitialPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Add an input so the real broker performs a source publication.
+	if err := os.WriteFile(filepath.Join(proposal.Path, "deployment-input.txt"), []byte("trusted synthetic deployment\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := broker.ProposalTreeDigest(ctx, proposal.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live.Annotations["sdo.dev/source-tree"] = tree
+	live.Spec.Template.Annotations["sdo.dev/source-tree"] = tree
+	if pod != nil {
+		pod.Annotations["sdo.dev/source-tree"] = tree
+	}
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: live.Namespace, Name: live.Name}
+	proof := broker.SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", ResourceIDs: []string{"Deployment/" + live.Namespace + "/" + live.Name}, ManifestPaths: source.ManifestPaths, Ready: true}
+	for _, init := range []bool{true, false} {
+		containers := live.Spec.Template.Spec.Containers
+		if init {
+			containers = live.Spec.Template.Spec.InitContainers
+		}
+		for _, c := range containers {
+			digest := c.Image
+			if pod != nil {
+				statuses := pod.Status.ContainerStatuses
+				if init {
+					statuses = pod.Status.InitContainerStatuses
+				}
+				for _, status := range statuses {
+					if status.Name == c.Name {
+						digest = strings.TrimPrefix(status.ImageID, "docker-pullable://")
+					}
+				}
+			}
+			proof.Images = append(proof.Images, digest)
+			proof.ContainerImages = append(proof.ContainerImages, rendered.DeployedImage{Ref: ref, Name: c.Name, Init: init, Applied: c.Image, Digest: digest})
+		}
+	}
+	receipt, err := authority.PublishVerifiedSource(ctx, "fixture-deployment", proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return receipt.Commit
 }

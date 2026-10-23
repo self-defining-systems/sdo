@@ -79,7 +79,16 @@ the lock's `source_commit` need not equal the operational head. Compare applicat
 inputs outside `.sdo/` before calling a lock stale. Other application changes
 invalidate evidence until the completed deployment receives a new lock.
 `AcceptedManifest(s)`, adoption, drift and `sdo source` read this accepted snapshot.
-A cold restart no longer needs the former in-memory healthy image baseline.
+A cold restart no longer needs the former in-memory healthy image baseline. Source-pinned
+images must remain identical. Mutable or built references require trusted
+apply/rollout-time evidence in the broker's private `source-evidence` ledger,
+bound to the accepted source inputs, workload, container name and regular/init
+role. Its `container_images` entries retain both `applied` and `digest`; legacy
+flat `images` lists cannot authorize a substitution. Matching current annotations,
+readiness or Pod image status alone are insufficient. A missing ledger after
+restart creates an explicit per-object gap rather than accepting the live image.
+Publication errors retain the last accepted revision or explicitly recover the
+broker's advanced HEAD; an empty publication result must never clear it.
 
 Missing lock/indexed YAML, hash mismatch and per-object `error` mean evidence
 gap, never absence or health. Inspect successful objects and retryable adoption

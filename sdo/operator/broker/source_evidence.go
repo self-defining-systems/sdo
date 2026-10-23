@@ -35,6 +35,25 @@ func validateSourceEvidence(value SourceEvidence) error {
 		}
 		seen[resource] = true
 	}
+	named := map[string]bool{}
+	for _, image := range value.ContainerImages {
+		id := image.Ref.Kind + "/" + image.Ref.Namespace + "/" + image.Ref.Name
+		key := fmt.Sprintf("%s/%s/%s/%t", image.Ref.APIVersion, id, image.Name, image.Init)
+		validDigest := false
+		for _, digest := range value.Images {
+			if digest == image.Digest {
+				validDigest = true
+			}
+		}
+		if !seen[id] || image.Ref.APIVersion == "" || image.Name == "" || image.Applied == "" || named[key] || !validDigest {
+			return errors.New("invalid named deployment image evidence")
+		}
+		if strings.Contains(image.Applied, "@sha256:") && image.Applied != image.Digest {
+			return errors.New("applied immutable image differs from deployed digest")
+		}
+		named[key] = true
+	}
+	// Keep legacy flat ledgers readable; they cannot authorize substitutions.
 	return nil
 }
 

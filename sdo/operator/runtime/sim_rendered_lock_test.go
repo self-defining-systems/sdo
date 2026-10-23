@@ -10,19 +10,21 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 // Properties, before the scheduled transitions:
 // P1: memory commits leave the deployment lock byte-for-byte unchanged.
 // P2: an unavailable workload object cannot hide an unrelated Service's drift.
 // P3: restart after rollout and before publication recovers a lock without an
-//
-//	in-memory healthy baseline; before publication, source remains a gap.
+// in-memory healthy baseline; before publication, source remains a gap.
+// P4: pre-publication regular/init mutations never enter accepted image evidence.
 func TestSimRenderedLockSchedule(t *testing.T) {
 	if seed := os.Getenv("SDO_CHAOS_SEED"); seed != "" {
 		parsed, err := strconv.ParseUint(seed, 10, 64)
@@ -36,6 +38,14 @@ func TestSimRenderedLockSchedule(t *testing.T) {
 }
 
 func runSimRenderedLock(t *testing.T, seed uint64) {
+	for _, pinned := range []bool{false, true} {
+		for _, mutation := range []string{"none", "regular", "init"} {
+			t.Run(fmt.Sprintf("pinned=%t/%s", pinned, mutation), func(t *testing.T) { runSimRenderedLockMutation(t, seed, mutation, pinned) })
+		}
+	}
+}
+
+func runSimRenderedLockMutation(t *testing.T, seed uint64, mutation string, pinned bool) {
 	rng := newSimRNG(seed)
 	clock := newSimClock()
 	source, _, _, deployed, service := acceptedSourceDeployment(t, true)
@@ -48,11 +58,31 @@ func runSimRenderedLock(t *testing.T, seed uint64) {
 	deployed.Status.UpdatedReplicas = 1
 	deployed.Status.ReadyReplicas = 1
 	deployed.Status.AvailableReplicas = 1
-	client := fake.NewSimpleClientset(deployed, service)
 	authority, err := broker.New(source.Repository, t.TempDir(), func(context.Context, string, []string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
+	if pinned {
+		path := filepath.Join(source.Repository, "consul.yaml")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = []byte(strings.ReplaceAll(strings.ReplaceAll(string(body), "consul:1.15", deployed.Spec.Template.Spec.Containers[0].Image), "example/setup:latest", deployed.Spec.Template.Spec.InitContainers[0].Image))
+		if err := os.WriteFile(path, body, 0600); err != nil {
+			t.Fatal(err)
+		}
+		nativeGit(t, source.Repository, "add", "consul.yaml")
+		nativeGit(t, source.Repository, "commit", "-qm", "source-pinned deployment")
+		revision = nativeGit(t, source.Repository, "rev-parse", "HEAD")
+		tree := nativeGit(t, source.Repository, "rev-parse", "HEAD^{tree}")
+		deployed.Annotations["sdo.dev/source-tree"] = tree
+		deployed.Spec.Template.Annotations["sdo.dev/source-tree"] = tree
+		// No named ledger: source pins themselves are authoritative.
+	} else {
+		revision = publishTestDeploymentEvidence(t, authority, source, deployed, nil)
+	}
+	client := fake.NewSimpleClientset(deployed, service)
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	original, err := source.Revision(context.Background(), ref, revision)
 	if err != nil {
@@ -97,7 +127,16 @@ func runSimRenderedLock(t *testing.T, seed uint64) {
 			controller = makeController(controller)
 		}
 		if tick == writeTick {
-			deployed.Status.ObservedGeneration = 1
+			if mutation != "none" {
+				image := "unrelated/incident@sha256:" + strings.Repeat("c", 64)
+				if mutation == "init" {
+					deployed.Spec.Template.Spec.InitContainers[0].Image = image
+				} else {
+					deployed.Spec.Template.Spec.Containers[0].Image = image
+				}
+				deployed.Generation++
+			}
+			deployed.Status.ObservedGeneration = deployed.Generation
 			if _, err := client.AppsV1().Deployments("app").UpdateStatus(context.Background(), deployed, metav1.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
@@ -116,6 +155,11 @@ func runSimRenderedLock(t *testing.T, seed uint64) {
 		if tick == writeTick {
 			revision = controller.CurrentAcceptedCommit()
 			lockTree = nativeGit(t, source.Repository, "rev-parse", "HEAD:.sdo/rendered")
+			workload := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "consul"}
+			view := LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app", DeploymentList: []appsv1.Deployment{*deployed}}, Source: source, SourceCommit: revision}
+			if diff, err := view.DiffAgainstSource(workload); err != nil || diff.Changed != (mutation != "none") {
+				t.Fatalf("P4 seed=%d mutation=%s: accepted image drift=%+v error=%v", seed, mutation, diff, err)
+			}
 		} else {
 			if err := os.WriteFile(filepath.Join(source.Repository, ".sdo/goal.md"), []byte(fmt.Sprintf("memory tick %d", tick)), 0600); err != nil {
 				t.Fatal(err)

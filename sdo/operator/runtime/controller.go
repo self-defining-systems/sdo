@@ -272,7 +272,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 				c.OnError(fmt.Errorf("reconcile rendered lock: %w", err))
 			}
 		}
-		if revision != c.CurrentAcceptedCommit() {
+		if revision != "" && revision != c.CurrentAcceptedCommit() {
 			c.mu.Lock()
 			c.config.SourceCommit = revision
 			c.adoptionNeeded = true

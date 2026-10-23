@@ -65,6 +65,8 @@ func acceptedSourceDeployment(t *testing.T, withTree bool) (GitPlanSource, *Stat
 	}
 	t.Cleanup(tracker.Stop)
 	tracker.Observe(time.Unix(10, 0), true)
+	tracker.recordDeployedImage(ref, "consul", false, deployed.Spec.Template.Spec.Containers[0].Image, tree)
+	tracker.recordDeployedImage(ref, "setup", true, deployed.Spec.Template.Spec.InitContainers[0].Image, tree)
 	source.Images = tracker
 	commit = seedRenderedLock(t, source, commit, "app")
 	return source, tracker, commit, deployed, service

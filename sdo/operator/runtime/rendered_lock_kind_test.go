@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -126,7 +127,23 @@ spec:
 		nativeGit(t, repo, args...)
 	}
 	revision := nativeGit(t, repo, "rev-parse", "HEAD")
-	tree := nativeGit(t, repo, "rev-parse", "HEAD^{tree}")
+	authority, err := broker.New(repo, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This scripted deployer records named evidence at apply/rollout time.
+	// Reconciliation below only reads this private, accepted ledger.
+	proposal, err := authority.CreateProposalForPhase(ctx, "kind-deploy", broker.InitialPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proposal.Path, "deployment-input.txt"), []byte("scripted kind deployment\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := broker.ProposalTreeDigest(ctx, proposal.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	source := GitPlanSource{Repository: repo, ManifestPaths: []string{"app.yaml"}, DeployedCommit: revision}
 	objects, err := source.RawManifests(ctx, revision, "lk1")
 	if err != nil {
@@ -149,10 +166,51 @@ spec:
 	if output, err := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfig, "-n", "lk1", "rollout", "status", "deployment/api", "--timeout=90s").CombinedOutput(); err != nil {
 		t.Fatalf("rollout: %s %v", output, err)
 	}
-	authority, err := broker.New(repo, t.TempDir(), func(context.Context, string, []string) error { return nil })
+	applied, err := client.AppsV1().Deployments("lk1").Get(ctx, "api", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !deployment.DeploymentRolloutComplete(applied) {
+		t.Fatal("scripted deployer observed incomplete rollout")
+	}
+	pods, err := client.CoreV1().Pods("lk1").List(ctx, metav1.ListOptions{LabelSelector: "app=api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods.Items) != 1 {
+		t.Fatalf("expected one deployed Pod, got %d", len(pods.Items))
+	}
+	proof := broker.SourceEvidence{ProposalTreeDigest: tree, ObservedRevision: tree, StrategyID: "raw-manifests", ResourceIDs: []string{"Deployment/lk1/api"}, ManifestPaths: source.ManifestPaths, Ready: true}
+	for _, init := range []bool{true, false} {
+		containers := applied.Spec.Template.Spec.Containers
+		statuses := pods.Items[0].Status.ContainerStatuses
+		if init {
+			containers = applied.Spec.Template.Spec.InitContainers
+			statuses = pods.Items[0].Status.InitContainerStatuses
+		}
+		for _, container := range containers {
+			digest := ""
+			for _, status := range statuses {
+				if status.Name == container.Name {
+					digest = strings.TrimPrefix(strings.TrimPrefix(status.ImageID, "docker-pullable://"), "containerd://")
+				}
+			}
+			if strings.HasPrefix(digest, "sha256:") {
+				digest = "busybox@" + digest
+			}
+			if !rendered.IsImmutableImage(digest) {
+				t.Fatalf("scripted deployer lacks rollout digest: %q", digest)
+			}
+			proof.Images = append(proof.Images, digest)
+			proof.ContainerImages = append(proof.ContainerImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "lk1", Name: "api"}, Name: container.Name, Init: init, Applied: container.Image, Digest: digest})
+		}
+	}
+	receipt, err := authority.PublishVerifiedSource(ctx, "kind-deploy", proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision = receipt.Commit
+	source.DeployedCommit = revision
 	responder := &lockKindResponder{source: source, client: client}
 	cache, err := NewKubernetesCache(KubernetesCacheConfig{Client: client, Namespace: "lk1", TrackDrift: true}, []sdk.Detector{fastloopDetector{}})
 	if err != nil {

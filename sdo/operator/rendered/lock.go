@@ -139,10 +139,14 @@ func containerImages(o *unstructured.Unstructured) ([]ContainerImage, error) {
 	return images, nil
 }
 
-// Validate independently renders the source revision and compares all object
-// fields except image digests. Controller-owned source-tree annotations are
-// checked against source identity, including the FX1 legacy empty annotation.
+// Validate accepts source-pinned identities without deployment substitutions.
 func (s Snapshot) Validate(ctx context.Context, repository, revision string) error {
+	return s.ValidateWithEvidence(ctx, repository, revision, nil)
+}
+
+// ValidateWithEvidence independently renders source and authorizes substitutions
+// only with separately supplied, broker-owned deployment evidence.
+func (s Snapshot) ValidateWithEvidence(ctx context.Context, repository, revision string, evidence []DeploymentEvidence) error {
 	l := s.Lock
 	if l.Version != 1 || l.Namespace == "" || !gitRevision.MatchString(l.SourceCommit) {
 		return errors.New("invalid rendered lock header")
@@ -206,13 +210,53 @@ func (s Snapshot) Validate(ctx context.Context, repository, revision string) err
 				return errors.New("lock object has stale deployed source tree")
 			}
 		}
-		if _, _, err := RenderManifest(expected.Object, l.Namespace, tree, nil); err != nil {
+		authorized := map[ContainerImage]DeployedImage{}
+		for _, proof := range evidence {
+			same, err := source.SameInputs(ctx, proof.SourceTree, revision)
+			if err != nil || !same {
+				continue
+			}
+			for _, image := range proof.Images {
+				if image.Ref != entry.Ref {
+					continue
+				}
+				key := ContainerImage{Name: image.Name, Init: image.Init}
+				if prior, ok := authorized[key]; ok && prior != image {
+					return errors.New("conflicting deployment image evidence")
+				}
+				authorized[key] = image
+			}
+		}
+		sourceImages, err := containerImages(expected)
+		if err != nil {
 			return err
 		}
-		// Image substitutions are omitted; container names and roles remain compared.
-		eraseImages(expected.Object)
-		actual = actual.DeepCopy()
-		eraseImages(actual.Object)
+		for i, image := range sourceImages {
+			if i >= len(images) || image.Name != images[i].Name || image.Init != images[i].Init {
+				return errors.New("source container inventory differs from lock")
+			}
+			if immutableImage.MatchString(image.Digest) {
+				if images[i].Digest != image.Digest || entry.Images[i].Digest != image.Digest {
+					return errors.New("lock replaces source-pinned image")
+				}
+			} else {
+				proof, ok := authorized[ContainerImage{Name: image.Name, Init: image.Init}]
+				if !ok || proof.Applied != images[i].Digest || proof.Digest != entry.Images[i].Digest {
+					return errors.New("lock image lacks trusted named deployment evidence")
+				}
+			}
+		}
+		if len(sourceImages) != len(images) {
+			return errors.New("source container inventory differs from lock")
+		}
+		if _, _, err := RenderManifest(expected.Object, l.Namespace, tree, func(_, _, name string, init bool, image string) string {
+			if immutableImage.MatchString(image) {
+				return image
+			}
+			return authorized[ContainerImage{Name: name, Init: init}].Applied
+		}); err != nil {
+			return err
+		}
 		a, _ := json.Marshal(actual.Object)
 		b, _ := json.Marshal(expected.Object)
 		if string(a) != string(b) {
@@ -223,21 +267,6 @@ func (s Snapshot) Validate(ctx context.Context, repository, revision string) err
 		return errors.New("rendered lock contains unindexed files")
 	}
 	return nil
-}
-
-func eraseImages(document map[string]any) {
-	spec, _, _ := unstructured.NestedMap(document, "spec", "template", "spec")
-	for _, field := range []string{"initContainers", "containers"} {
-		items, _ := spec[field].([]any)
-		for _, item := range items {
-			if c, ok := item.(map[string]any); ok {
-				c["image"] = "<deployed>"
-			}
-		}
-	}
-	if spec != nil {
-		_ = unstructured.SetNestedMap(document, spec, "spec", "template", "spec")
-	}
 }
 
 func (s Snapshot) object(entry Object) (*unstructured.Unstructured, error) {

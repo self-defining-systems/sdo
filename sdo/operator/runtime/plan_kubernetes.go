@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 )
 
@@ -72,15 +73,11 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 				continue
 			}
-			deployment, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+			deploymentObject, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 			if err != nil {
 				return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
 			}
-			replicas := int32(1)
-			if deployment.Spec.Replicas != nil {
-				replicas = *deployment.Spec.Replicas
-			}
-			if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.UpdatedReplicas < replicas || deployment.Status.AvailableReplicas < replicas || deployment.Status.Replicas > replicas {
+			if !deployment.DeploymentRolloutComplete(deploymentObject) {
 				settled = false
 			}
 		}

@@ -19,6 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/rendered"
 )
 
 // Actor and Phase are defined by the validator, which owns the ownership
@@ -62,14 +63,15 @@ type Receipt struct {
 // agent. Its ledger record is staged before source acceptance and reconciled
 // against the attributed Git commit after an interrupted publish.
 type SourceEvidence struct {
-	ProposalTreeDigest string   `json:"proposal_tree_digest"`
-	ObservedRevision   string   `json:"observed_revision"`
-	StrategyID         string   `json:"strategy_id"`
-	Images             []string `json:"images"`
-	ResourceIDs        []string `json:"resource_ids"`
-	ManifestPaths      []string `json:"manifest_paths,omitempty"`
-	Ready              bool     `json:"ready"`
-	AcceptedCommit     string   `json:"accepted_commit,omitempty"`
+	ContainerImages    []rendered.DeployedImage `json:"container_images,omitempty"`
+	ProposalTreeDigest string                   `json:"proposal_tree_digest"`
+	ObservedRevision   string                   `json:"observed_revision"`
+	StrategyID         string                   `json:"strategy_id"`
+	Images             []string                 `json:"images"`
+	ResourceIDs        []string                 `json:"resource_ids"`
+	ManifestPaths      []string                 `json:"manifest_paths,omitempty"`
+	Ready              bool                     `json:"ready"`
+	AcceptedCommit     string                   `json:"accepted_commit,omitempty"`
 }
 
 type Broker struct {
