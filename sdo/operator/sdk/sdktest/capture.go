@@ -24,6 +24,10 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		return Snapshot{}, errors.New("capture requires a matching application namespace")
 	}
 	s := Snapshot{NamespaceName: namespace}
+	if clock, ok := view.(sdk.ObservationClock); ok && !clock.ObservedAt().IsZero() {
+		observed := clock.ObservedAt().UTC()
+		s.ObservedAtTime = &observed
+	}
 	for _, object := range view.ConfigMaps() {
 		if object.Namespace == namespace {
 			copy := *object.DeepCopy()

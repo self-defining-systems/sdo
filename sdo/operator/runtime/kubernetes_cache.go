@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -247,7 +248,7 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 }
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace}
+	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC()}
 	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)

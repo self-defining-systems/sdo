@@ -52,6 +52,12 @@ Inspect firing/clearing thresholds, debounce state, snapshot versions, durable c
 
 The prober dials each declared edge afresh every interval and the finding needs `failures` consecutive failed dials of an edge that had connected before. The caller may still hold an old connection, so user-facing probes can stay healthy for the whole fault. Check that the edge and port are grounded in the application source, that the fix restored fresh connectivity for the same edge (the finding must clear), and that no finding appeared for an edge the prober never reached (those are never reported: the prober's own identity may simply not be admitted there). Detection time is the first failed dial plus about `failures` intervals; a link detector should not carry the scenario detector's 9 s minimum duration.
 
+## Workload-health finding
+
+**Signature:** a finding from detector `workload-health` with a `workload-pod-*`, `workload-container-*`, `workload-init-container-stuck` or `workload-deployment-*` rule. Runs whose seed predates the detector have no such records.
+
+The Go installer adds this generic detector beside `service-endpoints`; the judge does not author it. Its primary resource is the owning Deployment (resolved through ReplicaSet owners) or else the Pod, and it emits one finding per rule and primary, with the offending pods as related resources and `metadata.pods`/`metadata.reasons`. Ages (Pending, unready, init container and Deployment grace periods, and the five-minute restart window) are measured against the snapshot's recorded observation time, not wall time. A `workload-container-crash-looping` finding can come and go within a back-off cycle; `workload-container-restart-churn` and `workload-container-oom-killed` are derived from the last termination and stay active through the cycle. `workload-deployment-unavailable` is suppressed while a pod finding names the same Deployment, so its presence means no pod explains the shortfall (check `ReplicaFailure` and ReplicaSet `FailedCreate` events in its evidence). A Service-level `service-endpoints` finding over the same pods is the Service view of the same fault, not a second fault.
+
 ## Responder detour or thrashing
 
 **Signature:** the responder performs broad exploration, repeats hypotheses, changes unrelated source, or alternates between fixes without improving detector/health evidence.

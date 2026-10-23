@@ -436,6 +436,15 @@ type trafficContext struct {
 	windows map[string]traffic.Window
 }
 
+// ObservedAt forwards the base snapshot's clock, which embedding an interface
+// would otherwise hide from sdk.ObservationTime.
+func (c trafficContext) ObservedAt() time.Time {
+	if clock, ok := c.DetectionContext.(sdk.ObservationClock); ok {
+		return clock.ObservedAt()
+	}
+	return time.Time{}
+}
+
 func (c trafficContext) TrafficWindow(workload string) (traffic.Window, bool) {
 	window, ok := c.windows[workload]
 	return window, ok

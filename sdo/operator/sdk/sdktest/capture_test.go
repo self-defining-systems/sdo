@@ -1,8 +1,10 @@
 package sdktest
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -57,5 +59,28 @@ func TestCaptureSnapshotPreservesWorkloadRelations(t *testing.T) {
 	captured, err := CaptureSnapshot(view, "app")
 	if err != nil || len(captured.StatefulSetList) != 1 || len(captured.HPAList) != 1 || len(captured.PDBList) != 1 || captured.HPAList[0].Spec.ScaleTargetRef.Name != "database" || captured.PDBList[0].Spec.Selector.MatchLabels["app"] != "database" {
 		t.Fatalf("relation objects missing from capture: %+v %v", captured, err)
+	}
+}
+
+func TestCaptureSnapshotRecordsObservationTimeForReplay(t *testing.T) {
+	observed := time.Date(2026, 10, 23, 12, 0, 0, 123456789, time.UTC)
+	captured, err := CaptureSnapshot(Snapshot{NamespaceName: "app", ObservedAtTime: &observed}, "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replayed Snapshot
+	if err := json.Unmarshal(data, &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.ObservedAt().Equal(observed) || !sdk.ObservationTime(replayed).Equal(observed) {
+		t.Fatalf("replayed observation time %v, want %v", replayed.ObservedAt(), observed)
+	}
+	unclocked, err := json.Marshal(Snapshot{NamespaceName: "app"})
+	if err != nil || strings.Contains(string(unclocked), "observedAt") {
+		t.Fatalf("a snapshot without a clock must not encode one: %s %v", unclocked, err)
 	}
 }

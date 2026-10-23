@@ -6,13 +6,16 @@ description: Use when authoring or changing an SDO detector - a deterministic Go
 # Authoring a detector
 
 A detector is deterministic Go that reads a Kubernetes snapshot and returns findings. It never calls an LLM, reads
-the environment, the clock, or the network, and never looks at benchmark data or verdicts. Read the
-`sdo-memory` skill first for artifact IDs and the `memory` commands.
+the environment, the clock, or the network, and never looks at benchmark data or verdicts. Measure ages with
+`sdk.ObservationTime(ctx)`, never `time.Now()`. Read the `sdo-memory` skill first for artifact IDs and the
+`memory` commands.
 
 ## Workflow
 
 1. Look before you add: `sdo-operator memory ls --kind detector`. Widen an existing detector when only resource
-   identity or a parameter differs. Add a new one only for a different failure mechanism.
+   identity or a parameter differs. Add a new one only for a different failure mechanism. The Go-installed
+   `service-endpoints` and `workload-health` health detectors already report Services without ready endpoints and
+   generic pod/Deployment state (failed, pending, crash-looping, image-pull, OOMKilled, unready, unavailable).
 2. Scaffold: `sdo-operator memory new detector <id> --class incident --playbook <playbook-id>` (health judge:
    `--class health`). It writes `manifest.yaml`, `detector.go`, and `detector_test.go`.
    Create the playbook first if it does not exist (see `sdo-playbook-authoring`).
