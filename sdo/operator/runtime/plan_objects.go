@@ -309,7 +309,21 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident IncidentRequest, action program.Action, before *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	ref, _ := planActionRef(action)
 	proof := e.Safety.Objects[ref]
-	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	var source *unstructured.Unstructured
+	var err error
+	if ref.Namespace == "" {
+		// Cluster absence is anchored to the application's current accepted render
+		// selection, never an empty-namespace lock or a failed source lookup.
+		scoped, ok := e.Source.(interface {
+			AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
+		})
+		if !ok || incident.Namespace == "" {
+			return nil, fmt.Errorf("cluster object action requires application-scoped accepted source evidence")
+		}
+		source, err = scoped.AcceptedScopedManifest(ctx, incident.SourceCommit, incident.Namespace, ref)
+	} else {
+		source, err = e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	}
 	if objectActionOperation(action) == "delete" {
 		if !proof.DeleteAllowed {
 			return nil, fmt.Errorf("plan safety: irreversible delete effect is not authorized")

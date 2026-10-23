@@ -80,3 +80,5 @@ Structured actions require an administrator-reviewed fixture policy pinned in co
 Write verification and compensation compare plan-owned fields and current UID, while checking the full live credential predicate. API defaults and the Deployment revision annotation do not invalidate an otherwise approved effect.
 
 HPA, PDB and named webhook effects require a direct current read. An unwatched kind stays unknown unless that read proves the effect and the verifier has no cached input for the kind; watched kinds still wait for their cache barrier.
+
+A cluster-scoped webhook delete proves source absence through the application’s current accepted render selection. Missing or stale lock evidence refuses; the installer’s exact-name webhook grant remains required.

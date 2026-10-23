@@ -398,3 +398,10 @@ func TestPlanCreateServiceDefaultsPreserveRoutingProof(t *testing.T) {
 		})
 	}
 }
+
+func (s lifecycleTestSource) AcceptedScopedManifest(ctx context.Context, commit, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if namespace == "" {
+		return nil, rendered.ErrEvidenceGap
+	}
+	return s.AcceptedManifest(ctx, commit, ref)
+}
