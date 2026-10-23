@@ -96,6 +96,9 @@ DRAIN_TIMEOUT_SECONDS = 3600.0
 # solved incident is rejected. Bounded so a genuinely unsettled receipt still
 # rejects promptly.
 CLOSEOUT_SETTLE_TIMEOUT_SECONDS = 120.0
+# Resume can require informer resync, state baseline startup and workload probes
+# before reconciliation starts. Bound that path separately from receipt drain.
+RENDERED_LOCK_SETTLE_TIMEOUT_SECONDS = 600.0
 STAGE_END_EVIDENCE_SCOPE = "stage-end snapshot; the drained strict receipt supersedes it"
 _ZERO_TIME = "0001-01-01T00:00:00Z"
 
@@ -949,11 +952,25 @@ def _collect_settled_receipt(
     """
 
     receipt = ops.collect_receipt(config, incident_id, receipt_dir)
+    scale = float(os.getenv("SDO_TIME_SCALE", "1"))
+    rendered_timeout = timeout if timeout is not None else RENDERED_LOCK_SETTLE_TIMEOUT_SECONDS * scale
     if timeout is None:
-        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS * float(os.getenv("SDO_TIME_SCALE", "1"))
+        timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS * scale
     deadline = clock.monotonic() + timeout
     resumed = False
     control = config.control_namespace
+    previous_lines: list[str] = []
+    last_error = ""
+    progress = "waiting for controller resume"
+    generation = f"rendered-closeout-{uuid.uuid4().hex[:8]}"
+
+    def reconciliation_error(lines: list[str]) -> str:
+        for line in reversed(lines):
+            marker = line.find("reconcile rendered lock:")
+            if marker >= 0:
+                return line[marker:][:2048]
+        return ""
+
     try:
         while (
             not _closeout_settled(receipt) or not _rendered_lock_settled(config.repository)
@@ -962,18 +979,48 @@ def _collect_settled_receipt(
                 # Maintenance permits closure but suppresses rendered reconciliation.
                 # Recovery precedes fastloop learning. Let the acknowledged
                 # controller publish source evidence, then pause it again.
-                ops.set_maintenance(control, paused=False, generation=f"rendered-closeout-{uuid.uuid4().hex[:8]}")
+                previous_lines = ops.controller_logs(control).splitlines()
+                last_error = reconciliation_error(previous_lines)
+                ops.set_maintenance(control, paused=False, generation=generation)
                 resumed = True
+                deadline = clock.monotonic() + rendered_timeout
+            if resumed:
+                lines = ops.controller_logs(control).splitlines()
+                new_lines = lines[len(previous_lines) :] if lines[: len(previous_lines)] == previous_lines else lines
+                previous_lines = lines
+                error = reconciliation_error(new_lines)
+                if error:
+                    raise PersistentControllerError(f"rendered source lock publication failed: {error}")
+                for record in _log_records("\n".join(new_lines)):
+                    phase = progress
+                    if "state_baseline_startup_ms" in record:
+                        phase = "state baseline initialized"
+                    if record.get("maintenance_generation") == generation:
+                        phase = "controller resumed; waiting for rendered lock"
+                    if phase != progress:
+                        progress = phase
+                        logger.info("rendered source lock closeout: %s", progress)
             clock.sleep(POLL_SECONDS)
             receipt = ops.collect_receipt(config, incident_id, receipt_dir)
         if not _rendered_lock_settled(config.repository):
+            details = f"; controller progress: {progress}"
+            if last_error:
+                details += f"; last reported controller error: {last_error}"
             raise PersistentControllerError(
-                "controller acknowledged closure but did not publish a current rendered source lock"
+                "controller acknowledged closure but did not publish a current rendered source lock" + details
             )
         return receipt
     finally:
         if resumed:
-            pause_controller(ops, control, label="rendered-closeout", clock=clock)
+            try:
+                pause_controller(ops, control, label="rendered-closeout", clock=clock)
+            finally:
+                # Stage-end evidence predates this resume. Preserve its actual
+                # diagnostics before teardown removes the acknowledged runtime.
+                try:
+                    ops.export_controller_logs(control, receipt_dir)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                    logger.warning("could not retain rendered closeout logs: %s", type(exc).__name__)
 
 
 def _record_failed_closure(pending: PendingIncident, message: str, waited_seconds: float) -> ReceiptDrainResult:
