@@ -588,6 +588,15 @@ def _launch_native_lifecycle(
     if not raw_kubeconfig or not Path(raw_kubeconfig).is_absolute():
         raise RuntimeError("native benchmark operation requires an absolute trusted kubeconfig")
     kubeconfig = Path(raw_kubeconfig)
+    if namespace == "astronomy-shop":
+        from benchmarks.sregym.adapter.oracle_observability import prepare_oracle_observability, route_astronomy_traces
+
+        prepare_oracle_observability(
+            kubeconfig=kubeconfig,
+            sregym_dir=Path(__file__).resolve().parents[3] / "third_party/sregym",
+            cluster=kind_cluster_name,
+        )
+        route_astronomy_traces(kubeconfig)
     control_namespace = control_namespace_for(namespace)
     cluster = BenchmarkClusterResourcesConfig(
         namespace=namespace,

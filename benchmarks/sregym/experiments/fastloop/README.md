@@ -283,3 +283,21 @@ replacement were separate. The scripted worker image must
 include main's generated-contract dependencies, including `protovalidate`;
 source mounts do not add missing Python packages. Raw evidence is outside Git
 at `results/toy-cluster-evidence/`.
+
+Astronomy seeds require the stock SREGym oracle observability stack before
+application deployment. Fastloop `up` installs the chart and collector from the
+pinned harness checkout; Helm dependencies are already vendored and are not
+updated. For a source seed deployed directly through Go, first run:
+
+```bash
+uv run python -m benchmarks.sregym.adapter.oracle_observability \
+  --kubeconfig "$KUBECONFIG" --cluster "$SREGYM_KIND_CLUSTER_NAME" \
+  --sregym-dir third_party/sregym
+```
+
+After applying the seed, use `--route-astronomy-traces` on the same command to
+match the stock conductor's Jaeger ExternalName routing. The native benchmark
+adapter also prepares this stack before installing a seeded controller. OpenEBS
+is vendored at the revision recorded in the module; all telemetry runs inside
+the lane's existing Docker CPU caps. Count the total cap across every kind node
+under the host lease, including these infrastructure pods.
