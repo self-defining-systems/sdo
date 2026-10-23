@@ -122,6 +122,13 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	if c.PlanSafetyPolicyJSON != "" || c.PlanSafetyPolicySHA256 != "" {
+		sum := sha256.Sum256([]byte(c.PlanSafetyPolicyJSON))
+		if len(c.PlanSafetyPolicyJSON) > 1024*1024 || c.PlanSafetyPolicySHA256 != hex.EncodeToString(sum[:]) {
+			return errors.New("reviewed plan safety policy hash mismatch or size limit")
+		}
+	}
+
 	for _, name := range c.PlanWebhookNames {
 		if len(validation.IsDNS1123Subdomain(name)) > 0 {
 			return fmt.Errorf("invalid named plan webhook")

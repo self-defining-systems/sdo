@@ -52,6 +52,10 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
+	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
+	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
+	var planWebhookNames repeatable
+	flags.Var(&planWebhookNames, "plan-webhook-name", "exact reviewed webhook name authorized for controller get/delete")
 	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
 	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
@@ -114,8 +118,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
-		MaxResponseLoops: *maxResponseLoops,
-		ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+		MaxResponseLoops:     *maxResponseLoops,
+		PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
+		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		LateFindings:    *lateFindings,
 		HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),

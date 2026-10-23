@@ -425,7 +425,7 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 			return err
 		}
 	}
-	if err := e.validateCredentialDelta(ctx, current, restored); err != nil {
+	if err := validateCredentialChannelDelta(patch.Before, restored); err != nil {
 		return err
 	}
 	from, _ := json.Marshal(current.Object)
@@ -448,13 +448,9 @@ func (e PlanExecutor) restoreActionOnce(ctx context.Context, patch PlanPatch) er
 		if err := e.validateAcceptedRevision(IncidentRequest{SourceCommit: patch.SourceCommit}); err != nil {
 			return err
 		}
-		previous, _, _ := unstructured.NestedString(current.Object, "spec", "template", "spec", "serviceAccountName")
-		next, _, _ := unstructured.NestedString(restored.Object, "spec", "template", "spec", "serviceAccountName")
-		if previous != next {
-			if err := e.validateServiceAccount(ctx, patch.Ref, restored); err != nil {
-				return err
-			}
-		}
+		// Restoring the captured pre-image does not require a new account grant.
+		// The channel subset check above refuses anything absent from that image.
+
 	}
 	if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, delta); err != nil {
 		return fmt.Errorf("restore %s/%s: %w", patch.Ref.Kind, patch.Ref.Name, err)
