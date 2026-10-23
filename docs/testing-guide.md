@@ -377,3 +377,27 @@ git -C third_party/sregym submodule update --init SREGym-applications
 
 The Python unit-test CI job initializes these application sources explicitly so
 the discovery gate runs instead of silently skipping its cross-repository checks.
+
+### Health policy refresh after source advances
+
+The native builder refreshes stale health requirements through the registered judge
+and broker before compiling detectors. Accepted judge commits bind policy to all
+tracked application inputs outside operational memory, the human objective and
+health detector revision. Memory-only outcomes, playbooks and rendered locks do
+not trigger judge work. The runtime refuses stale evaluation, dispatch, plan
+writes and closure, and requests a builder relaunch for adoption. A refresh failure
+leaves health unverified. An investigation that predates a source or objective
+change is blocked and requires fresh investigation after adoption.
+
+The model-free tracing regression and seeded restart schedule run with:
+
+```bash
+(cd sdo/operator/runtime && go test . -run 'TestHealthRefresh|TestTracingSwapRefresh|TestSimHealthRefresh' -count=1 -timeout=5m)
+```
+
+The tracing capture replaces Jaeger with a collector while preserving old
+architecture, compiles accepted detectors, and requires collector coverage without
+Jaeger. The seeded schedule interrupts before publication or after acceptance
+but before adoption, reopens the broker, and checks that accepted work is reused
+and the old binary remains unauthorized. These checks use scripted judge results
+and no cluster or model calls; they do not evaluate actual judge model behavior.

@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"testing"
+	"time"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
@@ -13,7 +16,7 @@ import (
 )
 
 func TestControllerLaunchPreservesTypedConfigAndInjectsBuildPaths(t *testing.T) {
-	original := &contractsv1alpha1.ControllerConfig{Namespace: "app", ResponderAgentId: "custom-worker", DispatcherMode: "job", RepairPolicy: "commit", BrokerMode: "native", WorkerMountMode: "proposal-only", ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model"}
+	original := &contractsv1alpha1.ControllerConfig{Namespace: "app", SourceCommit: "old-source", DeployedCommit: "deployed", ResponderAgentId: "custom-worker", DispatcherMode: "job", RepairPolicy: "commit", BrokerMode: "native", WorkerMountMode: "proposal-only", ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model"}
 	data, err := controllerConfigJSON(RunConfig{Build: Config{ApplicationRoot: "/accepted/repo"}, Controller: original}, "/shared/.sdo-prober/digest/sdo-prober", provenance{Fingerprint: "tree", ArtifactDigest: "sha256:artifact", Revision: "head"})
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +25,7 @@ func TestControllerLaunchPreservesTypedConfigAndInjectsBuildPaths(t *testing.T) 
 	if err := protojson.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.AppRoot != "/accepted/repo" || decoded.ProberBinary != "/shared/.sdo-prober/digest/sdo-prober" || decoded.ResponderAgentId != "custom-worker" || decoded.DiagnosticsFingerprint != "tree" || decoded.ControllerArtifactDigest != "sha256:artifact" || decoded.ControllerRevision != "head" || decoded.BrokerMode != "native" || decoded.WorkerMountMode != "proposal-only" || decoded.ValidatorImage != "validator:test" || decoded.ResponderModel != "model" {
+	if decoded.AppRoot != "/accepted/repo" || decoded.ProberBinary != "/shared/.sdo-prober/digest/sdo-prober" || decoded.ResponderAgentId != "custom-worker" || decoded.DiagnosticsFingerprint != "tree" || decoded.ControllerArtifactDigest != "sha256:artifact" || decoded.ControllerRevision != "head" || decoded.SourceCommit != "head" || decoded.DeployedCommit != "deployed" || decoded.BrokerMode != "native" || decoded.WorkerMountMode != "proposal-only" || decoded.ValidatorImage != "validator:test" || decoded.ResponderModel != "model" {
 		t.Fatalf("launch contract lost fields: %s", decoded.String())
 	}
 	if original.AppRoot != "" || original.ProberBinary != "" {
@@ -57,5 +60,33 @@ func TestSuperviseAnnouncesEachRelaunch(t *testing.T) {
 	want := "{\"controller_supervisor\":\"relaunch\",\"launches\":1}\n{\"controller_supervisor\":\"relaunch\",\"launches\":2}\n"
 	if out.String() != want {
 		t.Fatalf("supervisor output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestHealthRefreshRelaunchesBoundedControllerAndPreservesFailures(t *testing.T) {
+	restart := exec.Command("sh", "-c", "exit 76").Run()
+	failure := errors.New("judge publication failed")
+	runs := 0
+	original := &contractsv1alpha1.ControllerConfig{Duration: durationpb.New(time.Minute), ExitAfterClosure: true}
+	err := runWithHealthRefresh(context.Background(), RunConfig{Controller: original}, func(_ context.Context, cfg RunConfig) error {
+		runs++
+		if !cfg.Controller.ExitAfterClosure || cfg.Controller.GetDuration().AsDuration() <= 0 || cfg.Controller.GetDuration().AsDuration() > time.Minute {
+			t.Fatalf("bounded launch lost contract: %v", cfg.Controller)
+		}
+		if runs == 1 {
+			return fmt.Errorf("child requires rebuild: %w", restart)
+		}
+		return failure
+	})
+	if runs != 2 || !errors.Is(err, failure) {
+		t.Fatalf("refresh relaunch: runs=%d err=%v", runs, err)
+	}
+	if original.GetDuration().AsDuration() != time.Minute {
+		t.Fatal("mutated launch contract")
+	}
+	runs = 0
+	ordinary := exec.Command("sh", "-c", "exit 1").Run()
+	if err := runWithHealthRefresh(context.Background(), RunConfig{}, func(context.Context, RunConfig) error { runs++; return ordinary }); err == nil || runs != 1 {
+		t.Fatalf("ordinary failure relaunched: runs=%d err=%v", runs, err)
 	}
 }

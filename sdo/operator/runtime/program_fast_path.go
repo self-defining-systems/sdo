@@ -279,6 +279,11 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
 		return attempt
 	}
+	if l.CheckHealth != nil {
+		if err := l.CheckHealth(ctx); err != nil {
+			return skip(FastPathSkipRefreshFailed)
+		}
+	}
 	executor := l.Executor
 	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
 	response := ToolResponse{}
