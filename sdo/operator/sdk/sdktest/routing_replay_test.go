@@ -103,3 +103,15 @@ func TestInstalledRoutingExampleCorpusReplays(t *testing.T) {
 		t.Fatalf("installed corpus repair: %+v %v", result, err)
 	}
 }
+
+func TestRoutingMitigatorUsesObservedPortItActuallyProbed(t *testing.T) {
+	c := routingCorpus(t)
+	for _, snapshot := range []*Snapshot{&c.Open, &c.Fixed, &c.Healthy} {
+		for i := range snapshot.PodList {
+			snapshot.PodList[i].Spec.Containers = append([]corev1.Container{{Name: "udp-sidecar", Ports: []corev1.ContainerPort{{ContainerPort: 9090, Protocol: corev1.ProtocolUDP}}}}, snapshot.PodList[i].Spec.Containers...)
+		}
+	}
+	if _, err := CheckMitigation(routingport.Program{}, routingport.Program{}, c); err != nil {
+		t.Fatal(err)
+	}
+}

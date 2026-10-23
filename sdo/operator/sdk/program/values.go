@@ -1,8 +1,10 @@
 package program
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"reflect"
 	"strings"
@@ -45,10 +47,13 @@ func (v Value) Param() string       { return v.param }
 func (v Value) Validate() error {
 	switch v.origin {
 	case ParameterValue:
-		if strings.TrimSpace(v.param) == "" {
+		if strings.TrimSpace(v.param) == "" || v.ref != (sdk.ObjectRef{}) || v.path != "" {
 			return fmt.Errorf("value parameter name is required")
 		}
 	case SourceValue, ObservedValue:
+		if v.param != "" {
+			return fmt.Errorf("object-derived value cannot include a parameter name")
+		}
 		if strings.EqualFold(v.ref.Kind, "Secret") {
 			return fmt.Errorf("Secret value resolution is forbidden")
 		}
@@ -65,24 +70,37 @@ func (v Value) Validate() error {
 }
 
 type valueWire struct {
-	Origin ValueOrigin   `json:"origin"`
-	Ref    sdk.ObjectRef `json:"ref,omitempty"`
-	Path   string        `json:"path,omitempty"`
-	Param  string        `json:"param,omitempty"`
+	Origin ValueOrigin    `json:"origin"`
+	Ref    *sdk.ObjectRef `json:"ref,omitempty"`
+	Path   string         `json:"path,omitempty"`
+	Param  string         `json:"param,omitempty"`
 }
 
 func (v Value) MarshalJSON() ([]byte, error) {
 	if err := v.Validate(); err != nil {
 		return nil, err
 	}
-	return json.Marshal(valueWire{v.origin, v.ref, v.path, v.param})
+	var ref *sdk.ObjectRef
+	if v.origin != ParameterValue {
+		ref = &v.ref
+	}
+	return json.Marshal(valueWire{v.origin, ref, v.path, v.param})
 }
 func (v *Value) UnmarshalJSON(raw []byte) error {
 	var w valueWire
-	if err := json.Unmarshal(raw, &w); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&w); err != nil {
 		return err
 	}
-	candidate := Value{origin: w.Origin, ref: w.Ref, path: w.Path, param: w.Param}
+	if decoder.Decode(new(any)) != io.EOF {
+		return fmt.Errorf("trailing value reference data")
+	}
+	var ref sdk.ObjectRef
+	if w.Ref != nil {
+		ref = *w.Ref
+	}
+	candidate := Value{origin: w.Origin, ref: ref, path: w.Path, param: w.Param}
 	if err := candidate.Validate(); err != nil {
 		return err
 	}

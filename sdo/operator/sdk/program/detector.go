@@ -33,7 +33,7 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 		}
 		var primary sdk.ObjectRef
 		for _, param := range d.program.Spec().Params {
-			if param.Required {
+			if param.Required && param.ValueKind == "" {
 				primary = bindings.Objects[param.Name]
 				break
 			}
