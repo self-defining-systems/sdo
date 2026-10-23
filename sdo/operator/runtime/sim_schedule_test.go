@@ -191,3 +191,118 @@ func TestSimSchedulePartialRepairCannotVerifyDrift(t *testing.T) {
 		}
 	})
 }
+
+// Check actual dispatches against the simulated API server, independently of
+// the controller's retained evidence and its potentially lagging informer.
+type simDriftDispatch struct{ world *simWorld }
+
+func (d simDriftDispatch) Dispatch(ctx context.Context, request IncidentRequest) (IncidentResult, error) {
+	w := d.world
+	if len(w.closed) > 0 {
+		snapshot, err := w.cache.live()
+		if err != nil {
+			return IncidentResult{}, err
+		}
+		view := serviceDriftView{&sdktest.ReplayReadView{Snapshot: snapshot}}
+		for _, finding := range request.Findings {
+			diff, err := view.DiffAgainstSource(finding.PrimaryResource)
+			if err != nil || !diff.Changed {
+				w.violate("dispatch after verified closure for source-equal drift %s: %v", finding.PrimaryResource.Name, err)
+			}
+		}
+	}
+	return w.responder.Dispatch(ctx, request)
+}
+
+// Seeded schedules straddle the per-finding batch deadline, restart from the
+// durable ConfigMap before launch, after repair, and after acknowledgment, and
+// retain seeded informer lag. No real clock sleeps or model calls are needed.
+func TestSimScheduleQueuedDriftNeverRedispatchesAfterVerifiedClosure(t *testing.T) {
+	sweepSimSeedsN(t, 8, func(t *testing.T, seed uint64) {
+		for _, gap := range []time.Duration{111 * time.Millisecond, 20*time.Second - time.Nanosecond, 20 * time.Second, 20*time.Second + time.Nanosecond} {
+			t.Run(fmt.Sprintf("gap=%s", gap), func(t *testing.T) {
+				w := newSimWorld(t, seed)
+				// Isolate dispatch/closure scheduling from ambiguous store writes.
+				w.client.ReactionChain = w.client.ReactionChain[2:]
+				w.responder.behavior = func() simBehavior { return simFixAll }
+				w.broker.reject = func() bool { return false }
+				health := controllerDetector("health", time.Second, sdk.Finding{})
+				health.spec.Class, health.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+				health.spec.OriginatingCommit = "c"
+				health.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+				health.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning}
+				w.detectors = []sdk.Detector{health}
+				w.configure = func(c *Controller) {
+					c.ConfigureDrift(DriftControllerConfig{BatchWindow: 20 * time.Second, View: func(s sdk.DetectionContext) program.ReadView {
+						return serviceDriftView{&sdktest.ReplayReadView{Snapshot: s.(sdktest.Snapshot)}}
+					}})
+					c.dispatcher = simDriftDispatch{world: w}
+				}
+				w.restart()
+				inject := func(index int) {
+					w.setPort(simServiceName(index), 9999)
+					w.controller.queueUnexplainedFinding(w.clock.now, sdk.DriftEvent{
+						Ref: simServiceRef(simServiceName(index)), Source: "differs from accepted manifest", ObservedAt: w.clock.now, Classification: sdk.DriftUnexplained,
+						Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort", Old: "8080", New: "9999", Source: "8080"}},
+					})
+				}
+				w.clock.now = w.clock.now.Add(time.Second)
+				firstAt := w.clock.now
+				inject(0)
+				w.step()
+				if gap >= 20*time.Second {
+					w.clock.now = firstAt.Add(20 * time.Second)
+					w.step() // Open the first incident without draining its effects yet.
+				}
+				w.clock.now = firstAt.Add(gap)
+				inject(1)
+				w.step()
+				w.persist()
+				if w.rng.IntN(2) == 0 {
+					w.restart()
+				}
+				if gap < 20*time.Second {
+					w.clock.now = firstAt.Add(20 * time.Second)
+					w.step()
+				}
+				w.drain()
+				// Restart at a seeded verification tick (while cache reads can still
+				// lag), then require exactly one independently verified outcome.
+				for tick := 0; tick < 20; tick++ {
+					w.clock.now = w.clock.now.Add(time.Second)
+					if tick == int(seed%3) {
+						w.restart()
+					}
+					w.step()
+					w.drain()
+				}
+				if len(w.closed) != 1 || len(w.closed[0].FinalDetectorStates) == 0 || len(w.closed[0].Request.DriftEvents) != 2 || w.responder.calls != 1 {
+					t.Fatalf("queued drift created an extra incident or lost verified evidence: closures=%d calls=%d", len(w.closed), w.responder.calls)
+				}
+				stored, err := w.outcomes.Get(context.Background(), w.closed[0].Request.IncidentID)
+				if err != nil || len(stored.Record.GetDriftEvents()) != 2 || stored.Record.GetTimestamps().GetVerifiedAt() == nil {
+					t.Fatalf("durable outcome lost resolved drift: %v %v", stored, err)
+				}
+				if w.controller.tracker.HasActiveDetector("drift.unexplained") || len(exportState(t, w.controller).PendingBatch.Findings) != 0 {
+					t.Fatal("verified closure left a stale binding")
+				}
+				w.restart()
+				w.clock.now = w.clock.now.Add(30 * time.Second)
+				w.step()
+				w.drain()
+				if w.responder.calls != 1 {
+					t.Fatal("restart after acknowledgment redispatched repaired drift")
+				}
+				// Control against accidentally suppressing the reused binding forever.
+				inject(1)
+				w.step()
+				w.clock.now = w.clock.now.Add(20 * time.Second)
+				w.step()
+				w.drain()
+				if w.responder.calls != 2 || len(w.violations) > 0 {
+					t.Fatalf("fresh fault did not dispatch independently: calls=%d violations=%v", w.responder.calls, w.violations)
+				}
+			})
+		}
+	})
+}

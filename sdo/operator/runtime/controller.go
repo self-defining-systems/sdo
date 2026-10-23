@@ -254,6 +254,7 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
 	c.processDispatchCompletions(now)
 	c.processBrokerCompletions()
+	c.attachPendingDrift()
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
