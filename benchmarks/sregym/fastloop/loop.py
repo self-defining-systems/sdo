@@ -148,8 +148,11 @@ class LoopConfig:
     capability_evidence: SuiteCapabilities = field(default_factory=SuiteCapabilities)
     permissive_responder: bool = False
     responder_namespaces: tuple[str, ...] = ()
+    cleanup_passes: int = 1
 
     def __post_init__(self) -> None:
+        if type(self.cleanup_passes) is not int or not 1 <= self.cleanup_passes <= 2:
+            raise ValueError("cleanup_passes must be 1 or 2")
         if not isinstance(self.slot_offset, int) or self.slot_offset < 0:
             raise ValueError("slot_offset must be a non-negative integer")
         if not self.run_id:
@@ -177,6 +180,7 @@ def write_loop_manifest(config: LoopConfig) -> None:
                 "fault_capabilities": config.capability_evidence.model_dump(mode="json"),
                 "permissive_responder": config.permissive_responder,
                 "responder_namespaces": list(config.responder_namespaces),
+                "cleanup_passes": config.cleanup_passes,
             },
             indent=2,
         )
@@ -399,6 +403,7 @@ def _run_one(
     oracle_finished_at: datetime | None = None
     recovery_finished_at: datetime | None = None
     recovery_seconds: float | None = None
+    cleanup_passes_verified = 0
     recovery_error: str | None = None
     recovered = bool(windows)
     diagnosis_grade: DiagnosisGrade | None = None
@@ -429,11 +434,18 @@ def _run_one(
         finally:
             oracle_finished_at = now()
         try:
-            recovery_seconds = driver.recover()
+            recovery_seconds = 0.0
+            for _ in range(config.cleanup_passes):
+                recovery_seconds += driver.recover()
+                recovery_oracle = grade()
+                if not recovery_oracle.success:
+                    raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
+                full_cleanup = getattr(driver, "last_full_cleanup_verified", False)
+                if config.cleanup_passes > 1 and not full_cleanup:
+                    raise RuntimeError("repeated cleanup requires verified full seed recovery on every pass")
+                if full_cleanup:
+                    cleanup_passes_verified += 1
             recovery_finished_at = now()
-            recovery_oracle = grade()
-            if not recovery_oracle.success:
-                raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
         except Exception as exc:
             logger.exception("fault recovery failed for incident %d", index)
             recovery_error = f"fault recovery failed: {_describe(exc)}"
@@ -476,7 +488,8 @@ def _run_one(
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
         cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
-        full_cleanup_verified=getattr(driver, "last_full_cleanup_verified", False),
+        full_cleanup_verified=getattr(driver, "last_full_cleanup_verified", False) and recovery_error is None,
+        cleanup_passes_verified=cleanup_passes_verified,
         incident_wall_seconds=monotonic() - started,
         run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == config.slot_offset else {},
         error="; ".join(errors) or None,

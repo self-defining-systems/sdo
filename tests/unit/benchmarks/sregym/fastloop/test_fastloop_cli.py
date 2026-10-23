@@ -620,3 +620,27 @@ def test_codex_prompt_and_oracle_cover_every_playbook_stream_incident(
         assert [
             fault for injected, fault, recovered in worker.oracles if injected == ids and recovered
         ] == expected_faults
+
+
+def test_sdo_agent_preserves_accepted_seed_manifest_selection(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    workspace = tmp_path / "workspace"
+    rendered = workspace / ".sdo/rendered"
+    rendered.mkdir(parents=True)
+    (rendered / "lock.json").write_text(json.dumps({"manifest_paths": ["kubernetes/astronomy-shop.yaml"]}))
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="kind-test",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="astronomy-shop",
+        application="astronomy-shop",
+        workspace=workspace,
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=tmp_path / "private",
+    )
+    args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+    agent = cli._sdo_agent(args, environment, tmp_path / "results")
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.deployed_manifest_paths == (
+        "kubernetes/astronomy-shop.yaml",
+    )

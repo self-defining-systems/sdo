@@ -35,7 +35,7 @@ func RunBaselineWrite(input io.Reader, directory string) error {
 		return errors.New("healthy baseline requires 1-16 snapshots")
 	}
 	for name, document := range files {
-		if !baselineFileName.MatchString(name) || !json.Valid(document) || len(document) > 1<<20 {
+		if !baselineFileName.MatchString(name) || !json.Valid(document) {
 			return fmt.Errorf("invalid healthy snapshot %q", name)
 		}
 	}

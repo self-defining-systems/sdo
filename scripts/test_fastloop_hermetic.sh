@@ -18,4 +18,7 @@ uv run --extra test pytest -q -p no:tach \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_composite.py::test_failed_composite_resets_only_after_verified_harness_recovery \
     tests/unit/benchmarks/sregym/adapter/test_native_persistent_ops.py::test_reset_stage_syncs_accepted_pvc_before_recreating_controller \
     tests/unit/benchmarks/sregym/fastloop/test_fastloop_reset.py::test_reset_cancels_and_awaits_workers_before_deleting_captures \
-    tests/unit/benchmarks/sregym/adapter/test_scripted_drift.py
+    tests/unit/benchmarks/sregym/adapter/test_scripted_drift.py \
+    tests/unit/benchmarks/sregym/assurance/test_mixed10_replay.py \
+    tests/unit/benchmarks/sregym/fastloop/test_fastloop_fault_driver.py \
+    tests/unit/benchmarks/sregym/fastloop/test_scripted_image_build.py

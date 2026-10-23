@@ -102,6 +102,52 @@ def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> 
     return LoopConfig(run_id="run-1", problems=problems, incidents=count, results_path=tmp_path / "incidents.jsonl")
 
 
+def test_repeated_cleanup_verifies_each_pass_before_next_incident(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    clock = FakeClock()
+    driver = FakeDriver(clock)
+    driver.last_full_cleanup_verified = True
+    config = replace(_config(tmp_path, 2), cleanup_passes=2)
+
+    records = run_incidents(FakeAgent(clock), driver, config, monotonic=clock.monotonic)
+
+    assert driver.events == ["inject:p1", "oracle", "recover", "oracle", "recover", "oracle"] * 2
+    assert all(record.cleanup_passes_verified == 2 for record in records)
+    assert all(record.full_cleanup_verified for record in records)
+    assert all(record.fault_recovery_seconds == 20 for record in records)
+
+
+def test_second_cleanup_failure_stops_reuse_even_with_continue_on_error(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    class FailsOnRepeat(FakeDriver):
+        last_full_cleanup_verified = True
+
+        def recover(self) -> float:
+            if self.recovered:
+                self.last_full_cleanup_verified = False
+                raise RuntimeError("second client refresh failed")
+            return super().recover()
+
+    clock = FakeClock()
+    config = replace(_config(tmp_path, 2), cleanup_passes=2, continue_on_error=True)
+    records = run_incidents(FakeAgent(clock), FailsOnRepeat(clock), config, monotonic=clock.monotonic)
+
+    assert len(records) == 1
+    assert records[0].cleanup_passes_verified == 1
+    assert not records[0].full_cleanup_verified
+    assert records[0].recovery_error
+
+
+@pytest.mark.parametrize("passes", [0, 3, True, 1.0])
+def test_cleanup_passes_rejects_invalid_configuration(tmp_path: Path, passes: int) -> None:
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="cleanup_passes"):
+        replace(_config(tmp_path, 1), cleanup_passes=passes)
+
+
 def test_each_incident_is_graded_before_recovery_and_learning_follows_recovery(tmp_path: Path) -> None:
     clock = FakeClock()
     driver, agent = FakeDriver(clock), FakeAgent(clock)

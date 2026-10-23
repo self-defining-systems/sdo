@@ -70,7 +70,8 @@ the harness's `seed-compatible/v1` contract: reset external state, restore appli
 refresh client connections/rollouts, and verify health. SDO's fault driver owns this ordered operation;
 the harness owns the credential reset and refresh hooks. It rejects older harness recovery before
 applying a seed, even without `--require-full-cleanup`. Retries after partial restores are supported.
-Do not count `full_cleanup_verified` until the refresh, health and rollout gates pass. Recovery failure
-details are not emitted by the adapter because they may contain credential material. Investigate by
-Secret name/key names and sanitized phase status only; never inspect Secret data or credentials.
+Do not count `full_cleanup_verified` until the refresh, health and rollout gates pass. Recovery errors
+identify numeric component indices and known lifecycle statuses (`error` or `timeout`); raw harness
+exception text is excluded because it may contain credential material. Investigate by Secret name/key
+names and sanitized phase status only; never inspect Secret data or credentials.
 

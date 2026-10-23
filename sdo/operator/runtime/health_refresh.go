@@ -56,7 +56,17 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		pending := cloneIncidentClosure(c.pendingClosure)
 		phase := c.closureState
 		receipt := cloneClosureReceipt(c.closureReceipt)
+		broker := c.broker
 		c.mu.Unlock()
+		committed := phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED && receipt != nil
+		replay := receipt == nil && (phase == contracts.ClosureState_CLOSURE_STATE_PENDING || phase == contracts.ClosureState_CLOSURE_STATE_PROCESSING)
+		if pending != nil && (committed || replay) && (request == nil || request.IncidentID == pending.Request.IncidentID) {
+			if err := checkInvestigationHealth(ctx, root, pending.Request.SourceCommit, compiled); errors.Is(err, ErrStaleHealthInvestigation) {
+				return checkCommittedRepairHealth(ctx, root, compiled, *pending, receipt, broker)
+			} else if err != nil {
+				return err
+			}
+		}
 		if request != nil {
 			if err := checkInvestigationHealth(ctx, root, request.SourceCommit, compiled); err != nil {
 				return err
@@ -70,6 +80,42 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		}
 		return nil
 	}
+}
+
+// Only complete native broker evidence can authorize finishing an already committed
+// incident across adoption of that incident's own accepted source repair.
+// A restart may precede persistence of the controller receipt, so a frozen
+// closure may replay the idempotent broker effect using its existing receipt.
+// This never authorizes an investigation or new publication using stale policy.
+type committedRepairHealthBroker interface {
+	committedRepairHealthReceipt(context.Context, IncidentClosure, *ClosureReceipt) (ClosureReceipt, error)
+}
+
+func checkCommittedRepairHealth(ctx context.Context, root, compiled string, closure IncidentClosure, receipt *ClosureReceipt, broker IncidentBroker) error {
+	proof, ok := broker.(committedRepairHealthBroker)
+	if !ok {
+		return ErrStaleHealthInvestigation
+	}
+	existing, err := proof.committedRepairHealthReceipt(ctx, closure, receipt)
+	if err != nil {
+		return err
+	}
+	old, err := memory.HealthInputs(ctx, root, closure.Request.SourceCommit)
+	if err != nil {
+		return err
+	}
+	current, err := memory.HealthInputs(ctx, root, compiled)
+	if err != nil {
+		return err
+	}
+	repair, err := memory.HealthInputs(ctx, root, existing.ProposalCommit)
+	if err != nil {
+		return err
+	}
+	if old.Objective != current.Objective || old.DetectorRevision != current.DetectorRevision || repair.SourceInputs != current.SourceInputs || repair.Objective != current.Objective {
+		return ErrStaleHealthInvestigation
+	}
+	return nil
 }
 
 // An investigation started against older application inputs cannot authorize

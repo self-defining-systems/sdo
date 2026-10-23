@@ -86,20 +86,38 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
+	// Receipt replay is bookkeeping for a closure already committed by the
+	// native broker. Adoption can change observation generations, but must not
+	// turn fetching that exact receipt into another repair/closure decision.
+	var recovered *ClosureReceipt
+	c.mu.Lock()
+	configuredBroker := c.broker
+	c.mu.Unlock()
+	if proof, ok := configuredBroker.(committedRepairHealthBroker); ok && c.CheckHealth != nil {
+		receipt, err := proof.committedRepairHealthReceipt(ctx, effect.Closure, nil)
+		if err == nil {
+			recovered = &receipt
+		} else if !errors.Is(err, ErrStaleHealthInvestigation) {
+			return err
+		}
+	}
 	// Refresh scope and observation state: restore, adoption and broker retries
 	// can retain success even when availability changes within one generation.
 	snapshot, err := c.provider.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("verify closure observation scope: %w", err)
 	}
-	if effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
+	if recovered == nil && effect.Closure.ObservationGeneration != observationGeneration(snapshot) {
 		return fmt.Errorf("observation scope changed; pending closure %s is superseded and requires fresh verification", effect.Closure.Request.IncidentID)
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
 		return err
 	}
-	verificationErr := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+	var verificationErr error
+	if recovered == nil {
+		verificationErr = c.revalidateClosure(actionCtx, snapshot, effect.Closure)
+	}
 	if err := actionCtx.Err(); err != nil {
 		cancel()
 		return err
@@ -152,7 +170,13 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	slog.Info("closure_handoff", "incident_id", effect.Closure.Request.IncidentID, "verified_to_handoff_ms", c.clock().Sub(effect.Closure.VerifiedAt).Milliseconds())
 	go func() {
 		defer cancel()
-		receipt, processErr := broker.ProcessClosure(actionCtx, effect.Closure)
+		var receipt ClosureReceipt
+		var processErr error
+		if recovered != nil {
+			receipt = *recovered
+		} else {
+			receipt, processErr = broker.ProcessClosure(actionCtx, effect.Closure)
+		}
 		c.closureResults <- closureCompletion{effectID: effect.Identity, receipt: receipt, err: processErr}
 	}()
 	return nil

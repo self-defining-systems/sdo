@@ -55,6 +55,7 @@ For first-mutation capture and evidence-gap semantics, read [capture boundaries]
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md).
+For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
 Before judging mixed-app slot validity or recovery, read [slot cleanup evidence](references/slot-cleanup.md).
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,

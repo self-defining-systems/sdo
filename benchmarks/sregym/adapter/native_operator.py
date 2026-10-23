@@ -64,6 +64,7 @@ class NativeInstallConfig:
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
     deployed_manifest_paths: tuple[str, ...] = ()
+    seed_broker_root: Path | None = None
 
     def __post_init__(self) -> None:
         if type(self.permissive_responder) is not bool:
@@ -74,6 +75,8 @@ class NativeInstallConfig:
             raise ValueError("accepted repository path must be absolute")
         if self.kubeconfig is not None and not self.kubeconfig.is_absolute():
             raise ValueError("kubeconfig path must be absolute")
+        if self.seed_broker_root is not None and not self.seed_broker_root.is_absolute():
+            raise ValueError("trusted seed broker root must be absolute")
         for field in (
             "namespace",
             "control_namespace",
@@ -463,6 +466,8 @@ def _record_launch(config: NativeInstallConfig) -> None:
 def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
     _record_launch(config)
     args = config.common_args()
+    if config.seed_broker_root is not None:
+        args.extend(("--seed-broker-root", str(config.seed_broker_root)))
     args.extend(("--repair-policy", config.repair_policy))
     args.extend(("--late-findings", config.late_findings))
     args.extend(("--reflection-session", config.reflection_session))

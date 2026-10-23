@@ -19,14 +19,18 @@ from typing import Any
 import yaml
 from google.protobuf import json_format
 
+from sdo.agents.health_judge import run_judge_task
 from sdo.agents.responder import (
     KubernetesResultPublisher,
     ReflectionTurn,
+    recorded_actions,
     run_reflection_task,
     run_worker_task,
 )
 from sdo.contracts import (
     DriftEvent,
+    HealthJudgeRequest,
+    HealthJudgeResult,
     IncidentRequest,
     IncidentResult,
 )
@@ -115,8 +119,8 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
     )
     if kind == "Deployment":
         _command(
-            ["kubectl", "-n", request.namespace, "rollout", "status", f"deployment/{name}", "--timeout=120s"],
-            timeout=130,
+            ["kubectl", "-n", request.namespace, "rollout", "status", f"deployment/{name}", "--timeout=600s"],
+            timeout=610,
         )
 
 
@@ -270,6 +274,31 @@ def _assess_policy_drift(request: IncidentRequest, event: DriftEvent, label: Dri
 
 
 def scripted_responder(request: IncidentRequest) -> IncidentResult:
+    if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
+        from .scripted_replay import replay_recorded_repair as replay
+
+        def run(command: str, *, timeout: float = 300) -> tuple[int, str]:
+            completed = subprocess.run(
+                ["/bin/sh", "-c", command],
+                cwd=request.repository_worktree,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+            return completed.returncode, completed.stdout + completed.stderr
+
+        recorded_actions.reset()
+        result = replay(
+            run,
+            int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"]),
+            json_format.MessageToDict(request, preserving_proto_field_name=True),
+            Path(request.repository_worktree),
+        )
+        result["schema_version"] = "sdo.dev/v1alpha1"
+        response = json_format.ParseDict(result, IncidentResult())
+        recorded_actions.merge_into(response)
+        return response
     started = _now()
     diagnosis = _tool("diagnose")
     plan_ids, programs = _matched_plans(diagnosis)
@@ -527,6 +556,13 @@ def _check_reflection(worktree: Path, playbook_ids: list[str]) -> None:
 
 class ScriptedReflector:
     def resume(self, **kwargs: Any) -> ReflectionTurn:
+        if os.environ.get("SDO_SCRIPTED_REPLAY_SLOT") is not None:
+            return ReflectionTurn(
+                summary="Recorded source restoration has no generalized program fixture",
+                learning_decision="no_change",
+                no_change_reason="Rehearsal verifies closure without inventing reusable memory",
+                playbook_ids=[],
+            )
         worktree = Path(kwargs["worktree"])
         incident = str(kwargs["incident_id"])
         capture = Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus"))
@@ -656,10 +692,78 @@ class ScriptedReflector:
         )
 
 
+def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
+    """Retain the accepted generic bundle for the rehearsal's unchanged topology.
+
+    The production task wrapper and Go broker still validate the result and the
+    complete unchanged detector bundle. New topology/objectives require a judge
+    outside this explicitly scripted rehearsal.
+    """
+    from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
+
+    slot = int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"])
+    if request.namespace != SCRIPTED_REPLAY_SLOTS[slot].namespace:
+        raise ValueError("scripted health refresh namespace differs from rehearsal")
+    goal_document = (checkout / ".sdo/goal.md").read_text(encoding="utf-8")
+    parts = goal_document.split("---\n", 2)
+    if len(parts) != 3 or parts[0]:
+        raise ValueError("scripted health refresh requires an accepted goal document")
+    # Match memory.HealthInputs: the request carries the human objective, not
+    # the document header or its human-ownership metadata.
+    goal = parts[2].strip().removeprefix("# Health objective\n").strip()
+    if request.health_objective.strip() != goal:
+        raise ValueError("scripted health refresh cannot change the objective")
+    lock = json.loads((checkout / ".sdo/rendered/lock.json").read_text(encoding="utf-8"))
+    paths = lock.get("manifest_paths")
+    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) and path for path in paths):
+        raise ValueError("scripted health refresh needs accepted manifest selection")
+    cluster_kinds = {
+        "Namespace",
+        "ClusterRole",
+        "ClusterRoleBinding",
+        "CustomResourceDefinition",
+        "MutatingWebhookConfiguration",
+        "ValidatingWebhookConfiguration",
+    }
+
+    def identity(kind: str, namespace: str, name: str) -> tuple[str, str, str]:
+        # Source inventory uses "default" for namespace-less YAML; the accepted
+        # renderer binds those selected source objects to the application lane.
+        effective = request.namespace if namespace in ("", "default") else namespace
+        return kind, "" if kind in cluster_kinds else effective, name
+
+    expected = {
+        identity(item["ref"]["kind"], item["ref"].get("namespace", ""), item["ref"]["name"]) for item in lock["objects"]
+    }
+    current = {
+        identity(row.kind, row.namespace, row.name)
+        for row in request.source_resources
+        if any(row.source == path or row.source.startswith(path.rstrip("/") + "/") for path in paths)
+    }
+    if not expected or current != expected:
+        raise ValueError("scripted health refresh cannot change the deployed topology")
+    ids = []
+    for path in sorted((checkout / ".sdo/diagnostics/detectors/health").glob("*/manifest.yaml")):
+        manifest = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if manifest.get("class") != "health" or manifest.get("owner") != "health_judge":
+            raise ValueError("scripted health refresh requires judge-owned health detectors")
+        ids.append(manifest["id"])
+    required = {"health-objective", "service-endpoints", "service-reachability", "workload-health"}
+    if not required.issubset(ids):
+        raise ValueError("scripted health refresh cannot weaken the accepted full bundle")
+    return HealthJudgeResult(
+        authored=True,
+        summary="Retained complete accepted generic health bundle for unchanged deployed topology",
+        agent_session_id="scripted-health-" + request.accepted_source_commit[:12],
+        objective_digest=hashlib.sha256(goal.encode()).hexdigest(),
+        detector_ids=ids,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
-    if len(args) != 1 or args[0] not in {"responder", "reflection"}:
-        print("usage: scripted_worker responder|reflection", file=sys.stderr)
+    if len(args) != 1 or args[0] not in {"responder", "reflection", "health-judge"}:
+        print("usage: scripted_worker responder|reflection|health-judge", file=sys.stderr)
         return 2
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
@@ -674,6 +778,13 @@ def main(argv: list[str] | None = None) -> int:
                 result_name,
                 publisher,
                 executor=scripted_responder,
+            )
+        elif args[0] == "health-judge":
+            run_judge_task(
+                Path(os.environ.get("SDO_TASK_PATH", "/sdo/request/agent-task.json")),
+                result_name,
+                publisher,
+                execute=scripted_health_judge,
             )
         else:
             run_reflection_task(

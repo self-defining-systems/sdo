@@ -168,6 +168,7 @@ class IncidentRecord(_PersistedModel):
     cleanup_restored: list[str] = Field(default_factory=list)
     #: v2 full recovery, application reconciliation and healthy rollouts all completed.
     full_cleanup_verified: bool = False
+    cleanup_passes_verified: int = Field(default=0, ge=0, le=2)
     cleanup_skipped_reason: str | None = None
     #: Wall time from the start of this incident to the loop being ready for the next one.
     incident_wall_seconds: float | None = None

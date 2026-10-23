@@ -1,20 +1,65 @@
 package operatorcli
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/install"
 )
+
+func TestInstallExistingMenuEnvironmentReachesControllerPod(t *testing.T) {
+	t.Setenv("SDO_PLAN_SOURCE_POLICY_FILE", "")
+	for _, value := range []string{"", "0", "1", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("SDO_RESPONDER_MENU", value)
+			args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
+			launch, err := ParseInstallExistingLaunch(args)
+			if value == "invalid" {
+				if err == nil || !strings.Contains(err.Error(), "SDO_RESPONDER_MENU") {
+					t.Fatalf("invalid menu input accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			launch.Install.AcceptedCommit = strings.Repeat("a", 40)
+			plan, err := install.Resources(launch.Install)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, actual := "0", ""
+			if value == "1" {
+				want = "1"
+			}
+			for _, environment := range plan.Job.Spec.Template.Spec.Containers[0].Env {
+				if environment.Name == "SDO_RESPONDER_MENU" {
+					actual = environment.Value
+				}
+			}
+			if actual != want {
+				t.Fatalf("controller menu environment=%q want %q", actual, want)
+			}
+			t.Logf("controller_launch_environment SDO_RESPONDER_MENU=%s", actual)
+		})
+	}
+}
 
 func TestParseInstallExistingUsesNativeAcceptedController(t *testing.T) {
 	args := []string{
 		"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo",
 		"--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test",
 		"--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model",
+		"--seed-broker-root", "/trusted/seed-broker",
 		"--repair-policy", "recorded-actions", "--reflection-session", "resume", "--reflection-guidance", "generalize-spec", "--responder-env", "SDO_SUBMISSION_MODE=relay", "--deployed-manifest-path", "kubernetes", "--late-findings", "pull", "--program-fast-path", "--program-trust-threshold", "4",
 	}
 	launch, err := ParseInstallExistingLaunch(args)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if launch.SeedBrokerRoot != "/trusted/seed-broker" {
+		t.Fatalf("trusted seed broker directory lost: %q", launch.SeedBrokerRoot)
 	}
 	if !launch.Install.ReuseExisting || launch.Install.RepairPolicy != "recorded-actions" || launch.Install.ReflectionSession != "resume" || launch.Install.ReflectionGuidance != "generalize-spec" || launch.Install.LateFindings != "pull" ||
 		launch.Install.NativeCommand[0] != "/usr/local/bin/sdo-operator" || len(launch.Install.ExtraControllerArgs) != 2 ||

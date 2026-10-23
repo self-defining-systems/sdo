@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from benchmarks.sregym.adapter.persistent import (
     STRICT_RECEIPT_FILENAME,
     PersistentState,
@@ -132,3 +134,138 @@ def test_drain_waits_for_the_worktree_to_drain(tmp_path: Path) -> None:
     )
 
     assert (record.pending.receipt_dir / STRICT_RECEIPT_FILENAME).is_file()
+
+
+@pytest.fixture
+def repaired_source_lock(tmp_path: Path):
+    import json
+    import subprocess
+
+    from tests.unit.benchmarks.sregym.adapter.test_persistent import _config
+
+    config = _config(tmp_path)
+    repository = config.repository
+    repository.mkdir(parents=True, exist_ok=True)
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", "-C", str(repository), *args], text=True).strip()
+
+    git("init", "-q")
+    source = repository / "app.yaml"
+    source.write_text("seed\n")
+    git("add", ".")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "seed")
+    seed = git("rev-parse", "HEAD")
+    source.write_text("repaired\n")
+    git("add", ".")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "repair")
+    repair = git("rev-parse", "HEAD")
+    lock = repository / ".sdo/rendered/lock.json"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(json.dumps({"source_commit": seed}))
+    return config, lock, repair
+
+
+@pytest.mark.parametrize("publish", [True, False])
+def test_closeout_waits_for_rendered_lock_after_acknowledged_source_repair(
+    tmp_path: Path, publish: bool, repaired_source_lock
+) -> None:
+    import json
+
+    from benchmarks.sregym.adapter.persistent import PersistentControllerError, _collect_settled_receipt
+
+    config, lock, repair = repaired_source_lock
+
+    class PublishingOps(FakeOps):
+        samples = 0
+
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            self.samples += 1
+            if publish and self.samples == 3:
+                lock.write_text(json.dumps({"source_commit": repair}))
+            return {"schema_version": "sdo.production-receipt/v2", "native_ledger": {"acknowledged": True}}
+
+    ops = PublishingOps()
+    ops.logs[config.control_namespace] = []
+    if not publish:
+        with pytest.raises(PersistentControllerError, match="current rendered source lock"):
+            _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", _clock(ops), timeout=5)
+        assert ops.samples == 6
+        assert [event[0] for event in ops.events] == ["active", "paused", "logs"]
+        return
+    receipt = _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", _clock(ops), timeout=5)
+    assert receipt["native_ledger"]["acknowledged"]
+    assert ops.samples == 3
+    assert [event[0] for event in ops.events] == ["active", "paused", "logs"]
+
+
+@pytest.mark.parametrize("behavior", ["slow_resume", "reconcile_error", "reconcile_error_export_failure", "hung"])
+def test_rendered_closeout_follows_progress_and_reports_controller_failure(
+    tmp_path: Path, repaired_source_lock, behavior: str
+) -> None:
+    import json
+
+    from benchmarks.sregym.adapter.persistent import Clock, PersistentControllerError, _collect_settled_receipt
+
+    config, lock, repair = repaired_source_lock
+    now = [0.0]
+    reason = "reconcile rendered lock: Deployment/user-service rollout is incomplete"
+
+    class ProgressOps(FakeOps):
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            if behavior == "slow_resume" and now[0] >= 135:
+                lock.write_text(json.dumps({"source_commit": repair}))
+            return {"schema_version": "sdo.production-receipt/v2", "native_ledger": {"acknowledged": True}}
+
+        def controller_logs(self, control):
+            logs = super().controller_logs(control)
+            if behavior.startswith("reconcile_error") and now[0] >= 2:
+                logs += "\n" + reason
+            return logs
+
+        def export_controller_logs(self, control, artifacts_dir):
+            super().export_controller_logs(control, artifacts_dir)
+            if behavior == "reconcile_error_export_failure":
+                raise OSError("synthetic artifact failure")
+
+    ops = ProgressOps()
+    ops.logs[config.control_namespace] = []
+    clock = Clock(monotonic=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds))
+    if behavior == "slow_resume":
+        receipt = _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", clock)
+        assert receipt["native_ledger"]["acknowledged"]
+        assert now[0] == 135
+    elif behavior.startswith("reconcile_error"):
+        with pytest.raises(PersistentControllerError, match=reason):
+            _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", clock)
+        assert now[0] < 5  # A reported error must not consume the hang budget.
+    else:
+        with pytest.raises(PersistentControllerError, match="current rendered source lock"):
+            _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", clock)
+        assert 600 <= now[0] < 601
+    assert any(event[0] == "paused" for event in ops.events)
+
+
+def test_rendered_closeout_resumes_through_the_inject_before_resume_wrapper(
+    tmp_path: Path, repaired_source_lock
+) -> None:
+    import json
+
+    from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
+    from benchmarks.sregym.fastloop.simultaneous import InjectBeforeResumeOps
+
+    config, lock, repair = repaired_source_lock
+
+    class PublishingOps(FakeOps):
+        def collect_receipt(self, config, incident_id, artifacts_dir):
+            if any(event[0] == "active" for event in self.events):
+                lock.write_text(json.dumps({"source_commit": repair}))
+            return {"schema_version": "sdo.production-receipt/v2", "native_ledger": {"acknowledged": True}}
+
+    inner = PublishingOps()
+    inner.logs[config.control_namespace] = []
+    ops = InjectBeforeResumeOps(inner)
+    receipt = _collect_settled_receipt(ops, config, "one", tmp_path / "receipt", _clock(inner), timeout=5)
+
+    assert receipt["native_ledger"]["acknowledged"]
+    assert [event[0] for event in inner.events] == ["active", "paused", "logs"]

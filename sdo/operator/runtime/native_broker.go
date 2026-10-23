@@ -751,3 +751,44 @@ func (n NativeIncidentBroker) ledgerPath(incidentID string) string {
 	path, _ := broker.NativeLedgerFile(n.LedgerRoot, incidentID)
 	return path
 }
+
+// committedRepairHealthReceipt authenticates the narrow post-commit health
+// continuation against durable native evidence and broker Git attribution.
+func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, closure IncidentClosure, receipt *ClosureReceipt) (ClosureReceipt, error) {
+	var recovered ClosureReceipt
+	err := n.withLock(func() error {
+		if n.Repository == nil || closure.Request.IncidentID == "" {
+			return ErrStaleHealthInvestigation
+		}
+		ledger, err := n.readLedger(closure.Request.IncidentID)
+		if err != nil {
+			return err
+		}
+		projected, err := incidentClosureContract(closure)
+		if err != nil {
+			return err
+		}
+		stored := closureReceiptState(ledger.Receipt)
+		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || stored.ProposalCommit == "" || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || len(closure.FinalDetectorStates) == 0 {
+			return ErrStaleHealthInvestigation
+		}
+		if receipt != nil && *receipt != *stored {
+			return ErrStaleHealthInvestigation
+		}
+		if ledger.ProposalCommit != stored.ProposalCommit || ledger.OutcomeCommit != stored.OutcomeCommit {
+			return ErrStaleHealthInvestigation
+		}
+		for phase, commit := range map[broker.Phase]string{broker.ProposalPhase: stored.ProposalCommit, broker.OutcomePhase: stored.OutcomeCommit} {
+			accepted, ok, err := n.Repository.AcceptedCommit(ctx, stored.IncidentID, phase)
+			if err != nil {
+				return err
+			}
+			if !ok || accepted.Commit != commit {
+				return ErrStaleHealthInvestigation
+			}
+		}
+		recovered = *stored
+		return nil
+	})
+	return recovered, err
+}
