@@ -46,6 +46,11 @@ def _install(tmp_path: Path) -> NativeInstallConfig:
     )
 
 
+def test_trusted_seed_broker_root_requires_an_absolute_host_path(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="trusted seed broker root must be absolute"):
+        replace(_install(tmp_path), seed_broker_root=tmp_path.relative_to(tmp_path.anchor))
+
+
 def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
     monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
@@ -70,6 +75,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
             deployed_manifest_paths=("kubernetes",),
             program_fast_path=True,
             program_trust_threshold=4,
+            seed_broker_root=tmp_path / "trusted-seed-broker",
         )
     )
 
@@ -87,6 +93,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
     assert "--program-fast-path" in calls[0]
     assert calls[0][calls[0].index("--program-trust-threshold") + 1] == "4"
+    assert calls[0][calls[0].index("--seed-broker-root") + 1] == str(tmp_path / "trusted-seed-broker")
     assert "--drift-tokens-per-hour" not in calls[0]
     assert "pull" in calls[0]
     assert calls[0][0] != "python3"

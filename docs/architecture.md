@@ -56,6 +56,8 @@ Captures omit Kubernetes write metadata and sensitive environment values; worker
 
 Production packages do not import SREGym code. Benchmark-only image stages live in `benchmarks/sregym/Dockerfile.worker`, extending the built production responder; development mounts expose only production sources, examples and the operator binary. Benchmark adapters may call production APIs; strict receipts and submission relays remain in the benchmark boundary. The native path passed an end-to-end kind smoke with real goal/source/architecture/judge artifacts, concrete deployment and health evidence, provider credentials, and controller installation. Detector SDK staleness/dependency interface changes are outside this refactor.
 
+Installing an independently accepted seed may also require its private deployment ledger. The host operator's optional `install-existing --seed-broker-root` names an explicit trusted directory outside the accepted repository. Go snapshots bounded regular `source-evidence` records, independently checks named image authority against the accepted Git history, and copies those records into the fresh controller PVC after its workspace reset. It imports no proposals or incident receipts and derives no authority from repository locks or live Pods. The benchmark adapter forwards this operator setting; broker ownership and validation remain in Go.
+
 Object-reference identity on the wire is `common.proto:ObjectRef`. The SDK
 keeps a comparable value projection for detector maps and plans. Its
 `ParseObjectRef`/`FormatObjectRef` pair owns agent text parsing and canonical

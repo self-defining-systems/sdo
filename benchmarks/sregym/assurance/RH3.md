@@ -32,6 +32,16 @@ seed; failure remains an error rather than a fabricated successful action.
 
 ## Phase B prerequisites
 
+Keep the accepted seed's private deployment ledger with its Git history. Set
+`SDO_SEED_BROKER_ROOT` to the independently produced seed broker directory before
+installing a fresh rehearsal controller. The adapter passes this trusted host
+path as `install-existing --seed-broker-root`; Go validates the bounded named
+image evidence against accepted history and restores only `source-evidence/`
+after resetting the PVC. Proposals, incident receipts and other private state
+are not imported. A Git-only seed can start with a current lock but loses its
+image authority after the first source repair. Do not infer that authority from
+rendered locks or healthy live Pods.
+
 The experiment lead must first refresh the social seed (JG1, lane 53) and astronomy
 seed (PO1, lane 52). Each fastloop environment must have a green full detector
 baseline, functioning official oracles, full-recovery support, and trusted scoped
