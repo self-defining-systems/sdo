@@ -16,12 +16,39 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 		return result, fmt.Errorf("invalid pending application action %d", index)
 	}
 	patch := result.Patches[index]
+	if patch.Operation != "" {
+		return e.reconcileObjectEffect(ctx, result, index)
+	}
 	if patch.Before == nil || patch.After == nil {
 		return result, fmt.Errorf("pending write has no in-process field images")
+	}
+	if patch.Structured {
+		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
+			return result, err
+		}
 	}
 	live, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil {
 		return result, err
+	}
+	if patch.Structured {
+		if err := e.Safety.checkObject(live, patch.Ref); err != nil {
+			return result, err
+		}
+		if live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
+			return result, fmt.Errorf("structured receipt unknown: UID changed")
+		}
+		before, after := true, true
+		for _, field := range []string{"spec", "data", "binaryData"} {
+			b, bok := patch.Before.Object[field]
+			a, aok := patch.After.Object[field]
+			v, vok := live.Object[field]
+			before = before && planFieldsMatch(b, bok, a, aok, v, vok, true)
+			after = after && planFieldsMatch(b, bok, a, aok, v, vok, false)
+		}
+		if !before && !after {
+			return result, fmt.Errorf("structured receipt unknown: neither field image matches")
+		}
 	}
 	// The write landed unless the object still holds its pre-image. Anything else
 	// is the write plus whatever the server made of it, so no after-image is compared.

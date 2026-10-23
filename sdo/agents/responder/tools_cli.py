@@ -12,6 +12,13 @@ from pathlib import Path
 
 from sdo.agents.responder import recorded_actions
 
+PLAN_ACTIONS = (
+    "SetField updates a schema-checked field by index or unique name, optionally from accepted source; "
+    "ConfigMap JSON/YAML entries preserve unrelated keys.\n"
+    "CreateFromSource restores a named missing object from accepted source.\n"
+    "DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it."
+)
+
 CLI_EXAMPLES = (
     "sdo source Deployment/app/api",
     "sdo diagnose targetport --bind service=Service/app/api",
@@ -47,6 +54,7 @@ def _parser() -> argparse.ArgumentParser:
         command = commands.add_parser(
             name,
             help="evaluate a bound program" if name == "diagnose" else "plan a bound program repair",
+            description=PLAN_ACTIONS if name == "plan" else None,
             epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2],
         )
         command.add_argument("program_id", nargs="?" if name == "diagnose" else None)

@@ -9,7 +9,6 @@ import (
 
 	"context"
 	"fmt"
-	"regexp"
 	"sync"
 	"time"
 
@@ -130,6 +129,23 @@ func (v Verdict) Validate() error {
 
 type Action interface{ action() }
 
+// CreateFromSource restores a missing named object from accepted source.
+type CreateFromSource struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+
+func (CreateFromSource) action() {}
+
+// DeleteObject irreversibly deletes a named object absent from accepted source.
+// Its receipt retains a nonsecret preimage; compensation never recreates it.
+type DeleteObject struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+
+func (DeleteObject) action() {}
+
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
 
 func (ReconcileFromSource) action() {}
@@ -146,6 +162,12 @@ type SetField struct {
 	Path   string
 	Value  any
 	Reason string
+	// ValueFromSource resolves the field against the incident-bound accepted manifest.
+	ValueFromSource bool
+	// DocumentFormat and DocumentPath select a JSON/YAML entry in one ConfigMap key.
+	// JSON edits preserve untouched number tokens; serialization may normalize formatting.
+	DocumentFormat string
+	DocumentPath   []string
 }
 
 func (SetField) action() {}
@@ -162,24 +184,11 @@ type Plan struct {
 	Rationale string
 }
 
-// Allowed SetField paths use dotted Kubernetes field names and numeric list
-// indexes. The patterns are:
-//   - spec.ports[N].{port,targetPort,protocol,name}
-//   - spec.selector[.KEY] and spec.replicas
-//   - spec.template.spec.{containers,initContainers}[N].image
-//   - spec.template.spec.{containers,initContainers}[N].ports[N].{containerPort,hostPort,protocol,name}
-//   - spec.template.spec.{containers,initContainers}[N].{livenessProbe,readinessProbe,startupProbe,env[N],resources}[.FIELD...]
-//
-// N is a numeric list index. A path must match a whole pattern.
-var allowedFieldPaths = []*regexp.Regexp{
-	regexp.MustCompile(`^spec\.ports\[[0-9]+\]\.(port|targetPort|protocol|name)$`),
-	regexp.MustCompile(`^spec\.selector(\.[A-Za-z0-9_./-]+)?$`),
-	regexp.MustCompile(`^spec\.replicas$`),
-	regexp.MustCompile(`^spec\.template\.spec\.(containers|initContainers)\[[0-9]+\]\.(image|ports\[[0-9]+\]\.(containerPort|hostPort|protocol|name)|((liveness|readiness|startup)Probe|env\[[0-9]+\]|resources)(\.[A-Za-z0-9_./-]+)*)$`),
-}
-
 func (p Plan) Validate() error {
 	for _, action := range p.Actions {
+		if err := validateObjectAction(action); err != nil {
+			return err
+		}
 		if action == nil {
 			return fmt.Errorf("nil action")
 		}
@@ -192,15 +201,8 @@ func (p Plan) Validate() error {
 		if !ok {
 			continue
 		}
-		allowed := false
-		for _, pattern := range allowedFieldPaths {
-			if pattern.MatchString(field.Path) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("SetField path %q is not allowed", field.Path)
+		if err := ValidateSetField(field); err != nil {
+			return err
 		}
 	}
 	return nil
