@@ -103,7 +103,15 @@ func (r RenderedLockReconciler) Reconcile(ctx context.Context, revision, namespa
 		}
 		same, identityErr := r.Source.SameInputs(ctx, deployedIdentity, revision)
 		if identityErr != nil || !same {
-			return revision, fmt.Errorf("rendered lock: %s/%s rollout has no matching accepted deployment identity: %v", ref.Kind, ref.Name, identityErr)
+			// Accepted source repairs can invalidate an existing workload's
+			// deployment evidence. Keep that loss explicit and object-scoped:
+			// unrelated Services, ConfigMaps and confirmed absences still need
+			// a current lock. Never authorize its images from this live read.
+			gaps[ref] = "rollout source inputs differ from accepted source"
+			if identityErr != nil {
+				gaps[ref] = fmt.Sprintf("rollout deployment identity unavailable: %v", identityErr)
+			}
+			continue
 		}
 		// Preserve source pins. Other identities come only from the deployer's
 		// durable named evidence, never from this observation or matching Pods.
