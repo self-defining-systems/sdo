@@ -1,0 +1,13 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: verify
+purpose: verify-burst
+ratePerSecond: 12
+duration: 3s
+scenarios:
+  - id: landing-page
+    weight: 1
+  - id: home-timeline-read
+    weight: 1
+  - id: user-timeline-read
+    weight: 1

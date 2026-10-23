@@ -38,6 +38,8 @@ Check ownership/class, objective digest, watches, namespace handling, source-bac
 
 Such a seed (for example `30e023d`) carries checks written knowing the SREGym faults. Its detection and diagnosis results are not a fair SDO measurement; report them as pre-fairness, and use a seed from a fresh lifecycle on the de-tailored code.
 
+The hand-authored seeds `social_network_handwritten` and `astronomy_shop_handwritten` (under `benchmarks/sregym/experiments/assurance/seeds/`) match parts of this signature: their objectives require ConfigMaps and reject NetworkPolicies that deny all traffic. They were written for health-signal evaluations, not by a lifecycle round. Report results that use them as hand-seeded health, separately from both lifecycle-seeded and pre-fairness runs.
+
 ## Finding-state instability
 
 **Signature:** incidents fire or clear unexpectedly, duplicate dispatches occur, or restarts change behavior.
