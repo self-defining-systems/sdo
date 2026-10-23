@@ -59,6 +59,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.adapter"
 depends_on = [
+    "sdo.agents.health_judge",
     "benchmarks.sregym.protocol",
     "sdo.contracts",
     "sdo.agents.responder",

@@ -82,7 +82,7 @@ def prepare(slot: int, output: Path) -> None:
     )
     registrations = output / "registrations"
     registrations.mkdir()
-    for role in ("responder", "reflector"):
+    for role in ("responder", "reflector", "health-judge"):
         payload = json.loads((ROOT / "benchmarks/sregym/adapter/scripted_registrations" / f"{role}.json").read_text())
         payload["kubernetes_job"]["command"].insert(1, f"SDO_SCRIPTED_REPLAY_SLOT={slot}")
         (registrations / f"{role}.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

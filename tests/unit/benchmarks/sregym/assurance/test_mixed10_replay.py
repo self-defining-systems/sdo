@@ -108,6 +108,92 @@ def test_scripted_control_only_tolerates_already_existing_resources(
             mixed10_rehearsal.prepare_scripted_control(environment)
 
 
+@pytest.mark.parametrize("change", ["none", "unqualified-source", "topology", "objective", "missing-detector"])
+def test_scripted_health_refresh_retains_complete_bundle_only_for_same_objective_and_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    from benchmarks.sregym.adapter import scripted_worker
+    from sdo.contracts import HealthJudgeRequest, SourceResource
+
+    monkeypatch.setenv("SDO_SCRIPTED_REPLAY_SLOT", "2")
+    sdo = tmp_path / ".sdo"
+    (sdo / "rendered").mkdir(parents=True)
+    (sdo / "goal.md").write_text("healthy\n")
+    names = {"health-objective", "service-endpoints", "service-reachability", "workload-health"}
+    for name in names:
+        if change == "missing-detector" and name == "workload-health":
+            continue
+        path = sdo / "diagnostics/detectors/health" / name / "manifest.yaml"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"id: {name}\nclass: health\nowner: health_judge\n")
+    ref = {"kind": "Deployment", "namespace": "social-network", "name": "synthetic"}
+    (sdo / "rendered/lock.json").write_text(json.dumps({"manifest_paths": ["kubernetes"], "objects": [{"ref": ref}]}))
+    request = HealthJudgeRequest(
+        namespace="social-network",
+        health_objective="changed" if change == "objective" else "healthy",
+        accepted_source_commit="a" * 40,
+        source_resources=[SourceResource(**ref, source="kubernetes/app.yaml")],
+    )
+    if change == "topology":
+        request.source_resources.add(
+            kind="Service", namespace="social-network", name="new", source="kubernetes/new.yaml"
+        )
+    if change == "unqualified-source":
+        request.source_resources[0].namespace = "default"
+    if change not in ("none", "unqualified-source"):
+        with pytest.raises(ValueError, match="scripted health refresh"):
+            scripted_worker.scripted_health_judge(request, tmp_path)
+    else:
+        result = scripted_worker.scripted_health_judge(request, tmp_path)
+        assert result.authored
+        assert set(result.detector_ids) == names
+        assert not result.HasField("artifact_proposal")
+        assert (sdo / "goal.md").read_text() == "healthy\n"
+
+        from sdo.contracts import (
+            SCHEMA_VERSION,
+            AgentResult,
+            AgentTask,
+            HealthJudgeResult,
+            parse_json,
+            to_canonical_json,
+        )
+
+        request.application = "synthetic"
+        request.attempt = request.validation_attempt = 1
+        request.architecture_summary_markdown = "Synthetic accepted architecture"
+        request.source_topology_fingerprint = "b" * 64
+        task = AgentTask(
+            schema_version=SCHEMA_VERSION,
+            task_id="refresh",
+            agent_id="sdo-health-judge",
+            task_type="health-judgment-direct-v1",
+        )
+        task.workspace.proposal_id = "refresh"
+        task.workspace.checkout_path = str(tmp_path)
+        task.workspace.base_commit = "a" * 40
+        task.request.Pack(request)
+        task_path = tmp_path / "task.json"
+        task_path.write_text(to_canonical_json(task))
+        published = []
+
+        class Publisher:
+            def publish_payload(self, name: str, key: str, payload: str) -> None:
+                published.append((name, key, payload))
+
+        monkeypatch.setattr(scripted_worker, "KubernetesResultPublisher", lambda **kwargs: Publisher())
+        monkeypatch.setenv("SDO_NAMESPACE", "social-network-sdo")
+        monkeypatch.setenv("SDO_RESULT_CONFIGMAP", "refresh-result")
+        monkeypatch.setenv("SDO_TASK_PATH", str(task_path))
+        assert scripted_worker.main(["health-judge"]) == 0
+        assert published[0][:2] == ("refresh-result", "agent-result.json")
+        envelope = parse_json(published[0][2], AgentResult())
+        typed = HealthJudgeResult()
+        assert envelope.response.Unpack(typed)
+        assert envelope.status == "completed"
+        assert set(typed.detector_ids) == names
+
+
 def test_exact_stream_directives() -> None:
     assert len(SLOTS) == 10
     assert [slot.problem_id.split("__")[3] for slot in SLOTS] == [
@@ -293,6 +379,12 @@ def test_phase_b_command_uses_exact_slot_and_no_model_registrations(tmp_path: Pa
         command = json.loads(path.read_text())["kubernetes_job"]["command"]
         assert "SDO_SCRIPTED_REPLAY_SLOT=9" in command
         assert "benchmarks.sregym.adapter.scripted_worker" in command
+    from sdo.contracts import HealthJudgeRequest, HealthJudgeResult
+
+    judge = json.loads((output / "registrations/health-judge.json").read_text())
+    capability = judge["capabilities"][0]
+    assert capability["request_type_url"] == "type.googleapis.com/" + HealthJudgeRequest.DESCRIPTOR.full_name
+    assert capability["result_type_url"] == "type.googleapis.com/" + HealthJudgeResult.DESCRIPTOR.full_name
 
 
 def test_service_restoration_preserves_cluster_allocated_identity(

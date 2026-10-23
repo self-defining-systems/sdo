@@ -64,6 +64,12 @@ namespace and an empty credentials Secret for its required runtime volume. It
 does not read Secret data or alter an existing Secret. Credential slots 1 and 4
 also require two full cleanup passes and a passing recovery oracle after each.
 
+The scripted health-refresh registration retains the accepted complete generic
+bundle only when the objective and selected deployed resource identities match
+the accepted lock. It edits no detector policy. The existing typed judge-task
+wrapper and independent Go broker validation still own acceptance. New topology,
+a changed objective or an incomplete bundle stops the rehearsal.
+
 After the runner completes, the wrapper requires the official mitigation oracle,
 full-cleanup verification, strictly parsed native receipts, broker source and
 outcome commits, and a zero-gap accepted rendered lock bound to the repaired source tree. A stale

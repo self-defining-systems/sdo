@@ -24,3 +24,11 @@ Native Go broker seeds may lack the historical Python lifecycle-provenance file.
 The adapter routes a current-schema goal, architecture and health bundle through
 the Go seeded installer, which independently validates it. Do not add fabricated
 legacy provenance to make a native seed look like a historical lifecycle run.
+
+Source advances also require the native health-refresh task. A scripted refresh
+may retain the complete accepted generic health bundle only with the same goal
+and the same selected deployed resource identities as the accepted lock. It must
+reject missing health detectors, new topology or a changed objective. Require its
+typed result and the independent Go broker validation; it provides no model or
+learning credit. Large non-manifest assets remain part of the source fingerprint
+through streaming, while YAML parsing retains its bounded input budget.

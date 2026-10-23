@@ -238,6 +238,11 @@ benchmark adapter recognizes a current-schema goal, architecture and health
 bundle for seeded installation; the Go installer still independently validates
 that memory before starting the controller.
 
+The storage edge fingerprints all accepted regular source blobs, streaming
+non-manifest assets without retaining their bytes. YAML parsing keeps a 64 MiB
+aggregate budget; large binary assets do not consume that parsing budget. The
+fingerprint encoding and exclusion of operational-memory files remain unchanged.
+
 ### Detector firing telemetry
 
 The controller records, per finding, whether and when each detector fired. The runtime appends `activated`, `cleared`, `not_persisted` (flagged but gone before the detector's firing threshold) and `batched` (the activated finding joined a dispatched incident) records to a JSONL stream, `detector-firings.jsonl`, in the controller's durable runtime area on the repository PVC (`/workspace/.sdo-runtime/telemetry/`, `--firing-telemetry-path`, default on in job mode). It is operational telemetry, not operational memory: it is outside `.sdo/`, changes none of the six artifact classes or their ownership, carries no benchmark labels or verdicts, and is derived only from the controller's deterministic finding state. Each record has the detector id, class, owner, rule id, fingerprint, severity, parameter bindings, surfaced playbooks, firing/clear counts against the persistence policy, the evaluation iteration, the open incident id (empty if none), and `dispatch_relation`: `before_dispatch` (part of the dispatched batch), `after_dispatch` (activated while the responder was in flight) or `no_incident`. Because the batcher debounces, an activation usually records `no_incident` and a later `batched` record settles `before_dispatch`.
