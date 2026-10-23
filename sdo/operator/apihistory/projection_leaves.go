@@ -10,7 +10,6 @@ import (
 
 	"github.com/distribution/reference"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Identifiers (including valid image repository/tag/digest identifiers) are an
@@ -76,7 +75,7 @@ func imageField(v any) (any, bool) {
 
 func portField(v any) (any, bool) {
 	if s, ok := v.(string); ok {
-		return s, len(validation.IsValidPortName(s)) == 0
+		return identifierField("container.port.name")(s)
 	}
 	return numberField(v)
 }
@@ -149,7 +148,8 @@ func fieldPathField(v any) (any, bool) {
 	for _, prefix := range []string{"metadata.labels['", "metadata.annotations['"} {
 		if strings.HasPrefix(s, prefix) && strings.HasSuffix(s, "']") {
 			key := strings.TrimSuffix(strings.TrimPrefix(s, prefix), "']")
-			return s, len(validation.IsQualifiedName(key)) == 0
+			_, valid := identifierField("label.key")(key)
+			return s, valid
 		}
 	}
 	return nil, false
@@ -157,3 +157,17 @@ func fieldPathField(v any) (any, bool) {
 
 var protocolField = enumField("TCP", "UDP", "SCTP")
 var resourceField = enumField("limits.cpu", "limits.memory", "limits.ephemeral-storage", "requests.cpu", "requests.memory", "requests.ephemeral-storage")
+
+// Built-in workload condition types are a finite reviewed vocabulary. Unknown
+// producer values, including well-formed custom identifiers, remain opaque.
+var reviewedWorkloadConditionType = enumField("Available", "Progressing", "ReplicaFailure")
+
+func workloadConditionType(v any) (any, bool) {
+	if value, ok := reviewedWorkloadConditionType(v); ok {
+		return value, true
+	}
+	if _, ok := v.(string); ok {
+		return "redacted", true
+	}
+	return nil, false
+}

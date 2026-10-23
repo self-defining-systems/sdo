@@ -147,6 +147,17 @@ func TestIdentifierGrammarAtPersistenceBoundary(t *testing.T) {
 					case "NetworkPolicy":
 						version = "networking.k8s.io/v1"
 					}
+					metadata, ok := obj["metadata"].(map[string]any)
+					if !ok {
+						metadata = map[string]any{}
+						obj["metadata"] = metadata
+					}
+					if _, exists := metadata["name"]; !exists {
+						metadata["name"] = "p"
+					}
+					if _, exists := metadata["namespace"]; !exists {
+						metadata["namespace"] = "app"
+					}
 					obj["kind"], obj["apiVersion"] = tc.kind, version
 					path := strings.Split(tc.path, ".")
 					if tc.key {
@@ -156,7 +167,18 @@ func TestIdentifierGrammarAtPersistenceBoundary(t *testing.T) {
 						obj = map[string]any{"kind": tc.kind + "List", "apiVersion": version, "items": []any{obj}}
 						path = append([]string{"items", "0"}, path...)
 					}
-					got := recordRetainedLeaf(t, "/api/v1/namespaces/app/pods", "GET", leafJSON(t, obj), "application/json", "")
+					resource := strings.ToLower(tc.kind) + "s"
+					switch tc.kind {
+					case "Endpoints":
+						resource = "endpoints"
+					case "NetworkPolicy":
+						resource = "networkpolicies"
+					}
+					requestPath := "/api/" + version + "/namespaces/app/" + resource
+					if strings.Contains(version, "/") {
+						requestPath = "/apis/" + version + "/namespaces/app/" + resource
+					}
+					got := recordRetainedLeaf(t, requestPath, "GET", leafJSON(t, obj), "application/json", "")
 					var projected any
 					if err := json.Unmarshal(got, &projected); err != nil {
 						t.Fatal(err)
@@ -184,13 +206,13 @@ func TestWorkloadConditionTypeVocabulary(t *testing.T) {
 		for _, list := range []bool{false, true} {
 			for _, value := range []string{"Authorization: Bearer " + retainedLeafCanary, retainedLeafCanary, "Available", "Progressing", "ReplicaFailure"} {
 				t.Run(fmt.Sprintf("%s/list=%t/%s", kind, list, value), func(t *testing.T) {
-					obj := map[string]any{"kind": kind, "apiVersion": "apps/v1", "status": map[string]any{"conditions": []any{map[string]any{"type": value, "status": "False", "reason": "FailedCreate"}}}}
+					obj := map[string]any{"kind": kind, "apiVersion": "apps/v1", "metadata": map[string]any{"name": "p", "namespace": "app"}, "status": map[string]any{"conditions": []any{map[string]any{"type": value, "status": "False", "reason": "FailedCreate"}}}}
 					path := []string{"status", "conditions", "0", "type"}
 					if list {
 						obj = map[string]any{"kind": kind + "List", "apiVersion": "apps/v1", "items": []any{obj}}
 						path = append([]string{"items", "0"}, path...)
 					}
-					got := recordRetainedLeaf(t, "/apis/apps/v1/namespaces/app/deployments", "GET", leafJSON(t, obj), "application/json", "")
+					got := recordRetainedLeaf(t, "/apis/apps/v1/namespaces/app/"+strings.ToLower(kind)+"s", "GET", leafJSON(t, obj), "application/json", "")
 					var projected any
 					if err := json.Unmarshal(got, &projected); err != nil {
 						t.Fatal(err)

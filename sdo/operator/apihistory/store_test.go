@@ -15,7 +15,7 @@ func TestStoreProjectsBeforeHashingAndBoundsIncident(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := []byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"db","namespace":"app","resourceVersion":"opaque"},"data":{"password":"cHJpdmF0ZQ=="},"stringData":{"token":"private"}}`)
+	raw := []byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"db","namespace":"app","resourceVersion":"123"},"data":{"password":"cHJpdmF0ZQ=="},"stringData":{"token":"private"}}`)
 	for range 4 {
 		s.Record(Event{Started: time.Now(), Phase: "end", Verb: "get", Resource: "secrets", Namespace: "app", Name: "db", Status: 200}, raw)
 	}
@@ -27,7 +27,7 @@ func TestStoreProjectsBeforeHashingAndBoundsIncident(t *testing.T) {
 	if len(h.Events) != 2 || h.Manifest.Complete || h.Manifest.Dropped != 2 {
 		t.Fatalf("history: %+v", h)
 	}
-	if h.Events[0].BodyHash != h.Events[1].BodyHash || h.Events[0].ResourceVersion != "opaque" {
+	if h.Events[0].BodyHash != h.Events[1].BodyHash || h.Events[0].ResourceVersion != "123" {
 		t.Fatal("missing hash or resourceVersion")
 	}
 	entries, _ := os.ReadDir(filepath.Join(dir, "blobs"))

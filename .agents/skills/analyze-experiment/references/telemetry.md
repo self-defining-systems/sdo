@@ -56,7 +56,7 @@ payloads remain key names with empty values and no added labels. Service
 `spec.clusterIPPresent` and Pod `status.podIPPresent` are derived booleans, not IPs.
 Endpoints subsets and EndpointSlice objects expose `readyAddressCount` and
 `notReadyAddressCount` (unspecified EndpointSlice readiness counts as ready).
-Annotations, env values, command/args, probe exec commands/headers/hosts, all HTTP
+Annotation contents, env values, command/args, probe exec commands/headers/hosts, all HTTP
 probe paths (including segments, queries and fragments), mount paths and messages
 stay opaque. Probe handler kind, port, scheme and timing remain visible. Image
 references are parsed and normalized; invalid strings and URL credentials, queries
@@ -68,7 +68,37 @@ downward-API expressions are validated/canonicalized. Bulk env references expose
 only name/optional. Identifier names, label/selector keys, reference names/keys and
 valid image identifiers are an accepted disclosure policy, not proof that a
 user-chosen identifier cannot encode a secret. Existing blobs keep the policy of
-the writer that recorded them. Unknown fields and wrong JSON leaf shapes
+the writer that recorded them. The single field-to-grammar table is
+`sdo/operator/apihistory/identifiers.go`; the full per-field disclosure table is
+in `docs/architecture.md`. Names/reference names/node names use DNS-1123
+subdomains (Service object names use DNS-1035 labels); namespaces, container,
+volume and Service/endpoint port names use DNS-1123 labels. Container named ports
+and string target/probe/network-policy ports use Kubernetes named-port validation
+(15 characters with a letter). Label/selector keys, referenced annotation keys,
+Pod custom condition types and HPA metric/resource names use qualified names.
+Data/reference keys use ConfigMap key validation; env names and reference kinds
+use conservative C identifiers. Reference apiVersion is a DNS-1035 version label
+with an optional DNS-1123 group prefix. Invalid leaves and keys are omitted.
+Workload condition types retain only `Available`, `Progressing`, `ReplicaFailure`;
+other types become `redacted`, including token-shaped custom types. Pod custom
+conditions remain useful only when their types satisfy qualified-name syntax.
+Custom HPA metrics/resources also require qualified-name syntax even when the
+API server accepts broader strings. HPA target/described-object references expose
+apiVersion/kind/name, never an invented namespace.
+
+Request group/version/resource/namespace/name/subresource segments have the same
+explicit DNS grammars described in the architecture table. Invalid request
+names/subresources and nondecimal resource versions become field-separated
+HMAC-SHA256 tokens (`opaque:` prefix), keyed randomly per history. The private
+0600 `identity.key` preserves equality across recorder restarts; separate histories
+produce different tokens. Numeric resource versions and valid request identifiers
+(including known subresources) remain visible. Altered request identity makes the
+envelope partial. Tokens allow equality comparisons, not recovery of raw text or
+resource-version ordering; never interpret a missing identity as a wider scope.
+Referenced annotation keys may appear through validated downward-API field paths,
+without disclosing annotation contents.
+
+Unknown fields and wrong JSON leaf shapes
 are dropped. Every projected object keeps `redacted: true`; absence of a field
 must not be read as evidence of its absence in Kubernetes. Label/selector keys
 alone cannot establish selector equality or backend membership. Older blobs may

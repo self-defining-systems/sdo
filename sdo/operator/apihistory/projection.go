@@ -14,7 +14,6 @@ import (
 type projection func(any) (any, bool)
 type projectionFields map[string]projection
 
-func textField(v any) (any, bool)   { s, ok := v.(string); return s, ok }
 func numberField(v any) (any, bool) { n, ok := v.(float64); return n, ok }
 func boolField(v any) (any, bool)   { b, ok := v.(bool); return b, ok }
 func object(fields projectionFields) projection {
@@ -50,18 +49,6 @@ func array(item projection) projection {
 	}
 }
 
-// Label/selector values and Secret/ConfigMap payloads are never retained.
-func keyNames(v any) (any, bool) {
-	input, ok := v.(map[string]any)
-	if !ok {
-		return nil, false
-	}
-	output := make(map[string]any, len(input))
-	for key := range input {
-		output[key] = ""
-	}
-	return output, true
-}
 func presence(fields projectionFields, source, target string) projection {
 	base := object(fields)
 	return func(v any) (any, bool) {
@@ -80,13 +67,17 @@ func presence(fields projectionFields, source, target string) projection {
 }
 
 var labelSelector = object(projectionFields{
-	"matchLabels":      keyNames,
-	"matchExpressions": array(object(projectionFields{"key": textField, "operator": enumField("In", "NotIn", "Exists", "DoesNotExist")})),
+	"matchLabels":      identifierKeys("selector.key"),
+	"matchExpressions": array(object(projectionFields{"key": identifierField("selector.key"), "operator": enumField("In", "NotIn", "Exists", "DoesNotExist")})),
 })
-var conditionFields = array(object(projectionFields{"type": textField, "status": enumField("True", "False", "Unknown"), "reason": reasonField}))
-var referenceFields = object(projectionFields{"name": textField, "key": textField, "optional": boolField})
-var bulkReferenceFields = object(projectionFields{"name": textField, "optional": boolField})
-var portFields = array(object(projectionFields{"name": textField, "port": numberField, "protocol": protocolField}))
+
+func conditions(typeField projection) projection {
+	return array(object(projectionFields{"type": typeField, "status": enumField("True", "False", "Unknown"), "reason": reasonField}))
+}
+
+var referenceFields = object(projectionFields{"name": identifierField("reference.name"), "key": identifierField("reference.key"), "optional": boolField})
+var bulkReferenceFields = object(projectionFields{"name": identifierField("reference.name"), "optional": boolField})
+var portFields = array(object(projectionFields{"name": identifierField("endpoint.port.name"), "port": numberField, "protocol": protocolField}))
 
 // HTTP request targets are opaque, including pathname segments, queries and
 // fragments. Keep handler kind, port, scheme and timing only.
@@ -103,27 +94,27 @@ var probeFields = object(projectionFields{
 // names and future resource-map values do not enter this projection.
 var resourceQuantities = object(projectionFields{"cpu": quantityField, "memory": quantityField, "ephemeral-storage": quantityField, "storage": quantityField})
 var containerFields = array(object(projectionFields{
-	"name": textField, "image": imageField,
-	"ports":          array(object(projectionFields{"name": textField, "containerPort": numberField, "hostPort": numberField, "protocol": protocolField})),
+	"name": identifierField("container.name"), "image": imageField,
+	"ports":          array(object(projectionFields{"name": identifierField("container.port.name"), "containerPort": numberField, "hostPort": numberField, "protocol": protocolField})),
 	"readinessProbe": probeFields, "livenessProbe": probeFields, "startupProbe": probeFields,
 	"resources": object(projectionFields{"requests": resourceQuantities, "limits": resourceQuantities}),
-	"env": array(object(projectionFields{"name": textField, "valueFrom": object(projectionFields{
+	"env": array(object(projectionFields{"name": identifierField("env.name"), "valueFrom": object(projectionFields{
 		"secretKeyRef": referenceFields, "configMapKeyRef": referenceFields,
 		"fieldRef":         object(projectionFields{"apiVersion": enumField("v1"), "fieldPath": fieldPathField}),
-		"resourceFieldRef": object(projectionFields{"containerName": textField, "resource": resourceField, "divisor": quantityField}),
+		"resourceFieldRef": object(projectionFields{"containerName": identifierField("container.name"), "resource": resourceField, "divisor": quantityField}),
 	})})),
 	"envFrom":      array(object(projectionFields{"secretRef": bulkReferenceFields, "configMapRef": bulkReferenceFields})),
-	"volumeMounts": array(object(projectionFields{"name": textField})),
+	"volumeMounts": array(object(projectionFields{"name": identifierField("volume.name")})),
 }))
 var podSpecFields = object(projectionFields{
-	"containers": containerFields, "initContainers": containerFields, "nodeName": textField,
-	"volumes": array(object(projectionFields{"name": textField})),
+	"containers": containerFields, "initContainers": containerFields, "nodeName": identifierField("node.name"),
+	"volumes": array(object(projectionFields{"name": identifierField("volume.name")})),
 })
-var templateFields = object(projectionFields{"metadata": object(projectionFields{"labels": keyNames}), "spec": podSpecFields})
+var templateFields = object(projectionFields{"metadata": object(projectionFields{"labels": identifierKeys("label.key")}), "spec": podSpecFields})
 var workloadStatus = object(projectionFields{
 	"replicas": numberField, "readyReplicas": numberField, "availableReplicas": numberField,
 	"unavailableReplicas": numberField, "updatedReplicas": numberField, "currentReplicas": numberField,
-	"fullyLabeledReplicas": numberField, "conditions": conditionFields,
+	"fullyLabeledReplicas": numberField, "conditions": conditions(workloadConditionType),
 })
 var containerState = object(projectionFields{
 	"waiting":    object(projectionFields{"reason": reasonField}),
@@ -131,22 +122,23 @@ var containerState = object(projectionFields{
 	"terminated": object(projectionFields{"reason": reasonField, "exitCode": numberField}),
 })
 var containerStatuses = array(object(projectionFields{
-	"name": textField, "image": imageField, "ready": boolField, "restartCount": numberField,
+	"name": identifierField("container.name"), "image": imageField, "ready": boolField, "restartCount": numberField,
 	"state": containerState, "lastState": containerState,
 }))
-var objectReference = object(projectionFields{"kind": textField, "namespace": textField, "name": textField, "apiVersion": textField})
+var crossVersionReference = projectionFields{"kind": identifierField("reference.kind"), "name": identifierField("reference.name"), "apiVersion": identifierField("reference.apiVersion")}
+var objectReference = object(projectionFields{"kind": identifierField("reference.kind"), "namespace": identifierField("reference.namespace"), "name": identifierField("reference.name"), "apiVersion": identifierField("reference.apiVersion")})
 var metricTarget = object(projectionFields{"type": enumField("Utilization", "Value", "AverageValue"), "value": quantityField, "averageValue": quantityField, "averageUtilization": numberField})
-var metricIdentifier = object(projectionFields{"name": textField, "selector": labelSelector})
+var metricIdentifier = object(projectionFields{"name": identifierField("metric.name"), "selector": labelSelector})
 var scalingRules = object(projectionFields{
 	"stabilizationWindowSeconds": numberField, "selectPolicy": enumField("Max", "Min", "Disabled"),
 	"policies": array(object(projectionFields{"type": enumField("Pods", "Percent"), "value": numberField, "periodSeconds": numberField})),
 })
 var metricFields = array(object(projectionFields{
 	"type":              enumField("Resource", "ContainerResource", "Pods", "Object", "External"),
-	"resource":          object(projectionFields{"name": textField, "target": metricTarget}),
-	"containerResource": object(projectionFields{"name": textField, "container": textField, "target": metricTarget}),
+	"resource":          object(projectionFields{"name": identifierField("resource.name"), "target": metricTarget}),
+	"containerResource": object(projectionFields{"name": identifierField("resource.name"), "container": identifierField("container.name"), "target": metricTarget}),
 	"pods":              object(projectionFields{"metric": metricIdentifier, "target": metricTarget}),
-	"object":            object(projectionFields{"describedObject": objectReference, "metric": metricIdentifier, "target": metricTarget}),
+	"object":            object(projectionFields{"describedObject": object(crossVersionReference), "metric": metricIdentifier, "target": metricTarget}),
 	"external":          object(projectionFields{"metric": metricIdentifier, "target": metricTarget}),
 }))
 var networkPeers = array(object(projectionFields{
@@ -196,8 +188,8 @@ func endpointSliceCounts(v any) (any, bool) {
 // Every retained nested field is enumerated here or in the shared shapes above.
 var operationalFields = map[string]projectionFields{
 	"Service": {"spec": presence(projectionFields{
-		"type": enumField("ClusterIP", "NodePort", "LoadBalancer", "ExternalName"), "selector": keyNames,
-		"ports": array(object(projectionFields{"name": textField, "port": numberField, "targetPort": portField, "protocol": protocolField, "nodePort": numberField})),
+		"type": enumField("ClusterIP", "NodePort", "LoadBalancer", "ExternalName"), "selector": identifierKeys("selector.key"),
+		"ports": array(object(projectionFields{"name": identifierField("service.port.name"), "port": numberField, "targetPort": portField, "protocol": protocolField, "nodePort": numberField})),
 	}, "clusterIP", "clusterIPPresent")},
 	"Deployment": {"spec": object(projectionFields{
 		"replicas": numberField, "strategy": object(projectionFields{"type": enumField("Recreate", "RollingUpdate")}), "selector": labelSelector, "template": templateFields,
@@ -207,7 +199,7 @@ var operationalFields = map[string]projectionFields{
 	}), "status": workloadStatus},
 	"ReplicaSet": {"spec": object(projectionFields{"replicas": numberField, "selector": labelSelector, "template": templateFields}), "status": workloadStatus},
 	"Pod": {"spec": podSpecFields, "status": presence(projectionFields{
-		"phase": enumField("Pending", "Running", "Succeeded", "Failed", "Unknown"), "conditions": conditionFields, "containerStatuses": containerStatuses, "initContainerStatuses": containerStatuses,
+		"phase": enumField("Pending", "Running", "Succeeded", "Failed", "Unknown"), "conditions": conditions(identifierField("Pod.condition.type")), "containerStatuses": containerStatuses, "initContainerStatuses": containerStatuses,
 	}, "podIP", "podIPPresent")},
 	"Endpoints":     {"subsets": array(endpointSubset)},
 	"EndpointSlice": {"ports": portFields},
@@ -215,7 +207,7 @@ var operationalFields = map[string]projectionFields{
 		"firstTimestamp": timestampField, "lastTimestamp": timestampField, "eventTime": timestampField,
 		"series": object(projectionFields{"count": numberField, "lastObservedTime": timestampField})},
 	"HorizontalPodAutoscaler": {"spec": object(projectionFields{
-		"scaleTargetRef": objectReference, "minReplicas": numberField, "maxReplicas": numberField,
+		"scaleTargetRef": object(crossVersionReference), "minReplicas": numberField, "maxReplicas": numberField,
 		"targetCPUUtilizationPercentage": numberField, // autoscaling/v1
 		"metrics":                        metricFields, "behavior": object(projectionFields{"scaleUp": scalingRules, "scaleDown": scalingRules}),
 	})},
@@ -269,6 +261,10 @@ func validIdentity(input map[string]any) bool {
 }
 
 func projectResponse(raw []byte) ([]byte, string, error) {
+	return projectResponseWithVersion(raw, identifierField("metadata.resourceVersion"))
+}
+
+func projectResponseWithVersion(raw []byte, resourceVersion projection) ([]byte, string, error) {
 	var input map[string]any
 	if err := json.Unmarshal(raw, &input); err != nil {
 		return nil, "", err
@@ -287,7 +283,7 @@ func projectResponse(raw []byte) ([]byte, string, error) {
 	if !validIdentity(input) {
 		return nil, "", errors.New("invalid object metadata")
 	}
-	output := projectItem(input, inputKind, version)
+	output := projectItem(input, inputKind, version, resourceVersion)
 	if strings.HasSuffix(inputKind, "List") {
 		items, valid := input["items"].([]any)
 		if input["items"] != nil && !valid {
@@ -299,22 +295,26 @@ func projectResponse(raw []byte) ([]byte, string, error) {
 			if !ok || !validIdentity(item) {
 				return nil, "", errors.New("invalid list item")
 			}
-			projected = append(projected, projectItem(item, kind, version))
+			projected = append(projected, projectItem(item, kind, version, resourceVersion))
 		}
 		output["items"] = projected
 	}
-	metadata, _ := input["metadata"].(map[string]any)
+	metadata := output["metadata"].(map[string]any)
 	rv, _ := metadata["resourceVersion"].(string)
 	b, err := json.Marshal(output)
 	return b, rv, err
 }
-func projectItem(input map[string]any, kind, version string) map[string]any {
-	metaFields := projectionFields{"name": textField, "namespace": textField, "resourceVersion": textField}
+func projectItem(input map[string]any, kind, version string, resourceVersion projection) map[string]any {
+	nameField := "metadata.name"
+	if kind == "Service" {
+		nameField = "Service.metadata.name"
+	}
+	metaFields := projectionFields{"name": identifierField(nameField), "namespace": identifierField("metadata.namespace"), "resourceVersion": resourceVersion}
 	if kind != "Secret" && kind != "ConfigMap" && !strings.HasSuffix(kind, "List") {
-		metaFields["labels"] = keyNames
+		metaFields["labels"] = identifierKeys("label.key")
 	}
 	if kind == "Pod" {
-		metaFields["ownerReferences"] = array(object(projectionFields{"kind": textField, "name": textField}))
+		metaFields["ownerReferences"] = array(object(projectionFields{"kind": identifierField("reference.kind"), "name": identifierField("reference.name")}))
 	}
 	metadata := map[string]any{}
 	if value, ok := object(metaFields)(input["metadata"]); ok {
@@ -330,7 +330,7 @@ func projectItem(input map[string]any, kind, version string) map[string]any {
 	output["apiVersion"], output["kind"], output["metadata"], output["redacted"] = version, kind, metadata, true
 	if kind == "Secret" || kind == "ConfigMap" {
 		for _, name := range []string{"data", "stringData", "binaryData"} {
-			if keys, ok := keyNames(input[name]); ok && len(keys.(map[string]any)) > 0 {
+			if keys, ok := identifierKeys("data.key")(input[name]); ok && len(keys.(map[string]any)) > 0 {
 				output[name] = keys
 			}
 		}

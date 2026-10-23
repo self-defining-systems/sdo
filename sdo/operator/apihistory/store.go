@@ -86,6 +86,7 @@ type Store struct {
 	queuedBytes atomic.Int64
 	projecting  chan struct{}
 	projections sync.WaitGroup
+	identityKey []byte
 	directory   string
 	limits      Limits
 	manifest    Manifest
@@ -125,6 +126,10 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(directory, "blobs"), 0700); err != nil {
 		return nil, err
 	}
+	identityKey, err := historyIdentityKey(directory)
+	if err != nil {
+		return nil, err
+	}
 	m := Manifest{Version: 1, Incident: incident, Complete: true}
 	data, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
 	if err == nil {
@@ -148,7 +153,7 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{directory: directory, limits: limits.defaults(), manifest: m, file: f, done: make(chan struct{})}
+	s := &Store{identityKey: identityKey, directory: directory, limits: limits.defaults(), manifest: m, file: f, done: make(chan struct{})}
 	s.dropped.Store(m.Dropped)
 	s.queue = make(chan observation, s.limits.Queue)
 	s.projecting = make(chan struct{}, 8)
@@ -174,6 +179,7 @@ func (s *Store) Record(event Event, raw []byte) {
 	if s.closed {
 		return
 	}
+	event = s.projectEvent(event)
 	event.BodyHash = ""
 	if event.BodyFormat == "log_tail" || event.Subresource == "log" {
 		event.BodyFormat = ""
@@ -203,7 +209,7 @@ func (s *Store) Record(event Event, raw []byte) {
 		go func() {
 			defer s.projections.Done()
 			defer func() { <-s.projecting }()
-			body, rv, err := projectResponse(captured)
+			body, rv, err := projectResponseWithVersion(captured, s.opaqueIdentifier("metadata.resourceVersion"))
 			event.ResourceVersion = rv
 			if err != nil {
 				event.Omission = "redacted_unsupported_projection"

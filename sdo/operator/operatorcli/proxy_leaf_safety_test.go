@@ -88,7 +88,14 @@ func recordRetainedLeaf(t *testing.T, path, method, body, contentType, encoding 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, cmd := range [][]string{{"history"}, {"state", "Pod/app/p", "--at", time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)}} {
+	var input struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal([]byte(body), &input); err != nil {
+		input.Kind = "Pod"
+	}
+	selector := strings.TrimSuffix(input.Kind, "List") + "/app/p"
+	for _, cmd := range [][]string{{"history"}, {"state", selector, "--at", time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)}} {
 		var out bytes.Buffer
 		if err := operatorcli.RunEvidence(cmd, func(string) string { return dir }, &out); err != nil {
 			t.Fatal(err)

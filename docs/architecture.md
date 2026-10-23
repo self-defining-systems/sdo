@@ -255,8 +255,7 @@ address counts and ports; Event reason/type/object/count/timestamps; and reviewe
 HPA, PDB and NetworkPolicy spec structure. Labels and selector match labels retain
 keys with empty values; selector expressions retain keys/operators, never values.
 Service clusterIP and Pod podIP become presence booleans; endpoint addresses become
-ready/not-ready counts. Secret/ConfigMap payloads remain key names only. All
-annotations, environment values, commands/arguments (including probe exec), probe
+ready/not-ready counts. Secret/ConfigMap payloads remain key names only. All annotation contents, environment values, commands/arguments (including probe exec), probe
 headers/hosts and all HTTP probe paths (including pathname segments, queries and
 fragments), mount paths and messages stay opaque under an explicit `redacted`
 marker. Probe handler kind, port, scheme and timing remain visible. Image strings
@@ -272,6 +271,43 @@ Identity names, label/selector keys, reference names/keys and valid image
 identifiers are an accepted disclosure boundary: user-chosen identifiers can
 encode secrets, so this is not a universal credential-absence guarantee. These
 rules apply to new recordings; existing blobs retain their original projection.
+The identity policy is centralized in
+[identifiers.go](../sdo/operator/apihistory/identifiers.go), with these per-field grammars:
+
+| Retained field | Disclosure grammar |
+| --- | --- |
+| Object names (except Service), node names and reference names | DNS-1123 subdomain, at most 253 characters |
+| Service object names | DNS-1035 label, at most 63 characters |
+| Namespaces, container/status/HPA-container names, volumes and mount names | DNS-1123 label, at most 63 characters |
+| Label keys, selector keys and referenced downward-API annotation/label keys | Kubernetes qualified name: optional DNS subdomain prefix and a 63-character name |
+| Secret/ConfigMap data keys and env key-selector keys | Kubernetes ConfigMap key: alphanumeric, `.`, `_`, `-`, at most 253 characters; reserved dot paths excluded |
+| Environment variable names and reference kinds | C identifier (`[A-Za-z_][A-Za-z0-9_]*`), a conservative disclosure policy |
+| Container port names, string targetPorts, network-policy and probe ports | Kubernetes named port: lowercase alphanumeric/hyphens, at most 15 characters, with a letter |
+| Service and endpoint port names | DNS-1123 label, at most 63 characters |
+| Reference apiVersion | DNS-1035 version label, optionally preceded by a DNS-1123 group subdomain and `/` |
+| HPA Pods/Object/External metric names and Resource/ContainerResource resource names | Kubernetes qualified name; custom names are retained only in that grammar, even if API admission allows broader text |
+| Pod condition types, including custom readiness conditions | Kubernetes qualified name |
+| Workload condition types | Finite reviewed vocabulary: `Available`, `Progressing`, `ReplicaFailure`; all other strings become `redacted` |
+| Request group; version; resource/subresource; namespace; name | DNS-1123 subdomain; DNS-1035 label; DNS-1123 label; DNS-1123 label; DNS-1123 subdomain, respectively |
+| Object/list/item and envelope resourceVersion | Nonempty ASCII decimal digits; other opaque values become tokens |
+
+Invalid identity leaves and map keys are omitted without echoing input or validator
+errors. HPA `scaleTargetRef` and object-metric `describedObject` use the actual
+CrossVersionObjectReference shape (apiVersion/kind/name), with no namespace.
+Invalid request names/subresources and nondecimal resource versions instead become
+`opaque:<HMAC-SHA256>` tokens. The hash uses a random 32-byte key stored privately
+in that history's `identity.key` (0600), with a field domain separator. Equality
+is preserved within each field across objects, lists, envelopes and recorder
+restarts in one history, without correlating separate histories. Known
+subresources such as `status`, `scale`, `log`, `exec`, `attach`, `portforward`,
+`token` and `finalize` pass through. Other valid subresource identifiers also pass;
+invalid group/version/resource/namespace segments are omitted. Altered request
+identity marks the envelope partial so an invalid namespace cannot widen an
+absence claim. The key and raw rejected values never appear in evidence CLI
+output. Numeric resource versions are retained as identities, not interpreted as
+ordered counters. A valid referenced annotation key remains visible in a
+validated downward-API expression; its annotation value remains opaque.
+
 Unknown fields and wrong JSON shapes cannot widen the allowlist. The
 enforced field-by-field allowlist is in [projection.go](../sdo/operator/apihistory/projection.go). Unsupported representations,
 all log bodies, watches and connection payloads retain envelopes only. Body

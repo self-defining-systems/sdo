@@ -29,8 +29,16 @@ func TestHistoryScopedOpaqueIdentityTokens(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e := h.Events[len(h.Events)-2]
-		other := h.Events[len(h.Events)-1]
+		// Body projection runs asynchronously; locate the responses by shape,
+		// never by completion order.
+		var e, other Event
+		for _, event := range h.Events[len(h.Events)-2:] {
+			if event.BodyHash != "" {
+				e = event
+			} else {
+				other = event
+			}
+		}
 		if e.Name == secret || !strings.HasPrefix(e.Name, "opaque:") || !strings.HasPrefix(e.Subresource, "opaque:") || !strings.HasPrefix(e.ResourceVersion, "opaque:") {
 			t.Fatal("invalid identity was not tokenized")
 		}
