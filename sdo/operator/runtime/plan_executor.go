@@ -132,7 +132,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 			defer cancel()
 			if rollbackErr := e.rollback(recoveryCtx, &result); rollbackErr != nil {
 				result.RollbackError = rollbackErr.Error()
-				result.RollingBack = true
+				result.RollingBack = result.RollbackCompleted < len(result.ActionsApplied)
 				err = errors.Join(err, fmt.Errorf("compensate partial application: %w", rollbackErr))
 			} else {
 				result.RolledBack = true
@@ -319,13 +319,22 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		return errors.New("plan object client is required")
 	}
 	application.RollingBack = true
+	var irreversible error
+	// Keep irreversible effects disclosed even when resuming a completed walk.
+	for i := 0; i < len(application.ActionsApplied) && i < len(application.Patches); i++ {
+		patch := application.Patches[i]
+		if patch.Operation == "delete" {
+			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible deletion of %s/%s was not restored; never auto-recreate", patch.Ref.Kind, patch.Ref.Name))
+		}
+	}
 	for index := len(application.ActionsApplied) - 1 - application.RollbackCompleted; index >= 0; index-- {
 		if index >= len(application.Patches) {
 			return errors.New("rollback requires in-process field writes")
 		}
 		patch := application.Patches[index]
 		if patch.Operation == "delete" {
-			return fmt.Errorf("irreversible deletion of %s/%s cannot be compensated; never auto-recreate", patch.Ref.Kind, patch.Ref.Name)
+			application.RollbackCompleted++
+			continue
 		}
 		if patch.Operation == "create" {
 			if err := e.restoreCreatedObject(ctx, patch); err != nil {
@@ -343,6 +352,10 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 		application.RollbackCompleted++
 	}
 	application.RollingBack = false
+	if irreversible != nil {
+		application.RollbackError = irreversible.Error()
+		return irreversible
+	}
 	application.RolledBack = true
 	application.RollbackError = ""
 	return nil
