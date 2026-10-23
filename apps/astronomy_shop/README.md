@@ -8,10 +8,18 @@ submodule and the SREGym-compatible Helm chart in the pinned `charts/` submodule
 The checked-in `kubernetes/astronomy-shop.yaml` is plain Kubernetes source for
 SDO's existing manifest strategy. It preserves the reference chart's images,
 24 Deployments, OpenSearch StatefulSet, collector DaemonSet, service names,
-labels, ports, database initialization, telemetry and `flagd-config` flags.
+labels, supported ports, database initialization, telemetry and `flagd-config` flags.
 The release and namespace are `astronomy-shop`; the storefront is
 `frontend-proxy:8080` and the workload control endpoint is `load-generator:8089`.
 As in SREGym, bundled Prometheus and browser workload traffic are disabled.
+
+The renderer applies three baseline corrections verified against source-built
+images: memory headroom for accounting (256 MiB), shipping (128 MiB) and the
+flagd UI (512 MiB); a collector Prometheus reader listening on port 8888 in
+addition to its OTLP reader; and removal of OpenSearch's unused port 9600.
+The pinned OpenSearch image disables Performance Analyzer because its required
+configuration is absent. OpenSearch HTTP and transport remain on 9200/9300.
+CPU limits, image versions, application flags and health detectors are unchanged.
 
 Initialize the two source submodules from the repository root:
 

@@ -3,8 +3,41 @@
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+
+def prepare_baseline(obj: dict[str, Any]) -> None:
+    """Keep the pinned chart's declared baseline consistent with its images."""
+    kind, name = obj["kind"], obj["metadata"]["name"]
+    if kind == "Deployment":
+        limits = {("accounting", "accounting"): "256Mi", ("shipping", "shipping"): "128Mi",
+                  ("flagd", "flagd-ui"): "512Mi"}
+        for container in obj["spec"]["template"]["spec"]["containers"]:
+            if memory := limits.get((name, container["name"])):
+                container["resources"]["limits"]["memory"] = memory
+    if kind == "ConfigMap" and name == "otel-collector-agent":
+        config = yaml.safe_load(obj["data"]["relay"])
+        readers = config["service"]["telemetry"]["metrics"]["readers"]
+        # The periodic OTLP reader does not serve the chart's metrics Service.
+        prometheus = {"host": "0.0.0.0", "port": 8888}
+        for reader in readers:
+            exporter = reader.get("pull", {}).get("exporter", {})
+            if "prometheus" in exporter:
+                exporter["prometheus"].update(prometheus)
+                break
+        else:
+            readers.append({"pull": {"exporter": {"prometheus": prometheus}}})
+        obj["data"]["relay"] = yaml.safe_dump(config, sort_keys=False)
+    # The pinned OpenSearch 3.4 image disables Performance Analyzer because
+    # its required configuration is absent. Preserve HTTP/transport, without
+    # advertising a metrics listener that the image does not provide.
+    if kind == "Service" and name in {"opensearch", "opensearch-headless"}:
+        obj["spec"]["ports"] = [p for p in obj["spec"]["ports"] if p["port"] != 9600]
+    if kind == "StatefulSet" and name == "opensearch":
+        for container in obj["spec"]["template"]["spec"]["containers"]:
+            container["ports"] = [p for p in container["ports"] if p["containerPort"] != 9600]
 
 
 def main() -> None:
@@ -36,6 +69,7 @@ def main() -> None:
     for obj in yaml.safe_load_all(rendered):
         if not obj:
             continue
+        prepare_baseline(obj)
         if obj["kind"] in {"ClusterRole", "ClusterRoleBinding"}:
             infrastructure.append(obj)
         else:
