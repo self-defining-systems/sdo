@@ -54,3 +54,7 @@ The renderer fixes the Kubernetes API version, validates source revisions and
 Helm version, and assigns the application namespace explicitly. Render twice
 and compare bytes to check reproducibility. Public demo configuration is included
 by the upstream chart; never use it as a production credential configuration.
+
+Image build declarations and Dockerfile-specific scope files are described in
+[scoped application image inputs](../BUILD_INPUTS.md). Prepare those scope files
+before fresh builds and trusted deployment evidence collection.

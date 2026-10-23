@@ -75,6 +75,11 @@ type SourceEvidence struct {
 }
 
 type Broker struct {
+	// MetricsDetectors installs the optional generic metrics detectors when
+	// the health judge's initial memory is accepted. Set it only where a
+	// metrics source is configured.
+	MetricsDetectors bool
+
 	target        string
 	workspaceRoot string
 	validator     Validator
@@ -251,7 +256,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 		}
 		// Validate before copying so invalid filesystem shapes also receive the
 		// shared diagnostics. Recheck the frozen private clone with the real runner.
-		preflight, err := checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision)
+		preflight, err := checkCandidate(ctx, proposal.Path, proposal.BaseCommit, actor, phase, paths, func(context.Context, string, []string) error { return nil }, publication, decision, b.MetricsDetectors)
 		if err != nil {
 			return err
 		}
@@ -287,7 +292,7 @@ func (b *Broker) publish(ctx context.Context, incidentID string, actor Actor, ph
 				return err
 			}
 		}
-		diagnostics, err := checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision)
+		diagnostics, err := checkCandidate(ctx, stage, proposal.BaseCommit, actor, phase, paths, b.validator, publication, decision, b.MetricsDetectors)
 		if err != nil {
 			return fmt.Errorf("proposal validation: %w", err)
 		}

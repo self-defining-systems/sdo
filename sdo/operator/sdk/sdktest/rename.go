@@ -241,6 +241,7 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("copy %s for rename replay: %w", source.SourceName, err)
 	}
 	result.SourceName, result.Traffic = source.SourceName, source.Traffic
+	result.Metrics, result.Alerts = source.Metrics, source.Alerts
 	namespace := source.NamespaceName
 	for index := range result.ConfigMapList {
 		renameMeta(&result.ConfigMapList[index].ObjectMeta, namespace, m)

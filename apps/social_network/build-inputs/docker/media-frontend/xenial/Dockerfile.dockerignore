@@ -1,0 +1,4 @@
+# Exclude operational/deployment files from fresh source builds.
+.git
+.sdo
+kubernetes
