@@ -13,6 +13,7 @@ func TestUnreplayableMitigationAcceptedWithTypedNote(t *testing.T) {
 		{program.ReconcileFromSource{Ref: ref}},
 		{program.Rollback{Ref: ref, ToRevision: "accepted"}},
 		{program.RestartRollout{Ref: ref}},
+		{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", ValueFromSource: true}},
 		{program.SetField{Ref: ref, Path: "spec.ports[0].targetPort", Value: 9999}, program.ReconcileFromSource{Ref: ref}},
 	} {
 		result, err := CheckMitigation(targetport.Program{}, fixtureMitigator{actions: actions}, c)

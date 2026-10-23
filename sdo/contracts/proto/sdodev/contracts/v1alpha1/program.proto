@@ -90,6 +90,9 @@ message SetField {
   string path = 2 [(buf.validate.field).string.min_len = 1];
   google.protobuf.Value value = 3 [(buf.validate.field).required = true];
   string reason = 4 [(buf.validate.field).string.min_len = 1];
+  bool value_from_source = 5;
+  string document_format = 6 [(buf.validate.field).string = {in: ["", "json", "yaml"]}];
+  repeated string document_path = 7;
 }
 
 message RestartRollout {

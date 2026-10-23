@@ -119,16 +119,22 @@ class Rollback(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., to_revision: _Optional[str] = ...) -> None: ...
 
 class SetField(_message.Message):
-    __slots__ = ("ref", "path", "value", "reason")
+    __slots__ = ("ref", "path", "value", "reason", "value_from_source", "document_format", "document_path")
     REF_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     VALUE_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FROM_SOURCE_FIELD_NUMBER: _ClassVar[int]
+    DOCUMENT_FORMAT_FIELD_NUMBER: _ClassVar[int]
+    DOCUMENT_PATH_FIELD_NUMBER: _ClassVar[int]
     ref: _common_pb2.ObjectRef
     path: str
     value: _struct_pb2.Value
     reason: str
-    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
+    value_from_source: bool
+    document_format: str
+    document_path: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., reason: _Optional[str] = ..., value_from_source: _Optional[bool] = ..., document_format: _Optional[str] = ..., document_path: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class RestartRollout(_message.Message):
     __slots__ = ("ref", "reason")

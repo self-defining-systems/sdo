@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,12 +22,19 @@ func configureSyntheticMenu(t *testing.T, loop *ResponderLoop, cluster *menuB3Cl
 	for _, kind := range []struct{ version, kind string }{{"v1", "Service"}, {"apps/v1", "Deployment"}, {"v1", "ConfigMap"}, {"v1", "Pod"}, {"apps/v1", "ReplicaSet"}, {"v1", "Endpoints"}, {"discovery.k8s.io/v1", "EndpointSlice"}, {"networking.k8s.io/v1", "NetworkPolicy"}, {"v1", "Event"}, {"apps/v1", "StatefulSet"}, {"autoscaling/v2", "HorizontalPodAutoscaler"}, {"policy/v1", "PodDisruptionBudget"}} {
 		deps = append(deps, sdk.WatchKind{APIVersion: kind.version, Kind: kind.kind, Namespace: "app"})
 	}
+	approvedPodSpec, _, _ := unstructured.NestedMap(cluster.objects[menuDeployment].Object, "spec", "template", "spec")
 	loop.MenuConfig = &ResponderMenuConfig{Reader: cluster, Dependencies: deps, Safety: &ResponderMenuSafety{Digest: "synthetic-policy", AuthorizeRead: func(_ context.Context, k sdk.WatchKind) error {
 		if k.Kind == "Secret" {
 			return errMenuSafety
 		}
 		return nil
 	}, AuthorizeObject: func(_ context.Context, ref sdk.ObjectRef, obj *unstructured.Unstructured) error {
+		if ref == menuDeployment {
+			podSpec, _, _ := unstructured.NestedMap(obj.Object, "spec", "template", "spec")
+			if !reflect.DeepEqual(approvedPodSpec, podSpec) {
+				return errMenuSafety
+			}
+		}
 		if ref != menuService && ref != menuDeployment {
 			return errMenuSafety
 		}

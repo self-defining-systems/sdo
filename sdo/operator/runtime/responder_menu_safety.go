@@ -53,50 +53,9 @@ func (s *ResponderMenuSafety) object(ctx context.Context, ref sdk.ObjectRef, obj
 	if object == nil || ref.Kind == "Secret" || object.GetKind() == "Secret" || s.AuthorizeObject == nil {
 		return errMenuSafety
 	}
-	// Reject credential consumers and opaque executable content before authored
-	// diagnosis or serialization. Inspect every nested pod template/init container.
-	var inspect func(any) bool
-	inspect = func(value any) bool {
-		switch v := value.(type) {
-		case map[string]any:
-			for key, child := range v {
-				switch key {
-				case "secret", "secretRef", "secretKeyRef", "envFrom", "imagePullSecrets", "projected", "csi", "hostPath", "persistentVolumeClaim", "configMap", "configMapKeyRef", "command", "args":
-					return false
-				case "privileged", "hostNetwork", "hostPID", "hostIPC":
-					if child == true {
-						return false
-					}
-				case "env":
-					if values, ok := child.([]any); ok {
-						for _, item := range values {
-							if env, ok := item.(map[string]any); ok {
-								if _, exists := env["value"]; exists {
-									return false
-								}
-							}
-						}
-					}
-				}
-				if !inspect(child) {
-					return false
-				}
-			}
-			if _, ok := v["containers"]; ok {
-				if v["automountServiceAccountToken"] != false || v["serviceAccountName"] == nil || v["serviceAccountName"] == "" {
-					return false
-				}
-			}
-		case []any:
-			for _, child := range v {
-				if !inspect(child) {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	if !inspect(object.Object) || s.AuthorizeObject(ctx, ref, object.DeepCopy()) != nil {
+	// Share the executor's structural Secret predicate. Exact nonsecret content,
+	// consumer closure and admission remain mandatory independent capabilities.
+	if planSecretPredicate(object) != nil || s.AuthorizeObject(ctx, ref, object.DeepCopy()) != nil {
 		return errMenuSafety
 	}
 	return nil
@@ -234,4 +193,12 @@ func (c *menuPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return err
 	}
 	return l.selection.completeAction(ctx, c.attempt, id, c.phase == "compensation", string(live.GetUID()), live.GetResourceVersion())
+}
+
+func (c *menuPlanClient) TokenlessServiceAccount(ctx context.Context, ref sdk.ObjectRef) (string, error) {
+	inspector, ok := c.PlanObjectClient.(PlanIdentityInspector)
+	if !ok {
+		return "", errMenuSafety
+	}
+	return inspector.TokenlessServiceAccount(ctx, ref)
 }

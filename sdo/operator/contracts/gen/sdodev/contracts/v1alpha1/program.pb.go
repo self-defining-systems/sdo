@@ -698,13 +698,16 @@ func (x *Rollback) GetToRevision() string {
 }
 
 type SetField struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ref           *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Value         *structpb.Value        `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
-	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Ref             *ObjectRef             `protobuf:"bytes,1,opt,name=ref,proto3" json:"ref,omitempty"`
+	Path            string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Value           *structpb.Value        `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	Reason          string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	ValueFromSource bool                   `protobuf:"varint,5,opt,name=value_from_source,json=valueFromSource,proto3" json:"value_from_source,omitempty"`
+	DocumentFormat  string                 `protobuf:"bytes,6,opt,name=document_format,json=documentFormat,proto3" json:"document_format,omitempty"`
+	DocumentPath    []string               `protobuf:"bytes,7,rep,name=document_path,json=documentPath,proto3" json:"document_path,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SetField) Reset() {
@@ -763,6 +766,27 @@ func (x *SetField) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *SetField) GetValueFromSource() bool {
+	if x != nil {
+		return x.ValueFromSource
+	}
+	return false
+}
+
+func (x *SetField) GetDocumentFormat() string {
+	if x != nil {
+		return x.DocumentFormat
+	}
+	return ""
+}
+
+func (x *SetField) GetDocumentPath() []string {
+	if x != nil {
+		return x.DocumentPath
+	}
+	return nil
 }
 
 type RestartRollout struct {
@@ -1547,12 +1571,15 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bRollback\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12(\n" +
 	"\vto_revision\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
-	"toRevision\"\xbe\x01\n" +
+	"toRevision\"\xcd\x02\n" +
 	"\bSetField\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1b\n" +
 	"\x04path\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\x124\n" +
 	"\x05value\x18\x03 \x01(\v2\x16.google.protobuf.ValueB\x06\xbaH\x03\xc8\x01\x01R\x05value\x12\x1f\n" +
-	"\x06reason\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"q\n" +
+	"\x06reason\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\x12*\n" +
+	"\x11value_from_source\x18\x05 \x01(\bR\x0fvalueFromSource\x12<\n" +
+	"\x0fdocument_format\x18\x06 \x01(\tB\x13\xbaH\x10r\x0eR\x00R\x04jsonR\x04yamlR\x0edocumentFormat\x12#\n" +
+	"\rdocument_path\x18\a \x03(\tR\fdocumentPath\"q\n" +
 	"\x0eRestartRollout\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
 	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xea\x03\n" +

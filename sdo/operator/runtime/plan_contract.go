@@ -79,7 +79,7 @@ func planActionProto(action program.Action) (*contracts.Action, error) {
 		if err != nil {
 			return nil, fmt.Errorf("encode SetField value: %w", err)
 		}
-		return &contracts.Action{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: planRefProto(a.Ref), Path: a.Path, Value: value, Reason: a.Reason}}}, nil
+		return &contracts.Action{Kind: &contracts.Action_SetField{SetField: &contracts.SetField{Ref: planRefProto(a.Ref), Path: a.Path, Value: value, Reason: a.Reason, ValueFromSource: a.ValueFromSource, DocumentFormat: a.DocumentFormat, DocumentPath: a.DocumentPath}}}, nil
 	case program.RestartRollout:
 		return &contracts.Action{Kind: &contracts.Action_RestartRollout{RestartRollout: &contracts.RestartRollout{Ref: planRefProto(a.Ref), Reason: a.Reason}}}, nil
 	case *program.ReconcileFromSource:
@@ -114,7 +114,7 @@ func planActionState(action *contracts.Action) program.Action {
 	case *contracts.Action_Rollback:
 		decoded = program.Rollback{Ref: objectRefState(kind.Rollback.GetRef()), ToRevision: kind.Rollback.GetToRevision()}
 	case *contracts.Action_SetField:
-		decoded = program.SetField{Ref: objectRefState(kind.SetField.GetRef()), Path: kind.SetField.GetPath(), Value: kind.SetField.GetValue().AsInterface(), Reason: kind.SetField.GetReason()}
+		decoded = program.SetField{Ref: objectRefState(kind.SetField.GetRef()), Path: kind.SetField.GetPath(), Value: kind.SetField.GetValue().AsInterface(), Reason: kind.SetField.GetReason(), ValueFromSource: kind.SetField.GetValueFromSource(), DocumentFormat: kind.SetField.GetDocumentFormat(), DocumentPath: kind.SetField.GetDocumentPath()}
 	case *contracts.Action_RestartRollout:
 		decoded = program.RestartRollout{Ref: objectRefState(kind.RestartRollout.GetRef()), Reason: kind.RestartRollout.GetReason()}
 	}
