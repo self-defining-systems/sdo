@@ -29,7 +29,7 @@ func (i Installer) Prepare(ctx context.Context, cfg Config, seed RepositorySeede
 	if i.Client == nil {
 		return errors.New("Kubernetes client is required")
 	}
-	plan, err := Resources(cfg)
+	plan, err := i.resources(cfg)
 	if err != nil {
 		return err
 	}
@@ -143,6 +143,12 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	if cfg.RegistryInsecure {
 		args = append(args, "--registry-insecure")
+	}
+	if cfg.PermissiveResponder {
+		args = append(args, "--permissive-responder")
+	}
+	for _, ns := range cfg.ResponderNamespaces {
+		args = append(args, "--responder-namespace", ns)
 	}
 	if cfg.HealthyBaseline {
 		args = append(args, "--healthy-baseline")

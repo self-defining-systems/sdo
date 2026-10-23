@@ -59,11 +59,17 @@ class NativeInstallConfig:
     duration_seconds: int | None = None
     exit_after_closure: bool = False
     healthy_baseline: bool = False
+    permissive_responder: bool = False
+    responder_namespaces: tuple[str, ...] = ()
     registration_configmap: str | None = None
     responder_env: tuple[str, ...] = ()
     deployed_manifest_paths: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if type(self.permissive_responder) is not bool:
+            raise TypeError("permissive_responder must be a boolean")
+        if self.responder_namespaces and not self.permissive_responder:
+            raise ValueError("responder_namespaces requires permissive_responder")
         if not self.repository.is_absolute():
             raise ValueError("accepted repository path must be absolute")
         if self.kubeconfig is not None and not self.kubeconfig.is_absolute():
@@ -137,6 +143,10 @@ class NativeInstallConfig:
             args.extend(("--agent-registration-configmap", self.registration_configmap))
         if self.healthy_baseline:
             args.append("--healthy-baseline")
+        if self.permissive_responder:
+            args.append("--permissive-responder")
+        for namespace in self.responder_namespaces:
+            args.extend(("--responder-namespace", namespace))
         for value in self.responder_env:
             args.extend(("--responder-env", value))
         return args

@@ -64,6 +64,8 @@ type Config struct {
 	RegistryInsecure                                bool
 	RegistryPushDockerConfig                        []byte
 	ReuseExisting, WaitForCompletion                bool
+	PermissiveResponder                             bool
+	ResponderNamespaces                             []string
 }
 
 type Plan struct {
@@ -76,6 +78,8 @@ type Plan struct {
 	ServiceAccounts              []*corev1.ServiceAccount
 	ControlRoles, AppRoles       []*rbacv1.Role
 	ControlBindings, AppBindings []*rbacv1.RoleBinding
+	ClusterRoles                 []*rbacv1.ClusterRole
+	ClusterBindings              []*rbacv1.ClusterRoleBinding
 	SyncPod                      *corev1.Pod
 	Job                          *batchv1.Job
 }
@@ -216,7 +220,7 @@ func (c Config) validate() error {
 	return nil
 }
 
-func Resources(c Config) (Plan, error) {
+func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	if err := c.validate(); err != nil {
 		return Plan{}, err
 	}
@@ -281,11 +285,24 @@ func Resources(c Config) (Plan, error) {
 	for _, name := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
 		plan.ControlBindings = append(plan.ControlBindings, binding(control, name, name, control))
 	}
+	if err := addPermissiveGrants(c, &plan, resources); err != nil {
+		return Plan{}, err
+	}
 	addObservationGrants(&plan, c)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
 		plan.Job.Spec.Template.Annotations = map[string]string{"sdo.dev/accepted-commit": c.AcceptedCommit}
+	}
+	if c.PermissiveResponder {
+		settings, err := json.Marshal(c.ResponderNamespaces)
+		if err != nil {
+			return Plan{}, err
+		}
+		if plan.Job.Spec.Template.Annotations == nil {
+			plan.Job.Spec.Template.Annotations = map[string]string{}
+		}
+		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
 	}
 	fingerprintJob := plan.Job.DeepCopy()
 	fingerprintJob.Annotations = nil

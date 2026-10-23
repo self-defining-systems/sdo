@@ -159,15 +159,23 @@ def _offline_config(*_args: Any, **_kwargs: Any) -> None:
     pass
 
 
+def _offline_command(*_args: Any, **_kwargs: Any) -> None:
+    raise RuntimeError("offline fault discovery cannot execute cluster commands")
+
+
 def describe(problem_ids: list[str] | dict[str, Any]) -> dict[str, dict[str, Any]]:
     # Runs in the harness environment; constructors need metadata, never a real cluster.
     config = importlib.import_module("kubernetes.config")
     ProblemRegistry = importlib.import_module("sregym.conductor.problems.registry").ProblemRegistry
     KubeCtl = importlib.import_module("sregym.service.kubectl").KubeCtl
+    Application = importlib.import_module("sregym.service.apps.base").Application
     with (
         patch.object(KubeCtl, "__init__", _offline_init),
         patch.object(KubeCtl, "is_emulated_cluster", _offline_emulated),
         patch.object(KubeCtl, "list_deployments", _offline_deployments),
+        patch.object(Application, "create_namespace", _offline_init),
+        patch.object(KubeCtl, "exec_command", _offline_command),
+        patch.object(KubeCtl, "exec_command_checked", _offline_command),
         patch.object(config, "load_kube_config", _offline_config),
     ):
         registry = ProblemRegistry()

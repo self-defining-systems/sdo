@@ -198,7 +198,7 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 	if i.Client == nil {
 		return Result{}, errors.New("Kubernetes client is required")
 	}
-	plan, err := Resources(cfg)
+	plan, err := i.resources(cfg)
 	if err != nil {
 		return Result{}, err
 	}
@@ -213,6 +213,11 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (Resu
 	}
 	if !reuse && cfg.WaitForCompletion && !prepared && i.SyncRepository == nil {
 		return Result{}, errors.New("completed installation requires repository synchronization")
+	}
+	if prior != nil {
+		if err := i.removeStalePermissiveGrants(ctx, cfg, prior); err != nil {
+			return Result{}, err
+		}
 	}
 	if !prepared {
 		if err := i.ensureBase(ctx, cfg, plan); err != nil {
@@ -328,6 +333,9 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 			return fmt.Errorf("create ServiceAccount %s: %w", sa.Name, err)
 		}
 	}
+	if err := i.ensurePermissiveNamespaces(ctx, cfg); err != nil {
+		return err
+	}
 	if err := i.reconcileObservationGrants(ctx, cfg, p); err != nil {
 		return err
 	}
@@ -364,6 +372,9 @@ func (i Installer) ensureBase(ctx context.Context, cfg Config, p Plan) error {
 		if err := i.upsertBinding(ctx, binding); err != nil {
 			return err
 		}
+	}
+	if err := i.ensurePermissiveClusterGrants(ctx, p); err != nil {
+		return err
 	}
 	_, err := i.Client.CoreV1().Secrets(cfg.controlNamespace()).Get(ctx, cfg.CredentialsSecret, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {

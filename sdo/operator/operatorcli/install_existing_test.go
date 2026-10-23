@@ -51,3 +51,21 @@ func TestInstallExistingDefaultsToResumedReflection(t *testing.T) {
 		t.Fatalf("default reflection mode: %q", launch.Install.ReflectionSession)
 	}
 }
+
+func TestParseInstallExistingPermissiveResponder(t *testing.T) {
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--control-namespace", "demo-sdo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "agent-credentials", "--model", "model"}
+	strict, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strict.Install.PermissiveResponder {
+		t.Fatal("permissions defaulted on")
+	}
+	launch, err := ParseInstallExistingLaunch(append(args, "--permissive-responder", "--responder-namespace", "policy-system"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !launch.Install.PermissiveResponder || len(launch.Install.ResponderNamespaces) != 1 || launch.Install.ResponderNamespaces[0] != "policy-system" {
+		t.Fatalf("permissions lost: %+v", launch.Install)
+	}
+}

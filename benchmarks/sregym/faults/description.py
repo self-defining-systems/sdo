@@ -17,6 +17,26 @@ from pydantic import BaseModel, ConfigDict, model_validator
 PROBE_KINDS = frozenset(
     {"target_port", "incorrect_image", "readiness", "wrong_selector", "network_policy", "configmap", "resource_request"}
 )
+CapabilityMode = Literal["strict", "permissive"]
+
+
+class FaultCapability(BaseModel):
+    """Benchmark evidence only: review status is independent of mitigation success."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    problem_id: str
+    declared_index: int
+    class_name: str
+    fault_key: str
+    required_capabilities: tuple[str, ...]
+    missing_capabilities: tuple[str, ...]
+    status: Literal["supported", "unreviewed", "unsupported"]
+
+
+class SuiteCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    mode: CapabilityMode = "strict"
+    faults: tuple[FaultCapability, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,12 +113,35 @@ SDO_CAPABILITIES = frozenset(
 )
 
 
-def validate_suite(catalog: Mapping[str, ProblemDescription], *, require_tracking: bool = False) -> None:
+def validate_suite(
+    catalog: Mapping[str, ProblemDescription],
+    *,
+    require_tracking: bool = False,
+    capability_mode: CapabilityMode = "strict",
+) -> SuiteCapabilities:
+    if capability_mode not in ("strict", "permissive"):
+        raise ValueError("capability_mode must be strict or permissive")
     errors: list[str] = []
+    evidence: list[FaultCapability] = []
     for problem_id, description in catalog.items():
-        for fault in description.faults:
+        for fault in description.ordered_faults():
             missing = set(fault.required_capabilities) - SDO_CAPABILITIES
-            if missing:
+            evidence.append(
+                FaultCapability(
+                    problem_id=problem_id,
+                    declared_index=fault.declared_index,
+                    class_name=fault.class_name,
+                    fault_key=fault.fault_key,
+                    required_capabilities=fault.required_capabilities,
+                    missing_capabilities=tuple(sorted(missing)),
+                    status="unreviewed"
+                    if any(item.startswith("unreviewed:") for item in missing)
+                    else "unsupported"
+                    if missing
+                    else "supported",
+                )
+            )
+            if missing and capability_mode == "strict":
                 errors.append(
                     f"{problem_id}/{fault.class_name}: unsupported repair/snapshot scope {', '.join(sorted(missing))}"
                 )
@@ -112,6 +155,7 @@ def validate_suite(catalog: Mapping[str, ProblemDescription], *, require_trackin
             )
     if errors:
         raise ValueError("; ".join(errors))
+    return SuiteCapabilities(mode=capability_mode, faults=tuple(evidence))
 
 
 def describe_sregym_problems(

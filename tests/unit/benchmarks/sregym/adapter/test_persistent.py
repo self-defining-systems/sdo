@@ -446,6 +446,21 @@ def test_runtime_config_round_trips_all_options_through_payload_and_state(tmp_pa
     assert runtime_config_from_payload(loaded.controllers[config.namespace].runtime_config) == config
 
 
+@pytest.mark.parametrize("responder_namespaces", [(), ("policy-system", "cache")])
+def test_runtime_config_json_preserves_reviewed_responder_grants(
+    tmp_path: Path, responder_namespaces: tuple[str, ...]
+) -> None:
+    config = replace(
+        _config(tmp_path),
+        permissive_responder=True,
+        responder_namespaces=responder_namespaces,
+        deployed_manifest_paths=("deploy/app.yaml",),
+    )
+    payload = json.loads(json.dumps(runtime_config_payload(config)))
+
+    assert runtime_config_from_payload(payload) == config
+
+
 def test_recreated_namespace_regains_controller_access_before_resume_and_injection(tmp_path: Path) -> None:
     elapsed = [0.0]
 

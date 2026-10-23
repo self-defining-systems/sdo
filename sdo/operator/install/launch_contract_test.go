@@ -162,3 +162,20 @@ func TestInstallerOperateLateFindingsOffAddsNoResponderSetting(t *testing.T) {
 		assertControllerLaunchRoundTrip(t, cfg, controller.Controller)
 	}
 }
+
+func TestPermissiveResponderOperateLaunchRoundTrip(t *testing.T) {
+	cfg := optionalLaunchConfig()
+	cfg.PermissiveResponder = true
+	cfg.ResponderNamespaces = []string{"policy-system"}
+	job, err := install.OperateJob(cfg, "requests succeed", "permissive-contract", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launch, err := operatorcli.ParseOperateLaunch(job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !launch.Install.PermissiveResponder || !reflect.DeepEqual(launch.Install.ResponderNamespaces, cfg.ResponderNamespaces) {
+		t.Fatalf("permissions lost in operate launch: %+v", launch.Install)
+	}
+}

@@ -770,6 +770,7 @@ def _check_suite_capabilities(ctx: _Context) -> PreflightCheck | None:
     if not selected:
         return None
     descriptions: dict[str, Any] = {}
+    evidence: list[dict[str, Any]] = []
     try:
         for config in selected:
             catalog = {
@@ -778,15 +779,18 @@ def _check_suite_capabilities(ctx: _Context) -> PreflightCheck | None:
             }
             if not catalog:
                 raise ValueError("suite selection resolved no problems")
-            validate_suite(catalog)
+            evidence.append(validate_suite(catalog, capability_mode=config.capability_mode).model_dump(mode="json"))
             descriptions.update({key: value.model_dump(mode="json") for key, value in catalog.items()})
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         return PreflightCheck(
             "suite-capabilities", "fail", str(exc), "select faults within SDO's application Role and snapshot scope"
         )
     ctx.facts["fault_descriptions"] = descriptions
+    ctx.facts["fault_capabilities"] = evidence
     return PreflightCheck(
-        "suite-capabilities", "pass", f"{len(descriptions)} problems within SDO repair/snapshot scope"
+        "suite-capabilities",
+        "pass",
+        f"{len(descriptions)} problems checked; capability modes: {sorted({item['mode'] for item in evidence})}",
     )
 
 

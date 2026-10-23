@@ -72,6 +72,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
+	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
+	var responderNamespaces repeatable
+	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	var responderEnv repeatable
 	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
@@ -160,7 +163,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ValidatorImage: *validatorImage, RepositoryPVC: *repositoryPVC,
 			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider,
-			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline,
+			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
 			MaxResponseLoops: *maxResponseLoops,

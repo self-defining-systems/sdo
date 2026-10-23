@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -83,7 +84,7 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 	if podUID == "" {
 		return ExistingController{}, errors.New("existing controller has no ready owned Pod")
 	}
-	if err := i.restoreApplicationGrants(ctx, cfg); err != nil {
+	if err := i.restoreApplicationGrantsWithSettings(ctx, cfg, job.Spec.Template.Annotations[PermissiveResponderAnnotation]); err != nil {
 		return ExistingController{}, err
 	}
 	commit, err := i.ReadAcceptedCommit(ctx, SyncConfig{ControlNamespace: cfg.ControlNamespace, RepositoryPVC: cfg.RepositoryPVC, ControllerImage: cfg.ControllerImage})
@@ -118,7 +119,18 @@ func podReady(conditions []corev1.PodCondition) bool {
 // namespace. A harness that recreates that namespace between stages deletes them, and the persistent controller
 // would then keep running without being able to observe the application.
 func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConfig) error {
-	plan, err := Resources(Config{
+	return i.restoreApplicationGrantsWithSettings(ctx, cfg, "")
+}
+
+func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg InspectConfig, settings string) error {
+	var namespaces []string
+	if settings != "" {
+		if err := json.Unmarshal([]byte(settings), &namespaces); err != nil {
+			return fmt.Errorf("invalid permissive responder settings: %w", err)
+		}
+	}
+	plan, err := i.resources(Config{
+		PermissiveResponder: settings != "", ResponderNamespaces: namespaces,
 		Namespace: cfg.Namespace, ControlNamespace: cfg.ControlNamespace, Application: cfg.Application,
 		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only", Model: "grants-only",
 		ControllerImage: cfg.ControllerImage, ResponderImage: cfg.ControllerImage, ValidatorImage: cfg.ControllerImage,
@@ -127,6 +139,9 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 	})
 	if err != nil {
 		return fmt.Errorf("plan application grants: %w", err)
+	}
+	if err := i.ensurePermissiveNamespaces(ctx, Config{PermissiveResponder: settings != "", ResponderNamespaces: namespaces}); err != nil {
+		return err
 	}
 	for _, role := range plan.AppRoles {
 		if err := i.upsertRole(ctx, role); err != nil {
@@ -138,5 +153,5 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 			return err
 		}
 	}
-	return nil
+	return i.ensurePermissiveClusterGrants(ctx, plan)
 }
