@@ -26,6 +26,10 @@ type ParamSpec struct {
 	Name     string
 	Kind     Kind
 	Required bool
+	// ValueKind selects a scalar parameter instead of an object Kind.
+	ValueKind ValueKind
+	// Default is optional; nil means no default.
+	Default any
 }
 
 type Bindings map[string]sdk.ObjectRef
