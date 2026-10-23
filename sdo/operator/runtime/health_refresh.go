@@ -56,7 +56,15 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		pending := cloneIncidentClosure(c.pendingClosure)
 		phase := c.closureState
 		receipt := cloneClosureReceipt(c.closureReceipt)
+		broker := c.broker
 		c.mu.Unlock()
+		if pending != nil && receipt != nil && phase == contracts.ClosureState_CLOSURE_STATE_COMMITTED && (request == nil || request.IncidentID == pending.Request.IncidentID) {
+			if err := checkInvestigationHealth(ctx, root, pending.Request.SourceCommit, compiled); errors.Is(err, ErrStaleHealthInvestigation) {
+				return checkCommittedRepairHealth(ctx, root, compiled, *pending, *receipt, broker)
+			} else if err != nil {
+				return err
+			}
+		}
 		if request != nil {
 			if err := checkInvestigationHealth(ctx, root, request.SourceCommit, compiled); err != nil {
 				return err
@@ -70,6 +78,40 @@ func controllerHealthGuard(c *Controller, root, compiled string) func(context.Co
 		}
 		return nil
 	}
+}
+
+// Only native broker evidence can authorize finishing an already committed
+// incident across adoption of that incident's own accepted source repair.
+// This is not an authorization to investigate or publish using stale policy.
+type committedRepairHealthBroker interface {
+	committedRepairHealthRevision(context.Context, IncidentClosure, ClosureReceipt) (string, error)
+}
+
+func checkCommittedRepairHealth(ctx context.Context, root, compiled string, closure IncidentClosure, receipt ClosureReceipt, broker IncidentBroker) error {
+	proof, ok := broker.(committedRepairHealthBroker)
+	if !ok {
+		return ErrStaleHealthInvestigation
+	}
+	proposal, err := proof.committedRepairHealthRevision(ctx, closure, receipt)
+	if err != nil {
+		return err
+	}
+	old, err := memory.HealthInputs(ctx, root, closure.Request.SourceCommit)
+	if err != nil {
+		return err
+	}
+	current, err := memory.HealthInputs(ctx, root, compiled)
+	if err != nil {
+		return err
+	}
+	repair, err := memory.HealthInputs(ctx, root, proposal)
+	if err != nil {
+		return err
+	}
+	if old.Objective != current.Objective || old.DetectorRevision != current.DetectorRevision || repair.SourceInputs != current.SourceInputs || repair.Objective != current.Objective {
+		return ErrStaleHealthInvestigation
+	}
+	return nil
 }
 
 // An investigation started against older application inputs cannot authorize
