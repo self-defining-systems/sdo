@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk/program"
 )
@@ -127,9 +128,13 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			err = bindingErr
 		} else if entry.action != nil {
 			inputs := program.ValueInputs{Spec: program.ProgramSpec{ID: string(entry.action.Message().Name())}}
+			observed := map[sdk.ObjectRef]*unstructured.Unstructured{}
 			inputs.Observed = func(ref sdk.ObjectRef) (map[string]any, error) {
 				if err := program.FromObserved(ref, "metadata.name").Validate(); err != nil {
 					return nil, err
+				}
+				if object := observed[ref]; object != nil {
+					return object.DeepCopy().Object, nil
 				}
 				object, err := l.Executor.Client.Get(ctx, ref)
 				if err != nil {
@@ -138,7 +143,8 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 				if object == nil {
 					return nil, fmt.Errorf("observed value object unavailable")
 				}
-				return object.Object, nil
+				observed[ref] = object.DeepCopy()
+				return object.DeepCopy().Object, nil
 			}
 			plan, err = menuRawPlan(entry.action, parameters, &inputs)
 			if err == nil {

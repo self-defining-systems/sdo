@@ -3,11 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	"net/http"
 	"net/http/httptest"
@@ -132,5 +135,16 @@ func TestXV2TypedExecUsesRBACAndRequestsNoOutput(t *testing.T) {
 	code, err := (TypedPlanClient{Client: client, ExecConfig: config}).Exec(context.Background(), sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "one"}, "app", []string{"/bin/true"})
 	if !called || !apierrors.IsForbidden(err) || code != 0 {
 		t.Fatalf("exec RBAC boundary: called=%t code=%d err=%v", called, code, err)
+	}
+}
+
+func TestXV2ExecWithoutConfigReportsRefused(t *testing.T) {
+	e, _, ref := runtimeActionFixture()
+	client := kubernetesfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace, UID: "pod-uid", ResourceVersion: "7"}})
+	e.Client = healthGuardedPlanClient{PlanObjectClient: TypedPlanClient{Client: client}}
+	e.Values = program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}
+	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.Exec{Pod: ref, Container: "app", Command: []program.Value{program.FromParam("command")}}}}, false)
+	if err == nil || result.Applied || result.VerificationPassed || result.ActionReports[0].Status != "refused" {
+		t.Fatalf("nil config must refuse exec before any effect: %+v %v", result, err)
 	}
 }

@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -82,6 +84,73 @@ func TestXV2BindingsAndValueProvenanceSurviveReceipts(t *testing.T) {
 			report, _ := json.Marshal(result.ActionReports)
 			if strings.Contains(string(report), `"replicas":3`) {
 				t.Fatal("action report contains a resolved value")
+			}
+		})
+	}
+}
+
+type observedScaleProgram struct{ source, target sdk.ObjectRef }
+
+func (p observedScaleProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "observed-scale"}
+}
+func (p observedScaleProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: p.target, Replicas: program.FromObserved(p.source, "spec.replicas")}}}, nil
+}
+
+func TestXV2ExtendedObservedValuesStayOnMitigationSnapshot(t *testing.T) {
+	source := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "database"}
+	target := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "worker"}
+	replicas := int32(2)
+	snapshot := sdktest.Snapshot{NamespaceName: "app", StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: source.Name, Namespace: source.Namespace, ResourceVersion: "17"}, Spec: appsv1.StatefulSetSpec{Replicas: &replicas}}}}
+	p := observedScaleProgram{source: source, target: target}
+	plan, err := runBoundedMitigator(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*snapshot.StatefulSetList[0].Spec.Replicas = 3
+	snapshot.StatefulSetList[0].ResourceVersion = "18"
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{target: planObject(target, map[string]any{"replicas": int64(1)})}}
+	e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
+	incident := IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}
+	first, err := e.Apply(context.Background(), incident, plan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := program.FieldValue(client.objects[target].Object, "spec.replicas")
+	if !planValuesEqual(got, 2) || first.ActionReports[0].Values[0].ResourceVersion != "17" {
+		t.Fatalf("invocation lost pinned observation: value=%v report=%+v", got, first.ActionReports)
+	}
+	refreshed, err := runBoundedMitigator(context.Background(), p, &sdktest.ReplayReadView{Snapshot: snapshot}, program.Bindings{}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := e.Apply(context.Background(), incident, refreshed, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ = program.FieldValue(client.objects[target].Object, "spec.replicas")
+	if !planValuesEqual(got, 3) || second.ActionReports[0].Values[0].ResourceVersion != "18" {
+		t.Fatalf("new invocation did not follow new observation: value=%v report=%+v", got, second.ActionReports)
+	}
+}
+
+func TestXV2NoopValuesCannotVerifyForeignWrites(t *testing.T) {
+	for _, scale := range []bool{false, true} {
+		t.Run(fmt.Sprint(scale), func(t *testing.T) {
+			client, ref := newServerPlanClient(deploymentWithDrift("safe:v1"))
+			client.afterPatch = func(object *unstructured.Unstructured) {
+				_ = unstructured.SetNestedField(object.Object, int64(9), "spec", "replicas")
+			}
+			value := program.FromParam("replicas")
+			var action program.Action = program.SetField{Ref: ref, Path: "spec.replicas", Value: value}
+			if scale {
+				action = program.ScaleWorkload{Ref: ref, Replicas: value}
+			}
+			e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue, Default: 1}}}}}
+			r, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action}}, false)
+			if err == nil || r.VerificationPassed {
+				t.Fatalf("no-op value credited a foreign write: %+v %v", r, err)
 			}
 		})
 	}

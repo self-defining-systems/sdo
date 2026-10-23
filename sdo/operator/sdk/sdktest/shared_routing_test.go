@@ -15,6 +15,7 @@ func sharedRoutingCorpus(t *testing.T) CorpusCase {
 	c := renameFixture(t)
 	for _, snapshot := range []*Snapshot{&c.Open, &c.Fixed, &c.Healthy} {
 		for i := range snapshot.PodList {
+			snapshot.PodList[i].ResourceVersion = "fixture"
 			snapshot.PodList[i].Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 		}
 	}

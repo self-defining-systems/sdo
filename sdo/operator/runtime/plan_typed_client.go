@@ -181,7 +181,7 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 // Exec requests no stdout/stderr streams. The API server enforces existing RBAC.
 func (c TypedPlanClient) Exec(ctx context.Context, pod sdk.ObjectRef, container string, command []string) (int, error) {
 	if c.Client == nil || c.ExecConfig == nil || c.Client.CoreV1().RESTClient() == nil {
-		return 0, fmt.Errorf("exec refused: controller exec transport unavailable")
+		return 0, fmt.Errorf("%w: controller exec transport unavailable", errPlanExecRefused)
 	}
 	if pod.APIVersion != "v1" || pod.Kind != "Pod" || pod.Name == "" || pod.Namespace == "" || container == "" || len(command) == 0 {
 		return 0, fmt.Errorf("exec requires named Pod, container and command")

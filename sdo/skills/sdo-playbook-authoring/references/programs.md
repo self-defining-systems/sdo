@@ -74,7 +74,8 @@ resolves a nonnegative integer replica count, and directly verifies `spec.replic
 reversible fields from captured pre-images; irreversible effects remain disclosed.
 
 `Exec{Pod, Container, Command: []program.Value{...}}` derives every command argument through values. The
-controller's existing Kubernetes RBAC must allow the exec subresource; no grant is created by a plan. Exec
+controller's existing Kubernetes RBAC must allow the exec subresource; no grant is created by a plan.
+Callers supply that controller transport through `RuntimeOptions.PlanExecConfig`; nil reports refused. Exec
 can reach mounted Secret files, so stdout and stderr are never requested, returned, or stored. Only the exit
 code is reported. Refused or uncertain execution earns no write or health-verification credit, and a durable
 receipt never authorizes command replay after restart.

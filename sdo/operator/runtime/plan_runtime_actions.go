@@ -12,6 +12,8 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
+var errPlanExecRefused = errors.New("exec refused")
+
 // PlanExecClient returns only a process exit code. It must discard output and
 // preserve Kubernetes RBAC denial, without adding a grant or retrying a command.
 type PlanExecClient interface {
@@ -165,8 +167,8 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 			}
 			code, execErr := e.Client.(PlanExecClient).Exec(ctx, ref, a.Container, items[i].command)
 			if execErr != nil {
-				if apierrors.IsForbidden(execErr) || apierrors.IsUnauthorized(execErr) {
-					return result, fmt.Errorf("exec refused by controller RBAC")
+				if errors.Is(execErr, errPlanExecRefused) || apierrors.IsForbidden(execErr) || apierrors.IsUnauthorized(execErr) {
+					return result, fmt.Errorf("exec refused: controller transport unavailable or RBAC denied")
 				}
 				result.ActionReports[i].Status = "unknown"
 				return result, fmt.Errorf("exec outcome unknown")
