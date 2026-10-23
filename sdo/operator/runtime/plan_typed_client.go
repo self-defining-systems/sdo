@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"errors"
 	corev1 "k8s.io/api/core/v1"
@@ -178,7 +179,8 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 	return fmt.Errorf("object delete kind/scope is unsupported")
 }
 
-// Exec requests no stdout/stderr streams. The API server enforces existing RBAC.
+// Exec requests no stdout/stderr streams. Kubernetes requires at least one I/O
+// stream, so stdin is opened and immediately closed at EOF. Existing RBAC applies.
 func (c TypedPlanClient) Exec(ctx context.Context, pod sdk.ObjectRef, container string, command []string) (int, error) {
 	if c.Client == nil || c.ExecConfig == nil || c.Client.CoreV1().RESTClient() == nil {
 		return 0, fmt.Errorf("%w: controller exec transport unavailable", errPlanExecRefused)
@@ -186,12 +188,12 @@ func (c TypedPlanClient) Exec(ctx context.Context, pod sdk.ObjectRef, container 
 	if pod.APIVersion != "v1" || pod.Kind != "Pod" || pod.Name == "" || pod.Namespace == "" || container == "" || len(command) == 0 {
 		return 0, fmt.Errorf("exec requires named Pod, container and command")
 	}
-	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: command, Stdin: false, Stdout: false, Stderr: false, TTY: false}, scheme.ParameterCodec)
+	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: command, Stdin: true, Stdout: false, Stderr: false, TTY: false}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(c.ExecConfig, "POST", request.URL())
 	if err != nil {
 		return 0, fmt.Errorf("exec transport unavailable")
 	}
-	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{})
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader("")})
 	if err == nil {
 		return 0, nil
 	}
