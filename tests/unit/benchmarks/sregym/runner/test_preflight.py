@@ -598,3 +598,18 @@ def test_model_policy_guards_every_model_variable_the_controller_sets() -> None:
 
     assert set(SDO_MODEL_ENV_OVERRIDES) == set(MODEL_ENV.values())
     assert "SDO_REFLECTION_MODEL" in SDO_MODEL_ENV_OVERRIDES
+
+
+@pytest.mark.parametrize("scope", ["Namespace-labels/PSA", "ResourceQuota", "Webhook-configuration"])
+def test_suite_capabilities_are_rejected_before_launch(fake_host, sregym_dir, monkeypatch, scope):
+    from benchmarks.sregym.faults.description import FaultSpec, ProblemDescription
+
+    description = ProblemDescription(
+        problem_id="unsafe",
+        faults=(FaultSpec("readiness", "frontend", class_name="SyntheticScope", required_capabilities=(scope,)),),
+        injection_order=(0,),
+    )
+    monkeypatch.setattr(fake_host, "suite_descriptions", lambda *args: {"unsafe": description.model_dump(mode="json")})
+    check = _check(_preflight([_luna()], fake_host, sregym_dir), "suite-capabilities")
+    assert check.status == "fail"
+    assert scope in check.detail

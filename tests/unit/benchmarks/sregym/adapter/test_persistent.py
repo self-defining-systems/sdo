@@ -1469,3 +1469,20 @@ def test_invalid_deferred_injection_pauses_without_incident_or_receipt_wait(tmp_
     outcome = json.loads((inputs.receipt_dir / "sdo_infrastructure_outcome.json").read_text())
     assert outcome["infra_error"] == "injection_invalid"
     assert outcome["incident_credit"] is False
+
+
+def test_validity_barrier_keeps_invalid_partial_injection_unobservable_to_responders() -> None:
+    from benchmarks.sregym.adapter.persistent import inject_while_paused
+    from benchmarks.sregym.protocol.injection import InvalidInjectionError
+
+    ops = FakeOps()
+    control = "hotel-sdo"
+    ops.logs[control] = []
+
+    def invalid():
+        assert ops.events[-1] == ("paused", control)
+        raise InvalidInjectionError({"partial_write": True})
+
+    with pytest.raises(InvalidInjectionError):
+        inject_while_paused(ops, control, "validity", invalid, clock=_clock(ops))
+    assert ops.events == [("paused", control)]

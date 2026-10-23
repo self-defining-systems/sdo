@@ -794,7 +794,14 @@ class _FaultGate:
     def _inject(self) -> None:
         if self._before_inject is not None:
             self._before_inject()
-        request_fault_injection(self._api_base)
+        from benchmarks.sregym.adapter.persistent import KubectlClusterOps, inject_while_paused
+
+        inject_while_paused(
+            KubectlClusterOps(),
+            self._namespace,
+            f"deferred-{uuid.uuid4().hex[:8]}",
+            lambda: request_fault_injection(self._api_base),
+        )
 
     def _run(self) -> None:
         try:

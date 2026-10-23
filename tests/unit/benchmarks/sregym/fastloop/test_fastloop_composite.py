@@ -300,7 +300,7 @@ def _inject() -> InjectionWindow:
 
 
 @pytest.mark.parametrize("recovery_oracle_failed", [False, True])
-def test_failed_composite_reset_restarts_controller_before_next_incident(
+def test_failed_composite_resets_only_after_verified_harness_recovery(
     tmp_path: Path, recovery_oracle_failed: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     class RestartOps(FakeOps):
@@ -350,6 +350,11 @@ def test_failed_composite_reset_restarts_controller_before_next_incident(
     with caplog.at_level("INFO"):
         rows = run_incidents(agent, Driver(), config, on_failed_incident=reset_failed)
 
+    if recovery_oracle_failed:
+        assert len(rows) == 1
+        assert rows[0].recovery_error is not None
+        assert resets == []
+        return
     assert len(rows) == 2
     assert rows[0].error is not None
     assert "oracle reported failure" in rows[0].error

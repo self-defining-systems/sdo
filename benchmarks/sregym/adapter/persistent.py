@@ -356,7 +356,7 @@ class KubectlClusterOps:
         return inject_fault_after_resumed_baseline(
             control_namespace,
             generation,
-            inject=inject,
+            inject=lambda: inject_while_paused(self, control_namespace, generation, inject),
             kubectl_runner=kubectl,
             timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS * scale,
             poll_seconds=min(1.0, scale),
@@ -1229,6 +1229,18 @@ def _log_records(logs: str) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             records.append(payload)
     return records
+
+
+def inject_while_paused(
+    ops: ClusterOps, control: str, generation: str, inject: Callable[[], None], *, clock: Clock | None = None
+) -> None:
+    """Keep partial injector writes behind maintenance until v2 validity is known."""
+    clock = clock or Clock()
+    paused = f"{generation}-validating-injection"
+    ops.set_maintenance(control, paused=True, generation=paused)
+    wait_for_maintenance_ack(ops, control, paused, clock)
+    inject()  # failure intentionally leaves maintenance paused
+    ops.set_maintenance(control, paused=False, generation=f"{generation}-injected")
 
 
 def wait_for_maintenance_ack(
