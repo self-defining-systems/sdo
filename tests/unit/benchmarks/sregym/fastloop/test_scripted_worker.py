@@ -55,6 +55,30 @@ def test_matched_program_runs_use_the_real_tool_binding_shape(monkeypatch: pytes
     assert calls == [("plan", "service-targetport-mismatch", "--bind", "service=Service/hotel/front")]
 
 
+def test_scripted_gate_can_publish_a_source_addition_between_incidents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = from_dict(IncidentRequest, json.loads((FIXTURES / "incident_request.json").read_text()))
+    request.repository_worktree = str(tmp_path)
+    (tmp_path / "kubernetes").mkdir()
+    monkeypatch.setenv("SDO_SCRIPTED_SOURCE_REPAIR", "1")
+    monkeypatch.setattr(
+        scripted_worker, "_tool", lambda *args: {"program_runs": []} if args[0] == "diagnose" else {"healthy": True}
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(scripted_worker, "_command", lambda args, **kwargs: commands.append(args) or "")
+    result = scripted_worker.scripted_responder(request)
+    path = tmp_path / "kubernetes/verification-policy.yaml"
+    assert path.is_file()
+    assert json.loads(path.read_text())["metadata"]["namespace"] == request.namespace
+    assert commands == [["kubectl", "-n", request.namespace, "apply", "-f", str(path)]]
+    assert any(action.resources[0].name == "verification-policy" for action in result.repair_actions)
+    assert result.usage.llm_calls == 0
+    repeated = scripted_worker.scripted_responder(request)
+    assert len(commands) == 1
+    assert not repeated.repair_actions
+
+
 @pytest.mark.parametrize("seed_source", SEED_SOURCES)
 @pytest.mark.parametrize("proposal_encoding", ["snake_case", "camel_case"])
 @pytest.mark.parametrize(
