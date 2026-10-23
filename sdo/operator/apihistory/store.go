@@ -353,6 +353,12 @@ func Read(directory string) (History, error) {
 	if h.Manifest.Version != 1 {
 		return h, errors.New("unknown history version")
 	}
+	// An unclosed manifest may predate failed appends and failed manifest
+	// updates. Writer liveness disappears on exit, so Open must independently
+	// prevent that stale manifest from certifying a fully recorded generation.
+	if h.Manifest.Open {
+		h.Manifest.Complete = false
+	}
 	f, err := os.Open(filepath.Join(directory, "events.jsonl"))
 	if err != nil {
 		return h, err
