@@ -11,13 +11,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
-	k8stesting "k8s.io/client-go/testing"
 )
 
 const hotel = "hotel-reservation"
@@ -136,7 +133,7 @@ func TestStateChangesShowOnlyWhatChangedSinceTheHealthyBaseline(t *testing.T) {
 	}
 
 	// wrong_service_selector, a new deny-all NetworkPolicy, a scaled
-	// Deployment with a changed env value, and changed ConfigMap and Secret data.
+	// Deployment with a changed env value, and changed ConfigMap data.
 	service, _ := client.CoreV1().Services(hotel).Get(ctx, "frontend", metav1.GetOptions{})
 	service.Spec.Selector["current_service_name"] = "frontend"
 	_, _ = client.CoreV1().Services(hotel).Update(ctx, service, metav1.UpdateOptions{})
@@ -152,17 +149,14 @@ func TestStateChangesShowOnlyWhatChangedSinceTheHealthyBaseline(t *testing.T) {
 	configMap, _ := client.CoreV1().ConfigMaps(hotel).Get(ctx, "mongo-geo-script", metav1.GetOptions{})
 	configMap.Data["k8s-geo-mongo.sh"] = "echo broken"
 	_, _ = client.CoreV1().ConfigMaps(hotel).Update(ctx, configMap, metav1.UpdateOptions{})
-	secret, _ := client.CoreV1().Secrets(hotel).Get(ctx, "mongo-credentials", metav1.GetOptions{})
-	secret.Data["password"] = []byte("letmein")
-	_, _ = client.CoreV1().Secrets(hotel).Update(ctx, secret, metav1.UpdateOptions{})
 	state, _ := client.CoreV1().ConfigMaps(hotel).Get(ctx, "sdo-controller-state", metav1.GetOptions{})
 	state.Data["state"] = "v2"
 	_, _ = client.CoreV1().ConfigMaps(hotel).Update(ctx, state, metav1.UpdateOptions{})
 
 	var changes *StateChanges
-	eventually(t, "five application changes", func() bool {
+	eventually(t, "four application changes", func() bool {
 		changes = tracker.Changes(start.Add(5 * time.Second))
-		return changes != nil && len(changes.Changes) == 5
+		return changes != nil && len(changes.Changes) == 4
 	})
 	if !changes.BaselineAt.Equal(start) {
 		t.Fatalf("baseline time: %s", changes.BaselineAt)
@@ -191,18 +185,13 @@ func TestStateChangesShowOnlyWhatChangedSinceTheHealthyBaseline(t *testing.T) {
 	if data == nil || field(data, "data[k8s-geo-mongo.sh]") == nil || field(data, "data[extra.sh]") != nil {
 		t.Fatalf("a ConfigMap change names the changed key only: %+v", data)
 	}
-	password := findChange(changes, "Secret", "mongo-credentials")
-	if password == nil || strings.Contains(fmt.Sprint(password.Fields), "letmein") ||
-		!strings.HasPrefix(field(password, "data[password]").After, "sha256:") {
-		t.Fatalf("Secret values appear only as digests: %+v", password)
-	}
 	for _, change := range changes.Changes {
 		if strings.HasPrefix(change.Name, "failure-admin") || strings.HasPrefix(change.Name, "sdo-") {
 			t.Fatalf("decoys present at baseline and SDO's own state must not appear: %+v", change)
 		}
 	}
-	if len(changes.UnobservedKinds) != 0 {
-		t.Fatalf("every kind is observable here: %v", changes.UnobservedKinds)
+	if len(changes.UnobservedKinds) != 1 || changes.UnobservedKinds[0] != "Secret" {
+		t.Fatalf("the fake typed client has no Secret metadata transport: %v", changes.UnobservedKinds)
 	}
 }
 
@@ -239,11 +228,9 @@ func TestStateBaselineRollsForwardOnlyAfterSustainedHealth(t *testing.T) {
 	}
 }
 
-func TestStateTrackerReportsKindsItMayNotRead(t *testing.T) {
+// A typed Secret client alone never authorizes a Secret read.
+func TestStateTrackerReportsMissingSecretMetadataClient(t *testing.T) {
 	client := fake.NewSimpleClientset(hotelObjects()...)
-	client.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, k8sruntime.Object, error) {
-		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", fmt.Errorf("RBAC"))
-	})
 	tracker := startedTracker(t, client)
 	start := time.Now().UTC()
 	tracker.Observe(start, true)

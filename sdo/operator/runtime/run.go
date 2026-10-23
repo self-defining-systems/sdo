@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
@@ -40,6 +41,9 @@ type RuntimeOptions struct {
 	// controller (observation, state, dispatch, and leader election), so the
 	// production wiring can run against a fake API server.
 	Client kubernetes.Interface
+	// MetadataClient replaces the Secret metadata transport in embedded runs.
+	// When Client is supplied without it, Secrets remain unobserved.
+	MetadataClient rest.Interface
 	// StateBaselineStartTimeout bounds the state tracker's RBAC probes and
 	// initial sync; zero means defaultStateBaselineStartTimeout.
 	StateBaselineStartTimeout time.Duration
@@ -72,6 +76,9 @@ func RunWithPrograms(detectors []sdk.Detector, programs program.ProgramRegistry)
 }
 
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {
+	// The typed launch path fills options.Client itself; that is still a
+	// production client and must receive the metadata transport below.
+	clientInjected := options.Client != nil
 	args := options.Args
 	if args == nil {
 		args = os.Args[1:]
@@ -475,7 +482,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	var stateTracker *StateTracker
 	if *stateBaseline {
-		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
+		metadataClient := options.MetadataClient
+		if metadataClient == nil && !clientInjected {
+			metadataClient, err = core.NewKubernetesMetadataClient()
+			if err != nil {
+				return fmt.Errorf("create Secret metadata client: %w", err)
+			}
+		}
+		stateTracker = NewStateTracker(StateTrackerConfig{Client: bootstrapProvider.Client, MetadataClient: metadataClient, Namespace: *namespace, Settle: scaledDuration(DefaultStateSettle, timeScale)})
 		defer stateTracker.Stop()
 	}
 	planSource := GitPlanSource{Repository: resolvedRoot, Images: stateTracker, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
