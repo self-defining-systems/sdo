@@ -373,3 +373,44 @@ func TestFiftyCaseTiming(t *testing.T) {
 	}
 	t.Logf("50 synthetic in-memory cases in %s (%.3f ms/case after build)", elapsed, float64(elapsed)/float64(time.Millisecond)/50)
 }
+
+type serviceCreateProgram struct{}
+
+func (serviceCreateProgram) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "create-service"}
+}
+func (serviceCreateProgram) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
+	r := program.NoMatch
+	if len(v.Services()) == 0 {
+		r = program.Match
+	}
+	return program.Verdict{Result: r}, nil
+}
+func (serviceCreateProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	return program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}, Reason: "restore synthetic service"}}}, nil
+}
+func TestCreateServiceNormalizesFakeStorageDefaults(t *testing.T) {
+	c := fixture("field")
+	c.ID = "create-service"
+	c.Corpus.RootCauseProgramIDs = []string{c.ID}
+	c.Corpus.Open.ServiceList = nil
+	p := serviceCreateProgram{}
+	r := Check(context.Background(), p, p, nil, c)
+	if r.Status != "replayed" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+type wrongExistingPathProgram struct{ fixtureProgram }
+
+func (p wrongExistingPathProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.selector.untouched", Value: program.FromSource(ref, "spec.selector.untouched")}}}, nil
+}
+func TestWrongExistingPathExecutesAndFailsPostCheck(t *testing.T) {
+	p := wrongExistingPathProgram{fixtureProgram{mode: "field"}}
+	r := Check(context.Background(), p, p, nil, fixture("field"))
+	if r.Status != "failed" || len(r.Actions) != 1 || r.Actions[0].Status != "applied" || r.Post.Result != program.Match {
+		t.Fatalf("wrong fix escaped post-check: %+v", r)
+	}
+}

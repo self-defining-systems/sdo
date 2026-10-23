@@ -12,8 +12,11 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes/scheme"
 	operator "sdo.dev/operator/runtime"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -336,8 +339,8 @@ func checkWrites(ctx context.Context, c *cluster, a operator.PlanApplicationResu
 		if got == nil {
 			return fmt.Errorf("unrelated object disappeared: %s/%s", ref.Kind, ref.Name)
 		}
-		left, leftErr := json.Marshal(comparable(o))
-		right, rightErr := json.Marshal(comparable(got))
+		left, leftErr := comparable(o)
+		right, rightErr := comparable(got)
 		if leftErr != nil || rightErr != nil || !bytes.Equal(left, right) {
 			return fmt.Errorf("unrelated fields changed: %s/%s", ref.Kind, ref.Name)
 		}
@@ -348,14 +351,25 @@ func checkWrites(ctx context.Context, c *cluster, a operator.PlanApplicationResu
 	}
 	return nil
 }
-func comparable(o *unstructured.Unstructured) map[string]any {
+func comparable(o *unstructured.Unstructured) ([]byte, error) {
 	x := o.DeepCopy()
 
 	x.SetUID("")
 	x.SetResourceVersion("")
 	x.SetGeneration(0)
 	x.SetCreationTimestamp(metav1.Time{})
-	return x.Object
+	// The typed client stores optional zero structures (for example an empty
+	// Service loadBalancer status) even when source omits them. Use the same
+	// Kubernetes conversion on both sides; executor read-back checks still
+	// independently prove all requested leaves and lifecycle effects.
+	typed, err := scheme.Scheme.New(schema.FromAPIVersionAndKind(x.GetAPIVersion(), x.GetKind()))
+	if err != nil {
+		return nil, err
+	}
+	if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(x.Object, typed); err != nil {
+		return nil, err
+	}
+	return json.Marshal(typed)
 }
 
 // cluster embeds the real typed client; only API-server metadata omitted by
