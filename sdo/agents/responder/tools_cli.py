@@ -43,13 +43,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("status", help="read current findings and session state")
-    for name in ("diagnose", "plan"):
+    for name in ("diagnose", "plan", "menu"):
         command = commands.add_parser(
             name,
-            help="evaluate a bound program" if name == "diagnose" else "plan a bound program repair",
+            help={
+                "diagnose": "evaluate a bound program",
+                "plan": "plan a bound program repair",
+                "menu": "list controller mitigation options",
+            }[name],
             epilog="Example: " + CLI_EXAMPLES[1 if name == "diagnose" else 2],
         )
-        command.add_argument("program_id", nargs="?" if name == "diagnose" else None)
+        command.add_argument("program_id", nargs=None if name == "plan" else "?")
         command.add_argument(
             "--bind",
             action="append",
@@ -59,6 +63,20 @@ def _parser() -> argparse.ArgumentParser:
             help="named program parameter; repeat for each binding",
         )
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
+    mitigate = commands.add_parser(
+        "mitigate",
+        help="select a controller menu option",
+        description=(
+            "Submit a versioned selection JSON file. Keep its request_id unchanged when retrying. "
+            "The controller owns plans and authorization."
+        ),
+    )
+    mitigate.add_argument("--selection", type=Path, required=True, metavar="FILE")
+    report = commands.add_parser("report", help="retrieve a settled mitigation report")
+    report.add_argument("attempt_id")
+    report.add_argument("--incident-id", required=True)
+    report.add_argument("--session-id", required=True)
+    report.add_argument("--epoch", type=int, required=True)
     commands.add_parser(
         "source", help="inspect accepted source for one resource", epilog="Example: " + CLI_EXAMPLES[0]
     ).add_argument("ref", metavar="Kind/namespace/name")
@@ -89,7 +107,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _request(args: argparse.Namespace) -> dict[str, object]:
     request: dict[str, object] = {"command": args.command}
-    if args.command in ("diagnose", "plan"):
+    if args.command in ("diagnose", "plan", "menu"):
         if args.program_id:
             request["program_id"] = args.program_id
         if args.bind:
@@ -97,6 +115,18 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             if len(bindings) != len(args.bind):
                 raise ValueError("duplicate binding name")
             request["bindings"] = bindings
+    elif args.command == "mitigate":
+        request["selection"] = _selection(args.selection)
+    elif args.command == "report":
+        if not args.attempt_id or not args.incident_id or not args.session_id or not 0 < args.epoch < 2**64:
+            raise ValueError("report requires nonempty IDs and a positive uint64 epoch")
+        request["report_query"] = {
+            "version": 1,
+            "incident_id": args.incident_id,
+            "session_id": args.session_id,
+            "dispatch_epoch": str(args.epoch),
+            "attempt_id": args.attempt_id,
+        }
     elif args.command == "apply":
         request["plan_ids"] = args.plan_ids
     elif args.command == "rollback":
@@ -104,6 +134,23 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     elif args.command == "source":
         request["ref"] = args.ref
     return request
+
+
+def _selection(path: Path) -> dict[str, object]:
+    # Keep help and all existing tools independent of protobuf startup costs.
+    from google.protobuf.json_format import ParseError
+
+    from sdo.contracts import MitigationSelection, parse_json, to_canonical_json, validate
+
+    try:
+        selection = parse_json(path.read_text(encoding="utf-8"), MitigationSelection())
+        validate(selection)
+    except (OSError, UnicodeError, ValueError, ParseError) as exc:
+        # Parser/validation errors may contain agent-supplied opaque values.
+        raise ValueError(
+            "invalid mitigation selection; supply a complete version 1 selection with a round limit of 1 or 2"
+        ) from exc
+    return json.loads(to_canonical_json(selection))
 
 
 def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:

@@ -47,6 +47,7 @@ from sdodev.contracts.v1alpha1 import (
     lifecycle_pb2,
     memory_pb2,
     messages_pb2,
+    mitigation_menu_pb2,
     outcome_pb2,
     program_pb2,
     telemetry_pb2,
@@ -92,6 +93,15 @@ SetField = program_pb2.SetField
 RestartRollout = program_pb2.RestartRollout
 ProgramRun = program_pb2.ProgramRun
 PlanApplication = program_pb2.PlanApplication
+MitigationMenu = mitigation_menu_pb2.MitigationMenu
+MitigationOption = mitigation_menu_pb2.MitigationOption
+MitigationSelection = mitigation_menu_pb2.MitigationSelection
+MitigationReportQuery = mitigation_menu_pb2.MitigationReportQuery
+MitigationReport = mitigation_menu_pb2.MitigationReport
+MitigationRoundReport = mitigation_menu_pb2.MitigationRoundReport
+MitigationActionReceipt = mitigation_menu_pb2.MitigationActionReceipt
+MitigationBarrier = mitigation_menu_pb2.MitigationBarrier
+MitigationObservation = mitigation_menu_pb2.MitigationObservation
 
 ControllerConfig = controller_config_pb2.ControllerConfig
 
@@ -181,6 +191,15 @@ HealthJudgeResult = lifecycle_pb2.HealthJudgeResult
 SourceResource = lifecycle_pb2.SourceResource
 
 __all__ = [
+    "MitigationMenu",
+    "MitigationOption",
+    "MitigationSelection",
+    "MitigationReportQuery",
+    "MitigationReport",
+    "MitigationRoundReport",
+    "MitigationActionReceipt",
+    "MitigationBarrier",
+    "MitigationObservation",
     "NATIVE_RECEIPT_SCHEMA_VERSION",
     "ResponderJobEvidence",
     "NativeProductionReceipt",

@@ -49,6 +49,7 @@ type menuB3Cluster struct {
 	observedReady         bool
 	reads, forbiddenReads int
 	trace                 []string
+	afterPatch            func(sdk.ObjectRef)
 }
 
 func (c *menuB3Cluster) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -71,6 +72,9 @@ func (c *menuB3Cluster) Patch(ctx context.Context, ref sdk.ObjectRef, kind types
 		if c.observedReady {
 			_ = unstructured.SetNestedField(c.objects[ref].Object, int64(1), "status", "readyReplicas")
 		}
+	}
+	if c.afterPatch != nil {
+		c.afterPatch(ref)
 	}
 	return nil
 }
@@ -134,8 +138,29 @@ func menuCall(t *testing.T, loop *ResponderLoop, payload map[string]any) map[str
 	}
 	return result
 }
-func menuSelection(menu map[string]any, option string, rounds int, requestID string) map[string]any {
-	return map[string]any{"command": "mitigate", "selection": map[string]any{"version": 1, "incident_id": menu["incident_id"], "session_id": menu["session_id"], "dispatch_epoch": menu["dispatch_epoch"], "menu_id": menu["menu_id"], "option_id": option, "request_id": requestID, "round_limit": rounds}}
+func menuSelection(t *testing.T, menu map[string]any, programID string, rounds int, requestID string) map[string]any {
+	t.Helper()
+	options, ok := menu["options"].([]any)
+	if !ok {
+		t.Fatalf("missing options: %+v", menu)
+	}
+	for _, value := range options {
+		option := value.(map[string]any)
+		if option["program_id"] != programID {
+			continue
+		}
+		if reason, _ := option["disabled_reason"].(string); reason != "" {
+			t.Fatalf("fixture option is disabled: %s", reason)
+		}
+		return map[string]any{"command": "mitigate", "selection": map[string]any{
+			"version": 1, "incident_id": menu["incident_id"], "session_id": menu["session_id"], "dispatch_epoch": menu["dispatch_epoch"],
+			"menu_id": menu["menu_id"], "option_id": option["option_id"], "request_id": requestID, "round_limit": rounds,
+			"program_revision": option["program_revision"], "dependency_revision": option["dependency_revision"],
+			"source_commit": menu["source_commit"], "scope_digest": menu["scope_digest"], "policy_digest": menu["policy_digest"], "bindings": menu["bindings"],
+		}}
+	}
+	t.Fatalf("missing option %q: %+v", programID, menu)
+	return nil
 }
 
 func TestMitigationMenuB3RoundControlsAndAlternateOption(t *testing.T) {
@@ -151,14 +176,9 @@ func TestMitigationMenuB3RoundControlsAndAlternateOption(t *testing.T) {
 			if !ok || len(options) != 2 {
 				t.Fatalf("want two selectable options: %+v", menu)
 			}
-			byProgram := map[string]string{}
-			for _, value := range options {
-				option := value.(map[string]any)
-				byProgram[option["program_id"].(string)] = option["option_id"].(string)
-			}
-			failed := menuCall(t, loop, menuSelection(menu, byProgram["restart-only"], 1, "restart-control"))
+			failed := menuCall(t, loop, menuSelection(t, menu, "restart-only", 1, "restart-control"))
 			first, ok := failed["report"].(map[string]any)
-			if !ok || first["status"] == "success" {
+			if !ok || first["status"] != "STATUS_UNRESOLVED" {
 				t.Fatalf("restart-only must settle an unsuccessful report: %+v", failed)
 			}
 			response = menuCall(t, loop, map[string]any{"command": "menu"})
@@ -166,24 +186,78 @@ func TestMitigationMenuB3RoundControlsAndAlternateOption(t *testing.T) {
 			if next["session_id"] != menu["session_id"] {
 				t.Fatal("alternate option changed session")
 			}
-			result := menuCall(t, loop, menuSelection(next, byProgram["routing-then-restart"], limit, "alternate"))
+			result := menuCall(t, loop, menuSelection(t, next, "routing-then-restart", limit, "alternate"))
 			report, ok := result["report"].(map[string]any)
 			if !ok {
 				t.Fatalf("missing durable report: %+v", result)
 			}
-			if (report["status"] == "success") != (limit == 2) {
+			if (report["status"] == "STATUS_SUCCESS") != (limit == 2) {
 				t.Fatalf("B3 round control: %+v; trace=%v", report, cluster.trace)
 			}
-			if limit == 2 && !strings.Contains(strings.Join(cluster.trace, ","), "route,observe-backend-ready,restart") {
-				t.Fatalf("restart lacked fresh readiness barrier: %v", cluster.trace)
+			if rounds, _ := report["rounds"].([]any); len(rounds) != limit {
+				t.Fatalf("round receipts missing: %+v", report)
 			}
-			if report["attempt_id"] == first["attempt_id"] {
+			if limit == 2 {
+				// Additional fresh reads are allowed; the three causal steps must
+				// occur in order, not necessarily in adjacent calls.
+				step := 0
+				for _, event := range cluster.trace {
+					if step < 3 && event == []string{"route", "observe-backend-ready", "restart"}[step] {
+						step++
+					}
+				}
+				if step != 3 {
+					t.Fatalf("restart lacked fresh readiness barrier: %v", cluster.trace)
+				}
+			}
+			if report["attempt_id"] == "" || first["attempt_id"] == "" || report["attempt_id"] == first["attempt_id"] {
 				t.Fatal("attempt IDs were reused")
+			}
+			writes := len(cluster.patches)
+			retrieved := menuCall(t, loop, map[string]any{"command": "report", "report_query": map[string]any{"version": 1, "incident_id": menu["incident_id"], "session_id": menu["session_id"], "dispatch_epoch": next["dispatch_epoch"], "attempt_id": report["attempt_id"]}})
+			want, _ := json.Marshal(report)
+			got, _ := json.Marshal(retrieved["report"])
+			if string(want) != string(got) || len(cluster.patches) != writes {
+				t.Fatalf("report retrieval changed settlement or wrote again: %+v", retrieved)
 			}
 			if len(loop.PlanApplications()) != 0 {
 				t.Fatal("menu attempt entered legacy positive trust path")
 			}
 		})
+	}
+}
+
+func TestMitigationMenuCompensationRechecksSecretConsumer(t *testing.T) {
+	loop, cluster := menuB3Loop(t)
+	response := menuCall(t, loop, map[string]any{"command": "menu"})
+	menu, ok := response["menu"].(map[string]any)
+	if !ok {
+		t.Fatalf("compensation fixture needs an enabled menu: %+v", response)
+	}
+	selection := menuSelection(t, menu, "routing-then-restart", 1, "compensation-safety")
+	cluster.afterPatch = func(ref sdk.ObjectRef) {
+		if ref != menuService {
+			return
+		}
+		// The first routing write lands safely. Before the one-round failure
+		// unwinds it, a consumer becomes unsafe. Compensation is a new effect
+		// and must re-evaluate the whole affected scope, not reuse acceptance.
+		_ = unstructured.SetNestedSlice(cluster.objects[menuDeployment].Object, []any{map[string]any{"name": "identity", "secret": map[string]any{"secretName": "SYNTHETIC-COMPENSATION-CANARY"}}}, "spec", "template", "spec", "volumes")
+	}
+	result := menuCall(t, loop, selection)
+	report, ok := result["report"].(map[string]any)
+	if !ok || report["status"] == "STATUS_SUCCESS" {
+		t.Fatalf("unsafe compensation must retain an unsuccessful report: %+v", result)
+	}
+	if len(cluster.patches) != 1 || cluster.forbiddenReads != 0 {
+		t.Fatalf("unsafe compensation wrote/fetched opaque content: writes=%d reads=%d", len(cluster.patches), cluster.forbiddenReads)
+	}
+	if residuals, _ := report["residuals"].([]any); len(residuals) == 0 {
+		t.Fatalf("retained routing effect needs residual evidence: %+v", report)
+	}
+	encoded, _ := json.Marshal(loop.ToolCalls())
+	if strings.Contains(string(encoded), "SYNTHETIC-COMPENSATION-CANARY") {
+		t.Fatal("unsafe compensation persisted credential canary")
 	}
 }
 
@@ -223,14 +297,20 @@ func TestMitigationMenuSecretNegativeFixtures(t *testing.T) {
 		for _, option := range []string{"restart-only", "routing-then-restart"} {
 			t.Run(name+"/"+option, func(t *testing.T) {
 				loop, cluster := menuB3Loop(t)
+				response := menuCall(t, loop, map[string]any{"command": "menu"})
+				menu, ok := response["menu"].(map[string]any)
+				if !ok {
+					t.Fatalf("negative fixture needs an enabled menu: %+v", response)
+				}
+				selection := menuSelection(t, menu, option, 2, "negative")
 				spec, _, _ := unstructured.NestedMap(cluster.objects[menuDeployment].Object, "spec", "template", "spec")
 				mutate(spec)
 				_ = unstructured.SetNestedMap(cluster.objects[menuDeployment].Object, spec, "spec", "template", "spec")
 				// Selecting either enabled primitive must reject the affected consumer
 				// before a write or an opaque fetch, with a structured safe report.
-				result := menuCall(t, loop, menuSelection(map[string]any{"incident_id": "synthetic-b3", "session_id": loop.sessionID, "dispatch_epoch": 1, "menu_id": "synthetic-menu"}, option, 2, "negative"))
+				result := menuCall(t, loop, selection)
 				report, ok := result["report"].(map[string]any)
-				if !ok || report["status"] != "refused" {
+				if !ok || report["status"] != "STATUS_REFUSED" || report["failed_phase"] != "safety" {
 					t.Errorf("need typed fail-closed refusal, got %+v", result)
 				}
 				if len(cluster.patches) != 0 || cluster.forbiddenReads != 0 {

@@ -104,6 +104,42 @@ remains at the controller's storage edge; this read projection strictly decodes
 field types and rejects undefined lifecycle enums. Source-mode operator launches
 use a cached build, so observation polling does not repeatedly use `go run`.
 
+## Mitigation menu contract foundation
+
+`mitigation_menu.proto` defines version 1 menu, selection, report-query and
+terminal-report messages with generated Go/Python types. `sdo menu [PROGRAM]
+[--bind NAME=Kind/ns/name]` requests options; `sdo mitigate --selection FILE`
+submits a complete selection JSON document with a stable `request_id` across
+retries. `sdo report ATTEMPT --incident-id ID --session-id ID --epoch N` requests
+the settled report. Transport filenames are independent of request identity.
+The CLI validates the selection shape, revision/session fences and one-or-two
+round bound; Go remains responsible for authorization and execution.
+
+This is a contract foundation: the runtime currently refuses these commands as
+unknown. The executable B3 and credential fixtures in
+`runtime/mitigation_menu_slice1_test.go` deliberately remain red until the
+durable ledger, session resume, fencing, current-read barriers and guarded
+executor land. No menu effect is enabled by these contracts. Existing
+`diagnose/plan/apply`, `sdo act` and capture-gap behavior continue as before.
+
+The intended enabled scope is routing `SetField` and Deployment restart only.
+Before enabling either, the Go menu must enforce an explicit fail-closed Secret
+predicate on forward writes, compensation and all new evidence. Opaque content
+needs trusted provenance; resource kind or redaction does not establish safety.
+No global domain attestation or SEC2 dependency, new grants or credential fetches
+are authorized. This guarantee concerns the menu boundary; inherited shell and
+`act` confinement remains separate. Unproven quiescence of a previous worker
+freezes further writes and yields unknown/interrupted/timeout evidence.
+
+Terminal reports carry unique attempts, round/action identities, action state
+(`NOT_APPLIED`, `APPLIED`, `UNKNOWN`), compensation conflicts/residuals and
+causal barrier identities. They contain no pre-images or raw command/log/probe
+outputs. Wire validation cannot establish evidence provenance or causal health.
+Menu success is not a legacy plan application, independent incident closure,
+or positive program trust credit. The runtime must ship trust exclusion together
+with execution. See the [analysis reference](../.agents/skills/analyze-experiment/references/mitigation-menu.md)
+for how to interpret these receipts as implementation proceeds.
+
 ## Benchmark fault and result boundary
 
 `benchmarks/sregym/faults/description.py` owns the versioned
@@ -449,6 +485,10 @@ traffic, alternate kubeconfigs and controller SDK reads remain outside its view.
 
 ## Component map
 
+The mitigation menu currently adds schema/CLI surface only; its runtime acceptance
+fixtures are red. The component responsible for later execution is the Go
+responder loop, not the Python CLI or benchmark adapter.
+
 | Capability | Repository implementation | Status | Evidence and limit |
 |---|---|---|---|
 | Public lifecycle | `sdo/operator/operatorcli/`, `lifecycle/`, `deployment/`, `artifacts/` | Active | Go host and in-cluster operate coordinate sequential role-owned proposals with trusted deployment and health evidence. |
@@ -476,6 +516,10 @@ The toy real-cluster validation tier keeps reusable application and fault code i
 SREGym harness. It uses the same production controller, broker and memory edge.
 
 ## Artifact ownership matrix
+
+Menu selections are agent requests, not durable artifact edits. Future menu
+ledgers and terminal reports belong to controller runtime state outside `.sdo/`;
+this contract foundation adds no writer or storage format to the active path.
 
 | Artifact | May author | May update | Validation rule |
 |---|---|---|---|
