@@ -22,6 +22,7 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -87,6 +88,10 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind ||
 				watch.APIVersion == servicehealth.ReachabilityWatch.APIVersion && watch.Kind == servicehealth.ReachabilityWatch.Kind {
 				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
+				continue
+			}
+			if watch.APIVersion == metrics.Watch.APIVersion && watch.Kind == metrics.Watch.Kind {
+				// Metrics detectors run on their interval; no informer backs the watch.
 				continue
 			}
 			watch.Namespace = config.Namespace

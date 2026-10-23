@@ -224,6 +224,9 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err := generateExternalNameTest(config.ApplicationRoot, directory); err != nil {
 		return nil, err
 	}
+	if err := generateMetricsTest(directory); err != nil {
+		return nil, err
+	}
 	if config.HealthyBaseline != "" {
 		if err := generateHealthyBaselineTest(config.HealthyBaseline, directory); err != nil {
 			return nil, err

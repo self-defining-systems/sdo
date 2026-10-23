@@ -63,6 +63,7 @@ type Config struct {
 	ReuseExisting, WaitForCompletion                bool
 	PermissiveResponder                             bool
 	ResponderNamespaces                             []string
+	MetricsURL                                      string
 }
 
 type Plan struct {
@@ -221,8 +222,11 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		plan.ServiceAccounts = append(plan.ServiceAccounts, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: control}})
 	}
 	controllerRules := []rbacv1.PolicyRule{
+		// Kubernetes RBAC cannot distinguish metadata-only reads from full objects.
+		// The baseline negotiates metadata strictly and never needs Secret get.
+		rule("", []string{"secrets"}, "list", "watch"),
 		rule("", []string{"configmaps"}, "get", "list", "watch", "create", "update", "delete"),
-		rule("", []string{"services", "pods", "endpoints", "events", "secrets"}, "get", "list", "watch"),
+		rule("", []string{"services", "pods", "endpoints", "events"}, "get", "list", "watch"),
 		rule("", []string{"pods/log"}, "get"),
 		rule("", []string{"pods", "services"}, "create", "delete"),
 		rule("apps", []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, "get", "list", "watch"),
@@ -250,6 +254,10 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		readRules := []rbacv1.PolicyRule{}
 		for _, r := range controllerRules {
 			if r.APIGroups[0] == "coordination.k8s.io" || r.APIGroups[0] == "batch" {
+				continue
+			}
+			if len(r.Resources) == 1 && r.Resources[0] == "secrets" {
+				readRules = append(readRules, r)
 				continue
 			}
 			readRules = append(readRules, rule(r.APIGroups[0], r.Resources, "get", "list", "watch"))
@@ -402,6 +410,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.HealthyBaseline {
 		args = append(args, "--healthy-baseline")
+	}
+	if c.MetricsURL != "" {
+		args = append(args, "--metrics-url", c.MetricsURL)
 	}
 	if c.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-directory", c.registrationDirectory())

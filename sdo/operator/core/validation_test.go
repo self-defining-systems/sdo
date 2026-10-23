@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -16,6 +17,15 @@ func TestValidateDetectorsAcceptsTheServiceReachabilityWatches(t *testing.T) {
 	}}
 	if err := ValidateDetectors([]sdk.Detector{detector}); err != nil {
 		t.Fatalf("service reachability watches must be supported: %v", err)
+	}
+}
+
+func TestValidateDetectorsAcceptsTheMetricsWatch(t *testing.T) {
+	detector := validationDetector{spec: sdk.DetectorSpec{
+		ID: "metrics", Interval: time.Second, Watches: []sdk.WatchKind{metrics.Watch},
+	}}
+	if err := ValidateDetectors([]sdk.Detector{detector}); err != nil {
+		t.Fatalf("metrics watch must be supported: %v", err)
 	}
 }
 
