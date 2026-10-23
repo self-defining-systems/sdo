@@ -58,6 +58,15 @@ func TestHealthRevisionColdWarmAndMemoryOnly(t *testing.T) {
 	if err != nil || memoryOnly.NeedsRefresh {
 		t.Fatalf("memory-only requires judge: %+v %v", memoryOnly, err)
 	}
+	healthWrite(t, root, ".sdo/lib/helper.go", "package helper")
+	healthCommit(t, root, "shared memory helper")
+	helperOnly, err := AcceptedHealthRevision(ctx, root)
+	if err != nil || helperOnly.NeedsRefresh {
+		t.Fatalf("memory-only helper schedules judge: %+v %v", helperOnly, err)
+	}
+	if helperOnly.DetectorRevision == memoryOnly.DetectorRevision {
+		t.Fatal("shared detector dependency absent from revision")
+	}
 	healthWrite(t, root, "app.yaml", "collector")
 	healthCommit(t, root, "developer swaps tracing")
 	cold, err := AcceptedHealthRevision(ctx, root)

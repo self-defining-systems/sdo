@@ -95,7 +95,9 @@ func AcceptedHealthRevision(ctx context.Context, repository string) (HealthRevis
 		if err != nil {
 			return HealthRevision{}, err
 		}
-		current.NeedsRefresh = current.SourceInputs != judge.SourceInputs || current.Objective != judge.Objective || current.DetectorRevision != judge.DetectorRevision
+		// Detector identity binds refresh work and binary adoption; memory-only
+		// detector/library publication does not itself schedule another judge.
+		current.NeedsRefresh = current.SourceInputs != judge.SourceInputs || current.Objective != judge.Objective
 	}
 	return current, nil
 }
