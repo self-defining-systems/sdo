@@ -106,6 +106,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 		return Observation{}, errors.New("raw deployment needs manifests and expected workloads")
 	}
 	imageRefs := map[string]string{}
+	imageInputs := map[string]rendered.ImageInputs{}
 	for _, build := range plan.ImageBuilds {
 		if build == nil || build.Image == "" || build.ContextPath == "" || build.DockerfilePath == "" {
 			return Observation{}, errors.New("image build needs image, context, and Dockerfile")
@@ -131,6 +132,7 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 			return Observation{}, fmt.Errorf("builder returned wrong or mutable image for %s: %q", build.Image, immutable)
 		}
 		imageRefs[build.Image] = immutable
+		imageInputs[build.Image] = rendered.ImageInputs{SourceImage: build.Image, ContextPath: filepath.ToSlash(filepath.Clean(build.ContextPath)), DockerfilePath: filepath.ToSlash(filepath.Clean(build.DockerfilePath))}
 	}
 	var documents bytes.Buffer
 	namedImages := []rendered.DeployedImage{}
@@ -163,13 +165,17 @@ func (strategy RawStrategy) ApplyAndVerify(ctx context.Context, checkout, tree s
 				continue
 			}
 			id, images, err := RenderManifest(document, strategy.Namespace, tree, func(kind, name, container string, init bool, image string) string {
+				inputs := imageInputs[image]
+				if inputs.SourceImage == "" {
+					inputs.SourceImage = image
+				}
 				if built := imageRefs[image]; built != "" {
 					image = built
 				}
 				apiVersion, _ := document["apiVersion"].(string)
 				metadata, _ := document["metadata"].(map[string]any)
 				namespace, _ := metadata["namespace"].(string)
-				namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name}, Name: container, Init: init, Applied: image, Digest: image})
+				namedImages = append(namedImages, rendered.DeployedImage{Ref: sdk.ObjectRef{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name}, Name: container, Init: init, Applied: image, Digest: image, Inputs: inputs})
 				return image
 			})
 			if err != nil {
@@ -297,9 +303,11 @@ func sameNamedImages(expected, actual []rendered.DeployedImage) bool {
 	}
 	counts := map[rendered.DeployedImage]int{}
 	for _, image := range expected {
+		image.Inputs = rendered.ImageInputs{} // observation verifies identities, not build declarations
 		counts[image]++
 	}
 	for _, image := range actual {
+		image.Inputs = rendered.ImageInputs{}
 		counts[image]--
 	}
 	for _, count := range counts {

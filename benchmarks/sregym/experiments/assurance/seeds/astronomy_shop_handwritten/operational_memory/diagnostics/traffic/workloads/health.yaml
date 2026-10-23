@@ -1,0 +1,24 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: health
+purpose: health-probe
+ratePerSecond: 4
+scenarios:
+  - id: storefront-home
+    weight: 1
+  - id: product-browse
+    weight: 1
+  - id: product-recommendations
+    weight: 1
+  - id: product-reviews
+    weight: 1
+  - id: ads
+    weight: 1
+  - id: cart-view
+    weight: 1
+  - id: currency-conversion
+    weight: 1
+  - id: shipping-quote
+    weight: 1
+  - id: product-image
+    weight: 1

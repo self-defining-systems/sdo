@@ -37,6 +37,9 @@ func validateSourceEvidence(value SourceEvidence) error {
 	}
 	named := map[string]bool{}
 	for _, image := range value.ContainerImages {
+		if err := image.Inputs.Validate(); err != nil {
+			return err
+		}
 		id := image.Ref.Kind + "/" + image.Ref.Namespace + "/" + image.Ref.Name
 		key := fmt.Sprintf("%s/%s/%s/%t", image.Ref.APIVersion, id, image.Name, image.Init)
 		validDigest := false

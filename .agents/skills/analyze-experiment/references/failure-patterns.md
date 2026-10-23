@@ -38,6 +38,8 @@ Check ownership/class, objective digest, watches, namespace handling, source-bac
 
 Such a seed (for example `30e023d`) carries checks written knowing the SREGym faults. Its detection and diagnosis results are not a fair SDO measurement; report them as pre-fairness, and use a seed from a fresh lifecycle on the de-tailored code.
 
+The hand-authored seeds `social_network_handwritten` and `astronomy_shop_handwritten` (under `benchmarks/sregym/experiments/assurance/seeds/`) match parts of this signature: their objectives require ConfigMaps and reject NetworkPolicies that deny all traffic. They were written for health-signal evaluations, not by a lifecycle round. Report results that use them as hand-seeded health, separately from both lifecycle-seeded and pre-fairness runs.
+
 ## Finding-state instability
 
 **Signature:** incidents fire or clear unexpectedly, duplicate dispatches occur, or restarts change behavior.
@@ -49,6 +51,18 @@ Inspect firing/clearing thresholds, debounce state, snapshot versions, durable c
 **Signature:** a finding with rule `link-reachability.<from>.<to>.<port>` (detector `traffic-<workload>` for a `purpose: link-probe` workload in `.sdo/diagnostics/traffic/workloads/`) while every `scenario-slo.*` scenario stays green.
 
 The prober dials each declared edge afresh every interval and the finding needs `failures` consecutive failed dials of an edge that had connected before. The caller may still hold an old connection, so user-facing probes can stay healthy for the whole fault. Check that the edge and port are grounded in the application source, that the fix restored fresh connectivity for the same edge (the finding must clear), and that no finding appeared for an edge the prober never reached (those are never reported: the prober's own identity may simply not be admitted there). Detection time is the first failed dial plus about `failures` intervals; a link detector should not carry the scenario detector's 9 s minimum duration.
+
+## Workload-health finding
+
+**Signature:** a finding from detector `workload-health` with a `workload-pod-*`, `workload-container-*`, `workload-init-container-stuck` or `workload-deployment-*` rule. Runs whose seed predates the detector have no such records.
+
+The Go installer adds this generic detector beside `service-endpoints`; the judge does not author it. Its primary resource is the owning Deployment (resolved through ReplicaSet owners) or else the Pod, and it emits one finding per rule and primary, with the offending pods as related resources and `metadata.pods`/`metadata.reasons`. Ages (Pending, unready, init container and Deployment grace periods, and the five-minute restart window) are measured against the snapshot's recorded observation time, not wall time. A `workload-container-crash-looping` finding can come and go within a back-off cycle; `workload-container-restart-churn` and `workload-container-oom-killed` are derived from the last termination and stay active through the cycle. `workload-deployment-unavailable` is suppressed while a pod finding names the same Deployment, so its presence means no pod explains the shortfall (check `ReplicaFailure` and ReplicaSet `FailedCreate` events in its evidence). A Service-level `service-endpoints` finding over the same pods is the Service view of the same fault, not a second fault.
+
+## Service port unreachable while pods are Ready
+
+**Signature:** a finding with rule `service-port-unreachable` from the generic `service-reachability` detector, primary resource a Service, while `service-endpoints` stays quiet.
+
+The controller derives one target per TCP port of each cluster-IP Service with a selector and the prober dials it every 10 s (1 s timeout). The finding needs 3 consecutive failed dials, all after the Service had a ready selected pod; a prior success is not required. Read `metadata.ports[]`: `error_class` (`refused` usually means nothing listens on the targetPort or the targetPort is wrong; `timeout` suggests dropped packets; `dns` a resolution problem), `target_port`, `target_port_declared` (false plus the evidence hint points at a targetPort/containerPort mismatch) and `last_success`. Headless, ExternalName and selector-less Services are never dialed. The detector stays quiet for ports whose backing pods are isolated by an ingress NetworkPolicy that does not admit the prober, so a NetworkPolicy fault is expected to surface through traffic or link findings instead. A detector error `service reachability: prober unavailable` means the controller could not read the prober; it blocks closure but never opens an incident.
 
 ## Responder detour or thrashing
 
@@ -119,3 +133,23 @@ source, human goal, controller outcomes, incident detectors or other playbooks.
 Go dispatch is the reflection replay unit after the mainline cutover. Each checkpoint replays one worker result through the shared validator and real broker; broker rejection/retry history remains in the Go ledger. `PlanApplication` retains controller-owned rollback pre-images, concrete applied actions, patches and timing through ProtoJSON restarts; `ProgramToolCall` retains its summary.
 
 For latent drift or toy lane failures, read [drift and toy failure patterns](drift-failures.md).
+
+
+## Forced abort and quiet-lane evidence
+
+The persistent benchmark state now records `cleanup_targets` before lifecycle
+installation, keyed by application namespace, with control namespace and
+kubeconfig. `aborted_incidents` preserves incident ID, namespace, stage label and
+abort timestamp when a pending incident is cancelled. These are benchmark
+cancellations, not successful closures, validated outcomes, or strict receipts;
+abort never drains or writes accepted operational memory. Targets remain for
+idempotent cleanup and verification retries even after controllers are removed.
+
+The adjacent `<state>.processes.json` holds launcher, guardian, runner and host
+helper identities (PID, start ticks, boot ID, UID and group), without command
+lines or credentials. A printed abort locator may be a symlink to the result
+directory's normal state file. Process disappearance alone does not prove cluster
+quiescence: require the abort command's `quiet: true`, zero owned runtime objects
+and zero live registered helpers. Leftovers or failed inventory exit nonzero.
+The production stop command preserves repository PVCs and state ConfigMaps, so
+their survival is expected. Old unregistered helpers are outside this evidence.

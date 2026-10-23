@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -21,6 +22,7 @@ import (
 
 	controllercore "sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -82,8 +84,9 @@ func NewKubernetesCache(config KubernetesCacheConfig, detectors []sdk.Detector) 
 			if watch.Namespace != "" && watch.Namespace != config.Namespace {
 				return nil, fmt.Errorf("watch namespace %q does not match cache namespace %q", watch.Namespace, config.Namespace)
 			}
-			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind {
-				// Synthetic-traffic results arrive through Notify, not an informer.
+			if watch.APIVersion == traffic.Watch.APIVersion && watch.Kind == traffic.Watch.Kind ||
+				watch.APIVersion == servicehealth.ReachabilityWatch.APIVersion && watch.Kind == servicehealth.ReachabilityWatch.Kind {
+				// Synthetic-traffic and reachability results arrive through Notify, not an informer.
 				continue
 			}
 			watch.Namespace = config.Namespace
@@ -247,7 +250,7 @@ func (c *KubernetesCache) enqueue(watch sdk.WatchKind) {
 }
 
 func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace}
+	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC()}
 	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)

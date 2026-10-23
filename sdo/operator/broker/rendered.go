@@ -7,6 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/sdk"
 
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/rendered"
@@ -85,6 +90,7 @@ func (b *Broker) renderedDeploymentEvidenceLocked(ctx context.Context, revision 
 	}
 	result := []rendered.DeploymentEvidence{}
 	source := rendered.Source{Repository: b.target}
+	records := []SourceEvidence{}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -109,12 +115,96 @@ func (b *Broker) renderedDeploymentEvidenceLocked(ctx context.Context, revision 
 		if _, err := runGit(ctx, b.target, "merge-base", "--is-ancestor", commit, revision); err != nil {
 			continue
 		}
-		same, err := source.SameInputs(ctx, tree, revision)
+		value.AcceptedCommit = commit
+		records = append(records, value)
+	}
+	// Newer independently verified deployments supersede earlier observations
+	// of the same named container, including mutable external image tags.
+	history, err := gitText(ctx, b.target, "rev-list", "--topo-order", revision)
+	if err != nil {
+		return nil, err
+	}
+	rank := map[string]int{}
+	for index, commit := range strings.Fields(history) {
+		rank[commit] = index
+	}
+	sort.Slice(records, func(i, j int) bool { return rank[records[i].AcceptedCommit] < rank[records[j].AcceptedCommit] })
+	type imageKey struct {
+		ref  sdk.ObjectRef
+		name string
+		init bool
+	}
+	seen := map[imageKey]bool{}
+	for _, value := range records {
+		commit, tree := value.AcceptedCommit, value.ProposalTreeDigest
+		// A source edit permanently retires affected evidence. Comparing each
+		// accepted source transition also rejects edit-then-revert histories.
+		revisions, err := gitText(ctx, b.target, "log", "--format=%H", commit+".."+revision, "--", ".", ":(exclude).sdo")
 		if err != nil {
 			return nil, err
 		}
-		if same {
-			result = append(result, rendered.DeploymentEvidence{SourceTree: tree, Images: value.ContainerImages})
+		source.ManifestPaths = value.ManifestPaths
+		type comparisonKey struct {
+			revision string
+			inputs   rendered.ImageInputs
+		}
+		manifests := map[string]map[imageKey]string{}
+		comparisons := map[comparisonKey]bool{}
+		proof := rendered.DeploymentEvidence{SourceTree: tree}
+		for _, image := range value.ContainerImages {
+			identity := imageKey{image.Ref, image.Name, image.Init}
+			if seen[identity] {
+				continue
+			}
+			seen[identity] = true
+			valid := true
+			for _, candidate := range append(strings.Fields(revisions), revision) {
+				key := comparisonKey{candidate, image.Inputs}
+				same, compared := comparisons[key]
+				if !compared {
+					same, err = source.SameImageInputs(ctx, tree, candidate, image.Inputs)
+					comparisons[key] = same && err == nil
+					same = comparisons[key]
+				}
+				if image.Inputs.SourceImage != "" {
+					names, read := manifests[candidate]
+					if !read {
+						names = map[imageKey]string{}
+						objects, readErr := source.RawManifests(ctx, candidate, image.Ref.Namespace)
+						if readErr != nil {
+							valid = false
+							break
+						}
+						for _, object := range objects {
+							ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
+							for _, field := range []string{"initContainers", "containers"} {
+								containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", field)
+								for _, raw := range containers {
+									container, _ := raw.(map[string]any)
+									name, _ := container["name"].(string)
+									sourceImage, _ := container["image"].(string)
+									names[imageKey{ref, name, field == "initContainers"}] = sourceImage
+								}
+							}
+						}
+						manifests[candidate] = names
+					}
+					if names[imageKey{image.Ref, image.Name, image.Init}] != image.Inputs.SourceImage {
+						valid = false
+						break
+					}
+				}
+				if !same {
+					valid = false
+					break
+				}
+			}
+			if valid {
+				proof.Images = append(proof.Images, image)
+			}
+		}
+		if len(proof.Images) > 0 {
+			result = append(result, proof)
 		}
 	}
 	return result, nil

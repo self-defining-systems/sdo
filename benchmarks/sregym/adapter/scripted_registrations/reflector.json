@@ -10,6 +10,6 @@
   ],
   "kubernetes_job": {
     "image": "${RESPONDER_IMAGE}",
-    "command": ["python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "reflection"]
+    "command": ["env", "SDO_SCRIPTED_MEMORY_CHANGE=1", "python3", "-m", "benchmarks.sregym.adapter.scripted_worker", "reflection"]
   }
 }

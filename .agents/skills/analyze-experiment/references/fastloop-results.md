@@ -167,3 +167,30 @@ Summaries exclude them from incident denominators and expose
 `infrastructure_outcomes` separately. `recovery_error` stops the stream even with
 continue-on-error: no baseline repair or reset can erase failed full recovery.
 The driver requests protocol v2 full cleanup before restoring its owned baseline.
+
+## Ordered mixed-app dispatch
+
+`python -m benchmarks.sregym.fastloop.dispatch` drives exactly the first ten
+entries of a supplied 50-slot `sequence_plan.json`, without regrouping by app.
+Each app binding pins its independently verified seed and saved fastloop
+environment; seed creation and lifecycle verification remain separate gates.
+Each slot runs in a fresh process against that app's persistent workspace and
+controller. `run --slot-offset` makes agent IDs, receipt/checkpoint directories
+and incident row indices use the global slot number.
+
+The dispatcher writes `run_manifest.json` (`sdo.mixed-dispatch/v1`) with the full
+50-entry plan, SHA-256 of the original plan file bytes, app seed/initial/latest
+accepted commits, controller-state paths, and each attempted slot's before/after
+accepted commits and status. It also aggregates the slot rows into
+`incidents.jsonl`/`.csv`; the detailed artifacts stay in each app environment's
+`results/<dispatch-run-id>-slot-<NNN>/`. A failed child or recovery leaves the
+manifest failed and prevents any subsequent slot. Output directories cannot be
+reused; restarting a failed stream is an explicit new experiment.
+
+`full_cleanup_verified=true` means the driver observed successful protocol-v2
+full recovery, reconciled its application baseline, then observed healthy
+workloads and completed rollouts. Legacy rows default false. Dispatch requires
+this field, a successful post-recovery oracle, no skipped cleanup and no error
+or infrastructure outcome. Aggregate-only faults remain supported; missing
+per-fault probe timing does not bypass the cleanup gate. DT1's shared detached
+launcher owns supervision and its process run record; dispatch adds no launcher.

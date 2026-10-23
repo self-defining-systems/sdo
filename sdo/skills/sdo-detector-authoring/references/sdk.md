@@ -19,6 +19,18 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     retained explicitly, so parsing the formatted value preserves every
     ObjectRef field.
 
+func ObservationTime(ctx DetectionContext) time.Time
+    ObservationTime returns the time a detection context describes. Detectors
+    that judge an age ("Pending longer than a minute", "restarted within five
+    minutes") must use it instead of time.Now, so Detect stays a pure function
+    of its snapshot and replays identically.
+
+    A context without a recorded clock falls back to the latest timestamp
+    recorded in its Pods, Deployments, ReplicaSets, and Events. That is a
+    deterministic lower bound on the real observation time, so an age derived
+    from it can only be underestimated: a grace period may elapse late, never
+    early. It is zero when the context records no time at all.
+
 func ServiceExpectsEndpoints(service corev1.Service) bool
     ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
     Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
@@ -199,6 +211,13 @@ const (
 	ObjectRefMalformed ObjectRefErrorCode = "malformed_object_ref"
 	ObjectRefCompound  ObjectRefErrorCode = "compound_object_ref"
 )
+type ObservationClock interface {
+	ObservedAt() time.Time
+}
+    ObservationClock is implemented by detection contexts that record when their
+    objects were read. The controller stamps each snapshot once, when it builds
+    it, and corpus captures carry the stamp so replay sees the same time.
+
 type PersistencePolicy struct {
 	Firing   int
 	Clearing int
@@ -234,16 +253,241 @@ const (
 	RuleSelectorMatchesNoPods = "service-selector-matches-no-pods"
 	RuleNoReadyEndpoints      = "service-has-no-ready-endpoints"
 )
+const (
+	// RuleServicePortUnreachable reports a Service whose ready backends do
+	// not accept fresh TCP connections on one or more Service ports.
+	RuleServicePortUnreachable = "service-port-unreachable"
+
+	DefaultReachabilityInterval = 10 * time.Second
+	DefaultReachabilityTimeout  = 1 * time.Second
+	// DefaultReachabilityFailures consecutive failed dials, at least two
+	// intervals apart end to end, report a port.
+	DefaultReachabilityFailures = 3
+	// MaxReachabilityTargets bounds the dialed Service ports per namespace.
+	MaxReachabilityTargets = 64
+)
+
+VARIABLES
+
+var ReachabilityWatch = sdk.WatchKind{APIVersion: "sdo.dev/v1alpha1", Kind: "ServiceReachability"}
+    ReachabilityWatch is emitted by the controller runtime when new dial samples
+    may change a verdict; it is not a Kubernetes kind.
+
 
 FUNCTIONS
 
 func EndpointWatches() []sdk.WatchKind
     EndpointWatches are the resources whose changes can change the verdict.
 
+func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector
+    NewReachabilityDetector reports every eligible Service that has a ready
+    selected pod while the last Failures fresh TCP dials of one of its ports,
+    all made after the Service gained that ready backend, failed. A prior
+    successful dial is not required: a port that never accepted a connection
+    while its pods report Ready is exactly the fault this detects. Without dial
+    observations in the context it reports nothing.
+
 func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector
     NewReadyEndpointsDetector reports every Service with a selector that has
     no ready endpoint, unless every workload it selects is scaled to zero on
     purpose. ExternalName Services never have endpoints and are skipped.
+
+func ReachabilityEligible(service corev1.Service) bool
+    ReachabilityEligible reports whether a Service is dialed: it has a
+    cluster IP that load-balances to selected pods. ExternalName Services
+    are DNS aliases, headless Services resolve to pod IPs without targetPort
+    translation, selector-less Services have hand-managed backends, and Services
+    SDO creates for itself are not the application's.
+
+func ReachabilityWatches() []sdk.WatchKind
+    ReachabilityWatches are the kinds whose changes can change the verdict.
+
+
+TYPES
+
+type DialErrorClass string
+    DialErrorClass classifies a failed dial.
+
+const (
+	DialRefused     DialErrorClass = "refused"
+	DialTimeout     DialErrorClass = "timeout"
+	DialDNS         DialErrorClass = "dns"
+	DialReset       DialErrorClass = "reset"
+	DialUnreachable DialErrorClass = "unreachable"
+	DialOther       DialErrorClass = "other"
+)
+type DialSample struct {
+	At       time.Time      `json:"at"`
+	Duration time.Duration  `json:"durationNs"`
+	OK       bool           `json:"ok"`
+	Class    DialErrorClass `json:"class,omitempty"`
+	Error    string         `json:"error,omitempty"`
+}
+    DialSample is one fresh TCP dial of a target.
+
+type ProberIdentity struct {
+	Namespace string            `json:"namespace,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+    ProberIdentity is where the dials come from, so NetworkPolicy admission can
+    be evaluated against it.
+
+type ReachabilityConsumer interface {
+	ConsumesServiceReachability() bool
+}
+    ReachabilityConsumer marks detectors that need dial observations, so the
+    controller runs the reachability observer only when one is installed.
+
+type ReachabilitySource interface {
+	ServiceReachability() (ReachabilityWindow, bool)
+}
+    ReachabilitySource is implemented by detection contexts that carry dial
+    observations. The controller runtime's snapshots implement it.
+
+type ReachabilityTarget struct {
+	Service  string `json:"service"`
+	Port     int32  `json:"port"`
+	PortName string `json:"portName,omitempty"`
+}
+    ReachabilityTarget is one TCP port of one Service, dialed through cluster
+    DNS.
+
+func ReachabilityTargets(ctx sdk.DetectionContext) ([]ReachabilityTarget, int)
+    ReachabilityTargets derives the dial targets from a namespace snapshot:
+    every TCP port of every eligible Service, sorted by Service and port,
+    at most MaxReachabilityTargets. It also returns how many were omitted.
+
+func (t ReachabilityTarget) ID() string
+    ID names the target.
+
+type ReachabilityWindow struct {
+	ObservedAt time.Time            `json:"observedAt"`
+	Interval   time.Duration        `json:"intervalNs"`
+	Timeout    time.Duration        `json:"timeoutNs"`
+	Failures   int                  `json:"failures"`
+	Targets    []TargetObservations `json:"targets"`
+	// Omitted counts derived targets beyond MaxReachabilityTargets.
+	Omitted int            `json:"omitted,omitempty"`
+	Prober  ProberIdentity `json:"prober"`
+	// LoadError is set when the prober could not be read.
+	LoadError string `json:"loadError,omitempty"`
+}
+    ReachabilityWindow is what the controller has observed at ObservedAt.
+
+func ReachabilityFrom(ctx sdk.DetectionContext) (ReachabilityWindow, bool)
+    ReachabilityFrom returns the dial observations, when the context carries
+    them.
+
+type TargetObservations struct {
+	Target  ReachabilityTarget `json:"target"`
+	Samples []DialSample       `json:"samples"`
+	// LastSuccess is the latest successful dial the controller has seen, which
+	// may be older than every retained sample.
+	LastSuccess *time.Time `json:"lastSuccess,omitempty"`
+}
+    TargetObservations are one target's recent samples, oldest first.
+
+```
+
+```text
+package workloadhealth // import "sdo.dev/operator/sdk/workloadhealth"
+
+Package workloadhealth holds an app-agnostic health check over Kubernetes
+workload state: failed, stuck, crashing, or unready pods and Deployments that
+do not reach their desired availability. It reports workloads, not Services;
+servicehealth covers Services without ready endpoints.
+
+Every age is measured against sdk.ObservationTime, never the wall clock,
+so one snapshot always yields the same findings.
+
+CONSTANTS
+
+const (
+	// RulePodFailed: a pod reached phase Failed.
+	RulePodFailed = "workload-pod-failed"
+	// RulePodUnknown: the kubelet stopped reporting a pod (phase Unknown).
+	RulePodUnknown = "workload-pod-unknown"
+	// RulePodPending: a scheduled pod stayed Pending past PendingGrace.
+	RulePodPending = "workload-pod-pending"
+	// RulePodUnschedulable: a pod stayed Pending past PendingGrace because
+	// the scheduler found no node (PodScheduled=False, Unschedulable).
+	RulePodUnschedulable = "workload-pod-unschedulable"
+	// RuleCrashLooping: a container waits in CrashLoopBackOff.
+	RuleCrashLooping = "workload-container-crash-looping"
+	// RuleImagePull: a container waits in ImagePullBackOff or ErrImagePull.
+	RuleImagePull = "workload-container-image-pull-failing"
+	// RuleConfigError: a container cannot be created from its spec
+	// (CreateContainerConfigError, CreateContainerError, InvalidImageName).
+	RuleConfigError = "workload-container-config-error"
+	// RuleWaiting: a container waits for any other non-startup reason.
+	RuleWaiting = "workload-container-waiting"
+	// RuleOOMKilled: a container is, or within RestartWindow was, OOMKilled.
+	RuleOOMKilled = "workload-container-oom-killed"
+	// RuleTerminatedError: a container's current state is terminated with a
+	// reason other than Completed.
+	RuleTerminatedError = "workload-container-terminated-error"
+	// RuleNotReady: a running container of a Running pod is unready past
+	// NotReadyGrace after it started.
+	RuleNotReady = "workload-container-not-ready"
+	// RuleInitStuck: an init container has not completed within
+	// InitContainerGrace.
+	RuleInitStuck = "workload-init-container-stuck"
+	// RuleRestartChurn: a container restarted at least RestartThreshold times,
+	// last terminated within RestartWindow, and has not since run ready for
+	// NotReadyGrace.
+	RuleRestartChurn = "workload-container-restart-churn"
+	// RuleDeploymentUnavailable: a Deployment has fewer available replicas
+	// than desired past DeploymentGrace since its last progress, and no pod
+	// finding explains it.
+	RuleDeploymentUnavailable = "workload-deployment-unavailable"
+	// RuleProgressDeadlineExceeded: a Deployment reports Progressing=False
+	// with reason ProgressDeadlineExceeded.
+	RuleProgressDeadlineExceeded = "workload-deployment-progress-deadline-exceeded"
+)
+    Rule IDs are stable. A finding is emitted once per rule and primary
+    resource: the owning Deployment when its ReplicaSet chain resolves in the
+    snapshot, otherwise the Pod itself.
+
+
+FUNCTIONS
+
+func NewDetector(spec sdk.DetectorSpec) sdk.Detector
+    NewDetector returns the workload health detector with DefaultPolicy.
+
+func NewDetectorWithPolicy(spec sdk.DetectorSpec, policy Policy) (sdk.Detector, error)
+    NewDetectorWithPolicy returns the workload health detector with policy.
+
+func Watches() []sdk.WatchKind
+    Watches are the resources whose changes can change the verdict.
+
+
+TYPES
+
+type Policy struct {
+	// PendingGrace is how long a pod may stay Pending after creation.
+	PendingGrace time.Duration
+	// NotReadyGrace is how long a started container may stay unready, and
+	// how long a restarted container must run ready to count as recovered.
+	NotReadyGrace time.Duration
+	// InitContainerGrace is how long an init container may take.
+	InitContainerGrace time.Duration
+	// DeploymentGrace is how long a Deployment may stay below its desired
+	// availability after its last recorded progress.
+	DeploymentGrace time.Duration
+	// RestartWindow bounds how recent a last termination must be to count
+	// for restart churn and for a past OOM kill.
+	RestartWindow time.Duration
+	// RestartThreshold is the restart count at which recent restarts churn.
+	RestartThreshold int32
+}
+    Policy holds the detector's thresholds. All durations are measured against
+    the snapshot's observation time.
+
+func DefaultPolicy() Policy
+    DefaultPolicy returns the thresholds the generic health detector uses.
+
+func (p Policy) Validate() error
+    Validate rejects non-positive thresholds.
 
 ```
 

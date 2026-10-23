@@ -10,6 +10,7 @@ type DeployedImage struct {
 	Init    bool          `json:"init"`
 	Applied string        `json:"applied"`
 	Digest  string        `json:"digest"`
+	Inputs  ImageInputs   `json:"inputs,omitzero"`
 }
 
 // DeploymentEvidence comes from the broker's private source-deployment ledger.
@@ -30,3 +31,12 @@ func (e DeploymentEvidence) Image(ref sdk.ObjectRef, name string, init bool) (De
 
 // IsImmutableImage recognizes the digest identities required by locks.
 func IsImmutableImage(image string) bool { return immutableImage.MatchString(image) }
+
+// ImageInputs is copied from the trusted deployment plan, never from a lock or
+// live Pod. SourceImage with empty paths declares an image with no local build.
+// The zero value denotes unknown inputs and retains the all-source fallback.
+type ImageInputs struct {
+	SourceImage    string `json:"source_image"`
+	ContextPath    string `json:"context_path,omitempty"`
+	DockerfilePath string `json:"dockerfile_path,omitempty"`
+}

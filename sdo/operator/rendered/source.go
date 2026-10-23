@@ -30,6 +30,7 @@ type SourceImages interface {
 
 // Source reads durable accepted locks and prepares controller-owned renders.
 type Source struct {
+	Evidence   []DeploymentEvidence
 	Gaps       map[sdk.ObjectRef]string
 	Repository string
 	Images     SourceImages
@@ -143,7 +144,7 @@ func (s Source) renderDocument(ctx context.Context, document map[string]any, tre
 		}
 		useImages = deployedTree != ""
 		if useImages {
-			same, err := s.sameImageSource(ctx, deployedTree, tree)
+			same, err := s.SameWorkloadInputs(ctx, deployedTree, tree, &unstructured.Unstructured{Object: document}, s.Evidence)
 			if err != nil {
 				return nil, fmt.Errorf("image source identity for %s/%s: %w", ref.Kind, ref.Name, err)
 			}

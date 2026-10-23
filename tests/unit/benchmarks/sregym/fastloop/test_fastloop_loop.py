@@ -504,3 +504,28 @@ def test_failed_recovery_never_advances_even_with_continue_and_reset(tmp_path: P
     assert resets == []
     assert driver.events.count("inject:a") == 1
     assert "inject:b" not in driver.events
+
+
+def test_global_slot_offset_reaches_agent_records_and_first_slot_prelude(tmp_path: Path) -> None:
+    clock = FakeClock()
+    agent = FakeAgent(clock)
+    records = run_incidents(
+        agent,
+        FakeDriver(clock),
+        LoopConfig(
+            run_id="mixed",
+            problems=("a", "b"),
+            incidents=2,
+            results_path=tmp_path / "incidents.jsonl",
+            slot_offset=7,
+            run_prelude_phase_seconds={"worker_start": 1.0},
+        ),
+        monotonic=clock.monotonic,
+        now=lambda: T0,
+    )
+    assert [row.index for row in records] == [7, 8]
+    assert [row.problem_id for row in records] == ["a", "b"]
+    assert "resolve:7" in agent.events
+    assert "resolve:8" in agent.events
+    assert records[0].run_prelude_phase_seconds == {"worker_start": 1.0}
+    assert records[1].run_prelude_phase_seconds == {}

@@ -15,6 +15,7 @@ require (
 
 require (
 	github.com/distribution/reference v0.6.0 // indirect
+	github.com/moby/patternmatcher v0.6.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )

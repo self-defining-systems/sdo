@@ -36,3 +36,27 @@ Correlate the deployer source commit with Git and `arch.md`. Correlate the objec
 - When validating benchmark claims and costs, read [receipts and benchmark results](benchmark-results.md).
 - For fastloop rows and learned-program confirmation, read [fastloop results](fastloop-results.md).
 - When reconstructing controller timing, read [telemetry and trajectories](telemetry.md).
+
+## Abstaining program refinement questions
+
+Go-owned `reflection_eligibility.causes[].items[]` can carry
+`reason: program_refinement` with `disposition: question`. The item identifies
+an existing program/revision and bindings that returned `NoMatch` or `Unknown`
+for an object in the confirmed cause that a successful repair action wrote.
+`evaluation` retains the typed `ProgramRun`, including verdict evidence and
+errors. Repeated runs with the same program, revision, bindings and verdict are
+represented by the first evaluation; distinct verdicts and revisions remain
+separate. A matching evaluation for the same revision and binding (or with an
+omitted revision on either evaluation) uses the
+existing matched-program work instead, so post-repair `NoMatch` is not treated
+as stale coverage.
+
+The item asks reflection to consider the incident's open capture as the positive
+case and extend/fix the program or explain why abstention should remain. Its
+`evidence_phase: open` names that requested capture, not the evaluation's time;
+`ProgramRun` has no phase timestamp. This question does not itself establish a
+false negative, label a positive corpus case, or grant trust. Unavailable
+observations can still justify safe abstention. Repaired objects without an
+eligible evaluation retain the generic `unbound_write` question. Historical
+outcomes lack these candidates; inspect their raw program runs before concluding
+that no existing program evaluated the object.

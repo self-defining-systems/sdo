@@ -143,12 +143,15 @@ class LoopConfig:
     results_path: Path
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
+    slot_offset: int = 0
     run_prelude_phase_seconds: dict[str, float] = field(default_factory=dict)
     capability_evidence: SuiteCapabilities = field(default_factory=SuiteCapabilities)
     permissive_responder: bool = False
     responder_namespaces: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.slot_offset, int) or self.slot_offset < 0:
+            raise ValueError("slot_offset must be a non-negative integer")
         if not self.run_id:
             raise ValueError("run_id must not be empty")
         if not self.problems or not all(isinstance(problem, str) and problem for problem in self.problems):
@@ -219,8 +222,11 @@ def run_incidents(
     pending: dict[Future[DiagnosisGrade], IncidentRecord] = {}
     stop_reason = "completed"
     try:
-        for index in range(config.incidents):
-            ids = config.stream[index] if config.stream else (config.problems[index % len(config.problems)],)
+        for local_index in range(config.incidents):
+            index = config.slot_offset + local_index
+            ids = (
+                config.stream[local_index] if config.stream else (config.problems[local_index % len(config.problems)],)
+            )
             record, recovered = _run_one(
                 agent,
                 driver,
@@ -237,7 +243,7 @@ def run_incidents(
                 and record.error
                 and record.recovery_error is None
                 and record.infra_error is None
-                and index + 1 < config.incidents
+                and local_index + 1 < config.incidents
                 and on_failed_incident is not None
             ):
                 try:
@@ -470,8 +476,9 @@ def _run_one(
         cleanup_deleted_counts=cleanup.deleted_counts if cleanup is not None else {},
         cleanup_restored=cleanup.restored if cleanup is not None else [],
         cleanup_skipped_reason=cleanup.skipped_reason if cleanup is not None else None,
+        full_cleanup_verified=getattr(driver, "last_full_cleanup_verified", False),
         incident_wall_seconds=monotonic() - started,
-        run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == 0 else {},
+        run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == config.slot_offset else {},
         error="; ".join(errors) or None,
         **(_outcome_fields(outcome) if outcome is not None else {}),
     )

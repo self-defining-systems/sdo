@@ -1505,3 +1505,18 @@ def test_valid_injection_barrier_retains_the_healthy_observation_baseline() -> N
     ops.logs["hotel-sdo"] = []
     inject_while_paused(ops, "hotel-sdo", "valid", lambda: None, clock=_clock(ops))
     assert ops.events == [("paused", "hotel-sdo"), ("active", "hotel-sdo")]
+
+
+def test_interrupted_install_retains_cleanup_target_before_controller_exists(tmp_path: Path) -> None:
+    inputs = _inputs(tmp_path, "s0")
+    ops = FakeOps()
+
+    def interrupted() -> bool:
+        state = PersistentState.load(inputs.state_path)
+        assert state.controllers == {}
+        assert state.cleanup_targets["hotel"].control_namespace == "hotel-sdo"
+        raise RuntimeError("launcher killed during installation")
+
+    with pytest.raises(RuntimeError, match="launcher killed"):
+        run_persistent_stage(inputs, ops=ops, run_lifecycle=interrupted, inject=lambda: None, clock=_clock(ops))
+    assert PersistentState.load(inputs.state_path).cleanup_targets["hotel"].namespace == "hotel"

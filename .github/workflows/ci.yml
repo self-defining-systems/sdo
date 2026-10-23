@@ -13,7 +13,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 # Every action is pinned to a commit (the tag it was taken from is in the
 # comment), and uv installs exactly uv.lock.
@@ -30,6 +30,10 @@ jobs:
     outputs:
       python: ${{ steps.resolve.outputs.python }}
       go: ${{ steps.resolve.outputs.go }}
+      image_controller: ${{ steps.resolve.outputs.image_controller }}
+      image_validator: ${{ steps.resolve.outputs.image_validator }}
+      image_responder: ${{ steps.resolve.outputs.image_responder }}
+      image_benchmark: ${{ steps.resolve.outputs.image_benchmark }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
@@ -63,21 +67,70 @@ jobs:
               - 'buf*.yaml'
               - 'buf.lock'
               - '.github/workflows/ci.yml'
+            image_controller:
+              - 'sdo/operator/**'
+              - 'scripts/sdo-images.hcl'
+              - 'scripts/build_sdo_images.sh'
+              - '.github/workflows/ci.yml'
+              - 'sdo/agents/registrations/**'
+            image_validator:
+              - 'sdo/operator/**'
+              - 'scripts/sdo-images.hcl'
+              - 'scripts/build_sdo_images.sh'
+              - '.github/workflows/ci.yml'
+            image_responder:
+              - 'sdo/operator/**'
+              - 'scripts/sdo-images.hcl'
+              - 'scripts/build_sdo_images.sh'
+              - '.github/workflows/ci.yml'
+              - 'sdo/**'
+              - 'libs/__init__.py'
+              - 'libs/agent_cli/**'
+              - 'examples/playbook-programs/**'
+              - 'uv.lock'
+              - 'pyproject.toml'
+            image_benchmark:
+              - 'sdo/operator/**'
+              - 'scripts/sdo-images.hcl'
+              - 'scripts/build_sdo_images.sh'
+              - '.github/workflows/ci.yml'
+              - 'sdo/**'
+              - 'libs/__init__.py'
+              - 'libs/agent_cli/**'
+              - 'examples/playbook-programs/**'
+              - 'uv.lock'
+              - 'pyproject.toml'
+              - 'benchmarks/__init__.py'
+              - 'benchmarks/sregym/__init__.py'
+              - 'benchmarks/sregym/Dockerfile.worker'
+              - 'benchmarks/sregym/adapter/__init__.py'
+              - 'benchmarks/sregym/adapter/submission.py'
+              - 'benchmarks/sregym/adapter/submission_relay.py'
+              - 'benchmarks/sregym/protocol/**'
+              - 'benchmarks/sregym/fastloop/__init__.py'
+              - 'benchmarks/sregym/fastloop/model_recording.py'
+              - 'benchmarks/sregym/fastloop/file_edits.py'
+              - 'benchmarks/sregym/fastloop/recording_worker.py'
       - name: Resolve affected areas
         id: resolve
         env:
           EVENT: ${{ github.event_name }}
           PYTHON: ${{ steps.filter.outputs.python }}
           GO: ${{ steps.filter.outputs.go }}
+          IMAGE_CONTROLLER: ${{ steps.filter.outputs.image_controller }}
+          IMAGE_VALIDATOR: ${{ steps.filter.outputs.image_validator }}
+          IMAGE_RESPONDER: ${{ steps.filter.outputs.image_responder }}
+          IMAGE_BENCHMARK: ${{ steps.filter.outputs.image_benchmark }}
         run: |
-          if [ "${EVENT}" = "merge_group" ]; then
-            # Validate the real merge commit against latest main: run everything.
-            echo "python=true" >> "${GITHUB_OUTPUT}"
-            echo "go=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "python=${PYTHON}" >> "${GITHUB_OUTPUT}"
-            echo "go=${GO}" >> "${GITHUB_OUTPUT}"
-          fi
+          for area in python go image_controller image_validator image_responder image_benchmark; do
+            variable="${area^^}"
+            if [ "${EVENT}" = "merge_group" ]; then
+              # Validate every area on the merge queue's real merge commit.
+              echo "${area}=true" >> "${GITHUB_OUTPUT}"
+            else
+              echo "${area}=${!variable}" >> "${GITHUB_OUTPUT}"
+            fi
+          done
 
   python:
     name: ${{ matrix.name }}
@@ -105,6 +158,15 @@ jobs:
         with:
           go-version: "1.26.8"
           cache-dependency-path: sdo/operator/go.sum
+      # The unit tests build the Go operator (adapter tests run it on fake
+      # controller state). Pin the toolchain so GOTOOLCHAIN=auto does not
+      # download go1.26 inside that build's timeout. The Go caches are
+      # restored by the dedicated cache step below.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        if: matrix.name == 'unit tests'
+        with:
+          go-version: "1.26.8"
+          cache: false
       - name: Check out the SREGym harness
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -180,7 +242,17 @@ jobs:
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "${{ matrix.go-version }}"
-          cache-dependency-path: ${{ matrix.directory }}/go.sum
+          cache: false
+      - name: Cache Go builds and subprocess builds
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.module }}-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-${{ matrix.module }}-${{ matrix.go-version }}-
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         if: matrix.module == 'runtime'
         with:
@@ -192,7 +264,7 @@ jobs:
       # TestReplay* and TestChaos* have dedicated, 5-minute-capped jobs below;
       # skip them here so the runtime module's tests aren't compiled and run a
       # second time in this job.
-      - run: go test -race -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...
+      - run: go test -race -parallel=2 -skip '^TestReplay|^TestChaos|^TestExhaustive|^TestExplorer' ./...
         working-directory: ${{ matrix.directory }}
 
       # Wall-clock latency is meaningful only without race instrumentation.
@@ -308,14 +380,28 @@ jobs:
   images:
     name: controller images
     needs: changes
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
+    if: >-
+      needs.changes.outputs.image_controller == 'true' ||
+      needs.changes.outputs.image_validator == 'true' ||
+      needs.changes.outputs.image_responder == 'true' ||
+      needs.changes.outputs.image_benchmark == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Check out the SREGym harness
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule update --init --depth 1 third_party/sregym
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Cache image schema-identity build
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ci-go-${{ runner.os }}-${{ runner.arch }}-images-1.26.8-${{ hashFiles('**/go.sum') }}-
+            ci-go-${{ runner.os }}-${{ runner.arch }}-operator-1.26.8-${{ hashFiles('**/go.sum') }}-
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
       - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6.4.3
         with:
@@ -323,17 +409,49 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - name: Build the SDO images and smoke-run the benchmark responder
-        run: ./scripts/build_sdo_images.sh
-      - name: Probe the SDO images against the pins
+      - name: Select affected images and compute schema identity
+        id: image-inputs
+        env:
+          CONTROLLER: ${{ needs.changes.outputs.image_controller }}
+          VALIDATOR: ${{ needs.changes.outputs.image_validator }}
+          RESPONDER: ${{ needs.changes.outputs.image_responder }}
+          BENCHMARK: ${{ needs.changes.outputs.image_benchmark }}
         run: |
-          uv run python -m benchmarks.sregym.runner.preflight \
-            --image controller_image=sdo-controller:v0.1.0 \
-            --image responder_image=sdo-sregym-responder:v0.1.0 \
-            --image validator_image=sdo-detector-validator:v0.1.0
-          uv run python -m benchmarks.sregym.runner.preflight \
-            --image responder_image=sdo-responder:v0.1.0
+          images=()
+          for image in controller validator responder benchmark; do
+            variable="${image^^}"
+            if [ "${!variable}" = "true" ]; then
+              images+=("${image}")
+            fi
+          done
+          echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
+          (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
+          identity="$(cd sdo/operator && go run ./cmd/sdo-operator schema-identity)"
+          echo "SDO_VALIDATOR_SCHEMA_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+      - name: Build affected images with persistent layers
+        uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
+        with:
+          source: .
+          files: scripts/sdo-images.hcl
+          targets: ${{ steps.image-inputs.outputs.targets }}
+          load: true
+          set: |
+            controller.cache-from=type=gha,scope=sdo-controller
+            controller.cache-to=type=gha,scope=sdo-controller,mode=max
+            validator.cache-from=type=gha,scope=sdo-validator
+            validator.cache-to=type=gha,scope=sdo-validator,mode=max
+            responder.cache-from=type=gha,scope=sdo-responder
+            responder.cache-to=type=gha,scope=sdo-responder,mode=max
+            benchmark.cache-from=type=gha,scope=sdo-benchmark
+            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=max
+      - name: Smoke and probe every affected image
+        env:
+          SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}
+          SDO_SKIP_IMAGE_BUILD: "1"
+          SDO_IMAGE_PREFLIGHT: "1"
+        run: ./scripts/build_sdo_images.sh
       - name: Confirm the responder image carries no SREGym answer key
+        if: needs.changes.outputs.image_benchmark == 'true'
         # Belt-and-braces over tests/unit/sdo/operator/test_dockerfile_benchmark_scope.py,
         # which checks the Dockerfile COPY lines statically: this lists the files an
         # actually built image carries, so a leak would fail here even if some other
