@@ -128,3 +128,57 @@ def test_receipt_is_persisted_atomically(tmp_path: Path) -> None:
     path = driver.persist_production_receipt({"schema_version": "sdo.production-receipt/v2"}, tmp_path)
     assert json.loads(path.read_text())["schema_version"] == "sdo.production-receipt/v2"
     assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
+def test_native_pipeline_forwards_reviewed_responder_scope(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv(
+        "SREGYM_EXPERIMENT_AGENT_CONFIG",
+        json.dumps(
+            {
+                "permissive_responder": True,
+                "responder_namespaces": ["policy-system"],
+            }
+        ),
+    )
+    monkeypatch.setenv("SREGYM_BASE_KUBECONFIG", str(tmp_path / "kubeconfig"))
+    args = driver._parse_args([])
+    install = driver._native_install_for_run(args, tmp_path, "demo", "demo", "http://localhost:8123")
+    assert install.permissive_responder is True
+    assert install.responder_namespaces == ("policy-system",)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"permissive_responder": "true"},
+        {"permissive_responder": True, "responder_namespaces": "policy-system"},
+        {"permissive_responder": True, "responder_namespaces": [""]},
+        {"responder_namespaces": ["policy-system"]},
+    ],
+)
+def test_pipeline_rejects_malformed_responder_scope(
+    monkeypatch: pytest.MonkeyPatch, settings: dict[str, object]
+) -> None:
+    monkeypatch.setenv("SREGYM_EXPERIMENT_AGENT_CONFIG", json.dumps(settings))
+    with pytest.raises(ValueError, match="permissive_responder|responder_namespaces"):
+        driver._parse_args([])
+
+
+def test_responder_scope_defaults_and_cli_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
+    args = driver._parse_args([])
+    assert args.permissive_responder is False
+    assert args.responder_namespaces == ()
+    monkeypatch.setenv(
+        "SREGYM_EXPERIMENT_AGENT_CONFIG",
+        json.dumps(
+            {
+                "permissive_responder": True,
+                "responder_namespaces": ["configured"],
+            }
+        ),
+    )
+    args = driver._parse_args(["--responder-namespace", "reviewed-a", "--responder-namespace", "reviewed-b"])
+    assert args.responder_namespaces == ("reviewed-a", "reviewed-b")
+    with pytest.raises(ValueError, match="requires permissive_responder"):
+        driver._parse_args(["--no-permissive-responder"])
