@@ -97,6 +97,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	CheckHealth                     func(context.Context) error
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
 	Programs                        program.ProgramRegistry
@@ -235,6 +236,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
+	if l.CheckHealth != nil {
+		if err := l.CheckHealth(ctx); err != nil {
+			response.Error = err.Error()
+			return response
+		}
+	}
 	switch request.Command {
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
@@ -639,6 +646,12 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 }
 
 func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	if l.CheckHealth != nil {
+		if err := l.CheckHealth(ctx); err != nil {
+			response.Error = err.Error()
+			return
+		}
+	}
 	for _, entry := range l.applicationsLog {
 		for _, consumed := range entry.PlanIDs {
 			for _, requested := range request.PlanIDs {

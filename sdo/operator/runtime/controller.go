@@ -148,6 +148,9 @@ type Controller struct {
 	timeline      []DetectorTimelineEntry
 	stateRestored bool
 
+	// CheckHealth refuses evaluation and effects while accepted health policy is stale.
+	CheckHealth              func(context.Context) error
+	checkInvestigationHealth func(context.Context, string) error
 	// ReconcileRendered is the Go-only deployment lock publication edge.
 	ReconcileRendered func(context.Context, string) (string, error)
 	OnError           func(error)
@@ -254,6 +257,9 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
+	if err := c.prepareHealthEffects(ctx, now); err != nil {
+		return err
+	}
 	c.processDispatchCompletions(now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()
@@ -1439,6 +1445,11 @@ func (c *Controller) PersistState(ctx context.Context) error {
 }
 
 func (c *Controller) actionContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if c.CheckHealth != nil {
+		if err := c.CheckHealth(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
 	if c.GuardAction != nil {
 		return c.GuardAction(ctx)
 	}
