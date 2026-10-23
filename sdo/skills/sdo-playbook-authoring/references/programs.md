@@ -4,6 +4,11 @@ Programs implement the [generated program SDK](program-sdk.md). Diagnose reads a
 mitigation returns typed actions. Import shared SDK helpers (`sdk/observe`, `sdk/routing`) instead of copying them into `.sdo/lib`.
 Keep names, ports and images in bindings or observed state, never in the learned predicate.
 
+Snapshot-only detectors may import their application's playbook package and promote its Diagnoser with
+`program.DetectorFromProgram`. Set `DetectorSpec.Playbooks` to the actual logical playbook IDs; detector IDs
+may differ. Findings preserve those declared references. Tests may import application playbooks to exercise
+their public contracts; production helper and playbook packages cannot import other playbook packages.
+
 Accepted Mitigators become selectable options in the responder menu, a convenience over direct commands.
 Declare object and typed value parameters and group related actions into one plan. Raw registered actions
 also appear as generic one-action plans. The ordinary PlanExecutor runs them with the controller's existing

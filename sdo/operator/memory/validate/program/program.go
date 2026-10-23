@@ -260,7 +260,10 @@ func checkProgramImports(root, module string) error {
 		}
 		for _, imported := range file.Imports {
 			name, err := strconv.Unquote(imported.Path.Value)
-			if err != nil || !allowedProgramImport(name, module) {
+			// Detectors can promote an application's diagnoser without copying its
+			// fault predicate. Tests may exercise the same public program contract.
+			playbookImport := (filepath.Base(root) == "detectors" || strings.HasSuffix(path, "_test.go")) && strings.HasPrefix(name, module+"/playbooks/")
+			if err != nil || !allowedProgramImport(name, module) && !playbookImport {
 				return fmt.Errorf("%s: authored Go may not import %q; use the read-only SDK or a shared library", path, name)
 			}
 		}
