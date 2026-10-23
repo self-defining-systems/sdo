@@ -41,6 +41,8 @@ type PlanVerifier interface {
 }
 
 type PlanPatch struct {
+	Operation    string
+	Irreversible bool
 	Structured   bool
 	SourceCommit string
 	Ref          sdk.ObjectRef
@@ -72,6 +74,7 @@ type PlanApplicationResult struct {
 	Patches                  []PlanPatch
 	Duration                 time.Duration
 	PreImages                []PlanPreImage
+	ObjectEffects            []PlanObjectEffect
 }
 
 type PlanExecutor struct {
@@ -106,6 +109,9 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 }
 
 func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if hasObjectActions(plan) {
+		return e.applyObjectPlan(ctx, incident, plan, dryRun)
+	}
 	started := time.Now()
 	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
 	writesLanded := false
@@ -278,11 +284,11 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if observed, getErr := e.Client.Get(ctx, patch.Ref); getErr == nil {
 			result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		}
+		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{result.Patches[index]}}); err != nil {
+			return result, err
+		}
 	}
 	writesLanded = true
-	if err := e.verifyStructuredWrites(ctx, result); err != nil {
-		return result, err
-	}
 	result.Applied = true
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
@@ -318,6 +324,16 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 			return errors.New("rollback requires in-process field writes")
 		}
 		patch := application.Patches[index]
+		if patch.Operation == "delete" {
+			return fmt.Errorf("irreversible deletion of %s/%s cannot be compensated; never auto-recreate", patch.Ref.Kind, patch.Ref.Name)
+		}
+		if patch.Operation == "create" {
+			if err := e.restoreCreatedObject(ctx, patch); err != nil {
+				return err
+			}
+			application.RollbackCompleted++
+			continue
+		}
 		if patch.Before == nil || patch.After == nil {
 			return errors.New("rollback requires before and after images")
 		}
@@ -747,6 +763,18 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := action.(type) {
+	case program.CreateFromSource:
+		return a.Ref, nil
+	case program.DeleteObject:
+		return a.Ref, nil
+	case *program.CreateFromSource:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.DeleteObject:
+		if a != nil {
+			return a.Ref, nil
+		}
 	case program.ReconcileFromSource:
 		return a.Ref, nil
 	case program.Rollback:
@@ -778,7 +806,8 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 }
 
 func validatePlanRef(ref sdk.ObjectRef) error {
-	if ref.APIVersion == "" || ref.Kind == "" || ref.Namespace == "" || ref.Name == "" {
+	clusterDelete := ref.APIVersion == "admissionregistration.k8s.io/v1" && (ref.Kind == "MutatingWebhookConfiguration" || ref.Kind == "ValidatingWebhookConfiguration") && ref.Namespace == ""
+	if ref.APIVersion == "" || ref.Kind == "" || (!clusterDelete && ref.Namespace == "") || ref.Name == "" {
 		return fmt.Errorf("plan action requires a namespaced object reference: %+v", ref)
 	}
 	return nil

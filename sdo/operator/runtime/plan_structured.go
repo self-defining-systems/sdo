@@ -10,6 +10,8 @@ import (
 
 func structuredPlanAction(action program.Action) bool {
 	switch a := action.(type) {
+	case program.CreateFromSource, *program.CreateFromSource, program.DeleteObject, *program.DeleteObject:
+		return true
 	case program.SetField:
 		return program.ExpandedSetField(a)
 	case *program.SetField:
@@ -33,6 +35,12 @@ func structuredPlanRef(plan program.Plan, ref sdk.ObjectRef) bool {
 func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApplicationResult) error {
 	for _, patch := range result.Patches {
 		if !patch.Structured {
+			continue
+		}
+		if patch.Operation != "" {
+			if err := e.observeObjectEffect(ctx, patch); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {

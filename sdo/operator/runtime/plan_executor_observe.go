@@ -16,6 +16,8 @@ type ObservedWrite struct {
 	Ref             sdk.ObjectRef
 	ResourceVersion string
 	Strict          bool
+	UID             string
+	Absent          bool
 }
 
 // WriteObserver is implemented by snapshot providers that serve reads from a
@@ -34,11 +36,15 @@ func (e PlanExecutor) awaitObserved(ctx context.Context, patches []PlanPatch) er
 	}
 	writes := make([]ObservedWrite, 0, len(patches))
 	for _, patch := range patches {
+		if patch.Operation == "delete" {
+			writes = append(writes, ObservedWrite{Ref: patch.Ref, UID: string(patch.Before.GetUID()), Absent: true, Strict: true})
+			continue
+		}
 		if patch.Structured && patch.After.GetResourceVersion() == "" {
 			return fmt.Errorf("write observation unknown: resource version is absent")
 		}
 		if version := patch.After.GetResourceVersion(); version != "" {
-			writes = append(writes, ObservedWrite{Ref: patch.Ref, ResourceVersion: version, Strict: patch.Structured})
+			writes = append(writes, ObservedWrite{Ref: patch.Ref, ResourceVersion: version, Strict: patch.Structured, UID: string(patch.After.GetUID())})
 		}
 	}
 	if err := e.Observer.AwaitWrites(ctx, writes); err != nil {
@@ -86,11 +92,17 @@ func (c *KubernetesCache) observed(writes []ObservedWrite) bool {
 			continue
 		}
 		stored, exists, err := informer.GetStore().GetByKey(write.Ref.Namespace + "/" + write.Ref.Name)
+		if write.Absent {
+			if err != nil || exists {
+				return false
+			}
+			continue
+		}
 		if err != nil || !exists {
 			return false
 		}
 		accessor, err := meta.Accessor(stored)
-		if err != nil || !resourceVersionAtLeast(accessor.GetResourceVersion(), write.ResourceVersion) {
+		if err != nil || (write.UID != "" && string(accessor.GetUID()) != write.UID) || !resourceVersionAtLeast(accessor.GetResourceVersion(), write.ResourceVersion) {
 			return false
 		}
 	}

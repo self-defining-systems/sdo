@@ -20,6 +20,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
@@ -37,7 +38,9 @@ const (
 )
 
 type Config struct {
-	ObservationCeiling                              sdk.ObservationScope
+	ObservationCeiling sdk.ObservationScope
+	// PlanWebhookNames authorizes only named, independently reviewed webhook deletions.
+	PlanWebhookNames                                []string
 	Namespace, ControlNamespace, Application        string
 	ControllerImage, ResponderImage, ValidatorImage string
 	RepositoryPVC, CredentialsSecret, Model         string
@@ -116,6 +119,11 @@ func (c Config) controlNamespace() string {
 	return c.Namespace
 }
 func (c Config) validate() error {
+	for _, name := range c.PlanWebhookNames {
+		if len(validation.IsDNS1123Subdomain(name)) > 0 {
+			return fmt.Errorf("invalid named plan webhook")
+		}
+	}
 	if err := c.ObservationCeiling.Validate(); err != nil {
 		return err
 	}
@@ -297,6 +305,7 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 		return Plan{}, err
 	}
 	addObservationGrants(&plan, c)
+	addPlanWebhookGrants(c, &plan)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)
 	if c.AcceptedCommit != "" {
@@ -311,6 +320,12 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 			plan.Job.Spec.Template.Annotations = map[string]string{}
 		}
 		plan.Job.Spec.Template.Annotations[PermissiveResponderAnnotation] = string(settings)
+	}
+	if len(c.PlanWebhookNames) > 0 {
+		if plan.Job.Spec.Template.Annotations == nil {
+			plan.Job.Spec.Template.Annotations = map[string]string{}
+		}
+		plan.Job.Spec.Template.Annotations[PlanWebhookGrantAnnotation] = "configured"
 	}
 	fingerprintJob := plan.Job.DeepCopy()
 	fingerprintJob.Annotations = nil

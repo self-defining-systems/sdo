@@ -360,3 +360,21 @@ func TestResponderToolsAcceptStructuredSetField(t *testing.T) {
 		t.Fatalf("apply: %s", applied.Error)
 	}
 }
+
+func TestPlanExecutorStructuredVerifiesEachWriteAtItsBoundary(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "flags"}
+	before := planObject(ref, nil)
+	delete(before.Object, "spec")
+	before.SetUID("fixture-uid")
+	before.Object["data"] = map[string]any{"key": "before"}
+	intermediate := before.DeepCopy()
+	intermediate.Object["data"].(map[string]any)["key"] = "intermediate"
+	after := before.DeepCopy()
+	after.Object["data"].(map[string]any)["key"] = "after"
+	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
+	e := PlanExecutor{Client: client, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}, Safety: fixturePlanSafety(t, ref, before, intermediate, after)}
+	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "data[key]", Value: "intermediate"}, program.SetField{Ref: ref, Path: "data[key]", Value: "after"}}}, false)
+	if err != nil || !result.VerificationPassed || len(client.patches) != 2 {
+		t.Fatalf("ordered writes: %v", err)
+	}
+}

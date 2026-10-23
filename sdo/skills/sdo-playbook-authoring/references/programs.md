@@ -36,6 +36,10 @@ current controller-owned nonsecret provenance; accepted Git origin alone supplie
 ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
 produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
 replay remains mandatory. Literal SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
+CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes only
+an explicitly allowed named object proven absent from that source; disclose deletion as irreversible, retain
+its nonsecret receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
+and live verification requires direct current UID/absence evidence plus independent health checks.
 Never delete a valid mitigator merely to eliminate a skipped-effect note.
 
 ## Routing

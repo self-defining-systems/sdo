@@ -43,6 +43,20 @@ type Action interface {
 
 type Bindings map[string]sdk.ObjectRef
 
+type CreateFromSource struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+    CreateFromSource restores a missing named object from accepted source.
+
+type DeleteObject struct {
+	Ref    sdk.ObjectRef
+	Reason string
+}
+    DeleteObject irreversibly deletes a named object absent from accepted
+    source. Its receipt retains a nonsecret preimage; compensation never
+    recreates it.
+
 type Diagnoser interface {
 	Spec() ProgramSpec
 	Diagnose(context.Context, ReadView, Bindings) (Verdict, error)
