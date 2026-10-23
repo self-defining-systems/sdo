@@ -195,14 +195,14 @@ func TestVerifyRetainedLearnedDriftRequiresEveryBinding(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
 	other := ref
 	other.Name = "peer"
-	first := sdk.Finding{DetectorID: "drift.targetport", RuleID: "targetport", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: program.Bindings{"service": ref}}
+	first := sdk.Finding{DetectorID: "drift.targetport", RuleID: "targetport", Status: sdk.FindingActive, PrimaryResource: ref, ParameterBindings: map[string]sdk.ObjectRef{"service": ref}}
 	second := first
 	second.PrimaryResource = other
-	second.ParameterBindings = program.Bindings{"service": other}
+	second.ParameterBindings = map[string]sdk.ObjectRef{"service": other}
 	for _, result := range []program.Result{program.Match, program.Unknown, program.NoMatch} {
 		t.Run(string(result), func(t *testing.T) {
 			registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, b program.Bindings) program.Verdict {
-				if b["service"].Name == "api" {
+				if b.Objects["service"].Name == "api" {
 					return program.Verdict{Result: program.NoMatch}
 				}
 				return program.Verdict{Result: result}

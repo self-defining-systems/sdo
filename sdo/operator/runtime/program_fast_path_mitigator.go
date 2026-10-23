@@ -97,6 +97,9 @@ func runBoundedMitigator(ctx context.Context, p program.Mitigator, view program.
 				plan = decoded.Plan
 			}
 		}
+		if err == nil {
+			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)
+		}
 		results <- outcome{plan: plan, err: err}
 	}()
 	select {

@@ -204,7 +204,10 @@
       "name": "reservation"
     },
     "Path": "spec.ports[0].targetPort",
-    "Value": 9100,
+    "Value": {
+      "origin": "parameter",
+      "param": "archived-target"
+    },
     "Reason": "use observed selected-Pod listener"
   },
   "drift": {

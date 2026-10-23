@@ -199,7 +199,7 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 
 func compactMeta(meta *metav1.ObjectMeta) {
 	meta.ManagedFields = nil
-	meta.ResourceVersion = ""
+	// Keep the observation version as provenance; UID/write metadata is discarded.
 	meta.UID = ""
 	meta.Generation = 0
 	delete(meta.Annotations, "kubectl.kubernetes.io/last-applied-configuration")

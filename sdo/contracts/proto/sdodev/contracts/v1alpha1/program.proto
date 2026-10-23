@@ -18,14 +18,19 @@ message ProgramSpec {
 }
 
 message ParamSpec {
+  option (buf.validate.message).cel = {id: "parameter.exactly_one_kind" message: "parameter requires an object kind or value kind; defaults require a value kind" expression: "(this.kind != '') != (this.value_kind != '') && (this.value_kind != '' || !has(this.default))"};
   string name = 1 [(buf.validate.field).string.min_len = 1];
-  string kind = 2 [(buf.validate.field).string.min_len = 1];
+  string kind = 2;
   bool required = 3;
+  string value_kind = 4 [(buf.validate.field).string = {in: ["", "string", "int", "quantity", "duration", "bool"]}];
+  google.protobuf.Value default = 5;
 }
 
 message Binding {
   string name = 1 [(buf.validate.field).string.min_len = 1];
-  ObjectRef object = 2 [(buf.validate.field).required = true];
+  option (buf.validate.message).cel = {id: "binding.exactly_one" message: "binding requires an object or a value" expression: "has(this.object) != has(this.value)"};
+  ObjectRef object = 2;
+  google.protobuf.Value value = 3;
 }
 
 message RelationCoveredFinding {
@@ -75,6 +80,9 @@ message Action {
     RestartRollout restart_rollout = 4;
     CreateFromSource create_from_source = 5;
     DeleteObject delete_object = 6;
+    DeletePod delete_pod = 7;
+    ScaleWorkload scale_workload = 8;
+    Exec exec = 9;
   }
 }
 
@@ -112,11 +120,58 @@ message Rollback {
 message SetField {
   ObjectRef ref = 1 [(buf.validate.field).required = true];
   string path = 2 [(buf.validate.field).string.min_len = 1];
-  google.protobuf.Value value = 3 [(buf.validate.field).required = true];
+  reserved 3, 5;
+  reserved "value_from_source";
+  PlanValue value = 8 [(buf.validate.field).required = true];
   string reason = 4 [(buf.validate.field).string.min_len = 1];
-  bool value_from_source = 5;
   string document_format = 6 [(buf.validate.field).string = {in: ["", "json", "yaml"]}];
   repeated string document_path = 7;
+}
+
+// Values describe authority; resolved data never crosses this contract.
+message PlanValue {
+  oneof origin {
+    option (buf.validate.oneof).required = true;
+    ValueField source = 1;
+    ValueField observed = 2;
+    string parameter = 3 [(buf.validate.field).string.min_len = 1];
+  }
+}
+
+message ValueField {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  string path = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message ValueProvenance {
+  string origin = 1 [(buf.validate.field).string = {in: ["source", "observed", "parameter"]}];
+  ObjectRef ref = 2;
+  string path = 3;
+  string source_commit = 4;
+  string resource_version = 5;
+  string parameter = 6;
+}
+
+message ActionReport {
+  uint32 action_index = 1;
+  string status = 2 [(buf.validate.field).string = {in: ["prepared", "applied", "refused", "unknown"]}];
+  repeated ValueProvenance values = 3;
+  optional int32 exit_code = 4;
+}
+
+message DeletePod {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+}
+
+message ScaleWorkload {
+  ObjectRef ref = 1 [(buf.validate.field).required = true];
+  PlanValue replicas = 2 [(buf.validate.field).required = true];
+}
+
+message Exec {
+  ObjectRef pod = 1 [(buf.validate.field).required = true];
+  string container = 2 [(buf.validate.field).string.min_len = 1];
+  repeated PlanValue command = 3 [(buf.validate.field).repeated.min_items = 1];
 }
 
 message RestartRollout {
@@ -159,6 +214,7 @@ message PlanApplication {
   // Final exact plan equivalence. False means no credit, not a program failure.
   optional bool final_equivalence_verified = 18;
   repeated PlanObjectEffect object_effects = 19;
+  repeated ActionReport action_reports = 20;
 }
 
 message ProgramToolCall {

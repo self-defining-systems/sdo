@@ -84,12 +84,12 @@ type snapshotDiagnoser struct{}
 type transientImageProgram struct{}
 
 func (transientImageProgram) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "health-objective-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}}}
+	return program.ProgramSpec{ID: "health-objective-failure", Params: []program.ParamSpec{{Name: "deployment", Kind: "Deployment", Required: true}, {Name: "image", ValueKind: program.StringValue, Default: "search:healthy"}}}
 }
 
 func (transientImageProgram) Diagnose(_ context.Context, view program.ReadView, bindings program.Bindings) (program.Verdict, error) {
 	for _, pod := range view.Pods() {
-		if pod.Labels["app"] != bindings["deployment"].Name {
+		if pod.Labels["app"] != bindings.Objects["deployment"].Name {
 			continue
 		}
 		for _, status := range pod.Status.ContainerStatuses {
@@ -106,7 +106,7 @@ func (p transientImageProgram) Mitigate(ctx context.Context, view program.ReadVi
 	if err != nil || verdict.Result != program.Match {
 		return program.Plan{}, err
 	}
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings["deployment"], Path: "spec.template.spec.containers[0].image", Value: "search:healthy", Reason: "restore pullable image"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: bindings.Objects["deployment"], Path: "spec.template.spec.containers[0].image", Value: program.FromParam("image"), Reason: "restore pullable image"}}}, nil
 }
 
 func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
@@ -135,7 +135,7 @@ func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
 	}
 	snapshot.PodList = nil
 	provider.snapshot = snapshot
-	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}})
 	if planned.Error != "" || planned.PlanID == "" || len(planned.Patches) != 1 {
 		t.Fatalf("plan after pod state changed: %+v", planned)
 	}
@@ -183,7 +183,7 @@ func TestResponderRestartPlansFromLiveViewInsteadOfCapturedMatch(t *testing.T) {
 	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}
-	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{"deployment": ref}})
+	planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "health-objective-failure", Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}})
 	if planned.Error == "" || planned.PlanID != "" {
 		t.Fatalf("stale captured diagnosis authorized a restart plan: %+v", planned)
 	}
@@ -217,8 +217,14 @@ func (d loopDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Findi
 	return nil, nil
 }
 
+func (p loopProgram) Spec() program.ProgramSpec {
+	spec := p.candidateProgram.Spec()
+	spec.Params = append(spec.Params, program.ParamSpec{Name: "port", ValueKind: program.IntValue, Default: 8080})
+	return spec
+}
+
 func (p loopProgram) Mitigate(context.Context, program.ReadView, program.Bindings) (program.Plan, error) {
-	return program.Plan{Actions: []program.Action{program.SetField{Ref: p.ref, Path: "spec.ports[0].targetPort", Value: 8080, Reason: "repair target port"}}}, nil
+	return program.Plan{Actions: []program.Action{program.SetField{Ref: p.ref, Path: "spec.ports[0].targetPort", Value: program.FromParam("port"), Reason: "repair target port"}}}, nil
 }
 
 func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *testing.T) {
@@ -235,7 +241,7 @@ func TestResponderLoopAppliesOneBatchThenRefusesExhaustedBudgetAndLogsCalls(t *t
 	if status := loop.Handle(context.Background(), ToolRequest{Command: "status"}); status.Trust["targetport"].VerifiedSuccesses != 2 {
 		t.Fatalf("status trust: %+v", status)
 	}
-	plan := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "targetport", Bindings: program.Bindings{"service": ref}})
+	plan := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: "targetport", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}})
 	if plan.Error != "" || plan.PlanID == "" || len(plan.Patches) != 1 {
 		t.Fatalf("plan: %+v", plan)
 	}

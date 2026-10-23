@@ -26,7 +26,7 @@ func TestPlanExecutorRollbackRejectsReorderedNamedList(t *testing.T) {
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}
 	executor := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}}
 	application, err := executor.Apply(ctx, IncidentRequest{RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{
-		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe.periodSeconds", Value: 5},
+		program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].readinessProbe.periodSeconds", Value: testPlanValue(5)},
 	}}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func (p *refreshFailureProgram) Mitigate(ctx context.Context, view program.ReadV
 		case "empty":
 			return program.Plan{}, nil
 		case "invalid":
-			return program.Plan{Actions: []program.Action{program.SetField{Path: "metadata.name", Value: "wrong"}}}, nil
+			return program.Plan{Actions: []program.Action{program.SetField{Path: "metadata.name", Value: testPlanValue("wrong")}}}, nil
 		case "transient":
 			if p.failures.Add(1) == 1 {
 				return program.Plan{}, errors.New("synthetic one-shot planning failure")

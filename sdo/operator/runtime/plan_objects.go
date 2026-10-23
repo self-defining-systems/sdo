@@ -67,7 +67,8 @@ func hasObjectActions(plan program.Plan) bool {
 
 func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
 	started := time.Now()
-	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
+	result = PlanApplicationResult{Plan: plan, DryRun: dryRun, ActionReports: newPlanReports(plan)}
+	defer func() { settlePlanReports(&result, err) }()
 	complete := false
 	defer func() {
 		result.Duration = time.Since(started)
@@ -167,7 +168,8 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		refs = append(refs, ref)
 		result.PreImages = append(result.PreImages, PlanPreImage{Ref: ref, Object: object.DeepCopy()})
 	}
-	for _, action := range plan.Actions {
+	for index, action := range plan.Actions {
+		e.report = &result.ActionReports[index]
 		ref, _ := planActionRef(action)
 		operation := objectActionOperation(action)
 		patch := PlanPatch{Authorization: planAuthorizationMode(action, e.SourceAuthority != nil), Ref: ref, Operation: operation, Before: current[ref].DeepCopy(), Structured: true, SourceCommit: incident.SourceCommit, Irreversible: operation == "delete"}

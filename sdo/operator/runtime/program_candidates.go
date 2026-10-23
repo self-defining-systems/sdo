@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"sdo.dev/operator/memory/layout"
 	"sort"
 	"strconv"
@@ -74,7 +75,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	add := func(id string, bindings program.Bindings, fingerprint, source string) {
 		if len(options.Affected) > 0 {
 			matched := false
-			for _, ref := range bindings {
+			for _, ref := range bindings.Objects {
 				for _, affected := range options.Affected {
 					if ref.Kind == affected.Kind && ref.Namespace == affected.Namespace && ref.Name == affected.Name {
 						matched = true
@@ -106,7 +107,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 				for _, reference := range finding.Playbooks {
 					id, err := layout.PlaybookID(reference)
 					if err == nil && id == spec.ID {
-						assignments = []program.Bindings{cloneProgramBindings(program.Bindings(finding.ParameterBindings))}
+						assignments = []program.Bindings{cloneProgramBindings(program.Bindings{Objects: finding.ParameterBindings})}
 						hintOnly = true
 						break
 					}
@@ -117,7 +118,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 				if hintOnly {
 					source = "hint"
 				} else {
-					for name, ref := range bindings {
+					for name, ref := range bindings.Objects {
 						if finding.ParameterBindings[name] == ref && ref.Kind != "" {
 							source = "hint"
 						}
@@ -134,6 +135,15 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 		refs := make([][]sdk.ObjectRef, len(spec.Params))
 		valid := true
 		for index, param := range spec.Params {
+			if param.ValueKind != "" {
+				if param.Required && param.Default == nil {
+					valid = false
+					break
+				}
+				refs[index] = []sdk.ObjectRef{{}}
+				continue
+			}
+
 			if !param.Required {
 				refs[index] = append([]sdk.ObjectRef{{}}, sweepRefs(view, param.Kind)...)
 				continue
@@ -173,10 +183,10 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 		start := encode()
 		count := 0
 		for ctx.Err() == nil {
-			bindings := program.Bindings{}
+			bindings := program.Bindings{Objects: program.ObjectBindings{}}
 			valid := true
 			for i, param := range spec.Params {
-				if !param.Required && indices[i] == 0 {
+				if param.ValueKind != "" || !param.Required && indices[i] == 0 {
 					continue
 				}
 				ref := refs[i][indices[i]]
@@ -184,7 +194,7 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 					valid = false
 					break
 				}
-				bindings[param.Name] = ref
+				bindings.Objects[param.Name] = ref
 			}
 			if valid {
 				before := len(candidates)
@@ -354,10 +364,16 @@ func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.
 			return
 		}
 		param := spec.Params[index]
+		if param.ValueKind != "" {
+			if !param.Required || param.Default != nil {
+				bind(index+1, current)
+			}
+			return
+		}
 		if hint, ok := finding.ParameterBindings[param.Name]; ok && hint.Kind == string(param.Kind) {
 			if !bindingUses(current, hint) {
 				next := cloneProgramBindings(current)
-				next[param.Name] = hint
+				next.Objects[param.Name] = hint
 				bind(index+1, next)
 			}
 			return
@@ -367,19 +383,19 @@ func candidateBindings(spec program.ProgramSpec, finding sdk.Finding) []program.
 				continue
 			}
 			next := cloneProgramBindings(current)
-			next[param.Name] = ref
+			next.Objects[param.Name] = ref
 			bind(index+1, next)
 		}
 		if !param.Required {
 			bind(index+1, current)
 		}
 	}
-	bind(0, program.Bindings{})
+	bind(0, program.Bindings{Objects: program.ObjectBindings{}})
 	return result
 }
 
 func bindingUses(bindings program.Bindings, ref sdk.ObjectRef) bool {
-	for _, existing := range bindings {
+	for _, existing := range bindings.Objects {
 		if existing == ref {
 			return true
 		}
@@ -388,24 +404,13 @@ func bindingUses(bindings program.Bindings, ref sdk.ObjectRef) bool {
 }
 
 func cloneProgramBindings(source program.Bindings) program.Bindings {
-	result := make(program.Bindings, len(source))
-	for key, ref := range source {
-		result[key] = ref
+	result := source.Clone()
+	if result.Objects == nil {
+		result.Objects = program.ObjectBindings{}
 	}
 	return result
 }
-
-func sameBindings(left, right program.Bindings) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, ref := range left {
-		if right[key] != ref {
-			return false
-		}
-	}
-	return true
-}
+func sameBindings(left, right program.Bindings) bool { return left.Equal(right) }
 
 func sortProgramRuns(runs []ProgramRun) {
 	priority := map[program.Result]int{program.Match: 0, program.NeedsJudgement: 1, program.Unknown: 2, program.NoMatch: 3}
@@ -425,15 +430,20 @@ func sortProgramRuns(runs []ProgramRun) {
 }
 
 func bindingKey(bindings program.Bindings) string {
-	keys := make([]string, 0, len(bindings))
-	for key := range bindings {
+	keys := make([]string, 0, len(bindings.Objects))
+	for key := range bindings.Objects {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		ref := bindings[key]
+		ref := bindings.Objects[key]
 		parts = append(parts, key+"="+ref.Kind+"/"+ref.Namespace+"/"+ref.Name)
 	}
-	return strings.Join(parts, ",")
+	key := strings.Join(parts, ",")
+	if len(bindings.Values) > 0 {
+		raw, _ := json.Marshal(bindings.Values)
+		key += "|values=" + string(raw)
+	}
+	return key
 }

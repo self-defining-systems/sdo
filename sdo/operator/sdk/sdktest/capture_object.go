@@ -126,7 +126,6 @@ func ProjectCapturedObject(raw []byte) ([]byte, error) {
 	compactMeta(&m)
 	meta.SetAnnotations(m.Annotations)
 	meta.SetManagedFields(nil)
-	meta.SetResourceVersion("")
 	meta.SetUID("")
 	meta.SetGeneration(0)
 	switch o := target.(type) {

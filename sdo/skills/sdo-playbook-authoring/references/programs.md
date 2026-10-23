@@ -30,17 +30,47 @@ Unknown; empty or absent observations never prove success or refusal.
 
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
 Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
-ConfigMap JSON/YAML entries preserve unrelated values. Use ValueFromSource for an accepted-source field value,
+ConfigMap JSON/YAML entries preserve unrelated values. Use `program.FromSource(ref, path)` for an accepted-source field value,
 and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects need
 current controller-owned nonsecret provenance; accepted Git origin alone supplies no clearance.
 ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
 produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
-replay remains mandatory. Literal SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
+replay remains mandatory. Observed and parameter-based SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
 CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes only
 an explicitly allowed named object proven absent from that source; disclose deletion as irreversible, retain
 its nonsecret receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
 and live verification requires direct current UID/absence evidence plus independent health checks.
 Never delete a valid mitigator merely to eliminate a skipped-effect note.
+
+## Values and runtime actions
+
+`SetField.Value` is an opaque `program.Value`: use `FromSource(ref, path)` for the incident-bound accepted
+manifest, `FromObserved(ref, path)` for this invocation's ReadView snapshot, or `FromParam(name)` for a
+declared scalar parameter. Raw Go literals do not compile, and zero values fail validation. The executor
+resolves at apply time and reports the source commit/path, observed resourceVersion/path, or parameter name.
+Secret-typed references fail before lookup; no Secret-derived resolved value belongs in reports or receipts.
+Observed values remain bound to their program invocation when several plans share one apply batch.
+
+Use `bindings.Objects[name]` for resource identities and `bindings.Values[name]` for scalar inputs.
+Declare value parameters in `ProgramSpec.Params` with `ValueKind` (`StringValue`, `IntValue`, `QuantityValue`,
+`DurationValue`, or `BoolValue`) and an optional `Default`. Keep object `Kind` empty for a value parameter.
+`ValidateBindings` rejects wrong types, unknown names, duplicate declarations, and mixed object/value kinds.
+Use `bindings.Parameter(spec, name)` to retrieve a validated binding or its default. Quantities and durations
+are strings in Kubernetes quantity and Go duration syntax; booleans and integers retain their scalar types.
+Named constants such as a scale amount are defaulted parameters. An emergency literal is a declared
+parameter the responder supplies and justifies; a permanent intended-state change requires a source repair.
+
+`DeletePod{Ref}` deletes one named Pod with UID/version preconditions and verifies absence or a replacement
+UID. It never recreates a Pod during undo. `ScaleWorkload{Ref, Replicas}` accepts a Deployment or StatefulSet,
+resolves a nonnegative integer replica count, and directly verifies `spec.replicas`. Partial failures undo
+reversible fields from captured pre-images; irreversible effects remain disclosed.
+
+`Exec{Pod, Container, Command: []program.Value{...}}` derives every command argument through values. The
+controller's existing Kubernetes RBAC must allow the exec subresource; no grant is created by a plan.
+Callers supply that controller transport through `RuntimeOptions.PlanExecConfig`; nil reports refused. Exec
+can reach mounted Secret files, so stdout and stderr are never requested, returned, or stored. Only the exit
+code is reported. Refused or uncertain execution earns no write or health-verification credit, and a durable
+receipt never authorizes command replay after restart.
 
 ## Routing
 
@@ -87,7 +117,7 @@ Credential safety also refuses deprecated identity aliases and unconfined storag
 
 JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.
 
-The source-only stream policy derives structured repair values and creates from accepted source, and grants deletes only to individually named incident resources with pinned UIDs. Unversioned detector references resolve only through the explicit allowed kinds. Legacy numeric SetField literals retain their existing allowlist and credential-delta check. Application patch receipts label these as `accepted-source`, `incident-named-delete`, or `legacy-literal`.
+The source-only stream policy derives structured repair values and creates from accepted source, and grants deletes only to individually named incident resources with pinned UIDs. Unversioned detector references resolve only through the explicit allowed kinds. Existing narrow SetField paths use declared parameters and retain their allowlist and credential-delta check. Application patch receipts label authority as `accepted-source`, `incident-named-delete`, `parameter`, or `observed`; action reports separately retain each value's provenance.
 
 Webhook namespace selectors may confine admission to the application. Network peer confinement is checked on NetworkPolicy rules.
 

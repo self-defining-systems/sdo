@@ -82,7 +82,7 @@ func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
 		name, old, replacement string
 		port                   bool
 	}{
-		{"service name", "ref := b[\"service\"]", "ref := b[\"service\"]\nif ref.Name != \"front\" { return program.Verdict{Result: program.NoMatch}, nil }", false},
+		{"service name", "ref := b.Objects[\"service\"]", "ref := b.Objects[\"service\"]\nif ref.Name != \"front\" { return program.Verdict{Result: program.NoMatch}, nil }", false},
 		{"port 8087", "target := port.TargetPort", "target := port.TargetPort\nif target.Type == intstr.Int && target.IntVal != 8087 { return program.Verdict{Result: program.NoMatch}, nil }", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,6 +91,9 @@ func TestProgramRenameInvarianceRejectsHardcodedValues(t *testing.T) {
 			source, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !strings.Contains(string(source), tc.old) {
+				t.Fatalf("mutation anchor missing: %s", tc.old)
 			}
 			if err := os.WriteFile(path, []byte(strings.Replace(string(source), tc.old, tc.replacement, 1)), 0o644); err != nil {
 				t.Fatal(err)

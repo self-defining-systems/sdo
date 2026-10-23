@@ -35,7 +35,7 @@ func TestCauseWorkKeepsConfirmedGroupsAndNeverCreditsUncertainRepairs(t *testing
 		t.Run(test.name, func(t *testing.T) {
 			outcome := proto.Clone(original).(*contracts.OutcomeRecord)
 			test.change(outcome)
-			work := classifyCauseWork(outcome, map[string]program.Result{matchedViewKey(repeatProgram, program.Bindings{"service": objectRefState(repeatService)}): test.fixed})
+			work := classifyCauseWork(outcome, map[string]program.Result{matchedViewKey(repeatProgram, program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(repeatService)}}): test.fixed})
 			if len(work) != 1 || work[0].GetCauseIndex() != 0 || !proto.Equal(work[0].Resources[0], repeatService) {
 				t.Fatalf("cause grouping changed: %v", work)
 			}
@@ -96,7 +96,7 @@ func TestMissingProofAndFixedVerdictRemainQuestions(t *testing.T) {
 			} else {
 				o.PlanApplications[0].FinalEquivalenceVerified = nil
 			}
-			key := matchedViewKey(repeatProgram, program.Bindings{"service": objectRefState(repeatService)})
+			key := matchedViewKey(repeatProgram, program.Bindings{Objects: program.ObjectBindings{"service": objectRefState(repeatService)}})
 			work := classifyCauseWork(o, map[string]program.Result{key: test.fixed})
 			if work[0].Items[0].Disposition != "question" {
 				t.Fatalf("unproven case settled: %v", work)

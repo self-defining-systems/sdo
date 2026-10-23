@@ -49,9 +49,26 @@ diagnostic; look it up here.
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
 - A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, including under consistent renaming. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
-- Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Literal fields require valid patches and available observations; accepted-source field selectors report skipped effect replay without proving repair. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
+- Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors report skipped effect replay without proving repair. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
 
 - CreateFromSource and DeleteObject require accepted-source presence/absence, nonsecret effect authorization, and direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. Their skipped effect replay supplies no repair proof or origin credit. Enforced by: `program.mitigation-unreplayable`.
+
+## Value provenance and runtime effects
+
+Mitigation returns to accepted or observed state; intended-state changes are source repairs. An emergency
+literal is a declared scalar parameter the responder fills and justifies. Opaque `FromSource`, `FromObserved`,
+or `FromParam` values enforce the Go API boundary; raw SetField, replica, or command literals fail compilation.
+
+Declare each scalar parameter's kind and optional default. The SDK's `ValidateBindings` checks supplied values;
+its value resolver rejects undeclared parameters, wrong types, zero Values, and Secret references before writes.
+
+Runtime action reports and receipts retain commit/path, resourceVersion/path, or parameter-name provenance.
+The runtime guards DeletePod by UID/version and directly verifies ScaleWorkload replicas. Exec uses existing
+controller RBAC and returns an exit code with no stdout/stderr; commands can reach mounted Secret files.
+
+- Replay external effects only with the required evidence. A skipped effect proves no repair; irreversible
+  Pod deletion or Exec never grants restart mutation or recreation authority. Enforced by:
+  `program.mitigation-unreplayable`.
 
 ## Corpus evidence
 

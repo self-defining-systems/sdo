@@ -78,6 +78,7 @@ type PlanApplicationResult struct {
 	Duration                 time.Duration
 	PreImages                []PlanPreImage
 	ObjectEffects            []PlanObjectEffect
+	ActionReports            []PlanActionReport
 }
 
 type PlanExecutor struct {
@@ -94,6 +95,8 @@ type PlanExecutor struct {
 	// show the application's writes before verifying.
 	Observer WriteObserver
 	Now      func() time.Time
+	Values   program.ValueInputs
+	report   *PlanActionReport
 }
 
 // Apply writes the plan and reports. A version conflict before anything was
@@ -125,11 +128,15 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 }
 
 func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	if hasRuntimeEffects(plan) {
+		return e.applyRuntimePlan(ctx, incident, plan, dryRun)
+	}
 	if hasObjectActions(plan) {
 		return e.applyObjectPlan(ctx, incident, plan, dryRun)
 	}
 	started := time.Now()
-	result = PlanApplicationResult{Plan: plan, DryRun: dryRun}
+	result = PlanApplicationResult{Plan: plan, DryRun: dryRun, ActionReports: newPlanReports(plan)}
+	defer func() { settlePlanReports(&result, err) }()
 	writesLanded := false
 	defer func() {
 		result.Duration = time.Since(started)
@@ -215,7 +222,8 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		refs = append(refs, ref)
 	}
 	guarded := false
-	for _, action := range plan.Actions {
+	for actionIndex, action := range plan.Actions {
+		e.report = &result.ActionReports[actionIndex]
 		ref, _ := planActionRef(action)
 		next, actionErr := e.prepareAction(ctx, incident, action, current[ref], structuredPlanRef(plan, ref))
 		if actionErr != nil {
@@ -281,7 +289,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 				return result, err
 			}
 		}
-		if guarded {
+		if guarded || actionUsesSourceValue(plan.Actions[index]) {
 			if err := e.validateAcceptedRevision(incident); err != nil {
 				return result, err
 			}
@@ -301,6 +309,9 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 			result.Patches[index].After.SetResourceVersion(observed.GetResourceVersion())
 		}
 		if err := e.verifyStructuredWrites(ctx, PlanApplicationResult{Patches: []PlanPatch{result.Patches[index]}}); err != nil {
+			return result, err
+		}
+		if err := e.verifyValueWrite(ctx, plan.Actions[index], result.Patches[index]); err != nil {
 			return result, err
 		}
 		result.Patches[index].DirectReadConfirmed = patch.Structured
@@ -344,8 +355,8 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 	// Keep irreversible effects disclosed even when resuming a completed walk.
 	for i := 0; i < len(application.ActionsApplied) && i < len(application.Patches); i++ {
 		patch := application.Patches[i]
-		if patch.Operation == "delete" {
-			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible deletion of %s/%s was not restored; never auto-recreate", patch.Ref.Kind, patch.Ref.Name))
+		if patch.Operation == "delete" || patch.Irreversible {
+			irreversible = errors.Join(irreversible, fmt.Errorf("irreversible %s effect on %s/%s was not restored; never auto-recreate or replay", patch.Operation, patch.Ref.Kind, patch.Ref.Name))
 		}
 	}
 
@@ -359,7 +370,7 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 				return errors.New("rollback requires in-process field writes")
 			}
 			patch := application.Patches[index]
-			if patch.Operation == "delete" {
+			if patch.Operation == "delete" || patch.Irreversible {
 				return nil
 			}
 			if patch.Operation == "create" {
@@ -732,25 +743,14 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		}
 		return sourceFields(next, previous, a.Ref)
 	case program.SetField:
-		var source map[string]any
-		if a.ValueFromSource {
-			if e.Source == nil || incident.SourceCommit == "" {
-				return nil, errors.New("accepted source is required")
-			}
-			if err := e.validateAcceptedRevision(incident); err != nil {
-				return nil, err
-			}
-			accepted, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, a.Ref)
-			if err != nil {
-				return nil, errors.New("accepted source lookup failed")
-			}
-			if err := e.Safety.checkObject(accepted, a.Ref); err != nil {
-				return nil, err
-			}
-			source = accepted.Object
-		}
-		err := program.ApplySetFieldAction(next.Object, a, source)
+		value, provenance, err := program.ResolveSetFieldValue(a, e.valueInputs(ctx, incident))
 		if err != nil {
+			return nil, err
+		}
+		if e.report != nil {
+			e.report.Values = append(e.report.Values, provenance)
+		}
+		if err := program.ApplySetFieldAction(next.Object, a, value); err != nil {
 			return nil, err
 		}
 		if a.Path == "spec.template.spec.serviceAccountName" {
@@ -758,6 +758,31 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 				return nil, err
 			}
 		}
+	case program.ScaleWorkload:
+		value, provenance, err := program.ResolveValue(a.Replicas, e.valueInputs(ctx, incident))
+		if err != nil {
+			return nil, err
+		}
+		field := program.SetField{Ref: a.Ref, Path: "spec.replicas", Value: a.Replicas}
+		if err := program.ValidateResolvedSetField(field, value); err != nil {
+			return nil, err
+		}
+		raw, _ := json.Marshal(value)
+		var replicas int32
+		if err := json.Unmarshal(raw, &replicas); err != nil || replicas < 0 {
+			return nil, fmt.Errorf("replicas must be a nonnegative int32")
+		}
+		if e.report != nil {
+			e.report.Values = append(e.report.Values, provenance)
+		}
+		if err := unstructured.SetNestedField(next.Object, int64(replicas), "spec", "replicas"); err != nil {
+			return nil, err
+		}
+	case *program.ScaleWorkload:
+		if a == nil {
+			return nil, errors.New("nil ScaleWorkload")
+		}
+		return e.prepareAction(ctx, incident, *a, current, safe)
 
 	case program.RestartRollout:
 		if a.Ref.Kind != "Deployment" || a.Ref.APIVersion != "apps/v1" {
@@ -810,6 +835,24 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 	switch a := action.(type) {
+	case program.DeletePod:
+		return a.Ref, nil
+	case program.ScaleWorkload:
+		return a.Ref, nil
+	case program.Exec:
+		return a.Pod, nil
+	case *program.DeletePod:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.ScaleWorkload:
+		if a != nil {
+			return a.Ref, nil
+		}
+	case *program.Exec:
+		if a != nil {
+			return a.Pod, nil
+		}
 	case program.CreateFromSource:
 		return a.Ref, nil
 	case program.DeleteObject:

@@ -28,7 +28,7 @@ func TestPlanCompensationRestoresRemovedCredentialFromExactPreimage(t *testing.T
 	before.SetResourceVersion("1")
 	client := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before.DeepCopy()}}
 	e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{false}}
-	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0]", Value: map[string]any{"name": "MODE", "value": "safe"}}}}, false)
+	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[0].env[0]", Value: testPlanValue(map[string]any{"name": "MODE", "value": "safe"})}}}, false)
 	if err != nil || result.VerificationPassed {
 		t.Fatalf("credential removal failed: %v", err)
 	}

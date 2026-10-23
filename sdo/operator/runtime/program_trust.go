@@ -3,7 +3,6 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
-	"maps"
 	"sort"
 	"strings"
 
@@ -240,7 +239,7 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 			selected = true
 			verified := false
 			for _, run := range response.ProgramRuns {
-				if run.ProgramID != id || !maps.Equal(run.Bindings, plan.Bindings) {
+				if run.ProgramID != id || !run.Bindings.Equal(plan.Bindings) {
 					continue
 				}
 				if run.ProgramRevision != "" && run.ProgramRevision != revision {

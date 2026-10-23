@@ -51,13 +51,14 @@ func main() {
 	registry, err := generated.Programs(); if err != nil { panic(err) }
 	diagnoser, ok := registry.Diagnoser("service-targetport-mismatch"); if !ok { panic("missing compiled diagnoser") }
 	mitigator, ok := registry.Mitigator("service-targetport-mismatch"); if !ok { panic("missing compiled mitigator") }
-	bindings := program.Bindings{"service": sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"}}
+	bindings := program.Bindings{Objects:program.ObjectBindings{"service": sdk.ObjectRef{Kind: "Service", Namespace: "app", Name: "peer"}}}
 	view := &sdktest.ReplayReadView{Snapshot: snapshot}
 	verdict, err := diagnoser.Diagnose(context.Background(), view, bindings); if err != nil { panic(err) }
 	plan, err := mitigator.Mitigate(context.Background(), view, bindings); if err != nil { panic(err) }
 	if len(plan.Actions) != 1 { panic("expected one action") }
 	action, ok := plan.Actions[0].(program.SetField); if !ok { panic("expected SetField") }
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"result": verdict.Result, "path": action.Path, "value": action.Value}); err != nil { panic(err) }
+	value,_,err:=program.ResolveValue(action.Value,program.ValueInputs{Observed:func(ref sdk.ObjectRef)(map[string]any,error){for _,pod:=range snapshot.Pods(){if pod.Namespace==ref.Namespace&&pod.Name==ref.Name{raw,_:=json.Marshal(pod);var object map[string]any;err:=json.Unmarshal(raw,&object);return object,err}};return nil,os.ErrNotExist}});if err!=nil{panic(err)}
+ if err := json.NewEncoder(os.Stdout).Encode(map[string]any{"result": verdict.Result, "path": action.Path, "value": value}); err != nil { panic(err) }
 }
 `
 
@@ -669,7 +670,7 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		t.Fatal(err)
 	}
 	secondResult := fastloopGateResult(secondRequest, []sdk.ObjectRef{peer})
-	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{"service": peer}, Verdict: program.Verdict{Result: program.NoMatch}}}
+	secondResult.ProgramRuns = []ProgramRun{{ProgramID: "service-targetport-mismatch", Bindings: program.Bindings{Objects: program.ObjectBindings{"service": peer}}, Verdict: program.Verdict{Result: program.NoMatch}}}
 	secondResult.ProgramToolCalls = []ToolCall{{Command: "diagnose"}, {Command: "plan"}, {Command: "apply"}, {Command: "verify"}}
 	secondResult.ResponseLoopsUsed = 1
 	secondClosure := fastloopGateClose(t, ctx, second, secondDispatch, secondResult, start.Add(2*time.Second))

@@ -261,7 +261,7 @@ func TestNativeClosureRecordsMonotonicPhaseTimestamps(t *testing.T) {
 	closure := nativeClosure(workspace)
 	closure.Request.RepairPolicy = "recorded-actions"
 	closure.Result.FastPathSkippedReason = FastPathSkipUncoveredFinding
-	closure.Result.FastPathRelationCoveredFindings = []RelationCoveredFinding{{FindingFingerprint: "health/service/api", ProgramID: "repair", Bindings: program.Bindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}}
+	closure.Result.FastPathRelationCoveredFindings = []RelationCoveredFinding{{FindingFingerprint: "health/service/api", ProgramID: "repair", Bindings: program.Bindings{Objects: program.ObjectBindings{"workload": {Kind: "Deployment", Namespace: "app", Name: "api"}}}}}
 	receipt, err := native.ProcessClosure(context.Background(), closure)
 	if err != nil {
 		t.Fatal(err)

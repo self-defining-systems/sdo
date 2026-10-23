@@ -126,7 +126,10 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
 
 def _binding_args(bindings: dict[str, Any]) -> list[str]:
     args: list[str] = []
-    for name, ref in sorted(bindings.items()):
+    if bindings.get("values"):
+        raise ValueError("scripted plan CLI does not support scalar value bindings")
+    objects = bindings.get("objects", {}) if "objects" in bindings or "values" in bindings else bindings
+    for name, ref in sorted(objects.items()):
         args.extend(["--bind", f"{name}={ref['kind']}/{ref['namespace']}/{ref['name']}"])
     return args
 

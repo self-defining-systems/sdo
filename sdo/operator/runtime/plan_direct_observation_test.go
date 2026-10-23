@@ -36,7 +36,7 @@ func TestPlanUnwatchedKindsUseDirectCurrentProof(t *testing.T) {
 			}
 			safety := fixturePlanSafety(t, ref, before, after)
 			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
-			var action program.Action = program.SetField{Ref: ref, Path: path, Value: 2}
+			var action program.Action = program.SetField{Ref: ref, Path: path, Value: testPlanValue(2)}
 			if kind == "MutatingWebhookConfiguration" {
 				proof := safety.Objects[ref]
 				proof.DeleteAllowed = true

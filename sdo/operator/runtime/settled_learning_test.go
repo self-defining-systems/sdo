@@ -44,7 +44,7 @@ func (p sharedProbeProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: p.id, Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
 func (p sharedProbeProgram) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	_, err := v.ProbeTCP(b["service"], 80)
+	_, err := v.ProbeTCP(b.Objects["service"], 80)
 	if err != nil {
 		return program.Verdict{Result: program.Unknown}, err
 	}
@@ -68,12 +68,12 @@ func TestIndependentFixedDiagnosesShareImmutableRecordingWithoutConsumption(t *t
 	}
 	o := &contracts.OutcomeRecord{}
 	for _, id := range []string{"probe-a", "probe-b"} {
-		o.ProgramRuns = append(o.ProgramRuns, programRunContract(ProgramRun{ProgramID: id, Bindings: program.Bindings{"service": ref}, Verdict: program.Verdict{Result: program.Match}}))
+		o.ProgramRuns = append(o.ProgramRuns, programRunContract(ProgramRun{ProgramID: id, Bindings: program.Bindings{Objects: program.ObjectBindings{"service": ref}}, Verdict: program.Verdict{Result: program.Match}}))
 	}
 	for range 2 {
 		verdicts := fixedCaptureVerdicts(context.Background(), o, registry, capture)
 		for _, run := range o.ProgramRuns {
-			if verdicts[matchedViewKey(run.ProgramId, program.Bindings{"service": ref})] != program.Match {
+			if verdicts[matchedViewKey(run.ProgramId, program.Bindings{Objects: program.ObjectBindings{"service": ref}})] != program.Match {
 				t.Fatalf("shared read consumed: %v", verdicts)
 			}
 		}
@@ -118,7 +118,7 @@ func TestCompletionReadsEachFinalObjectOnceAcrossApplications(t *testing.T) {
 	loop.applicationsLog = append(loop.applicationsLog, app, app)
 	counted := countingCompletionClient{PlanObjectClient: loop.Executor.Client, reads: map[sdk.ObjectRef]int{}}
 	loop.Executor.Client = counted
-	loop.CreditEquivalentRepairs(context.Background(), []RepairActionReceipt{{Success: true, Resources: []sdk.ObjectRef{run.Bindings["service"]}}})
+	loop.CreditEquivalentRepairs(context.Background(), []RepairActionReceipt{{Success: true, Resources: []sdk.ObjectRef{run.Bindings.Objects["service"]}}})
 	if len(counted.reads) != 1 {
 		t.Fatalf("final objects: %v", counted.reads)
 	}

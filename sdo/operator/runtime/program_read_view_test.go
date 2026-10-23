@@ -183,7 +183,7 @@ func (p unavailableCapabilityProgram) Diagnose(_ context.Context, v program.Read
 func TestUnavailableSweepCapabilityCannotClearFault(t *testing.T) {
 	for _, method := range []string{"prober", "baseline"} {
 		t.Run(method, func(t *testing.T) {
-			verdict := program.RunDiagnose(context.Background(), unavailableCapabilityProgram{method: method}, LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}}, nil, time.Second)
+			verdict := program.RunDiagnose(context.Background(), unavailableCapabilityProgram{method: method}, LiveReadView{DetectionContext: sdktest.Snapshot{NamespaceName: "app"}}, program.Bindings{Objects: program.ObjectBindings{}}, time.Second)
 			if verdict.Result != program.Unknown {
 				t.Fatalf("unavailable %s cleared fault: %+v", method, verdict)
 			}

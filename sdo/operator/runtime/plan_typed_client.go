@@ -3,19 +3,29 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"errors"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
+	utilexec "k8s.io/client-go/util/exec"
 
 	"sdo.dev/operator/sdk"
 )
 
 // TypedPlanClient limits plan mutations to the application kinds the SDK reads.
-type TypedPlanClient struct{ Client kubernetes.Interface }
+type TypedPlanClient struct {
+	Client     kubernetes.Interface
+	ExecConfig *rest.Config
+}
 
 func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	if c.Client == nil {
@@ -24,6 +34,10 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 	var object any
 	var err error
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/Pod":
+		object, err = c.Client.CoreV1().Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	case "apps/v1/StatefulSet":
+		object, err = c.Client.AppsV1().StatefulSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/Service":
 		object, err = c.Client.CoreV1().Services(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	case "v1/ConfigMap":
@@ -60,6 +74,9 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		return fmt.Errorf("Kubernetes plan client is required")
 	}
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "apps/v1/StatefulSet":
+		_, err := c.Client.AppsV1().StatefulSets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
+		return err
 	case "v1/Service":
 		_, err := c.Client.CoreV1().Services(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
 		return err
@@ -142,6 +159,8 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 	}
 	options := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version}}
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/Pod":
+		return c.Client.CoreV1().Pods(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "v1/ConfigMap":
 		return c.Client.CoreV1().ConfigMaps(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "v1/Service":
@@ -158,4 +177,32 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 		}
 	}
 	return fmt.Errorf("object delete kind/scope is unsupported")
+}
+
+// Exec requests no stdout/stderr streams. Kubernetes requires at least one I/O
+// stream, so stdin is opened and immediately closed at EOF. Existing RBAC applies.
+func (c TypedPlanClient) Exec(ctx context.Context, pod sdk.ObjectRef, container string, command []string) (int, error) {
+	if c.Client == nil || c.ExecConfig == nil || c.Client.CoreV1().RESTClient() == nil {
+		return 0, fmt.Errorf("%w: controller exec transport unavailable", errPlanExecRefused)
+	}
+	if pod.APIVersion != "v1" || pod.Kind != "Pod" || pod.Name == "" || pod.Namespace == "" || container == "" || len(command) == 0 {
+		return 0, fmt.Errorf("exec requires named Pod, container and command")
+	}
+	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(pod.Name).Namespace(pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: container, Command: command, Stdin: true, Stdout: false, Stderr: false, TTY: false}, scheme.ParameterCodec)
+	executor, err := remotecommand.NewSPDYExecutor(c.ExecConfig, "POST", request.URL())
+	if err != nil {
+		return 0, fmt.Errorf("exec transport unavailable")
+	}
+	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader("")})
+	if err == nil {
+		return 0, nil
+	}
+	var exited utilexec.ExitError
+	if errors.As(err, &exited) {
+		return exited.ExitStatus(), nil
+	}
+	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+		return 0, err
+	}
+	return 0, fmt.Errorf("exec transport failed")
 }

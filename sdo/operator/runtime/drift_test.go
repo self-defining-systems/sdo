@@ -93,7 +93,7 @@ func TestDriftClassifierMatchesTargetPortOnAffectedBinding(t *testing.T) {
 	next := driftService(9999)
 	next.ManagedFields = append(next.ManagedFields, metav1.ManagedFieldsEntry{Manager: "unknown-editor", Operation: metav1.ManagedFieldsOperationUpdate, FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:ports":{"k:{\"port\":80,\"protocol\":\"TCP\"}":{"f:targetPort":{}}}}}`)}})
 	registry, err := program.NewRegistry([]program.Diagnoser{candidateProgram{spec: program.ProgramSpec{ID: "targetport", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}, run: func(_ context.Context, bindings program.Bindings) program.Verdict {
-		if bindings["service"].Name == "api" {
+		if bindings.Objects["service"].Name == "api" {
 			return program.Verdict{Result: program.Match}
 		}
 		return program.Verdict{Result: program.NoMatch}
@@ -125,7 +125,7 @@ func TestWatchEventProgramsUseHintOnceForOwnedAndUnownedChanges(t *testing.T) {
 			}
 			view := serviceDriftView{&sdktest.ReplayReadView{Snapshot: sdktest.Snapshot{NamespaceName: "app", ServiceList: []corev1.Service{*after, {ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "app"}}}}}}
 			event, runs, err := (DriftClassifier{Programs: registry}).Classify(context.Background(), objectChange(t, before, after, "v1", "Service"), view, time.Unix(10, 0))
-			if err != nil || event == nil || calls != 1 || len(runs) != 1 || runs[0].BindingSource != "hint" || runs[0].Bindings["service"].Name != "api" {
+			if err != nil || event == nil || calls != 1 || len(runs) != 1 || runs[0].BindingSource != "hint" || runs[0].Bindings.Objects["service"].Name != "api" {
 				t.Fatalf("watch binding was not diagnosed exactly once as hint: event=%+v runs=%+v calls=%d err=%v", event, runs, calls, err)
 			}
 			if event.Source != "watch event program match" {

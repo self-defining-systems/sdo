@@ -30,7 +30,7 @@ func TestRV13RollbackStrandedByDelete(t *testing.T) {
 	safety.Objects[np] = PlanObjectSafety{UID: "np-uid", DeleteAllowed: true, Digests: map[string]bool{planSafetyDigest(npBefore): true}}
 	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, program.Plan{Actions: []program.Action{
-		program.SetField{Ref: cm, Path: "data[key]", Value: "after", Reason: "r"},
+		program.SetField{Ref: cm, Path: "data[key]", Value: testPlanValue("after"), Reason: "r"},
 		program.DeleteObject{Ref: np, Reason: "r"},
 	}}, false)
 	t.Logf("err=%v rolledBack=%v rollbackErr=%q cm=%v", err, result.RolledBack, result.RollbackError, client.objects[cm].Object["data"])

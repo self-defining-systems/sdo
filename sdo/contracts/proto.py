@@ -92,6 +92,13 @@ PlanObjectEffect = program_pb2.PlanObjectEffect
 ReconcileFromSource = program_pb2.ReconcileFromSource
 Rollback = program_pb2.Rollback
 SetField = program_pb2.SetField
+PlanValue = program_pb2.PlanValue
+ValueField = program_pb2.ValueField
+ValueProvenance = program_pb2.ValueProvenance
+ActionReport = program_pb2.ActionReport
+DeletePod = program_pb2.DeletePod
+ScaleWorkload = program_pb2.ScaleWorkload
+Exec = program_pb2.Exec
 RestartRollout = program_pb2.RestartRollout
 ProgramRun = program_pb2.ProgramRun
 PlanApplication = program_pb2.PlanApplication
@@ -299,6 +306,13 @@ __all__ = [
     "StateChanges",
     "StateFieldChange",
     "SetField",
+    "PlanValue",
+    "ValueField",
+    "ValueProvenance",
+    "ActionReport",
+    "DeletePod",
+    "ScaleWorkload",
+    "Exec",
     "SurfacedPlaybook",
     "TimingMetrics",
     "TrafficLink",
