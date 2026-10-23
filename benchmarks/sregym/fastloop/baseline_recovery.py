@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any, Protocol
 
 from benchmarks.sregym.adapter import kubectl
 
@@ -27,6 +29,7 @@ NON_APPLICATION_NAMESPACES = frozenset(
 WORKLOAD_KINDS = frozenset(
     {
         "Deployment",
+        "DaemonSet",
         "StatefulSet",
         "Service",
         "ConfigMap",
@@ -38,11 +41,8 @@ WORKLOAD_KINDS = frozenset(
     }
 )
 _RESOURCE_NAMES = (
-    "deployments,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,persistentvolumeclaims"
+    "deployments,daemonsets,statefulsets,services,configmaps,jobs,cronjobs,pods,networkpolicies,persistentvolumeclaims"
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class ApplicationCluster(Protocol):
@@ -69,6 +69,36 @@ class KubectlApplicationCluster:
         )
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None:
+        resource = f"{value['kind'].lower()}/{value['metadata']['name']}"
+        output = kubectl(
+            ["get", resource, "-o", "json", "--ignore-not-found=true"],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+        ).stdout
+        if output.strip():
+            current = json.loads(output)
+            # SSA merges fields owned by other managers. In particular, restoring
+            # an EnvVar literal can retain the injector's valueFrom and fail API
+            # validation. Replace complete captured content, guarded against races.
+            patch = [
+                {"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]}
+            ]
+            for key in ("spec", "data", "binaryData"):
+                if key in value:
+                    patch.append({"op": "add", "path": f"/{key}", "value": value[key]})
+                elif key in current:
+                    patch.append({"op": "remove", "path": f"/{key}"})
+            # kubectl patch reads --patch-file as a filename, including a literal
+            # "-". Keep baseline values out of command arguments in a private file.
+            with TemporaryDirectory(prefix="sdo-baseline-") as directory:
+                patch_path = Path(directory) / "patch.json"
+                patch_path.write_text(json.dumps(patch), encoding="utf-8")
+                kubectl(
+                    ["patch", resource, "--type=json", "--patch-file", str(patch_path)],
+                    namespace=namespace,
+                    kubeconfig=self.kubeconfig,
+                )
+            return
         kubectl(
             ["apply", "--server-side", "--field-manager=sdo-deployer", "--force-conflicts", "-f", "-"],
             namespace=namespace,
