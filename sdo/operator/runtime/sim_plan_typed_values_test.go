@@ -22,9 +22,19 @@ type simTypedKube struct {
 	once       bool
 	deletedUID types.UID
 	execCalls  int
+	podReads   int
 }
 
 func (k *simTypedKube) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if ref.Kind == "Pod" && (k.mode == "exec-version-bumped" || k.mode == "exec-pod-recreated") {
+		k.podReads++
+		if k.podReads == 2 {
+			if k.mode == "exec-pod-recreated" {
+				k.objects[ref].SetUID("replacement-pod")
+			}
+			k.bump(k.objects[ref])
+		}
+	}
 	if k.objects[ref] == nil {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, ref.Name)
 	}
@@ -66,6 +76,11 @@ func (k *simTypedKube) Delete(_ context.Context, ref sdk.ObjectRef, uid types.UI
 	}
 	k.deletedUID = uid
 	delete(k.objects, ref)
+	if k.mode == "replacement-after-delete" {
+		replacement := object.DeepCopy()
+		replacement.SetUID("replacement-pod")
+		k.objects[ref] = replacement
+	}
 	return nil
 }
 func (k *simTypedKube) Exec(_ context.Context, ref sdk.ObjectRef, _ string, _ []string) (int, error) {
@@ -79,7 +94,7 @@ func TestSimXV2ActionsAndValuesUnderServerFaults(t *testing.T) {
 	sweepSimSeedsN(t, 24, func(t *testing.T, seed uint64) {
 		rng := newSimRNG(seed)
 		for _, origin := range []program.ValueOrigin{program.SourceValue, program.ObservedValue} {
-			for _, mode := range []string{"normal", "conflict", "write-error", "stale-write", "partial-undo", "restart"} {
+			for _, mode := range []string{"normal", "conflict", "write-error", "stale-write", "partial-undo", "restart", "epoch-bump"} {
 				t.Run(string(origin)+"/"+mode, func(t *testing.T) {
 					initial := deploymentWithDrift("safe:v1")
 					_ = unstructured.SetNestedField(initial.Object, false, "spec", "template", "spec", "automountServiceAccountToken")
@@ -101,9 +116,22 @@ func TestSimXV2ActionsAndValuesUnderServerFaults(t *testing.T) {
 					if origin == program.ObservedValue {
 						value = program.FromObserved(ref, "spec.replicas")
 					}
-					e := PlanExecutor{Client: kube, Source: planFakeSource{source: accepted}, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Now: newSimClock().Now, Values: program.ValueInputs{Observed: func(sdk.ObjectRef) (map[string]any, error) { return observed.Object, nil }}}
+					head := "accepted"
+					e := PlanExecutor{Client: kube, Source: planFakeSource{source: accepted}, AcceptedRevision: func() string { return head }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Now: newSimClock().Now, Values: program.ValueInputs{Observed: func(sdk.ObjectRef) (map[string]any, error) { return observed.Object, nil }}}
 					plan := program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: ref, Replicas: value}}}
 					incident := IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}
+					if mode == "epoch-bump" {
+						if _, err := e.Apply(context.Background(), incident, plan, true); err != nil {
+							t.Fatal(err)
+						}
+						desired++
+						_ = unstructured.SetNestedField(accepted.Object, desired, "spec", "replicas")
+						_ = unstructured.SetNestedField(observed.Object, desired, "spec", "replicas")
+						observed.SetResourceVersion(fmt.Sprint(seed + 200))
+						head = "accepted-refreshed"
+						incident.SourceCommit = head
+						kube.bump(kube.objects[ref])
+					}
 					if mode == "partial-undo" {
 						podRef := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "worker"}
 						pod := planObject(podRef, map[string]any{})
@@ -171,14 +199,14 @@ func TestSimXV2ActionsAndValuesUnderServerFaults(t *testing.T) {
 					}
 					if len(r.ActionReports) > 0 && len(r.ActionReports[0].Values) > 0 {
 						p := r.ActionReports[0].Values[0]
-						if origin == program.SourceValue && p.SourceCommit != "accepted" || origin == program.ObservedValue && p.ResourceVersion != observed.GetResourceVersion() {
+						if origin == program.SourceValue && p.SourceCommit != incident.SourceCommit || origin == program.ObservedValue && p.ResourceVersion != observed.GetResourceVersion() {
 							t.Fatal("value provenance lost")
 						}
 					}
 				})
 			}
 		}
-		for _, mode := range []string{"normal", "conflict", "write-error", "stale-write", "pod-recreated"} {
+		for _, mode := range []string{"normal", "conflict", "write-error", "stale-write", "pod-recreated", "replacement-after-delete"} {
 			t.Run("DeletePod/"+mode, func(t *testing.T) {
 				ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "worker"}
 				pod := planObject(ref, map[string]any{})
@@ -194,5 +222,84 @@ func TestSimXV2ActionsAndValuesUnderServerFaults(t *testing.T) {
 				}
 			})
 		}
+		for _, mode := range []string{"no-grant", "exec-version-bumped", "exec-pod-recreated", "restart"} {
+			t.Run("Exec-refused/"+mode, func(t *testing.T) {
+				ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "worker"}
+				pod := planObject(ref, map[string]any{})
+				kube := &simTypedKube{simKube: newSimKube(drawSimFaults(newSimRNG(seed)), pod), mode: mode}
+				e := PlanExecutor{Client: kube, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}}
+				plan := program.Plan{Actions: []program.Action{program.Exec{Pod: ref, Container: "app", Command: []program.Value{program.FromParam("command")}}}}
+				incident := IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}
+				if mode == "restart" {
+					preview, err := e.Apply(context.Background(), incident, plan, true)
+					if err != nil {
+						t.Fatal(err)
+					}
+					receipt, err := preview.Proto()
+					if err != nil {
+						t.Fatal(err)
+					}
+					restored := planApplicationState(receipt).Result
+					if _, err = e.Reconcile(context.Background(), restored); err != nil || kube.execCalls != 0 || restored.VerificationPassed {
+						t.Fatal("restart replayed or credited an unexecuted command")
+					}
+					return
+				}
+				r, err := e.Apply(context.Background(), incident, plan, false)
+				if err == nil || r.Applied || r.VerificationPassed || r.ActionReports[0].Status != "refused" || r.ActionReports[0].ExitCode != nil {
+					t.Fatalf("Exec failure received credit: %+v %v", r, err)
+				}
+				if mode != "no-grant" && kube.execCalls != 0 {
+					t.Fatal("Exec reached a changed Pod identity/version")
+				}
+			})
+		}
+		t.Run("DeletePod/restart-mid-plan", func(t *testing.T) {
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "worker"}
+			pod := planObject(ref, map[string]any{})
+			kube := &simTypedKube{simKube: newSimKube(drawSimFaults(newSimRNG(seed)), pod)}
+			before := kube.objects[ref].DeepCopy()
+			if err := kube.Delete(context.Background(), ref, before.GetUID(), before.GetResourceVersion()); err != nil {
+				t.Fatal(err)
+			}
+			plan := program.Plan{Actions: []program.Action{program.DeletePod{Ref: ref}, program.Exec{Pod: ref, Container: "app", Command: []program.Value{program.FromParam("command")}}}}
+			interrupted := PlanApplicationResult{Plan: plan, Applied: true, ActionsApplied: plan.Actions[:1], ActionReports: []PlanActionReport{{ActionIndex: 0, Status: "applied"}, {ActionIndex: 1, Status: "prepared"}}, Patches: []PlanPatch{{Ref: ref, Operation: "delete_pod", Irreversible: true}}}
+			receipt, err := interrupted.Proto()
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored := planApplicationState(receipt).Result
+			e := PlanExecutor{Client: kube}
+			r, err := e.Reconcile(context.Background(), restored)
+			if err != nil || r.VerificationPassed || kube.objects[ref] != nil || kube.execCalls != 0 || len(restored.Patches) != 0 {
+				t.Fatal("restart recreated a deleted Pod, replayed Exec or credited an incomplete plan")
+			}
+		})
+		t.Run("DeletePod/partial-plan-undo", func(t *testing.T) {
+			deployment := deploymentWithDrift("safe:v1")
+			faults := simFaults{churnPerPatch: func() int { return 0 }, failAfterCommit: func() bool { return false }, staleReads: func() int { return 0 }}
+			kube := &simTypedKube{simKube: newSimKube(faults, deployment)}
+			var ref sdk.ObjectRef
+			for ref = range kube.objects {
+			}
+			deleted := sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "deleted"}
+			commandPod := deleted
+			commandPod.Name = "exec"
+			for _, podRef := range []sdk.ObjectRef{deleted, commandPod} {
+				object := planObject(podRef, map[string]any{})
+				object.SetUID(types.UID(podRef.Name))
+				object.SetResourceVersion("1")
+				kube.objects[podRef] = object
+			}
+			before, _ := program.FieldValue(kube.objects[ref].Object, "spec.replicas")
+			e := PlanExecutor{Client: kube, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue, Default: 2}, {Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}}
+			plan := program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: ref, Replicas: program.FromParam("replicas")}, program.DeletePod{Ref: deleted}, program.Exec{Pod: commandPod, Container: "app", Command: []program.Value{program.FromParam("command")}}}}
+			r, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, plan, false)
+			after, _ := program.FieldValue(kube.objects[ref].Object, "spec.replicas")
+			if err == nil || r.VerificationPassed || !planValuesEqual(before, after) || kube.objects[deleted] != nil || r.RollbackError == "" {
+				t.Fatalf("irreversible effect hid reversible undo: before=%v after=%v rollback=%s err=%v", before, after, r.RollbackError, err)
+			}
+		})
+
 	})
 }

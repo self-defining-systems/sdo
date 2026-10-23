@@ -3,6 +3,10 @@ package runtime
 import (
 	"context"
 	"fmt"
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -64,8 +68,16 @@ func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest)
 // verifyValueWrite proves the exact changed fields with a direct server read.
 // Health clearance and informer freshness cannot stand in for write evidence.
 func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Action, patch PlanPatch) error {
-	switch action.(type) {
-	case program.SetField, *program.SetField, program.ScaleWorkload, *program.ScaleWorkload:
+	path := ""
+	switch a := action.(type) {
+	case program.SetField:
+		path = a.Path
+	case *program.SetField:
+		if a != nil {
+			path = a.Path
+		}
+	case program.ScaleWorkload, *program.ScaleWorkload:
+		path = "spec.replicas"
 	default:
 		return nil
 	}
@@ -78,6 +90,17 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 	}
 	live = live.DeepCopy()
 	canonicalizePlanObject(live)
+	expected, expectedErr := program.FieldValue(patch.After.Object, path)
+	actual, actualErr := program.FieldValue(live.Object, path)
+	if expectedErr != nil || actualErr != nil {
+		return fmt.Errorf("value write observation unknown: requested path unavailable")
+	}
+	// Scalar and list requests must match even when they were no-ops against the
+	// pre-image. Map fields also retain the default-aware guarded delta check below.
+	if _, mapping := expected.(map[string]any); !mapping && !planValuesEqual(expected, actual) {
+		return fmt.Errorf("value write observation unknown: requested value changed")
+	}
+
 	for _, field := range []string{"spec", "data", "binaryData"} {
 		b, bok := patch.Before.Object[field]
 		a, aok := patch.After.Object[field]
@@ -90,29 +113,120 @@ func (e PlanExecutor) verifyValueWrite(ctx context.Context, action program.Actio
 }
 
 func actionUsesSourceValue(action program.Action) bool {
-	switch a := action.(type) {
-	case program.SetField:
-		return a.Value.Origin() == program.SourceValue
-	case program.ScaleWorkload:
-		return a.Replicas.Origin() == program.SourceValue
-	case program.Exec:
-		for _, v := range a.Command {
-			if v.Origin() == program.SourceValue {
-				return true
-			}
-		}
-	case *program.SetField:
-		if a != nil {
-			return actionUsesSourceValue(*a)
-		}
-	case *program.ScaleWorkload:
-		if a != nil {
-			return actionUsesSourceValue(*a)
-		}
-	case *program.Exec:
-		if a != nil {
-			return actionUsesSourceValue(*a)
+	for _, value := range planActionValues(action) {
+		if value.Origin() == program.SourceValue {
+			return true
 		}
 	}
 	return false
+}
+
+func planActionValues(action program.Action) []program.Value {
+	switch a := action.(type) {
+	case program.SetField:
+		return []program.Value{a.Value}
+	case program.ScaleWorkload:
+		return []program.Value{a.Replicas}
+	case program.Exec:
+		return a.Command
+	case *program.SetField:
+		if a != nil {
+			return planActionValues(*a)
+		}
+	case *program.ScaleWorkload:
+		if a != nil {
+			return planActionValues(*a)
+		}
+	case *program.Exec:
+		if a != nil {
+			return planActionValues(*a)
+		}
+	}
+	return nil
+}
+
+// planObservedObject reads only the program's supplied view. No API read or
+// Secret lookup can be substituted for an unavailable snapshot observation.
+func planObservedObject(view program.ReadView, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	versions := map[string]string{"Pod": "v1", "Service": "v1", "ConfigMap": "v1", "Endpoints": "v1", "Event": "v1", "Deployment": "apps/v1", "ReplicaSet": "apps/v1", "StatefulSet": "apps/v1", "HorizontalPodAutoscaler": "autoscaling/v2", "PodDisruptionBudget": "policy/v1", "NetworkPolicy": "networking.k8s.io/v1", "EndpointSlice": "discovery.k8s.io/v1", "MutatingWebhookConfiguration": "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration": "admissionregistration.k8s.io/v1"}
+	if versions[ref.Kind] == "" || versions[ref.Kind] != ref.APIVersion {
+		return nil, fmt.Errorf("observed value kind/version unavailable")
+	}
+	if ref.Namespace != view.Namespace() {
+		return (LiveReadView{DetectionContext: view}).snapshotObject(ref)
+	}
+	var object any
+	switch ref.Kind {
+	case "StatefulSet":
+		if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
+			for _, item := range extended.StatefulSets() {
+				if item.Namespace == ref.Namespace && item.Name == ref.Name {
+					object = &item
+					break
+				}
+			}
+		}
+	case "HorizontalPodAutoscaler":
+		if extended, ok := view.(interface {
+			HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+		}); ok {
+			for _, item := range extended.HorizontalPodAutoscalers() {
+				if item.Namespace == ref.Namespace && item.Name == ref.Name {
+					object = &item
+					break
+				}
+			}
+		}
+	case "PodDisruptionBudget":
+		if extended, ok := view.(interface {
+			PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+		}); ok {
+			for _, item := range extended.PodDisruptionBudgets() {
+				if item.Namespace == ref.Namespace && item.Name == ref.Name {
+					object = &item
+					break
+				}
+			}
+		}
+	case "Event":
+		for _, item := range view.Events() {
+			if item.Namespace == ref.Namespace && item.Name == ref.Name {
+				object = &item
+				break
+			}
+		}
+	default:
+		return (LiveReadView{DetectionContext: view}).snapshotObject(ref)
+	}
+	if object == nil {
+		return nil, fmt.Errorf("observed value object unavailable")
+	}
+	return planUnstructured(object, ref)
+}
+
+func bindMitigationValues(plan program.Plan, spec program.ProgramSpec, bindings program.Bindings, view program.ReadView) (program.Plan, error) {
+	observations := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	for _, action := range plan.Actions {
+		for _, value := range planActionValues(action) {
+			if value.Origin() != program.ObservedValue {
+				continue
+			}
+			ref := value.Ref()
+			if _, ok := observations[ref]; ok {
+				continue
+			}
+			object, err := planObservedObject(view, ref)
+			if err != nil {
+				return program.Plan{}, err
+			}
+			observations[ref] = object.DeepCopy()
+		}
+	}
+	return program.BindPlanValues(plan, program.ValueInputs{Spec: spec, Bindings: bindings.Clone(), Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
+		object := observations[ref]
+		if object == nil {
+			return nil, fmt.Errorf("program snapshot value object unavailable")
+		}
+		return object.DeepCopy().Object, nil
+	}}), nil
 }
