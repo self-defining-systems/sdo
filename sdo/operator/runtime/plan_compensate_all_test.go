@@ -3,12 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
+	"testing"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"strings"
-	"testing"
 )
 
 type interruptedCompensationClient struct {
@@ -25,7 +26,7 @@ func (c *interruptedCompensationClient) Patch(ctx context.Context, ref sdk.Objec
 func TestPlanCompensationAttemptsEveryReversibleWrite(t *testing.T) {
 	objects := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	var actions []program.Action
-	var safety *PlanSafetyPolicy
+
 	var first sdk.ObjectRef
 	for _, name := range []string{"first", "second"} {
 		ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: name}
@@ -39,12 +40,7 @@ func TestPlanCompensationAttemptsEveryReversibleWrite(t *testing.T) {
 		before.Object["data"] = map[string]any{"key": "before"}
 		after := before.DeepCopy()
 		after.Object["data"].(map[string]any)["key"] = "after"
-		proof := fixturePlanSafety(t, ref, before, after)
-		if safety == nil {
-			safety = proof
-		} else {
-			safety.Objects[ref] = proof.Objects[ref]
-		}
+
 		objects[ref] = before
 		actions = append(actions, program.SetField{Ref: ref, Path: "data[key]", Value: testPlanValue("after")})
 	}
@@ -53,10 +49,10 @@ func TestPlanCompensationAttemptsEveryReversibleWrite(t *testing.T) {
 	object.SetUID("fixture-uid")
 	object.SetResourceVersion("1")
 	objects[np] = object
-	safety.Objects[np] = PlanObjectSafety{UID: "fixture-uid", DeleteAllowed: true, Digests: map[string]bool{planSafetyDigest(object): true}}
+
 	actions = append(actions, program.DeleteObject{Ref: np, Reason: "synthetic fixture"})
 	client := &interruptedCompensationClient{lifecycleTestClient: &lifecycleTestClient{planFakeClient: &planFakeClient{objects: objects}, ignoreDelete: true}, failRestore: true}
-	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Safety: safety, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: actions}, false)
 	if err == nil || result.RolledBack || !strings.Contains(result.RollbackError, "irreversible") {
 		t.Fatal("partial compensation not disclosed")

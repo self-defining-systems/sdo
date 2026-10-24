@@ -1116,14 +1116,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="multiply controller and wait windows; values below 1 require scripted agents (default 1)",
     )
     run.add_argument(
-        "--program-fast-path", action="store_true", help="allow trusted playbook programs to resolve incidents"
+        "--program-fast-path",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="allow trusted playbook programs to resolve incidents",
     )
     run.add_argument(
         "--program-trust-threshold",
         type=int,
-        default=3,
+        default=1,
         metavar="K",
-        help="verified successes required for a trusted program (default 3)",
+        help="verified successes required for a trusted program (default 1)",
     )
     run.add_argument(
         "--detection-timeout",

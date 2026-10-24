@@ -42,17 +42,17 @@ class RuntimeConfig:
     model: str
     timeout_seconds: int
     validator_image: str = "sdo-detector-validator:v0.1.0"
-    verification_timeout_seconds: int = 120
+    verification_timeout_seconds: int = 300
     wait_for_completion: bool = False
-    repair_policy: str = "commit"
+    repair_policy: str = "recorded-actions"
     agent_provider: str = "codex"
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
-    program_fast_path: bool = False
-    program_trust_threshold: int = 3
+    program_fast_path: bool = True
+    program_trust_threshold: int = 1
     late_findings: str = "off"
-    max_response_loops: int = 5
+    max_response_loops: int = 10
     healthy_baseline: bool = False
     permissive_responder: bool = False
     responder_namespaces: tuple[str, ...] = ()
@@ -107,8 +107,6 @@ class RuntimeConfig:
             raise ValueError("max_deployment_attempts must be positive")
         if self.program_trust_threshold <= 0:
             raise ValueError("program_trust_threshold must be positive")
-        if self.program_fast_path and self.repair_policy != "recorded-actions":
-            raise ValueError("program fast path requires recorded-actions repair policy")
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
             raise ValueError("agent_registrations path must be absolute")
 

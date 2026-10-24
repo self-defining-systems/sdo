@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	operator "sdo.dev/operator/runtime"
@@ -173,25 +172,13 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 			incident.Findings = append(incident.Findings, sdk.Finding{PrimaryResource: ref})
 		}
 	}
-	authority := &operator.SourcePlanAuthority{Config: &operator.SourcePlanPolicy{Version: 1, Authority: "accepted-source-and-incident", Applications: map[string]string{incident.Application: incident.Namespace}, FieldRepairs: "accepted-source-only", CreateKinds: []string{"v1/ConfigMap", "v1/Service"}, DeleteKinds: []string{"networking.k8s.io/v1/NetworkPolicy", "admissionregistration.k8s.io/v1/MutatingWebhookConfiguration", "admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration"}, TTLSeconds: 3600}, Source: source, UID: func(ctx context.Context, ref sdk.ObjectRef) (types.UID, error) {
-		o, e := client.Get(ctx, ref)
-		if e != nil {
-			return "", e
-		}
-		return o.GetUID(), nil
-	}}
-	for ref := range client.initial {
-		if ref.Namespace == "" {
-			authority.Config.WebhookNames = append(authority.Config.WebhookNames, ref.Name)
-		}
-	}
 	observedObjects, err := snapshotObjects(c.Corpus.Open)
 	if err != nil {
 		return fail(err)
 	}
 	waiter := &reaction{cluster: client, source: source, plan: plan, effects: &r.Effects}
 	verifier := &postVerifier{cluster: client, source: source, p: p, bindings: bindings, detectors: detectors, result: &r, reaction: waiter}
-	executor := operator.PlanExecutor{Client: client, Source: source, SourceAuthority: authority, AcceptedRevision: func() string { return commit }, Rollouts: waiter, Verifier: verifier, Values: program.ValueInputs{Spec: p.Spec(), Bindings: bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
+	executor := operator.PlanExecutor{Client: client, Source: source, Rollouts: waiter, Verifier: verifier, Values: program.ValueInputs{Spec: p.Spec(), Bindings: bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
 		o := observedObjects[ref]
 		if o == nil {
 			return nil, fmt.Errorf("observed object unavailable")

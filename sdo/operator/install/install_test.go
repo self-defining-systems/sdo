@@ -335,7 +335,7 @@ func TestOperateJobUsesPreparedPVCAcceptedMountAndRegistrationConfigMap(t *testi
 	}
 }
 
-func TestOperateMayApplySourceButControllerMayOnlyObserveApplication(t *testing.T) {
+func TestOperateAndControllerApplicationMutationGrants(t *testing.T) {
 	plan, err := Resources(testConfig())
 	if err != nil {
 		t.Fatal(err)
@@ -350,8 +350,8 @@ func TestOperateMayApplySourceButControllerMayOnlyObserveApplication(t *testing.
 				t.Fatal("operate cannot apply application source")
 			}
 		case "sdo-controller":
-			if roleAllows(role, "deployments", "create") || roleAllows(role, "services", "update") {
-				t.Fatal("long-running controller gained source deployment privileges")
+			if !roleAllows(role, "deployments", "create") || !roleAllows(role, "deployments", "delete") || roleAllows(role, "services", "update") {
+				t.Fatal("controller must support named plan lifecycle effects without the source updater grant")
 			}
 		}
 	}

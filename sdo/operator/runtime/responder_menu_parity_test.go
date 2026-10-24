@@ -41,18 +41,12 @@ func TestProductionResponderMenuStreamFamilyParity(t *testing.T) {
 				action = program.SetField{Ref: ref, Path: path, Value: program.FromSource(ref, path)}
 				// Legacy numeric/string workload fields use the executor's universal delta.
 			}
-			policy := fixturePlanSafety(t, ref, before, after)
-			policy.SourceCommit = loop.Request.SourceCommit
-			proof := policy.Objects[ref]
-			proof.UID = string(before.GetUID())
-			proof.CreateAllowed = family == "missing_configmap"
-			policy.Objects[ref] = proof
 			objects := map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}
 			if family == "missing_configmap" {
 				delete(objects, ref)
 			}
 			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: objects}}
-			executor := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: after}}, Safety: policy, AcceptedRevision: func() string { return loop.Request.SourceCommit }}
+			executor := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: after}}}
 			if _, err := executor.Apply(context.Background(), loop.Request, program.Plan{Actions: []program.Action{action}}, true); err != nil {
 				t.Fatalf("direct refused fixture: %v", err)
 			}

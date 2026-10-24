@@ -70,7 +70,16 @@ class ToyWorker:
         if op == "recover":
             started = time.monotonic()
             command(config, env.namespace, "apply", "-f", str(env.workspace / "kubernetes"))
-            return {"seconds": time.monotonic() - started}
+            return {
+                "seconds": time.monotonic() - started,
+                "protocol_version": 2,
+                "success": True,
+                "recovery_contract": "seed-compatible/v1",
+            }
+        if op == "refresh":
+            # Commands create fresh kubectl clients; the toy retains no API or
+            # credential clients across recovery.
+            return {"protocol_version": 2, "success": True, "recovery_contract": "seed-compatible/v1"}
         raise ValueError(f"unsupported toy worker operation: {op}")
 
 

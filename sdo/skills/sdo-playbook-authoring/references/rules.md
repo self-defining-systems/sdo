@@ -51,7 +51,7 @@ diagnostic; look it up here.
 - A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, including under consistent renaming. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
 - Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors report skipped effect replay without proving repair. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
 
-- CreateFromSource and DeleteObject require accepted-source presence/absence, nonsecret effect authorization, and direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. Their skipped effect replay supplies no repair proof or origin credit. Enforced by: `program.mitigation-unreplayable`.
+- CreateFromSource requires accepted-source presence; DeleteObject targets the incident namespace without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. Their skipped effect replay supplies no repair proof or origin credit. Enforced by: `program.mitigation-unreplayable`.
 
 ## Value provenance and runtime effects
 

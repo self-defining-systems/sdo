@@ -62,21 +62,15 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed accepted-source and incident policy JSON")
-	planSourceFile := flags.String("plan-source-policy-file", "", "reviewed source policy file; defaults to SDO_PLAN_SOURCE_POLICY_FILE")
-	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
-	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
-	var planWebhookNames repeatable
-	flags.Var(&planWebhookNames, "plan-webhook-name", "exact reviewed webhook name authorized for controller get/delete")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "independent verification timeout")
+	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
 	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
 	var responderNamespaces repeatable
@@ -88,9 +82,10 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err := flags.Parse(args[1:]); err != nil {
 		return OperateConfig{}, err
 	}
-	sourcePolicyInput, sourcePolicyErr := readSourcePolicyInput(*planSourceFile, *planSourceJSON)
-	if sourcePolicyErr != nil {
-		return OperateConfig{}, sourcePolicyErr
+
+	menuEnabled, menuErr := responderMenuEnabled()
+	if menuErr != nil {
+		return OperateConfig{}, menuErr
 	}
 	if flags.NArg() != 0 {
 		return OperateConfig{}, fmt.Errorf("unexpected operate arguments: %v", flags.Args())
@@ -169,6 +164,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			MaxAttempts:  *maxAttempts,
 		},
 		Install: install.Config{
+			ResponderMenu:      menuEnabled,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
@@ -177,9 +173,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, MetricsURL: *metricsURL, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection,
-			MaxResponseLoops:     *maxResponseLoops,
-			PlanSourcePolicyJSON: sourcePolicyInput, PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
-			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+			MaxResponseLoops: *maxResponseLoops,
+			ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,

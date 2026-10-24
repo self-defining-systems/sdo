@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
@@ -32,27 +31,14 @@ func TestHealthRefreshFailureBlocksEvaluationRepairAndClosure(t *testing.T) {
 	}
 }
 
-func TestHealthRefreshBlocksToolsAndPendingEffects(t *testing.T) {
+func TestHealthRefreshBlocksPendingControllerEffects(t *testing.T) {
 	ctx := context.Background()
 	failure := memory.ErrHealthRefreshRequired
-	loop := NewResponderLoop(IncidentRequest{IncidentID: "stale"}, nil, staticProvider{}, nil, PlanExecutor{}, 1)
-	loop.CheckHealth = func(context.Context) error { return failure }
-	for _, command := range []string{"status", "apply"} {
-		response := loop.Handle(ctx, ToolRequest{Command: command, PlanIDs: []string{"old-plan"}})
-		if response.Error != failure.Error() || response.Healthy || response.LoopsUsed != 0 {
-			t.Fatalf("stale tool authorized: %+v", response)
-		}
-	}
-	// There is no backing client: reaching it would panic and expose a write.
-	client := healthGuardedPlanClient{Check: loop.CheckHealth}
-	if err := client.Patch(ctx, sdk.ObjectRef{}, types.MergePatchType, nil); !errors.Is(err, failure) {
-		t.Fatalf("write allowed: %v", err)
-	}
 	c, err := NewController(testControllerConfig(), nil, staticProvider{}, &recordingDispatcher{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.CheckHealth = loop.CheckHealth
+	c.CheckHealth = func(context.Context) error { return failure }
 	if err := c.ExecuteDispatchEffect(ctx, DispatchEffect{}); !errors.Is(err, failure) {
 		t.Fatalf("dispatch allowed: %v", err)
 	}

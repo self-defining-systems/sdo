@@ -160,15 +160,17 @@ def test_run_time_scale_is_explicit_and_defaults_to_normal_timing() -> None:
     assert settings.poll_seconds == pytest.approx(0.2)
 
 
-def test_program_fast_path_is_explicit_and_defaults_off() -> None:
+def test_program_fast_path_defaults_on_and_can_be_disabled() -> None:
     ordinary = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
     enabled = build_parser().parse_args(
         ["run", "--run-dir", "x", "--agent", "sdo", "--program-fast-path", "--program-trust-threshold", "4"]
     )
-    assert ordinary.program_fast_path is False
-    assert ordinary.program_trust_threshold == 3
+    assert ordinary.program_fast_path is True
+    assert ordinary.program_trust_threshold == 1
     assert enabled.program_fast_path is True
     assert enabled.program_trust_threshold == 4
+    disabled = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--no-program-fast-path"])
+    assert disabled.program_fast_path is False
 
 
 def test_time_scale_shortens_persistent_controller_polls(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,7 +269,7 @@ def test_drift_token_budget_reaches_fastloop_runtime(tmp_path: Path, monkeypatch
         ]
     )
     agent = cli._sdo_agent(args, environment, tmp_path)
-    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.program_trust_threshold == 3
+    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.program_trust_threshold == 1
 
 
 def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:

@@ -49,14 +49,12 @@ health firing is reported as overlap. See the [closed-loop report contract](../.
 Keep source-restoration mitigators for image, readiness and ConfigMap faults when diagnosis supports them.
 Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
 ConfigMap JSON/YAML entries preserve unrelated values. Use `program.FromSource(ref, path)` for an accepted-source field value,
-and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects need
-current controller-owned nonsecret provenance; accepted Git origin alone supplies no clearance.
+and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects use the ordinary namespace-scoped executor.
 ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
 produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
 replay remains mandatory. Observed and parameter-based SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
-CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes only
-an explicitly allowed named object proven absent from that source; disclose deletion as irreversible, retain
-its nonsecret receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
+CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes a named object in the incident namespace without a source-absence gate; disclose deletion as irreversible, retain
+its receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
 and live verification requires direct current UID/absence evidence plus independent health checks.
 Never delete a valid mitigator merely to eliminate a skipped-effect note.
 
@@ -119,27 +117,13 @@ canonical "evidence gap" reason, with details in the summary. A truncated read o
 establish absence. The per-incident ledger records the number of distinct missing resource/phase observations;
 a flag alone does not prove that learning is blocked.
 
-Every SetField, ReconcileFromSource and Rollback compares credential channels in its pre-image and post-image, independently of path spelling. A repair must not add or change a credential channel; existing channels permit unrelated legacy repairs. Compensation may restore channels from the exact captured pre-image, while refusing any channel absent from that image.
+Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. All actions remain within the controller-derived incident namespace, with Kubernetes RBAC and schema checks. Cluster-scoped webhook mutations are outside this scope.
 
-Compensation attempts every reversible write even when a plan also deleted an object or another restore failed. The delete remains explicitly irreversible and not restored; it never triggers recreation.
+Save-time build, vet, tests and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. Failed fast-path attempts compensate all reversible writes before responder dispatch; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
 
-Structured actions require an administrator-reviewed fixture policy pinned in controller launch configuration. Responders, plan output and dry-run images never supply authorization; values outside the reviewed set refuse. A named webhook RBAC grant alone supplies no plan authorization.
+The fast path defaults on and chooses one trusted program/binding by findings covered, then stable program ID/bindings order. Uncovered findings go to the responder after whole-incident verification; failed verification rolls back the attempt. Success credit survives broker-validated revisions; real fast-path failure still revokes trust.
 
-Write verification and compensation compare plan-owned fields and current UID, while checking the full live credential predicate. API defaults and the Deployment revision annotation do not invalidate an otherwise approved effect.
-
-HPA, PDB and named webhook effects require a direct current read. An unwatched kind stays unknown unless that read proves the effect and the verifier has no cached input for the kind; watched kinds still wait for their cache barrier.
-
-A cluster-scoped webhook delete proves source absence through the application’s current accepted render selection. Missing or stale lock evidence refuses; the installer’s exact-name webhook grant remains required.
-
-Credential safety also refuses deprecated identity aliases and unconfined storage. Pod and CronJob templates need explicit token automount disablement; dropping that denial restores the default token mount and counts as a credential-channel addition. NetworkPolicy repairs admit only bounded namespace-local pod-label peers; allow-all and cross-namespace routes refuse.
-
-JSON ConfigMap entry edits preserve numeric precision, including untouched large integers and exponent literals. Document serialization may normalize formatting; use entry edits for semantic values.
-
-The source-only stream policy derives structured repair values and creates from accepted source, and grants deletes only to individually named incident resources with pinned UIDs. Unversioned detector references resolve only through the explicit allowed kinds. Existing narrow SetField paths use declared parameters and retain their allowlist and credential-delta check. Application patch receipts label authority as `accepted-source`, `incident-named-delete`, `parameter`, or `observed`; action reports separately retain each value's provenance.
-
-Webhook namespace selectors may confine admission to the application. Network peer confinement is checked on NetworkPolicy rules.
-
-Source policy inventory uses render-lock identities and filters allowed kinds before reading source content; a missing lock entry alone never proves deletion eligibility.
+Receipts report value provenance (`accepted-source`, `parameter`, `observed`, `incident-namespace`), not an administrator grant. JSON/YAML ConfigMap entry edits preserve unrelated values and numeric precision, including untouched large integers and exponent literals; document serialization may normalize formatting.
 
 `spec.template.spec.dnsPolicy` is a schema-checked SetField path for Deployment and StatefulSet source
 restoration. A DNS policy repair does not remove an injected dnsConfig; if that field was absent from

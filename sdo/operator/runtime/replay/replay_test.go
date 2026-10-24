@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"testing"
+	"time"
+
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -14,8 +17,6 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
-	"time"
 )
 
 type fixtureProgram struct {
@@ -344,7 +345,7 @@ func (webhookProgram) Diagnose(_ context.Context, v program.ReadView, b program.
 func (webhookProgram) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
 	return program.Plan{Actions: []program.Action{program.DeleteObject{Ref: b.Objects["webhook"], Reason: "remove injected synthetic webhook"}}}, nil
 }
-func TestScopedWebhookDeleteRefreshesObservation(t *testing.T) {
+func TestScopedWebhookDeleteIsOutsideIncidentNamespace(t *testing.T) {
 	target := sdk.ObservationTarget{APIVersion: "admissionregistration.k8s.io/v1", Kind: "MutatingWebhookConfiguration", Name: "synthetic-webhook"}
 	scoped := sdk.ScopedSnapshot{Version: 1, Scope: sdk.ObservationScope{Version: 1, Targets: []sdk.ObservationTarget{target}}, Statuses: []sdk.ObservationStatus{{Target: target, State: sdk.ObservationObserved}}}
 	healthy := sdktest.Snapshot{NamespaceName: "app", ScopedSnapshot: scoped}
@@ -353,8 +354,8 @@ func TestScopedWebhookDeleteRefreshesObservation(t *testing.T) {
 	c := Case{ID: "webhook", Corpus: sdktest.CorpusCase{Open: open, Healthy: healthy, Fixed: healthy, RootCauseProgramIDs: []string{"webhook"}, Bindings: program.Bindings{Objects: program.ObjectBindings{"webhook": {APIVersion: target.APIVersion, Kind: target.Kind, Name: target.Name}}}}}
 	p := webhookProgram{}
 	r := Check(context.Background(), p, p, nil, c)
-	if r.Status != "replayed" {
-		t.Fatalf("%+v", r)
+	if r.Status != "failed" || len(r.Errors) == 0 {
+		t.Fatalf("cluster-scoped plan was accepted: %+v", r)
 	}
 }
 

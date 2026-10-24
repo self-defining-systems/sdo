@@ -9,7 +9,6 @@ import (
 )
 
 func TestInstallExistingMenuEnvironmentReachesControllerPod(t *testing.T) {
-	t.Setenv("SDO_PLAN_SOURCE_POLICY_FILE", "")
 	for _, value := range []string{"", "0", "1", "invalid"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("SDO_RESPONDER_MENU", value)
@@ -30,7 +29,7 @@ func TestInstallExistingMenuEnvironmentReachesControllerPod(t *testing.T) {
 				t.Fatal(err)
 			}
 			want, actual := "0", ""
-			if value == "1" {
+			if value != "0" {
 				want = "1"
 			}
 			for _, environment := range plan.Job.Spec.Template.Spec.Containers[0].Env {
@@ -112,5 +111,31 @@ func TestParseInstallExistingPermissiveResponder(t *testing.T) {
 	}
 	if !launch.Install.PermissiveResponder || len(launch.Install.ResponderNamespaces) != 1 || launch.Install.ResponderNamespaces[0] != "policy-system" {
 		t.Fatalf("permissions lost: %+v", launch.Install)
+	}
+}
+
+func TestGS1AutomaticRepairDefaultsAndOptOuts(t *testing.T) {
+	t.Setenv("SDO_RESPONDER_MENU", "")
+	args := []string{"install-existing", "--repository", "/accepted/app", "--namespace", "demo", "--application", "demo", "--controller-image", "controller:test", "--responder-image", "responder:test", "--validator-image", "validator:test", "--repository-pvc", "repository", "--credentials-secret", "credentials", "--model", "model"}
+	launch, err := ParseInstallExistingLaunch(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := launch.Install
+	if !c.ProgramFastPath || !c.ResponderMenu || c.RepairPolicy != "recorded-actions" || c.ProgramTrustThreshold != 1 || c.MaxResponseLoops != 10 || c.VerificationTimeoutSeconds != 300 {
+		t.Fatalf("defaults: %+v", c)
+	}
+	disabled, err := ParseInstallExistingLaunch(append(args, "--program-fast-path=false", "--repair-policy=commit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled.Install.AcceptedCommit = strings.Repeat("a", 40)
+	plan, err := install.Resources(disabled.Install)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, _, err := ParseControllerLaunch(plan.Job.Spec.Template.Spec.Containers[0].Args)
+	if err != nil || controller.Controller.GetProgramFastPath() || controller.Controller.GetRepairPolicy() != "commit" {
+		t.Fatalf("opt-out lost: %+v %v", controller, err)
 	}
 }

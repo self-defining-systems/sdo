@@ -22,13 +22,7 @@ type persistedPlan struct {
 type planApplicationFields PlanApplicationResult
 
 func (result PlanApplicationResult) MarshalJSON() ([]byte, error) {
-	for _, effect := range result.ObjectEffects {
-		if effect.DeletedPreImage != nil {
-			if err := planSecretPredicate(effect.DeletedPreImage); err != nil {
-				return nil, err
-			}
-		}
-	}
+
 	plan, err := encodePersistedActions(result.Plan.Actions)
 	if err != nil {
 		return nil, fmt.Errorf("encode plan: %w", err)

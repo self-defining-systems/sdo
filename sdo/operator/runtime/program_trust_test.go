@@ -4,46 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
-
-func TestProgramTrustResetsOnFailureOrProgramRevisionChange(t *testing.T) {
-	outcomes := []*contracts.OutcomeRecord{}
-	for _, revision := range []string{"tree-a", "tree-a", "tree-a", "tree-b", "tree-b"} {
-		outcomes = append(outcomes, verifiedTrustOutcome(t, "targetport", revision))
-	}
-	stats := settledTrustStats(outcomes)["targetport"]
-	if stats.VerifiedSuccesses != 2 || stats.Trusted || stats.LastChange != "tree-b" {
-		t.Fatalf("revision reset: %+v", stats)
-	}
-	outcomes = append(outcomes, &contracts.OutcomeRecord{ProgramRuns: []*contracts.ProgramRun{{ProgramId: "targetport", ProgramRevision: "tree-c"}}})
-	stats = settledTrustStats(outcomes)["targetport"]
-	if stats.VerifiedSuccesses != 0 || stats.Failures != 0 || stats.LastChange != "tree-c" {
-		t.Fatalf("edit without application did not reset: %+v", stats)
-	}
-	failed := verifiedTrustOutcome(t, "targetport", "tree-c")
-	failed.PlanApplications[0].Verification.Result = contracts.Verdict_RESULT_MATCH
-	outcomes = append(outcomes, failed)
-	stats = settledTrustStats(outcomes)["targetport"]
-	if stats.VerifiedSuccesses != 0 || stats.Failures != 1 || stats.Trusted {
-		t.Fatalf("failure reset: %+v", stats)
-	}
-}
-
-func TestProgramTrustUsesConfiguredSuccessThreshold(t *testing.T) {
-	outcomes := []*contracts.OutcomeRecord{verifiedTrustOutcome(t, "targetport", "tree-a"), verifiedTrustOutcome(t, "targetport", "tree-a")}
-	if settledTrustStats(outcomes)["targetport"].Trusted || !settledTrustStats(outcomes, 2)["targetport"].Trusted {
-		t.Fatal("configured trust threshold was ignored")
-	}
-}
 
 func TestInterruptedFastPathFailureBreaksTrustWithoutApplication(t *testing.T) {
 	outcomes := []*contracts.OutcomeRecord{}

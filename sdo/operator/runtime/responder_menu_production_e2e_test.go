@@ -70,11 +70,11 @@ func (productionMenuHealth) Detect(_ context.Context, view sdk.DetectionContext)
 func TestProductionResponderMenuScriptedFactoryStrictReceipt(t *testing.T) {
 	testProductionResponderMenuFactory(t, true)
 }
-func TestProductionResponderMenuOffByDefault(t *testing.T) {
+func TestProductionResponderMenuExplicitOptOut(t *testing.T) {
 	testProductionResponderMenuFactory(t, false)
 }
 func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
-	launch := ""
+	launch := "0"
 	if enabled {
 		launch = "1"
 	}
@@ -96,15 +96,6 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic fixture"}, nil
 	})}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "service-1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
-	policyPath, err := filepath.Abs("../config/plan-policies/mixed10.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SDO_PLAN_SOURCE_POLICY_FILE", policyPath)
-	policyBytes, err := os.ReadFile(os.Getenv("SDO_PLAN_SOURCE_POLICY_FILE"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	bad, good := productionMenuProgram{"try-wrong-port", 7777}, productionMenuProgram{"restore-route", 8080}
 	registry, err := program.NewRegistry([]program.Diagnoser{bad, good}, []program.Mitigator{bad, good})
 	if err != nil {
@@ -141,7 +132,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	done := make(chan error, 1)
 	start := time.Now().UTC()
 	go func() {
-		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--toolchain-image", "synthetic/controller:compiler", "--plan-source-policy-json", string(policyBytes), "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--diagnosis-settle-delay", "1ns", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
+		done <- RunWithOptions(ctx, []sdk.Detector{productionMenuHealth{}}, RuntimeOptions{Args: []string{"--toolchain-image", "synthetic/controller:compiler", "--namespace", "app", "--control-namespace", "demo", "--app-root", accepted, "--source-commit", revision, "--repository-pvc", "synthetic-repository", "--repository-mount-path", mount, "--responder-credentials-secret", "unused-placeholder", "--responder-image", "synthetic/responder:scripted", "--agent-registration-directory", registrytest.Directory(), "--repair-policy", "recorded-actions", "--state-baseline=false", "--synthetic-traffic=false", "--clean-responder-helpers=false", "--firing-telemetry-path", "off", "--lifecycle-telemetry-path", "off", "--diagnosis-settle-delay", "1ns", "--verification-timeout", "5s", "--exit-after-closure"}, Client: client, Programs: registry, NativeBroker: native, Stdout: writer, Stderr: writer})
 	}()
 	t.Cleanup(func() {
 		cancel()

@@ -33,9 +33,6 @@ func (c KubernetesPlanClient) resource(ref sdk.ObjectRef) (dynamic.ResourceInter
 	if err != nil {
 		return nil, fmt.Errorf("map %s/%s: %w", ref.Kind, ref.Name, err)
 	}
-	if mapping.Scope.Name() == meta.RESTScopeNameRoot && ref.Namespace == "" && ref.APIVersion == "admissionregistration.k8s.io/v1" && (ref.Kind == "MutatingWebhookConfiguration" || ref.Kind == "ValidatingWebhookConfiguration") {
-		return c.Client.Resource(mapping.Resource), nil
-	}
 	if mapping.Scope.Name() != meta.RESTScopeNameNamespace {
 		return nil, fmt.Errorf("plan object %s/%s is not namespaced", ref.Kind, ref.Name)
 	}
@@ -96,7 +93,7 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 }
 
 func (c KubernetesPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if object == nil || !samePlanRef(object, ref) || ref.APIVersion != "v1" || (ref.Kind != "ConfigMap" && ref.Kind != "Service") || ref.Namespace == "" {
+	if object == nil || !samePlanRef(object, ref) || ref.Namespace == "" {
 		return nil, fmt.Errorf("object create kind/scope is unsupported")
 	}
 	resource, err := c.resource(ref)
@@ -108,11 +105,6 @@ func (c KubernetesPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, obj
 func (c KubernetesPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
 	if uid == "" || version == "" {
 		return fmt.Errorf("delete requires UID/version preconditions")
-	}
-	allowed := ref.Namespace != "" && ((ref.APIVersion == "v1" && (ref.Kind == "ConfigMap" || ref.Kind == "Service" || ref.Kind == "Pod")) || (ref.APIVersion == "networking.k8s.io/v1" && ref.Kind == "NetworkPolicy"))
-	allowed = allowed || (ref.Namespace == "" && ref.APIVersion == "admissionregistration.k8s.io/v1" && (ref.Kind == "MutatingWebhookConfiguration" || ref.Kind == "ValidatingWebhookConfiguration"))
-	if !allowed {
-		return fmt.Errorf("object delete kind/scope is unsupported")
 	}
 	resource, err := c.resource(ref)
 	if err != nil {

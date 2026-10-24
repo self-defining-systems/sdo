@@ -227,7 +227,7 @@ func TestReflectionBrokerDiagnosticRetryIsDurableAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected || !ledger.ReflectionProcessed || ledger.ReflectionCommit != "" {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries || !ledger.ReflectionRejected || !ledger.ReflectionProcessed || ledger.ReflectionCommit != "" {
 		t.Fatalf("terminal rejection not durable: %v", ledger)
 	}
 	for i, rejection := range ledger.ReflectionRejections {
@@ -243,8 +243,8 @@ func TestReflectionBrokerDiagnosticRetryIsDurableAndBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if calls != 3 {
-		t.Fatalf("dispatched %d times, want 3", calls)
+	if want := 1 + broker.MaxValidationRetries; calls != want {
+		t.Fatalf("dispatched %d times, want %d", calls, want)
 	}
 }
 

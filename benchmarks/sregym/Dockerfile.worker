@@ -44,4 +44,8 @@ COPY --from=sregym-responder /opt/sdo/benchmarks /opt/sdo/benchmarks
 COPY benchmarks/sregym/adapter/scripted_worker.py benchmarks/sregym/adapter/scripted_replay.py benchmarks/sregym/adapter/scripted_replay_catalog.py /opt/sdo/benchmarks/sregym/adapter/
 COPY benchmarks/sregym/fastloop/scripted_program /opt/sdo-scripted/targetport
 COPY benchmarks/sregym/fastloop/scripted_networkpolicy_program /opt/sdo-scripted/networkpolicy
-RUN chmod -R a+rX /opt/sdo/benchmarks/sregym/adapter /opt/sdo-scripted
+# Only the model-free scripted worker can retain the exact toy health fixture.
+COPY apps/toy/seed/.sdo/goal.md apps/toy/seed/.sdo/lifecycle-provenance.yaml /opt/sdo/apps/toy/seed/.sdo/
+COPY apps/toy/seed/.sdo/diagnostics/detectors/health /opt/sdo/apps/toy/seed/.sdo/diagnostics/detectors/health
+COPY apps/toy/kubernetes /opt/sdo/apps/toy/kubernetes
+RUN chmod -R a+rX /opt/sdo/benchmarks/sregym/adapter /opt/sdo-scripted /opt/sdo/apps/toy

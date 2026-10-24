@@ -43,17 +43,13 @@ func (e PlanExecutor) verifyStructuredWrites(ctx context.Context, result PlanApp
 			}
 			continue
 		}
-		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
-			return err
-		}
+
 		live, err := e.Client.Get(ctx, patch.Ref)
 		if err != nil {
 			return fmt.Errorf("structured write observation unknown: current read failed")
 		}
-		if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, false); err != nil {
-			return err
-		}
-		if live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
+
+		if live == nil || !samePlanRef(live, patch.Ref) || live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
 			return fmt.Errorf("structured write observation unknown: UID changed or absent")
 		}
 		for _, field := range []string{"spec", "data", "binaryData"} {

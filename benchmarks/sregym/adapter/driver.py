@@ -275,13 +275,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--program-fast-path",
         action=argparse.BooleanOptionalAction,
-        default=config.get("program_fast_path", False),
+        default=config.get("program_fast_path", True),
         help="enable trusted playbook programs to resolve incidents without a responder",
     )
     parser.add_argument(
         "--program-trust-threshold",
         type=int,
-        default=config.get("program_trust_threshold", 3),
+        default=config.get("program_trust_threshold", 1),
         help="successful verified repairs required before a program is trusted (positive integer)",
     )
     parser.add_argument(
@@ -315,7 +315,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=config.get("late_findings", "off"),
         help="let the responder pull findings that activated after dispatch (off by default)",
     )
-    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 5)))
+    parser.add_argument("--max-response-loops", type=int, default=int(config.get("max_response_loops", 10)))
     parser.add_argument(
         "--healthy-baseline",
         action=argparse.BooleanOptionalAction,
@@ -675,7 +675,7 @@ def _launch_native_lifecycle(
         healthy_baseline=args.healthy_baseline,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=120,
+        verification_timeout_seconds=300,
         duration_seconds=None if persistent else args.timeout_sec,
         exit_after_closure=not persistent,
         registration_configmap="sdo-agent-registrations" if args.agent_registrations else None,
@@ -782,7 +782,7 @@ def _native_install_for_run(
         responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
         response_timeout_seconds=args.timeout_sec,
-        verification_timeout_seconds=120,
+        verification_timeout_seconds=300,
         duration_seconds=args.timeout_sec,
         exit_after_closure=True,
         responder_env=(

@@ -130,6 +130,44 @@ func TestVerifiedFastPathNeedsNoResponderJob(t *testing.T) {
 	}
 }
 
+func settledFastPathFixture() *c.NativeProductionReceipt {
+	r := fixture()
+	l := r.NativeLedger
+	r.ResponderJobEvidence = nil
+	l.ProposalCommit, l.Receipt.ProposalCommit = "", ""
+	l.OutcomeDocument.RepairCommit = nil
+	l.OutcomeDocument.ResolutionPath, l.Closure.Result.ResolutionPath = "fast_path", "fast_path"
+	l.OutcomeDocument.FastPathPrograms, l.Closure.Result.FastPathPrograms = []string{"targetport"}, []string{"targetport"}
+	l.OutcomeDocument.ReflectionEligibility = &c.ReflectionEligibility{Version: 1}
+	l.OutcomeDocument.PlanApplications = []*c.PlanApplication{{Applied: true, Verification: &c.Verdict{Result: c.Verdict_RESULT_NO_MATCH}}}
+	return r
+}
+
+func TestFastPathAcceptsCompletedVersionedSettlement(t *testing.T) {
+	if result := Evaluate(encoded(t, settledFastPathFixture()), true); result.GetFailure() != nil {
+		t.Fatal(result.GetFailure())
+	}
+	for name, change := range map[string]func(*c.NativeProductionReceipt){
+		"missing settlement": func(r *c.NativeProductionReceipt) { r.NativeLedger.OutcomeDocument.ReflectionEligibility = nil },
+		"unfinished":         func(r *c.NativeProductionReceipt) { r.NativeLedger.ReflectionProcessed = false },
+		"rejected":           func(r *c.NativeProductionReceipt) { r.NativeLedger.ReflectionRejected = true },
+		"missing decision":   func(r *c.NativeProductionReceipt) { r.NativeLedger.ReflectionDecision = nil },
+		"worker dispatch":    func(r *c.NativeProductionReceipt) { r.ResponderJobEvidence = fixture().ResponderJobEvidence },
+		"program mismatch":   func(r *c.NativeProductionReceipt) { r.NativeLedger.Closure.Result.FastPathPrograms = []string{"other"} },
+		"rollback": func(r *c.NativeProductionReceipt) {
+			r.NativeLedger.OutcomeDocument.PlanApplications[0].RolledBack = true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := settledFastPathFixture()
+			change(r)
+			if result := Evaluate(encoded(t, r), true); result.GetFailure() == nil {
+				t.Fatal("incomplete or conflicting fast-path evidence accepted")
+			}
+		})
+	}
+}
+
 func TestWireRejectionDoesNotPoisonNextIncident(t *testing.T) {
 	for _, bad := range []string{`{`, `{"native_ledger":[]}`, `{"responder_job_evidence":[{"succeeded":1}]}`, `{"schema_version":22}`} {
 		got := Evaluate([]byte(bad), true)

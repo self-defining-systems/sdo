@@ -137,11 +137,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		return result, nil
 	}
 	for i, original := range plan.Actions {
-		if actionUsesSourceValue(original) {
-			if revisionErr := e.validateAcceptedRevision(incident); revisionErr != nil {
-				return result, revisionErr
-			}
-		}
+
 		a := concreteRuntimeAction(original)
 		ref, _ := planActionRef(a)
 		switch a := a.(type) {

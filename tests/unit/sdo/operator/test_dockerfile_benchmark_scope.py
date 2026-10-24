@@ -58,6 +58,16 @@ SCRIPTED_PROGRAM_FILES = {
     "benchmarks/sregym/fastloop/scripted_networkpolicy_program/diagnose.go",
 }
 
+SCRIPTED_TOY_FILES = {
+    "apps/toy/seed/.sdo/goal.md",
+    "apps/toy/seed/.sdo/lifecycle-provenance.yaml",
+    "apps/toy/seed/.sdo/diagnostics/detectors/health/toy-endpoints/detector.go",
+    "apps/toy/seed/.sdo/diagnostics/detectors/health/toy-endpoints/manifest.yaml",
+    "apps/toy/kubernetes/frontend.yaml",
+    "apps/toy/kubernetes/backend.yaml",
+    "apps/toy/kubernetes/catalog.yaml",
+}
+
 #: The scripted-Codex test wrapper is allowed to add exactly these, and nothing else that
 #: FORBIDDEN_PREFIXES would otherwise catch. ``scripted_codex`` installs the program from
 #: ``scripted_program`` (``programs.py`` ``PROGRAM_SOURCE``).
@@ -148,7 +158,7 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     assert leaked == set(), f"sregym-responder image would copy answer-key paths: {sorted(leaked)}"
     assert {path for path in copied if path.startswith("benchmarks/sregym/fastloop/")} == ALLOWED_FASTLOOP_FILES
     scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
-    assert scripted == SCRIPTED_REPLAY_FILES | SCRIPTED_PROGRAM_FILES
+    assert scripted == SCRIPTED_REPLAY_FILES | SCRIPTED_PROGRAM_FILES | SCRIPTED_TOY_FILES
     assert SCRIPTED_REPLAY_FILES.isdisjoint(copied)
     guard_build = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "submission-guard-build"))
     assert {path for path in guard_build if path.startswith("benchmarks/")} == {
@@ -242,10 +252,11 @@ def test_sregym_responder_copy_matches_exactly_what_its_entry_points_import() ->
     assert copied - needed == set(), f"the image copies files its entry points never import: {copied - needed}"
 
 
-def test_scripted_worker_stage_contains_only_its_entry_point_and_program() -> None:
+def test_scripted_worker_stage_contains_only_entry_points_programs_and_toy_health_fixture() -> None:
     copied = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert copied == {
         *SCRIPTED_REPLAY_FILES,
+        *SCRIPTED_TOY_FILES,
         "benchmarks/sregym/fastloop/scripted_program/README.md",
         "benchmarks/sregym/fastloop/scripted_program/diagnose.go",
         "benchmarks/sregym/fastloop/scripted_program/mitigate.go",

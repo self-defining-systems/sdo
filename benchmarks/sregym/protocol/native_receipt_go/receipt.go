@@ -206,7 +206,11 @@ func validate(r *c.NativeProductionReceipt) error {
 	jobs := r.GetResponderJobEvidence()
 	if outcome.GetResolutionPath() == "fast_path" {
 		applications := outcome.GetPlanApplications()
-		if len(jobs) != 0 || request.GetRepairPolicy() != "recorded-actions" || response.GetResolutionPath() != "fast_path" || !slices.Equal(response.GetFastPathPrograms(), outcome.GetFastPathPrograms()) || len(outcome.GetFastPathPrograms()) == 0 || l.GetReflectionSkippedReason() != "trusted program fast path" || len(response.GetProgramFailureSignals()) != 0 || len(applications) == 0 {
+		// Current Go closures settle versioned cause work even on the fast path.
+		// Retain the legacy skip proof while requiring complete accepted settlement
+		// for current receipts; all program, health, commit and no-worker checks stay.
+		settled := outcome.GetReflectionEligibility().GetVersion() == 1 && l.GetRequiresReflection() && l.GetReflectionProcessed() && !l.GetReflectionRejected() && (decision.GetLearningDecision() == "updated" || decision.GetLearningDecision() == "no_change")
+		if len(jobs) != 0 || request.GetRepairPolicy() != "recorded-actions" || response.GetResolutionPath() != "fast_path" || !slices.Equal(response.GetFastPathPrograms(), outcome.GetFastPathPrograms()) || len(outcome.GetFastPathPrograms()) == 0 || (l.GetReflectionSkippedReason() != "trusted program fast path" && !settled) || len(response.GetProgramFailureSignals()) != 0 || len(applications) == 0 {
 			return errors.New("native fast path lacks verified program and reflection evidence")
 		}
 		for _, application := range applications {

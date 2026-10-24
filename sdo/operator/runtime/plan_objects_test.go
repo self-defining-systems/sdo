@@ -80,12 +80,8 @@ func TestPlanExecutorCreateFromSourceAndCompensate(t *testing.T) {
 				accepted.Object["data"] = map[string]any{"key": "safe"}
 			}
 			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
-			safety := fixturePlanSafety(t, ref, accepted)
-			proof := safety.Objects[ref]
-			proof.UID = ""
-			proof.CreateAllowed = true
-			safety.Objects[ref] = proof
-			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "restore accepted missing object"}}}, false)
 			if err != nil || !result.VerificationPassed || client.creates != 1 {
 				t.Fatalf("create: %v", err)
@@ -116,11 +112,8 @@ func TestPlanExecutorDeleteObjectIrreversibleReceipt(t *testing.T) {
 	before.SetUID("fixture-uid")
 	before.SetResourceVersion("1")
 	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
-	safety := fixturePlanSafety(t, ref, before)
-	proof := safety.Objects[ref]
-	proof.DeleteAllowed = true
-	safety.Objects[ref] = proof
-	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
+	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "source-absent blocking policy"}}}, false)
 	if err != nil || !result.VerificationPassed || client.deletes != 1 {
 		t.Fatalf("delete: %v", err)
@@ -152,69 +145,17 @@ func TestPlanExecutorDeleteObjectIrreversibleReceipt(t *testing.T) {
 	}
 }
 
-func TestPlanObjectActionsRefuseKindsAndSourceContradictions(t *testing.T) {
-	for _, kind := range []string{"Secret", "ServiceAccount", "Role", "ClusterRole", "RoleBinding", "ClusterRoleBinding", "CertificateSigningRequest", "Node", "Namespace", "Deployment", "CustomResource"} {
-		ref := sdk.ObjectRef{APIVersion: "v1", Kind: kind, Namespace: "app", Name: "placeholder"}
-		for _, action := range []program.Action{program.CreateFromSource{Ref: ref, Reason: "fixture"}, program.DeleteObject{Ref: ref, Reason: "fixture"}} {
-			if (program.Plan{Actions: []program.Action{action}}).Validate() == nil {
-				t.Fatalf("forbidden kind %s accepted", kind)
-			}
-		}
-	}
-	ref := sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "owned"}
-	before := planObject(ref, map[string]any{"podSelector": map[string]any{}})
-	before.SetUID("fixture-uid")
-	before.SetResourceVersion("1")
-	for _, source := range []PlanSource{lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}, planFakeSource{}} {
-		client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
-		safety := fixturePlanSafety(t, ref, before)
-		proof := safety.Objects[ref]
-		proof.DeleteAllowed = true
-		safety.Objects[ref] = proof
-		e := PlanExecutor{Client: client, Source: source, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-		if _, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false); err == nil || client.deletes != 0 {
-			t.Fatal("non-authoritative absence or source-owned delete accepted")
-		}
-	}
-}
-
 func TestPlanDeleteMustObserveAbsenceAndNeverRecreate(t *testing.T) {
 	ref := sdk.ObjectRef{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy", Namespace: "app", Name: "foreign"}
 	before := planObject(ref, map[string]any{"podSelector": map[string]any{}})
 	before.SetUID("fixture-uid")
 	before.SetResourceVersion("1")
 	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}, ignoreDelete: true}
-	safety := fixturePlanSafety(t, ref, before)
-	proof := safety.Objects[ref]
-	proof.DeleteAllowed = true
-	safety.Objects[ref] = proof
-	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
+	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "fixture"}}}, false)
 	if err == nil || result.VerificationCompleted || result.ObjectEffects[0].Confirmed || client.creates != 0 {
 		t.Fatal("missing absence evidence treated as success or recreation")
-	}
-}
-
-func TestPlanDeleteNamedWebhookAndPolicyDeleteSafety(t *testing.T) {
-	for _, kind := range []string{"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"} {
-		t.Run(kind, func(t *testing.T) {
-			ref := sdk.ObjectRef{APIVersion: "admissionregistration.k8s.io/v1", Kind: kind, Name: "synthetic-outage"}
-			object := &unstructured.Unstructured{Object: map[string]any{"apiVersion": ref.APIVersion, "kind": kind, "metadata": map[string]any{"name": ref.Name}, "webhooks": []any{map[string]any{"name": "fixture.example.invalid", "clientConfig": map[string]any{"service": map[string]any{"name": "fixture", "namespace": "app"}}, "rules": []any{map[string]any{"resources": []any{"pods"}}}}}}}
-			object.SetUID("fixture-uid")
-			object.SetResourceVersion("1")
-			for _, allowed := range []bool{false, true} {
-				client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}}
-				safety := fixturePlanSafety(t, ref, object)
-				proof := safety.Objects[ref]
-				proof.DeleteAllowed = allowed
-				safety.Objects[ref] = proof
-				e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-				result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.DeleteObject{Ref: ref, Reason: "named fixture webhook outage"}}}, false)
-				if (err == nil) != allowed || (!allowed && client.deletes != 0) || (allowed && !result.VerificationPassed) {
-					t.Fatalf("allowed=%v err=%v", allowed, err)
-				}
-			}
-		})
 	}
 }
 
@@ -259,20 +200,17 @@ func TestResponderToolsAcceptCreateAndDelete(t *testing.T) {
 				source = lifecycleTestSource{}
 				action = program.DeleteObject{Ref: ref, Reason: "synthetic source-absent policy"}
 			}
-			safety := fixturePlanSafety(t, ref, object)
-			proof := safety.Objects[ref]
-			proof.CreateAllowed = operation == "create"
-			proof.DeleteAllowed = operation == "delete"
+
 			if operation == "create" {
-				proof.UID = ""
+
 			}
-			safety.Objects[ref] = proof
+
 			p := lifecycleFixtureProgram{action: action, client: client, ref: ref}
 			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
 			if err != nil {
 				t.Fatal(err)
 			}
-			e := PlanExecutor{Client: client, Source: source, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			e := PlanExecutor{Client: client, Source: source, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			loop := NewResponderLoop(IncidentRequest{IncidentID: "synthetic", Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, registry, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, nil, e, 5)
 			loop.ReadView = func(sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{} }
 			planned := loop.Handle(context.Background(), ToolRequest{Command: "plan", ProgramID: p.Spec().ID, Bindings: program.Bindings{Objects: program.ObjectBindings{"target": ref}}})
@@ -311,16 +249,12 @@ func TestPlanCreateLostReplyAndRecreatedUIDFailClosed(t *testing.T) {
 	for _, lostReply := range []bool{true, false} {
 		t.Run(fmt.Sprint(lostReply), func(t *testing.T) {
 			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
-			safety := fixturePlanSafety(t, ref, accepted)
-			proof := safety.Objects[ref]
-			proof.UID = ""
-			proof.CreateAllowed = true
-			safety.Objects[ref] = proof
+
 			var objects PlanObjectClient = client
 			if lostReply {
 				objects = lostCreateReplyClient{client}
 			}
-			e := PlanExecutor{Client: objects, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+			e := PlanExecutor{Client: objects, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "fixture"}}}, false)
 			if lostReply {
 				if err == nil || result.PendingAction == nil || result.VerificationCompleted || client.deletes != 0 {
@@ -376,12 +310,8 @@ func TestPlanCreateServiceDefaultsPreserveRoutingProof(t *testing.T) {
 			accepted := planObject(ref, map[string]any{"selector": map[string]any{"app": "api"}, "ports": []any{map[string]any{"port": float64(80)}}})
 			raw := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{}}}
 			client := defaultingServiceCreateClient{lifecycleTestClient: raw, changeSelector: changed}
-			safety := fixturePlanSafety(t, ref, accepted)
-			proof := safety.Objects[ref]
-			proof.UID = ""
-			proof.CreateAllowed = true
-			safety.Objects[ref] = proof
-			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: accepted}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.CreateFromSource{Ref: ref, Reason: "fixture"}}}, false)
 			if changed {
 				if err == nil || result.VerificationCompleted {

@@ -11,6 +11,29 @@ from benchmarks.sregym.fastloop.stream import load_stream_config
 ROOT = Path(__file__).resolve().parents[5]
 
 
+def test_toy_recovery_meets_the_warm_lane_protocol(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+    from benchmarks.sregym.fastloop.toy import ToyWorker
+
+    deployments = [{"spec": {"replicas": 1}, "status": {"readyReplicas": 1}}] * 3
+    monkeypatch.setattr("benchmarks.sregym.fastloop.toy.command", lambda *args: json.dumps({"items": deployments}))
+    env = SimpleNamespace(kubeconfig=tmp_path / "config", namespace="toy", workspace=tmp_path)
+    cluster = SimpleNamespace(list_objects=lambda namespace: [], delete=lambda *args: None, apply=lambda *args: None)
+    driver = SregymFaultDriver(
+        ToyWorker(env),
+        namespace="toy",
+        baseline=ApplicationBaseline(namespace="toy", objects=[]),
+        cluster=cluster,
+        require_full_cleanup=True,
+    )
+    driver.recover()
+    assert driver.last_full_cleanup_verified
+
+
 def test_toy_latent_stream_covers_three_services_and_health_control():
     stream = load_stream_config(ROOT / "tests/fixtures/sregym/fastloop/toy_latent_repeat.json")
     specs = [fault_spec(ids[0]) for ids in stream.incidents]
@@ -138,3 +161,55 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
     assert spec.clear_field_ownership
     with pytest.raises(ValueError, match="only target-port"):
         fault_spec("toy_readiness_unowned_backend")
+
+
+@pytest.mark.parametrize(
+    "change", ["none", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
+)
+def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
+    import shutil
+
+    import yaml
+
+    from benchmarks.sregym.adapter import scripted_worker
+    from sdo.contracts import HealthJudgeRequest, SourceResource
+
+    monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
+    seed = ROOT / "apps/toy/seed/.sdo"
+    shutil.copytree(seed, tmp_path / ".sdo")
+    body = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    resources = []
+    for path in sorted((ROOT / "apps/toy/kubernetes").glob("*.yaml")):
+        resources.extend(
+            SourceResource(
+                kind=obj["kind"],
+                namespace=obj["metadata"].get("namespace", "sdo-toy"),
+                name=obj["metadata"]["name"],
+                source=f"kubernetes/{path.name}",
+            )
+            for obj in yaml.safe_load_all(path.read_text())
+        )
+    request = HealthJudgeRequest(
+        namespace="other" if change == "namespace" else "sdo-toy",
+        health_objective="changed" if change == "objective" else body,
+        accepted_source_commit="a" * 40,
+        source_resources=resources,
+    )
+    detector = tmp_path / ".sdo/diagnostics/detectors/health/toy-endpoints/detector.go"
+    if change == "topology":
+        request.source_resources.add(
+            kind="Deployment", namespace="sdo-toy", name="unexpected", source="kubernetes/new.yaml"
+        )
+    if change == "missing-detector":
+        detector.unlink()
+    if change == "changed-detector":
+        detector.write_text("package toy\n")
+    if change == "none":
+        result = scripted_worker.scripted_health_judge(request, tmp_path)
+        assert result.authored
+        assert "toy-endpoints" in result.detector_ids
+        assert "health-objective" in result.detector_ids
+        assert (tmp_path / ".sdo/diagnostics/detectors/health/health-objective/detector.go").is_file()
+    else:
+        with pytest.raises(ValueError, match="scripted toy health refresh"):
+            scripted_worker.scripted_health_judge(request, tmp_path)

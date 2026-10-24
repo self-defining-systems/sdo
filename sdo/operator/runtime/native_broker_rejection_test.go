@@ -72,9 +72,9 @@ func writeGoodPlaybook(w IncidentWorkspace) (ReflectionDecision, error) {
 	return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte(body), 0o644)
 }
 
-func TestMaxValidationRetriesIsTwo(t *testing.T) {
-	if broker.MaxValidationRetries != 2 {
-		t.Fatalf("MaxValidationRetries = %d, want 2", broker.MaxValidationRetries)
+func TestMaxValidationRetriesIsFive(t *testing.T) {
+	if broker.MaxValidationRetries != 5 {
+		t.Fatalf("MaxValidationRetries = %d, want 5", broker.MaxValidationRetries)
 	}
 }
 
@@ -143,7 +143,7 @@ func TestNativeBrokerRecordsTerminalRejectionAfterRetryBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ledger.ReflectionRejected || !ledger.ReflectionProcessed || len(ledger.ReflectionRejections) != 3 {
+	if !ledger.ReflectionRejected || !ledger.ReflectionProcessed || len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries {
 		t.Fatalf("terminal state not recorded: %+v", ledger)
 	}
 	for _, rejection := range ledger.ReflectionRejections {
@@ -156,7 +156,7 @@ func TestNativeBrokerRecordsTerminalRejectionAfterRetryBound(t *testing.T) {
 	}
 	// A further call returns the stored receipt without dispatching again.
 	again, err := h.native.ProcessClosure(context.Background(), h.closure)
-	if err != nil || again != receipt || len(h.calls) != 3 {
+	if err != nil || again != receipt || len(h.calls) != 1+broker.MaxValidationRetries {
 		t.Fatalf("terminal rejection reopened: %+v %v calls=%d", again, err, len(h.calls))
 	}
 }
@@ -188,14 +188,14 @@ func TestNativeBrokerRestartKeepsRejectionAttempts(t *testing.T) {
 	if h.calls[3].Attempt != 3 {
 		t.Fatalf("attempts after restart = %+v", h.calls)
 	}
-	if len(h.calls) != 4 {
-		t.Fatalf("total dispatches = %d, want 4 (bound spans the restart)", len(h.calls))
+	if want := 2 + broker.MaxValidationRetries; len(h.calls) != want {
+		t.Fatalf("total dispatches = %d, want %d (bound spans the restart)", len(h.calls), want)
 	}
 	ledger, err := h.native.readLedger("inc-restart")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected || receipt.ReflectionCommit != "" {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries || !ledger.ReflectionRejected || receipt.ReflectionCommit != "" {
 		t.Fatalf("ledger = %+v receipt = %+v", ledger, receipt)
 	}
 	for i, rejection := range ledger.ReflectionRejections {
@@ -242,7 +242,7 @@ func TestNativeBrokerRejectionRecordedBeforeProposalReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries {
 		t.Fatalf("recovery lost the retry budget: %v", ledger.ReflectionRejections)
 	}
 	for i, rejection := range ledger.ReflectionRejections {
@@ -272,7 +272,7 @@ func TestNativeBrokerBindsDurableReflectionIDsToAcceptedDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger.ReflectionRejections) != 3 || !ledger.ReflectionRejected {
+	if len(ledger.ReflectionRejections) != 1+broker.MaxValidationRetries || !ledger.ReflectionRejected {
 		t.Fatalf("decision rejection bypassed retry accounting: %+v", ledger)
 	}
 	for i, rejection := range ledger.ReflectionRejections {

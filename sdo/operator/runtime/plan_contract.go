@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -45,12 +46,9 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	for _, effect := range r.ObjectEffects {
 		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible}
 		if effect.DeletedPreImage != nil {
-			if err := planSecretPredicate(effect.DeletedPreImage); err != nil {
-				return nil, err
-			}
 			image, err := structpb.NewStruct(effect.DeletedPreImage.Object)
 			if err != nil {
-				return nil, fmt.Errorf("encode nonsecret delete receipt")
+				return nil, fmt.Errorf("encode delete receipt")
 			}
 			encoded.DeletedPreImage = image
 		}

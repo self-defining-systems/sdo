@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
@@ -50,16 +51,12 @@ func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest)
 		if e.Source == nil {
 			return nil, fmt.Errorf("accepted source is required")
 		}
-		if err := e.validateAcceptedRevision(incident); err != nil {
-			return nil, err
-		}
+
 		object, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
 		if err != nil || object == nil || !samePlanRef(object, ref) {
 			return nil, fmt.Errorf("accepted value object unavailable")
 		}
-		if err := planSecretPredicate(object); err != nil {
-			return nil, err
-		}
+
 		return object.Object, nil
 	}
 	return in

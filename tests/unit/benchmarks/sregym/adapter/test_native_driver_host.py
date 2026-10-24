@@ -412,7 +412,7 @@ def test_environment_settings_reach_nonpersistent_native_install(
     assert len(commands) == 1
     command = commands[0]
     assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path" in command
+    assert "--program-fast-path=true" in command
     assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
 
 
@@ -461,12 +461,12 @@ def test_driver_rejects_invalid_program_settings(monkeypatch: pytest.MonkeyPatch
         driver._parse_args([])
 
 
-def test_driver_default_settings_remain_explicitly_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_driver_default_settings_enable_automatic_repair(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
     args = driver._parse_args([])
     assert args.deployed_manifest_paths == ()
-    assert args.program_fast_path is False
-    assert args.program_trust_threshold == 3
+    assert args.program_fast_path is True
+    assert args.program_trust_threshold == 1
 
 
 @pytest.mark.parametrize(

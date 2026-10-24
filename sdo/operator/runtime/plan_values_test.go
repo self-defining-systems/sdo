@@ -53,7 +53,7 @@ func TestXV2BindingsAndValueProvenanceSurviveReceipts(t *testing.T) {
 			observed := accepted.DeepCopy()
 			observed.SetResourceVersion("snapshot-17")
 			c := &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}
-			e := PlanExecutor{Client: c, Source: planFakeSource{source: accepted}, AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue}}}, Bindings: program.Bindings{Values: map[string]any{"replicas": 3}}, Observed: func(sdk.ObjectRef) (map[string]any, error) { return observed.Object, nil }}}
+			e := PlanExecutor{Client: c, Source: planFakeSource{source: accepted}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Values: program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "replicas", ValueKind: program.IntValue}}}, Bindings: program.Bindings{Values: map[string]any{"replicas": 3}}, Observed: func(sdk.ObjectRef) (map[string]any, error) { return observed.Object, nil }}}
 			value := program.FromSource(ref, "spec.replicas")
 			if origin == program.ObservedValue {
 				value = program.FromObserved(ref, "spec.replicas")

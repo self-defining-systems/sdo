@@ -46,16 +46,16 @@ class NativeInstallConfig:
     model: str
     kubeconfig: Path | None = None
     agent_provider: str = "codex"
-    repair_policy: str = "commit"
+    repair_policy: str = "recorded-actions"
     late_findings: str = "off"
     reflection_session: str = "resume"
     reflection_guidance: str = "baseline"
     force_reflection: bool = False
-    program_fast_path: bool = False
-    program_trust_threshold: int = 3
-    max_response_loops: int = 5
+    program_fast_path: bool = True
+    program_trust_threshold: int = 1
+    max_response_loops: int = 10
     response_timeout_seconds: int = 1800
-    verification_timeout_seconds: int = 120
+    verification_timeout_seconds: int = 300
     duration_seconds: int | None = None
     exit_after_closure: bool = False
     healthy_baseline: bool = False
@@ -96,8 +96,6 @@ class NativeInstallConfig:
             raise ValueError("repair_policy must be commit or recorded-actions")
         if self.program_trust_threshold <= 0:
             raise ValueError("program_trust_threshold must be positive")
-        if self.program_fast_path and self.repair_policy != "recorded-actions":
-            raise ValueError("program fast path requires recorded-actions repair policy")
         if self.late_findings not in ("off", "pull"):
             raise ValueError("late_findings must be off or pull")
         if self.reflection_session not in ("fresh", "resume"):
@@ -476,8 +474,7 @@ def install_existing(config: NativeInstallConfig) -> NativeInstallReceipt:
         args.append("--force-reflection")
     for path in config.deployed_manifest_paths:
         args.extend(("--deployed-manifest-path", path))
-    if config.program_fast_path:
-        args.append("--program-fast-path")
+    args.append(f"--program-fast-path={str(config.program_fast_path).lower()}")
     args.extend(("--program-trust-threshold", str(config.program_trust_threshold)))
     args.extend(("--max-response-loops", str(config.max_response_loops)))
     args.extend(("--response-timeout", f"{config.response_timeout_seconds}s"))
@@ -534,8 +531,7 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--reflection-guidance", config.install.reflection_guidance))
     if config.install.force_reflection:
         args.append("--force-reflection")
-    if config.install.program_fast_path:
-        args.append("--program-fast-path")
+    args.append(f"--program-fast-path={str(config.install.program_fast_path).lower()}")
     args.extend(("--program-trust-threshold", str(config.install.program_trust_threshold)))
     args.extend(("--max-response-loops", str(config.install.max_response_loops)))
     args.extend(("--repair-policy", config.install.repair_policy))

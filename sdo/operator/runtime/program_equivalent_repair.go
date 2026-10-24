@@ -173,27 +173,64 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 		if len(owner.GetManagedFields()) == 0 {
 			owner = current
 		}
-		expectedFields := planComparableFields(want, want, owner)
-		if reflect.DeepEqual(planComparableFields(preImage.Object, want, owner), expectedFields) ||
-			!reflect.DeepEqual(planComparableFields(current, want, owner), expectedFields) {
+		// A fault injector may own the broken field before the plan repairs it.
+		// Include explicit plan changes even when SSA ownership moved away from
+		// the deployer; otherwise a verified repair can never earn exact credit.
+		changed := map[string]bool{}
+		beforeFields, afterFields := flattenDriftObject(preImage.Object), flattenDriftObject(want)
+		reconcileSource, explicitWrite := false, false
+		for _, action := range preview.Plan.Actions {
+			ref, err := planActionRef(action)
+			if err != nil || ref != preImage.Ref {
+				continue
+			}
+			switch action.(type) {
+			case program.ReconcileFromSource, *program.ReconcileFromSource:
+				reconcileSource = true
+			default:
+				explicitWrite = true
+			}
+		}
+		for path, value := range beforeFields {
+			// Full source manifests omit server defaults and other controllers'
+			// fields. Keep that existing projection for source-only reconciliation.
+			if _, present := afterFields[path]; !present && reconcileSource && !explicitWrite {
+				continue
+			}
+			if !reflect.DeepEqual(value, afterFields[path]) {
+				changed[path] = true
+			}
+		}
+		for path, value := range afterFields {
+			if !reflect.DeepEqual(value, beforeFields[path]) {
+				changed[path] = true
+			}
+		}
+		expectedFields := planComparableFields(want, want, owner, changed)
+		if reflect.DeepEqual(planComparableFields(preImage.Object, want, owner, changed), expectedFields) ||
+			!reflect.DeepEqual(planComparableFields(current, want, owner, changed), expectedFields) {
 			return false
 		}
 	}
 	return true
 }
 
-// Project both sides onto the plan's declared, deployer-owned fields. This
+// Project both sides onto declared deployer-owned fields and explicit writes. This
 // removes server defaults and unrelated controllers' fields without letting a
 // different value in a repaired field earn equivalent-repair credit.
-func planComparableFields(object, declared, owner *unstructured.Unstructured) map[string]any {
+func planComparableFields(object, declared, owner *unstructured.Unstructured, changed map[string]bool) map[string]any {
 	observed := flattenDriftObject(object)
 	owned := ownedDriftPaths(owner, "sdo-deployer")
 	fields := map[string]any{}
-	for path := range flattenDriftObject(declared) {
+	paths := flattenDriftObject(declared)
+	for path := range changed {
+		paths[path] = nil
+	}
+	for path := range paths {
 		if path == "metadata.annotations.kubectl.kubernetes.io/last-applied-configuration" || path == "metadata.annotations.sdo.dev/source-tree" {
 			continue
 		}
-		if len(owner.GetManagedFields()) > 0 && !ownsDriftPath(owned, path) {
+		if len(owner.GetManagedFields()) > 0 && !ownsDriftPath(owned, path) && !changed[path] {
 			continue
 		}
 		fields[path] = observed[path]

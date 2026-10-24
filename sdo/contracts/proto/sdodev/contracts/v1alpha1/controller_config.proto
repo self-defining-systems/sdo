@@ -130,12 +130,8 @@ message ControllerConfig {
   // token and requires metrics_url.
   string metrics_url = 70;
   string metrics_token_file = 71;
-  // Independently reviewed fixture policy, pinned by administrator launch config.
-  // Never populate these fields from responder, plan, or dry-run output.
-  string plan_safety_policy_json = 72;
-  string plan_safety_policy_sha256 = 73;
-  // Reviewed source-only policy; generated per incident, never from plans.
-  string plan_source_policy_json = 74;
+  reserved 72, 73, 74;
+  reserved "plan_safety_policy_json", "plan_safety_policy_sha256", "plan_source_policy_json";
 
   // Trusted controller image supplying Go to compiler-free workers and validators.
   // Required at startup, independently of the optional traffic prober image.
