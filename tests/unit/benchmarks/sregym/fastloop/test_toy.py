@@ -138,3 +138,53 @@ def test_sweep_stream_models_an_unowned_service_without_changing_controller():
     assert spec.clear_field_ownership
     with pytest.raises(ValueError, match="only target-port"):
         fault_spec("toy_readiness_unowned_backend")
+
+
+@pytest.mark.parametrize(
+    "change", ["none", "namespace", "objective", "topology", "missing-detector", "changed-detector"]
+)
+def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypatch, change):
+    import shutil
+
+    import yaml
+
+    from benchmarks.sregym.adapter import scripted_worker
+    from sdo.contracts import HealthJudgeRequest, SourceResource
+
+    monkeypatch.delenv("SDO_SCRIPTED_REPLAY_SLOT", raising=False)
+    seed = ROOT / "apps/toy/seed/.sdo"
+    shutil.copytree(seed, tmp_path / ".sdo")
+    body = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    resources = []
+    for path in sorted((ROOT / "apps/toy/kubernetes").glob("*.yaml")):
+        resources.extend(
+            SourceResource(
+                kind=obj["kind"],
+                namespace=obj["metadata"].get("namespace", "sdo-toy"),
+                name=obj["metadata"]["name"],
+                source=f"kubernetes/{path.name}",
+            )
+            for obj in yaml.safe_load_all(path.read_text())
+        )
+    request = HealthJudgeRequest(
+        namespace="other" if change == "namespace" else "sdo-toy",
+        health_objective="changed" if change == "objective" else body,
+        accepted_source_commit="a" * 40,
+        source_resources=resources,
+    )
+    detector = tmp_path / ".sdo/diagnostics/detectors/health/toy-endpoints/detector.go"
+    if change == "topology":
+        request.source_resources.add(
+            kind="Deployment", namespace="sdo-toy", name="unexpected", source="kubernetes/new.yaml"
+        )
+    if change == "missing-detector":
+        detector.unlink()
+    if change == "changed-detector":
+        detector.write_text("package toy\n")
+    if change == "none":
+        result = scripted_worker.scripted_health_judge(request, tmp_path)
+        assert result.authored
+        assert "toy-endpoints" in result.detector_ids
+    else:
+        with pytest.raises(ValueError, match="scripted toy health refresh"):
+            scripted_worker.scripted_health_judge(request, tmp_path)

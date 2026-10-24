@@ -695,6 +695,48 @@ class ScriptedReflector:
         )
 
 
+def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
+    """Retain the exact hand-authored toy policy after checking its source shape."""
+    seed = Path(__file__).resolve().parents[3] / "apps/toy/seed/.sdo"
+    accepted = checkout / ".sdo"
+    for name in ("goal.md", "lifecycle-provenance.yaml"):
+        if (accepted / name).read_bytes() != (seed / name).read_bytes():
+            raise ValueError("scripted toy health refresh requires the unchanged toy seed")
+    objective = (seed / "goal.md").read_text().split("---\n", 2)[2].strip()
+    if request.namespace != "sdo-toy" or request.health_objective.strip() != objective:
+        raise ValueError("scripted toy health refresh cannot change the namespace or objective")
+    expected = set()
+    for path in sorted((seed.parents[1] / "kubernetes").glob("*.yaml")):
+        for obj in yaml.safe_load_all(path.read_text()):
+            expected.add((obj["kind"], obj["metadata"].get("namespace", "sdo-toy"), obj["metadata"]["name"]))
+    actual = {
+        (row.kind, "sdo-toy" if row.namespace in ("", "default") else row.namespace, row.name)
+        for row in request.source_resources
+        if row.source.startswith("kubernetes/")
+    }
+    if not expected or actual != expected:
+        raise ValueError("scripted toy health refresh cannot change the deployed topology")
+    health = Path("diagnostics/detectors/health")
+    for path in (seed / health).rglob("*"):
+        if path.is_file():
+            current = accepted / path.relative_to(seed)
+            if not current.is_file() or current.read_bytes() != path.read_bytes():
+                raise ValueError("scripted toy health refresh requires the complete unchanged toy detector")
+    ids = []
+    for path in sorted((accepted / health).glob("*/manifest.yaml")):
+        manifest = yaml.safe_load(path.read_text())
+        if manifest.get("class") != "health" or manifest.get("owner") != "health_judge":
+            raise ValueError("scripted toy health refresh requires judge-owned health detectors")
+        ids.append(manifest["id"])
+    return HealthJudgeResult(
+        authored=True,
+        summary="Retained exact toy health policy for unchanged topology and objective",
+        agent_session_id="scripted-toy-health-" + request.accepted_source_commit[:12],
+        objective_digest=hashlib.sha256(objective.encode()).hexdigest(),
+        detector_ids=ids,
+    )
+
+
 def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> HealthJudgeResult:
     """Retain the accepted generic bundle for the rehearsal's unchanged topology.
 
@@ -704,6 +746,8 @@ def scripted_health_judge(request: HealthJudgeRequest, checkout: Path) -> Health
     """
     from benchmarks.sregym.adapter.scripted_replay_catalog import SCRIPTED_REPLAY_SLOTS
 
+    if "SDO_SCRIPTED_REPLAY_SLOT" not in os.environ:
+        return _scripted_toy_health_judge(request, checkout)
     slot = int(os.environ["SDO_SCRIPTED_REPLAY_SLOT"])
     if request.namespace != SCRIPTED_REPLAY_SLOTS[slot].namespace:
         raise ValueError("scripted health refresh namespace differs from rehearsal")
