@@ -97,6 +97,8 @@ def _seconds(start: datetime | None, end: datetime | None) -> float | None:
 class IncidentRecord(_PersistedModel):
     model_config = ConfigDict(extra="forbid")
 
+    image_delivery: str = "unknown"
+    image_delivery_reason: str = ""
     schema_version: Literal["sdo.fastloop-incident/v1"] = SCHEMA_VERSION
     run_id: str = Field(min_length=1)
     index: int = Field(ge=0)

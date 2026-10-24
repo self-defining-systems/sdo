@@ -138,6 +138,8 @@ class LoopConfig:
     problems: tuple[str, ...]
     incidents: int
     results_path: Path
+    image_delivery: str = "unknown"
+    image_delivery_reason: str = ""
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
     run_prelude_phase_seconds: dict[str, float] = field(default_factory=dict)
@@ -386,6 +388,8 @@ def _run_one(
     window = outcome.injection if outcome is not None else fallback
     cleanup = getattr(driver, "last_cleanup", None) if windows else None
     record = IncidentRecord(
+        image_delivery=config.image_delivery,
+        image_delivery_reason=config.image_delivery_reason,
         run_id=config.run_id,
         index=index,
         agent=agent.name,

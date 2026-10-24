@@ -491,3 +491,20 @@ def test_composed_stream_injects_together_and_grades_each_fault(tmp_path: Path) 
     assert records[0].oracle is not None
     assert records[0].oracle.success is False
     assert "oracle reported failure" in str(records[0].error)
+
+
+def test_delivery_fallback_survives_failed_and_successful_incident_rows(tmp_path):
+    from dataclasses import replace
+
+    clock = FakeClock()
+    config = replace(
+        _config(tmp_path, 2),
+        continue_on_error=True,
+        image_delivery="kind-load-fallback",
+        image_delivery_reason="registry offline",
+    )
+    records = run_incidents(FakeAgent(clock, fail_on={0}), FakeDriver(clock), config, monotonic=clock.monotonic)
+    assert len(records) == 2
+    for record in load_records(config.results_path):
+        assert record.image_delivery == "kind-load-fallback"
+        assert record.image_delivery_reason == "registry offline"

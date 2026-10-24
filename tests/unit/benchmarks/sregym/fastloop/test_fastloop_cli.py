@@ -87,6 +87,7 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
 ) -> None:
     from benchmarks.sregym.fastloop import cli
 
+    monkeypatch.setattr(cli, "up_preflight", lambda _args: None)
     (tmp_path / "application_workspace").mkdir()
 
     class Worker:
@@ -119,7 +120,7 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
             return [{"kind": "Deployment", "metadata": {"name": "mongo", "namespace": namespace}, "spec": {}}]
 
     monkeypatch.setattr(cli, "KubectlApplicationCluster", Cluster)
-    assert main(["up", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox"]) == 0
+    assert main(["up", "--no-dev-mount", "--run-dir", str(tmp_path), "--builder", "", "--no-sandbox"]) == 0
     assert FastloopEnvironment.load(tmp_path).application == "hotel-reservation"
     baseline = load_application_baseline(tmp_path / "cluster_baseline_state.json", "hotel-reservation")
     assert baseline is not None
