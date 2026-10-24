@@ -180,3 +180,25 @@ func TestPrepareHealthWithMetricsInstallsTheAlertsDetectorIdempotently(t *testin
 		t.Fatalf("an edited generic detector must be rejected: %v", err)
 	}
 }
+
+func TestPrepareHealthInstallsPodAdmissionInAllSeeds(t *testing.T) {
+	root := preparedHealthRoot(t)
+	generated := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, "pod-admission"))
+	seeds := []string{"astronomy_shop_handwritten", "social_network_handwritten", "hotel_reservation_30e023d"}
+	for _, file := range []string{layout.DetectorFileName, layout.DetectorTestFileName, layout.ManifestFileName} {
+		want, err := os.ReadFile(filepath.Join(generated, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, seed := range seeds {
+			path := filepath.Join("..", "..", "..", "benchmarks", "sregym", "experiments", "assurance", "seeds", seed, "operational_memory", "diagnostics", "detectors", "health", "pod-admission", file)
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("%s differs from generic policy", path)
+			}
+		}
+	}
+}

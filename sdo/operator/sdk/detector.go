@@ -201,6 +201,8 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
 }
 
 type DetectionContext interface {
+	// PodAdmission returns the frozen dry-run result, false when unobserved.
+	PodAdmission() (PodAdmissionResult, bool)
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service

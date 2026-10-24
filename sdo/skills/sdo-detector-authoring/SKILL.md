@@ -11,6 +11,8 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 1. Compare the confirmed mechanism with accepted detectors. Widen one when only resource identity or a
    parameter differs; add one only for a different mechanism. The installed `service-endpoints` and
    `workload-health` detectors already cover endpoint readiness and generic pod/Deployment health.
+   `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
+   while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
    identical, including watches, persistence, playbook IDs and accepted provenance.
 3. Derive relationships from observed objects. Use the context namespace for absent resources and emit

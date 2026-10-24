@@ -845,3 +845,46 @@ func TestControllerSecretGrantsOnlyAllowMetadataListWatch(t *testing.T) {
 		}
 	}
 }
+
+// Health judge workers use sdo-responder; independent health evaluation uses
+// sdo-operate, and continuous health uses sdo-controller. Dry-run requires the
+// ordinary create grant in each case, including split control namespaces.
+func TestHealthActorsCanDryRunPodAdmission(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		config := testConfig()
+		if !split {
+			config.ControlNamespace = config.Namespace
+		}
+		plan, err := Resources(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roles := append(plan.ControlRoles, plan.AppRoles...)
+		bindings := append(plan.ControlBindings, plan.AppBindings...)
+		for _, actor := range []string{"sdo-controller", "sdo-operate", "sdo-responder"} {
+			allowed := false
+			for _, b := range bindings {
+				if b.Namespace != config.Namespace {
+					continue
+				}
+				subject := false
+				for _, s := range b.Subjects {
+					subject = subject || s.Name == actor && s.Namespace == config.controlNamespace()
+				}
+				if !subject {
+					continue
+				}
+				for _, role := range roles {
+					if role.Namespace == b.Namespace && role.Name == b.RoleRef.Name {
+						for _, r := range role.Rules {
+							allowed = allowed || contains(r.APIGroups, "") && contains(r.Resources, "pods") && contains(r.Verbs, "create")
+						}
+					}
+				}
+			}
+			if !allowed {
+				t.Fatalf("split=%v: %s cannot dry-run create app Pods", split, actor)
+			}
+		}
+	}
+}

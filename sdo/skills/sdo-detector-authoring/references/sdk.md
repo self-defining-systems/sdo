@@ -20,6 +20,10 @@ func CanonicalObjectKind(raw string) string
     CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
     Unknown kinds remain usable without inventing an API version.
 
+func ConsumesPodAdmission(detectors []Detector) bool
+    ConsumesPodAdmission enables the bounded API observation only for bundles
+    containing a detector that explicitly requests it.
+
 func FormatObjectRef(ref ObjectRef) (string, error)
     FormatObjectRef returns canonical text. Non-default API versions are
     retained explicitly, so parsing the formatted value preserves every
@@ -98,6 +102,8 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
     reference wins.
 
 type DetectionContext interface {
+	// PodAdmission returns the frozen dry-run result, false when unobserved.
+	PodAdmission() (PodAdmissionResult, bool)
 	Namespace() string
 	ConfigMaps() []corev1.ConfigMap
 	Services() []corev1.Service
@@ -308,6 +314,17 @@ type PersistencePolicy struct {
 	// while a persistent fault still fires once both conditions hold.
 	MinDuration time.Duration
 }
+
+type PodAdmissionResult struct {
+	Namespace string `json:"namespace"`
+	SourcePod string `json:"source_pod,omitempty"`
+	Admitted  bool   `json:"admitted"`
+	Rejection string `json:"rejection,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+    PodAdmissionResult freezes one server-side dry-run Pod create. Rejection
+    contains an API failure; Error means the observation itself was unavailable.
+    No Pod is persisted and no referenced Secret is read by the observer.
 
 type ScopedObservationSource interface {
 	ScopedDeployments(string) ([]appsv1.Deployment, error)
@@ -579,6 +596,9 @@ const (
     resource: the owning Deployment when its ReplicaSet chain resolves in the
     snapshot, otherwise the Pod itself.
 
+const RulePodAdmissionRejected = "pod-admission-rejected"
+    RulePodAdmissionRejected means a server-side dry-run Pod create failed.
+
 
 FUNCTIONS
 
@@ -587,6 +607,11 @@ func NewDetector(spec sdk.DetectorSpec) sdk.Detector
 
 func NewDetectorWithPolicy(spec sdk.DetectorSpec, policy Policy) (sdk.Detector, error)
     NewDetectorWithPolicy returns the workload health detector with policy.
+
+func NewPodAdmissionDetector(spec sdk.DetectorSpec) sdk.Detector
+    NewPodAdmissionDetector checks admission independently of existing Pod
+    readiness. Its input is a frozen dry-run observation, so replay needs no
+    API.
 
 func Watches() []sdk.WatchKind
     Watches are the resources whose changes can change the verdict.

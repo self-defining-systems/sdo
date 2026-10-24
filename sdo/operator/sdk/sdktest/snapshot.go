@@ -20,6 +20,7 @@ import (
 )
 
 type Snapshot struct {
+	Admission *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
@@ -291,4 +292,11 @@ func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
 		return servicehealth.ReachabilityWindow{}, false
 	}
 	return *s.Reachability, true
+}
+
+func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
+	if s.Admission == nil {
+		return sdk.PodAdmissionResult{}, false
+	}
+	return *s.Admission, true
 }

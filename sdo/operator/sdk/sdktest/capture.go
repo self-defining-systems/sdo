@@ -25,6 +25,9 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		return Snapshot{}, errors.New("capture requires a matching application namespace")
 	}
 	s := Snapshot{NamespaceName: namespace}
+	if result, ok := view.PodAdmission(); ok {
+		s.Admission = &result
+	}
 	if recorder, ok := view.(interface{ RecordedReads() []PrimitiveCall }); ok {
 		s.captureReadInputs(recorder.RecordedReads())
 	}
