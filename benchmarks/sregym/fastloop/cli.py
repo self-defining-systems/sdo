@@ -527,6 +527,17 @@ def _run(args: argparse.Namespace) -> int:
         )
     if args.time_scale <= 0:
         raise SystemExit("--time-scale must be positive")
+    if args.time_scale < 1:
+        scripted = args.agent == "sdo" and (
+            args.agent_registrations.resolve()
+            == (REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations").resolve()
+            if args.agent_registrations is not None
+            else environment.app == "toy"
+        )
+        if not scripted:
+            raise SystemExit(
+                "--time-scale below 1 is for scripted-agent runs only; live LLM runs must use --time-scale 1"
+            )
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
@@ -1037,7 +1048,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--follow-up-cooldown-seconds", type=int, default=30)
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
-    run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
+    run.add_argument(
+        "--time-scale",
+        type=float,
+        default=1.0,
+        help="multiply controller and wait windows; values below 1 require scripted agents (default 1)",
+    )
     run.add_argument(
         "--program-fast-path", action="store_true", help="allow trusted playbook programs to resolve incidents"
     )

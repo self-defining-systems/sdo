@@ -53,7 +53,7 @@ The experiment is the incidents; everything else is overhead to remove.
 - Use only your own lanes; never touch other users' clusters or processes.
 - Stop a run as soon as it is known to run stale or broken code. Fix, refreeze, rebuild.
 - Deliver one image set per lane, once. Scripted gates and live slots share it: switch agents with `fastloop reset` and run flags, never with a second image set.
-- Use `--time-scale 0.1` for smoke runs so timer waits do not dominate; leave it at 1 for measured experiments.
+- Time scaling is for scripted-agent runs only; live LLM runs, including smokes, use `--time-scale 1`.
 - Source-only fixes use the mounted worktree and a warm reset; dependency fixes use a new frozen tag.
 - Each incident row must explain itself. A missing skip reason, verdict or learning decision is a bug to fix, not a gap to explain in the report.
 - Never print, copy or commit credentials. After a run, check the results tree has no provider auth files.

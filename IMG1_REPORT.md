@@ -185,3 +185,23 @@ broker packages; the complete runtime module (143.65 s for its main package);
 and the hermetic fastloop gate (Go plus 18 Python tests). Skill lint has the
 same 16 pre-existing findings as HEAD, with no new findings. Pyright retains
 its existing responder `__all__` warning and reports zero errors.
+
+## Live-agent time-scale guard
+
+Decision: refuse reduced time scales for live runs rather than clamp individual
+deadlines. `fastloop run --time-scale <1` is allowed only for SDO with the
+repository's scripted registrations, explicitly selected or supplied by the toy
+lane default. Custom registrations and Codex baseline runs are treated as live.
+Rejection precedes Kubernetes access, worker startup and setting `SDO_TIME_SCALE`.
+Live LLM runs, including smokes, use time scale 1. The run-experiment skill and
+live README example now say so. Accepted scripted runs keep their existing
+scaled timers; live runs at scale 1 keep unscaled deadlines.
+
+The fail-first CLI regression failed in five cases: live Codex and Claude SDO,
+the Codex baseline on SREGym and toy lanes, and a toy lane with explicit live
+registrations. Additional tests retain normal live runs and reduced scripted
+runs. No model calls or live cluster mutations are needed for this validation.
+
+Validation passed: 272 fastloop/skill tests in 123.12 s, the formatting and
+static-error gates, and the hermetic fastloop gate (Go plus 18 Python tests).
+Skill lint is unchanged from the 16 pre-existing baseline findings.

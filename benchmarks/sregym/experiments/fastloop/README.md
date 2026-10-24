@@ -104,10 +104,15 @@ uv run python -m benchmarks.sregym.fastloop reset \
 uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_FASTLOOP_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/pbprog_repeat.json \
-  --diagnosis-grading off --time-scale 0.1 --continue-on-error
+  --diagnosis-grading off --time-scale 1 --continue-on-error
 ```
 
-`--time-scale` defaults to 1. It scales controller detector intervals, finding
+`--time-scale` defaults to 1. Live LLM runs, including smokes, use 1.
+Values below 1 are refused before runtime setup unless SDO uses the repository's
+`benchmarks/sregym/adapter/scripted_registrations` (explicitly selected, or the
+toy lane default). Custom registrations are conservatively treated as live.
+This keeps live verification and responder deadlines from being shortened.
+For scripted-agent runs it scales controller detector intervals, finding
 debounce, drift baseline settle, diagnosis settle, verification waits, the
 fastloop reflection wait, controller and fault-gate polling, recovery health
 polling, and composite stability and deadline waits. `--continue-on-error` records a failed incident and
