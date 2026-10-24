@@ -185,6 +185,8 @@ def test_toy_scripted_health_refresh_needs_no_rehearsal_slot(tmp_path, monkeypat
         result = scripted_worker.scripted_health_judge(request, tmp_path)
         assert result.authored
         assert "toy-endpoints" in result.detector_ids
+        assert "health-objective" in result.detector_ids
+        assert (tmp_path / ".sdo/diagnostics/detectors/health/health-objective/detector.go").is_file()
     else:
         with pytest.raises(ValueError, match="scripted toy health refresh"):
             scripted_worker.scripted_health_judge(request, tmp_path)

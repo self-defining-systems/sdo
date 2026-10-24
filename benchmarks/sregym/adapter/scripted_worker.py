@@ -722,6 +722,13 @@ def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> H
             current = accepted / path.relative_to(seed)
             if not current.is_file() or current.read_bytes() != path.read_bytes():
                 raise ValueError("scripted toy health refresh requires the complete unchanged toy detector")
+    # Native judge publication requires an explicit objective detector. Reuse
+    # the toy's exact readiness policy; Go adds and validates generic detectors.
+    objective_detector = accepted / health / "health-objective"
+    objective_detector.mkdir(exist_ok=True)
+    for name in ("manifest.yaml", "detector.go"):
+        content = (seed / health / "toy-endpoints" / name).read_text()
+        (objective_detector / name).write_text(content.replace("toy-endpoints", "health-objective"))
     ids = []
     for path in sorted((accepted / health).glob("*/manifest.yaml")):
         manifest = yaml.safe_load(path.read_text())
@@ -730,7 +737,7 @@ def _scripted_toy_health_judge(request: HealthJudgeRequest, checkout: Path) -> H
         ids.append(manifest["id"])
     return HealthJudgeResult(
         authored=True,
-        summary="Retained exact toy health policy for unchanged topology and objective",
+        summary="Authored the exact toy readiness objective and retained its accepted detector",
         agent_session_id="scripted-toy-health-" + request.accepted_source_commit[:12],
         objective_digest=hashlib.sha256(objective.encode()).hexdigest(),
         detector_ids=ids,
