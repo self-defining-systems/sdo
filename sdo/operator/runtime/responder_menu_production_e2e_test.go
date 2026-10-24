@@ -92,8 +92,12 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	native := &NativeIncidentBroker{Repository: repository, LedgerRoot: filepath.Join(mount, "ledger"), SessionRoot: mount, Deriver: OutcomeDeriverFunc(func(ctx context.Context, closure IncidentClosure, repairCommit, backend, model string) (DerivedOutcome, error) {
 		t.Logf("closure evidence: status=%s repairs=%d plans=%d calls=%d dispatch_error=%s", closure.Result.Status, len(closure.Result.RepairActions), len(closure.Result.PlanApplications), len(closure.Result.ProgramToolCalls), closure.DispatchError)
 		return (ProtoOutcomeDeriver{}).Derive(ctx, closure, repairCommit, backend, model)
-	}), ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "synthetic fixture"}, nil
+	}), ResponderBackend: "scripted", ResponderModel: "none", Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _ string, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+		var gaps []*contracts.SdkGap
+		for _, cause := range outcome.ConfirmedRootCauses {
+			gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-capability", Reason: "menu transport fixture has no executable learning observations", ScratchScript: "scratch/test", Resources: cause.Resources})
+		}
+		return ReflectionDecision{LearningDecision: "sdk_gap", NoChangeReason: "synthetic menu transport fixture", SDKGaps: gaps}, nil
 	})}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: menuService.Name, Namespace: "app", UID: types.UID("fixture-uid"), ResourceVersion: "service-1"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "backend"}, Ports: []corev1.ServicePort{{Port: 80, TargetPort: intstr.FromInt(9999)}}}}
 	bad, good := productionMenuProgram{"try-wrong-port", 7777}, productionMenuProgram{"restore-route", 8080}
@@ -197,7 +201,7 @@ func testProductionResponderMenuFactory(t *testing.T, enabled bool) {
 	if err := os.WriteFile(script, []byte(productionMenuScript), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.CommandContext(ctx, python, "run", "python", script, request.IncidentID, sessionDir)
+	cmd := exec.CommandContext(ctx, python, "run", "--no-sync", "python", script, request.IncidentID, sessionDir)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "PYTHONPATH="+root, "SDO_TOOLS_DIR="+filepath.Join(sessionDir, "tools"), "CODEX_HOME="+filepath.Join(sessionDir, "codex"), "SDO_SESSION_SCRATCH="+filepath.Join(sessionDir, "scratch"), "SDO_MITIGATION_SESSION=1")
 	output, err := cmd.CombinedOutput()

@@ -383,6 +383,19 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 }
 
 func (v LiveReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	// Declared scoped observations carry availability and canonical projection.
+	// A generic reader must not turn that evidence into a missing object.
+	if ref.Namespace != v.Namespace() {
+		target := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
+		if target.Cluster() {
+			target.Name = ref.Name
+		}
+		for _, status := range sdk.ScopedSource(v.DetectionContext).ObservationStatuses() {
+			if status.Target == target {
+				return v.scopedObject(ref)
+			}
+		}
+	}
 	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
 		return source.Object(ref)
 	}
