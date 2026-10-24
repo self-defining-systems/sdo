@@ -129,7 +129,6 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     elif args.command == "mitigate":
         if bool(args.selection) == bool(args.option):
             raise ValueError("choose an option or a selection file")
-        request["selection"] = _selection(args.selection) if args.selection else _option_selection(args)
         parameters = dict(args.param)
         if len(parameters) != len(args.param):
             raise ValueError("duplicate parameter name")
@@ -137,6 +136,7 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             if name in parameters:
                 raise ValueError("duplicate parameter name")
             parameters[name] = value
+        request["selection"] = _selection(args.selection) if args.selection else _option_selection(args, parameters)
         if parameters:
             request["parameters"] = parameters
     elif args.command == "report":
@@ -158,16 +158,24 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     return request
 
 
-def _option_selection(args: argparse.Namespace) -> dict[str, object]:
+def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> dict[str, object]:
     response = _exchange({"command": "menu"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
     menu = response.get("menu")
     if response.get("error") or not isinstance(menu, dict):
         raise ValueError("current mitigation menu unavailable")
-    options = [
-        option
-        for option in menu.get("options", [])
-        if args.option in (option.get("option_id"), option.get("program_id"))
-    ]
+    exact = [option for option in menu.get("options", []) if args.option == option.get("option_id")]
+    options = exact or [option for option in menu.get("options", []) if args.option == option.get("program_id")]
+    if not exact and len(options) > 1 and parameters:
+        # Several finding-derived rows may name one program. Let Go parse and
+        # validate explicit object/scalar parameters into one concrete option.
+        response = _exchange(
+            {"command": "menu", "program_id": args.option, "parameters": parameters},
+            Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
+        )
+        menu = response.get("menu")
+        if response.get("error") or not isinstance(menu, dict):
+            raise ValueError("bound mitigation menu unavailable")
+        options = [option for option in menu.get("options", []) if args.option == option.get("program_id")]
     if len(options) != 1 or options[0].get("disabled_reason"):
         raise ValueError("mitigation option unavailable or ambiguous")
     option = options[0]

@@ -31,7 +31,7 @@ func TestControllerLogsLoadedNonemptySourcePlanPolicyBeforeClusterAccess(t *test
 		DeleteKinds  int    `json:"delete_kinds"`
 		SHA256       string `json:"sha256"`
 	}
-	if err := json.Unmarshal(output.Bytes(), &event); err != nil || !event.Loaded || event.Applications != 3 || event.CreateKinds == 0 || event.DeleteKinds == 0 || event.SHA256 != fmt.Sprintf("%x", sha256.Sum256(raw)) {
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil || !event.Loaded || event.Applications != 4 || event.CreateKinds == 0 || event.DeleteKinds == 0 || event.SHA256 != fmt.Sprintf("%x", sha256.Sum256(raw)) {
 		t.Fatalf("controller did not log its loaded non-empty reviewed policy: %s (%v)", output.String(), err)
 	}
 	t.Log("controller_policy_startup", strings.TrimSpace(output.String()))

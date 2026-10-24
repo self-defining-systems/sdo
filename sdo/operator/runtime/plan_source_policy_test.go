@@ -188,7 +188,7 @@ func TestCommittedMixed10SourcePolicyScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.Applications) != 3 || c.Applications["astronomy_shop"] != "astronomy-shop" || c.Applications["hotel_reservation"] != "hotel-res" || c.Applications["social_network"] != "social-network" {
+	if len(c.Applications) != 4 || c.Applications["astronomy_shop"] != "astronomy-shop" || c.Applications["opentelemetry-demo"] != "astronomy-shop" || c.Applications["hotel_reservation"] != "hotel-res" || c.Applications["social_network"] != "social-network" {
 		t.Fatal("mixed10 scope changed")
 	}
 	for _, bad := range []string{`{"Plan":{},"DryRun":true}`, strings.Replace(string(raw), "accepted-source-only", "responder-literals", 1), strings.Replace(string(raw), "v1/ConfigMap", "v1/Secret", 1)} {
