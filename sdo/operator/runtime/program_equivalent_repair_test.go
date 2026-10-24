@@ -15,6 +15,20 @@ import (
 
 type sourceRepairProgram struct{}
 
+func TestFinalPlanEquivalenceIncludesFieldsTakenByTheFaultInjector(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	before := planObject(ref, map[string]any{"selector": map[string]any{"app": "api"}, "ports": []any{map[string]any{"port": float64(80), "targetPort": float64(9999)}}})
+	before.SetManagedFields([]metav1.ManagedFieldsEntry{{Manager: "sdo-deployer", FieldsType: "FieldsV1", FieldsV1: &metav1.FieldsV1{Raw: []byte(`{"f:spec":{"f:selector":{"f:app":{}}}}`)}}})
+	preview := PlanApplicationResult{PreImages: []PlanPreImage{{Ref: ref, Object: before}}, Patches: []PlanPatch{{Ref: ref, Patch: []byte(`{"spec":{"ports":[{"port":80,"targetPort":8080}]}}`)}}}
+	for _, port := range []float64{8080, 9999, 8081} {
+		current := before.DeepCopy()
+		current.Object["spec"].(map[string]any)["ports"].([]any)[0].(map[string]any)["targetPort"] = port
+		if got := finalPlanFieldsMatch(preview, func(sdk.ObjectRef) *unstructured.Unstructured { return current }); got != (port == 8080) {
+			t.Fatalf("port %v: exact=%t", port, got)
+		}
+	}
+}
+
 func (sourceRepairProgram) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "source-repair", Params: []program.ParamSpec{{Name: "service", Kind: "Service", Required: true}}}
 }
