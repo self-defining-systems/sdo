@@ -23,7 +23,7 @@ func TestHealthRefreshPendingJobReturnsUnverifiedAndCanReattach(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &contracts.AgentTask{SchemaVersion: worker_registry.SchemaVersion, TaskId: "health-refresh-pending", AgentId: "sdo-health-judge", TaskType: registrytest.TaskType(t, "sdo-health-judge", request), Request: payload, Workspace: &contracts.ProposalWorkspace{ProposalId: "refresh", CheckoutPath: "/workspace/proposal", BaseCommit: "abc"}}
-	executor := worker_registry.KubernetesExecutor{Client: client, Namespace: "demo", Registry: registry, RepositoryPVC: "repo", RepositoryMountPath: "/workspace", PollInterval: time.Millisecond}
+	executor := worker_registry.KubernetesExecutor{ToolchainImage: "compiler:test", Client: client, Namespace: "demo", Registry: registry, RepositoryPVC: "repo", RepositoryMountPath: "/workspace", PollInterval: time.Millisecond}
 	for attempt := 0; attempt < 2; attempt++ {
 		err := withHealthRefreshDeadline(context.Background(), 30*time.Millisecond, func(ctx context.Context) error { _, err := executor.Execute(ctx, task); return err })
 		if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "health unverified") {
@@ -33,6 +33,10 @@ func TestHealthRefreshPendingJobReturnsUnverifiedAndCanReattach(t *testing.T) {
 	jobs, err := client.BatchV1().Jobs("demo").List(context.Background(), metav1.ListOptions{})
 	if err != nil || len(jobs.Items) != 1 {
 		t.Fatalf("reattachment replaced retained Job: %v %v", jobs, err)
+	}
+	initializers := jobs.Items[0].Spec.Template.Spec.InitContainers
+	if len(initializers) != 1 || initializers[0].Image != "compiler:test" {
+		t.Fatalf("health judge did not receive its configured compiler: %+v", initializers)
 	}
 }
 

@@ -77,6 +77,7 @@ func refreshControllerHealthOnce(ctx context.Context, config *contracts.Controll
 		namespace = config.GetNamespace()
 	}
 	coordinator := lifecycle.Coordinator{Broker: repository, Bootstrap: artifacts.BootstrapStore{}, Registry: registry, Workers: worker_registry.KubernetesExecutor{
+		ToolchainImage: config.GetToolchainImage(),
 		Client: client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
 	}}
 	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace()}, revision); err != nil {
