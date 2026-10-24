@@ -261,14 +261,16 @@ func (p *Prober) Windows() map[string]traffic.Window {
 	return windows
 }
 
-// Reset forgets all observations, for example after a maintenance pause.
+// Reset forgets recent observations, for example after a maintenance pause.
+// Successful qualification survives for this immutable scenario catalog: a
+// maintenance boundary must not turn an existing regression into an exemption.
 // Iteration numbers keep increasing so every iteration stays replayable.
 func (p *Prober) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, state := range p.probes {
 		for _, scenario := range state.scenarios {
-			scenario.samples, scenario.qualified, scenario.invalid, scenario.lastInvalid = nil, false, 0, ""
+			scenario.samples, scenario.invalid, scenario.lastInvalid = nil, 0, ""
 		}
 		state.skipped = 0
 	}
