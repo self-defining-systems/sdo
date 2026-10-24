@@ -88,6 +88,11 @@ def execute_incident(
         recorded_actions.reset()
     if recovery is not None:
         prompt += recovery.recovered_prompt()
+    continuation = os.environ.get("SDO_RESPONSE_CONTINUATION", "")
+    if continuation:
+        if recovery is None or resume_session_id is None:
+            raise ResponderExecutionError("controller continuation requires the existing provider session")
+        prompt = "Controller independent verification of your previous response:\n" + continuation
     corrected_branch = False
     while True:
         try:
@@ -647,6 +652,8 @@ def _responder_prompt(request: IncidentRequest) -> str:
         "Recovery requires evidence from the intended application behavior. "
         f"Skill index: {SKILLS_ROOT}/sdo-memory/SKILL.md. Read relevant guidance once. "
         "Work autonomously in the supplied repository and Kubernetes namespace to resolve every triggering finding. "
+        "Keep investigating and repairing until verification is healthy or your response budget is spent; "
+        "a partial fix is not a reason to stop. "
         f"{strategy}"
         f"{program_guidance}"
         f"{drift_guidance}"
