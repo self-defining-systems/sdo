@@ -52,3 +52,7 @@ a source exists.
   The generated registration tests check this.
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a metrics URL is configured; do not author it.
+
+## Generic reachability baseline
+
+The native healthy-baseline acceptance gate can publish measured, source/config-bound exclusions as health-judge-owned `service-reachability/baseline.json`. Do not infer exclusions from missing successful dials or author them from an incident. Generic reachability reads accepted exclusions from its runtime window and invalidates them when source, objective or target configuration changes; new wrong targetPort failures remain detectable. The JSON is visible diagnostic evidence, not an agent waiver or an editable generic detector implementation. Inspect `baseline_status` in finding port metadata when an earlier exclusion no longer applies.

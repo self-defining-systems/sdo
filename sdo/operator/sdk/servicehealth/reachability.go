@@ -117,11 +117,14 @@ type ProberIdentity struct {
 
 // ReachabilityWindow is what the controller has observed at ObservedAt.
 type ReachabilityWindow struct {
-	ObservedAt time.Time            `json:"observedAt"`
-	Interval   time.Duration        `json:"intervalNs"`
-	Timeout    time.Duration        `json:"timeoutNs"`
-	Failures   int                  `json:"failures"`
-	Targets    []TargetObservations `json:"targets"`
+	Baseline        *ReachabilityBaseline `json:"baseline,omitempty"`
+	SourceInputs    string                `json:"sourceInputs,omitempty"`
+	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
+	ObservedAt      time.Time             `json:"observedAt"`
+	Interval        time.Duration         `json:"intervalNs"`
+	Timeout         time.Duration         `json:"timeoutNs"`
+	Failures        int                   `json:"failures"`
+	Targets         []TargetObservations  `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`
@@ -261,6 +264,9 @@ func (d reachabilityDetector) Detect(_ context.Context, ctx sdk.DetectionContext
 	admitting := map[string][]string{}
 	order := make([]string, 0)
 	for _, observed := range observations {
+		if excludedReachabilityTarget(ctx, window, observed.Target) {
+			continue
+		}
 		service, exists := services[observed.Target.Service]
 		if !exists || !ReachabilityEligible(service) {
 			continue
@@ -337,6 +343,9 @@ func (d reachabilityDetector) finding(
 		}
 		if failed.observed.LastSuccess != nil {
 			entry["last_success"] = failed.observed.LastSuccess.UTC().Format(time.RFC3339)
+		}
+		if window.Baseline != nil {
+			entry["baseline_status"] = reachabilityBaselineStatus(ctx, window, failed.observed.Target)
 		}
 		metadata = append(metadata, entry)
 	}

@@ -177,6 +177,10 @@ func (o *ServiceReachabilityObserver) Cycle(ctx context.Context) bool {
 // history it gathered itself. It stops early when the prober cannot be read,
 // leaving the load error in the window.
 func (o *ServiceReachabilityObserver) Collect(ctx context.Context) error {
+	return o.collect(ctx, nil)
+}
+
+func (o *ServiceReachabilityObserver) collect(ctx context.Context, check func() error) error {
 	for round := 0; round < o.config.Failures; round++ {
 		if round > 0 {
 			select {
@@ -186,6 +190,11 @@ func (o *ServiceReachabilityObserver) Collect(ctx context.Context) error {
 			}
 		}
 		o.Cycle(ctx)
+		if check != nil {
+			if err := check(); err != nil {
+				return err
+			}
+		}
 		o.mu.Lock()
 		failed := o.failure != ""
 		o.mu.Unlock()

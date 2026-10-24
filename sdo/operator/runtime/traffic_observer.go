@@ -416,9 +416,11 @@ func (o *TrafficObserver) Summary() map[string]any {
 // TrafficSnapshotProvider adds synthetic-traffic windows and Service
 // reachability observations to another provider's snapshots.
 type TrafficSnapshotProvider struct {
-	Base         SnapshotProvider
-	Observer     *TrafficObserver
-	Reachability *ServiceReachabilityObserver
+	Base                          SnapshotProvider
+	Observer                      *TrafficObserver
+	Reachability                  *ServiceReachabilityObserver
+	Baseline                      *servicehealth.ReachabilityBaseline
+	SourceInputs, ObjectiveDigest string
 }
 
 func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
@@ -433,9 +435,10 @@ func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCon
 	var reachability *servicehealth.ReachabilityWindow
 	if p.Reachability != nil {
 		window, _ := p.Reachability.Window()
+		window.Baseline, window.SourceInputs, window.ObjectiveDigest = p.Baseline, p.SourceInputs, p.ObjectiveDigest
 		reachability = &window
 	}
-	return trafficContext{ScopedObservationSource: scopedSource(base),DetectionContext: base, windows: windows, reachability: reachability}, nil
+	return trafficContext{ScopedObservationSource: scopedSource(base), DetectionContext: base, windows: windows, reachability: reachability}, nil
 }
 
 type trafficContext struct {

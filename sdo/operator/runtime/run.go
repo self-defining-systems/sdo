@@ -460,7 +460,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	var snapshotProvider SnapshotProvider = kubernetesCache
 	if trafficObserver != nil || reachabilityObserver != nil {
-		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver}
+		baseline, sourceInputs, objective, err := loadReachabilityBaseline(ctx, resolvedRoot, resolvedSourceCommit)
+		if err != nil {
+			return err
+		}
+		snapshotProvider = TrafficSnapshotProvider{Base: kubernetesCache, Observer: trafficObserver, Reachability: reachabilityObserver, Baseline: baseline, SourceInputs: sourceInputs, ObjectiveDigest: objective}
 	}
 	if trafficObserver != nil {
 		defer trafficObserver.Stop()
@@ -825,6 +829,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		startTraffic()
 		startReachability()
 		waitState()
+		if launchConfig != nil && options.NativeBroker != nil {
+			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
+				return err
+			}
+		}
 		if err := controller.Step(runCtx, time.Now().UTC(), nil); err != nil {
 			if runCtx.Err() != nil {
 				return nil
@@ -881,6 +890,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		startTraffic()
 		startReachability()
 		waitState()
+		if launchConfig != nil && options.NativeBroker != nil {
+			if err := acceptStartupReachabilityBaseline(runCtx, controller, resolvedRoot, options.NativeBroker.Repository, launchConfig.GetHealthyBaseline(), reachabilityObserver, snapshotProvider, detectors); err != nil {
+				return err
+			}
+		}
 		kubernetesCache.TakeEvents()
 		if !preserved {
 			kubernetesCache.TakeObjectChanges()
@@ -1293,6 +1307,13 @@ func evaluateOnce(
 		readSource = GitPlanSource{Repository: *appRoot}
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
+	if *appRoot != "" {
+		baseline, sourceInputs, objective, err := loadReachabilityBaseline(ctx, *appRoot, readCommit)
+		if err != nil {
+			return err
+		}
+		trafficProvider.Baseline, trafficProvider.SourceInputs, trafficProvider.ObjectiveDigest = baseline, sourceInputs, objective
+	}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
 			return errors.New("traffic health evaluation requires a live prober URL")
