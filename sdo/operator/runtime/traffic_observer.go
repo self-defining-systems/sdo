@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"net/http"
 	"sort"
 	"strings"
@@ -481,4 +482,18 @@ func scopedSource(view sdk.DetectionContext) sdk.ScopedObservationSource {
 		return source
 	}
 	return sdk.ScopedSnapshot{}
+}
+
+func (v trafficContext) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.DetectionContext), nil
+}
+
+func (v trafficContext) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
+		return source.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
 }

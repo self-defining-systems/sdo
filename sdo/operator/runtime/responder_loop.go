@@ -32,6 +32,7 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	Refs          []sdk.ObjectRef                        `json:"refs,omitempty"`
 	Parameters    map[string]string                      `json:"parameters,omitempty"`
 	Selection     *contracts.MitigationSelection         `json:"-"`
 	ReportQuery   *contracts.MitigationReportQuery       `json:"-"`
@@ -341,7 +342,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "apply":
 		l.apply(ctx, request, &response)
 	case "pre-apply":
-		if err := l.capturePreApply(ctx); err != nil {
+		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
 			response.Error = err.Error()
 			break
 		}
@@ -459,7 +460,7 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 		return nil, errors.New("live read view is unavailable")
 	}
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
-		if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace); err != nil {
+		if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace, findingCaptureRefs(l.Request.Findings)...); err != nil {
 			return nil, err
 		}
 	}
@@ -657,7 +658,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 
 	// A missing capture is an evidence gap; it must not block the repair.
-	_ = l.capturePreApply(ctx)
+	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
 	l.batches++
 	started := time.Now().UTC()
 	id := fmt.Sprintf("application-%s-%d", l.sessionID, l.batches)

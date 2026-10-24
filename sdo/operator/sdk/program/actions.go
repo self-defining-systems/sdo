@@ -94,6 +94,9 @@ func selectedField(value any, selector string) (any, error) {
 // FieldValue resolves numeric indexes, unique [name=NAME] list identities and
 // bracketed ConfigMap keys. It does not invent missing intermediate objects.
 func FieldValue(object map[string]any, path string) (any, error) {
+	if strings.HasPrefix(path, "/") {
+		return objectPointerValue(object, path)
+	}
 	parts, err := parseFieldPath(path)
 	if err != nil {
 		return nil, err
@@ -122,6 +125,10 @@ func FieldValue(object map[string]any, path string) (any, error) {
 // ApplySetField mutates one field. Named list selectors must resolve uniquely,
 // except a missing final env[name=NAME] can insert an entry with that same name.
 func ApplySetField(object map[string]any, path string, value any) error {
+	if strings.HasPrefix(path, "/") {
+		return applyObjectPointer(object, path, value)
+	}
+
 	parts, err := parseFieldPath(path)
 	if err != nil {
 		return err

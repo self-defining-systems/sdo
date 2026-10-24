@@ -3,10 +3,8 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -176,60 +174,10 @@ func planActionValues(action program.Action) []program.Value {
 // planObservedObject reads only the program's supplied view. No API read or
 // Secret lookup can be substituted for an unavailable snapshot observation.
 func planObservedObject(view program.ReadView, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	versions := map[string]string{"Pod": "v1", "Service": "v1", "ConfigMap": "v1", "Endpoints": "v1", "Event": "v1", "Deployment": "apps/v1", "ReplicaSet": "apps/v1", "StatefulSet": "apps/v1", "HorizontalPodAutoscaler": "autoscaling/v2", "PodDisruptionBudget": "policy/v1", "NetworkPolicy": "networking.k8s.io/v1", "EndpointSlice": "discovery.k8s.io/v1", "MutatingWebhookConfiguration": "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration": "admissionregistration.k8s.io/v1"}
-	if versions[ref.Kind] == "" || versions[ref.Kind] != ref.APIVersion {
-		return nil, fmt.Errorf("observed value kind/version unavailable")
+	if strings.EqualFold(ref.Kind, "Secret") {
+		return nil, fmt.Errorf("Secret value resolution is forbidden")
 	}
-	if ref.Namespace != view.Namespace() {
-		return (LiveReadView{DetectionContext: view}).snapshotObject(ref)
-	}
-	var object any
-	switch ref.Kind {
-	case "StatefulSet":
-		if extended, ok := view.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
-			for _, item := range extended.StatefulSets() {
-				if item.Namespace == ref.Namespace && item.Name == ref.Name {
-					object = &item
-					break
-				}
-			}
-		}
-	case "HorizontalPodAutoscaler":
-		if extended, ok := view.(interface {
-			HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-		}); ok {
-			for _, item := range extended.HorizontalPodAutoscalers() {
-				if item.Namespace == ref.Namespace && item.Name == ref.Name {
-					object = &item
-					break
-				}
-			}
-		}
-	case "PodDisruptionBudget":
-		if extended, ok := view.(interface {
-			PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-		}); ok {
-			for _, item := range extended.PodDisruptionBudgets() {
-				if item.Namespace == ref.Namespace && item.Name == ref.Name {
-					object = &item
-					break
-				}
-			}
-		}
-	case "Event":
-		for _, item := range view.Events() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	default:
-		return (LiveReadView{DetectionContext: view}).snapshotObject(ref)
-	}
-	if object == nil {
-		return nil, fmt.Errorf("observed value object unavailable")
-	}
-	return planUnstructured(object, ref)
+	return view.Object(ref)
 }
 
 func bindMitigationValues(plan program.Plan, spec program.ProgramSpec, bindings program.Bindings, view program.ReadView) (program.Plan, error) {

@@ -192,16 +192,16 @@ func addPermissiveReadBindings(c Config, p *Plan, namespaces []string) {
 }
 
 func (i Installer) resources(c Config) (Plan, error) {
-	if !c.PermissiveResponder {
-		return Resources(c)
-	}
 	_, resources, err := i.Client.Discovery().ServerGroupsAndResources()
 	if err != nil {
-		return Plan{}, fmt.Errorf("discover permissive responder resources: %w", err)
+		return Plan{}, fmt.Errorf("discover controller/responder resources: %w", err)
 	}
 	plan, err := Resources(c, resources...)
 	if err != nil {
 		return Plan{}, err
+	}
+	if !c.PermissiveResponder {
+		return plan, nil
 	}
 	namespaces, err := i.Client.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
 	if err != nil {

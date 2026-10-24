@@ -347,6 +347,9 @@ func comparable(o *unstructured.Unstructured) ([]byte, error) {
 	// Kubernetes conversion on both sides; executor read-back checks still
 	// independently prove all requested leaves and lifecycle effects.
 	typed, err := scheme.Scheme.New(schema.FromAPIVersionAndKind(x.GetAPIVersion(), x.GetKind()))
+	if kruntime.IsNotRegisteredError(err) {
+		return json.Marshal(x.Object)
+	}
 	if err != nil {
 		return nil, err
 	}

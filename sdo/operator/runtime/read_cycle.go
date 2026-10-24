@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sync"
 	"time"
 
@@ -165,4 +166,20 @@ func (v *cachedReadView) QueryMetrics(q metrics.Query) metrics.Result {
 		return metrics.Result{Query: q, Error: err.Error()}
 	}
 	return r
+}
+
+func (v *cachedReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	var object unstructured.Unstructured
+	err := v.read("Object", []any{ref}, &object, func() (any, error) { return v.ReadView.Object(ref) })
+	if err != nil {
+		return nil, err
+	}
+	return &object, nil
+}
+
+func (v *cachedReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.ReadView.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.ReadView), nil
 }

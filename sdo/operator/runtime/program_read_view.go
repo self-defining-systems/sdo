@@ -14,6 +14,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -381,84 +382,21 @@ func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, erro
 	return program.Diff{}, nil
 }
 
-func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+func (v LiveReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
+		return source.Object(ref)
+	}
 	if ref.Namespace != v.Namespace() {
 		return v.scopedObject(ref)
 	}
-	var object any
-	switch ref.Kind {
-	case "Service":
-		for _, item := range v.Services() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Deployment":
-		for _, item := range v.Deployments() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "ConfigMap":
-		for _, item := range v.ConfigMaps() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Pod":
-		for _, item := range v.Pods() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "ReplicaSet":
-		for _, item := range v.ReplicaSets() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "Endpoints":
-		for _, item := range v.Endpoints() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "EndpointSlice":
-		for _, item := range v.EndpointSlices() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	case "NetworkPolicy":
-		for _, item := range v.NetworkPolicies() {
-			if item.Namespace == ref.Namespace && item.Name == ref.Name {
-				object = &item
-				break
-			}
-		}
-	default:
-		return nil, fmt.Errorf("source diff does not support %s", ref.Kind)
+	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
+}
+func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	object, err := v.Object(ref)
+	if errors.Is(err, sdk.ErrObjectNotCaptured) || apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("%w: %v", errSnapshotObjectAbsent, err)
 	}
-	if object == nil {
-		return nil, fmt.Errorf("%w: %s/%s", errSnapshotObjectAbsent, ref.Kind, ref.Name)
-	}
-	content, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
-	if err != nil {
-		return nil, err
-	}
-	result := &unstructured.Unstructured{Object: content}
-	result.SetAPIVersion(ref.APIVersion)
-	result.SetKind(ref.Kind)
-	result.SetNamespace(ref.Namespace)
-	result.SetName(ref.Name)
-	return result, nil
+	return object, err
 }
 
 func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -655,4 +593,11 @@ func (v LiveReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
 		return source.PodDisruptionBudgets()
 	}
 	return nil
+}
+
+func (v LiveReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.DetectionContext), nil
 }

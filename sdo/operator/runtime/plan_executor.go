@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
@@ -169,7 +170,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if err := validatePlanRef(ref); err != nil {
 			return result, err
 		}
-		if incident.Namespace != "" && ref.Namespace != incident.Namespace {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace && !genericIncidentRef(incident, action, ref) {
 			return result, fmt.Errorf("plan object %s/%s is outside incident namespace %q", ref.Namespace, ref.Name, incident.Namespace)
 		}
 		if _, exists := current[ref]; exists {
@@ -710,8 +711,8 @@ func planActionRef(action program.Action) (sdk.ObjectRef, error) {
 }
 
 func validatePlanRef(ref sdk.ObjectRef) error {
-	if ref.APIVersion == "" || ref.Kind == "" || ref.Namespace == "" || ref.Name == "" {
-		return fmt.Errorf("plan action requires a namespaced object reference: %+v", ref)
+	if ref.APIVersion == "" || ref.Kind == "" || ref.Name == "" {
+		return fmt.Errorf("plan action requires a versioned object reference: %+v", ref)
 	}
 	return nil
 }
@@ -794,4 +795,27 @@ func planValuesEqual(left, right any) bool {
 	}
 	b, err := json.Marshal(right)
 	return err == nil && string(a) == string(b)
+}
+
+// Generic field plans may cross the app boundary only for an exact object
+// already cited by the incident, never from an arbitrary program-supplied name.
+func genericIncidentRef(incident IncidentRequest, action program.Action, ref sdk.ObjectRef) bool {
+	var path string
+	switch a := action.(type) {
+	case program.SetField:
+		path = a.Path
+	case *program.SetField:
+		if a != nil {
+			path = a.Path
+		}
+	}
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for _, known := range findingCaptureRefs(incident.Findings) {
+		if known == ref {
+			return true
+		}
+	}
+	return false
 }

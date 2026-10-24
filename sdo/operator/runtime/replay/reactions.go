@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"sdo.dev/operator/sdk"
@@ -151,17 +150,6 @@ func (w *reaction) ownerTemplate(ctx context.Context, pod *unstructured.Unstruct
 	return nil, fmt.Errorf("standalone pod has no controller recreation model")
 }
 func (w *reaction) ownerObject(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	if ref.Kind == "ReplicaSet" {
-		o, err := w.cluster.fake.AppsV1().ReplicaSets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-		if err != nil {
-			return nil, err
-		}
-		fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(o)
-		if err != nil {
-			return nil, err
-		}
-		return &unstructured.Unstructured{Object: fields}, nil
-	}
 	return w.cluster.Get(ctx, ref)
 }
 func (w *reaction) ownedBy(ctx context.Context, pod *unstructured.Unstructured, target sdk.ObjectRef) (bool, error) {
@@ -218,17 +206,18 @@ func (w *reaction) replace(ctx context.Context, ref sdk.ObjectRef, old *unstruct
 			return err
 		}
 	}
-	created, err := w.cluster.fake.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
-	if err != nil {
-		return err
-	}
-	fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(created)
+	fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(pod)
 	if err != nil {
 		return err
 	}
 	o := &unstructured.Unstructured{Object: fields}
 	o.SetAPIVersion("v1")
 	o.SetKind("Pod")
+	o, err = w.cluster.Create(ctx, objectRef(o), o)
+	if err != nil {
+		return err
+	}
+
 	if w.cluster.simCreated == nil {
 		w.cluster.simCreated = map[sdk.ObjectRef]*unstructured.Unstructured{}
 		w.cluster.simDeleted = map[sdk.ObjectRef]bool{}

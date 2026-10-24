@@ -1,6 +1,7 @@
 package sdktest
 
 import (
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sort"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 )
 
 type Snapshot struct {
-	Admission *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
+	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
+	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
+	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
@@ -299,4 +302,13 @@ func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
 		return sdk.PodAdmissionResult{}, false
 	}
 	return *s.Admission, true
+}
+
+func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	// Generic objects are authoritative; old fixtures fall back to typed arrays.
+	objects := append(append([]unstructured.Unstructured(nil), s.Objects...), sdk.TypedObjects(s)...)
+	return sdk.FindObject(objects, ref)
+}
+func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	return append(sdk.TypedObjects(s), s.Objects...), nil
 }

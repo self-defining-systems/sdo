@@ -73,3 +73,28 @@ a restored or adopted closure from an obsolete scope fails visibly and cannot
 publish retained success. A scope change during an open incident supersedes its
 evidence and produces a failed closure. `open@detect` remains historical evidence;
 diagnosis rejects reuse when its generation differs from the current snapshot.
+
+## Generic object captures (CAP1)
+
+Snapshots also contain `objects`, a canonical array of versioned unstructured
+Kubernetes objects. Discovery lists every nonsecret listable kind in the app
+namespace and all namespaces touched by session actions, primitive/CLI reads,
+API-history envelopes or findings. Cluster objects require explicit references.
+`open@detect` retains its original boundary; newly discovered session scopes enter
+pre-apply and fixed captures. CLI pre-apply requests include declared targets
+before the mutation receipt exists. Secret resources are never requested.
+
+Generic objects preserve unknown API fields and support SDK `Object` reads and
+JSON-pointer `SetField` replay. Legacy typed arrays remain a compatibility view;
+AD1 `pod_admission`, scoped-observation statuses and telemetry remain intact.
+Generic objects are authoritative when both representations are present.
+ConfigMap opaque values remain redacted; JSON configuration documents retain
+operational structure with credential-named entries removed, and boolean strings
+remain available. Last-applied copies, managed fields and credential-named env
+values are removed recursively. Generic foreign objects therefore contain more
+operational fields than the older scoped projection; do not mistake the older
+scoped arrays for the entire captured object.
+
+A discovery/list error fails capture explicitly. A protected missing or oversized
+snapshot is an evidence gap. Capture/replay does not establish a successful live
+repair, and synthetic fault tests do not grant program trust.

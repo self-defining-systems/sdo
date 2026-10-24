@@ -28,6 +28,7 @@ import (
 )
 
 type KubernetesCacheConfig struct {
+	GenericCapture     *controllercore.GenericCapture
 	Now                func() time.Time
 	AcceptedScope      func(context.Context) (sdk.ObservationScope, string, error)
 	Scope, Ceiling     sdk.ObservationScope
@@ -289,7 +290,7 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		return nil, err
 	}
 	c.observeScoped(scoped)
-	snapshot := controllercore.DetectionSnapshot{NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC(), ScopedSnapshot: scoped}
+	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: time.Now().UTC(), ScopedSnapshot: scoped}
 	statefulSets, err := c.config.Client.AppsV1().StatefulSets(c.config.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)

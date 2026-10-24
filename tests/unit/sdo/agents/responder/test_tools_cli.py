@@ -163,7 +163,10 @@ def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, 
     seen = []
 
     def exchange(request, _directory):
-        assert request == {"command": "pre-apply"}
+        assert request == {
+            "command": "pre-apply",
+            "refs": [{"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"}],
+        }
         seen.append("capture")
         return response
 

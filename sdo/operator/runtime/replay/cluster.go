@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -20,78 +23,66 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-type resource struct{ field, version, kind, plural string }
-
-var resources = []resource{
-	{"configMaps", "v1", "ConfigMap", "configmaps"}, {"services", "v1", "Service", "services"}, {"pods", "v1", "Pod", "pods"}, {"deployments", "apps/v1", "Deployment", "deployments"}, {"statefulSets", "apps/v1", "StatefulSet", "statefulsets"}, {"replicaSets", "apps/v1", "ReplicaSet", "replicasets"}, {"horizontalPodAutoscalers", "autoscaling/v2", "HorizontalPodAutoscaler", "horizontalpodautoscalers"}, {"podDisruptionBudgets", "policy/v1", "PodDisruptionBudget", "poddisruptionbudgets"}, {"endpoints", "v1", "Endpoints", "endpoints"}, {"endpointSlices", "discovery.k8s.io/v1", "EndpointSlice", "endpointslices"}, {"networkPolicies", "networking.k8s.io/v1", "NetworkPolicy", "networkpolicies"}, {"events", "v1", "Event", "events"},
-}
-
-var scopedResources = []resource{
-	{"deployments", "apps/v1", "Deployment", "deployments"}, {"services", "v1", "Service", "services"}, {"endpoints", "v1", "Endpoints", "endpoints"},
-	{"mutating_webhooks", "admissionregistration.k8s.io/v1", "MutatingWebhookConfiguration", "mutatingwebhookconfigurations"},
-	{"validating_webhooks", "admissionregistration.k8s.io/v1", "ValidatingWebhookConfiguration", "validatingwebhookconfigurations"},
-}
-
-func allResources() []resource {
-	out := append([]resource{}, resources...)
-	return append(out, scopedResources[3:]...)
-}
-func (r resource) gvk() schema.GroupVersionKind {
-	return schema.FromAPIVersionAndKind(r.version, r.kind)
-}
-func (r resource) gvr() schema.GroupVersionResource {
-	return r.gvk().GroupVersion().WithResource(r.plural)
-}
-func objectRef(o *unstructured.Unstructured) sdk.ObjectRef {
-	return sdk.ObjectRef{APIVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}
+func objectRef(o *unstructured.Unstructured) sdk.ObjectRef { return sdk.ObjectIdentity(*o) }
+func fixtureResource(ref sdk.ObjectRef) schema.GroupVersionResource {
+	gvr, _ := meta.UnsafeGuessKindToResource(schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind))
+	return gvr
 }
 func snapshotObjects(s sdktest.Snapshot) (map[sdk.ObjectRef]*unstructured.Unstructured, error) {
-	raw, err := json.Marshal(s)
-	if err != nil {
-		return nil, err
-	}
-	var fields map[string]json.RawMessage
-	if err = json.Unmarshal(raw, &fields); err != nil {
-		return nil, err
-	}
-	var scoped map[string]json.RawMessage
-	if err = json.Unmarshal(fields["scoped_observation"], &scoped); err != nil {
-		return nil, err
-	}
 	out := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	for index, r := range append(append([]resource{}, resources...), scopedResources...) {
-		var items []map[string]any
-		rawField := fields[r.field]
-		if index >= len(resources) {
-			rawField = scoped[r.field]
+	add := func(object unstructured.Unstructured) error {
+		ref := sdk.ObjectIdentity(object)
+		if strings.EqualFold(ref.Kind, "Secret") {
+			return fmt.Errorf("Secret fixture objects are forbidden")
 		}
-		if len(rawField) == 0 {
-			continue
+		if ref.Kind == "" || ref.APIVersion == "" || ref.Name == "" {
+			return fmt.Errorf("fixture object identity is incomplete")
 		}
-		if err = json.Unmarshal(rawField, &items); err != nil {
+		out[ref] = object.DeepCopy()
+		return nil
+	}
+	for _, object := range sdk.TypedObjects(s) {
+		if object.GetNamespace() == "" {
+			object.SetNamespace(s.NamespaceName)
+		}
+		if err := add(object); err != nil {
 			return nil, err
 		}
-		for _, item := range items {
-			item["apiVersion"] = r.version
-			item["kind"] = r.kind
-			raw, e := json.Marshal(item)
-			if e != nil {
-				return nil, e
+	}
+	// Compatibility for old scoped fixtures uses field types, not kind tables.
+	v := reflect.ValueOf(s.ScopedSnapshot)
+	for i := 0; i < v.NumField(); i++ {
+		field := v.Field(i)
+		if field.Kind() != reflect.Slice {
+			continue
+		}
+		elem := field.Type().Elem()
+		if elem.Kind() != reflect.Struct || !reflect.PointerTo(elem).Implements(reflect.TypeOf((*kruntime.Object)(nil)).Elem()) {
+			continue
+		}
+		for j := 0; j < field.Len(); j++ {
+			ptr := reflect.New(elem)
+			ptr.Elem().Set(field.Index(j))
+			obj := ptr.Interface().(kruntime.Object)
+			fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(obj)
+			if err != nil {
+				return nil, err
 			}
-			o := &unstructured.Unstructured{}
-			if e = o.UnmarshalJSON(raw); e != nil {
-				return nil, e
+			gvks, _, err := scheme.Scheme.ObjectKinds(obj)
+			if err != nil || len(gvks) == 0 {
+				return nil, fmt.Errorf("scoped fixture GVK unavailable")
 			}
-			o.SetAPIVersion(r.version)
-			o.SetKind(r.kind)
-			if o.GetNamespace() == "" && index < len(resources) {
-				o.SetNamespace(s.NamespaceName)
+			object := unstructured.Unstructured{Object: fields}
+			object.SetGroupVersionKind(gvks[0])
+			if err := add(object); err != nil {
+				return nil, err
 			}
-			ref := objectRef(o)
-			if ref.Name == "" {
-				return nil, fmt.Errorf("fixture object has no name")
-			}
-			out[ref] = o
+		}
+	}
+	// Canonical generic objects override their legacy compatibility projections.
+	for _, object := range s.Objects {
+		if err := add(object); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -101,94 +92,146 @@ func newCluster(s sdktest.Snapshot) (*cluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := kubefake.NewSimpleClientset()
-	c := &cluster{TypedPlanClient: operator.TypedPlanClient{Client: f}, fake: f, initial: objects, original: s}
-	for ref, o := range objects {
-		if o.GetUID() == "" {
-			o.SetUID(types.UID("offline:" + ref.Kind + ":" + ref.Name))
+	fake := kubefake.NewSimpleClientset()
+	c := &cluster{TypedPlanClient: operator.TypedPlanClient{Client: fake}, fake: fake, initial: objects, original: s}
+	for ref, object := range objects {
+		if object.GetUID() == "" {
+			object.SetUID(types.UID("offline:" + ref.Kind + ":" + ref.Name))
 		}
-		if o.GetResourceVersion() == "" {
-			o.SetResourceVersion("1")
+		if object.GetResourceVersion() == "" {
+			object.SetResourceVersion("1")
 		}
-		typed, e := scheme.Scheme.New(schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind))
-		if e != nil {
-			return nil, e
-		}
-		if e = kruntime.DefaultUnstructuredConverter.FromUnstructured(o.Object, typed); e != nil {
-			return nil, e
-		}
-		if e = f.Tracker().Add(typed); e != nil {
-			return nil, e
+		if err := fake.Tracker().Add(object); err != nil {
+			return nil, err
 		}
 	}
-	// The tracker has no API-server admission/defaulting. Synthesize identity
-	// metadata only, preserving all authored and mutated application fields.
-	f.PrependReactor("create", "*", func(a ktesting.Action) (bool, kruntime.Object, error) {
-		action := a.(ktesting.CreateAction)
-		o := action.GetObject()
-		access, ok := o.(metav1.Object)
-		if !ok {
-			return true, nil, fmt.Errorf("created object has no metadata")
+	fake.PrependReactor("create", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		object := action.(ktesting.CreateAction).GetObject()
+		access, err := meta.Accessor(object)
+		if err != nil {
+			return true, nil, err
 		}
 		access.SetUID(types.UID("offline:created:" + access.GetName()))
 		access.SetResourceVersion("1")
 		return false, nil, nil
 	})
-	// client-go does not enforce delete preconditions itself.
-	f.PrependReactor("delete", "*", func(a ktesting.Action) (bool, kruntime.Object, error) {
-		action := a.(ktesting.DeleteAction)
-		o, e := f.Tracker().Get(a.GetResource(), a.GetNamespace(), action.GetName())
-		if e != nil {
-			return true, nil, e
+	fake.PrependReactor("delete", "*", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		deletion := action.(ktesting.DeleteAction)
+		object, err := fake.Tracker().Get(action.GetResource(), action.GetNamespace(), deletion.GetName())
+		if err != nil {
+			return true, nil, err
 		}
-		meta := o.(metav1.Object)
-		pre := action.GetDeleteOptions().Preconditions
-		if pre == nil || pre.UID == nil || pre.ResourceVersion == nil || *pre.UID != meta.GetUID() || *pre.ResourceVersion != meta.GetResourceVersion() {
-			return true, nil, apierrors.NewConflict(a.GetResource().GroupResource(), action.GetName(), fmt.Errorf("identity preconditions differ"))
+		access, err := meta.Accessor(object)
+		if err != nil {
+			return true, nil, err
+		}
+		pre := deletion.GetDeleteOptions().Preconditions
+		if pre == nil || pre.UID == nil || pre.ResourceVersion == nil || *pre.UID != access.GetUID() || *pre.ResourceVersion != access.GetResourceVersion() {
+			return true, nil, apierrors.NewConflict(action.GetResource().GroupResource(), deletion.GetName(), fmt.Errorf("identity preconditions differ"))
 		}
 		return false, nil, nil
 	})
 	return c, nil
 }
+func fixtureUnstructured(object kruntime.Object, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if object == nil {
+		return nil, fmt.Errorf("fixture returned no object")
+	}
+	fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+	if err != nil {
+		return nil, err
+	}
+	out := &unstructured.Unstructured{Object: fields}
+	out.SetAPIVersion(ref.APIVersion)
+	out.SetKind(ref.Kind)
+	return out, nil
+}
+func (c *cluster) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(ref.Kind, "Secret") {
+		return nil, fmt.Errorf("Secret reads forbidden")
+	}
+	object, err := c.fake.Invokes(ktesting.NewGetAction(fixtureResource(ref), ref.Namespace, ref.Name), &unstructured.Unstructured{})
+	if err != nil {
+		return nil, err
+	}
+	return fixtureUnstructured(object, ref)
+}
+func (c *cluster) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.EqualFold(ref.Kind, "Secret") {
+		return fmt.Errorf("Secret writes forbidden")
+	}
+	_, err := c.fake.Invokes(ktesting.NewPatchAction(fixtureResource(ref), ref.Namespace, ref.Name, kind, patch), &unstructured.Unstructured{})
+	return err
+}
+func (c *cluster) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if object == nil || sdk.ObjectIdentity(*object) != ref || strings.EqualFold(ref.Kind, "Secret") {
+		return nil, fmt.Errorf("create requires matching nonsecret identity")
+	}
+	created, err := c.fake.Invokes(ktesting.NewCreateAction(fixtureResource(ref), ref.Namespace, object.DeepCopy()), &unstructured.Unstructured{})
+	if err != nil {
+		return nil, err
+	}
+	return fixtureUnstructured(created, ref)
+}
+func (c *cluster) Delete(ctx context.Context, ref sdk.ObjectRef, uid types.UID, version string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.EqualFold(ref.Kind, "Secret") {
+		return fmt.Errorf("Secret writes forbidden")
+	}
+	_, err := c.fake.Invokes(ktesting.NewDeleteActionWithOptions(fixtureResource(ref), ref.Namespace, ref.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &version}}), &unstructured.Unstructured{})
+	return err
+}
 func (c *cluster) objects(ctx context.Context) (map[sdk.ObjectRef]*unstructured.Unstructured, error) {
-	out := map[sdk.ObjectRef]*unstructured.Unstructured{}
-	for _, r := range allResources() {
-		if err := ctx.Err(); err != nil {
+	refs := map[sdk.ObjectRef]bool{}
+	for ref := range c.initial {
+		refs[ref] = true
+	}
+	// Client-go records creates, including controller reactions and subsequently
+	// deleted objects. This is the fixture inventory; there is no resource allowlist.
+	for _, action := range c.fake.Actions() {
+		if action.GetVerb() != "create" {
+			continue
+		}
+		creation, ok := action.(ktesting.CreateAction)
+		if !ok {
+			continue
+		}
+		object := creation.GetObject()
+		fields, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(object)
+		if err != nil {
 			return nil, err
 		}
-		list, e := c.fake.Tracker().List(r.gvr(), r.gvk(), "")
-		if e != nil {
-			return nil, e
-		}
-		raw, e := json.Marshal(list)
-		if e != nil {
-			return nil, e
-		}
-		var data struct {
-			Items []json.RawMessage `json:"items"`
-		}
-		if e = json.Unmarshal(raw, &data); e != nil {
-			return nil, e
-		}
-		for _, item := range data.Items {
-			o := &unstructured.Unstructured{}
-			var fields map[string]any
-			if e = json.Unmarshal(item, &fields); e != nil {
-				return nil, e
+		o := unstructured.Unstructured{Object: fields}
+		if o.GetKind() == "" {
+			gvks, _, err := scheme.Scheme.ObjectKinds(object)
+			if err != nil || len(gvks) == 0 {
+				return nil, fmt.Errorf("created fixture GVK unavailable")
 			}
-			fields["apiVersion"] = r.version
-			fields["kind"] = r.kind
-			item, e = json.Marshal(fields)
-			if e != nil {
-				return nil, e
-			}
-			if e = o.UnmarshalJSON(item); e != nil {
-				return nil, e
-			}
-			o.SetAPIVersion(r.version)
-			o.SetKind(r.kind)
-			out[objectRef(o)] = o
+			o.SetGroupVersionKind(gvks[0])
 		}
+		refs[sdk.ObjectIdentity(o)] = true
+	}
+	out := map[sdk.ObjectRef]*unstructured.Unstructured{}
+	for ref := range refs {
+		object, err := c.Get(ctx, ref)
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[ref] = object
 	}
 	return out, nil
 }
@@ -197,43 +240,29 @@ func (c *cluster) snapshot(ctx context.Context) (sdktest.Snapshot, error) {
 	if err != nil {
 		return sdktest.Snapshot{}, err
 	}
-	scopedRaw, _ := json.Marshal(c.original.ScopedSnapshot)
-	var scoped map[string]any
-	if err = json.Unmarshal(scopedRaw, &scoped); err != nil {
-		return sdktest.Snapshot{}, err
-	}
-	fields := map[string]any{"namespace": c.original.NamespaceName, "scoped_observation": scoped}
-	for _, r := range resources {
-		items := []any{}
-		for ref, o := range objects {
-			if ref.APIVersion == r.version && ref.Kind == r.kind && ref.Namespace == c.original.NamespaceName {
-				items = append(items, o.Object)
+	original := c.original.ScopedSnapshot
+	s := sdktest.Snapshot{NamespaceName: c.original.NamespaceName, ObjectSnapshotVersion: 1, ScopedSnapshot: sdk.ScopedSnapshot{Version: original.Version, Scope: original.Scope, Generation: original.Generation, Statuses: original.Statuses}}
+	var local, scoped []unstructured.Unstructured
+	for ref, object := range objects {
+		s.Objects = append(s.Objects, *object.DeepCopy())
+		if ref.Namespace == s.NamespaceName {
+			local = append(local, *object.DeepCopy())
+		}
+		for _, target := range original.Scope.Targets {
+			if target.APIVersion == ref.APIVersion && target.Kind == ref.Kind && target.Namespace == ref.Namespace && (target.Name == "" || target.Name == ref.Name) {
+				scoped = append(scoped, *object.DeepCopy())
+				break
 			}
 		}
-		fields[r.field] = items
 	}
-	for _, r := range scopedResources {
-		items := []any{}
-		for ref, o := range objects {
-			if ref.APIVersion != r.version || ref.Kind != r.kind {
-				continue
-			}
-			for _, target := range c.original.ScopedSnapshot.Scope.Targets {
-				if target.APIVersion == ref.APIVersion && target.Kind == ref.Kind && target.Namespace == ref.Namespace && (target.Name == "" || target.Name == ref.Name) {
-					items = append(items, o.Object)
-					break
-				}
-			}
-		}
-		scoped[r.field] = items
-	}
-	raw, err := json.Marshal(fields)
-	if err != nil {
+	sdk.SortObjects(s.Objects)
+	if err := sdk.DecodeTypedObjects(&s, local); err != nil {
 		return sdktest.Snapshot{}, err
 	}
-	var s sdktest.Snapshot
-	err = json.Unmarshal(raw, &s)
-	return s, err
+	if err := sdk.DecodeTypedObjects(&s.ScopedSnapshot, scoped); err != nil {
+		return sdktest.Snapshot{}, err
+	}
+	return s, nil
 }
 
 type source struct {

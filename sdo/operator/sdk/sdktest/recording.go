@@ -4,6 +4,7 @@ import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk/servicehealth"
 
 	"bytes"
@@ -283,6 +284,16 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
+		case "Object":
+			if len(args) != 1 {
+				return nil, errors.New("invalid Object arguments")
+			}
+			var ref sdk.ObjectRef
+			if err := json.Unmarshal(args[0], &ref); err != nil {
+				return nil, err
+			}
+			_, _ = recorder.Object(ref)
+			continue
 		case "QueryMetrics":
 			if len(args) != 1 {
 				return nil, errors.New("invalid QueryMetrics arguments")
@@ -489,4 +500,33 @@ func (v *RecordingReadView) ValidatingWebhookConfiguration(name string) (*admiss
 	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
 	v.record("ValidatingWebhookConfiguration", []any{name}, result, err)
 	return result, err
+}
+
+func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	object, err := v.ReadView.Object(ref)
+	if err == nil {
+		raw, marshalErr := json.Marshal(object)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		raw, marshalErr = ProjectCapturedObject(raw)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		projected := new(unstructured.Unstructured)
+		if marshalErr = json.Unmarshal(raw, projected); marshalErr != nil {
+			return nil, marshalErr
+		}
+		v.record("Object", []any{ref}, projected, nil)
+	} else {
+		v.record("Object", []any{ref}, nil, err)
+	}
+	return object, err
+}
+
+func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.ReadView.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.ReadView), nil
 }

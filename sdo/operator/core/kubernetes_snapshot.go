@@ -14,6 +14,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
@@ -27,6 +28,7 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
+	Capture      *GenericCapture
 	PodAdmission bool
 	Scope        sdk.ObservationScope
 	Ceiling      sdk.ObservationScope
@@ -43,7 +45,11 @@ func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvide
 	if err != nil {
 		return nil, err
 	}
-	return &KubernetesSnapshotProvider{Namespace: namespace, Client: client}, nil
+	capture, err := NewGenericCapture(namespace)
+	if err != nil {
+		return nil, err
+	}
+	return &KubernetesSnapshotProvider{Namespace: namespace, Client: client, Capture: capture}, nil
 }
 
 // NewKubernetesClient returns a client with its own transport and rate limiter.
@@ -155,6 +161,7 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 	}
 	return DetectionSnapshot{
 		Admission:         admission,
+		GenericCapture:    p.Capture,
 		ScopedSnapshot:    scoped,
 		NamespaceName:     namespace,
 		ConfigMapList:     configMaps.Items,
@@ -176,6 +183,7 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 
 type DetectionSnapshot struct {
 	Admission          *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
+	GenericCapture     *GenericCapture         `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
 	NamespaceName      string
 	ConfigMapList      []corev1.ConfigMap
@@ -426,4 +434,17 @@ func (s DetectionSnapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
 		return sdk.PodAdmissionResult{}, false
 	}
 	return *s.Admission, true
+}
+
+func (s DetectionSnapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if s.GenericCapture != nil {
+		return s.GenericCapture.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(s), nil
+}
+func (s DetectionSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if s.GenericCapture != nil {
+		return s.GenericCapture.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(s), ref)
 }
