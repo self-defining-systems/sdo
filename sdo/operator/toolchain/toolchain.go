@@ -3,9 +3,21 @@
 package toolchain
 
 import (
+	"fmt"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+// ValidateImage rejects an incomplete launch before building or contacting Kubernetes.
+// Runtime images are compiler-free; the trusted controller image supplies Go.
+func ValidateImage(image string) error {
+	if strings.TrimSpace(image) == "" {
+		return fmt.Errorf("--toolchain-image is required: worker and validator runtime images lack Go; set it to the controller image")
+	}
+	return nil
+}
 
 // Apply copies the trusted toolchain into a private emptyDir before untrusted
 // code starts. The init container sees neither the candidate nor credentials;
@@ -13,7 +25,7 @@ import (
 func Apply(pod *corev1.PodSpec, controllerImage string) {
 	if controllerImage == "" {
 		return
-	} // Older/custom registrations may carry their own compiler.
+	} // Low-level custom pods may supply Go themselves; controller startup validates the image.
 	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "sdo-toolchain", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	no, yes := false, true
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{

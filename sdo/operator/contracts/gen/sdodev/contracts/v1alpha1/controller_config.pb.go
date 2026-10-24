@@ -135,8 +135,11 @@ type ControllerConfig struct {
 	// token and requires metrics_url.
 	MetricsUrl       string `protobuf:"bytes,70,opt,name=metrics_url,json=metricsUrl,proto3" json:"metrics_url,omitempty"`
 	MetricsTokenFile string `protobuf:"bytes,71,opt,name=metrics_token_file,json=metricsTokenFile,proto3" json:"metrics_token_file,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Trusted controller image supplying Go to compiler-free workers and validators.
+	// Required at startup, independently of the optional traffic prober image.
+	ToolchainImage string `protobuf:"bytes,72,opt,name=toolchain_image,json=toolchainImage,proto3" json:"toolchain_image,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ControllerConfig) Reset() {
@@ -633,11 +636,18 @@ func (x *ControllerConfig) GetMetricsTokenFile() string {
 	return ""
 }
 
+func (x *ControllerConfig) GetToolchainImage() string {
+	if x != nil {
+		return x.ToolchainImage
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_controller_config_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\n" +
-	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xab\x1d\n" +
+	"1sdodev/contracts/v1alpha1/controller_config.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x1egoogle/protobuf/duration.proto\"\xd4\x1d\n" +
 	"\x10ControllerConfig\x12%\n" +
 	"\tnamespace\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12+\n" +
 	"\x11control_namespace\x18\x02 \x01(\tR\x10controlNamespace\x12\"\n" +
@@ -713,7 +723,8 @@ const file_sdodev_contracts_v1alpha1_controller_config_proto_rawDesc = "" +
 	"\x14program_min_duration\x18E \x01(\v2\x19.google.protobuf.DurationB\b\xbaH\x05\xaa\x01\x022\x00R\x12programMinDuration\x12\x1f\n" +
 	"\vmetrics_url\x18F \x01(\tR\n" +
 	"metricsUrl\x12,\n" +
-	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFileB\x14\n" +
+	"\x12metrics_token_file\x18G \x01(\tR\x10metricsTokenFile\x12'\n" +
+	"\x0ftoolchain_image\x18H \x01(\tR\x0etoolchainImageB\x14\n" +
 	"\x12_synthetic_trafficB\x1a\n" +
 	"\x18_clean_responder_helpersB\x11\n" +
 	"\x0f_state_baselineJ\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b;\x10<J\x04\b<\x10=J\x04\b=\x10>R\x06brokerR\vbroker_argsR\x1adrift_investigation_windowR'drift_investigation_dispatches_per_hourR#drift_investigation_tokens_per_hourB\x88\x02\n" +

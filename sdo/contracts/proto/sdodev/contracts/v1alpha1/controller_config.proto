@@ -130,4 +130,8 @@ message ControllerConfig {
   // token and requires metrics_url.
   string metrics_url = 70;
   string metrics_token_file = 71;
+
+  // Trusted controller image supplying Go to compiler-free workers and validators.
+  // Required at startup, independently of the optional traffic prober image.
+  string toolchain_image = 72;
 }
