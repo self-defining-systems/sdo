@@ -125,6 +125,7 @@ StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
 IncidentRequest = messages_pb2.IncidentRequest
+FastPathRepair = messages_pb2.FastPathRepair
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
 AppliedPlaybook = messages_pb2.AppliedPlaybook
@@ -261,6 +262,7 @@ __all__ = [
     "validate",
     "IncidentClosure",
     "IncidentRequest",
+    "FastPathRepair",
     "IncidentResult",
     "LateFindingsPull",
     "MemoryDetector",

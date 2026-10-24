@@ -270,6 +270,7 @@ func TestHermeticTrustedLatentDriftSkipsResponderAndRetainsLearningClassificatio
 
 func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) {
 	loop, client := trustedPortLoop(t, true, true, false)
+	installIneffectivePortProgram(t, loop)
 	request := goldenRequest(t)
 	request.Namespace = "app"
 	request.RepairPolicy = "recorded-actions"
@@ -404,14 +405,14 @@ func TestRelationCoveredFindingMustClearBeforeFastPathCloses(t *testing.T) {
 	if err := task.GetRequest().UnmarshalTo(incident); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(incident.GetFastPathSummary(), "image-pull-failure") || !strings.Contains(incident.GetFastPathSummary(), "rollback true") {
+	if !strings.Contains(incident.GetFastPathSummary(), "image-pull-failure") || !strings.Contains(incident.GetFastPathSummary(), "rollback false") {
 		t.Fatalf("responder missed failed relation verification: %q", incident.GetFastPathSummary())
 	}
 	deployment, err := client.AppsV1().Deployments("app").Get(context.Background(), "api", metav1.GetOptions{})
-	if err != nil || deployment.Spec.Template.Spec.Containers[0].Image != "missing:v1" {
-		t.Fatalf("failed relation verification left mutation: %+v %v", deployment, err)
+	if err != nil || deployment.Spec.Template.Spec.Containers[0].Image != "good:v1" {
+		t.Fatalf("inconclusive relation verification undid a repair: %+v %v", deployment, err)
 	}
-	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || !contains(loop.FailureSignals(), "fast_path_failure:image-pull-failure@tree-a") {
+	if len(loop.fastPathRelationCoveredFindings) != 1 || loop.fastPathRelationCoveredFindings[0].ProgramID != "image-pull-failure" || len(loop.FailureSignals()) != 0 || len(incident.FastPathRepairs) != 0 {
 		t.Fatalf("relation and trust evidence: %+v %+v", loop.fastPathRelationCoveredFindings, loop.FailureSignals())
 	}
 	cancel()
@@ -439,7 +440,7 @@ func TestColdFastPathDispatchesResponderWithoutSettling(t *testing.T) {
 		}
 		marker, err := client.CoreV1().ConfigMaps("app").Get(ctx, IncidentJobName(request.IncidentID)+"-fast-path", metav1.GetOptions{})
 		want := "trusted program fast path skipped: " + string(FastPathSkipUntrustedProgram)
-		if err != nil || marker.Data["summary"] != want || marker.Data["state"] != "failed" {
+		if err != nil || marker.Data["summary"] != want || marker.Data["state"] != "skipped" {
 			t.Fatalf("missing durable skip reason: %+v %v", marker, err)
 		}
 		taskMap, err := client.CoreV1().ConfigMaps("app").Get(ctx, IncidentJobName(request.IncidentID)+"-request", metav1.GetOptions{})

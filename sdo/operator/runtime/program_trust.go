@@ -81,7 +81,8 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					revision = outcome.GetSourceCommit()
 				}
 				state = stateForRevision(id, revision)
-				failed := outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH
+				scoped := strings.HasPrefix(application.GetApplicationId(), "fast-path") && application.CoveredFindingsVerified != nil
+				failed := !scoped && (outcome.GetClassification() != "success" || application.GetDryRun() || application.GetError() != "" || application.GetRolledBack() || application.GetRollbackError() != "" || application.GetVerification().GetResult() != contracts.Verdict_RESULT_NO_MATCH)
 				for _, signal := range outcome.GetProgramFailureSignals() {
 					// Count durable responder failures after applications, so the
 					// same failure does not also count against a successful retry.
@@ -98,6 +99,9 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
+				} else if scoped && verifiedFastPathApplication(outcome, application, id, revision) && !creditedInOutcome[id] {
+					state.VerifiedSuccesses++
+					creditedInOutcome[id] = true
 				}
 				state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
 				stats[id] = state
@@ -174,6 +178,12 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		}
 	}
 	return stats
+}
+
+// Cause-scoped fast-path credit never depends on unrelated incident closure.
+// Exact write retention and bound post-apply proof remain mandatory.
+func verifiedFastPathApplication(outcome *contracts.OutcomeRecord, app *contracts.PlanApplication, id, revision string) bool {
+	return strings.HasPrefix(app.GetApplicationId(), "fast-path") && app.GetCoveredFindingsVerified() && app.GetApplied() && !app.GetDryRun() && !app.GetRolledBack() && app.GetError() == "" && app.GetRollbackError() == "" && app.GetVerificationCompleted() && app.GetVerificationPassed() && app.GetFinalEquivalenceVerified() && app.GetVerification().GetResult() == contracts.Verdict_RESULT_NO_MATCH && boundPostApplyNoMatch(outcome, app, id, revision)
 }
 
 // parseProgramToolCall decodes one recorded program tool call, rejecting
@@ -267,8 +277,8 @@ func boundPostApplyNoMatch(outcome *contracts.OutcomeRecord, application *contra
 }
 
 // fastPathTrustFailureSignals is the durable trust input for a fast-path
-// marker. Persist its JSON string array under "trust_failure_signals" before
-// application, retain it through failed verification, and restore it on handoff.
+// marker. Persist its JSON string array under "trust_failure_signals" only
+// after a cause-scoped failure, and restore it on failed-marker handoff.
 // The revision comes from the accepted trust snapshot, not the source commit
 // of a later responder outcome.
 func (l *ResponderLoop) fastPathTrustFailureSignals(ids []string) []string {

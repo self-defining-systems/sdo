@@ -437,8 +437,8 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		t.Fatalf("SetField was not replayed: %+v", notes)
 	}
 
-	// With two faults, the best single binding runs, then whole-incident verification
-	// rolls it back before responder handoff because the other fault remains.
+	// With two faults, keep the verified best single binding and hand the
+	// remaining fault to the responder without penalizing that binding.
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "accepted recorded routing fixture")
 	commit := nativeGit(t, root, "rev-parse", "HEAD")
@@ -486,16 +486,25 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 	loop.InitialDiagnose(ctx)
 	attempt := loop.TryTrustedFastPath(ctx, 1)
 	applications := loop.PlanApplications()
-	if !attempt.Attempted || attempt.Resolved || !attempt.RolledBack || len(applications) != 1 || len(applications[0].Result.ActionsApplied) != 1 {
+	if !attempt.Attempted || attempt.Resolved || !attempt.Verified || attempt.RolledBack || len(loop.FailureSignals()) != 0 || len(applications) != 1 || len(applications[0].Result.ActionsApplied) != 1 {
 		t.Fatalf("single-binding attempt: %+v applications=%+v", attempt, applications)
 	}
+	repaired := 0
 	for _, name := range []string{snapshot.ServiceList[0].Name, snapshot.ServiceList[1].Name} {
 		live, err := client.CoreV1().Services("app").Get(ctx, name, metav1.GetOptions{})
-		if err != nil || live.Spec.Ports[0].TargetPort.IntVal != 9999 {
-			t.Fatalf("verification failure left a partial repair: %+v %v", live, err)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live.Spec.Ports[0].TargetPort.IntVal == 8080 {
+			repaired++
+		} else if live.Spec.Ports[0].TargetPort.IntVal != 9999 {
+			t.Fatalf("unexpected targetPort: %+v", live)
 		}
 	}
-	t.Log("captured routing repair passes save-time replay; two faults attempt one binding and roll back before responder handoff")
+	if repaired != 1 {
+		t.Fatalf("kept %d repairs, want one", repaired)
+	}
+	t.Log("captured routing repair passes save-time replay; two faults keep one verified binding before responder handoff")
 }
 
 func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {

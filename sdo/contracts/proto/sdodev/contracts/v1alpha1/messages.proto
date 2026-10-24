@@ -242,6 +242,17 @@ message IncidentRequest {
   string fast_path_summary = 24;
   string prepared_agent_task = 25;
   string observation_generation = 26;
+  repeated FastPathRepair fast_path_repairs = 27;
+}
+
+// Controller-verified cause repairs already kept before responder dispatch.
+// These observations authorize no mutation or rollback on restart.
+message FastPathRepair {
+  string program_id = 1 [(buf.validate.field).string.min_len = 1];
+  string program_revision = 2 [(buf.validate.field).string.min_len = 1];
+  repeated Binding bindings = 3;
+  repeated Finding covered_findings = 4 [(buf.validate.field).repeated.min_items = 1];
+  google.protobuf.Timestamp verified_at = 5 [(buf.validate.field).required = true];
 }
 
 message RootCauseEvidence {

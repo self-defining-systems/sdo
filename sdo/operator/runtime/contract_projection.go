@@ -185,6 +185,10 @@ func stateChangesContract(state *StateChanges) *contracts.StateChanges {
 }
 
 func incidentRequestContract(request IncidentRequest) (*contracts.IncidentRequest, error) {
+	repairs, err := fastPathRepairsContract(request.FastPathRepairs)
+	if err != nil {
+		return nil, err
+	}
 	result := &contracts.IncidentRequest{
 		ObservationGeneration: request.ObservationGeneration,
 		SchemaVersion:         request.SchemaVersion, Application: request.Application, Namespace: request.Namespace,
@@ -198,6 +202,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 		MaxResponseLoops: int32(request.MaxResponseLoops),
 		DriftEvents:      driftEventsContract(request.DriftEvents), PreparedAgentTask: request.PreparedAgentTask,
 		FastPathSummary: request.FastPathSummary,
+		FastPathRepairs: repairs,
 	}
 	for _, run := range request.InitialProgramRuns {
 		result.InitialProgramRuns = append(result.InitialProgramRuns, programRunContract(run))
@@ -504,6 +509,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 		ObservationGeneration: message.GetObservationGeneration(),
 		SchemaVersion:         message.GetSchemaVersion(), Application: message.GetApplication(), Namespace: message.GetNamespace(),
 		IncidentID: message.GetIncidentId(), Findings: findingsState(message.GetFindings()),
+		FastPathRepairs:   fastPathRepairsState(message.GetFastPathRepairs()),
 		DetectorHistory:   evaluationsState(message.GetDetectorHistory()),
 		SurfacedPlaybooks: make([]SurfacedPlaybook, 0, len(message.GetSurfacedPlaybooks())),
 		RelevantOutcomes:  make([]PriorOutcomeEvidence, 0, len(message.GetRelevantOutcomes())),

@@ -47,7 +47,13 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		}
 		// Legacy markers have no bound diagnoses. They are handed to the responder;
 		// their application, result and rollback journals are never decoded.
-		attempt := loop.recheckFastPath(ctx, runs)
+		var scope fastPathVerificationScope
+		if raw := marker.Data["verification_scope"]; raw != "" {
+			if err := json.Unmarshal([]byte(raw), &scope); err != nil {
+				return IncidentResult{}, "", false, fmt.Errorf("decode fast-path verification scope: %w", err)
+			}
+		}
+		attempt := loop.recheckFastPath(ctx, runs, scope)
 		if attempt.Resolved {
 			result := fastPathResult(request, loop, attempt, time.Now().UTC())
 			fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
@@ -55,9 +61,6 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 				return IncidentResult{}, "", false, err
 			}
 			return result, "", true, nil
-		}
-		if err = loop.restoreFastPathTrustFailureSignals(marker.Data["trust_failure_signals"]); err != nil {
-			return IncidentResult{}, "", false, err
 		}
 		if err = loop.persistToolState(ctx); err != nil {
 			return IncidentResult{}, "", false, err
@@ -79,30 +82,28 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 		minimum = 3
 	}
 	loop.BeforeFastPathApply = func(ctx context.Context, runs []ProgramRun) error {
-		ids := make([]string, 0, len(runs))
-		for _, run := range runs {
-			ids = append(ids, run.ProgramID)
-		}
 		encoded, err := json.Marshal(runs)
 		if err != nil {
 			return err
 		}
-		signals, err := json.Marshal(loop.fastPathTrustFailureSignals(ids))
+		marker.Data["program_runs"] = string(encoded)
+		scope, err := json.Marshal(loop.fastPathScope)
 		if err != nil {
 			return err
 		}
-		marker.Data["program_runs"] = string(encoded)
-		marker.Data["trust_failure_signals"] = string(signals)
+		marker.Data["verification_scope"] = string(scope)
 		return save()
 	}
 	defer func() { loop.BeforeFastPathApply = nil }()
 	started := time.Now().UTC()
 	attempt := loop.TryTrustedFastPath(ctx, minimum)
+	if attempt.Verified {
+		loop.CreditEquivalentRepairs(ctx, ProgramRepairReceipts(loop.PlanApplications(), nil))
+	}
 	if !attempt.Attempted {
 		log.Printf("incident %s trusted program fast path skipped: %s", request.IncidentID, attempt.SkippedReason)
 	}
 	if attempt.Resolved {
-		loop.CreditEquivalentRepairs(ctx, ProgramRepairReceipts(loop.PlanApplications(), nil))
 		result := fastPathResult(request, loop, attempt, started)
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		if err = validateIncidentResultFor(result, request); err != nil {
@@ -121,12 +122,25 @@ func (d KubernetesJobDispatcher) tryFastPath(ctx context.Context, request Incide
 	if summary == "" {
 		summary = "trusted program fast path skipped: " + string(attempt.SkippedReason)
 	}
-	marker.Data["state"] = "failed"
+	marker.Data["state"] = "unverified"
+	if !attempt.Attempted {
+		marker.Data["state"] = "skipped"
+	}
+	if attempt.Verified {
+		marker.Data["state"] = "partial"
+	}
+	for _, signal := range loop.FailureSignals() {
+		if _, _, ok := parseFastPathTrustFailureSignal(signal); ok {
+			marker.Data["state"] = "failed"
+		}
+	}
 	marker.Data["summary"] = summary
-	if attempt.Attempted {
-		if err = loop.restoreFastPathTrustFailureSignals(marker.Data["trust_failure_signals"]); err != nil {
+	if marker.Data["state"] == "failed" {
+		signals, err := json.Marshal(loop.fastPathTrustFailureSignals(attempt.Programs))
+		if err != nil {
 			return IncidentResult{}, "", false, err
 		}
+		marker.Data["trust_failure_signals"] = string(signals)
 	}
 	if err = loop.persistToolState(ctx); err != nil {
 		return IncidentResult{}, "", false, err

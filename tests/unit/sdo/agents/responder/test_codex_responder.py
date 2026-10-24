@@ -45,6 +45,19 @@ def _request(name: str = "incident_request.json") -> IncidentRequest:
     return json_format.Parse(_fixture(name), IncidentRequest())
 
 
+def test_prompt_preserves_typed_fast_path_repairs() -> None:
+    request = _request()
+    repair = request.fast_path_repairs.add(program_id="service-targetport-mismatch", program_revision="accepted-port")
+    repair.covered_findings.add().CopyFrom(request.findings[0])
+    repair.verified_at.CopyFrom(request.response_deadline)
+    prompt = _responder_prompt(request)
+    assert "Preserve those repairs" in prompt
+    assert "do not repeat or undo" in prompt
+    document = json.loads(prompt.split("Incident request:\n", 1)[1])
+    assert document["fast_path_repairs"][0]["program_id"] == "service-targetport-mismatch"
+    assert document["fast_path_repairs"][0]["covered_findings"][0]["detector_id"] == request.findings[0].detector_id
+
+
 def _result() -> IncidentResult:
     return json_format.Parse(_fixture("incident_result.json"), IncidentResult())
 

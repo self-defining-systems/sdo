@@ -150,6 +150,8 @@ type ResponderLoop struct {
 	findings                        []sdk.Finding
 	batches                         int
 	fastPathPrograms                []string
+	fastPathRepairs                 []FastPathRepair
+	fastPathScope                   fastPathVerificationScope
 	fastPathRelationCoveredFindings []RelationCoveredFinding
 	fastPathSkippedReason           FastPathSkipReason
 }
