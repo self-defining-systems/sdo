@@ -13,11 +13,12 @@ import (
 // verifyClosureDrift rechecks the owned fields admitted on source-declared
 // objects. Health clearance and responder claims cannot resolve a live/source
 // mismatch. Admission stays in the drift classifier, including for late drift.
-func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) bool {
+func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) (bool, []sdk.Finding) {
 	c.mu.Lock()
 	findings := append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)
 	c.mu.Unlock()
 	clear := true
+	var unresolvedFindings []sdk.Finding
 	active := map[string][]sdk.Finding{}
 	errors := map[string]error{}
 	for _, finding := range findings {
@@ -36,6 +37,10 @@ func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snap
 		resolved, err := c.closureSourceRestored(ctx, snapshot, finding, events)
 		if !resolved {
 			clear = false
+			if err != nil {
+				finding.Evidence += "; source verification: " + err.Error()
+			}
+			unresolvedFindings = append(unresolvedFindings, finding)
 			active[finding.DetectorID] = append(active[finding.DetectorID], finding)
 			if err != nil {
 				errors[finding.DetectorID] = err
@@ -62,7 +67,7 @@ func (c *Controller) verifyClosureDrift(ctx context.Context, now time.Time, snap
 			c.recordEvaluation(id, now, unresolved)
 		}
 	}
-	return clear
+	return clear, unresolvedFindings
 }
 
 // closureSourceRestored is also used at the broker handoff, where a restored

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -246,7 +247,7 @@ func (d *verificationRetryDispatcher) Dispatch(_ context.Context, r IncidentRequ
 	d.requests <- r
 	return completedResult(r.IncidentID), nil
 }
-func (d *verificationRetryDispatcher) ContinueAfterVerification(_ context.Context, _ IncidentRequest, _ []DetectorEvaluation, _ time.Time) (bool, error) {
+func (d *verificationRetryDispatcher) ContinueAfterVerification(_ context.Context, _ IncidentRequest, _ ToolResponse, _ time.Time) (bool, error) {
 	d.resumed++
 	return true, nil
 }
@@ -302,5 +303,83 @@ func TestContinuationUsagePreservesUnknownFieldsAndDeduplicatesRepairs(t *testin
 	got := accumulateResponderResult(typed, second)
 	if got.Usage.InputTokens != 300 || got.Usage.TotalCostUsd != nil || len(got.RepairActions) != 2 {
 		t.Fatalf("partial usage or duplicate actions: %+v", got)
+	}
+}
+
+func TestControllerWaitsForFreshClearSamplesInsteadOfRedispatch(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	snapshot := sdktest.Snapshot{NamespaceName: "demo"}
+	d := &verificationRetryDispatcher{requests: make(chan IncidentRequest, 1)}
+	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: snapshot}, d, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := goldenRequest(t)
+	request.ObservationGeneration = observationGeneration(snapshot)
+	request.ResponseDeadline = now.Add(time.Minute)
+	c.currentIncidentRequest = &request
+	result := completedResult(request.IncidentID)
+	c.currentIncidentResult = &result
+	c.incidentOpen, c.responderDone = true, true
+	c.responderCompletedAt = now
+	c.healthDetectorIDs = []string{"health-objective"}
+	c.history = []DetectorEvaluation{{DetectorID: "health-objective", EvaluatedAt: now.Add(-time.Second), Status: DetectorEvaluationClear}}
+	c.maybeCloseIncident(context.Background(), now, snapshot)
+	if d.resumed != 0 || !c.responderDone || !c.responderCompletedAt.Equal(now) {
+		t.Fatal("clear but not-yet-fresh health samples caused another worker and reset verification freshness")
+	}
+	c.history = append(c.history, DetectorEvaluation{DetectorID: "health-objective", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear})
+	c.maybeCloseIncident(context.Background(), now.Add(time.Second), snapshot)
+	if c.IncidentOpen() {
+		t.Fatal("fresh clear sample did not allow verified closure")
+	}
+}
+
+func TestContinuationFeedbackNamesDriftAndSharesSchema(t *testing.T) {
+	finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Fingerprint: "flags/key", Summary: "accepted source difference", Evidence: "field data.fail differs", PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "demo", Name: "flags"}}
+	response := ToolResponse{Healthy: false, Summary: "unresolved accepted drift", Findings: []sdk.Finding{finding}}
+	encoded, err := continuationFeedback(2, response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"attempt", "healthy", "summary", "findings"} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("missing shared feedback field %s: %s", key, encoded)
+		}
+	}
+	if _, ok := payload["detector_states"]; ok {
+		t.Fatal("independent feedback used divergent schema")
+	}
+	if !strings.Contains(string(encoded), "flags/key") || !strings.Contains(string(encoded), "ConfigMap") || !strings.Contains(string(encoded), "flags") {
+		t.Fatalf("drift identity lost: %s", encoded)
+	}
+}
+
+func TestControllerContinuationDistinguishesFaultFromObservationWindow(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{}}, &verificationRetryDispatcher{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.healthDetectorIDs = []string{"health"}
+	c.responderCompletedAt = now
+	c.history = []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(-time.Second), Status: DetectorEvaluationClear}}
+	pending := c.continuationVerificationLocked(false, true, nil)
+	if len(pending.Findings) != 0 || pending.Error != "" || !strings.Contains(pending.Summary, "health") || !strings.Contains(pending.Summary, now.Format(time.RFC3339Nano)) {
+		t.Fatalf("unnamed pending observation: %+v", pending)
+	}
+	drift := sdk.Finding{DetectorID: "drift.unexplained", PrimaryResource: sdk.ObjectRef{Kind: "ConfigMap", Namespace: "demo", Name: "flags"}, Fingerprint: "flags/key"}
+	failed := c.continuationVerificationLocked(false, false, []sdk.Finding{drift})
+	if len(failed.Findings) != 1 || failed.Findings[0].PrimaryResource.Name != "flags" {
+		t.Fatalf("clear health concealed unresolved drift: %+v", failed)
+	}
+	c.history = append(c.history, DetectorEvaluation{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationError, Error: "snapshot unavailable"})
+	failed = c.continuationVerificationLocked(false, true, nil)
+	if !strings.Contains(failed.Error, "health: snapshot unavailable") {
+		t.Fatalf("unnamed detector failure: %+v", failed)
 	}
 }

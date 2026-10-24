@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+
+	"sdo.dev/operator/sdk"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -101,25 +104,7 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 			result.ResponseLoopExhausted = true
 			result.Error = "response deadline or loop budget exhausted with unresolved findings"
 		}
-		// Feedback is factual controller input; the provider chooses its next repair.
-		feedback := struct {
-			Attempt  int                  `json:"attempt"`
-			Healthy  bool                 `json:"healthy"`
-			Error    string               `json:"error,omitempty"`
-			Summary  string               `json:"summary"`
-			Findings []sdkFindingFeedback `json:"findings"`
-		}{Attempt: state.Attempts, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary}
-		for _, finding := range verification.Findings {
-			evidence := finding.Evidence
-			if len(evidence) > 1200 {
-				evidence = evidence[:1200]
-			}
-			feedback.Findings = append(feedback.Findings, sdkFindingFeedback{DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: evidence})
-			if len(feedback.Findings) >= 24 {
-				break
-			}
-		}
-		encoded, err := json.Marshal(feedback)
+		encoded, err := continuationFeedback(state.Attempts, verification)
 		if err != nil {
 			return IncidentResult{}, err
 		}
@@ -138,10 +123,12 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 }
 
 type sdkFindingFeedback struct {
-	RuleID     string `json:"rule_id"`
-	DetectorID string `json:"detector_id"`
-	Summary    string `json:"summary"`
-	Evidence   string `json:"evidence"`
+	Resource    sdk.ObjectRef `json:"primary_resource"`
+	Fingerprint string        `json:"fingerprint"`
+	RuleID      string        `json:"rule_id"`
+	DetectorID  string        `json:"detector_id"`
+	Summary     string        `json:"summary"`
+	Evidence    string        `json:"evidence"`
 }
 
 func accumulateResponderResult(previous *contracts.IncidentResult, current IncidentResult) IncidentResult {
@@ -189,8 +176,8 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 // ContinueAfterVerification lets the observation controller resume a response
 // when its later independent verification contradicts the dispatcher's check.
 // The request, workspace, provider checkpoint and original deadline stay fixed.
-func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, request IncidentRequest, states []DetectorEvaluation, now time.Time) (bool, error) {
-	if d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
+func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, request IncidentRequest, verification ToolResponse, now time.Time) (bool, error) {
+	if verification.Healthy || (len(verification.Findings) == 0 && verification.Error == "") || d.LoopFactory == nil || !now.Before(request.ResponseDeadline) {
 		return false, nil
 	}
 	loop := d.LoopFactory(request)
@@ -211,11 +198,7 @@ func (d KubernetesJobDispatcher) ContinueAfterVerification(ctx context.Context, 
 	if !state.Done {
 		return true, nil
 	} // replay of a controller transition after a crash
-	feedback, err := json.Marshal(struct {
-		Healthy        bool                 `json:"healthy"`
-		Summary        string               `json:"summary"`
-		DetectorStates []DetectorEvaluation `json:"detector_states"`
-	}{Summary: "controller independent verification remains unhealthy", DetectorStates: states})
+	feedback, err := continuationFeedback(state.Attempts, verification)
 	if err != nil {
 		return false, err
 	}
@@ -239,4 +222,92 @@ func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderCon
 		return err
 	}
 	return nil
+}
+
+// Both continuation paths publish the same factual schema, including object and
+// finding identity. A pending observation window is not an unhealthy finding.
+func continuationFeedback(attempt int, verification ToolResponse) ([]byte, error) {
+	feedback := struct {
+		Attempt  int                  `json:"attempt"`
+		Healthy  bool                 `json:"healthy"`
+		Error    string               `json:"error,omitempty"`
+		Summary  string               `json:"summary"`
+		Findings []sdkFindingFeedback `json:"findings"`
+	}{Attempt: attempt, Healthy: verification.Healthy, Error: verification.Error, Summary: verification.Summary, Findings: []sdkFindingFeedback{}}
+	for _, finding := range verification.Findings {
+		evidence := finding.Evidence
+		if len(evidence) > 1200 {
+			evidence = evidence[:1200]
+		}
+		feedback.Findings = append(feedback.Findings, sdkFindingFeedback{Resource: finding.PrimaryResource, Fingerprint: FindingFingerprint(finding), DetectorID: finding.DetectorID, RuleID: finding.RuleID, Summary: finding.Summary, Evidence: evidence})
+		if len(feedback.Findings) >= 24 {
+			break
+		}
+	}
+	return json.Marshal(feedback)
+}
+
+// Caller holds c.mu. Closure drift has already been freshly checked against
+// accepted source. Health samples must be fresh before closure, but waiting for
+// that observation must not reset responderCompletedAt or consume another Job.
+func (c *Controller) continuationVerificationLocked(healthVerified, driftClear bool, driftFindings []sdk.Finding) ToolResponse {
+	result := ToolResponse{Command: "verify", Healthy: healthVerified && driftClear, Findings: append([]sdk.Finding(nil), driftFindings...)}
+	ids := append([]string(nil), c.healthDetectorIDs...)
+	if len(ids) == 0 && c.currentIncidentRequest != nil {
+		seen := map[string]bool{}
+		for _, finding := range c.currentIncidentRequest.Findings {
+			if !seen[finding.DetectorID] {
+				ids = append(ids, finding.DetectorID)
+				seen[finding.DetectorID] = true
+			}
+		}
+	}
+	states, _ := c.latestEvaluations(ids, time.Time{}, false)
+	result.DetectorStates = states
+	firing := map[string]bool{}
+	var errors, pending []string
+	for _, id := range ids {
+		var latest *DetectorEvaluation
+		for i := range states {
+			if states[i].DetectorID == id {
+				latest = &states[i]
+				break
+			}
+		}
+		if latest == nil || (len(c.healthDetectorIDs) > 0 && latest.EvaluatedAt.Before(c.responderCompletedAt)) {
+			pending = append(pending, id)
+			continue
+		}
+		if latest.Status == DetectorEvaluationFiring {
+			firing[id] = true
+		}
+		if latest.Status == DetectorEvaluationError {
+			errors = append(errors, id+": "+latest.Error)
+		}
+	}
+	for _, state := range c.tracker.Snapshot() {
+		if state.Active && firing[state.DetectorID] {
+			result.Findings = append(result.Findings, state.Finding)
+		} else if state.Active {
+			for _, id := range ids {
+				if id == state.DetectorID {
+					pending = append(pending, id)
+					break
+				}
+			}
+		}
+	}
+	sortFindings(result.Findings)
+	result.Error = strings.Join(errors, "; ")
+	switch {
+	case result.Healthy:
+		result.Summary = "controller independently verified healthy"
+	case len(result.Findings) > 0:
+		result.Summary = "controller verification retains named unresolved findings"
+	case result.Error != "":
+		result.Summary = "controller detector verification failed: " + result.Error
+	default:
+		result.Summary = fmt.Sprintf("awaiting post-response clear evaluation or clearing confirmation for %v since %s", pending, c.responderCompletedAt.UTC().Format(time.RFC3339Nano))
+	}
+	return result
 }
