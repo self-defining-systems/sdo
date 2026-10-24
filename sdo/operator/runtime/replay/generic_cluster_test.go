@@ -68,7 +68,7 @@ func TestGenericObjectProductionExecutorReplay(t *testing.T) {
 			healthy := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*fixed}}
 			p := genericReplayProgram{ref: ref}
 			bindings := program.Bindings{Objects: program.ObjectBindings{"target": ref}, Values: map[string]any{"desired": "fixed"}}
-			result := Check(context.Background(), p, p, nil, Case{ID: "generic", Corpus: sdktest.CorpusCase{Open: open, Fixed: healthy, Healthy: healthy, Bindings: bindings, PeerBindings: bindings, RootCauseProgramIDs: []string{p.Spec().ID}}})
+			result := Check(context.Background(), p, p, nil, Case{ID: "generic", Accepted: []*unstructured.Unstructured{fixed.DeepCopy()}, Corpus: sdktest.CorpusCase{Open: open, Fixed: healthy, Healthy: healthy, Bindings: bindings, PeerBindings: bindings, RootCauseProgramIDs: []string{p.Spec().ID}}})
 			if result.Status != "replayed" {
 				t.Fatalf("production executor failed generic replay: %+v", result)
 			}
