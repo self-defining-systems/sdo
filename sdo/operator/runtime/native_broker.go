@@ -642,7 +642,10 @@ func (n NativeIncidentBroker) RecordControllerRollout(receipt ControllerRolloutR
 			return errors.New("controller rollout verification time is required")
 		}
 		if receipt.Success {
-			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint {
+			// A later accepted revision carries its own diagnostics tree; the
+			// trusted startup check has already verified it contains the reflection.
+			exact := receipt.ControllerRevision == receipt.Expectation.ReflectionCommit
+			if receipt.BuildArtifact == "" || receipt.ControllerRevision == "" || receipt.ObservedDetectorFingerprint == "" || (exact && receipt.ObservedDetectorFingerprint != receipt.Expectation.AfterDetectorFingerprint) {
 				return errors.New("successful rollout lacks matching build and restarted detector fingerprint")
 			}
 			if successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {

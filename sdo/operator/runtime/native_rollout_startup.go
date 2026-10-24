@@ -38,8 +38,17 @@ func completeNativeRolloutHandoffs(ctx context.Context, native NativeIncidentBro
 		return errors.New("controller build fingerprint differs from accepted diagnostics tree")
 	}
 	for _, handoff := range handoffs {
-		if handoff.Expectation.ReflectionCommit != launch.ControllerRevision || handoff.Expectation.AfterDetectorFingerprint != fingerprint {
+		// Later accepted commits (for example a health refresh) may follow the
+		// reflection; any accepted HEAD that contains it satisfies the rollout.
+		exact := handoff.Expectation.ReflectionCommit == launch.ControllerRevision
+		if exact && handoff.Expectation.AfterDetectorFingerprint != fingerprint {
 			return fmt.Errorf("controller revision does not satisfy rollout for incident %s", handoff.Expectation.IncidentID)
+		}
+		if !exact {
+			contains := exec.CommandContext(ctx, "git", "-C", appRoot, "merge-base", "--is-ancestor", handoff.Expectation.ReflectionCommit, launch.ControllerRevision)
+			if output, err := contains.CombinedOutput(); err != nil {
+				return fmt.Errorf("controller revision does not contain reflection for incident %s: %w: %s", handoff.Expectation.IncidentID, err, strings.TrimSpace(string(output)))
+			}
 		}
 		if err := native.RecordControllerRollout(ControllerRolloutReceipt{
 			Expectation:                 handoff.Expectation,

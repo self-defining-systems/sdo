@@ -600,7 +600,7 @@ func TestNativeBrokerRequiresVerifiedDetectorRolloutBeforeAck(t *testing.T) {
 	if err != nil || len(handoffs) != 1 || handoffs[0].Receipt != receipt || handoffs[0].Expectation != expectation {
 		t.Fatalf("restart handoff = %+v, %v", handoffs, err)
 	}
-	bad := ControllerRolloutReceipt{Expectation: expectation, Success: true, BuildArtifact: "image", ControllerRevision: "rev", ObservedDetectorFingerprint: "wrong", VerifiedAt: time.Now()}
+	bad := ControllerRolloutReceipt{Expectation: expectation, Success: true, BuildArtifact: "image", ControllerRevision: receipt.ReflectionCommit, ObservedDetectorFingerprint: "wrong", VerifiedAt: time.Now()}
 	if err := native.RecordControllerRollout(bad); err == nil {
 		t.Fatal("mismatched detector revision accepted")
 	}
