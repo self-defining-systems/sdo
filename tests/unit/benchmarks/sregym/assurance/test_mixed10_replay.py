@@ -328,7 +328,11 @@ else:
                 request = json.loads(path.read_text())
                 observed.append(request["command"])
                 response = {"source": source[request["ref"]]} if request["command"] == "source" else {"healthy": True}
-                (session / "responses" / path.name).write_text(json.dumps(response))
+                # Match Go's atomic response publication: readers may observe
+                # the file as soon as its final name exists.
+                temporary = session / "responses" / ("." + path.name)
+                temporary.write_text(json.dumps(response))
+                temporary.replace(session / "responses" / path.name)
                 path.unlink()
             time.sleep(0.005)
 
@@ -342,7 +346,7 @@ else:
     finally:
         stop.set()
         thread.join(timeout=5)
-    assert result.status == "completed"
+    assert result.status == "completed", result
     expected = 2 if slot == 3 else 9
     assert len(result.repair_actions) == expected
     assert all(action.success for action in result.repair_actions)
