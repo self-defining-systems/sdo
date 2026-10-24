@@ -260,9 +260,6 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if derived.Record == nil || derived.Record.GetIncidentId() != id {
 				return errors.New("outcome deriver returned an invalid typed record")
 			}
-			if derived.RequiresReflection && derived.Record.GetClassification() != outcomeclass.Success {
-				return errors.New("outcome reflection requires successful classification")
-			}
 			ledger.OutcomeDocument = proto.Clone(derived.Record).(*contracts.OutcomeRecord)
 			ledger.RequiresReflection = derived.RequiresReflection
 			// Every verified closure settles current evidence before committing its
@@ -270,6 +267,15 @@ func (n NativeIncidentBroker) ProcessClosure(ctx context.Context, closure Incide
 			if derived.Record.GetClassification() == "success" {
 				ledger.OutcomeDocument.ReflectionEligibility = n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
 				ledger.RequiresReflection = true
+			} else {
+				indices := partialRepairCauses(ledger.OutcomeDocument)
+				ledger.RequiresReflection = len(indices) > 0
+				if ledger.RequiresReflection {
+					eligibility := n.prepareCauseWork(ctx, ledger.OutcomeDocument, IncidentWorkspace{IncidentID: id, Worktree: closure.Request.RepositoryWorktree, BaseCommit: closure.Request.RepositoryBaseCommit})
+					ledger.OutcomeDocument.ReflectionEligibility = partialReflectionEligibility(eligibility, indices, false)
+				} else {
+					ledger.ReflectionDecision = &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: noVerifiedRepair}
+				}
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
@@ -339,6 +345,10 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
+		if effect.Outcome.GetClassification() != outcomeclass.Success {
+			effect.Outcome = partialReflectionOutcome(effect.Outcome)
+			trimPartialReflectionClosure(effect.Closure, effect.Outcome)
+		}
 		eligibility := &contracts.ReflectionEligibility{}
 		if effect.Outcome.GetReflectionEligibility() != nil {
 			proto.Merge(eligibility, effect.Outcome.GetReflectionEligibility())

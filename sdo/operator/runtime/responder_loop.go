@@ -363,11 +363,12 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 // writer's definition; everything bulky is reduced to a count.
 type truncatedToolResponse struct {
 	ToolResponse
-	Truncated           bool `json:"truncated"`
-	FindingsCount       int  `json:"findings_count"`
-	ProgramRunsCount    int  `json:"program_runs_count"`
-	DetectorStatesCount int  `json:"detector_states_count"`
-	PatchesCount        int  `json:"patches_count"`
+	VerificationSummary *VerificationSummary `json:"verification_summary,omitempty"`
+	Truncated           bool                 `json:"truncated"`
+	FindingsCount       int                  `json:"findings_count"`
+	ProgramRunsCount    int                  `json:"program_runs_count"`
+	DetectorStatesCount int                  `json:"detector_states_count"`
+	PatchesCount        int                  `json:"patches_count"`
 }
 
 // recordedToolResponseJSON caps the stored response. An apply record keeps every
@@ -383,6 +384,13 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 	record := truncatedToolResponse{
 		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved},
 		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
+	}
+	if response.Command == "verify" {
+		record.VerificationSummary = compactVerification(response)
+		candidate, _ := json.Marshal(record)
+		if len(candidate) > maxRecordedToolResponse {
+			record.VerificationSummary = nil
+		}
 	}
 	limit := maxRecordedToolResponse
 	isApply := response.Command == "apply"
