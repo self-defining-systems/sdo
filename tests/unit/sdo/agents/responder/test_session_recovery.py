@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -90,6 +91,23 @@ def test_new_controller_cannot_hide_lost_checkpoint_acknowledgment(
     replacement = SessionRecovery(session, "codex", tmp_path / "scratch", recovered.append)
     assert replacement.resume_session_id() == "provider-session"
     assert len(recovered) == 1
+
+
+def test_first_checkpoint_waits_for_provider_transcript_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "provider"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    path = home / "sessions/2030/01/01/rollout-date-provider-session.jsonl"
+
+    def flush_transcript(_seconds: float) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"synthetic":"provider asynchronously flushed its session"}\n')
+
+    monkeypatch.setattr(time, "sleep", flush_transcript)
+    seen = []
+    recovery = SessionRecovery(controller_session(), "codex", tmp_path / "scratch", seen.append)
+    recovery.checkpoint("provider-session")
+    assert seen[0].checkpoint_digest == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert recovery.resume_session_id() == "provider-session"
 
 
 def test_pending_reports_enter_same_session_prompt_and_ack_only_after_delivery(tmp_path: Path) -> None:

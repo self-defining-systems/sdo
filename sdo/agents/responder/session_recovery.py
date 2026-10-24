@@ -13,6 +13,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,7 +60,7 @@ class SessionRecovery:
             raise SessionRecoveryError("interrupted: provider checkpoint home unavailable")
         return Path(value).resolve()
 
-    def _transcript(self, session_id: str) -> Path:
+    def _transcript(self, session_id: str, *, wait_seconds: float = 0) -> Path:
         if not _TOKEN.fullmatch(session_id):
             raise SessionRecoveryError("interrupted: invalid provider session identity")
         home = self._home()
@@ -68,7 +69,14 @@ class SessionRecovery:
             if self.provider == "codex"
             else f"projects/**/{session_id}.jsonl"
         )
+        deadline = time.monotonic() + wait_seconds
         matches = list(home.glob(pattern))
+        # Codex can emit thread.started before its asynchronous rollout writer
+        # creates the file. Only a fresh checkpoint waits; recovery still fails
+        # immediately if an already accepted transcript has disappeared.
+        while not matches and time.monotonic() < deadline:
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+            matches = list(home.glob(pattern))
         if len(matches) != 1 or not matches[0].resolve().is_relative_to(home):
             raise SessionRecoveryError("interrupted: persisted provider transcript unavailable")
         return matches[0]
@@ -135,7 +143,7 @@ class SessionRecovery:
                 if checkpoint.provider_session_id != session_id:
                     raise SessionRecoveryError("interrupted: provider session changed")
             else:
-                transcript = self._transcript(session_id)
+                transcript = self._transcript(session_id, wait_seconds=min(5.0, self.remaining_seconds()))
                 with transcript.open("rb") as stream:
                     prefix = stream.read()
                     os.fsync(stream.fileno())
