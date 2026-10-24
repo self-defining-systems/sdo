@@ -69,6 +69,8 @@ class KubectlApplicationCluster:
         )
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None:
+        if value["kind"] == "PersistentVolumeClaim":
+            value = _manifest(value)
         resource = f"{value['kind'].lower()}/{value['metadata']['name']}"
         output = kubectl(
             ["get", resource, "-o", "json", "--ignore-not-found=true"],
@@ -77,6 +79,10 @@ class KubectlApplicationCluster:
         ).stdout
         if output.strip():
             current = json.loads(output)
+            if value["kind"] == "PersistentVolumeClaim" and "volumeName" in current.get("spec", {}):
+                # A recreated claim owns new data. Preserve its immutable binding,
+                # including when restoring a baseline captured before this rule.
+                value["spec"]["volumeName"] = current["spec"]["volumeName"]
             # SSA merges fields owned by other managers. In particular, restoring
             # an EnvVar literal can retain the injector's valueFrom and fail API
             # validation. Replace complete captured content, guarded against races.
@@ -147,6 +153,9 @@ def _manifest(value: dict[str, Any]) -> dict[str, Any]:
     metadata = result["metadata"]
     for key in ("uid", "resourceVersion", "generation", "creationTimestamp", "managedFields", "selfLink"):
         metadata.pop(key, None)
+    if result["kind"] == "PersistentVolumeClaim":
+        # Dynamic provisioner identity is not the application's desired spec.
+        result.get("spec", {}).pop("volumeName", None)
     return result
 
 
@@ -155,7 +164,10 @@ def _identity(value: dict[str, Any]) -> tuple[str, str]:
 
 
 def _content(value: dict[str, Any]) -> tuple[Any, Any, Any]:
-    return value.get("spec"), value.get("data"), value.get("binaryData")
+    spec = value.get("spec")
+    if value["kind"] == "PersistentVolumeClaim" and isinstance(spec, dict):
+        spec = {key: item for key, item in spec.items() if key != "volumeName"}
+    return spec, value.get("data"), value.get("binaryData")
 
 
 def capture_application_baseline(cluster: ApplicationCluster, namespace: str) -> ApplicationBaseline:
