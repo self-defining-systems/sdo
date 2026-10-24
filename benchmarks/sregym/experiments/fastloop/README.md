@@ -42,6 +42,42 @@ is insufficient because adoption restores it. Check the accepted outcomes for
 `source="periodic program sweep"` and `binding_source=hint`. This is an explicit
 benchmark setup, not a change to production drift admission.
 
+`up` mounts the current worktree by default. Bare `--dev-mount` makes that
+explicit; `--dev-mount PATH` selects another worktree. SREGym lanes can opt out
+with `--no-dev-mount`, which warns that source edits require rebuilt images.
+Toy lanes require mounts. Run the cheap host gate before building new images:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop preflight
+# Only for dependency, tool or Dockerfile changes; use a new tag:
+SDO_IMAGE_TAG=my-frozen-tag bash scripts/build_sdo_images.sh
+```
+
+`up` repeats host and requested-image checks before its first compiler or Docker
+build. Missing tools, an unavailable Docker daemon, an invalid worktree or a
+missing image fail immediately. Live launch assurance (quota, pins, parity and
+host capacity) still applies before spending model tokens.
+
+Each lane owns `<cluster>-registry` (`registry:3`), labelled `sdo.fastloop.lane`,
+with a dynamically allocated loopback port and storage retained across resets.
+It joins the kind network; containerd hosts.toml routes pulls to that container.
+Images keep their original names inside the nodes. Pushes retain layers and only
+missing layers transfer. Existing unlabelled registries are never adopted.
+Unchanged warm lanes skip delivery; resets do no image work. Registry setup,
+push or pull failures trigger automatic archive fallback and a clear stderr
+WARNING containing the error, image list and elapsed fallback seconds.
+`fastloop.json` and every incident row record `image_delivery` and
+`image_delivery_reason`; `image_delivery.jsonl` keeps delivery history. Run warns
+again while the lane remains in `kind-load-fallback` mode. A successful registry
+refresh of all affected images clears it. There is no manual flag to prefer archive loading.
+
+Only the controller image stores Go and the offline dependency/build caches.
+Worker and validator init containers use that image to populate a private
+emptyDir, mounted read-only into compiler-free runtime containers. The init
+container has no candidate or provider-credential mounts. Compilation, vet,
+replay and network isolation remain required. Scripted images omit model CLIs
+from their ancestry. Bake shares OS and dependency stages; never flatten images.
+
 Use an existing set of SDO controller, responder, and validator images for the
 first `up`. The worktree is mounted into every kind node at `/opt/sdo-dev`; the
 Pods use its Python packages and a host-built `sdo-operator` at
@@ -204,22 +240,17 @@ Prepare matching runtime images once (or use already built image tags):
 ```bash
 export GOMAXPROCS=2 GOFLAGS='-p=2'
 SDO_IMAGE_TAG=fastloop SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_images.sh
-bash scripts/prepare_toy_node.sh sdo-toy-node:fastloop \
-  sdo-controller:fastloop sdo-sregym-responder:fastloop sdo-detector-validator:fastloop
 ```
 
-Node preparation creates a temporary Docker container, imports image content,
-preserves the base node entrypoint, commits the cache image, and removes its
-container and archive. It creates no Kubernetes cluster. Reuse this node image
-until runtime image content changes; `up` verifies complete manifest digests and
-loads any missing or changed images. An unprepared node is supported but pays the
-image transfer cost during `up`. Image preparation is separate from cluster startup.
+Up uses the standard kind node image and delivers runtime images through its
+lane registry. Reuse that cluster and reset it for source edits; no custom
+preloaded node image or archive preparation is needed.
 
 ```bash
 export SDO_TIME_SCALE=0.1
 export TOY_RUN="$PWD/.fastloop/toy"
 uv run python -m benchmarks.sregym.fastloop up --app toy \
-  --run-dir "$TOY_RUN" --toy-node-image sdo-toy-node:fastloop --dev-mount "$PWD"
+  --run-dir "$TOY_RUN" --cluster-prefix my-toy- --dev-mount "$PWD"
 uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
   --reflection-session fresh --diagnosis-grading off --time-scale 0.1 \
@@ -227,7 +258,7 @@ uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo
 uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 ```
 
-The cluster is always named `sdo-toy`; creation refuses to adopt an existing
+The cluster name uses `--cluster-prefix` plus `--worker-id`; creation refuses to adopt an existing
 cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
 changes need no runtime image rebuild. Scripted responder, reflector and drift

@@ -13,8 +13,8 @@ A live LLM run costs tens of minutes and millions of tokens, while the hermetic 
 | --- | --- | --- | --- |
 | 0 | Contracts, receipts, rows, CLI | `uv run --extra test pytest -q tests/unit/benchmarks/sregym` plus the focused Go module (`(cd sdo/operator/runtime && go test ./...)`) | 30–60 s |
 | 1 | Real Go controller, broker, memory edge and builder against a fake Kubernetes API | `bash scripts/test_fastloop_hermetic.sh` | about 15 s |
-| 2a toy cluster | Three-service kind app, Calico, real controller/broker, scripted workers | `fastloop up --app toy --dev-mount` | measured cold 130 s; reset 8.7 s; warm incident 15–19 s |
-| 2b | Hotel kind cluster with scripted agents and mounted source | `fastloop up --dev-mount`, then `fastloop reset` between runs | reset about 7 s, run a few minutes |
+| 2a toy cluster | Three-service kind app, Calico, real controller/broker, scripted workers | `fastloop up --app toy --dev-mount` | registry delivery on first up; mounted source and warm reset thereafter |
+| 2b | Hotel kind cluster with scripted agents and mounted source | `fastloop up --dev-mount`, then `fastloop reset --dev-mount` between runs | reset about 7 s, run a few minutes |
 | 3 | One recorded stage re-executed offline | `fastloop replay --run-dir <results/run-id> --incident 0 --stage reflection` | seconds |
 | 4 | Live models on kind | [run-experiment](../run-experiment/SKILL.md) | tens of minutes per incident |
 
@@ -44,6 +44,7 @@ In a brief, state the change's risk classes, the tiers required before handoff, 
 ## Rules
 
 - Run every SREGym test, scripted or live, through fastloop unless the user opts out. Keep one warm `--dev-mount` lane and use `fastloop reset` between runs instead of rebuilding images or recreating clusters.
+- Run `fastloop preflight` before image builds; up repeats host and image checks before any build or cluster change.
 - Before a live run, gates 0 and 1 must pass on the exact commit the images are built from.
 - Run live work from a frozen, detached worktree through the [detached launcher](../../../docs/testing-guide.md#detached-launches); adopt the shared lane record after an agent restart.
 - Before trusting a skip or a silent no-op, make it observable. A decision point that returns without a recorded reason (fast-path skip, drift deferral, learning failure) is a bug.
