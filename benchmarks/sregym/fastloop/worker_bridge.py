@@ -17,7 +17,12 @@ def main() -> int:
     def extended_handle(self: Any, request: dict[str, Any]) -> dict[str, Any]:
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
-            return self._grade(problem)
+            verdict = self._grade(problem)
+            if request.get("verify_traffic"):
+                from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
+
+                return verify_baseline_traffic(problem, verdict)
+            return verdict
         return handle(self, request)
 
     if "FASTLOOP_KIND_CONFIG" in os.environ:

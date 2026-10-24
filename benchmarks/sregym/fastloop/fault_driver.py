@@ -70,6 +70,7 @@ class SregymFaultDriver:
         worker: WorkerRequester,
         *,
         namespace: str,
+        baseline_problem_id: str | None = None,
         baseline: ApplicationBaseline | tuple[ApplicationBaseline, ...] | None = None,
         cluster: ApplicationCluster | None = None,
         health_timeout_seconds: float = 300.0,
@@ -78,6 +79,10 @@ class SregymFaultDriver:
         sleep: Callable[[float], None] = time.sleep,
         before_inject: Callable[[str], None] | None = None,
     ) -> None:
+        if baseline_problem_id is not None and (not isinstance(baseline_problem_id, str) or not baseline_problem_id):
+            raise ValueError("baseline_problem_id must be a nonempty string")
+        self._baseline_problem_id = baseline_problem_id
+        self._seed_recovery_verified = False
         if health_timeout_seconds <= 0:
             raise ValueError("health_timeout_seconds must be positive")
         if health_poll_seconds <= 0:
@@ -135,6 +140,20 @@ class SregymFaultDriver:
         args: dict[str, Any] = {} if fault is None else {"fault": fault}
         return OracleVerdict.model_validate(self._worker.request("oracle", timeout=WORKER_OP_TIMEOUT_SECONDS, **args))
 
+    def recovery_oracle(self) -> OracleVerdict | None:
+        """Verify seed recovery independently from the injected fault's mitigation."""
+        if self._baseline_problem_id is None:
+            return None
+        if not self._seed_recovery_verified:
+            raise FastloopFaultError("independent baseline check requires verified seed recovery")
+        reply = self._worker.request(
+            "baseline_oracle",
+            problem_id=self._baseline_problem_id,
+            verify_traffic=True,
+            timeout=WORKER_OP_TIMEOUT_SECONDS,
+        )
+        return OracleVerdict(kind=reply["kind"], success=reply["success"], details=reply.get("details", {}))
+
     def recover_fault(self, index: int) -> float:
         """Revert one fault of a composition; the others stay, so the application may stay unhealthy."""
 
@@ -150,6 +169,7 @@ class SregymFaultDriver:
         """Recover faults, restore the application baseline, then wait for health and rollouts."""
 
         started = self._monotonic()
+        self._seed_recovery_verified = False
         self.last_cleanup = RecoveryCleanup()
         self._worker.request("recover", timeout=WORKER_OP_TIMEOUT_SECONDS)
         if self._baselines is not None and self._cluster is not None:
@@ -170,6 +190,7 @@ class SregymFaultDriver:
             if health.get("healthy"):
                 unready_rollouts = self._unready_rollouts()
                 if not unready_rollouts:
+                    self._seed_recovery_verified = self._baselines is not None and self._cluster is not None
                     return self._monotonic() - started
             if self._monotonic() >= deadline:
                 raise FastloopFaultError(

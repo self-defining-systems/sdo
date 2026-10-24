@@ -364,7 +364,12 @@ def _run_one(
         try:
             recovery_seconds = driver.recover()
             recovery_finished_at = now()
-            recovery_oracle = grade()
+            # A seed reset can intentionally remove fault-created workloads.
+            # Its independent oracle must describe the recovered baseline,
+            # not require a repaired injected workload to remain present.
+            recovery_oracle = getattr(driver, "recovery_oracle", lambda: None)()
+            if recovery_oracle is None:
+                recovery_oracle = grade()
             if not recovery_oracle.success:
                 raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
         except Exception as exc:
