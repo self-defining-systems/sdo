@@ -240,7 +240,7 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 		t.Fatal(err)
 	}
 	item := stored.Record.GetReflectionEligibility().GetCauses()[0].GetItems()[0]
-	if item.GetDisposition() != "false_match" || item.GetProgramRevision() != revision || checks != 1 || calls != 2 {
+	if item.GetDisposition() != "false_match" || item.GetProgramRevision() != revision || checks != 1 || calls != broker.MaxValidationRetries {
 		t.Fatalf("classification bypassed: %v checks=%d calls=%d", item, checks, calls)
 	}
 	ledger, err := native.readLedger(o.IncidentId)

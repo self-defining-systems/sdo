@@ -536,7 +536,7 @@ func TestT1EvidenceGapDeclineRequiresControllerFlag(t *testing.T) {
 	c := t1Classes()[5] // no installed program, complete protected observations
 	c.decline = true
 	run := t1RunBroker(t, c, false)
-	if run.ledger.GetReflectionEvidenceGapCount() != 0 || !run.ledger.ReflectionRejected || run.calls != 3 {
+	if run.ledger.GetReflectionEvidenceGapCount() != 0 || !run.ledger.ReflectionRejected || run.calls != 1+broker.MaxValidationRetries {
 		t.Fatalf("unflagged decline accepted: calls=%d ledger=%v", run.calls, run.ledger)
 	}
 	for _, rejection := range run.ledger.ReflectionRejections {
