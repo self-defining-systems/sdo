@@ -375,7 +375,9 @@ def _run_one(
     learning_complete = True
     if outcome is not None and outcome.terminal_error:
         learning_complete = False
-    elif outcome is not None and recovered:
+    elif outcome is not None:
+        # Benchmark cleanup cannot invalidate SDO's own outcome or suppress its
+        # reflection. The separate recovery gate still blocks the next injection.
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:

@@ -120,6 +120,72 @@ def test_modified_deployment_is_restored_and_named() -> None:
     assert cleanup.restored == ["Deployment/mongodb-geo"]
 
 
+@pytest.mark.parametrize("legacy_binding", [False, True])
+def test_restore_bound_claim_preserves_new_volume_and_restores_requested_storage(
+    monkeypatch: Any, tmp_path: Path, legacy_binding: bool
+) -> None:
+    cluster = FakeCluster()
+    original = obj(
+        "PersistentVolumeClaim",
+        "geo-pvc",
+        spec={
+            "accessModes": ["ReadWriteOnce"],
+            "storageClassName": "synthetic-storage",
+            "volumeName": "old-volume",
+            "resources": {"requests": {"storage": "2Gi"}},
+        },
+        status={"phase": "Bound"},
+    )
+    cluster.add(original)
+    baseline = capture_application_baseline(cluster, "hotel")
+    if legacy_binding:
+        # Existing saved baselines also need to work without recapturing the app.
+        baseline.objects[0]["spec"]["volumeName"] = "old-volume"
+    else:
+        assert "volumeName" not in baseline.objects[0]["spec"]
+    live = deepcopy(original)
+    live["metadata"]["resourceVersion"] = "17"
+    live["spec"]["volumeName"] = "new-volume"
+    live["spec"]["resources"]["requests"]["storage"] = "1Gi"
+    volume_data = {"new-volume": "existing application data"}
+    calls: list[str] = []
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        calls.append(args[0])
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(live))
+        assert args[:3] == ["patch", "persistentvolumeclaim/geo-pvc", "--type=json"]
+        for operation in json.loads(Path(args[4]).read_text(encoding="utf-8")):
+            if operation["path"] == "/spec":
+                assert operation["value"]["volumeName"] == "new-volume", "PVC binding is immutable"
+                live["spec"] = operation["value"]
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    cluster.objects[("hotel", "PersistentVolumeClaim", "geo-pvc")] = live
+    monkeypatch.setattr(cluster, "apply", KubectlApplicationCluster(tmp_path / "kubeconfig").apply)
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert calls == ["get", "patch"]
+    assert cleanup.restored == ["PersistentVolumeClaim/geo-pvc"]
+    assert cluster.touched == []  # No deletion or recreation of a data claim.
+    assert live["spec"] == {**original["spec"], "volumeName": "new-volume"}
+    assert volume_data[live["spec"]["volumeName"]] == "existing application data"
+
+
+def test_recreated_claim_binding_alone_does_not_require_restoration() -> None:
+    cluster = FakeCluster()
+    cluster.add(obj("PersistentVolumeClaim", "geo-pvc", spec={"volumeName": "old-volume"}))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.objects[("hotel", "PersistentVolumeClaim", "geo-pvc")]["spec"]["volumeName"] = "new-volume"
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cleanup.restored == []
+    assert cluster.touched == []
+
+
 def test_deleted_application_daemonset_is_restored() -> None:
     cluster = FakeCluster()
     original = obj("DaemonSet", "collector", spec={"selector": {"matchLabels": {"app": "collector"}}})
