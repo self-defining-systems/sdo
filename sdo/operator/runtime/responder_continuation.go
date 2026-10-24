@@ -288,6 +288,13 @@ func (c *Controller) continuationVerificationLocked(healthVerified, driftClear b
 	for _, state := range c.tracker.Snapshot() {
 		if state.Active && firing[state.DetectorID] {
 			result.Findings = append(result.Findings, state.Finding)
+		} else if state.Active {
+			for _, id := range ids {
+				if id == state.DetectorID {
+					pending = append(pending, id)
+					break
+				}
+			}
 		}
 	}
 	sortFindings(result.Findings)
