@@ -333,6 +333,10 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
 	}
+	stored, err = memory.AfterAdoption(ctx, request.RepositoryWorktree, stored)
+	if err != nil {
+		return nil, fmt.Errorf("read adoption learning boundary: %w", err)
+	}
 	records := make([]*contracts.OutcomeRecord, 0, len(stored))
 	for _, outcome := range stored {
 		if outcome.Record != nil {

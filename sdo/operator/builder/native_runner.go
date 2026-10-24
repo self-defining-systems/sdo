@@ -83,6 +83,10 @@ func runOnce(ctx context.Context, config RunConfig) error {
 	}
 	buildConfig := config.Build
 	buildConfig.DiagnosticsRoot = projected.Directory
+	buildConfig.CompileOnly, err = memory.AdoptedBuild(ctx, config.Build.ApplicationRoot, projected.AcceptedRevision)
+	if err != nil {
+		return err
+	}
 	workspace, err := BuildWorkspace(ctx, buildConfig)
 	if err != nil {
 		return err

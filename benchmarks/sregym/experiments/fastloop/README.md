@@ -312,3 +312,9 @@ adapter also prepares this stack before installing a seeded controller. OpenEBS
 is vendored at the revision recorded in the module; all telemetry runs inside
 the lane's existing Docker CPU caps. Count the total cap across every kind node
 under the host lease, including these infrastructure pods.
+
+For a development source tree that needs additional cached Go module metadata,
+set `SDO_DEV_MODULE_DOWNLOADS=1` and stage the matching download-cache files under
+`/opt/sdo-dev/.fastloop/go-mod-download` on each node. The development Pod mounts
+this directory read-only at `/go/pkg/mod/cache/download` and propagates the opt-in
+to nested workers. Default mounts and offline network policy remain unchanged.

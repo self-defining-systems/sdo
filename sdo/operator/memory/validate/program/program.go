@@ -21,6 +21,7 @@ import (
 type Spec struct {
 	ID, Diagnoser, Mitigator string
 	Cases, NegativeCases     []string
+	OperatorCases            []string
 }
 
 var programID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -29,15 +30,25 @@ var shellFence = regexp.MustCompile(`(?i)^(?:` + "```" + `|~~~)[ \t]*(bash|sh|zs
 
 // Inspect validates a compiler workspace containing detectors and program memory.
 func Inspect(workspace, module string) ([]Spec, error) {
-	return inspect(workspace, module, filepath.Join(workspace, "detectors"))
+	return inspect(workspace, module, filepath.Join(workspace, "detectors"), false)
 }
 
 // InspectMemory validates an application memory root before it is projected into a compiler workspace.
 func InspectMemory(memoryRoot, module string) ([]Spec, error) {
-	return inspect(memoryRoot, module, filepath.Join(memoryRoot, "diagnostics", "detectors"))
+	return inspect(memoryRoot, module, filepath.Join(memoryRoot, "diagnostics", "detectors"), false)
 }
 
-func inspect(workspace, module, detectors string) ([]Spec, error) {
+// InspectForAdoption discovers constructors without accepting corpus or replay evidence.
+// It is only used by explicit initial adoption and identical accepted-memory builds.
+func InspectMemoryForAdoption(root, module string) ([]Spec, error) {
+	return inspect(root, module, filepath.Join(root, "diagnostics", "detectors"), true)
+}
+
+func InspectForAdoption(workspace, module string) ([]Spec, error) {
+	return inspect(workspace, module, filepath.Join(workspace, "detectors"), true)
+}
+
+func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error) {
 	for _, part := range []string{detectors, filepath.Join(workspace, "playbooks"), filepath.Join(workspace, "lib")} {
 		if err := checkProgramImports(part, module); err != nil {
 			return nil, err
@@ -147,6 +158,10 @@ func inspect(workspace, module, detectors string) ([]Spec, error) {
 		if len(mitigate) == 1 {
 			item.Mitigator = mitigate[0]
 		}
+		if adoption {
+			programs = append(programs, item)
+			continue
+		}
 		Cases, err := corpusCasesFor(filepath.Join(workspace, "corpus"), ID)
 		if err != nil {
 			return nil, err
@@ -155,6 +170,15 @@ func inspect(workspace, module, detectors string) ([]Spec, error) {
 			return nil, fmt.Errorf("playbook %s needs a labeled corpus case", ID)
 		}
 		item.Cases = Cases
+		for _, caseID := range Cases {
+			marked, err := OperatorCorpus(filepath.Join(workspace, "corpus", caseID))
+			if err != nil {
+				return nil, err
+			}
+			if marked {
+				item.OperatorCases = append(item.OperatorCases, caseID)
+			}
+		}
 		item.NegativeCases, err = noMatchCasesFor(filepath.Join(workspace, "corpus"), ID)
 		if err != nil {
 			return nil, err
@@ -162,8 +186,10 @@ func inspect(workspace, module, detectors string) ([]Spec, error) {
 		programs = append(programs, item)
 	}
 	sort.Slice(programs, func(i, j int) bool { return programs[i].ID < programs[j].ID })
-	if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs); err != nil {
-		return nil, err
+	if !adoption {
+		if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs); err != nil {
+			return nil, err
+		}
 	}
 	return programs, nil
 }
@@ -188,7 +214,15 @@ func checkCorpusLabels(root string, programs []Spec) error {
 		if err != nil {
 			return err
 		}
+		marked, err := OperatorCorpus(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return err
+		}
 		allowed := map[string]bool{"open.json": true, "fixed.json": true, "healthy.json": true, "recordings.json": true, "labels.json": true}
+		if marked {
+			allowed["operator.json"] = true
+			allowed["accepted.json"] = true
+		}
 		for _, file := range files {
 			if file.IsDir() || !allowed[file.Name()] {
 				return fmt.Errorf("unexpected corpus file %s; only snapshots, recordings, and labels are allowed", filepath.Join(entry.Name(), file.Name()))
@@ -359,7 +393,14 @@ func noMatchCasesFor(root, programID string) ([]string, error) {
 // ReplayTests generates mandatory corpus, rename-invariance and mitigation generalization tests.
 func ReplayTests(programs []Spec) string {
 	var test strings.Builder
-	test.WriteString("package generated\n\nimport (\n\t\"encoding/json\"\n\t\"os\"\n\t\"testing\"\n\t\"path/filepath\"\n\t\"sdo.dev/operator/sdk/program\"\n\t\"sdo.dev/operator/sdk/sdktest\"\n)\n\nfunc TestProgramCorpus(t *testing.T) {\n var notes []sdktest.MitigationReplayResult\n defer func(){ data,err:=json.Marshal(notes);if err!=nil {t.Fatal(err)};if err:=os.WriteFile(\"mitigation-replay.json\",data,0600);err!=nil {t.Fatal(err)} }()\n\tregistry, err := Programs()\n\tif err != nil { t.Fatal(err) }\n")
+	test.WriteString("package generated\n\nimport (\n\t\"encoding/json\"\n\t\"os\"\n\t\"testing\"\n\t\"sdo.dev/operator/sdk/sdktest\"\n")
+	for _, item := range programs {
+		if len(item.Cases)+len(item.NegativeCases) > 0 {
+			test.WriteString("\t\"path/filepath\"\n\t\"sdo.dev/operator/sdk/program\"\n")
+			break
+		}
+	}
+	test.WriteString(")\n\nfunc TestProgramCorpus(t *testing.T) {\n var notes []sdktest.MitigationReplayResult\n defer func(){ data,err:=json.Marshal(notes);if err!=nil {t.Fatal(err)};if err:=os.WriteFile(\"mitigation-replay.json\",data,0600);err!=nil {t.Fatal(err)} }()\n\tregistry, err := Programs()\n\tif err != nil { t.Fatal(err) }\n")
 	for _, item := range programs {
 		fmt.Fprintf(&test, "\t{\n\t\tp, ok := registry.Diagnoser(%q)\n\t\tif !ok { t.Fatal(%q) }\n\t\tif p.Spec().ID != %q { t.Fatalf(\"program ID mismatch: %%s\", p.Spec().ID) }\n", item.ID, "missing diagnoser "+item.ID, item.ID)
 		for _, caseID := range item.Cases {

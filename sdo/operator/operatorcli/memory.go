@@ -24,6 +24,18 @@ import (
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
 commands:
+  adopt-existing --root DIR [--operator-root DIR]
+        Explicitly compile and adopt supplied memory as an unvalidated base.
+        Records SDO-Origin: adopted-existing; later edits require the broker.
+  import prepare --root DIR --worktree-root DIR --id ID
+        Create a broker proposal for operator-authored memory. Edit only the
+        returned checkout. Each positive corpus case needs operator.json and
+        accepted.json; no captured provenance or live trust is implied.
+  import publish --root DIR --worktree-root DIR --id ID --namespace NS
+        --validator-image IMAGE --repository-pvc PVC --repository-mount-path DIR
+        [--repository-pvc-subpath PATH] [--kubeconfig FILE] [--context NAME]
+        [--operator-root DIR] [--application-namespace NS] [--healthy-baseline]
+        Publish through the broker and its isolated Kubernetes validator.
   check [--root .] [--json] [--decision FILE]
         Run structural, semantic, ownership, build, vet, and detector tests.
         SDO_ACTOR, SDO_PHASE, and SDO_BASE_COMMIT are required. Operator sources
@@ -70,6 +82,10 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 	var code int
 	var err error
 	switch args[0] {
+	case "adopt-existing":
+		err = memoryAdoptExisting(ctx, args[1:], getenv, stdout)
+	case "import":
+		err = memoryImport(ctx, args[1:], getenv, stdout)
 	case "check":
 		code, err = memoryCheck(ctx, args[1:], getenv, stdout)
 	case "ls":
@@ -87,6 +103,13 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 	if errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(stdout, MemoryUsage)
 		return exitClean
+	}
+	var failure *validate.Failure
+	if errors.As(err, &failure) {
+		for _, diagnostic := range failure.Diagnostics {
+			fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+		}
+		return exitDiagnostics
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "sdo-operator memory:", err)

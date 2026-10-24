@@ -49,7 +49,7 @@ func (s *run) semantic(ctx context.Context) error {
 			if err := s.corpusRules(base); err != nil {
 				return err
 			}
-			if err := validateNewProgramCorpus(s.req.Root, base); err != nil {
+			if err := validateNewProgramCorpus(s.req.Root, base, s.req.Actor == Human && s.req.Phase == ImportPhase, s.changed); err != nil {
 				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: layout.CorpusDir, Message: err.Error()})
 			}
 		} else if err := s.corpusRules(""); err != nil {

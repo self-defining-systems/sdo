@@ -40,6 +40,7 @@ const (
 	ReflectionPhase Phase = "reflection"
 	InitialPhase    Phase = "initial"
 	OutcomePhase    Phase = "outcome"
+	ImportPhase     Phase = "import"
 )
 
 // Layer selects a group of rules.

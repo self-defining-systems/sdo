@@ -23,3 +23,11 @@ reads remain detector errors/Unknown even when agent code ignores accessor error
 Frozen snapshot telemetry is reusable. Only actual Open/Healthy observations are
 used for those phases. Post-plan observations are still unavailable unless the
 checker can independently derive them; Fixed recordings never prove a repair.
+
+## Operator imports
+
+`human` / `import` accepted broker commits carry `SDO-Origin: operator`. This is operator authorship, not responder learning or a captured incident. Each hand-written positive case has an `operator.json` object (`schema_version: 1`, `origin: "operator"`, nonempty `description`) beside the normal five corpus files, plus an explicit `accepted.json` source inventory. Captured provenance must be absent; accepted cases remain immutable. Programs run the production `runtime/replay.Check` during the independent validator build, alongside unchanged generalization, compilation, vet, tests and secret rules. The import grants no accepted outcome, origin learning credit, or live trust. `memory import prepare` returns a base-bound broker checkout; `memory import publish` uses the ordinary isolated Kubernetes validator. Do not present an offline replay success as a live mitigation.
+
+## Adopted existing memory
+
+Explicit `memory adopt-existing` / `install-existing --adopt-existing-memory` commits carry `SDO-Origin: adopted-existing` and `SDO-Validation: skipped`. Report these as an unvalidated accepted base, never as a successful import/replay. Only controller/program compilation is required initially. The exact unchanged inherited memory can be rebuilt without corpus acceptance; edits lose this exemption and follow normal broker validation. Inherited outcomes remain historical documents but supply no learning credit after adoption. Live executor refusals remain refusals. Healthy detector findings and excluded gallery detectors must be reported explicitly.

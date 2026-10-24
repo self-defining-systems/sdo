@@ -41,6 +41,7 @@ const (
 	ReflectionPhase = validate.ReflectionPhase
 	InitialPhase    = validate.InitialPhase
 	OutcomePhase    = validate.OutcomePhase
+	ImportPhase     = validate.ImportPhase
 )
 
 // Validator validates a complete candidate tree, including manifests and
@@ -151,7 +152,7 @@ func (b *Broker) CreateProposalForPhase(ctx context.Context, incidentID string, 
 	if strings.TrimSpace(incidentID) == "" {
 		return Proposal{}, errors.New("incident ID is required")
 	}
-	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase {
+	if phase != ProposalPhase && phase != ReflectionPhase && phase != InitialPhase && phase != ImportPhase {
 		return Proposal{}, fmt.Errorf("invalid proposal phase %q", phase)
 	}
 	var proposal Proposal
@@ -507,6 +508,9 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 		return Receipt{}, err
 	}
 	message := fmt.Sprintf("sdo(%s): validated %s\n\nSDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, phase, incidentID, actor, phase)
+	if phase == ImportPhase {
+		message += "\nSDO-Origin: operator"
+	}
 	if _, err := runGitEnv(ctx, stage, brokerGitEnv(), "commit", "--quiet", "--allow-empty", "-m", message); err != nil {
 		return Receipt{}, err
 	}

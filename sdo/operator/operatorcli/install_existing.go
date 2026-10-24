@@ -11,17 +11,21 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/builder"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/memory"
 )
 
 // InstallExistingConfig installs an already accepted source tree without
 // rerunning deployment agents or replacing the accepted Git history.
 type InstallExistingConfig struct {
-	Repository     string
-	Kubeconfig     string
-	SeedBrokerRoot string
-	Duration       time.Duration
-	Install        install.Config
+	Repository          string
+	AdoptExistingMemory bool
+	OperatorRoot        string
+	Kubeconfig          string
+	SeedBrokerRoot      string
+	Duration            time.Duration
+	Install             install.Config
 }
 
 type InstallExistingResult struct {
@@ -38,6 +42,8 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	flags := flag.NewFlagSet("sdo-operator install-existing", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	adopt := flags.Bool("adopt-existing-memory", false, "explicitly adopt supplied memory unvalidated as the accepted base")
+	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "operator sources used to compile adopted memory")
 	repository := flags.String("repository", "", "clean accepted Git repository")
 	namespace := flags.String("namespace", "", "application namespace")
 	controlNamespace := flags.String("control-namespace", "", "operator namespace")
@@ -165,11 +171,11 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")
 	}
-	return InstallExistingConfig{Repository: *repository, Kubeconfig: *kubeconfig, SeedBrokerRoot: *seedBrokerRoot, Duration: *duration, Install: config}, nil
+	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, SeedBrokerRoot: *seedBrokerRoot, Duration: *duration, Install: config}, nil
 }
 
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
-	commit, err := acceptedHead(ctx, launch.Repository)
+	commit, err := prepareInstallExistingRepository(ctx, launch)
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
@@ -178,6 +184,9 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		return InstallExistingResult{}, err
 	}
 	config := launch.Install
+	if launch.AdoptExistingMemory {
+		config.ProgramFastPath = false
+	}
 	config.AcceptedCommit = commit
 	installer := install.Installer{
 		Client:         client,
@@ -189,4 +198,48 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		return InstallExistingResult{}, err
 	}
 	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, ControllerLogs: result.ControllerLogs}, nil
+}
+
+// prepareInstallExistingRepository keeps the opt-in adoption edge separate from
+// normal accepted installs and every subsequent broker mutation.
+func prepareInstallExistingRepository(ctx context.Context, launch InstallExistingConfig) (string, error) {
+	if !launch.AdoptExistingMemory {
+		return acceptedHead(ctx, launch.Repository)
+	}
+	diagnostics, err := memory.CandidateDiagnostics(launch.Repository)
+	if err != nil {
+		return "", err
+	}
+	w, err := builder.BuildWorkspace(ctx, builder.Config{ApplicationRoot: launch.Repository, DiagnosticsRoot: diagnostics, OperatorRoot: launch.OperatorRoot, CompileOnly: true})
+	if err != nil {
+		return "", err
+	}
+	defer w.Close()
+	if _, err = w.ValidateAndBuild(ctx); err != nil {
+		return "", err
+	}
+	return memory.MarkAdoptedExisting(ctx, launch.Repository)
+}
+
+func memoryAdoptExisting(ctx context.Context, args []string, getenv func(string) string, out io.Writer) error {
+	flags := flag.NewFlagSet("memory adopt-existing", flag.ContinueOnError)
+	root := flags.String("root", ".", "seed repository with existing memory")
+	operator := flags.String("operator-root", operatorRootDefault(getenv), "operator sources")
+	positional, err := parseFlags(flags, args)
+	if err != nil {
+		return err
+	}
+	if len(positional) != 0 {
+		return errors.New("adopt-existing takes no positional arguments")
+	}
+	absolute, err := absRoot(*root)
+	if err != nil {
+		return err
+	}
+	commit, err := prepareInstallExistingRepository(ctx, InstallExistingConfig{Repository: absolute, OperatorRoot: *operator, AdoptExistingMemory: true})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "{\"adopted\":true,\"accepted_commit\":%q,\"origin\":\"adopted-existing\",\"validated\":false}\n", commit)
+	return err
 }

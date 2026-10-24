@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"strings"
@@ -28,7 +29,15 @@ func (s *run) programRules(ctx context.Context) error {
 			break
 		}
 	}
-	if _, err := programvalidation.InspectMemory(filepath.Join(s.req.Root, layout.Dir), module); err != nil {
+	inspect := programvalidation.InspectMemory
+	adopted, err := memory.AdoptedBuild(ctx, s.req.Root, "HEAD")
+	if err != nil {
+		return err
+	}
+	if adopted {
+		inspect = programvalidation.InspectMemoryForAdoption
+	}
+	if _, err := inspect(filepath.Join(s.req.Root, layout.Dir), module); err != nil {
 		s.add(Semantic, Diagnostic{Rule: "program.invalid", Path: layout.PlaybooksDir, Message: err.Error()})
 	}
 
