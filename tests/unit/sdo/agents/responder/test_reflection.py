@@ -196,6 +196,47 @@ def test_reflection_prompt_requires_direct_edits_and_check_until_green(tmp_path:
     assert json.dumps({"incident_id": "inc-1"}) not in prompt
 
 
+@pytest.mark.parametrize("session_mode", ["fresh", "resume"])
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("classification", ["success", "failed"])
+def test_reflection_requires_executable_learning_for_verified_parts(
+    tmp_path: Path, session_mode: str, retry: bool, classification: str
+) -> None:
+    backend = _CapturingBackend()
+    outcome = _outcome()
+    outcome.classification = classification
+    outcome.repair_actions.add(
+        action_id="restore-port",
+        kind="kubectl-patch",
+        target="Service/api",
+        summary="Restore the observed listener port",
+        details='$ kubectl patch service api -p \'{"spec":{"ports":[{"port":80,"targetPort":8080}]}}\'\nexit 0',
+        success=True,
+    )
+    SessionReflector(backend).resume(
+        session_id="session-1",
+        incident_id=outcome.incident_id,
+        worktree=tmp_path,
+        outcome=outcome,
+        history=[],
+        outcome_commit="outcome-sha",
+        session_mode=session_mode,  # type: ignore[arg-type]
+        closure=_fresh_closure(tmp_path),
+        validation_attempt=2 if retry else 1,
+        diagnostics=[MemoryDiagnostic(rule="program.replay", message="Correct the fixed case")] if retry else [],
+    )
+    prompt = str(backend.calls[0]["prompt"])
+    assert "Learn executable diagnosis and mitigation for each independently verified repair" in prompt
+    assert "Use recorded actions as repair evidence" in prompt
+    assert "A README note alone does not capture an executable repair" in prompt
+    assert "Learn verified parts even when the whole incident remains unhealthy" in prompt
+    assert "only typed SDK gaps scoped to the affected cause" in prompt
+    assert "detector coverage; detectors may surface several playbooks" in prompt
+    current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+    assert current["classification"] == classification
+    assert current["repair_actions"][0]["details"] == outcome.repair_actions[0].details
+
+
 def test_reflection_retry_prompt_carries_typed_broker_diagnostics(tmp_path: Path) -> None:
     backend = _CapturingBackend()
     SessionReflector(backend).resume(

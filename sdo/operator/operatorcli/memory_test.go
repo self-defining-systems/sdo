@@ -72,6 +72,14 @@ func runMemory(t *testing.T, env map[string]string, args ...string) (int, string
 
 func prepareCleanReflection(t *testing.T, root string) {
 	t.Helper()
+	outcomePath := filepath.Join(root, layout.OutcomePath("incident"))
+	if err := os.MkdirAll(filepath.Dir(outcomePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outcomePath, []byte(`{"schema_version":1,"incident_id":"incident","classification":"failed"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, root, "add", ".")
 	gitRun(t, root, "commit", "--allow-empty", "-qm", "outcome\n\nSDO-Incident: incident\nSDO-Phase: outcome")
 	if err := validate.WritePublicationContext(context.Background(), root, validate.PublicationContext{BaseCommit: "HEAD", IncidentID: "incident"}); err != nil {
 		t.Fatal(err)

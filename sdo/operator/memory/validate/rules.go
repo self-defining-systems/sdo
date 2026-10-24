@@ -3,14 +3,16 @@ package validate
 // Rule IDs are stable: agents, the CLI, and tests match on them.
 const (
 	// Publication content and lifecycle context.
-	RuleEmptyDiff          = "diff.empty"
-	RuleBootstrapClosed    = "lifecycle.bootstrap-closed"
-	RuleAcceptedOutcome    = "lifecycle.accepted-outcome"
-	RuleVerifiedSource     = "lifecycle.verified-source"
-	RuleReflectionDecision = "reflection.decision"
-	RuleWhitespace         = "diff.whitespace"
-	RuleSnapshotBudget     = "memory.snapshot-budget"
-	RuleSnapshotProjection = "memory.snapshot"
+	RuleEmptyDiff                  = "diff.empty"
+	RuleBootstrapClosed            = "lifecycle.bootstrap-closed"
+	RuleAcceptedOutcome            = "lifecycle.accepted-outcome"
+	RuleVerifiedSource             = "lifecycle.verified-source"
+	RuleReflectionDecision         = "reflection.decision"
+	RuleReflectionProgramRequired  = "reflection.program-required"
+	RuleReflectionDetectorRequired = "reflection.detector-required"
+	RuleWhitespace                 = "diff.whitespace"
+	RuleSnapshotBudget             = "memory.snapshot-budget"
+	RuleSnapshotProjection         = "memory.snapshot"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"
@@ -53,10 +55,7 @@ const (
 	RuleArchitectureCommit   = "architecture.generated-at-commit"
 	RuleArchitectureBaseline = "architecture.source-commit"
 
-	RuleCorpusImmutable    = "program.corpus-immutable"
-	RuleCorpusProvenance   = "program.corpus-provenance"
-	RuleCaptureUnavailable = "program.capture-unavailable"
-	RuleCaptureProvenance  = "program.capture-provenance"
+	RuleCorpusImmutable = "program.corpus-immutable"
 
 	// Ownership.
 	RuleOwnershipDenied       = "ownership.denied"

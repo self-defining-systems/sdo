@@ -61,6 +61,7 @@ func testHermeticRepeatBroker(t *testing.T, rejectFirst bool) {
 		t.Fatal(err)
 	}
 	testutil.CopyPortProgram(t, target, fixture)
+	fastloopWriteDetector(t, target, "accepted-program")
 	copyFastloopTree(t, filepath.Join(fixture, "corpus"), filepath.Join(target, ".sdo/corpus"))
 	index := filepath.Join(target, ".sdo/playbooks/README.md")
 	prior, _ := os.ReadFile(index)

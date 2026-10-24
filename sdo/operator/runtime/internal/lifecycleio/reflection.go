@@ -68,8 +68,12 @@ func (d ReflectionDriver) Execute(ctx context.Context, effect lifecyclecore.Refl
 		event.Kind = lifecyclecore.ReflectionCompleted
 	case lifecyclecore.ReviewReflection:
 		diagnostics := validate.ReflectionDiagnostics(effect.Decision, effect.Paths)
-		for _, diagnostic := range lifecyclecore.EvidenceGapDiagnostics(effect.Decision, effect.EvidenceGapCount) {
-			diagnostics = append(diagnostics, validate.Diagnostic{Rule: diagnostic.GetRule(), Message: diagnostic.GetMessage()})
+		if effect.Outcome != nil && effect.Workspace != nil {
+			learning, learningErr := validate.ReflectionLearningDiagnostics(effect.Workspace.CheckoutPath, effect.Outcome, effect.Decision)
+			if learningErr != nil {
+				return event, learningErr
+			}
+			diagnostics = append(diagnostics, learning...)
 		}
 		err = validate.Err(diagnostics)
 		event.Kind = lifecyclecore.ReflectionReviewed

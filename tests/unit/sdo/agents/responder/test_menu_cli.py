@@ -95,7 +95,10 @@ def test_report_then_act_uses_existing_session_and_capture(monkeypatch, tmp_path
                 "attempt_id": "attempt-1",
             },
         },
-        {"command": "pre-apply"},
+        {
+            "command": "pre-apply",
+            "refs": [{"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "frontend"}],
+        },
     ]
 
 

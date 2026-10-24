@@ -158,6 +158,21 @@ func lifecycleChecks(ctx context.Context, r Request, paths []string) ([]Diagnost
 		}
 		if r.Actor == Responder {
 			ds = append(ds, ReflectionDiagnostics(r.Decision, paths)...)
+			if incident != "" && accepted {
+				raw, readErr := gitText(ctx, r.Root, "show", r.Base+":"+layout.OutcomePath(incident))
+				if readErr != nil {
+					return append(ds, Diagnostic{Rule: RuleAcceptedOutcome, Message: "reflection requires the committed controller outcome document"}), nil
+				}
+				outcome := new(contracts.OutcomeRecord)
+				if err := protojson.Unmarshal([]byte(raw), outcome); err != nil {
+					return nil, err
+				}
+				learning, err := ReflectionLearningDiagnostics(r.Root, outcome, r.Decision)
+				if err != nil {
+					return nil, err
+				}
+				ds = append(ds, learning...)
+			}
 		}
 	}
 	if r.Phase == InitialPhase && r.Actor == Deployer {
@@ -188,11 +203,8 @@ func ReflectionDiagnostics(d *contracts.ReflectionDecision, paths []string) []Di
 	if d == nil {
 		return fail("reflection requires an explicit learning decision")
 	}
-	if d.GetDeclineReason() == "evidence_gap" && d.GetLearningDecision() == "no_change" && d.GetNoChangeReason() != "evidence gap" {
-		return fail("an evidence gap no_change uses the canonical evidence gap reason")
-	}
-	if d.GetNoChangeReason() == "evidence gap" && d.GetDeclineReason() != "evidence_gap" {
-		return fail("an evidence gap decline requires its typed decline_reason")
+	if d.GetDeclineReason() != "" {
+		return fail("only typed SDK gaps may excuse executable learning; missing controller captures do not block session-evidence fixtures")
 	}
 	switch d.GetLearningDecision() {
 	case "updated":

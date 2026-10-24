@@ -180,7 +180,7 @@ func TestResponderDirectProgramEditRejectsUnformattedGo(t *testing.T) {
 	}
 }
 
-func TestNewProgramRequiresCapturedCorpus(t *testing.T) {
+func TestNewProgramRequiresExecutableCodeRatherThanCaptureProvenance(t *testing.T) {
 	root := repository(t)
 	memoryFixture(t, root)
 	dir := filepath.Join(root, ".sdo", "playbooks", "fault")
@@ -203,8 +203,8 @@ func TestNewProgramRequiresCapturedCorpus(t *testing.T) {
 	if err == nil {
 		err = validate.Err(diagnostics)
 	}
-	if err == nil || !strings.Contains(err.Error(), "captured incident provenance") {
-		t.Fatalf("agent-authored matching corpus accepted: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "program.invalid") {
+		t.Fatalf("non-executable program accepted: %v", err)
 	}
 }
 

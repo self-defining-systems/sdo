@@ -142,7 +142,8 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	openRaw, _ := json.Marshal(open)
 	fixedRaw, _ := json.Marshal(fixed)
 	labels, _ := json.Marshal(map[string]any{"bindings": corpus.Bindings, "peer_bindings": program.Bindings{Objects: program.ObjectBindings{"deployment": {APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, Name: "peer"}}}, "root_cause_program_ids": []string{p.Spec().ID}, "provenance": sdktest.CorpusProvenance{IncidentID: "image-origin", OpenSHA256: fmt.Sprintf("%x", sha256.Sum256(openRaw)), FixedSHA256: fmt.Sprintf("%x", sha256.Sum256(fixedRaw))}})
-	for name, data := range map[string][]byte{"open.json": openRaw, "fixed.json": fixedRaw, "healthy.json": fixedRaw, "recordings.json": recordingsRaw, "labels.json": labels} {
+	acceptedRaw, _ := json.Marshal(sourceReader.objects)
+	for name, data := range map[string][]byte{"accepted.json": acceptedRaw, "open.json": openRaw, "fixed.json": fixedRaw, "healthy.json": fixedRaw, "recordings.json": recordingsRaw, "labels.json": labels} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -163,8 +164,8 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	if err != nil || len(diagnostics) != 0 {
 		t.Fatalf("source program compile and generated replay gate: %v %+v", err, diagnostics)
 	}
-	if len(notes) != 1 || notes[0].Status != sdktest.MitigationReplaySkippedUnreplayableEffect {
-		t.Fatalf("missing typed skip note: %+v", notes)
+	if len(notes) != 1 || notes[0].Status != sdktest.MitigationReplayPassed {
+		t.Fatalf("missing executed replay note: %+v", notes)
 	}
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "learn source image\n\nSDO-Incident: image-origin\nSDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passed")

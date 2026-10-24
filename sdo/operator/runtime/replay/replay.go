@@ -29,6 +29,8 @@ type Case struct {
 	Corpus    sdktest.CorpusCase
 	Accepted  []*unstructured.Unstructured
 	Revisions map[string][]*unstructured.Unstructured
+	// RepairOnly is the learning gate; broader matrix checks remain an offline analysis.
+	RepairOnly bool
 }
 type DetectorResult struct {
 	ID       string                   `json:"id"`
@@ -94,10 +96,10 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 			r.scoreDetector(phase, row, detectorFamilyMatches(detectors[i], c), c)
 		}
 	}
-	if r.Healthy.Result == program.Match {
+	if !c.RepairOnly && r.Healthy.Result == program.Match {
 		r.incidentFP("healthy:diagnose:" + p.Spec().ID)
 	}
-	if r.Healthy.Result != program.NoMatch {
+	if !c.RepairOnly && r.Healthy.Result != program.NoMatch {
 		r.Errors = append(r.Errors, "healthy diagnosis is not NoMatch")
 	}
 	if !r.ExpectedMatch {
@@ -177,7 +179,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		return fail(err)
 	}
 	waiter := &reaction{cluster: client, source: source, plan: plan, effects: &r.Effects}
-	verifier := &postVerifier{cluster: client, source: source, p: p, bindings: bindings, detectors: detectors, result: &r, reaction: waiter}
+	verifier := &postVerifier{cluster: client, source: source, p: p, bindings: bindings, detectors: detectors, result: &r, reaction: waiter, recordings: c.Corpus.PhaseRecordings("open")}
 	executor := operator.PlanExecutor{Client: client, Source: source, Rollouts: waiter, Verifier: verifier, Values: program.ValueInputs{Spec: p.Spec(), Bindings: bindings, Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
 		o := observedObjects[ref]
 		if o == nil {
@@ -199,8 +201,10 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		}
 		return fail(fmt.Errorf("PlanExecutor: %w", err))
 	}
-	if err = checkTargetValues(ctx, plan, application, source); err != nil {
-		return fail(err)
+	if !c.RepairOnly {
+		if err = checkTargetValues(ctx, plan, application, source); err != nil {
+			return fail(err)
+		}
 	}
 	if !application.VerificationCompleted || !application.VerificationPassed {
 		return fail(fmt.Errorf("post-plan diagnosis or detector remains active/unknown"))
@@ -262,13 +266,14 @@ func Matrix(ctx context.Context, registry program.ProgramRegistry, detectors []s
 }
 
 type postVerifier struct {
-	cluster   *cluster
-	source    *source
-	p         program.Diagnoser
-	bindings  program.Bindings
-	detectors []sdk.Detector
-	result    *Result
-	reaction  *reaction
+	cluster    *cluster
+	source     *source
+	p          program.Diagnoser
+	bindings   program.Bindings
+	detectors  []sdk.Detector
+	result     *Result
+	reaction   *reaction
+	recordings []sdktest.PrimitiveCall
 }
 
 func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
@@ -279,7 +284,7 @@ func (v *postVerifier) Verify(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	v.result.Post = program.RunDiagnose(ctx, v.p, newReadView(ctx, s, nil, v.source), v.bindings, 5*time.Second)
+	v.result.Post = program.RunDiagnose(ctx, v.p, newReadView(ctx, s, unchangedPodProbes(v.cluster.initial, s, v.recordings), v.source), v.bindings, 5*time.Second)
 	v.result.Detectors["post"] = detect(ctx, v.detectors, s)
 	clear := v.result.Post.Result == program.NoMatch
 	for _, d := range v.result.Detectors["post"] {

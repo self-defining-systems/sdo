@@ -5,6 +5,7 @@ package sdodev.contracts.v1alpha1;
 import "buf/validate/validate.proto";
 import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
+import "sdodev/contracts/v1alpha1/common.proto";
 import "sdodev/contracts/v1alpha1/program.proto";
 import "sdodev/contracts/v1alpha1/memory.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
@@ -129,4 +130,6 @@ message SdkGap {
   string primitive = 2 [(buf.validate.field).string.min_len = 1];
   string reason = 3 [(buf.validate.field).string.min_len = 1];
   string scratch_script = 4 [(buf.validate.field).string.min_len = 1];
+  // Confirmed-cause resources this exception applies to; never excuses peers.
+  repeated ObjectRef resources = 5;
 }

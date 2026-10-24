@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -10,19 +9,20 @@ import (
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// ProgramLearningEvidence links a newly introduced program to the captured
-// incident whose diagnosis corpus the broker independently validated. The trust
-// projection additionally requires successful mitigation replay for origin credit;
-// an external effect with skipped replay can earn only live repair credits.
+// ProgramLearningEvidence links a newly introduced program to its controller-verified
+// incident. executable-v1 publication proves compilation and executed repair replay;
+// session observation fixtures need no controller capture digests.
 // It is derived from immutable accepted Git objects, never worker claims or a
 // mutable checkout. It does not claim the program performed the original repair.
 type ProgramLearningEvidence struct {
 	ProgramID      string
 	IncidentID     string
 	AcceptedCommit string
+	Bindings       program.Bindings
 }
 
 var acceptedCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -52,6 +52,7 @@ func ReadProgramLearningEvidence(ctx context.Context, repository, commit string)
 			RootCauseProgramIDs    []string                 `json:"root_cause_program_ids"`
 			Provenance             sdktest.CorpusProvenance `json:"provenance"`
 			SyntheticNoMatchReason string                   `json:"synthetic_no_match_reason"`
+			Bindings               program.Bindings         `json:"bindings"`
 		}
 		if json.Unmarshal(data, &labels) != nil || labels.Provenance.IncidentID == "" || labels.SyntheticNoMatchReason != "" {
 			continue
@@ -67,23 +68,13 @@ func ReadProgramLearningEvidence(ctx context.Context, repository, commit string)
 		}
 		body := "\n" + string(message) + "\n"
 		valid := true
-		for _, trailer := range []string{"SDO-Incident: " + labels.Provenance.IncidentID, "SDO-Actor: responder", "SDO-Phase: reflection", "SDO-Validation: passed"} {
+		for _, trailer := range []string{"SDO-Incident: " + labels.Provenance.IncidentID, "SDO-Actor: responder", "SDO-Phase: reflection", "SDO-Validation: passed", "SDO-Learning: executable-v1"} {
 			valid = valid && strings.Contains(body, "\n"+trailer+"\n")
 		}
 		if !valid {
 			continue
 		}
-		directory := strings.TrimSuffix(name, "labels.json")
-		for file, digest := range map[string]string{"open.json": labels.Provenance.OpenSHA256, "fixed.json": labels.Provenance.FixedSHA256} {
-			snapshot, err := git("show", origin+":"+directory+file)
-			if err != nil || fmt.Sprintf("%x", sha256.Sum256(snapshot)) != digest {
-				valid = false
-				break
-			}
-		}
-		if !valid || labels.Provenance.OpenSHA256 == labels.Provenance.FixedSHA256 {
-			continue
-		}
+
 		for _, id := range labels.RootCauseProgramIDs {
 			if !layout.ValidPlaybookID(id) || seen[id+"\x00"+labels.Provenance.IncidentID] {
 				continue
@@ -101,7 +92,7 @@ func ReadProgramLearningEvidence(ctx context.Context, repository, commit string)
 				continue
 			}
 			seen[id+"\x00"+labels.Provenance.IncidentID] = true
-			evidence = append(evidence, ProgramLearningEvidence{ProgramID: id, IncidentID: labels.Provenance.IncidentID, AcceptedCommit: origin})
+			evidence = append(evidence, ProgramLearningEvidence{ProgramID: id, IncidentID: labels.Provenance.IncidentID, AcceptedCommit: origin, Bindings: labels.Bindings})
 		}
 	}
 	return evidence, nil

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -18,7 +19,7 @@ OPERATOR = ROOT / "sdo/operator"
 APP_FIXTURE = ROOT / "tests/fixtures/sdo/playbook_program_app"
 
 
-def _accepted_app(tmp_path: Path) -> Path:
+def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     app = tmp_path / "app"
     shutil.copytree(APP_FIXTURE, app)
     memory = app / ".sdo"
@@ -33,6 +34,18 @@ def _accepted_app(tmp_path: Path) -> Path:
         '---\nschema_version: 1\nowner: "responder"\nfault_class: "missing-configmap"\n'
         'originating_incident: "fixture"\n---\n\n' + missing.read_text().split("---\n", 2)[-1]
     )
+    outcomes = memory / "outcomes"
+    outcomes.mkdir()
+    record = {"schema_version": 1, "incident_id": "scripted-incident", "classification": "failed"}
+    if verified:
+        record["classification"] = "success"
+        record["confirmed_root_causes"] = [
+            {
+                "summary": "routing fault",
+                "resources": [{"api_version": "v1", "kind": "Service", "namespace": "demo", "name": "front"}],
+            }
+        ]
+    (outcomes / f"{hashlib.sha256(b'scripted-incident').hexdigest()}.json").write_text(json.dumps(record))
     for args in (
         ("init", "-q"),
         ("add", "."),
@@ -137,10 +150,11 @@ def test_scripted_responder_consumes_real_go_tool_responses(tmp_path: Path, monk
     assert scripted_worker._tool("verify")["healthy"] is True
 
 
-def test_scripted_reflection_can_publish_memory_without_a_program_pair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path
+@pytest.mark.parametrize("verified", [False, True])
+def test_scripted_reflection_note_requires_executable_learning_when_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_binary: Path, verified: bool
 ) -> None:
-    app = _accepted_app(tmp_path)
+    app = _accepted_app(tmp_path, verified=verified)
     monkeypatch.setenv("SDO_SCRIPTED_MEMORY_CHANGE", "1")
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(tmp_path / "no-captured-pair"))
     monkeypatch.setenv("SDO_ACTOR", "responder")
@@ -156,6 +170,10 @@ def test_scripted_reflection_can_publish_memory_without_a_program_pair(
     monkeypatch.setattr(scripted_worker, "_command", real_operator)
     closure = IncidentClosure()
     closure.request.namespace = "demo"
+    if verified:
+        with pytest.raises(RuntimeError, match="reflection.program-required"):
+            scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
+        return
     turn = scripted_worker.ScriptedReflector().resume(worktree=app, incident_id="scripted-incident", closure=closure)
     assert turn.learning_decision == "updated"
     assert turn.playbook_ids == ["verified-repair-notes"]

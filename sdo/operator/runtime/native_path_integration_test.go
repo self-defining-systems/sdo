@@ -220,7 +220,11 @@ func New() sdk.Detector { return servicehealth.NewReadyEndpointsDetector(sdk.Det
 		if request.GetOutcomeCommit() != task.GetWorkspace().GetBaseCommit() || request.GetOutcome() == nil {
 			return nil, fmt.Errorf("reflection did not start from committed outcome")
 		}
-		response, err = anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "the accepted playbook already covers this incident"})
+		var gaps []*contracts.SdkGap
+		for _, cause := range request.Outcome.ConfirmedRootCauses {
+			gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-capability", Reason: "lifecycle transport test has no executable observation fixture", ScratchScript: "scratch/test", Resources: cause.Resources})
+		}
+		response, err = anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "synthetic lifecycle fixture lacks executable observations", SdkGaps: gaps})
 	default:
 		return nil, fmt.Errorf("unexpected task %q", task.GetTaskType())
 	}

@@ -21,28 +21,21 @@ A program directory contains diagnose.go, optional mitigate.go, Go tests and a R
 fault class and originating incident. Preserve accepted provenance and add its logical ID to the playbook index.
 The worker's authoring reference tool supplies the current worked routing example alongside this guide.
 
-## Evidence and corpus
+## Evidence and replay fixtures
 
-Use the captures actually present in the incident evidence inventory. Choose an available open boundary
-that contains the confirmed cause and the independently verified fixed boundary. Supported phase values
-do not promise that a capture exists. Never backfill a later symptom into an earlier capture.
-An unsupported positive case is an evidence gap.
+Learn from recorded responder actions and live observations already present in the incident session.
+Build a fixture from the available snapshot and those observations; a missing controller open/fixed
+capture must not prevent learning. Do not invent successful primitive replies. Supply root_cause_program_ids
+and object bindings for the confirmed cause. Keep originating incident attribution in labels.provenance.incident_id;
+snapshot digests and a protected capture mount are not required. Include accepted.json when the executed
+mitigation reads accepted source. For replay, open.json represents the fault and recordings.json contains
+its observed primitive replies; fixed.json and healthy.json remain readable context, not repair proof.
 
-The [generated runtime contract](../../sdo-memory/references/runtime.md) distinguishes capture filenames
-from provenance phase values. The corpus creation tool copies open, fixed and primitive recordings exactly,
-uses fixed bytes for the healthy snapshot, and derives digests and incident provenance. Supply the confirmed
-program IDs, affected bindings and a healthy same-kind peer from fixed evidence. Accepted cases are immutable;
-new observations get a new case ID. Synthetic tightening cases need a concrete negative reason and negative
-program labels; they cannot replace captured positive evidence.
-
-Diagnosis replay requires Match at open and NoMatch at fixed and healthy peers, including consistently renamed
-resources, labels, ports and images. Prove matching and near-miss cases. Unknown or failed primitive reads stay
-Unknown; empty or absent observations never prove success or refusal.
-
-Offline closed-loop matrix fixtures may add `health_impact: true|false` to `labels.json` (default true).
-False permits health detectors to stay silent on latent faults; it never relaxes incident detector or Diagnose
-family expectations or detector silence on Healthy. Detector roles use existing `Spec().Class`; cross-family
-health firing is reported as overlap. See the [closed-loop report contract](../../../operator/runtime/replay/README.md).
+Every independently verified cause requires diagnose and mitigate programs, a README describing fault
+handling, and a detector that references its playbook. One detector may reference several playbooks.
+Replay must diagnose Match, execute the mitigation with the production executor, and reach NoMatch.
+Only compilation and that closed loop are save-time learning checks. Rename, healthy-peer and controller
+capture-provenance checks are offline analysis, not publication prerequisites. Preserve accepted fixture bytes.
 
 ## Source restoration
 
@@ -50,13 +43,12 @@ Keep source-restoration mitigators for image, readiness and ConfigMap faults whe
 Prefer a narrow, schema-checked SetField when diagnosis identifies the damaged field; named list selectors and
 ConfigMap JSON/YAML entries preserve unrelated values. Use `program.FromSource(ref, path)` for an accepted-source field value,
 and ReconcileFromSource only when restoring the whole source-owned object is justified. Structured effects use the ordinary namespace-scoped executor.
-ReconcileFromSource and Rollback express desired state from accepted source or history. External effects may
-produce an informational skipped replay result; this proves no repair and earns no origin credit. Diagnosis
-replay remains mandatory. Observed and parameter-based SetField plans must replay to NoMatch after applying their patches; source-selected fields require unavailable accepted-source evidence and report a skipped effect.
-CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes a named object in the incident namespace without a source-absence gate; disclose deletion as irreversible, retain
-its receipt, and never auto-recreate it. Both are external effects: skipped replay proves no repair,
-and live verification requires direct current UID/absence evidence plus independent health checks.
-Never delete a valid mitigator merely to eliminate a skipped-effect note.
+ReconcileFromSource and Rollback express desired state from accepted source or explicit history. Supply
+accepted manifests in accepted.json for source-based replay. Replay must execute the proposed action and
+clear diagnosis; an unavailable external effect requires a typed SDK gap instead of a skipped success.
+CreateFromSource restores only a named missing object present in accepted source. DeleteObject removes a
+named object in the incident namespace; disclose deletion as irreversible, retain its receipt, and never
+auto-recreate it. Live verification requires direct current UID/absence evidence and independent health checks.
 
 ## Values and runtime actions
 
@@ -101,9 +93,10 @@ unchanged. It never treats a Service probe or a fixed-phase answer as proof of a
 
 ## Acceptance
 
-The complete memory check compiles, vets and tests the authored sources, validates imports, ownership,
-provenance, captured bytes and README policy, and runs generated corpus, rename and mitigation replay.
-Fix diagnostics in the final proposal files; the broker checks the same files independently.
+The broker enforces artifact ownership and verified-cause coverage independently of the worker's claim.
+Programs must compile and mitigation must clear diagnosis in replay. Failed replay is rejected and retried
+with diagnostics. A skipped effect is not replay success. The only learning exception is a typed SDK gap
+with the confirmed-cause resources and a concrete reason. Missing controller captures do not justify a decline.
 
 ## Go-owned per-cause work
 
@@ -111,15 +104,13 @@ The supplied work list preserves the responder's confirmed resource groups. Cove
 
 A program that still matches the verified fixed capture has a definite false match. Go seeds that exact capture as negative evidence and preserves it through edits; the failing NoMatch replay is the question to resolve. The [generated replay API](../../sdo-detector-authoring/references/replay.md) defines CapturedFixedNoMatchPhase for this observed negative evidence. It is never a positive incident-open phase, a synthetic positive case or a trust credit.
 
-Go flags missing resource/phase observations as `evidence_gap` work items after scanning complete protected
-recordings. Only those flags permit a decline for missing recordings: use the typed `decline_reason` and the
-canonical "evidence gap" reason, with details in the summary. A truncated read or a recorded error does not
-establish absence. The per-incident ledger records the number of distinct missing resource/phase observations;
-a flag alone does not prove that learning is blocked.
+Go's missing-observation flags describe optional controller captures. They do not block fixtures built
+from session observations and cannot justify an evidence_gap decline. An unavailable SDK capability can
+be reported with a typed SDK gap naming its cause resources, primitive, reason and scratch script.
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. All actions remain within the controller-derived incident namespace, with Kubernetes RBAC and schema checks. Cluster-scoped webhook mutations are outside this scope.
 
-Save-time build, vet, tests and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. Failed fast-path attempts compensate all reversible writes before responder dispatch; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
+Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. Failed fast-path attempts compensate all reversible writes before responder dispatch; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
 
 The fast path defaults on and chooses one trusted program/binding by findings covered, then stable program ID/bindings order. Uncovered findings go to the responder after whole-incident verification; failed verification rolls back the attempt. Success credit survives broker-validated revisions; real fast-path failure still revokes trust.
 

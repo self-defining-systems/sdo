@@ -240,12 +240,15 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 		t.Fatal(err)
 	}
 	item := stored.Record.GetReflectionEligibility().GetCauses()[0].GetItems()[0]
-	if item.GetDisposition() != "false_match" || item.GetProgramRevision() != revision || checks != 1 || calls != broker.MaxValidationRetries {
+	if item.GetDisposition() != "false_match" || item.GetProgramRevision() != revision || checks != 0 || calls != broker.MaxValidationRetries {
 		t.Fatalf("classification bypassed: %v checks=%d calls=%d", item, checks, calls)
 	}
 	ledger, err := native.readLedger(o.IncidentId)
 	if err != nil || !ledger.GetReflectionRejected() {
 		t.Fatalf("rejection missing: %v %v", ledger, err)
+	}
+	if len(ledger.ReflectionRejections) == 0 || ledger.ReflectionRejections[0].Diagnostics[0].Rule != "reflection.program-required" {
+		t.Fatalf("missing mandatory-learning rejection: %v", ledger.ReflectionRejections)
 	}
 	if state := ProgramTrustStats([]*contracts.OutcomeRecord{stored.Record}, 1)[repeatProgram]; state.VerifiedSuccesses != 0 || state.Trusted {
 		t.Fatalf("rejected reflection left credit: %+v", state)

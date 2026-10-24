@@ -40,7 +40,7 @@ func learningTrustRepository(t *testing.T) (string, string) {
 		}
 	}
 	nativeGit(t, root, "add", ".")
-	nativeGit(t, root, "commit", "-qm", "learn\n\nSDO-Incident: learning\nSDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passed")
+	nativeGit(t, root, "commit", "-qm", "learn\n\nSDO-Incident: learning\nSDO-Actor: responder\nSDO-Phase: reflection\nSDO-Validation: passed\nSDO-Learning: executable-v1")
 	return root, nativeGit(t, root, "rev-parse", "HEAD")
 }
 
@@ -51,5 +51,22 @@ func TestAcceptedCorpusDoesNotInventTrustForAnUnmatchedOrigin(t *testing.T) {
 	trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: root, SourceCommit: commit})
 	if err != nil || trust["service-targetport-mismatch"].VerifiedSuccesses != 0 || trust["service-targetport-mismatch"].Trusted {
 		t.Fatalf("corpus invented origin credit: %+v %v", trust, err)
+	}
+}
+
+func TestNewProgramGetsOneVerifiedOriginCreditWithoutPriorProgramRun(t *testing.T) {
+	root, commit := learningTrustRepository(t)
+	origin := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{t1Ref("api")}}}}
+	dispatcher := KubernetesJobDispatcher{ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}}}}
+	request := IncidentRequest{RepositoryWorktree: root, SourceCommit: commit}
+	trust, err := dispatcher.programTrust(context.Background(), request)
+	if err != nil || !trust["service-targetport-mismatch"].Trusted || trust["service-targetport-mismatch"].VerifiedSuccesses != 1 {
+		t.Fatalf("new replayed program has no first-encounter credit: %+v %v", trust, err)
+	}
+	failure := &contracts.OutcomeRecord{IncidentId: "repeat", SourceCommit: trust["service-targetport-mismatch"].LastChange, ProgramFailureSignals: []string{"fast_path_failure:service-targetport-mismatch"}}
+	dispatcher.Outcomes = priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}, {IncidentID: "repeat", Record: failure}}}
+	trust, err = dispatcher.programTrust(context.Background(), request)
+	if err != nil || trust["service-targetport-mismatch"].Trusted {
+		t.Fatalf("origin replay erased a real failure: %+v %v", trust, err)
 	}
 }

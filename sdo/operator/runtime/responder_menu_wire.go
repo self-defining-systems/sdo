@@ -124,6 +124,12 @@ func (r truncatedToolResponse) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	}
+	if r.VerificationSummary != nil {
+		fields["verification_summary"], err = json.Marshal(r.VerificationSummary)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return json.Marshal(fields)
 }
 

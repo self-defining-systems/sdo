@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/sdk/sdktest"
+	"strings"
 	"testing"
 )
 
-func TestUnreplayableMitigatorPassesDiagnosisGateWithTypedNote(t *testing.T) {
+func TestUnreplayableMitigatorFailsSaveGate(t *testing.T) {
 	root := programFixture(t)
 	path := filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/mitigate.go")
 	source := `package targetport
@@ -26,14 +26,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 		t.Fatal(err)
 	}
 	defer w.Close()
-	if err := w.Check(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	notes, err := w.MitigationReplayResults()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(notes) != 1 || notes[0].Status != sdktest.MitigationReplaySkippedUnreplayableEffect || notes[0].ProgramID != "service-targetport-mismatch" || notes[0].CaseID != "targetport-mismatch" {
-		t.Fatalf("typed replay notes: %+v", notes)
+	if err := w.Check(context.Background()); err == nil || !strings.Contains(err.Error(), "mitigation must clear diagnosis") {
+		t.Fatalf("unreplayed mitigation passed save gate: %v", err)
 	}
 }

@@ -351,7 +351,14 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 			records = append(records, outcome.Record)
 		}
 	}
-	return ProgramTrustStats(records, d.ProgramTrustThreshold), nil
+	stats := ProgramTrustStats(records, d.ProgramTrustThreshold)
+	threshold := max(1, d.ProgramTrustThreshold)
+	if request.RepositoryWorktree != "" && gitRevision.MatchString(request.SourceCommit) {
+		if err := creditLearnedPrograms(ctx, request, records, stats, threshold); err != nil {
+			return nil, fmt.Errorf("read broker-validated learning credit: %w", err)
+		}
+	}
+	return stats, nil
 }
 
 // ResponderJobFailedError preserves the controller's terminal dispatch signal.
