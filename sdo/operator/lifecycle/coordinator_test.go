@@ -136,6 +136,7 @@ type fakeExecutor struct {
 	deployFailures      int
 	archFailures        int
 	retiredJudgePayload bool
+	judgeJobFailures    int
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
@@ -161,6 +162,10 @@ func (f *fakeExecutor) Execute(_ context.Context, task *contracts.AgentTask) (*c
 		}
 		response, err = anypb.New(&contracts.ArchitectureResult{SummaryMarkdown: "# Architecture\nSource-grounded layout.", TopologyFingerprint: request.GetSourceTopologyFingerprint(), SourceCommit: request.GetAcceptedSourceCommit(), AgentSessionId: "architecture-session"})
 	case healthJudgeTask:
+		if f.judgeJobFailures > 0 {
+			f.judgeJobFailures--
+			return nil, &worker_registry.JobFailedError{JobName: worker_registry.JobName(task.GetTaskId())}
+		}
 		request := &contracts.HealthJudgeRequest{}
 		if err := task.GetRequest().UnmarshalTo(request); err != nil {
 			return nil, err
