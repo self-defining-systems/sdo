@@ -722,12 +722,13 @@ func samePlanRef(object *unstructured.Unstructured, ref sdk.ObjectRef) bool {
 
 // PlanHealthVerifier runs the accepted health detectors on a fresh snapshot.
 type PlanHealthVerifier struct {
-	Detectors []sdk.Detector
-	Provider  core.SnapshotProvider
+	Detectors    []sdk.Detector
+	Provider     core.SnapshotProvider
+	Timeout      time.Duration
+	PollInterval time.Duration
 }
 
 func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
-	sink := &planFindingSink{}
 	var health []sdk.Detector
 	for _, detector := range v.Detectors {
 		if detector.Spec().Class == sdk.DetectorClassHealth {
@@ -737,10 +738,42 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	if len(health) == 0 {
 		return false, errors.New("health detectors are required")
 	}
-	if err := (core.Runner{Detectors: health, Provider: v.Provider, Sink: sink}).RunOnce(ctx); err != nil {
-		return false, err
+	budget := v.Timeout
+	if budget <= 0 {
+		sink := &planFindingSink{}
+		if err := (core.Runner{Detectors: health, Provider: v.Provider, Sink: sink}).RunOnce(ctx); err != nil {
+			return false, err
+		}
+		return !sink.firing, nil
 	}
-	return !sink.firing, nil
+	interval := v.PollInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	verification, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	for {
+		sink := &planFindingSink{}
+		if err := (core.Runner{Detectors: health, Provider: v.Provider, Sink: sink}).RunOnce(verification); err != nil {
+			if ctx.Err() == nil && errors.Is(verification.Err(), context.DeadlineExceeded) {
+				return false, nil
+			}
+			return false, err
+		}
+		if !sink.firing {
+			return true, nil
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-verification.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			return false, nil
+		case <-timer.C:
+		}
+	}
 }
 
 type planFindingSink struct{ firing bool }

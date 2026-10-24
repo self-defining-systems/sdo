@@ -528,7 +528,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
 					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource,
 
-					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
+					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: scaledDuration(time.Second, timeScale)}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
 				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
