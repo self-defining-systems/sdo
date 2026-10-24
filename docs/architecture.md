@@ -636,7 +636,7 @@ Structured plan authority is supplied by administrator-owned controller launch c
 
 The production `run.go` `LoopFactory` enables the convenience menu when the controller process has
 `SDO_RESPONDER_MENU=1` (unset or `0` is off; other values refuse startup). The dispatcher advertises
-`SDO_MITIGATION_SESSION=1` only for enabled menus. No synthetic safety capabilities are supplied.
+`SDO_MITIGATION_SESSION=1` only for enabled menus. Durable provider checkpoints use the independent `SDO_RESPONDER_SESSION=1` flag even when the menu is disabled. No synthetic safety capabilities are supplied.
 Menu execution uses the same executor, source authority, health verifier and controller credentials
 as direct plan execution, with no additional menu preflight or read prerequisites.
 

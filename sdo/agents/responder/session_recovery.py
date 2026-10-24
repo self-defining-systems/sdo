@@ -215,7 +215,7 @@ class SessionRecovery:
 
 def open_recovery(incident_id: str, provider: str) -> SessionRecovery | None:
     """Join the controller session only when the dispatcher enables the protocol."""
-    if os.environ.get("SDO_MITIGATION_SESSION") != "1":
+    if os.environ.get("SDO_RESPONDER_SESSION") != "1" and os.environ.get("SDO_MITIGATION_SESSION") != "1":
         return None
     from sdo.agents.responder import recorded_actions
     from sdo.agents.responder.tools_cli import _exchange

@@ -267,7 +267,10 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		tools.Add(1)
 		go func() { defer tools.Done(); _ = server.Serve(toolCtx) }()
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
-		environment["SDO_MITIGATION_SESSION"] = "1"
+		environment["SDO_RESPONDER_SESSION"] = "1"
+		if loop.MenuConfig.valid() {
+			environment["SDO_MITIGATION_SESSION"] = "1"
+		}
 	}
 	executor := worker_registry.KubernetesExecutor{
 		APIProxyImage:  d.APIProxyImage,

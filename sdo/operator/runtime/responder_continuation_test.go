@@ -138,8 +138,11 @@ func TestResponderContinuationRetainsSessionBudgetAndUsageAcrossRestart(t *testi
 	if sessionPath(first) == "" || sessionPath(first) != sessionPath(second) {
 		t.Fatal("continuation changed durable provider session")
 	}
-	if !containsEnvironment(second.Spec.Template.Spec.Containers[0].Env, "SDO_MITIGATION_SESSION", "1") {
+	if !containsEnvironment(second.Spec.Template.Spec.Containers[0].Env, "SDO_RESPONDER_SESSION", "1") {
 		t.Fatal("durable resume requires session protocol even with menu off")
+	}
+	if containsEnvironment(second.Spec.Template.Spec.Containers[0].Env, "SDO_MITIGATION_SESSION", "1") {
+		t.Fatal("continuation enabled the menu flag")
 	}
 	feedback := ""
 	for _, v := range second.Spec.Template.Spec.Containers[0].Env {

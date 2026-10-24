@@ -162,3 +162,18 @@ def test_expired_session_does_not_launch_a_provider(tmp_path: Path, monkeypatch:
     )
     with pytest.raises(codex.ResponderExecutionError, match="original deadline"):
         codex.execute_incident(_request(), provider="codex")
+
+
+def test_continuation_checkpoint_does_not_require_menu_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    from sdo.agents.responder.session_recovery import open_recovery
+    from sdo.contracts import to_canonical_json
+
+    monkeypatch.delenv("SDO_MITIGATION_SESSION", raising=False)
+    monkeypatch.setenv("SDO_RESPONDER_SESSION", "1")
+    monkeypatch.setattr(
+        "sdo.agents.responder.tools_cli._exchange",
+        lambda *_: {"session": json.loads(to_canonical_json(controller_session()))},
+    )
+    assert open_recovery("incident", "codex") is not None
