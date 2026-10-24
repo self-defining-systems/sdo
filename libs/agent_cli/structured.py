@@ -136,6 +136,7 @@ class StructuredTurn:
     model_requests: int | None = None
     model_requests_source: str | None = None
     resumed: bool = False
+    skill_directory: Path | None = None
 
 
 def turn_usage(turn: StructuredTurn) -> dict[str, int | float]:
@@ -227,11 +228,15 @@ def run_structured_turn(
     try:
         with ExitStack() as turn_scope:
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
+            effective_environment = {**os.environ, **(environment or {}), **extra_env}
+            home_variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
+            default_home = Path.home() / (".codex" if provider == "codex" else ".claude")
+            skill_directory = Path(effective_environment.get(home_variable) or default_home).expanduser() / "skills"
             agent = CliAgent(
                 selected,
                 model=model,
                 executor=executor,
-                env={**os.environ, **(environment or {}), **extra_env},
+                env=effective_environment,
                 event_handler=recorder,
                 check_timeout=_CLI_CHECK_TIMEOUT_S,
             )
@@ -293,6 +298,7 @@ def run_structured_turn(
         model_requests=model_requests,
         model_requests_source=model_requests_source,
         resumed=resume_session_id is not None,
+        skill_directory=skill_directory,
     )
     _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
     return turn
