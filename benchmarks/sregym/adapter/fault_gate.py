@@ -133,6 +133,10 @@ def controller_active_findings_after_resume(controller_logs: str, generation: st
     application deploy) counts; a later pause invalidates the baseline.
     """
 
+    return _resumed_baseline_state(controller_logs, generation)[1]
+
+
+def _resumed_baseline_state(controller_logs: str, generation: str) -> tuple[bool, list[str] | None]:
     latest: list[str] | None = None
     resumed = False
     for line in controller_logs.splitlines():
@@ -151,7 +155,7 @@ def controller_active_findings_after_resume(controller_logs: str, generation: st
             continue
         if resumed and "controller_iteration" in payload:
             latest = controller_active_findings(line)
-    return latest
+    return resumed, latest
 
 
 def inject_fault_after_resumed_baseline(
@@ -164,11 +168,18 @@ def inject_fault_after_resumed_baseline(
     sleep: Callable[[float], None] = time.sleep,
     timeout_seconds: float = RESUMED_BASELINE_TIMEOUT_SECONDS,
     poll_seconds: float = BASELINE_POLL_SECONDS,
+    startup_timeout_seconds: float = BASELINE_TIMEOUT_SECONDS,
 ) -> dict[str, float]:
-    """Inject once the persistent controller reports all-clear after resuming ``generation``."""
+    """Wait for startup, then give the resumed controller its full baseline window.
+
+    Lifecycle health refresh uses the existing startup budget. The shorter
+    readiness budget begins only after the matching resume record, which the
+    controller emits after startup and informer synchronization complete.
+    """
 
     started = monotonic()
-    deadline = started + timeout_seconds
+    deadline = started + startup_timeout_seconds
+    resumed_at: float | None = None
     next_progress = started
     last_error = f"controller has not resumed maintenance generation {generation!r}"
     while monotonic() < deadline:
@@ -177,9 +188,12 @@ def inject_fault_after_resumed_baseline(
             namespace=control_namespace,
             check=False,
         )
-        active = (
-            controller_active_findings_after_resume(completed.stdout, generation) if completed.returncode == 0 else None
+        resumed, active = (
+            _resumed_baseline_state(completed.stdout, generation) if completed.returncode == 0 else (False, None)
         )
+        if resumed and resumed_at is None:
+            resumed_at = monotonic()
+            deadline = resumed_at + timeout_seconds
         if active:
             last_error = f"latest controller evaluation has active findings {sorted(set(active))}"
         if active == []:
@@ -187,6 +201,9 @@ def inject_fault_after_resumed_baseline(
             inject()
             return {
                 "controller_baseline_wait": baseline_ready - started,
+                "controller_startup_wait": (resumed_at if resumed_at is not None else baseline_ready) - started,
+                "controller_resumed_baseline_wait": baseline_ready
+                - (resumed_at if resumed_at is not None else started),
                 "fault_injection_request": monotonic() - baseline_ready,
             }
         if completed.returncode != 0:
@@ -208,14 +225,16 @@ def inject_fault_after_resumed_baseline(
                 "waiting for controller baseline in %s, generation %s (%.0f/%.0fs): %s",
                 control_namespace,
                 generation,
-                now - started,
-                timeout_seconds,
+                now - (resumed_at if resumed_at is not None else started),
+                timeout_seconds if resumed_at is not None else startup_timeout_seconds,
                 last_error,
             )
             next_progress = now + BASELINE_PROGRESS_SECONDS
         sleep(min(poll_seconds, max(0.0, deadline - now)))
+    phase = "all-clear baseline" if resumed_at is not None else "startup resume"
+    budget = timeout_seconds if resumed_at is not None else startup_timeout_seconds
     raise FaultGateError(
         f"controller in {control_namespace!r}, generation {generation!r}, did not report an all-clear baseline "
-        f"within {timeout_seconds:.0f}s: {last_error}; inspect "
+        f"during {phase} within {budget:.0f}s: {last_error}; inspect "
         f"kubectl -n {control_namespace} logs job/sdo-controller-run --container=controller"
     )
