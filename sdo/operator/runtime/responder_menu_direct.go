@@ -201,7 +201,8 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		description.ActionResults = result.ActionReports
 		description.ChangesRemain = result.Applied && !result.RolledBack
 		description.RolledBack = result.RolledBack
-		description.Pending = result.PendingAction != nil
+		description.Pending = result.PendingAction != nil || result.RolloutPending != nil
+		response.RolloutPending = result.RolloutPending
 		if applyErr != nil {
 			description.Error = boundedToolText(applyErr.Error())
 		}
@@ -240,6 +241,12 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			report.FailedPhase = ""
 			report.ReasonCode = ""
 			l.findings = nil
+			break
+		}
+		if result.RolloutPending != nil {
+			report.Status = contracts.MitigationReport_STATUS_UNRESOLVED
+			report.FailedPhase = "rollout"
+			report.ReasonCode = "rollout_pending"
 			break
 		}
 		report.FailedPhase = "verification"

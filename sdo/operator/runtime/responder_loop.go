@@ -46,6 +46,7 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	RolloutPending *contracts.RolloutPending    `json:"rollout_pending,omitempty"`
 	MenuExecution  []MenuRoundExecution         `json:"-"`
 	MenuParameters map[string][]MenuParameter   `json:"-"`
 	Menu           *contracts.MitigationMenu    `json:"-"`
@@ -382,7 +383,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved},
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
 		Truncated:    true, FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {
@@ -690,10 +691,13 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if err != nil {
 		response.Error = err.Error()
 	}
-	l.verify(ctx, selected, response)
+	response.RolloutPending = result.RolloutPending
+	if result.RolloutPending == nil {
+		l.verify(ctx, selected, response)
+	}
 	// The application is recorded as observed and left in place; whether to roll
 	// it back, apply again or edit is the responder's decision.
-	if result.Applied {
+	if result.Applied && result.RolloutPending == nil {
 		// Application credit is binding-scoped; closure still independently
 		// requires global health. A different open fault is not a failed repair.
 		unrelated := onlyUnrelatedFindings(selected, response.Findings)

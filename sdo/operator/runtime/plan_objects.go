@@ -269,8 +269,9 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
-	if err := e.Rollouts.Wait(ctx, refs); err != nil {
-		return result, fmt.Errorf("wait for object plan rollouts: %w", err)
+	if pending, err := e.waitForRollouts(ctx, incident, refs); err != nil {
+		result.RolloutPending = pending
+		return result, err
 	}
 	passed, verifyErr := e.Verifier.Verify(ctx)
 	if verifyErr != nil {

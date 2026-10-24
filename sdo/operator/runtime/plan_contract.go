@@ -12,7 +12,8 @@ import (
 )
 
 // Proto projects an application onto the current PlanApplication contract.
-// Only completed action and verification evidence crosses the durable boundary.
+// Applied actions, pending-rollout observations and verification evidence cross
+// the durable boundary; pending observations never become verification credit.
 func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	if err := r.Plan.Validate(); err != nil {
 		return nil, err
@@ -25,7 +26,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		plan.Actions = append(plan.Actions, converted)
 	}
-	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified}
+	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, RolloutPending: r.RolloutPending}
 	for _, action := range r.ActionsApplied {
 		converted, err := planActionProto(action)
 		if err != nil {
@@ -69,7 +70,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 }
 
 func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
-	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified}
+	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, RolloutPending: application.GetRolloutPending()}
 	if application.GetPlan() != nil {
 		result.Plan.Rationale = application.GetPlan().GetRationale()
 		for _, action := range application.GetPlan().GetActions() {
@@ -97,7 +98,7 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 		}
 		result.ActionReports = append(result.ActionReports, decoded)
 	}
-	result.VerificationCompleted = application.GetVerificationCompleted() || application.GetVerification() != nil
+	result.VerificationCompleted = application.GetVerificationCompleted() || (application.GetVerification() != nil && application.GetRolloutPending() == nil)
 	result.VerificationPassed = application.GetVerificationPassed() || application.GetVerification().GetResult() == contracts.Verdict_RESULT_NO_MATCH
 	if application.GetDuration() != nil {
 		result.Duration = application.GetDuration().AsDuration()
