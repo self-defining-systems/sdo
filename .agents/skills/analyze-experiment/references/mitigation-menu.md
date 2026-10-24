@@ -46,3 +46,7 @@ A missing required repair receipt field previously rejected the enriched dispatc
 result; retry then lost process-local evidence and closed as `cleared_without_action`.
 Read classification and ACK separately. The menu now supplies required receipt details,
 and a focused incident-contract test guards that failure before the end-to-end check.
+
+For a logical program ID with several finding-derived menu rows, explicit CLI `--param NAME=VALUE` / `--NAME VALUE` inputs now request a controller-bound menu for that program before selecting one concrete option. Go parses object and scalar bindings and rejects unknown or incomplete required parameters. Without explicit parameters, multiple rows remain ambiguous; a concrete option ID still selects that exact row. A binding/listing failure consumes no mitigation batch.
+
+The reviewed mixed10 source policy includes the deployed chart identity `opentelemetry-demo` mapped exactly to `astronomy-shop`, alongside `astronomy_shop`. A scope refusal with adopted memory can be an application-identity mismatch rather than missing corpus evidence: compare the incident's `application` and `namespace` with the committed policy map. The control namespace is not an application repair scope. Accepted-source contents and metadata UID checks still govern each action.

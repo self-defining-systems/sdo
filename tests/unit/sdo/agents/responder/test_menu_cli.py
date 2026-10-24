@@ -97,3 +97,69 @@ def test_report_then_act_uses_existing_session_and_capture(monkeypatch, tmp_path
         },
         {"command": "pre-apply"},
     ]
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_logical_program_id_with_parameters_resolves_binding_ambiguity(monkeypatch, named) -> None:
+    seen = []
+    options = [{"option_id": f"candidate-{i}", "program_id": "adopted-high-cpu"} for i in range(2)]
+    parameters = {"config": "ConfigMap/astronomy-shop/flags", "workload": "Deployment/astronomy-shop/ad"}
+
+    def exchange(request, _):
+        seen.append(request)
+        if request["command"] == "menu":
+            if request.get("parameters"):
+                assert request == {"command": "menu", "program_id": "adopted-high-cpu", "parameters": parameters}
+                return {
+                    "menu": {
+                        "remaining_batches": 5,
+                        "options": [{"option_id": "bound-option", "program_id": "adopted-high-cpu"}],
+                    }
+                }
+            return {"menu": {"remaining_batches": 5, "options": options}}
+        assert request["selection"]["option_id"] == "bound-option"
+        assert request["parameters"] == parameters
+        return {"summary": "applied"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    args = ["mitigate", "adopted-high-cpu"]
+    for name, value in parameters.items():
+        args += [f"--{name}", value] if named else ["--param", f"{name}={value}"]
+    assert tools_cli.main(args) == 0
+    assert len(seen) == 3
+
+
+def test_logical_program_id_remains_ambiguous_without_parameters(monkeypatch, capsys) -> None:
+    def exchange(request, _):
+        assert request == {"command": "menu"}
+        return {
+            "menu": {
+                "remaining_batches": 5,
+                "options": [{"option_id": f"candidate-{i}", "program_id": "same"} for i in range(2)],
+            }
+        }
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["mitigate", "same"]) == 1
+    assert "unavailable or ambiguous" in capsys.readouterr().err
+
+
+def test_logical_program_id_refuses_failed_parameter_binding(monkeypatch, capsys) -> None:
+    seen = []
+
+    def exchange(request, _):
+        seen.append(request)
+        assert request["command"] == "menu"
+        if request.get("parameters"):
+            return {"error": "required workload binding missing"}
+        return {
+            "menu": {
+                "remaining_batches": 5,
+                "options": [{"option_id": f"candidate-{i}", "program_id": "same"} for i in range(2)],
+            }
+        }
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+    assert tools_cli.main(["mitigate", "same", "--param", "config=ConfigMap/app/flags"]) == 1
+    assert "bound mitigation menu unavailable" in capsys.readouterr().err
+    assert len(seen) == 2
