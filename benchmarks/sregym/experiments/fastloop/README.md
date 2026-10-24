@@ -238,7 +238,7 @@ uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo
 uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 ```
 
-The cluster is always named `sdo-toy`; creation refuses to adopt an existing
+The cluster defaults to `sdo-toy`; set `SDO_TOY_CLUSTER=gs1-toy` (or another owned lane name) to isolate a scratch run. Cluster creation refuses to adopt an existing
 cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
 changes need no runtime image rebuild. Scripted responder, reflector and drift
@@ -318,3 +318,11 @@ set `SDO_DEV_MODULE_DOWNLOADS=1` and stage the matching download-cache files und
 `/opt/sdo-dev/.fastloop/go-mod-download` on each node. The development Pod mounts
 this directory read-only at `/go/pkg/mod/cache/download` and propagates the opt-in
 to nested workers. Default mounts and offline network policy remain unchanged.
+
+## Automatic repair defaults (GS1)
+
+Fast path and `recorded-actions` are on by default, with trust threshold 1, 10 response loops, 5 validation retries, and a 5-minute verification timeout. The mitigation menu is on unless `SDO_RESPONDER_MENU=0`. Disable automatic plans with `--program-fast-path=false` or `--repair-policy=commit` on the Go launch CLI; the benchmark CLI accepts `--no-program-fast-path`.
+
+One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
+
+For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. The toy transport's environment variable selects the cluster; `--cluster-prefix` is the SREGym-lane setting. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and fast-path reuse.

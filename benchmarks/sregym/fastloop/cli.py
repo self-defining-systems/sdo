@@ -979,14 +979,17 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
     run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
     run.add_argument(
-        "--program-fast-path", action="store_true", help="allow trusted playbook programs to resolve incidents"
+        "--program-fast-path",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="allow trusted playbook programs to resolve incidents",
     )
     run.add_argument(
         "--program-trust-threshold",
         type=int,
-        default=3,
+        default=1,
         metavar="K",
-        help="verified successes required for a trusted program (default 3)",
+        help="verified successes required for a trusted program (default 1)",
     )
     run.add_argument(
         "--detection-timeout",

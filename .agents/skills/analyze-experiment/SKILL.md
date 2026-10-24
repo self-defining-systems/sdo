@@ -62,3 +62,5 @@ Before judging mixed-app slot validity or recovery, read [slot cleanup evidence]
 Before reconstructing a timeline, read [telemetry and trajectories](references/telemetry.md).
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
+
+For automatic repair gate changes, defaults, match selection and historical receipt provenance, read [automatic repair evidence](references/automatic-repair.md).

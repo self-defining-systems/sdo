@@ -59,7 +59,7 @@ deployed_manifest_paths = ["kubernetes"]
 # Opt in to agent-free incident resolution by trusted playbook programs.
 program_fast_path = true
 # Require this many independently verified successful repairs before trusting a program.
-program_trust_threshold = 3
+program_trust_threshold = 1
 
 [[stages]]
 name = "first-incident"

@@ -91,7 +91,7 @@ def test_install_existing_invokes_go_cli_and_parses_receipt(tmp_path: Path, monk
     assert "--healthy-baseline" in calls[0]
     assert calls[0][calls[0].index("--max-response-loops") + 1] == "3"
     assert calls[0][calls[0].index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path" in calls[0]
+    assert "--program-fast-path=true" in calls[0]
     assert calls[0][calls[0].index("--program-trust-threshold") + 1] == "4"
     assert calls[0][calls[0].index("--seed-broker-root") + 1] == str(tmp_path / "trusted-seed-broker")
     assert "--drift-tokens-per-hour" not in calls[0]

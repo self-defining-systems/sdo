@@ -1399,7 +1399,7 @@ def test_driver_environment_settings_are_recorded_and_preserved_on_persistent_re
     assert len(commands) == 1
     command = commands[0]
     assert command[command.index("--deployed-manifest-path") + 1] == "kubernetes"
-    assert "--program-fast-path" in command
+    assert "--program-fast-path=true" in command
     assert command[command.index("--program-trust-threshold") + 1] == str(trust_threshold)
 
 
