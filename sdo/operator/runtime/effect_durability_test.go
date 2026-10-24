@@ -42,6 +42,7 @@ func durabilityController(t *testing.T, client *fake.Clientset, config Controlle
 	if err != nil {
 		t.Fatalf("new controller: %v", err)
 	}
+	controller.now = func() time.Time { return time.Unix(0, 0) }
 	if err := controller.AttachStateStore(
 		context.Background(), lifecycleio.NewConfigMapStateStore(client, "demo", durabilityStateName),
 	); err != nil {

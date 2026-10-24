@@ -260,6 +260,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
+	if err := c.retireExpiredIncident(ctx, now); err != nil {
+		return err
+	}
 	c.processDispatchCompletions(now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()
@@ -1091,17 +1094,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.reportBrokerError("freeze closure", err)
 		return
 	}
-	c.incidentOpen = false
-	c.responderDone = false
-	c.currentIncidentRequest = nil
-	c.currentIncidentResult = nil
-	c.dispatchError = ""
-	c.incidentDetectedAt = time.Time{}
-	c.incidentDispatchedAt = time.Time{}
-	c.responderCompletedAt = time.Time{}
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
-	c.incidentFindingKeys = nil
-	c.cleanedHelpers = nil
+	c.clearIncidentLocked()
 	c.mu.Unlock()
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)

@@ -10,6 +10,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk/program"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,54 @@ func TestNewProgramGetsOneVerifiedOriginCreditWithoutPriorProgramRun(t *testing.
 	trust, err = dispatcher.programTrust(context.Background(), request)
 	if err != nil || trust["service-targetport-mismatch"].Trusted {
 		t.Fatalf("origin replay erased a real failure: %+v %v", trust, err)
+	}
+}
+
+func TestMissingOptionalLearningCreditDoesNotBlockResponder(t *testing.T) {
+	dispatcher := KubernetesJobDispatcher{Outcomes: priorOutcomeReader{}}
+	trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: filepath.Join(t.TempDir(), "deleted-proposal"), SourceCommit: strings.Repeat("a", 40)})
+	if err != nil || len(trust) != 0 {
+		t.Fatalf("optional learning evidence blocked dispatch: %v %v", trust, err)
+	}
+}
+
+func TestLearningEvidenceGitErrorIncludesStderr(t *testing.T) {
+	_, err := memory.ReadProgramLearningEvidence(context.Background(), filepath.Join(t.TempDir(), "deleted-proposal"), strings.Repeat("a", 40))
+	if err == nil || !strings.Contains(err.Error(), "cannot change to") {
+		t.Fatalf("lost git stderr: %v", err)
+	}
+}
+
+func TestLearningTrustUsesAcceptedRepositoryAfterProposalRetirement(t *testing.T) {
+	root, commit := learningTrustRepository(t)
+	origin := &contracts.OutcomeRecord{IncidentId: "learning", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{t1Ref("api")}}}}
+	dispatcher := KubernetesJobDispatcher{AcceptedRepository: root, ProgramTrustThreshold: 1, Outcomes: priorOutcomeReader{outcomes: []memory.Outcome{{IncidentID: "learning", Record: origin}}}}
+	trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{RepositoryWorktree: filepath.Join(t.TempDir(), "deleted-proposal"), SourceCommit: commit})
+	if err != nil || !trust["service-targetport-mismatch"].Trusted {
+		t.Fatalf("accepted credit depended on deleted proposal: %v %v", trust, err)
+	}
+}
+
+func TestMissingLearningCommitOrCorpusIsOptional(t *testing.T) {
+	root := nativeRepository(t)
+	dispatcher := KubernetesJobDispatcher{AcceptedRepository: root, Outcomes: priorOutcomeReader{}}
+	for _, commit := range []string{strings.Repeat("a", 40), nativeGit(t, root, "rev-parse", "HEAD")} {
+		trust, err := dispatcher.programTrust(context.Background(), IncidentRequest{SourceCommit: commit})
+		if err != nil || len(trust) != 0 {
+			t.Fatalf("absent optional credit blocked dispatch: %v %v", trust, err)
+		}
+	}
+}
+
+func TestPreparedResponderRequestSurvivesMissingOptionalLearningCredit(t *testing.T) {
+	root := nativeRepository(t)
+	request := goldenRequest(t)
+	request.SourceCommit = strings.Repeat("a", 40) // absent Git object
+	request.RepositoryWorktree = root
+	request.RepositoryBaseCommit = nativeGit(t, root, "rev-parse", "HEAD")
+	dispatcher := KubernetesJobDispatcher{AcceptedRepository: root, Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), Outcomes: priorOutcomeReader{}, LoopFactory: func(IncidentRequest) *ResponderLoop { return &ResponderLoop{} }}
+	prepared, err := dispatcher.PrepareDispatch(context.Background(), request)
+	if err != nil || prepared.PreparedAgentTask == "" {
+		t.Fatalf("responder request blocked by optional credit: %v", err)
 	}
 }

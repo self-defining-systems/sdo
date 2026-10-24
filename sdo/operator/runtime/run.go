@@ -527,9 +527,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			apiProxyImage = launchConfig.GetValidatorImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
-			APIProxyImage:  apiProxyImage,
-			ToolchainImage: *toolchainImage,
-			Client:         bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			AcceptedRepository: resolvedRoot,
+			APIProxyImage:      apiProxyImage,
+			ToolchainImage:     *toolchainImage,
+			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
@@ -848,6 +849,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			}
 			return err
 		}
+	}
+	if err := controller.retireExpiredIncident(runCtx, time.Now().UTC()); err != nil {
+		return err
 	}
 	persistControllerState()
 	// A controller launched during a maintenance pause must still complete its rollout handoff: the pause keeps
@@ -1447,7 +1451,13 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 }
 
 func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
+	// Stale health evidence owns retirement before the generic expiry fallback.
 	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
+	// Completions pump effects without a detector Step. Recheck the deadline
+	// here too, before retrying a prepared workspace or responder request.
+	if err := controller.retireExpiredIncident(ctx, controller.clock()); err != nil {
 		return err
 	}
 	// A failed state write leaves effects pending for the next successful save.
