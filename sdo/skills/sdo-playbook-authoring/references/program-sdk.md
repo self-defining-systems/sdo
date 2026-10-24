@@ -178,6 +178,7 @@ type ProgramSpec struct {
 }
 
 type ReadView interface {
+	sdk.ObjectReader
 	sdk.DetectionContext
 	sdk.ScopedObservationSource
 	sdk.ObservationClock

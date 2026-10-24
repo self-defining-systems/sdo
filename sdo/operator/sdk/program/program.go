@@ -131,6 +131,7 @@ type Mitigator interface {
 }
 
 type ReadView interface {
+	sdk.ObjectReader
 	sdk.DetectionContext
 	sdk.ScopedObservationSource
 	sdk.ObservationClock

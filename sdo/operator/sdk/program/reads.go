@@ -5,6 +5,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -111,4 +112,23 @@ func (v snapshotReadView) ServiceReachability() (servicehealth.ReachabilityWindo
 		return source.ServiceReachability()
 	}
 	return servicehealth.ReachabilityWindow{}, false
+}
+
+func (v snapshotReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
+		return source.Object(ref)
+	}
+	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
+}
+func (v *checkedReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	object, err := v.ReadView.Object(ref)
+	v.check(err)
+	return object, err
+}
+
+func (v snapshotReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
+	if source, ok := v.DetectionContext.(sdk.ObjectCaptureSource); ok {
+		return source.CaptureObjects(refs)
+	}
+	return sdk.TypedObjects(v.DetectionContext), nil
 }

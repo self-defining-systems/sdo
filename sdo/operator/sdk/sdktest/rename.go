@@ -169,6 +169,7 @@ func renameCorpusCase(c CorpusCase) (CorpusCase, error) {
 	}
 	for _, snapshot := range []*Snapshot{&renamed.Open, &renamed.Fixed, &renamed.Healthy} {
 		renameExactValues(snapshot, m)
+		renameGenericObjects(snapshot, m)
 	}
 	renamed.Bindings = renameBindings(c.Bindings, c.Open.NamespaceName, m)
 	renamed.PeerBindings = renameBindings(c.PeerBindings, c.Healthy.NamespaceName, m)
@@ -654,4 +655,51 @@ func renameRecordings(calls []PrimitiveCall, namespace string, m *renameMapping)
 		renamed[index].Arguments, _ = json.Marshal(args)
 	}
 	return renamed, nil
+}
+
+// Generic fixtures undergo the same identity and port substitution as the
+// legacy typed views. Preserve unknown resource fields while renaming known
+// references; never replace the object with a typed decoding.
+func renameGenericObjects(snapshot *Snapshot, m *renameMapping) {
+	for index := range snapshot.Objects {
+		object := &snapshot.Objects[index]
+		if object.GetNamespace() != snapshot.NamespaceName {
+			continue
+		}
+		object.SetName(m.value(object.GetName()))
+		labels := object.GetLabels()
+		for key, value := range labels {
+			labels[key] = m.value(value)
+		}
+		object.SetLabels(labels)
+		renameGenericTree(object.Object, m)
+	}
+}
+func renameGenericTree(value any, m *renameMapping) {
+	switch v := value.(type) {
+	case []any:
+		for _, item := range v {
+			renameGenericTree(item, m)
+		}
+	case map[string]any:
+		for key, item := range v {
+			if key == "namespace" || key == "apiVersion" || key == "kind" {
+				continue
+			}
+			if text, ok := item.(string); ok {
+				v[key] = m.exact(text)
+				continue
+			}
+			switch key {
+			case "port", "targetPort", "containerPort", "hostPort", "nodePort", "healthCheckNodePort":
+				switch number := item.(type) {
+				case int64:
+					v[key] = int64(m.port(int32(number)))
+				case float64:
+					v[key] = float64(m.port(int32(number)))
+				}
+			}
+			renameGenericTree(item, m)
+		}
+	}
 }

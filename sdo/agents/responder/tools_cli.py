@@ -245,7 +245,10 @@ def _act(args: argparse.Namespace) -> int:
         # Capture is evidence collection, not mutation authority. Keep repairs and
         # their receipts available even when the controller cannot capture.
         try:
-            response = _exchange({"command": "pre-apply"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
+            response = _exchange(
+                {"command": "pre-apply", "refs": args.resource},
+                Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
+            )
             if response.get("error"):
                 raise ValueError(str(response["error"]))
         except (OSError, ValueError, TimeoutError) as exc:

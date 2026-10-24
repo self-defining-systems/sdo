@@ -187,19 +187,23 @@ func ValidateCapturedCorpusDirectory(trusted, candidate, incidentID string, chan
 }
 
 // CaptureIncidentSnapshot stores the first namespace-local view at each boundary.
-func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string) error {
+func CaptureIncidentSnapshot(repositoryMount, incidentID, phase string, view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) error {
 	if phase != "open" && phase != "fixed" && phase != "open@detect" && phase != "open@settle" && phase != "open@pre-apply" {
 		return fmt.Errorf("invalid corpus capture phase %q", phase)
 	}
-	snapshot, err := sdktest.CaptureSnapshot(view, namespace)
+	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
+	if err != nil {
+		return err
+	}
+	refs, err = CapturedSessionRefs(filepath.Dir(dir), refs)
+	if err != nil {
+		return err
+	}
+	snapshot, err := sdktest.CaptureSnapshot(view, namespace, refs...)
 	if err != nil {
 		return err
 	}
 	data, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
-	dir, err := IncidentCorpusDir(repositoryMount, incidentID)
 	if err != nil {
 		return err
 	}

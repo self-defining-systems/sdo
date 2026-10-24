@@ -589,7 +589,7 @@ func (c *Controller) captureOpenDetect(ctx context.Context, snapshot sdk.Detecti
 			return
 		}
 	}
-	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace); err != nil {
+	if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, request.IncidentID, "open@detect", snapshot, request.Namespace, findingCaptureRefs(request.Findings)...); err != nil {
 		report(fmt.Errorf("capture incident open snapshot: %w", err))
 		return
 	}
@@ -1026,7 +1026,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				return
 			}
 		}
-		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace); err != nil {
+		if err := memory.CaptureIncidentSnapshot(c.config.CorpusSessionRoot, c.currentIncidentRequest.IncidentID, "fixed", snapshot, c.config.Namespace, findingCaptureRefs(c.currentIncidentRequest.Findings)...); err != nil {
 			c.mu.Unlock()
 			c.reportBrokerError("capture verified snapshot", err)
 			return

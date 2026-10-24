@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk"
 )
 
 const preApplyCaptureGap = "pre_apply_capture_gap"
@@ -19,7 +20,7 @@ const preApplyCaptureGap = "pre_apply_capture_gap"
 // repair. Handle serializes ad hoc acknowledgements and typed plan application.
 // The protected file is the durable marker across responder/controller restarts.
 // This boundary does no diagnosis, primitive probing, or settle waiting.
-func (l *ResponderLoop) capturePreApply(ctx context.Context) (captureErr error) {
+func (l *ResponderLoop) capturePreApply(ctx context.Context, refs ...sdk.ObjectRef) (captureErr error) {
 	if l.CorpusSessionRoot == "" || l.preApplyCaptured {
 		return nil
 	}
@@ -56,7 +57,7 @@ func (l *ResponderLoop) capturePreApply(ctx context.Context) (captureErr error) 
 	if err != nil {
 		return fmt.Errorf("pre-apply snapshot: %w", err)
 	}
-	if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", snapshot, l.Request.Namespace); err != nil {
+	if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", snapshot, l.Request.Namespace, append(findingCaptureRefs(l.Request.Findings), refs...)...); err != nil {
 		return fmt.Errorf("capture pre-apply snapshot: %w", err)
 	}
 	l.preApplyCaptured = true

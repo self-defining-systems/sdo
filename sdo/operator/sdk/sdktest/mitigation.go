@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	jsonpatch "github.com/evanphx/json-patch"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sort"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -131,6 +133,33 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 			return err
 		}
 	}
+	// Generic objects are authoritative. Refresh typed compatibility arrays after
+	// patching so typed diagnoses see the same repaired object as generic readers.
+	if objects, ok := fixture["objects"].([]any); ok && len(objects) > 0 {
+		body, _ := json.Marshal(objects)
+		var canonical []unstructured.Unstructured
+		if err := json.Unmarshal(body, &canonical); err != nil {
+			return err
+		}
+		compatibility := Snapshot{NamespaceName: c.Open.NamespaceName}
+		var local []unstructured.Unstructured
+		for _, object := range canonical {
+			if object.GetNamespace() == compatibility.NamespaceName {
+				local = append(local, object)
+			}
+		}
+		if err := sdk.DecodeTypedObjects(&compatibility, local); err != nil {
+			return err
+		}
+		encoded, _ := json.Marshal(compatibility)
+		var legacy map[string]any
+		_ = json.Unmarshal(encoded, &legacy)
+		for key, value := range legacy {
+			if _, isList := value.([]any); isList && key != "objects" {
+				fixture[key] = value
+			}
+		}
+	}
 	raw, err = json.Marshal(fixture)
 	if err != nil {
 		return err
@@ -152,17 +181,62 @@ func checkMitigationPlanRepairs(p program.Diagnoser, c CorpusCase, plan program.
 }
 
 func fixtureObject(snapshot map[string]any, ref sdk.ObjectRef) (map[string]any, error) {
-	kinds := map[string]string{"Service": "services", "Pod": "pods", "Deployment": "deployments", "ReplicaSet": "replicaSets", "ConfigMap": "configMaps", "Endpoints": "endpoints", "EndpointSlice": "endpointSlices", "NetworkPolicy": "networkPolicies"}
-	versions := map[string]string{"Service": "v1", "Pod": "v1", "Deployment": "apps/v1", "ReplicaSet": "apps/v1", "ConfigMap": "v1", "Endpoints": "v1", "EndpointSlice": "discovery.k8s.io/v1", "NetworkPolicy": "networking.k8s.io/v1"}
-	if ref.Namespace != snapshot["namespace"] || versions[ref.Kind] != ref.APIVersion || ref.Name == "" {
+	if ref.Name == "" || ref.Kind == "" || ref.APIVersion == "" {
 		return nil, fmt.Errorf("invalid fixture reference %+v", ref)
 	}
-	list, _ := snapshot[kinds[ref.Kind]].([]any)
-	for _, item := range list {
-		object, _ := item.(map[string]any)
-		meta, _ := object["metadata"].(map[string]any)
-		if meta["name"] == ref.Name && meta["namespace"] == ref.Namespace {
-			return object, nil
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	var typed Snapshot
+	if err = json.Unmarshal(raw, &typed); err != nil {
+		return nil, err
+	}
+	known := sdk.TypedObjects(typed)
+	keys := []string{"objects"}
+	rest := make([]string, 0, len(snapshot))
+	for key := range snapshot {
+		if key != "objects" {
+			rest = append(rest, key)
+		}
+	}
+	sort.Strings(rest)
+	keys = append(keys, rest...)
+	for _, key := range keys {
+		value := snapshot[key]
+		list, _ := value.([]any)
+		for _, item := range list {
+			object, _ := item.(map[string]any)
+			if object == nil {
+				continue
+			}
+			meta, _ := object["metadata"].(map[string]any)
+			namespace, _ := meta["namespace"].(string)
+			if meta["name"] != ref.Name || namespace != ref.Namespace {
+				continue
+			}
+			api, _ := object["apiVersion"].(string)
+			kind, _ := object["kind"].(string)
+			if api == ref.APIVersion && kind == ref.Kind {
+				return object, nil
+			}
+			// Old typed fixture arrays predate explicit GVKs. Match by their JSON shape.
+			if api == "" && kind == "" {
+				for _, candidate := range known {
+					if sdk.ObjectIdentity(candidate) == ref {
+						a, _ := json.Marshal(candidate.Object)
+						var fields map[string]any
+						_ = json.Unmarshal(a, &fields)
+						delete(fields, "apiVersion")
+						delete(fields, "kind")
+						b, _ := json.Marshal(fields)
+						c, _ := json.Marshal(object)
+						if string(b) == string(c) {
+							return object, nil
+						}
+					}
+				}
+			}
 		}
 	}
 	return nil, fmt.Errorf("fixture lacks %s/%s", ref.Kind, ref.Name)

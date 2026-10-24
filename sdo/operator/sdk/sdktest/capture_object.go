@@ -2,147 +2,155 @@ package sdktest
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"strings"
-
-	appsv1 "k8s.io/api/apps/v1"
-	autoscalingv2 "k8s.io/api/autoscaling/v2"
-	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	policyv1 "k8s.io/api/policy/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ProjectCapturedObject applies the controller corpus capture projection to API
-// JSON. Unsupported representations carry metadata only in the caller. Secret
-// values are never observations: only their key names survive.
+// ProjectCapturedObject preserves arbitrary Kubernetes fields while stripping
+// credential payloads, last-applied copies and volatile write metadata.
+// Discovery callers exclude Secrets entirely; this also protects recorded JSON.
 func ProjectCapturedObject(raw []byte) ([]byte, error) {
-	var header struct {
-		APIVersion string            `json:"apiVersion"`
-		Kind       string            `json:"kind"`
-		Items      []json.RawMessage `json:"items"`
-		Metadata   json.RawMessage   `json:"metadata"`
-	}
-	if err := json.Unmarshal(raw, &header); err != nil {
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
 		return nil, err
 	}
-	if strings.HasSuffix(header.Kind, "List") {
-		kind := strings.TrimSuffix(header.Kind, "List")
-		probe, _ := json.Marshal(map[string]string{"kind": kind, "apiVersion": header.APIVersion})
-		if _, err := ProjectCapturedObject(probe); err != nil {
-			return nil, err
-		}
-		items := make([]json.RawMessage, 0, len(header.Items))
-		for _, item := range header.Items {
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(item, &fields); err != nil {
-				return nil, err
+	api, _ := object["apiVersion"].(string)
+	kind, _ := object["kind"].(string)
+	if api == "" || kind == "" {
+		return nil, fmt.Errorf("capture requires Kubernetes apiVersion and kind")
+	}
+	if strings.HasSuffix(kind, "List") {
+		items, _ := object["items"].([]any)
+		for i, item := range items {
+			m, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid Kubernetes list item")
 			}
-			fields["kind"], _ = json.Marshal(kind)
-			fields["apiVersion"], _ = json.Marshal(header.APIVersion)
-			b, _ := json.Marshal(fields)
+			if m["apiVersion"] == nil {
+				m["apiVersion"] = api
+			}
+			if m["kind"] == nil {
+				m["kind"] = strings.TrimSuffix(kind, "List")
+			}
+			b, _ := json.Marshal(m)
 			p, err := ProjectCapturedObject(b)
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, p)
-		}
-		// List metadata (continue/resourceVersion) is useful for scope, not identity.
-		var meta metav1.ListMeta
-		if len(header.Metadata) > 0 {
-			if err := json.Unmarshal(header.Metadata, &meta); err != nil {
+			if err = json.Unmarshal(p, &items[i]); err != nil {
 				return nil, err
 			}
 		}
-		return json.Marshal(struct {
-			APIVersion string            `json:"apiVersion"`
-			Kind       string            `json:"kind"`
-			Metadata   metav1.ListMeta   `json:"metadata"`
-			Items      []json.RawMessage `json:"items"`
-		}{header.APIVersion, header.Kind, meta, items})
+	} else if _, ok := object["metadata"].(map[string]any); !ok {
+		return nil, fmt.Errorf("capture requires resource metadata")
 	}
-	// Concrete typed decoding drops unknown payload fields.
-	var target any
-	switch header.Kind {
-	case "ConfigMap":
-		target = &corev1.ConfigMap{}
-	case "Service":
-		target = &corev1.Service{}
-	case "Pod":
-		target = &corev1.Pod{}
-	case "Deployment":
-		target = &appsv1.Deployment{}
-	case "StatefulSet":
-		target = &appsv1.StatefulSet{}
-	case "ReplicaSet":
-		target = &appsv1.ReplicaSet{}
-	case "HorizontalPodAutoscaler":
-		target = &autoscalingv2.HorizontalPodAutoscaler{}
-	case "PodDisruptionBudget":
-		target = &policyv1.PodDisruptionBudget{}
-	case "Endpoints":
-		target = &corev1.Endpoints{}
-	case "EndpointSlice":
-		target = &discoveryv1.EndpointSlice{}
-	case "NetworkPolicy":
-		target = &networkingv1.NetworkPolicy{}
-	case "Event":
-		target = &corev1.Event{}
-	case "Secret":
-		// Decode values as opaque JSON to also support stringData and non-base64
-		// alternate Secret values without ever copying them into the projection.
-		var s struct {
-			metav1.TypeMeta
-			Metadata   metav1.ObjectMeta          `json:"metadata"`
-			Data       map[string]json.RawMessage `json:"data"`
-			StringData map[string]json.RawMessage `json:"stringData"`
+	redactObjectTree(object)
+	return json.Marshal(object)
+}
+func redactObjectTree(value any) {
+	switch v := value.(type) {
+	case []any:
+		for _, item := range v {
+			redactObjectTree(item)
 		}
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, err
-		}
-		compactMeta(&s.Metadata)
-		keys := func(in map[string]json.RawMessage) map[string]string {
-			out := make(map[string]string, len(in))
-			for k := range in {
-				out[k] = ""
+	case map[string]any:
+		if v["kind"] == "Secret" {
+			// Whitelist only metadata and key names for Secrets, including nested objects.
+			for key := range v {
+				if key != "apiVersion" && key != "kind" && key != "metadata" && key != "data" && key != "stringData" {
+					delete(v, key)
+				}
 			}
-			return out
+			for _, key := range []string{"data", "stringData"} {
+				if data, ok := v[key].(map[string]any); ok {
+					for k := range data {
+						data[k] = ""
+					}
+				}
+			}
 		}
-		return json.Marshal(struct {
-			metav1.TypeMeta
-			Metadata   metav1.ObjectMeta `json:"metadata"`
-			Data       map[string]string `json:"data,omitempty"`
-			StringData map[string]string `json:"stringData,omitempty"`
-		}{s.TypeMeta, s.Metadata, keys(s.Data), keys(s.StringData)})
-	default:
-		return nil, errors.New("unsupported capture representation")
+		if meta, ok := v["metadata"].(map[string]any); ok {
+			delete(meta, "managedFields")
+			delete(meta, "uid")
+			delete(meta, "generation")
+			if annotations, ok := meta["annotations"].(map[string]any); ok {
+				delete(annotations, "kubectl.kubernetes.io/last-applied-configuration")
+			}
+		}
+		if name, ok := v["name"].(string); ok && sensitiveEnvironmentName.MatchString(name) {
+			if _, exists := v["value"]; exists {
+				v["value"] = ""
+			}
+			delete(v, "valueFrom")
+		}
+		// ConfigMap values follow the existing capture-only redaction policy.
+		if v["kind"] == "ConfigMap" {
+			for _, key := range []string{"data", "binaryData"} {
+				if data, ok := v[key].(map[string]any); ok {
+					for k, value := range data {
+						if key == "data" {
+							data[k] = capturedConfigValue(k, value)
+						} else {
+							data[k] = ""
+						}
+					}
+				}
+			}
+			if meta, ok := v["metadata"].(map[string]any); ok {
+				annotations, ok := meta["annotations"].(map[string]any)
+				if !ok {
+					annotations = map[string]any{}
+					meta["annotations"] = annotations
+				}
+				annotations["sdo.dev/configmap-values-redacted"] = "true"
+			}
+		}
+		if involved, ok := v["involvedObject"].(map[string]any); ok {
+			delete(involved, "uid")
+			delete(involved, "resourceVersion")
+		}
+		for _, item := range v {
+			redactObjectTree(item)
+		}
 	}
-	if err := json.Unmarshal(raw, target); err != nil {
-		return nil, err
+}
+
+// Structured ConfigMaps can contain operational flags. Keep document structure
+// and redact credential-named entries, while opaque values remain key-only.
+func capturedConfigValue(key string, value any) any {
+	text, ok := value.(string)
+	if !ok || sensitiveEnvironmentName.MatchString(key) {
+		return ""
 	}
-	meta := target.(metav1.Object)
-	m := metav1.ObjectMeta{Annotations: meta.GetAnnotations()}
-	compactMeta(&m)
-	meta.SetAnnotations(m.Annotations)
-	meta.SetManagedFields(nil)
-	meta.SetUID("")
-	meta.SetGeneration(0)
-	switch o := target.(type) {
-	case *corev1.Pod:
-		redactPodSpec(&o.Spec)
-	case *appsv1.Deployment:
-		compactMeta(&o.Spec.Template.ObjectMeta)
-		redactPodSpec(&o.Spec.Template.Spec)
-	case *appsv1.StatefulSet:
-		compactMeta(&o.Spec.Template.ObjectMeta)
-		redactPodSpec(&o.Spec.Template.Spec)
-	case *appsv1.ReplicaSet:
-		compactMeta(&o.Spec.Template.ObjectMeta)
-		redactPodSpec(&o.Spec.Template.Spec)
-	case *corev1.Event:
-		o.InvolvedObject.ResourceVersion = ""
-		o.InvolvedObject.UID = ""
+	if text == "true" || text == "false" {
+		return text
 	}
-	return json.Marshal(target)
+	var document map[string]any
+	if json.Unmarshal([]byte(text), &document) != nil || document == nil {
+		return ""
+	}
+	var scrub func(any)
+	scrub = func(value any) {
+		switch v := value.(type) {
+		case []any:
+			for _, item := range v {
+				scrub(item)
+			}
+		case map[string]any:
+			for key, item := range v {
+				if sensitiveEnvironmentName.MatchString(key) {
+					v[key] = ""
+				} else {
+					scrub(item)
+				}
+			}
+		}
+	}
+	scrub(document)
+	redactObjectTree(document)
+	raw, err := json.Marshal(document)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }

@@ -296,6 +296,9 @@ func Resources(c Config, resources ...*metav1.APIResourceList) (Plan, error) {
 	if err := addPermissiveGrants(c, &plan, resources); err != nil {
 		return Plan{}, err
 	}
+	if err := addCaptureGrants(c, &plan, resources); err != nil {
+		return Plan{}, err
+	}
 	addObservationGrants(&plan, c)
 	plan.SyncPod = syncPod(c)
 	plan.Job = controllerJob(c)

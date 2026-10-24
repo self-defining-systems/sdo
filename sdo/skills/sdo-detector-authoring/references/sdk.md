@@ -14,6 +14,10 @@ const MaxObservationObjects = 500
 const MaxObservationTargets = 32
 const ObservationObserved = "observed"
 
+VARIABLES
+
+var ErrObjectNotCaptured = errors.New("object not captured")
+
 FUNCTIONS
 
 func CanonicalObjectKind(raw string) string
@@ -24,6 +28,11 @@ func ConsumesPodAdmission(detectors []Detector) bool
     ConsumesPodAdmission enables the bounded API observation only for bundles
     containing a detector that explicitly requests it.
 
+func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
+    DecodeTypedObjects maintains the legacy typed fixture edge without a kind
+    map. New kinds remain in Objects and are available through ObjectReader.
+
+func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error)
 func FormatObjectRef(ref ObjectRef) (string, error)
     FormatObjectRef returns canonical text. Non-default API versions are
     retained explicitly, so parsing the formatted value preserves every
@@ -60,6 +69,12 @@ func ServiceExpectsEndpoints(service corev1.Service) bool
     aliases: Kubernetes never gives them endpoints, even when a selector is left
     over from a type change. A detector must not report an ExternalName Service
     for missing ready endpoints or pods.
+
+func SortObjects(objects []unstructured.Unstructured)
+func TypedObjects(view any) []unstructured.Unstructured
+    TypedObjects is the compatibility edge for existing typed detector views and
+    old fixtures. It discovers zero-argument Kubernetes slice getters by type;
+    capture/replay have no separate kind inventories.
 
 
 TYPES
@@ -220,6 +235,20 @@ const (
 	FindingActive   FindingStatus = "active"
 	FindingResolved FindingStatus = "resolved"
 )
+type ObjectCaptureSource interface {
+	CaptureObjects([]ObjectRef) ([]unstructured.Unstructured, error)
+}
+    ObjectCaptureSource freezes discovery-backed objects at an incident
+    boundary. References extend the application namespace to incident-touched
+    scopes.
+
+type ObjectReader interface {
+	Object(ObjectRef) (*unstructured.Unstructured, error)
+}
+    ObjectReader reads an exact, versioned identity. Returned objects are
+    private copies. An absent or uncaptured identity is an error, never an empty
+    healthy object.
+
 type ObjectRef struct {
 	APIVersion string `json:"api_version,omitempty"`
 	Kind       string `json:"kind"`
@@ -229,6 +258,8 @@ type ObjectRef struct {
     ObjectRef is the comparable in-process projection of common.proto:ObjectRef.
     Cross-process contracts use the generated protobuf message; raw tool refs
     are parsed only by ParseObjectRef.
+
+func ObjectIdentity(o unstructured.Unstructured) ObjectRef
 
 func ObjectRefFrom(kind string, apiVersion string, object metav1.Object) ObjectRef
 

@@ -35,11 +35,12 @@ import (
 )
 
 type RuntimeOptions struct {
-	Programs program.ProgramRegistry
-	Args     []string
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Provider SnapshotProvider
+	GenericCapture *core.GenericCapture
+	Programs       program.ProgramRegistry
+	Args           []string
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Provider       SnapshotProvider
 
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
@@ -407,10 +408,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err = scope.Within(ceiling); err != nil {
 		return err
 	}
+	genericCapture := options.GenericCapture
+	if genericCapture == nil && options.Client == nil {
+		genericCapture, err = core.NewGenericCapture(*namespace)
+		if err != nil {
+			return fmt.Errorf("create generic capture reader: %w", err)
+		}
+	}
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
 			return observation.Accepted(ctx, resolvedRoot)
-		}, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -530,7 +538,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource,
+					Client: GenericPlanClient{TypedPlanClient: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Objects: genericCapture}, Source: planSource,
 
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider, Timeout: *verificationTimeout, PollInterval: scaledDuration(time.Second, timeScale)}, Observer: kubernetesCache,
 				}, *maxResponseLoops)

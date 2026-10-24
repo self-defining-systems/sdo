@@ -36,6 +36,19 @@ func ExpandedSetField(f SetField) bool {
 // ValidateSetField checks the explicit path allowlist and Kubernetes schema kind.
 // An absent API version retains legacy program validation; executors require it.
 func ValidateSetField(f SetField) error {
+	if strings.HasPrefix(f.Path, "/") {
+		if f.Ref.APIVersion == "" || f.Ref.Kind == "" || f.Ref.Name == "" || strings.EqualFold(f.Ref.Kind, "Secret") {
+			return fmt.Errorf("generic SetField requires a named nonsecret resource")
+		}
+		if f.DocumentFormat != "" || len(f.DocumentPath) > 0 {
+			return fmt.Errorf("generic SetField cannot contain a document path")
+		}
+		if _, err := objectPointer(f.Path); err != nil {
+			return err
+		}
+		return f.Value.Validate()
+	}
+
 	allowed := f.Ref.Kind == "NetworkPolicy" && f.Path == "spec"
 	for _, pattern := range allowedFieldPaths {
 		allowed = allowed || pattern.MatchString(f.Path)
@@ -166,7 +179,7 @@ func ValidateResolvedSetField(f SetField, value any) error {
 	if err := ValidateSetField(f); err != nil {
 		return err
 	}
-	if f.DocumentFormat != "" {
+	if f.DocumentFormat != "" || strings.HasPrefix(f.Path, "/") {
 		return nil
 	}
 	if f.Ref.APIVersion == "" {

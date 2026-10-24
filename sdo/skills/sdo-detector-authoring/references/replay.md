@@ -55,9 +55,10 @@ func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []st
     findings and detector errors are not violations here: other tests own them.
 
 func ProjectCapturedObject(raw []byte) ([]byte, error)
-    ProjectCapturedObject applies the controller corpus capture projection to
-    API JSON. Unsupported representations carry metadata only in the caller.
-    Secret values are never observations: only their key names survive.
+    ProjectCapturedObject preserves arbitrary Kubernetes fields while stripping
+    credential payloads, last-applied copies and volatile write metadata.
+    Discovery callers exclude Secrets entirely; this also protects recorded
+    JSON.
 
 func ValidateCorpusProvenance(dir string) error
     ValidateCorpusProvenance checks that persisted case snapshots still match
@@ -142,6 +143,8 @@ type RecordingReadView struct {
 
 func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
 
+func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
+
 func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
@@ -153,6 +156,8 @@ func (v *RecordingReadView) MetricResult(id string) (metrics.Result, bool)
 func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
 
 func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
+func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 
 func (v *RecordingReadView) ObservationGeneration() string
 
@@ -228,7 +233,9 @@ func (v *ReplayReadView) TrafficWindow(name string) (traffic.Window, bool)
 func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
 type Snapshot struct {
-	Admission *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
+	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
+	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
+	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
@@ -257,7 +264,7 @@ type Snapshot struct {
 	Reachability *servicehealth.ReachabilityWindow `json:"reachability,omitempty"`
 }
 
-func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, error)
+func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.ObjectRef) (Snapshot, error)
     CaptureSnapshot copies the namespace-local detection view for corpus replay.
     ConfigMap data and binaryData retain key names only; live read views are
     unchanged.
@@ -270,6 +277,8 @@ func LoadSnapshots(dir string) ([]Snapshot, error)
 
 func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
     AlertsResult implements metrics.AlertSource.
+
+func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
 
 func (s Snapshot) ConfigMaps() []corev1.ConfigMap
 
@@ -289,6 +298,8 @@ func (s Snapshot) MetricResult(id string) (metrics.Result, bool)
 func (s Snapshot) Namespace() string
 
 func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
+
+func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 
 func (s Snapshot) ObservedAt() time.Time
     ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
