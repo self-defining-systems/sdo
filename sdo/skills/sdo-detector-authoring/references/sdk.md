@@ -447,11 +447,25 @@ func ReachabilityEligible(service corev1.Service) bool
     translation, selector-less Services have hand-managed backends, and Services
     SDO creates for itself are not the application's.
 
+func ReachabilityTargetConfiguration(ctx sdk.DetectionContext, target ReachabilityTarget) (string, bool)
+    ReachabilityTargetConfiguration binds a target to its observed Service,
+    selected backend configuration, referenced ConfigMaps and selecting network
+    policy. It never reads credentials or Secret resources.
+
 func ReachabilityWatches() []sdk.WatchKind
     ReachabilityWatches are the kinds whose changes can change the verdict.
 
 
 TYPES
+
+type BaselineAuthorization struct {
+	SourceInputs    string `json:"sourceInputs"`
+	ObjectiveDigest string `json:"objectiveDigest"`
+	Reason          string `json:"reason"`
+	GoalHealthy     bool   `json:"goalHealthy"`
+}
+    BaselineAuthorization is supplied only by trusted health acceptance or an
+    explicit healthy-baseline gate after independently checking the goal.
 
 type DialErrorClass string
     DialErrorClass classifies a failed dial.
@@ -480,11 +494,39 @@ type ProberIdentity struct {
     ProberIdentity is where the dials come from, so NetworkPolicy admission can
     be evaluated against it.
 
+type ReachabilityBaseline struct {
+	Version       int                     `json:"version"`
+	Authorization BaselineAuthorization   `json:"authorization"`
+	CapturedAt    time.Time               `json:"capturedAt"`
+	Exclusions    []ReachabilityExclusion `json:"exclusions"`
+}
+    ReachabilityBaseline is visible, health-judge-owned accepted diagnostic
+    data. It records measured failures, never an inference from missing prior
+    success.
+
+func CaptureReachabilityBaseline(ctx sdk.DetectionContext, a BaselineAuthorization) (*ReachabilityBaseline, error)
+    CaptureReachabilityBaseline captures only targets the ordinary detector
+    independently diagnoses from fresh failed probes in this authorized
+    snapshot.
+
+func (b *ReachabilityBaseline) Validate() error
+
 type ReachabilityConsumer interface {
 	ConsumesServiceReachability() bool
 }
     ReachabilityConsumer marks detectors that need dial observations, so the
     controller runs the reachability observer only when one is installed.
+
+type ReachabilityExclusion struct {
+	Namespace     string             `json:"namespace"`
+	Target        ReachabilityTarget `json:"target"`
+	ServiceUID    string             `json:"serviceUID,omitempty"`
+	TargetPort    string             `json:"targetPort"`
+	Protocol      string             `json:"protocol"`
+	Selector      map[string]string  `json:"selector"`
+	Configuration string             `json:"configuration"`
+	Samples       []DialSample       `json:"samples"`
+}
 
 type ReachabilitySource interface {
 	ServiceReachability() (ReachabilityWindow, bool)
@@ -509,11 +551,14 @@ func (t ReachabilityTarget) ID() string
     ID names the target.
 
 type ReachabilityWindow struct {
-	ObservedAt time.Time            `json:"observedAt"`
-	Interval   time.Duration        `json:"intervalNs"`
-	Timeout    time.Duration        `json:"timeoutNs"`
-	Failures   int                  `json:"failures"`
-	Targets    []TargetObservations `json:"targets"`
+	Baseline        *ReachabilityBaseline `json:"baseline,omitempty"`
+	SourceInputs    string                `json:"sourceInputs,omitempty"`
+	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
+	ObservedAt      time.Time             `json:"observedAt"`
+	Interval        time.Duration         `json:"intervalNs"`
+	Timeout         time.Duration         `json:"timeoutNs"`
+	Failures        int                   `json:"failures"`
+	Targets         []TargetObservations  `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`

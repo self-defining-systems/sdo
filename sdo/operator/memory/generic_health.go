@@ -141,6 +141,16 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 		return err
 	}
 	for _, entry := range entries {
+		if manifest.ID == "service-reachability" && entry.Name() == "baseline.json" && !entry.IsDir() {
+			data, err := os.ReadFile(filepath.Join(base, entry.Name()))
+			if err != nil {
+				return err
+			}
+			if _, err := DecodeReachabilityBaseline(data); err != nil {
+				return err
+			}
+			continue
+		}
 		if entry.Name() != layout.ManifestFileName && entry.Name() != layout.DetectorFileName && entry.Name() != layout.DetectorTestFileName {
 			return fmt.Errorf("generic health package %s contains unexpected file %s", manifest.ID, entry.Name())
 		}
