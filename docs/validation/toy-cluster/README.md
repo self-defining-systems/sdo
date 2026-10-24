@@ -194,7 +194,7 @@ c170ee836 feat: exercise periodic invariant sweeps on unowned toy services
 - `benchmarks/sregym/fastloop/toy{,_cni,_images,_ops,_reset}.py` plus toy selection
   in CLI/environment/dev setup and optional checkpoint export control.
 - `tests/fixtures/sregym/fastloop/toy_latent_repeat.json` and `toy_sweep.json`.
-- `scripts/prepare_toy_node.sh`, Python contract tests and Go broker seed validation.
+- Lane registry delivery (the former node-archive preparer has been retired), Python contract tests and Go broker seed validation.
 - Design, architecture, testing-guide, iteration ladder and analysis-reference
   updates, plus this recorded validation evidence.
 

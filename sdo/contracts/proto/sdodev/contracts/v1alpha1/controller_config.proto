@@ -136,4 +136,8 @@ message ControllerConfig {
   string plan_safety_policy_sha256 = 73;
   // Reviewed source-only policy; generated per incident, never from plans.
   string plan_source_policy_json = 74;
+
+  // Trusted controller image supplying Go to compiler-free workers and validators.
+  // Required at startup, independently of the optional traffic prober image.
+  string toolchain_image = 75;
 }

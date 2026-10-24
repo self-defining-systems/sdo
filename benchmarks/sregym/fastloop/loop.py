@@ -141,6 +141,9 @@ class LoopConfig:
     problems: tuple[str, ...]
     incidents: int
     results_path: Path
+    delivery_record_path: Path | None = None
+    image_delivery: str = "unknown"
+    image_delivery_reason: str = ""
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
     slot_offset: int = 0
@@ -468,7 +471,16 @@ def _run_one(
     fallback = windows[0] if windows else InjectionWindow(started_at=now(), finished_at=now())
     window = outcome.injection if outcome is not None else fallback
     cleanup = getattr(driver, "last_cleanup", None) if windows else None
+    delivery, reason = config.image_delivery, config.image_delivery_reason
+    if config.delivery_record_path is not None and config.delivery_record_path.is_file():
+        from benchmarks.sregym.fastloop.image_delivery import delivery_state
+
+        state = delivery_state(config.delivery_record_path)
+        if state:
+            delivery, reason = state["path"], state["reason"]
     record = IncidentRecord(
+        image_delivery=delivery,
+        image_delivery_reason=reason,
         run_id=config.run_id,
         index=index,
         agent=agent.name,

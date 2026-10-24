@@ -23,7 +23,7 @@ cp .fastloop/sdo-operator "${build_dir}/.fastloop/"
 cp -a sdo/operator "${build_dir}/sdo/"
 docker build --network=none --file "${repo_root}/tests/fixtures/sdo/abort_smoke/Dockerfile" \
   --build-arg "BASE_IMAGE=${base_image}" --tag "${controller_image}" "${build_dir}"
-kind load docker-image --name "${SDO_ABORT_SMOKE_CLUSTER}" \
+uv run python -m benchmarks.sregym.fastloop.image_delivery --cluster "${SDO_ABORT_SMOKE_CLUSTER}" --run-dir "${SDO_ABORT_SMOKE_RUN_DIR}" \
   "${controller_image}" "${worker_image}" sdo-toy-app:v1
 SDO_OPERATOR_BIN="${repo_root}/.fastloop/sdo-operator" \
 KUBECONFIG="${SDO_ABORT_SMOKE_RUN_DIR}/kubeconfig" \

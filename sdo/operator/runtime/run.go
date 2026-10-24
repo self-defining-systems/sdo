@@ -30,6 +30,7 @@ import (
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
+	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -222,6 +223,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	proberBinary := flags.String(
 		"prober-binary", "", "compiled routing and traffic prober on the shared repository volume; the controller runs it as an isolated pod",
 	)
+	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required in job mode)")
 	proberImage := flags.String("prober-image", "", "image that runs the prober binary; defaults to --responder-image")
 	proberURL := flags.String("prober-url", "", "use an already running prober at this URL instead of starting one")
 	metricsURL := flags.String(
@@ -317,6 +319,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return fmt.Errorf("unsupported dispatcher mode %q", *dispatcherMode)
 	}
 	jobDispatch := options.Dispatcher == nil
+	if jobDispatch {
+		if err := toolchain.ValidateImage(*toolchainImage); err != nil {
+			return err
+		}
+	}
 	if jobDispatch && (*repositoryPVC == "" || *credentialsSecret == "") {
 		return fmt.Errorf("repository-pvc and responder-credentials-secret are required in job mode")
 	}
@@ -560,8 +567,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			apiProxyImage = launchConfig.GetValidatorImage()
 		}
 		dispatcher = KubernetesJobDispatcher{
-			APIProxyImage: apiProxyImage,
-			Client:        bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			APIProxyImage:  apiProxyImage,
+			ToolchainImage: *toolchainImage,
+			Client:         bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,
@@ -686,7 +694,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller.CanAct = elector.IsLeader
 	controller.GuardAction = elector.GuardContext
-	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap)
+	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
 	}

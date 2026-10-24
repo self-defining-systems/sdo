@@ -533,3 +533,30 @@ Rebalance the name patterns using top-level `pass` event `Elapsed` values. Keep 
 matrix shard values in sync; `tests/unit/sdo/operator/test_runtime_shards.py` checks
 that contract. New test names are discovered automatically and must still pass the
 exactly-once guard.
+### Fast image delivery
+
+Use `uv run python -m benchmarks.sregym.fastloop preflight` before image builds.
+Fastloop up repeats this gate before compiling or building. Mounts default to
+this worktree; bare `--dev-mount` is accepted by up and reset. A code edit needs
+only `uv run python -m benchmarks.sregym.fastloop reset --run-dir "$RUN_DIR" --dev-mount`.
+Only dependency/tool changes need a new image tag via `scripts/build_sdo_images.sh`,
+which uses the shared Bake graph and works with a private docker-container builder.
+
+Up pushes through a lane-owned registry, preserving layers. An automatic archive
+fallback warns on stderr and records `image_delivery: kind-load-fallback` plus
+`image_delivery_reason` in the lane and incident rows. Run repeats that warning.
+See the [fastloop procedure](../benchmarks/sregym/experiments/fastloop/README.md)
+for ownership and cache details. Legacy live SREGym launches require
+`--allow-non-fastloop`; use fastloop for normal experiments.
+
+Fastloop image delivery regressions run without Docker or a cluster:
+
+```bash
+uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_fast_image_delivery.py tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py
+(cd sdo/operator && go test ./toolchain ./install ./operatorcli)
+(cd sdo/operator/runtime && go test -run 'TestNativeStartupRejectsMissingToolchainBeforeKubernetes|TestNativeReflection|TestControllerConfig')
+```
+
+Direct controller launches require `--toolchain-image <controller-image>`;
+`install-existing` supplies it automatically. The traffic prober image is
+independent. Missing compiler configuration fails at startup.

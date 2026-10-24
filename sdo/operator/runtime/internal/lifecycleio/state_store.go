@@ -63,9 +63,10 @@ var errStaleResourceVersion = fmt.Errorf("%w: stale ConfigMap resourceVersion", 
 // cached resourceVersion. Only a resourceVersion conflict falls back to Get
 // plus Update, and that path still rejects a stale state revision.
 type ConfigMapStateStore struct {
-	client    kubernetes.Interface
-	namespace string
-	name      string
+	client       kubernetes.Interface
+	namespace    string
+	name         string
+	evidenceRoot string
 
 	mu sync.Mutex
 	// cached is the ConfigMap as the API server last returned it, or nil when
@@ -87,8 +88,12 @@ type ambiguousWrite struct {
 	digest   [sha256.Size]byte
 }
 
-func NewConfigMapStateStore(client kubernetes.Interface, namespace string, name string) *ConfigMapStateStore {
-	return &ConfigMapStateStore{client: client, namespace: namespace, name: name}
+func NewConfigMapStateStore(client kubernetes.Interface, namespace string, name string, evidenceRoot ...string) *ConfigMapStateStore {
+	store := &ConfigMapStateStore{client: client, namespace: namespace, name: name}
+	if len(evidenceRoot) > 0 {
+		store.evidenceRoot = evidenceRoot[0]
+	}
+	return store
 }
 
 func (s *ConfigMapStateStore) Load(ctx context.Context) (*contracts.ControllerState, string, error) {
@@ -117,6 +122,9 @@ func (s *ConfigMapStateStore) Load(ctx context.Context) (*contracts.ControllerSt
 	if _, err := strconv.ParseUint(revision, 10, 64); err != nil {
 		return nil, "", fmt.Errorf("invalid controller state revision %q", revision)
 	}
+	if err := s.restoreEvidence(state, configMap.Annotations[StateEvidenceAnnotation]); err != nil {
+		return nil, "", err
+	}
 	s.remember(configMap)
 	return state, revision, nil
 }
@@ -137,6 +145,10 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state *contracts.Control
 		document = proto.Clone(state).(*contracts.ControllerState)
 		document.FailedClosures = nil
 	}
+	document, evidence, err := s.stageEvidence(document)
+	if err != nil {
+		return "", err
+	}
 	payload, err := encodeControllerState(document)
 	if err != nil {
 		return "", err
@@ -148,19 +160,19 @@ func (s *ConfigMapStateStore) Save(ctx context.Context, state *contracts.Control
 	defer s.mu.Unlock()
 	if s.cached != nil && expectedRevision != "" &&
 		s.cached.Annotations[StateRevisionAnnotation] == expectedRevision {
-		if sha256.Sum256(payload) == s.durableDigest {
+		if stateDigest(payload, evidence) == s.durableDigest {
 			return expectedRevision, nil
 		}
-		revision, updateErr := s.update(ctx, s.cached, payload)
+		revision, updateErr := s.update(ctx, s.cached, payload, evidence)
 		if !errors.Is(updateErr, errStaleResourceVersion) {
 			return revision, updateErr
 		}
 	}
-	return s.saveFromServer(ctx, payload, expectedRevision)
+	return s.saveFromServer(ctx, payload, expectedRevision, evidence)
 }
 
 // saveFromServer is the compare-and-swap path against a freshly read ConfigMap.
-func (s *ConfigMapStateStore) saveFromServer(ctx context.Context, payload []byte, expectedRevision string) (string, error) {
+func (s *ConfigMapStateStore) saveFromServer(ctx context.Context, payload []byte, expectedRevision string, evidence string) (string, error) {
 	s.cached = nil
 	configMaps := s.client.CoreV1().ConfigMaps(s.namespace)
 	current, err := configMaps.Get(ctx, s.name, metav1.GetOptions{})
@@ -171,7 +183,7 @@ func (s *ConfigMapStateStore) saveFromServer(ctx context.Context, payload []byte
 		created, createErr := configMaps.Create(ctx, &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: s.name, Namespace: s.namespace,
-				Annotations: map[string]string{StateRevisionAnnotation: "1"},
+				Annotations: map[string]string{StateRevisionAnnotation: "1", StateEvidenceAnnotation: evidence},
 			},
 			Data: map[string]string{StateDataKey: string(payload)},
 		}, metav1.CreateOptions{})
@@ -179,7 +191,7 @@ func (s *ConfigMapStateStore) saveFromServer(ctx context.Context, payload []byte
 			return "", ErrStateConflict
 		}
 		if createErr != nil {
-			s.ambiguous = &ambiguousWrite{revision: "1", digest: sha256.Sum256(payload)}
+			s.ambiguous = &ambiguousWrite{revision: "1", digest: stateDigest(payload, evidence)}
 			return "", fmt.Errorf("create controller state ConfigMap: %w", createErr)
 		}
 		s.remember(created)
@@ -192,18 +204,18 @@ func (s *ConfigMapStateStore) saveFromServer(ctx context.Context, payload []byte
 	s.remember(current)
 	if s.ownsAmbiguousWrite(current) {
 		expectedRevision = current.Annotations[StateRevisionAnnotation]
-		s.adopted = &ambiguousWrite{revision: expectedRevision, digest: sha256.Sum256([]byte(current.Data[StateDataKey]))}
+		s.adopted = &ambiguousWrite{revision: expectedRevision, digest: stateDigest([]byte(current.Data[StateDataKey]), current.Annotations[StateEvidenceAnnotation])}
 	}
 	s.ambiguous = nil
 	if expectedRevision == "" || current.Annotations[StateRevisionAnnotation] != expectedRevision {
 		return "", ErrStateConflict
 	}
-	return s.update(ctx, current, payload)
+	return s.update(ctx, current, payload, evidence)
 }
 
 // update replaces base's state payload, preserving its other metadata, with
 // base's resourceVersion as the API server's precondition. Callers hold s.mu.
-func (s *ConfigMapStateStore) update(ctx context.Context, base *corev1.ConfigMap, payload []byte) (string, error) {
+func (s *ConfigMapStateStore) update(ctx context.Context, base *corev1.ConfigMap, payload []byte, evidence string) (string, error) {
 	currentRevision := base.Annotations[StateRevisionAnnotation]
 	revision, err := strconv.ParseUint(currentRevision, 10, 64)
 	if err != nil {
@@ -215,6 +227,10 @@ func (s *ConfigMapStateStore) update(ctx context.Context, base *corev1.ConfigMap
 		updated.Annotations = make(map[string]string)
 	}
 	updated.Annotations[StateRevisionAnnotation] = nextRevision
+	delete(updated.Annotations, StateEvidenceAnnotation)
+	if evidence != "" {
+		updated.Annotations[StateEvidenceAnnotation] = evidence
+	}
 	updated.Data = map[string]string{StateDataKey: string(payload)}
 	s.cached = nil
 	written, err := s.client.CoreV1().ConfigMaps(s.namespace).Update(ctx, updated, metav1.UpdateOptions{})
@@ -222,7 +238,7 @@ func (s *ConfigMapStateStore) update(ctx context.Context, base *corev1.ConfigMap
 		if apierrors.IsConflict(err) {
 			return "", errStaleResourceVersion
 		}
-		s.ambiguous = &ambiguousWrite{revision: nextRevision, digest: sha256.Sum256(payload)}
+		s.ambiguous = &ambiguousWrite{revision: nextRevision, digest: stateDigest(payload, evidence)}
 		return "", fmt.Errorf("update controller state ConfigMap: %w", err)
 	}
 	if written == nil {
@@ -236,7 +252,7 @@ func (s *ConfigMapStateStore) update(ctx context.Context, base *corev1.ConfigMap
 // ownsAmbiguousWrite reports whether configMap holds the state of the last
 // write whose reply was lost. Callers hold s.mu.
 func (s *ConfigMapStateStore) ownsAmbiguousWrite(configMap *corev1.ConfigMap) bool {
-	digest := sha256.Sum256([]byte(configMap.Data[StateDataKey]))
+	digest := stateDigest([]byte(configMap.Data[StateDataKey]), configMap.Annotations[StateEvidenceAnnotation])
 	for _, write := range []*ambiguousWrite{s.ambiguous, s.adopted} {
 		if write != nil && configMap.Annotations[StateRevisionAnnotation] == write.revision && digest == write.digest {
 			return true
@@ -248,5 +264,5 @@ func (s *ConfigMapStateStore) ownsAmbiguousWrite(configMap *corev1.ConfigMap) bo
 // remember caches configMap as the durable object. Callers hold s.mu.
 func (s *ConfigMapStateStore) remember(configMap *corev1.ConfigMap) {
 	s.cached = configMap.DeepCopy()
-	s.durableDigest = sha256.Sum256([]byte(configMap.Data[StateDataKey]))
+	s.durableDigest = stateDigest([]byte(configMap.Data[StateDataKey]), configMap.Annotations[StateEvidenceAnnotation])
 }

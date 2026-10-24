@@ -17,6 +17,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/toolchain"
 )
 
 const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.b636177843996657"
@@ -41,6 +42,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	controlNamespace := flags.String("control-namespace", "", "controller namespace")
 	application := flags.String("application", "", "application identity")
 	responderImage := flags.String("responder-image", "", "registered responder image")
+	toolchainImage := flags.String("toolchain-image", "", "trusted controller image supplying Go to workers and validators (required)")
 	proberImage := flags.String("prober-image", "", "traffic prober image")
 	repositoryPVC := flags.String("repository-pvc", "", "repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "repository PVC mount")
@@ -92,6 +94,9 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if flags.NArg() != 0 {
 		return builder.RunConfig{}, false, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
 	}
+	if err := toolchain.ValidateImage(*toolchainImage); err != nil {
+		return builder.RunConfig{}, false, err
+	}
 	if *brokerMode != "native" || *workerMountMode != "proposal-only" {
 		return builder.RunConfig{}, false, errors.New("native broker requires proposal-only worker mounts")
 	}
@@ -129,7 +134,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
 		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), DiagnosisSettleDelay: durationpb.New(*diagnosisSettleDelay), LeaseName: "sdo-controller", RestartAfterClosure: *supervise,
 		ExitAfterClosure: *exitAfterClosure,
-		ProberImage:      *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
+		ToolchainImage:   *toolchainImage, ProberImage: *proberImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode, ValidatorImage: *validatorImage,
 		SchemaIdentity: *schemaIdentity, ResponderBackend: *backend, ResponderModel: *model, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, HealthyBaseline: *healthyBaseline, MetricsUrl: *metricsURL,
 		ProgramFastPath: *programFastPath, ProgramTrustThreshold: int32(*programTrustThreshold),
