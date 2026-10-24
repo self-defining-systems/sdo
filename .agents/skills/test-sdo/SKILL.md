@@ -1,9 +1,9 @@
 ---
-name: iterate-sdo
-description: Choose the cheapest SDO test tier that reproduces a bug or validates a change, and climb the tier ladder before any live LLM run. Use when debugging SDO controller, broker, memory-edge, responder, reflection, drift or fast-path behavior, when a live run fails, or when an iteration loop is taking too long.
+name: test-sdo
+description: Test SDO changes and debug SDO behavior by climbing a tier ladder from unit tests through fastloop kind clusters to live LLM runs on SREGym, and report live runs against a baseline. Use when validating or debugging controller, broker, memory-edge, responder, reflection, drift or fast-path behavior; when running, rerunning or comparing any live SREGym test or experiment; when a live run fails; or when an iteration loop is taking too long.
 ---
 
-# Iterate on SDO
+# Test SDO
 
 A live LLM run costs tens of minutes and millions of tokens, while the hermetic gate takes seconds. Find each bug at the lowest tier that can show it, and climb to a live run only when every tier below it passes.
 
@@ -16,7 +16,7 @@ A live LLM run costs tens of minutes and millions of tokens, while the hermetic 
 | 2a toy cluster | Three-service kind app, Calico, real controller/broker, scripted workers | `fastloop up --app toy --dev-mount` | measured cold 130 s; reset 8.7 s; warm incident 15–19 s |
 | 2b | Hotel kind cluster with scripted agents and mounted source | `fastloop up --dev-mount`, then `fastloop reset` between runs | reset about 7 s, run a few minutes |
 | 3 | One recorded stage re-executed offline | `fastloop replay --run-dir <results/run-id> --incident 0 --stage reflection` | seconds |
-| 4 | Live models on kind | [run-fastloop-experiment](../run-fastloop-experiment/SKILL.md) | 30–120 min |
+| 4 | Live models on kind | `fastloop run` on a warm lane; follow [references/live-run.md](references/live-run.md), which links [report.md](references/report.md) and [failure-modes.md](references/failure-modes.md) | tens of minutes per incident |
 
 The exact flags for tiers 0–1 are in [the testing guide](../../../docs/testing-guide.md), and for tiers 2–3 in [the fastloop README](../../../benchmarks/sregym/experiments/fastloop/README.md). Use those commands; do not restate them.
 
