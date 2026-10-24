@@ -105,8 +105,47 @@ func TestProberObservesHealthyThenBrokenTraffic(t *testing.T) {
 
 	p.Reset()
 	for _, observed := range p.Windows()["health"].Scenarios {
-		if len(observed.Samples) != 0 || observed.Qualified {
-			t.Fatalf("reset must forget observations: %+v", observed)
+		if len(observed.Samples) != 0 || !observed.Qualified {
+			t.Fatalf("reset must forget samples while retaining healthy qualification: %+v", observed)
+		}
+	}
+}
+
+func TestMaintenanceResetPreservesPreviouslyHealthyScenarioQualification(t *testing.T) {
+	application := &app{}
+	p := newProber(t, application)
+	probeFor(t, p, 600*time.Millisecond)
+	for _, observed := range p.Windows()["health"].Scenarios {
+		if !observed.Qualified {
+			t.Fatalf("healthy baseline must qualify %s", observed.Scenario.ID)
+		}
+	}
+
+	application.broken.Store(true)
+	// Maintenance clears pre-fault samples, not the fact that these exact
+	// scenario definitions worked before the fault.
+	p.Reset()
+	probeFor(t, p, 600*time.Millisecond)
+	window := p.Windows()["health"]
+	verdicts := traffic.Judge(window)
+	if len(verdicts) != 2 {
+		t.Fatalf("previously healthy scenarios disappeared after reset: %+v", window)
+	}
+	for _, verdict := range verdicts {
+		if !verdict.Evaluated || verdict.Healthy {
+			t.Fatalf("current failures must remain detector findings: %+v", verdict)
+		}
+	}
+	result, err := p.Burst(context.Background(), prober.BurstRequest{Workload: "verify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Healthy {
+		t.Fatalf("closure skipped baseline-passing scenarios after maintenance: %+v", result)
+	}
+	for _, verdict := range result.Verdicts {
+		if !verdict.Qualified || verdict.Healthy {
+			t.Fatalf("failed baseline target must block closure: %+v", verdict)
 		}
 	}
 }
@@ -307,6 +346,8 @@ func TestVerifyBurstDoesNotBlockOnScenariosTheProbeNeverSawPass(t *testing.T) {
 	p := newProber(t, application)
 	// The steady probe has only ever seen /status fail: its generator is
 	// wrong for this application, so it never qualified and cannot fire.
+	probeFor(t, p, 600*time.Millisecond)
+	p.Reset()
 	probeFor(t, p, 600*time.Millisecond)
 
 	result, err := p.Burst(context.Background(), prober.BurstRequest{Workload: "verify"})
