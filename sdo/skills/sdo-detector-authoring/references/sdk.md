@@ -402,6 +402,14 @@ const (
 	RuleNoReadyEndpoints      = "service-has-no-ready-endpoints"
 )
 const (
+	// RuleHPAMissingCPURequest: a utilization HPA selects a ready Pod whose
+	// target containers have no positive effective CPU request.
+	RuleHPAMissingCPURequest = "hpa-cpu-request-missing"
+	// RuleHPAScalingInactive: the autoscaler reports a persistent metric or
+	// scale-target failure, independently of workload/endpoint readiness.
+	RuleHPAScalingInactive = "hpa-scaling-inactive"
+)
+const (
 	// RuleServicePortUnreachable reports a Service whose ready backends do
 	// not accept fresh TCP connections on one or more Service ports.
 	RuleServicePortUnreachable = "service-port-unreachable"
@@ -438,7 +446,9 @@ func NewReachabilityDetector(spec sdk.DetectorSpec) sdk.Detector
 func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector
     NewReadyEndpointsDetector reports every Service with a selector that has
     no ready endpoint, unless every workload it selects is scaled to zero on
-    purpose. ExternalName Services never have endpoints and are skipped.
+    purpose. ExternalName Services never have endpoints and are skipped. It also
+    reports independently observed HPA control-loop failures, even when selected
+    Pods and Service endpoints are ready. HPA status is sampled at Interval.
 
 func ReachabilityEligible(service corev1.Service) bool
     ReachabilityEligible reports whether a Service is dialed: it has a

@@ -38,6 +38,8 @@ type readyEndpointsDetector struct {
 // NewReadyEndpointsDetector reports every Service with a selector that has no
 // ready endpoint, unless every workload it selects is scaled to zero on
 // purpose. ExternalName Services never have endpoints and are skipped.
+// It also reports independently observed HPA control-loop failures, even when
+// selected Pods and Service endpoints are ready. HPA status is sampled at Interval.
 func NewReadyEndpointsDetector(spec sdk.DetectorSpec) sdk.Detector {
 	return readyEndpointsDetector{spec: spec}
 }
@@ -67,6 +69,7 @@ func (d readyEndpointsDetector) Detect(_ context.Context, ctx sdk.DetectionConte
 		}
 		findings = append(findings, d.unreadyFinding(service, ref, selected))
 	}
+	findings = append(findings, d.hpaFindings(ctx)...)
 	return findings, nil
 }
 

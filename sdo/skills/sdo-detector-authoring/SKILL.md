@@ -11,6 +11,9 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 1. Compare the confirmed mechanism with accepted detectors. Widen one when only resource identity or a
    parameter differs; add one only for a different mechanism. The installed `service-endpoints` and
    `workload-health` detectors already cover endpoint readiness and generic pod/Deployment health.
+   `service-endpoints` also reports persistent HPA control failures even when Pods are Ready. It checks actual
+   admitted Pod CPU requests for utilization metrics; a template edit alone does not prove recovery.
+   Clearing requires the observed autoscaler failure to clear.
    `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
    while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
 2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
