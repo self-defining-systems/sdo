@@ -27,3 +27,38 @@ func TestApplyMountsSourcePackagesAndHostBinaryReadOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyOptInModuleDownloadsForMountedSource(t *testing.T) {
+	t.Setenv("SDO_DEV_MODULE_DOWNLOADS", "1")
+	pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "worker"}}, InitContainers: []corev1.Container{{Name: "init"}}}
+	Apply(pod)
+	for _, container := range append(pod.Containers, pod.InitContainers...) {
+		found := false
+		for _, mount := range container.VolumeMounts {
+			if mount.MountPath == "/go/pkg/mod/cache/download" && mount.ReadOnly {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("module metadata unavailable to %s", container.Name)
+		}
+		propagated := false
+		for _, env := range container.Env {
+			if env.Name == "SDO_DEV_MODULE_DOWNLOADS" && env.Value == "1" {
+				propagated = true
+			}
+		}
+		if !propagated {
+			t.Fatalf("nested worker mount opt-in missing for %s", container.Name)
+		}
+	}
+	found := false
+	for _, volume := range pod.Volumes {
+		if volume.HostPath != nil && volume.HostPath.Path == NodePath+"/.fastloop/go-mod-download" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing node module metadata volume")
+	}
+}
