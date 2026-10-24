@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/sdk"
 )
@@ -67,8 +68,13 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 	}
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	var blockers []*contracts.RolloutBlocker
+	diagnostics := map[sdk.ObjectRef]*contracts.RolloutBlocker{}
+	var lastDiagnostics time.Time
 	for {
 		settled := true
+		blockers = nil
+		refreshDiagnostics := time.Since(lastDiagnostics) >= 5*time.Second
 		for _, ref := range refs {
 			if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
 				continue
@@ -79,14 +85,21 @@ func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) 
 			}
 			if !deployment.DeploymentRolloutComplete(deploymentObject) {
 				settled = false
+				if refreshDiagnostics || diagnostics[ref] == nil {
+					diagnostics[ref] = w.rolloutBlocker(ctx, deploymentObject)
+				}
+				blockers = append(blockers, diagnostics[ref])
 			}
+		}
+		if refreshDiagnostics {
+			lastDiagnostics = time.Now()
 		}
 		if settled {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return &rolloutBlockedError{blockers: blockers, cause: ctx.Err()}
 		case <-ticker.C:
 		}
 	}

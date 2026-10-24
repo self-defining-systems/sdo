@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -71,6 +72,7 @@ type PlanApplicationResult struct {
 	RollbackError            string
 	VerificationPassed       bool
 	VerificationCompleted    bool
+	RolloutPending           *contracts.RolloutPending
 	FinalEquivalenceVerified *bool
 	ActionsApplied           []program.Action
 	Patches                  []PlanPatch
@@ -81,10 +83,12 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
-	Client   PlanObjectClient
-	Source   PlanSource
-	Rollouts PlanRollouts
-	Verifier PlanVerifier
+	// RolloutTimeout can shorten the default ninety-second rollout budget.
+	RolloutTimeout time.Duration
+	Client         PlanObjectClient
+	Source         PlanSource
+	Rollouts       PlanRollouts
+	Verifier       PlanVerifier
 	// Observer, when set, is the cache the verifier reads; Apply waits for it to
 	// show the application's writes before verifying.
 	Observer WriteObserver
@@ -265,8 +269,9 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	if err := e.awaitObserved(ctx, result.Patches); err != nil {
 		return result, err
 	}
-	if err := e.Rollouts.Wait(ctx, refs); err != nil {
-		return result, fmt.Errorf("wait for plan rollouts: %w", err)
+	if pending, err := e.waitForRollouts(ctx, incident, refs); err != nil {
+		result.RolloutPending = pending
+		return result, err
 	}
 	passed, err := e.Verifier.Verify(ctx)
 	if err != nil {

@@ -284,8 +284,26 @@ class ProgramRun(_message.Message):
     can_mitigate: bool
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ...) -> None: ...
 
+class RolloutPending(_message.Message):
+    __slots__ = ("reason", "blockers")
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    BLOCKERS_FIELD_NUMBER: _ClassVar[int]
+    reason: str
+    blockers: _containers.RepeatedCompositeFieldContainer[RolloutBlocker]
+    def __init__(self, reason: _Optional[str] = ..., blockers: _Optional[_Iterable[_Union[RolloutBlocker, _Mapping]]] = ...) -> None: ...
+
+class RolloutBlocker(_message.Message):
+    __slots__ = ("ref", "reason", "warning_events")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    WARNING_EVENTS_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    reason: str
+    warning_events: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ..., warning_events: _Optional[_Iterable[str]] = ...) -> None: ...
+
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -304,6 +322,7 @@ class PlanApplication(_message.Message):
     FINAL_EQUIVALENCE_VERIFIED_FIELD_NUMBER: _ClassVar[int]
     OBJECT_EFFECTS_FIELD_NUMBER: _ClassVar[int]
     ACTION_REPORTS_FIELD_NUMBER: _ClassVar[int]
+    ROLLOUT_PENDING_FIELD_NUMBER: _ClassVar[int]
     plan: Plan
     applied: bool
     dry_run: bool
@@ -322,7 +341,8 @@ class PlanApplication(_message.Message):
     final_equivalence_verified: bool
     object_effects: _containers.RepeatedCompositeFieldContainer[PlanObjectEffect]
     action_reports: _containers.RepeatedCompositeFieldContainer[ActionReport]
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ...) -> None: ...
+    rollout_pending: RolloutPending
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")

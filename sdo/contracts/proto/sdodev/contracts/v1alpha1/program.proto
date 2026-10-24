@@ -192,6 +192,18 @@ message ProgramRun {
   optional bool can_mitigate = 9;
 }
 
+// A landed mutation whose rollout is blocked. This never supplies repair credit.
+message RolloutPending {
+  string reason = 1;
+  repeated RolloutBlocker blockers = 2;
+}
+
+message RolloutBlocker {
+  ObjectRef ref = 1;
+  string reason = 2;
+  repeated string warning_events = 3;
+}
+
 message PlanApplication {
   Plan plan = 1 [(buf.validate.field).required = true];
   bool applied = 2;
@@ -215,6 +227,7 @@ message PlanApplication {
   optional bool final_equivalence_verified = 18;
   repeated PlanObjectEffect object_effects = 19;
   repeated ActionReport action_reports = 20;
+  RolloutPending rollout_pending = 21;
 }
 
 message ProgramToolCall {

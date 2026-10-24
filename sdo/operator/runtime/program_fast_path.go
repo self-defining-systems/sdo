@@ -283,7 +283,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	executor := l.Executor
 	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
 	response := ToolResponse{}
-	if result.Applied {
+	if result.Applied && result.RolloutPending == nil {
 		l.verify(ctx, selectedPlans, &response)
 	}
 	fillProgramRevisions(ctx, response.ProgramRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
@@ -302,6 +302,10 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	}
 	if attempt.Resolved {
 		attempt.Summary = fmt.Sprintf("trusted programs %s resolved incident", strings.Join(attempt.Programs, ", "))
+	} else if result.RolloutPending != nil {
+		response.RolloutPending = result.RolloutPending
+		attempt.Verification = response
+		attempt.Summary = "applied repair remains rollout_pending; repair the blocking peer before independent verification: " + result.RolloutPending.Reason
 	} else {
 		result.VerificationPassed = false
 		for _, id := range attempt.Programs {

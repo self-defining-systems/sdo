@@ -159,3 +159,7 @@ quiescence: require the abort command's `quiet: true`, zero owned runtime object
 and zero live registered helpers. Leftovers or failed inventory exit nonzero.
 The production stop command preserves repository PVCs and state ConfigMaps, so
 their survival is expected. Old unregistered helpers are outside this evidence.
+
+### Peer fault blocks the first repair's rollout
+
+A source reconciliation can repair one Deployment field while another fault prevents replacement Pods from being created. An unbounded synchronous rollout wait holds the responder tool lock, queues later peer repairs/status calls and prevents continuation verification even after the model returns. Check the pending tool request, landed field change, Deployment conditions and owner-correlated warning events. A typed `rollout_pending` after the bounded wait keeps landed writes and releases the lock; it earns no independent mitigation credit and must not trigger automatic rollback. Count full TTM only from later independent controller verification, not the first mutation or the pending reply.
