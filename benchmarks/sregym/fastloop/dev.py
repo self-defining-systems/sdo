@@ -16,6 +16,12 @@ def write_kind_config(source: Path, destination: Path, worktree: Path) -> Path:
     config = yaml.safe_load(source.read_text(encoding="utf-8"))
     for node in config["nodes"]:
         node.setdefault("extraMounts", []).append({"hostPath": str(worktree), "containerPath": "/opt/sdo-dev"})
+    config.setdefault("containerdConfigPatches", []).extend(
+        [
+            '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"',
+            '[plugins."io.containerd.cri.v1.images".registry]\n  config_path = "/etc/containerd/certs.d"',
+        ]
+    )
     destination.write_text(yaml.safe_dump(config), encoding="utf-8")
     return destination
 
@@ -26,10 +32,11 @@ def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) ->
     output = worktree / ".fastloop" / "sdo-operator"
     output.parent.mkdir(exist_ok=True)
     subprocess.run(
-        ["go", "build", "-buildvcs=false", "-o", str(output), "./cmd/sdo-operator"],
+        ["go", "build", "-buildvcs=false", "-o", str(output.with_suffix(".new")), "./cmd/sdo-operator"],
         cwd=worktree / "sdo" / "operator",
         check=True,
     )
+    output.with_suffix(".new").replace(output)
     if sregym_dir is None:
         destination = run_dir / "kind-dev.yaml"
         destination.write_text(
@@ -37,6 +44,10 @@ def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) ->
                 {
                     "kind": "Cluster",
                     "apiVersion": "kind.x-k8s.io/v1alpha4",
+                    "containerdConfigPatches": [
+                        '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"',
+                        '[plugins."io.containerd.cri.v1.images".registry]\n  config_path = "/etc/containerd/certs.d"',
+                    ],
                     "networking": {"disableDefaultCNI": True, "podSubnet": "192.168.0.0/16"},
                     "nodes": [
                         {

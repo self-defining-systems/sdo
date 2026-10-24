@@ -141,16 +141,26 @@ func TestKubernetesValidatorAcceptsOnlyKnownJobAdmissionDefaults(t *testing.T) {
 	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, runtime.Object, error) {
 		admitted := action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
 		kubescheme.Scheme.Default(admitted)
+		// The apiserver defaults nested init containers; client-go's Job
+		// defaulter does not. These are the observed v1.34 defaults.
+		for i := range admitted.Spec.Template.Spec.InitContainers {
+			admitted.Spec.Template.Spec.InitContainers[i].TerminationMessagePath = "/dev/termination-log"
+			admitted.Spec.Template.Spec.InitContainers[i].TerminationMessagePolicy = corev1.TerminationMessageReadFile
+		}
 		admitted.Spec.Template.Labels["batch.kubernetes.io/controller-uid"] = "job-uid"
 		admitted.Spec.Template.Labels["batch.kubernetes.io/job-name"] = admitted.Name
 		admitted.Spec.Template.Labels["controller-uid"] = "job-uid"
 		admitted.Spec.Template.Labels["job-name"] = admitted.Name
 		return true, admitted, nil
 	})
-	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test"}
+	launcher := KubernetesValidationJobClient{Client: client, Namespace: "sdo", Image: "validator:test", ToolchainImage: "controller:compiler", RepositoryPVC: "repository"}
 	job := launcher.canaryJob("sdo-validator-allow", false)
 	if err := launcher.createJob(context.Background(), job); err != nil {
 		t.Fatalf("known API Job defaults rejected: %v", err)
+	}
+	job = launcher.validationJob("sdo-validator-compile", "worktrees/candidate", strings.Repeat("a", 40), false)
+	if err := launcher.createJob(context.Background(), job); err != nil {
+		t.Fatalf("known compiler init defaults rejected: %v", err)
 	}
 }
 
@@ -186,8 +196,11 @@ func TestKubernetesValidatorProjectsHealthyBaselineOnlyForIncidentGate(t *testin
 }
 
 func TestKubernetesValidatorCompilesProgramsOffline(t *testing.T) {
-	launcher := KubernetesValidationJobClient{RepositoryPVC: "repository"}
+	launcher := KubernetesValidationJobClient{RepositoryPVC: "repository", ToolchainImage: "controller:compiler"}
 	job := launcher.validationJob("sdo-validator-test", "worktrees/candidate", strings.Repeat("a", 40), false)
+	if len(job.Spec.Template.Spec.InitContainers) != 1 || job.Spec.Template.Spec.InitContainers[0].Image != "controller:compiler" {
+		t.Fatal("validator job missing controller compiler")
+	}
 	env := map[string]string{}
 	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
 		env[entry.Name] = entry.Value

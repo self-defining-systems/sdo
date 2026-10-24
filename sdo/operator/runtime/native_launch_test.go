@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 func TestNativeLaunchRequiresProposalOnlyMountAndBuildsBroker(t *testing.T) {
 	root := nativeRepository(t)
 	config := &contracts.ControllerConfig{
-		BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
+		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "linked", AppRoot: root, Namespace: "default",
 		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
 		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
 	}
@@ -38,17 +39,24 @@ func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	worker := native.Reflector.(RegisteredReflectionWorker)
+	if worker.Executor.(worker_registry.KubernetesExecutor).ToolchainImage != "controller:compiler" {
+		t.Fatal("reflection compiler depends on traffic prober image")
+	}
+
 	executor, err := worker.SessionExecutor("incident-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resumed := executor.(worker_registry.KubernetesExecutor)
+	if resumed.ToolchainImage != "controller:compiler" {
+		t.Fatal("resumed reflection lost compiler image")
+	}
 	bound, err := memory.PrepareIncidentSession(root, "", "incident-1")
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +69,9 @@ func TestNativeReflectionSharesIncidentSessionWithResponder(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := freshExecutor.(worker_registry.KubernetesExecutor)
+	if fresh.ToolchainImage != "controller:compiler" {
+		t.Fatal("fresh reflection lost compiler image")
+	}
 	if fresh.SessionPVCSubPath != bound || fresh.Environment["SDO_TURN_USAGE_LOG"] != "/sdo/session/reflection-usage.jsonl" {
 		t.Fatalf("fresh reflection lost incident usage mount: %+v", fresh)
 	}
@@ -93,7 +104,7 @@ func TestAgentWorkerEnvironmentRejectsUnknownProvider(t *testing.T) {
 func TestNativeLaunchRejectsUnknownProvider(t *testing.T) {
 	root := nativeRepository(t)
 	config := &contracts.ControllerConfig{
-		BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "default",
+		ToolchainImage: "controller:compiler", BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: root, Namespace: "default",
 		BrokerWorktreeRoot: filepath.Join(t.TempDir(), "workspaces"), RepositoryMountPath: filepath.Dir(root), RepositoryPvc: "repository",
 		ValidatorImage: "validator:test", SchemaIdentity: "schema", ResponderBackend: "gemini", ResponderModel: "model",
 	}
@@ -108,12 +119,16 @@ func TestNativeReflectionJobsCarryConfiguredProviderAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &contracts.ControllerConfig{AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
+	config := &contracts.ControllerConfig{ToolchainImage: "controller:compiler", ProberImage: "traffic-only:test", AppRoot: root, RepositoryMountPath: root, RepositoryPvc: "repo", ReflectionSession: "resume", ResponderBackend: "claude", ResponderModel: "claude-haiku-5-5"}
 	native := &NativeIncidentBroker{LedgerRoot: filepath.Join(root, "ledger")}
 	if err := attachNativeReflector(native, config, fake.NewSimpleClientset(), registry, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	worker := native.Reflector.(RegisteredReflectionWorker)
+	if worker.Executor.(worker_registry.KubernetesExecutor).ToolchainImage != "controller:compiler" {
+		t.Fatal("reflection compiler depends on traffic prober image")
+	}
+
 	environments := []map[string]string{worker.Executor.(worker_registry.KubernetesExecutor).Environment}
 	for _, factory := range []func(string) (ReflectionTaskExecutor, error){worker.SessionExecutor, worker.FreshSessionExecutor} {
 		executor, err := factory("incident-1")
@@ -172,5 +187,21 @@ func TestWithAgentEnvironmentOverridesResponderEnv(t *testing.T) {
 	}
 	if untouched, err := withAgentEnvironment(map[string]string{"A": "b"}, nil); err != nil || untouched["A"] != "b" {
 		t.Fatalf("no launch config must leave env: %v %v", untouched, err)
+	}
+}
+
+func TestNativeStartupRejectsMissingToolchainBeforeKubernetes(t *testing.T) {
+	config := &contracts.ControllerConfig{
+		BrokerMode: "native", WorkerMountMode: "proposal-only", AppRoot: "/workspace/app", Namespace: "default",
+		BrokerWorktreeRoot: "/workspace/worktrees", RepositoryMountPath: "/workspace", RepositoryPvc: "repository",
+		ValidatorImage: "validator:slim", SchemaIdentity: "schema", ResponderBackend: "codex", ResponderModel: "model",
+		ProberImage: "traffic-only:test",
+	}
+	client := fake.NewSimpleClientset()
+	if _, _, err := nativeBrokerFromLaunch(context.Background(), config, client); err == nil || !strings.Contains(err.Error(), "--toolchain-image") {
+		t.Fatalf("missing compiler should fail at startup: %v", err)
+	}
+	if len(client.Actions()) != 0 {
+		t.Fatal("missing compiler reached Kubernetes")
 	}
 }

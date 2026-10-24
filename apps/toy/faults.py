@@ -52,7 +52,7 @@ class ToyFault:
         kind = "service" if self.kind == "target-port" else "deployment"
         command(kubeconfig, namespace, "patch", kind, self.service, "--type=strategic", "-p", json.dumps(self.patch))
 
-    def oracle(self, kubeconfig: str, namespace: str) -> bool:
+    def oracle(self, kubeconfig: str, namespace: str, *, image: str = IMAGE) -> bool:
         if self.kind == "network-policy":
             policies = json.loads(command(kubeconfig, namespace, "get", "networkpolicies", "-o", "json"))["items"]
             return not any(item["metadata"]["name"] == f"isolate-{self.service}" for item in policies)
@@ -62,7 +62,7 @@ class ToyFault:
             return live["spec"]["ports"][0].get("targetPort") == 8080
         container = live["spec"]["template"]["spec"]["containers"][0]
         correct = (
-            container["image"] == IMAGE
+            container["image"] == image
             if self.kind == "image"
             else container["readinessProbe"]["httpGet"]["path"] == "/ready"
         )

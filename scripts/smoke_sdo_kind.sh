@@ -31,7 +31,7 @@ EOF
 
 kind create cluster --name "${cluster_name}" --config "${kind_config}" --wait 120s
 docker image inspect sdo-detector-validator:v0.1.0 >/dev/null
-kind load docker-image sdo-detector-validator:v0.1.0 --name "${cluster_name}"
+(cd "${repo_root}" && uv run python -m benchmarks.sregym.fastloop.image_delivery --cluster "${cluster_name}" --run-dir "${workspace}" sdo-controller:v0.1.0)
 schema_identity="$(cd "${repo_root}/sdo/operator" && go run ./cmd/sdo-operator schema-identity)"
 
 cat >"${job_manifest}" <<EOF
@@ -53,7 +53,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: validator
-          image: sdo-detector-validator:v0.1.0
+          image: sdo-controller:v0.1.0
           imagePullPolicy: Never
           command: ["/usr/local/bin/sdo-operator"]
           args: ["validate", "--app", "/workspace", "--expect-schema", "${schema_identity}"]

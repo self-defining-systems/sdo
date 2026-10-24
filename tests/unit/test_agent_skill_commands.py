@@ -9,7 +9,7 @@ from benchmarks.sregym.fastloop.records import IncidentRecord
 from sdo.contracts import OutcomeRecord
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILLS = ("iterate-sdo", "run-fastloop-experiment")
+SKILLS = ("test-sdo", "run-experiment")
 CODE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
 REPO_PATH = re.compile(r"(?<!\S)(?:docs|benchmarks|sdo|scripts|tests)/[\w./-]+")
 
@@ -17,7 +17,7 @@ REPO_PATH = re.compile(r"(?<!\S)(?:docs|benchmarks|sdo|scripts|tests)/[\w./-]+")
 def test_fastloop_skills_reference_existing_commands_paths_and_fields() -> None:
     parser = build_parser()
     subparsers = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
-    report = ROOT / ".agents/skills/run-fastloop-experiment/references/report.md"
+    report = ROOT / ".agents/skills/run-experiment/references/report.md"
     files = [
         file
         for skill in SKILLS

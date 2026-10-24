@@ -1,0 +1,8 @@
+.git
+.venv
+.fastloop
+**/__pycache__
+.pytest_cache
+.ruff_cache
+third_party
+worktrees

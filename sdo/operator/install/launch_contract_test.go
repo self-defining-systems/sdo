@@ -106,6 +106,7 @@ func assertControllerLaunchRoundTrip(t *testing.T, cfg install.Config, launch *c
 		"application":             {launch.GetApplication(), cfg.Application},
 		"app root":                {launch.GetAppRoot(), "/workspace/application"},
 		"responder image":         {launch.GetResponderImage(), cfg.ResponderImage},
+		"toolchain image":         {launch.GetToolchainImage(), cfg.ControllerImage},
 		"prober image":            {launch.GetProberImage(), cfg.ControllerImage},
 		"validator image":         {launch.GetValidatorImage(), cfg.ValidatorImage},
 		"repository PVC":          {launch.GetRepositoryPvc(), cfg.RepositoryPVC},

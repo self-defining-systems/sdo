@@ -18,7 +18,7 @@ func TestApplyMountsSourcePackagesAndHostBinaryReadOnly(t *testing.T) {
 		"/opt/sdo/examples":           "/opt/sdo-dev/examples",
 		"/usr/local/bin/sdo-operator": "/opt/sdo-dev/.fastloop/sdo-operator",
 	}
-	for index, mount := range pod.Containers[0].VolumeMounts {
+	for index, mount := range pod.Containers[0].VolumeMounts[:4] {
 		if !mount.ReadOnly {
 			t.Fatalf("writable dev mount: %+v", mount)
 		}
@@ -60,5 +60,27 @@ func TestApplyOptInModuleDownloadsForMountedSource(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing node module metadata volume")
+	}
+}
+
+func TestApplyMountsLiveBenchmarkModulesWithoutAnswerKeys(t *testing.T) {
+	pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "live-worker"}}, InitContainers: []corev1.Container{{Name: "init"}}}
+	ApplyWorker(pod)
+	for _, container := range append(pod.Containers, pod.InitContainers...) {
+		count := 0
+		for _, mount := range container.VolumeMounts {
+			if mount.MountPath == "/opt/sdo/benchmarks" {
+				t.Fatal("answer key tree exposed")
+			}
+			if mount.MountPath == "/opt/sdo/benchmarks/sregym/fastloop/model_recording.py" {
+				count++
+			}
+			if mount.MountPath == "/opt/sdo/benchmarks/sregym/adapter/scripted_worker.py" {
+				count++
+			}
+		}
+		if count != 2 {
+			t.Fatalf("benchmark code not mounted: %+v", container.VolumeMounts)
+		}
 	}
 }

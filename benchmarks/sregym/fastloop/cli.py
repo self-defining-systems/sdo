@@ -21,6 +21,7 @@ import argparse
 import json
 import logging
 import os
+import platform
 import socket
 import subprocess
 import sys
@@ -100,7 +101,16 @@ def node_images_match(cluster: str, images: Images) -> bool:
         return False
     for image in (images.controller, images.responder, images.validator):
         local = subprocess.run(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            [
+                "docker",
+                "image",
+                "inspect",
+                "--platform",
+                "linux/" + ("arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "amd64"),
+                "--format",
+                "{{.Id}}",
+                image,
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -121,7 +131,16 @@ def node_images_match(cluster: str, images: Images) -> bool:
             except (ValueError, KeyError, TypeError):
                 return False
             if digest != local.stdout.strip():
-                return False
+                from benchmarks.sregym.fastloop.image_delivery import image_ref
+
+                manifest = subprocess.run(
+                    ["docker", "exec", node, "ctr", "-n", "k8s.io", "images", "ls", "name==" + image_ref(image)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if manifest.returncode != 0 or local.stdout.strip() not in manifest.stdout.split():
+                    return False
     return True
 
 
@@ -133,6 +152,7 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
         "SREGYM_KIND_CLUSTER_PREFIX": args.cluster_prefix,
         "SREGYM_KIND_CLUSTER_NAME": f"{args.cluster_prefix}{args.worker_id}",
         "SREGYM_KIND_REQUIRE_NETWORK_POLICY": "1",
+        "FASTLOOP_DELIVERY_RECORD": str(args.run_dir.resolve() / "image_delivery.jsonl"),
         "SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE": images.validator,
         "SREGYM_KIND_REQUIRED_IMAGES": json.dumps([images.controller, images.responder, images.validator]),
         "SREGYM_REUSE_CLUSTER": "1",
@@ -152,7 +172,69 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
     return worker_env
 
 
+def _neighbor_capacity() -> int | None:
+    try:
+        return int(Path("/proc/sys/net/ipv4/neigh/default/gc_thresh3").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _free_bytes(path: Path) -> int | None:
+    import shutil
+
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
+def check_host_capacity(args: argparse.Namespace) -> None:
+    # Match the live launch gate without depending on the legacy runner.
+    minimum_neighbors = 65536
+    limit = _neighbor_capacity()
+    if limit is not None and limit < minimum_neighbors:
+        raise ValueError(
+            f"fastloop preflight: IPv4 neighbor capacity {limit} < {minimum_neighbors}; "
+            "ask the host administrator to increase capacity"
+        )
+    paths = [getattr(args, "run_dir", REPO_ROOT)]
+    inspected = subprocess.run(
+        ["docker", "info", "--format", "{{.DockerRootDir}}"], check=True, capture_output=True, text=True
+    )
+    if inspected.stdout.strip():
+        paths.append(Path(inspected.stdout.strip()))
+    for path in paths:
+        free = _free_bytes(path)
+        if free is not None and free < 100 * 1000**3:
+            raise ValueError(f"fastloop preflight: less than 100 GB free at {path}")
+
+
+def up_preflight(args: argparse.Namespace) -> None:
+    """Read-only host checks run before any compiler, builder, or cluster mutation."""
+    import shutil
+    import warnings
+
+    if args.kind_worker_nodes < 0:
+        raise SystemExit("--kind-worker-nodes must not be negative")
+    for executable in ("docker", "kind", "kubectl", "go"):
+        if shutil.which(executable) is None:
+            raise ValueError(f"fastloop preflight: missing {executable}")
+    subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], check=True, capture_output=True, text=True)
+    check_host_capacity(args)
+    if args.dev_mount is None:
+        warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
+    elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
+        raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
+    for image in (args.controller_image, args.responder_image, args.validator_image):
+        if image is None:
+            continue
+        subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
+
+
 def _up(args: argparse.Namespace) -> int:
+    up_preflight(args)
     if args.app == "toy":
         from benchmarks.sregym.fastloop.toy import up
 
@@ -165,6 +247,12 @@ def _up(args: argparse.Namespace) -> int:
             args.cluster_prefix = "fastloop-dev-w"
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+    prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
+    if prior is not None and prior.dev_mount != args.dev_mount:
+        raise ValueError(
+            "up --dev-mount must match the worktree used to create this environment; "
+            "use --no-dev-mount for a lane created without a dev mount"
+        )
     workspace = run_dir / "application_workspace"
     if not workspace.exists():
         if args.seed is None:
@@ -178,9 +266,6 @@ def _up(args: argparse.Namespace) -> int:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
         prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
-    prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
-    if prior is not None and prior.dev_mount != args.dev_mount:
-        raise ValueError("up --dev-mount must match the worktree used to create this environment")
     seed_commit = prior.seed_commit if prior is not None else None
     if seed_commit is None and (workspace / ".git").exists():
         seed_commit = subprocess.run(
@@ -219,6 +304,8 @@ def _up(args: argparse.Namespace) -> int:
             with _worker(previous) as cached_worker:
                 health = cached_worker.request("health", namespace=previous.namespace, timeout=60)
             if health.get("healthy"):
+                if previous.dev_mount is not None and previous.state_path.is_file():
+                    return _reset(argparse.Namespace(run_dir=previous.run_dir, dev_mount=previous.dev_mount))
                 print(f"fastloop environment ready: reused verified node image digests -> {previous.path}")
                 return 0
     if args.builder:
@@ -276,6 +363,13 @@ def _up(args: argparse.Namespace) -> int:
         environment.baseline_path,
         tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
     )
+    delivery_path = run_dir / "image_delivery.jsonl"
+    if delivery_path.is_file():
+        from benchmarks.sregym.fastloop.image_delivery import delivery_state
+
+        delivery = delivery_state(delivery_path)
+        environment.image_delivery, environment.image_delivery_reason = delivery["path"], delivery["reason"]
+        environment.image_delivery_seconds, environment.image_delivery_images = delivery["seconds"], delivery["images"]
     environment.save()
     print(
         f"fastloop environment ready: cluster={environment.cluster} namespace={environment.namespace} "
@@ -442,8 +536,25 @@ def _run(args: argparse.Namespace) -> int:
     if args.sweep_service and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if environment.image_delivery == "kind-load-fallback":
+        from benchmarks.sregym.fastloop.image_delivery import warn_fallback
+
+        warn_fallback(
+            environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
+        )
     if args.time_scale <= 0:
         raise SystemExit("--time-scale must be positive")
+    if args.time_scale < 1:
+        scripted = args.agent == "sdo" and (
+            args.agent_registrations.resolve()
+            == (REPO_ROOT / "benchmarks/sregym/adapter/scripted_registrations").resolve()
+            if args.agent_registrations is not None
+            else environment.app == "toy"
+        )
+        if not scripted:
+            raise SystemExit(
+                "--time-scale below 1 is for scripted-agent runs only; live LLM runs must use --time-scale 1"
+            )
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
 
@@ -522,6 +633,9 @@ def _run(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     config = LoopConfig(
+        delivery_record_path=environment.run_dir / "image_delivery.jsonl",
+        image_delivery=environment.image_delivery,
+        image_delivery_reason=environment.image_delivery_reason,
         run_id=run_id,
         problems=problems,
         incidents=len(stream) if stream else args.incidents,
@@ -829,6 +943,9 @@ def _down(args: argparse.Namespace) -> int:
         logger.error("persistent controller teardown: %s", error)
     if args.delete_cluster:
         subprocess.run(["kind", "delete", "cluster", "--name", environment.cluster], check=True)
+        from benchmarks.sregym.fastloop.image_delivery import remove_registry
+
+        remove_registry(environment.cluster)
     return 1 if errors else 0
 
 
@@ -882,6 +999,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    preflight = commands.add_parser("preflight", help="fail fast on host prerequisites before building images")
+    preflight.add_argument("--dev-mount", type=Path, nargs="?", const=REPO_ROOT, default=REPO_ROOT)
+    preflight.add_argument("--kind-worker-nodes", type=int, default=1)
+    for role in ("controller", "responder", "validator"):
+        preflight.add_argument(f"--{role}-image", default=None)
+    preflight.set_defaults(handler=lambda args: up_preflight(args) or 0)
+
     up = commands.add_parser("up", help="create or reuse the cluster and deploy the application once")
     up.add_argument("--run-dir", type=Path, required=True)
     up.add_argument("--app", choices=("sregym", "toy"), default="sregym")
@@ -903,8 +1027,14 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--validator-image", default=Images().validator)
     up.add_argument("--sregym-dir", type=Path, default=DEFAULT_SREGYM_DIR)
     up.add_argument(
-        "--dev-mount", type=Path, help="mount this worktree into kind and build its Go operator on the host"
+        "--dev-mount",
+        type=Path,
+        nargs="?",
+        const=REPO_ROOT,
+        default=REPO_ROOT,
+        help="mount a worktree (default: current worktree) and host-build the Go operator",
     )
+    up.add_argument("--no-dev-mount", dest="dev_mount", action="store_const", const=None)
     up.add_argument("--redeploy", action="store_true", help="redeploy even if the application is healthy")
     up.add_argument(
         "--no-sandbox",
@@ -915,7 +1045,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     reset = commands.add_parser("reset", help="restore a warm cluster to its application and controller baseline")
     reset.add_argument("--run-dir", type=Path, required=True)
-    reset.add_argument("--dev-mount", type=Path, help="worktree mounted when this environment was created")
+    reset.add_argument(
+        "--dev-mount", type=Path, nargs="?", const=REPO_ROOT, help="worktree mounted when this environment was created"
+    )
     reset.set_defaults(handler=_reset)
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
@@ -977,7 +1109,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--reasoning-effort", default=None, help="Codex baseline reasoning effort (default: Codex's)")
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
-    run.add_argument("--time-scale", type=float, default=1.0, help="multiply controller and wait windows (default 1)")
+    run.add_argument(
+        "--time-scale",
+        type=float,
+        default=1.0,
+        help="multiply controller and wait windows; values below 1 require scripted agents (default 1)",
+    )
     run.add_argument(
         "--program-fast-path", action="store_true", help="allow trusted playbook programs to resolve incidents"
     )

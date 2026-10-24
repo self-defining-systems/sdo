@@ -20,60 +20,12 @@ if [[ -z "${validator_schema_identity}" ]]; then
   validator_schema_identity="$(cd "${repo_root}/sdo/operator" && go run ./cmd/sdo-operator schema-identity)"
 fi
 if [[ "${SDO_SKIP_IMAGE_BUILD:-0}" != "1" ]]; then
-  # The images share no layers beyond the cached Go dependency stage, so build
-  # them concurrently; the benchmark worker extends the responder and follows it.
-  pids=()
-  if selected_image validator; then
-    docker build \
-      --load \
-      --file "${repo_root}/sdo/operator/Dockerfile.validator" \
-      --build-arg "SDO_VALIDATOR_SCHEMA_IDENTITY=${validator_schema_identity}" \
-      --tag sdo-detector-validator:${tag} \
-      "${repo_root}" &
-    pids+=($!)
+  export SDO_IMAGE_TAG="${tag}" SDO_VALIDATOR_SCHEMA_IDENTITY="${validator_schema_identity}"
+  export SDO_WORKER_TARGET=sregym-responder
+  if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
+    export SDO_WORKER_TARGET=scripted-worker
   fi
-  if selected_image controller; then
-    docker build \
-      --load \
-      --file "${repo_root}/sdo/operator/Dockerfile.runtime" \
-      --target controller \
-      --tag sdo-controller:${tag} \
-      "${repo_root}" &
-    pids+=($!)
-  fi
-  if selected_image responder || selected_image benchmark; then
-    (
-      docker build \
-        --load \
-        --file "${repo_root}/sdo/operator/Dockerfile.runtime" \
-        --target responder \
-        --tag sdo-responder:${tag} \
-        "${repo_root}"
-      if selected_image benchmark; then
-        if [[ "${SDO_SCRIPTED_WORKER:-0}" == "1" ]]; then
-          worker_target=scripted-worker
-        else
-          worker_target=sregym-responder
-        fi
-        docker build \
-          --load \
-          --build-arg "SDO_RESPONDER_IMAGE=sdo-responder:${tag}" \
-          --file "${repo_root}/benchmarks/sregym/Dockerfile.worker" \
-          --target "${worker_target}" \
-          --tag sdo-sregym-responder:${tag} \
-          "${repo_root}"
-      fi
-    ) &
-    pids+=($!)
-  fi
-  build_failed=0
-  for pid in "${pids[@]}"; do
-    wait "${pid}" || build_failed=1
-  done
-  if [[ "${build_failed}" != "0" ]]; then
-    echo "image build failed" >&2
-    exit 1
-  fi
+  (cd "${repo_root}" && docker buildx bake --file scripts/sdo-images.hcl --load "${selected[@]}")
 fi
 for target in "${selected[@]}"; do
   case "${target}" in
@@ -94,18 +46,24 @@ for target in "${selected[@]}"; do
     role=responder_image
     ;;
   esac
-  docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
-    command -v go >/dev/null
-    command -v sdo-operator >/dev/null
-    test "$GOPROXY" = off
-    test "$GOFLAGS" = "-mod=mod -p=2"
-    cd /opt/sdo/sdo/operator/sdk
-    go list ./program >/dev/null
-  '
-  docker run --rm --user 65532:65532 \
-    --volume "${repo_root}/tests/fixtures/sdo/playbook_program_app:/fixture:ro" \
-    "${image}:${tag}" \
-    sdo-operator validate --app /fixture --expect-schema "${validator_schema_identity}"
+  if [[ "${target}" == "controller" ]]; then
+    docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
+      command -v go >/dev/null
+      test "$GOPROXY" = off
+      test "$GOFLAGS" = "-mod=mod -p=2"
+      cd /opt/sdo/sdo/operator/sdk
+      go list ./program >/dev/null
+    '
+    docker run --rm --user 65532:65532 \
+      --volume "${repo_root}/tests/fixtures/sdo/playbook_program_app:/fixture:ro" \
+      "${image}:${tag}" sdo-operator validate --app /fixture --expect-schema "${validator_schema_identity}"
+  else
+    docker run --rm --user 65532:65532 "${image}:${tag}" sh -ec '
+      ! command -v go
+      command -v sdo-operator >/dev/null
+      sdo-operator memory help >/dev/null
+    '
+  fi
   if [[ "${SDO_IMAGE_PREFLIGHT:-0}" == "1" ]]; then
     uv run python -m benchmarks.sregym.runner.preflight --image "${role}=${image}:${tag}"
   fi
