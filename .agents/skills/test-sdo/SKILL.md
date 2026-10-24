@@ -20,6 +20,26 @@ A live LLM run costs tens of minutes and millions of tokens, while the hermetic 
 
 The exact flags for tiers 0–1 are in [the testing guide](../../../docs/testing-guide.md), and for tiers 2–3 in [the fastloop README](../../../benchmarks/sregym/experiments/fastloop/README.md). Use those commands; do not restate them.
 
+## Minimum tier by risk
+
+Climb only as far as the change's risk requires, and only from green: run a tier after every cheaper tier that applies passes.
+
+- Concurrency, restarts or failure handling: tier 1 plus Go `-race` tests with injected failures.
+- Credentials or secrets: time-capped property tests with canaries in every excluded field, plus an independent read-only review.
+- Classification, trust or scoring logic: tier 0 regression fixtures plus tier 3 replay.
+- Platform wiring (images, permissions, mounts, config): tier 2.
+- Prompts or model behavior: only tiers 3 and 4 show anything, so keep each such change small and isolated.
+
+In a brief, state the change's risk classes, the tiers required before handoff, and which tier gates the next live run. A handoff that skips a required tier is not done.
+
+## Live runs need approval
+
+Tier 4 spends real money and quota.
+
+1. The first time, ask the user which live runs are pre-approved, before one is near. Recommend: small smokes on the cheapest approved model are pre-approved; each full experiment is approved separately.
+2. Save the answer in your persistent agent state (for example `~/.agent-state/test-sdo/live-approval.md`) and reuse it; update it as soon as the user changes it.
+3. A live run outside the saved preference waits for explicit approval. Keep running the cheaper tiers meanwhile.
+
 ## When something fails
 
 1. Stop the slow loop. Do not rerun a whole live stream to debug one incident.
@@ -27,7 +47,7 @@ The exact flags for tiers 0–1 are in [the testing guide](../../../docs/testing
 3. Name the root cause with `file:line` before changing code.
 4. Write the cheapest failing test that reproduces it, at Tier 0 or 1 when possible. Build it from the live evidence shape, for example a fixture under `sdo/operator/runtime/testdata/`.
 5. Fix, run the tiers from the bottom up, then retry the failing tier.
-6. A bug a lower tier missed means a test gap: add the test before climbing again.
+6. A bug a lower tier missed means a test gap: add the test before climbing again. Record which tier caught each bug; if expensive tiers keep catching cheap bugs, make the lower tiers more representative instead of running the expensive ones more often.
 
 ## Rules
 
