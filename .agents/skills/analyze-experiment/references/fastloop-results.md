@@ -123,3 +123,7 @@ and earns no additional program trust credit. `PlanApplication` keeps applied
 actions and verification outcomes; rollback pre-images and patches are retired
 (reserved fields 11 and 13). The tools-state ConfigMap retains attempt counts,
 limits and revision-bound failure signals, not mutation history.
+
+## Seed recovery oracle
+
+A full seed-compatible cleanup intentionally removes fault-created objects. Its `recovery_oracle` is an independent baseline check plus a fresh HTTP probe, not another mitigation verdict for the removed injection. Keep the original `oracle` and its failed components unchanged. A failed or incomplete seed probe blocks reuse and keeps `full_cleanup_verified=False`; no benchmark verdict is supplied to production learning. Legacy drivers without this check retain their fault-oracle recovery behavior.

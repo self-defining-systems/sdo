@@ -207,6 +207,13 @@ class Worker:
                 "kind": "sregym-mitigation-oracle",
                 "success": all(self.app.objects[key] == self.app.baseline[key] for key in selected),
             }
+        if op == "baseline_oracle":
+            assert kwargs["verify_traffic"] is True
+            return {
+                "kind": "health-check",
+                "success": self.app.healthy(),
+                "details": {"scope": "seed-baseline", "traffic_ok": self.app.healthy()},
+            }
         if op == "recover":
             return {"seconds": 0.001}
         if op == "health":
