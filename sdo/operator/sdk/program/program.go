@@ -3,7 +3,9 @@ package program
 import (
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 )
 
 type Kind string
@@ -129,6 +132,16 @@ type Mitigator interface {
 
 type ReadView interface {
 	sdk.DetectionContext
+	sdk.ScopedObservationSource
+	sdk.ObservationClock
+	StatefulSets() []appsv1.StatefulSet
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	metrics.Source
+	metrics.AlertSource
+	metrics.QuerySource
+	traffic.Source
+	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
@@ -433,7 +446,13 @@ func (v *checkedReadView) ObservedAt() time.Time {
 
 func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
 	if source, ok := v.ReadView.(traffic.Source); ok {
-		return source.TrafficWindow(name)
+		r, ok := source.TrafficWindow(name)
+		if !ok {
+			v.check(fmt.Errorf("traffic %q unavailable", name))
+		} else if r.LoadError != "" {
+			v.check(fmt.Errorf("traffic %q: %s", name, r.LoadError))
+		}
+		return r, ok
 	}
 	return traffic.Window{}, false
 }

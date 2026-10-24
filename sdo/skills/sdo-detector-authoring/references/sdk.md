@@ -926,6 +926,12 @@ func (q Query) EffectiveStep() time.Duration
 func (q Query) Validate() error
     Validate checks one query in isolation.
 
+type QuerySource interface {
+	QueryMetrics(Query) Result
+}
+    QuerySource evaluates a typed PromQL query through the runtime. Results
+    (including failures) are frozen for the evaluation cycle.
+
 type Reduction string
     Reduction collapses a series' samples to the one value a rule compares.
     Instant results have one sample, so every reduction agrees on them.

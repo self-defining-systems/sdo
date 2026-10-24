@@ -25,6 +25,16 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, err
 		return Snapshot{}, errors.New("capture requires a matching application namespace")
 	}
 	s := Snapshot{NamespaceName: namespace}
+	if recorder, ok := view.(interface{ RecordedReads() []PrimitiveCall }); ok {
+		s.captureReadInputs(recorder.RecordedReads())
+	}
+	if original, ok := view.(Snapshot); ok {
+		s.Traffic = original.Traffic
+		s.Metrics = original.Metrics
+		s.Alerts = original.Alerts
+		s.Readings = original.Readings
+		s.Reachability = original.Reachability
+	}
 	if clock, ok := view.(sdk.ObservationClock); ok && !clock.ObservedAt().IsZero() {
 		observed := clock.ObservedAt().UTC()
 		s.ObservedAtTime = &observed
