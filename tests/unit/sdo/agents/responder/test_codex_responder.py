@@ -716,3 +716,19 @@ def test_controller_verification_resumes_same_session_with_remaining_budget(monk
     assert captured["resume_session_id"] == "same-provider-session"
     assert captured["timeout_seconds"] == 43.0
     assert feedback in captured["prompt"]
+
+
+def test_app_drift_defaults_to_verified_accepted_source_restoration() -> None:
+    request = _request()
+    request.drift_events.add(operation="Update", classification="unexplained")
+
+    prompt = _responder_prompt(request)
+
+    assert "restore app-namespace drift to accepted source" in prompt
+    assert "positive evidence" in prompt
+    assert "runtime-managed field" in prompt
+    assert "recorded accepted change" in prompt
+    assert "verify the restoration" in prompt
+    assert "uncertainty alone must not block restoration" in prompt
+    assert "AND a violated application relation" not in prompt
+    assert "take no action and leave the finding unresolved" not in prompt
