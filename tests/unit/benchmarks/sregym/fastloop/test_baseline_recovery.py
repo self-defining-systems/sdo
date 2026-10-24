@@ -120,6 +120,123 @@ def test_modified_deployment_is_restored_and_named() -> None:
     assert cleanup.restored == ["Deployment/mongodb-geo"]
 
 
+@pytest.mark.parametrize("legacy_binding", [False, True])
+def test_restore_bound_claim_preserves_new_volume_and_restores_requested_storage(
+    monkeypatch: Any, tmp_path: Path, legacy_binding: bool
+) -> None:
+    cluster = FakeCluster()
+    original = obj(
+        "PersistentVolumeClaim",
+        "geo-pvc",
+        spec={
+            "accessModes": ["ReadWriteOnce"],
+            "storageClassName": "synthetic-storage",
+            "volumeName": "old-volume",
+            "resources": {"requests": {"storage": "2Gi"}},
+        },
+        status={"phase": "Bound"},
+    )
+    cluster.add(original)
+    baseline = capture_application_baseline(cluster, "hotel")
+    if legacy_binding:
+        # Existing saved baselines also need to work without recapturing the app.
+        baseline.objects[0]["spec"]["volumeName"] = "old-volume"
+    else:
+        assert "volumeName" not in baseline.objects[0]["spec"]
+    live = deepcopy(original)
+    live["metadata"]["resourceVersion"] = "17"
+    live["spec"]["volumeName"] = "new-volume"
+    live["spec"]["resources"]["requests"]["storage"] = "1Gi"
+    volume_data = {"new-volume": "existing application data"}
+    calls: list[str] = []
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        calls.append(args[0])
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(live))
+        assert args[:3] == ["patch", "persistentvolumeclaim/geo-pvc", "--type=json"]
+        for operation in json.loads(Path(args[4]).read_text(encoding="utf-8")):
+            if operation["path"] == "/spec":
+                assert operation["value"]["volumeName"] == "new-volume", "PVC binding is immutable"
+                live["spec"] = operation["value"]
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    cluster.objects[("hotel", "PersistentVolumeClaim", "geo-pvc")] = live
+    monkeypatch.setattr(cluster, "apply", KubectlApplicationCluster(tmp_path / "kubeconfig").apply)
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert calls == ["get", "patch"]
+    assert cleanup.restored == ["PersistentVolumeClaim/geo-pvc"]
+    assert cluster.touched == []  # No deletion or recreation of a data claim.
+    assert live["spec"] == {**original["spec"], "volumeName": "new-volume"}
+    assert volume_data[live["spec"]["volumeName"]] == "existing application data"
+
+
+def test_recreated_claim_binding_alone_does_not_require_restoration() -> None:
+    cluster = FakeCluster()
+    cluster.add(obj("PersistentVolumeClaim", "geo-pvc", spec={"volumeName": "old-volume"}))
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.objects[("hotel", "PersistentVolumeClaim", "geo-pvc")]["spec"]["volumeName"] = "new-volume"
+
+    cleanup = reconcile_application(cluster, baseline, "hotel")
+
+    assert cleanup.restored == []
+    assert cluster.touched == []
+
+
+@pytest.mark.parametrize("legacy_binding", [False, True])
+def test_restore_service_preserves_new_cluster_ips_and_repairs_target_port(
+    monkeypatch: Any, tmp_path: Path, legacy_binding: bool
+) -> None:
+    cluster = FakeCluster()
+    original = obj(
+        "Service",
+        "consul",
+        spec={"clusterIP": "10.0.0.1", "clusterIPs": ["10.0.0.1"], "ports": [{"port": 80, "targetPort": 8080}]},
+    )
+    cluster.add(original)
+    baseline = capture_application_baseline(cluster, "hotel")
+    if legacy_binding:
+        baseline.objects[0]["spec"].update(clusterIP="10.0.0.1", clusterIPs=["10.0.0.1"])
+    else:
+        assert "clusterIP" not in baseline.objects[0]["spec"]
+        assert "clusterIPs" not in baseline.objects[0]["spec"]
+    live = deepcopy(original)
+    live["metadata"]["resourceVersion"] = "17"
+    live["spec"].update(clusterIP="10.0.0.2", clusterIPs=["10.0.0.2"])
+    live["spec"]["ports"][0]["targetPort"] = 8888
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(live))
+        assert args[:3] == ["patch", "service/consul", "--type=json"]
+        for operation in json.loads(Path(args[4]).read_text(encoding="utf-8")):
+            if operation["path"] == "/spec":
+                assert operation["value"]["clusterIP"] == "10.0.0.2"
+                assert operation["value"]["clusterIPs"] == ["10.0.0.2"]
+                live["spec"] = operation["value"]
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    cluster.objects[("hotel", "Service", "consul")] = live
+    monkeypatch.setattr(cluster, "apply", KubectlApplicationCluster(tmp_path / "kubeconfig").apply)
+
+    reconcile_application(cluster, baseline, "hotel")
+
+    assert live["spec"]["ports"] == original["spec"]["ports"]
+    assert cluster.touched == []
+
+
+def test_headless_service_intent_is_preserved_in_a_captured_baseline() -> None:
+    cluster = FakeCluster()
+    service = obj("Service", "mongo", spec={"clusterIP": "None", "clusterIPs": ["None"]})
+    cluster.add(service)
+
+    assert capture_application_baseline(cluster, "hotel").objects == [service]
+
+
 def test_deleted_application_daemonset_is_restored() -> None:
     cluster = FakeCluster()
     original = obj("DaemonSet", "collector", spec={"selector": {"matchLabels": {"app": "collector"}}})
@@ -205,3 +322,188 @@ def test_capture_discovers_secondary_app_namespaces_without_control_or_observabi
     monkeypatch.setattr(baseline_recovery, "kubectl", fake_kubectl)
 
     assert application_namespaces(path, tmp_path / "kubeconfig", "hotel") == ("hotel", "hotel-db")
+
+
+ALLOCATED_CASES = [
+    pytest.param("ConfigMap", ("metadata", "uid"), "old-uid", "live-uid", id="uid"),
+    pytest.param("ConfigMap", ("metadata", "resourceVersion"), "1", "17", id="resource-version"),
+    pytest.param(
+        "ConfigMap",
+        ("metadata", "creationTimestamp"),
+        "2020-01-01T00:00:00Z",
+        "2026-01-01T00:00:00Z",
+        id="creation-time",
+    ),
+    pytest.param("ConfigMap", ("metadata", "generation"), 1, 2, id="generation"),
+    pytest.param(
+        "ConfigMap", ("metadata", "managedFields"), [{"manager": "old"}], [{"manager": "live"}], id="managed-fields"
+    ),
+    pytest.param("Service", ("spec", "clusterIP"), "10.0.0.1", "10.0.0.2", id="service-ip"),
+    pytest.param("Service", ("spec", "clusterIPs"), ["10.0.0.1"], ["10.0.0.2"], id="service-ips"),
+    pytest.param("Service", ("spec", "ipFamilies"), ["IPv4"], ["IPv6"], id="service-families"),
+    pytest.param("Service", ("spec", "ipFamilyPolicy"), "SingleStack", "PreferDualStack", id="service-family-policy"),
+    pytest.param("Service", ("spec", "healthCheckNodePort"), 32001, 32002, id="service-health-node-port"),
+    pytest.param("Service", ("spec", "ports", 0, "nodePort"), 32003, 32004, id="service-node-port"),
+    pytest.param("PersistentVolumeClaim", ("spec", "volumeName"), "old-volume", "live-volume", id="pvc-volume"),
+    pytest.param("Pod", ("spec", "nodeName"), "old-node", "live-node", id="pod-node"),
+    pytest.param(
+        "Job",
+        ("spec", "selector"),
+        {"matchLabels": {"controller-uid": "old"}},
+        {"matchLabels": {"controller-uid": "live"}},
+        id="job-selector",
+    ),
+    *[
+        pytest.param("Job", (*prefix, label), "old-controller", "live-controller", id=f"job-{location}-{label}")
+        for location, prefix in [
+            ("labels", ("metadata", "labels")),
+            ("template", ("spec", "template", "metadata", "labels")),
+            ("selector", ("spec", "selector", "matchLabels")),
+        ]
+        for label in ["controller-uid", "batch.kubernetes.io/controller-uid"]
+    ],
+]
+
+
+def set_path(value: Any, path: tuple[Any, ...], content: Any) -> None:
+    for index, key in enumerate(path[:-1]):
+        if isinstance(value, dict) and key not in value:
+            value[key] = [] if isinstance(path[index + 1], int) else {}
+        if isinstance(value, list):
+            while len(value) <= key:
+                value.append({})
+        value = value[key]
+    value[path[-1]] = deepcopy(content)
+
+
+def get_path(value: Any, path: tuple[Any, ...]) -> Any:
+    for key in path:
+        if isinstance(value, dict) and key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def allocated_fixture(kind: str) -> dict[str, Any]:
+    if kind == "ConfigMap":
+        return obj(kind, "synthetic", data={"desired": "healthy"})
+    if kind == "Service":
+        return obj(
+            kind,
+            "synthetic",
+            spec={"ports": [{"name": "http", "port": 80, "targetPort": 8080}], "selector": {"app": "healthy"}},
+        )
+    if kind == "PersistentVolumeClaim":
+        return obj(kind, "synthetic", spec={"resources": {"requests": {"storage": "2Gi"}}})
+    if kind == "Job":
+        return obj(
+            kind,
+            "synthetic",
+            spec={
+                "backoffLimit": 2,
+                "template": {
+                    "metadata": {"labels": {"app": "healthy"}},
+                    "spec": {"containers": [{"name": "app", "image": "synthetic:healthy"}]},
+                },
+            },
+        )
+    return obj(kind, "synthetic", spec={"containers": [{"name": "app", "image": "synthetic:healthy"}]})
+
+
+@pytest.mark.parametrize(("kind", "path", "old", "new"), ALLOCATED_CASES)
+@pytest.mark.parametrize("legacy", [False, True])
+def test_allocated_fields_keep_live_identity_while_desired_content_is_restored(
+    monkeypatch: Any, tmp_path: Path, kind: str, path: tuple[Any, ...], old: Any, new: Any, legacy: bool
+) -> None:
+    original = allocated_fixture(kind)
+    set_path(original, path, old)
+    cluster = FakeCluster()
+    cluster.add(original)
+    captured = capture_application_baseline(cluster, "hotel").objects[0]
+    assert get_path(captured, path) is None
+    restore = deepcopy(original if legacy else captured)
+    live = deepcopy(original)
+    live["metadata"]["resourceVersion"] = "17"
+    set_path(live, path, new)
+    # Every case also restores ordinary desired content, rather than merely skipping the object.
+    desired = (
+        ("data", "desired")
+        if kind == "ConfigMap"
+        else ("spec", "selector", "app")
+        if kind == "Service"
+        else ("spec", "resources", "requests", "storage")
+        if kind == "PersistentVolumeClaim"
+        else ("spec", "backoffLimit")
+        if kind == "Job"
+        else ("spec", "containers", 0, "image")
+    )
+    expected = get_path(original, desired)
+    set_path(live, desired, 9 if kind == "Job" else "faulty")
+
+    def api(args: list[str], **_kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout=json.dumps(live))
+        assert args[0] == "patch"
+        for operation in json.loads(Path(args[4]).read_text()):
+            if operation["op"] == "test":
+                assert operation["value"] == live["metadata"]["resourceVersion"]
+            elif operation["op"] == "add":
+                live[operation["path"].removeprefix("/")] = operation["value"]
+            elif operation["op"] == "remove":
+                live.pop(operation["path"].removeprefix("/"), None)
+        return SimpleNamespace(stdout="patched")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", restore)
+
+    assert get_path(live, path) == new
+    assert get_path(live, desired) == expected
+    assert get_path(original, path) == old
+
+
+@pytest.mark.parametrize(("kind", "path", "old", "new"), ALLOCATED_CASES)
+def test_missing_object_recreation_omits_allocated_fields(
+    monkeypatch: Any, tmp_path: Path, kind: str, path: tuple[Any, ...], old: Any, new: Any
+) -> None:
+    original = allocated_fixture(kind)
+    set_path(original, path, old)
+    created = []
+
+    def api(args: list[str], **kwargs: Any) -> Any:
+        if args[0] == "get":
+            return SimpleNamespace(stdout="")
+        assert args[0] == "apply"
+        created.append(json.loads(kwargs["input_text"]))
+        return SimpleNamespace(stdout="created")
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.baseline_recovery.kubectl", api)
+    KubectlApplicationCluster(tmp_path / "kubeconfig").apply("hotel", original)
+
+    assert len(created) == 1
+    assert get_path(created[0], path) is None
+
+
+@pytest.mark.parametrize(("kind", "path", "old", "new"), ALLOCATED_CASES)
+def test_allocated_field_changes_alone_never_restore_the_object(
+    kind: str, path: tuple[Any, ...], old: Any, new: Any
+) -> None:
+    cluster = FakeCluster()
+    original = allocated_fixture(kind)
+    set_path(original, path, old)
+    cluster.add(original)
+    baseline = capture_application_baseline(cluster, "hotel")
+    set_path(original, path, new)
+
+    assert reconcile_application(cluster, baseline, "hotel").restored == []
+    assert cluster.touched == []
+
+
+@pytest.mark.parametrize("phase", ["Pending", "Bound"])
+def test_reconciliation_never_deletes_an_extra_pvc(phase: str) -> None:
+    cluster = FakeCluster()
+    baseline = capture_application_baseline(cluster, "hotel")
+    cluster.add(obj("PersistentVolumeClaim", "data", status={"phase": phase}))
+
+    assert reconcile_application(cluster, baseline, "hotel").deleted_counts == {}
+    assert ("hotel", "PersistentVolumeClaim", "data") in cluster.objects
+    assert cluster.touched == []
