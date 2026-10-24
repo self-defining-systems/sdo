@@ -52,7 +52,7 @@ func TestOperatorImportContract(t *testing.T) {
 				actor = broker.Responder
 			}
 			receipt, err := repo.Publish(context.Background(), "operator-1", actor, broker.Phase("import"))
-			if name != "valid" {
+			if name != "valid" && name != "missing operator corpus" {
 				if err == nil {
 					t.Fatal("invalid import accepted")
 				}

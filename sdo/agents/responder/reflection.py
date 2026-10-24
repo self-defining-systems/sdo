@@ -173,16 +173,21 @@ def _logical_learning_request(
             "Go has settled covered items and materialized their evidence in this checkout. "
             "Preserve Go-owned cases and address only the per-cause questions in the same incident session. "
             "A false-match fixed capture is a required NoMatch regression. "
-            "Only Go-flagged gaps permit declining for missing evidence; explain which observation is missing. "
+            "Missing controller captures do not block learning from recorded session observations. "
             "Return updated whenever final files include Go or agent edits.\n"
             f"Per-cause work:\n{work_json}\n"
         )
     return (
-        "The controller verified this incident and committed its outcome. "
+        "The controller committed its authoritative incident outcome. "
         "Accepted source and developer changes express intent. Operational memory is fallible advice. "
         "Recovery requires evidence from the intended application behavior. "
-        "Learn reusable operational memory for the responder's confirmed causes within the captured evidence. "
-        "Prefer executable programs where the evidence supports them; prose records what a program cannot. "
+        "Learn executable diagnosis and mitigation for each independently verified repair, with a README and "
+        "detector coverage; detectors may surface several playbooks. "
+        "Use recorded actions as repair evidence and the session's live observations to build replay fixtures. "
+        "A README note alone does not capture an executable repair. "
+        "Learn verified parts even when the whole incident remains unhealthy. "
+        "Missing controller captures do not block learning; only typed SDK gaps scoped to the affected cause "
+        "resources may excuse a required program or detector. "
         f"The authoring guide starts at {SKILLS_ROOT}/sdo-memory/SKILL.md. "
         "Go owns the supplied classification, corpus evidence and trust decisions. "
         "Preserve Go-owned cases; answer unresolved questions in this incident session without inferring cause groups. "
@@ -264,7 +269,7 @@ class SessionReflector:
             prompt = (
                 "Author corrected final files. You are correcting operational-memory edits that SDO's broker rejected. "
                 "The controller has "
-                "independently verified incident closure and committed its authoritative outcome; the responder's "
+                "committed its authoritative incident outcome; the responder's "
                 "session context remains available.\n\n"
                 f"{render_validation_feedback(validation_attempt, diagnostics)}\n"
                 "The rejected edit was rolled back, so the worktree is clean at the accepted outcome commit. "
@@ -288,7 +293,7 @@ class SessionReflector:
                 event_dependence=self.guidance == "generalize-spec",
             )
             prompt = (
-                "The controller has independently verified incident closure and committed its authoritative "
+                "The controller has committed its authoritative incident "
                 "outcome. You are reflecting in a fresh session: the responder's session transcript is not "
                 "available, so rely on the incident brief below and supplied memory context.\n\n"
                 f"{brief}\n"
@@ -296,7 +301,7 @@ class SessionReflector:
             )
             return self.backend.fresh(worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
         prompt = (
-            "The controller has independently verified incident closure and committed its authoritative outcome.\n"
+            "The controller has committed its authoritative incident outcome.\n"
             "Reflect using the same incident context.\n"
             f"{request}"
         )

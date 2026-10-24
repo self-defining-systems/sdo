@@ -43,7 +43,7 @@ func TestAcceptedCorpusUsesAcceptedBaseCommit(t *testing.T) {
 	}
 }
 
-func TestCorpusRequiresProvisionedCaptureContext(t *testing.T) {
+func TestSessionFixtureDoesNotRequireProvisionedCaptureContext(t *testing.T) {
 	for _, name := range []string{"missing directory", "absent directory", "file instead of directory", "missing incident", "empty provisioned context"} {
 		t.Run(name, func(t *testing.T) {
 			root := copyParityTree(t)
@@ -75,15 +75,16 @@ func TestCorpusRequiresProvisionedCaptureContext(t *testing.T) {
 				request.CaptureRoot = t.TempDir()
 				ctx = validate.WithCaptureSource(ctx, "", "")
 			}
+			compiled := false
 			diagnostics, err := validate.Check(ctx, request, func(context.Context, validate.Request) ([]validate.Diagnostic, error) {
-				t.Fatal("candidate executed without provisioned capture context")
+				compiled = true
 				return nil, nil
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := rules(nil, diagnostics).broker; len(got) != 1 || got[0] != validate.RuleCaptureUnavailable {
-				t.Fatalf("missing capture context did not produce a named rejection: %v", diagnostics)
+			if len(diagnostics) != 0 || !compiled {
+				t.Fatalf("session fixture blocked on missing controller capture: %v", diagnostics)
 			}
 		})
 	}

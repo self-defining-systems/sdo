@@ -53,26 +53,14 @@ func TestEvidenceGapsNameOnlyTheMissingResourceAndPhase(t *testing.T) {
 	}
 }
 
-func TestEvidenceGapDeclineNeedsGoFlag(t *testing.T) {
-	decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "evidence gap", DeclineReason: "evidence_gap"}
-	if len(lifecyclecore.EvidenceGapDiagnostics(decision, 0)) != 1 || len(lifecyclecore.EvidenceGapDiagnostics(decision, 1)) != 0 {
-		t.Fatal("evidence decline escaped Go flags")
-	}
-}
-
-func TestUnflaggedGapDeclineGetsTypedBrokerRetryFeedback(t *testing.T) {
+func TestCaptureGapNeverExcusesLearning(t *testing.T) {
 	driver := lifecycleio.ReflectionDriver{Repository: &broker.Broker{}, Now: func() time.Time { return time.Unix(1, 0) }}
-	effect := lifecyclecore.ReflectionEffect{Kind: lifecyclecore.ReviewReflection, ID: "review", Decision: &contracts.ReflectionDecision{
-		LearningDecision: "no_change", NoChangeReason: "evidence gap", DeclineReason: "evidence_gap",
-	}}
-	rejected, err := driver.Execute(context.Background(), effect)
-	if err != nil || rejected.Kind != lifecyclecore.ReflectionRejected || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != "reflection.evidence_gap" {
-		t.Fatalf("unflagged absence escaped review: %v %v", rejected, err)
-	}
-	effect.EvidenceGapCount = 1
-	accepted, err := driver.Execute(context.Background(), effect)
-	if err != nil || accepted.Kind != lifecyclecore.ReflectionReviewed {
-		t.Fatalf("flagged gap rejected: %v %v", accepted, err)
+	for _, count := range []uint32{0, 1} {
+		effect := lifecyclecore.ReflectionEffect{Kind: lifecyclecore.ReviewReflection, ID: "review", EvidenceGapCount: count, Decision: &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "evidence gap", DeclineReason: "evidence_gap"}}
+		rejected, err := driver.Execute(context.Background(), effect)
+		if err != nil || rejected.Kind != lifecyclecore.ReflectionRejected || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != "reflection.decision" {
+			t.Fatalf("capture gap excused learning: %v %v", rejected, err)
+		}
 	}
 }
 

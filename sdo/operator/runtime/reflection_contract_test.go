@@ -284,6 +284,12 @@ func t1RunBroker(t *testing.T, c t1Class, reject bool) t1Run {
 		t.Fatal(err)
 	}
 	t1Write(t, root, ".sdo/playbooks/contract-repair/diagnose.go", source)
+	detectorPath := ".sdo/diagnostics/detectors/health/health/manifest.yaml"
+	detectorManifest, err := os.ReadFile(filepath.Join(root, detectorPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t1Write(t, root, detectorPath, []byte(strings.Replace(string(detectorManifest), "  - base\n", "  - base\n  - contract-repair\n", 1)))
 	t1Write(t, root, ".sdo/playbooks/contract-repair/README.md", []byte("---\nschema_version: 1\nowner: responder\nfault_class: contract-repair\noriginating_incident: seed\n---\nRestore the accepted target port for <SERVICE>.\n"))
 	t1Write(t, root, ".sdo/corpus/seed/labels.json", []byte(`{"root_cause_program_ids":["contract-repair"],"bindings":{"service":{"apiVersion":"v1","kind":"Service","namespace":"app","name":"api"}},"peer_bindings":{"service":{"apiVersion":"v1","kind":"Service","namespace":"app","name":"peer"}}}`))
 	seedCapture := t.TempDir()
@@ -542,7 +548,7 @@ func TestT1EvidenceGapDeclineRequiresControllerFlag(t *testing.T) {
 	for _, rejection := range run.ledger.ReflectionRejections {
 		found := false
 		for _, diagnostic := range rejection.Diagnostics {
-			found = found || diagnostic.Rule == "reflection.evidence_gap"
+			found = found || diagnostic.Rule == "reflection.decision"
 		}
 		if !found {
 			t.Errorf("missing typed gap rejection: %v", rejection)
@@ -659,5 +665,6 @@ const t1ProgramSource = `package contractrepair
 import ("context"; "sdo.dev/operator/sdk/program")
 type Program struct{}
 func (Program) Spec() program.ProgramSpec {return program.ProgramSpec{ID:"contract-repair",Params:[]program.ParamSpec{{Name:"service",Kind:"Service",Required:true}}}}
+func (Program) Mitigate(_ context.Context, _ program.ReadView,b program.Bindings)(program.Plan,error){return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"],Reason:"restore accepted source"}},Rationale:"restore accepted source"},nil}
 func (Program) Diagnose(_ context.Context, v program.ReadView,b program.Bindings)(program.Verdict,error){d,e:=v.DiffAgainstSource(b.Objects["service"]);r:=program.NoMatch;if d.Changed {r=program.Match};return program.Verdict{Result:r},e}
 `

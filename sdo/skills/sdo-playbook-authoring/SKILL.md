@@ -17,20 +17,16 @@ The installed `sdo-memory` skill defines ownership, logical IDs and the generate
    [generated program SDK](references/program-sdk.md) before choosing API types. The
    [authoring_reference](../sdo-memory/references/runtime.md#authoring_reference) tool retrieves these same
    shipped references without searching installation directories.
-3. Ground positive cases in controller captures. Start with
-   [evidence_inventory](../sdo-memory/references/runtime.md#evidence_inventory), then retrieve relevant
-   [capture_fields](../sdo-memory/references/runtime.md#capture_fields) on demand. Locate primitive calls with
-   [recordings_index](../sdo-memory/references/runtime.md#recordings_index); a partial result does not establish
-   that a primitive was unrecorded. Use
-   [create_corpus](../sdo-memory/references/runtime.md#create_corpus) to preserve captured bytes and supply
-   provenance. Inspect available evidence before deciding a cause is learnable; later live observations do
-   not establish what an earlier capture contained.
-4. Author final files in the proposal checkout and register every playbook in its index. Keep program README
-   prose to judgement and context; keep scripts out of program directories. Prose-only playbooks may use
-   named, executable scripts for repeatable diagnosis or repair. The
-   [restart-loop example](assets/restart-loop/README.md) illustrates a prose playbook.
-5. Validate with the typed memory check, then return the same learning decision and every changed logical ID.
-   Report an evidence or SDK gap when no captured case supports a safe reusable relation.
+3. For each independently verified cause, submit a diagnose program, mitigation program, a README explaining
+   how to handle the fault, and detector coverage. A detector may surface multiple playbooks.
+   Use the responder's recorded actions and existing session observations to build the replay fixture.
+   Controller captures and the evidence tools are optional sources, never prerequisites for learning.
+4. Author final files in the proposal checkout and register every playbook in its index. A fixture labels
+   its positive programs and binds the confirmed-cause resources. Include observed primitive replies and
+   accepted.json when the mitigation needs source values. Preserve accepted cases; add new evidence by ID.
+5. Validate compilation and mitigation-clears-diagnosis replay, then return the same decision and changed
+   logical IDs. A README-only update fails for a verified repair. The only exception is a typed SDK gap
+   naming the cause resources, missing primitive and concrete reason; it cannot excuse other causes.
 
 Use role placeholders in prose and bound resources in Go. Mitigation returns to accepted or observed state;
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills

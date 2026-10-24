@@ -27,6 +27,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -122,6 +123,33 @@ func fastloopWriteProgram(t *testing.T, checkout, captureDir, incidentID string)
 	}
 
 	writeCapturedProgramCorpus(t, checkout, captureDir, incidentID, "service-targetport-mismatch", "service", "Service", "app", "api", "peer", "detect")
+	fastloopWriteDetector(t, checkout, incidentID)
+}
+
+func fastloopWriteDetector(t *testing.T, root, incidentID string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".sdo/diagnostics/go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := programModule.FindSubmatch(data)
+	if len(module) != 2 {
+		t.Fatal("missing module")
+	}
+	source := fmt.Sprintf(`package routingrelations
+import("time";"sdo.dev/operator/sdk";"sdo.dev/operator/sdk/program"; learned %q)
+func New() sdk.Detector {return program.DetectorFromProgram(learned.Program{},func(s sdk.DetectionContext) []program.Bindings {
+ var result []program.Bindings;for _,service:=range s.Services(){result=append(result,program.Bindings{Objects:program.ObjectBindings{"service":{APIVersion:"v1",Kind:"Service",Namespace:service.Namespace,Name:service.Name}}})};return result
+},sdk.DetectorSpec{ID:"routing-relations",Class:sdk.DetectorClassIncident,Owner:sdk.DetectorOwnerResponder,Watches:[]sdk.WatchKind{{APIVersion:"v1",Kind:"Service"},{APIVersion:"v1",Kind:"Pod"}},Interval:time.Second,Persistence:sdk.PersistencePolicy{Firing:1,Clearing:1},Batching:sdk.BatchingPolicy{Severity:sdk.SeverityWarning,Debounce:500*time.Millisecond},Playbooks:[]string{"service-targetport-mismatch"},OriginatingIncident:%q,OriginatingCommit:"reflection"})}
+`, string(module[1])+"/playbooks/service-targetport-mismatch", incidentID)
+	formatted, err := format.Source([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = layout.WriteDetector(root, layout.Detector{Class: layout.ClassIncident, Manifest: layout.DetectorManifest{APIVersion: layout.APIVersion, Kind: layout.DetectorManifestKind, SDKVersion: layout.SDKVersion, ID: "routing-relations", Constructor: "New", Class: "incident", Owner: "responder", Watches: []layout.Watch{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Pod"}}, Interval: "1s", Persistence: layout.Persistence{Firing: 1, Clearing: 1}, Batching: layout.Batching{Severity: "warn", Debounce: "500ms"}, PossiblePlaybooks: []string{"service-targetport-mismatch"}, OriginatingIncident: incidentID, OriginatingCommit: "reflection"}, Files: []layout.File{{Name: "detector.go", Content: formatted}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func fastloopGateResult(request IncidentRequest, resources []sdk.ObjectRef) IncidentResult {
@@ -347,6 +375,14 @@ func fastloopGateAcknowledge(t *testing.T, ctx context.Context, controller *Cont
 }
 
 func TestHermeticFastloopRealGoGate(t *testing.T) {
+	runHermeticFastloopRealGoGate(t, false)
+}
+
+func TestHermeticReflectionLearnsThenIdenticalRecurrenceSkipsResponder(t *testing.T) {
+	runHermeticFastloopRealGoGate(t, true)
+}
+
+func runHermeticFastloopRealGoGate(t *testing.T, recurrence bool) {
 	testutil.OfflineGo(t, "..")
 	t.Setenv("GOFLAGS", "-mod=mod -p=2")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -413,7 +449,19 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	worker.Executor = reflectionTaskExecutorFunc(func(_ context.Context, task *contracts.AgentTask) (*contracts.AgentResult, error) {
 		reflected++
 		if reflected > 1 {
-			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "program already covers this class"})
+			request := new(contracts.ReflectionRequest)
+			if err := task.Request.UnmarshalTo(request); err != nil {
+				t.Fatal(err)
+			}
+			incidentID := request.GetClosure().GetRequest().GetIncidentId()
+			captureDir, err := memory.IncidentCorpusDir(captureRoot, incidentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixtureRoot := t.TempDir()
+			writeCapturedProgramCorpus(t, fixtureRoot, captureDir, incidentID, "service-targetport-mismatch", "service", "Service", "app", "peer", "api", "detect")
+			copyFastloopTree(t, filepath.Join(fixtureRoot, ".sdo/corpus/service-targetport-mismatch-case"), filepath.Join(task.Workspace.CheckoutPath, ".sdo/corpus", incidentID))
+			response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated"})
 			if err != nil {
 				return nil, err
 			}
@@ -429,6 +477,12 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 			return nil, err
 		}
 		fastloopWriteProgram(t, task.Workspace.CheckoutPath, captureDir, incidentID)
+		if recurrence {
+			// Fixtures retain session observations; controller captures are absent.
+			if err := os.RemoveAll(captureDir); err != nil {
+				return nil, err
+			}
+		}
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}})
 		if err != nil {
 			return nil, err
@@ -585,6 +639,10 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 	}
 	if image := deployment.Spec.Template.Spec.Containers[0].Image; image != "good:v1" {
 		t.Fatalf("rendered source restore lost deployed image: %s", image)
+	}
+	if recurrence {
+		runCompiledLearningRecurrence(t, ctx, built, accepted, firstRequest)
+		return
 	}
 
 	peerService, err = client.CoreV1().Services("app").Get(ctx, "peer", metav1.GetOptions{})

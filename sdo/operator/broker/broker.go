@@ -508,6 +508,9 @@ func (b *Broker) accept(ctx context.Context, stage, incidentID string, actor Act
 		return Receipt{}, err
 	}
 	message := fmt.Sprintf("sdo(%s): validated %s\n\nSDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, phase, incidentID, actor, phase)
+	if phase == ReflectionPhase {
+		message += "\nSDO-Learning: executable-v1"
+	}
 	if phase == ImportPhase {
 		message += "\nSDO-Origin: operator"
 	}

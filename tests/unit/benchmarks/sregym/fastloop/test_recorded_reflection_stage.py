@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from agentshim.testing import FakeExecutor
 
 from benchmarks.sregym.fastloop.file_edits import record_file_edits
@@ -24,7 +25,9 @@ from tests.unit.sdo.agents.responder.test_reflection_outcomes import _outcome
 from tests.unit.sdo.agents.responder.test_reflection_worker import _closure
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Callable
+
+    from agentshim import CommandRequest
 
 ROOT = Path(__file__).resolve().parents[5]
 
@@ -35,6 +38,9 @@ def reflection_recording(
     *,
     captures: dict[str, bytes] | None = None,
     files: dict[str, bytes] | None = None,
+    classification: str = "success",
+    verified_service: bool = False,
+    check_prompt: Callable[[str], None] | None = None,
 ) -> tuple[CheckpointStore, Path]:
     source = tmp_path / "source"
     shutil.copytree(ROOT / "tests/fixtures/sdo/missing_configmap_app", source)
@@ -58,8 +64,16 @@ def reflection_recording(
     ):
         subprocess.run(["git", "-C", str(source), *args], check=True)
     closure = _closure()
+    record = _outcome(closure.request.incident_id)
+    record.classification = classification
+    if verified_service:
+        resource = record.confirmed_root_causes[0].resources[0]
+        resource.kind, resource.namespace, resource.name = "Service", "demo", "front"
+    else:
+        # These tests isolate transport and frontmatter from verified repair learning.
+        del record.confirmed_root_causes[:]
     outcome = tmp_path / "outcome.json"
-    outcome.write_text(to_canonical_json(_outcome(closure.request.incident_id)))
+    outcome.write_text(to_canonical_json(record))
     recorder = tmp_path / "outcome.go"
     recorder.write_text("""package main
 import (
@@ -85,9 +99,7 @@ func main() {
     commit = subprocess.check_output(
         ["go", "run", str(recorder), str(source), str(outcome)], cwd=ROOT / "sdo/operator", text=True
     ).strip()
-    request = ReflectionRequest(
-        closure=closure, outcome=_outcome(closure.request.incident_id), outcome_commit=commit, session_mode="fresh"
-    )
+    request = ReflectionRequest(closure=closure, outcome=record, outcome_commit=commit, session_mode="fresh")
     request.memory_snapshot.accepted_commit = commit
     task = AgentTask(
         schema_version="sdo.dev/v1alpha1",
@@ -108,7 +120,9 @@ func main() {
         for index, output in enumerate(outputs)
     )
 
-    def author(_request: object):
+    def author(command: CommandRequest):
+        if check_prompt is not None:
+            check_prompt(command.stdin or "")
         authored = files if files is not None else readme_files()
         for name, data in authored.items():
             path = source / name
@@ -222,7 +236,8 @@ def test_recorded_reflection_reports_all_rejections(tmp_path: Path) -> None:
         assert "text.physical-path" in result["proposals"][0]["error"]
 
 
-def test_recorded_program_replay_validates_capture_provenance_and_generalization(tmp_path: Path) -> None:
+@pytest.mark.parametrize("classification", ["success", "failed"])
+def test_recorded_program_replay_accepts_session_fixture_without_captures(tmp_path: Path, classification: str) -> None:
     fixture = ROOT / "tests/fixtures/sdo/playbook_program_app/.sdo"
     corpus = fixture / "corpus/targetport-mismatch"
     fixed = json.loads((corpus / "fixed.json").read_text())
@@ -242,12 +257,19 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
         files[f".sdo/playbooks/service-targetport-mismatch/{name}"] = path.read_bytes()
     files[".sdo/lib/ports/ports.go"] = (fixture / "lib/ports/ports.go").read_bytes()
     files[".sdo/diagnostics/go.mod"] = (fixture / "diagnostics/go.mod").read_bytes()
-    labels["provenance"] = {
-        "incident_id": _closure().request.incident_id,
-        "open_at": "detect",
-        "open_sha256": hashlib.sha256(captures["open@detect.json"]).hexdigest(),
-        "fixed_sha256": hashlib.sha256(captures["fixed.json"]).hexdigest(),
-    }
+    labels["provenance"] = {"incident_id": _closure().request.incident_id}
+    detector = fixture / "diagnostics/detectors/incidents/missing-configmap"
+    manifest = (detector / "manifest.yaml").read_text()
+    manifest = manifest.replace("    - missing-configmap", "    - missing-configmap\n    - service-targetport-mismatch")
+    manifest = manifest.replace("firing: 2", "firing: 1")
+    files[".sdo/diagnostics/detectors/incidents/missing-configmap/manifest.yaml"] = manifest.encode()
+    detector_source = (detector / "detector.go").read_text()
+    detector_source = detector_source.replace("Firing: 2", "Firing: 1")
+    detector_source = detector_source.replace(
+        "[]string{playbookPath}", '[]string{playbookPath, "service-targetport-mismatch"}'
+    )
+    files[".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"] = detector_source.encode()
+
     for name, data in {
         "open.json": captures["open@detect.json"],
         "fixed.json": captures["fixed.json"],
@@ -256,6 +278,30 @@ def test_recorded_program_replay_validates_capture_provenance_and_generalization
         "labels.json": json.dumps(labels).encode(),
     }.items():
         files[f".sdo/corpus/replayed-targetport/{name}"] = data
-    store, source = reflection_recording(tmp_path, [frontmatter_output()], captures=captures, files=files)
+
+    def check_prompt(prompt: str) -> None:
+        # This scripted agent checks its task before authoring final Go files.
+        # It proves wiring and validation, not how a live model follows instructions.
+        assert "Learn executable diagnosis and mitigation for each independently verified repair" in prompt
+        assert "Learn verified parts even when the whole incident remains unhealthy" in prompt
+        assert "Use recorded actions as repair evidence" in prompt
+        current = json.loads(prompt.split("Current outcome:\n", 1)[1].split("\n\nOutcome history", 1)[0])
+        assert current["classification"] == classification
+        assert (
+            current["repair_actions"][0]["details"]
+            == _outcome(_closure().request.incident_id).repair_actions[0].details
+        )
+
+    store, source = reflection_recording(
+        tmp_path,
+        [frontmatter_output()],
+        captures=None,
+        files=files,
+        verified_service=True,
+        classification=classification,
+        check_prompt=check_prompt,
+    )
     result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
-    assert result["proposals"][0]["status"] == "accepted", result
+    assert result["proposals"][0]["status"] == "accepted", result["proposals"][0].get("error", result)
+    assert result["proposals"][0]["commit"]
+    assert result["proposals"][0]["artifact_ids"] == ["service-targetport-mismatch"]

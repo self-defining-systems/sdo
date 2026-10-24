@@ -1,98 +1,13 @@
 package validate
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
-	programvalidation "sdo.dev/operator/memory/validate/program"
-	"sdo.dev/operator/sdk/sdktest"
 )
-
-// validateNewProgramCorpus requires captured matching evidence for responder
-// learning, or explicitly operator-origin positive cases in a human import.
-func validateNewProgramCorpus(candidate, baseline string, operatorImport bool, changed []string) error {
-	programRoot := filepath.Join(candidate, layout.PlaybooksDir)
-	programs, err := os.ReadDir(programRoot)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	caseRoot := filepath.Join(candidate, layout.CorpusDir)
-	cases, err := os.ReadDir(caseRoot)
-	if os.IsNotExist(err) {
-		cases = nil
-	} else if err != nil {
-		return err
-	}
-	for _, item := range programs {
-		if !item.IsDir() {
-			continue
-		}
-		newSource := filepath.Join(programRoot, item.Name(), "diagnose.go")
-		if _, err := os.Stat(newSource); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		if _, err := os.Stat(filepath.Join(baseline, layout.PlaybookDir(item.Name()), "diagnose.go")); err == nil {
-			touched := false
-			for _, p := range changed {
-				touched = touched || strings.HasPrefix(p, layout.PlaybookDir(item.Name())+"/")
-			}
-			if !operatorImport || !touched {
-				continue
-			}
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-		captured := false
-		for _, entry := range cases {
-			if !entry.IsDir() {
-				continue
-			}
-			dir := filepath.Join(caseRoot, entry.Name())
-			caseData, err := sdktest.LoadCorpusCase(dir)
-			if err != nil {
-				return err
-			}
-			for _, id := range caseData.RootCauseProgramIDs {
-				if id != item.Name() {
-					continue
-				}
-				if operatorImport {
-					marked, err := programvalidation.OperatorCorpus(dir)
-					if err != nil {
-						return err
-					}
-					if marked {
-						captured = true
-					}
-					continue
-				}
-				if err := sdktest.ValidateCorpusProvenance(dir); err != nil {
-					return fmt.Errorf("new program %s corpus %s: %w", item.Name(), entry.Name(), err)
-				}
-				if caseData.Provenance.IncidentID != "" {
-					captured = true
-				}
-			}
-		}
-		if !captured {
-			if operatorImport {
-				return fmt.Errorf("new program %s requires an operator-origin corpus case", item.Name())
-			}
-			return fmt.Errorf("new program %s requires a captured incident corpus case", item.Name())
-		}
-	}
-	return nil
-}
 
 // corpusRules protects accepted evidence before examining new cases. A changed
 // accepted case fails closed, even if its new labels claim to be synthetic or
@@ -122,7 +37,6 @@ func (s *run) corpusRules(baseline string) error {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	var capturedPaths []string
 	for _, id := range ids {
 		rel := layout.CorpusDir + "/" + id
 		if baseline != "" {
@@ -133,51 +47,6 @@ func (s *run) corpusRules(baseline string) error {
 				return err
 			}
 		}
-		dir := filepath.Join(s.req.Root, rel)
-		marked, operatorErr := programvalidation.OperatorCorpus(dir)
-		if marked || operatorErr != nil {
-			if operatorErr != nil {
-				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: rel, Message: operatorErr.Error()})
-			}
-			if s.req.Actor != Human || s.req.Phase != ImportPhase {
-				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: rel, Message: "operator-origin corpus may only be added by human in import phase"})
-			}
-			continue
-		}
-		if err := sdktest.ValidateCorpusProvenance(dir); err != nil {
-			s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: rel, Message: err.Error()})
-		}
-		caseData, err := sdktest.LoadCorpusCase(dir)
-		if err != nil {
-			// The provenance diagnostic already explains the malformed case.
-			continue
-		}
-		if caseData.Provenance.IncidentID == "" && caseData.SyntheticNoMatchReason != "" && len(caseData.RootCauseProgramIDs) == 0 && len(caseData.NoMatchProgramIDs) > 0 {
-			continue
-		}
-		capturedPaths = append(capturedPaths, rel+"/labels.json")
-	}
-	if len(capturedPaths) == 0 {
-		return nil
-	}
-	capture := s.req.CaptureDirectory
-	if capture == "" && s.req.CaptureRoot != "" && strings.TrimSpace(s.req.IncidentID) != "" {
-		var err error
-		capture, err = memory.IncidentCorpusDir(s.req.CaptureRoot, s.req.IncidentID)
-		if err != nil {
-			return err
-		}
-	}
-	if capture == "" || strings.TrimSpace(s.req.IncidentID) == "" {
-		s.add(Semantic, Diagnostic{Rule: RuleCaptureUnavailable, Path: layout.CorpusDir, Message: "proposed corpus requires a provisioned capture directory and incident ID"})
-		return nil
-	}
-	if info, err := os.Stat(capture); err != nil || !info.IsDir() {
-		s.add(Semantic, Diagnostic{Rule: RuleCaptureUnavailable, Path: layout.CorpusDir, Message: "provisioned corpus capture directory is unavailable"})
-		return nil
-	}
-	if err := memory.ValidateCapturedCorpusDirectory(capture, s.req.Root, s.req.IncidentID, capturedPaths); err != nil {
-		s.add(Semantic, Diagnostic{Rule: RuleCaptureProvenance, Path: layout.CorpusDir, Message: err.Error()})
 	}
 	return nil
 }

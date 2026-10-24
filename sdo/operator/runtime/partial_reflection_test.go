@@ -99,7 +99,11 @@ func TestNativeBrokerReflectsOnlyVerifiedPartialRepair(t *testing.T) {
 				if err := os.WriteFile(usagePath, []byte(`{"usage":{"input_tokens":42,"output_tokens":7,"model_requests":2}}`+"\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "no_change", NoChangeReason: "synthetic evidence reviewed"})
+				var gaps []*contracts.SdkGap
+				for _, cause := range request.Outcome.ConfirmedRootCauses {
+					gaps = append(gaps, &contracts.SdkGap{FaultClass: "synthetic-fixture", Primitive: "fixture-capability", Reason: "transport-only test has no executable observation fixture", ScratchScript: "scratch/test", Resources: cause.Resources})
+				}
+				response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "sdk_gap", NoChangeReason: "synthetic transport fixture lacks SDK evidence", SdkGaps: gaps})
 				return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 			})}
 			receipt, err := native.ProcessClosure(ctx, closure)

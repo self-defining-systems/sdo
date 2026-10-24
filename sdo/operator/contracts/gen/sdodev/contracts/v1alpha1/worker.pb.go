@@ -792,6 +792,8 @@ type SdkGap struct {
 	Primitive     string                 `protobuf:"bytes,2,opt,name=primitive,proto3" json:"primitive,omitempty"`
 	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
 	ScratchScript string                 `protobuf:"bytes,4,opt,name=scratch_script,json=scratchScript,proto3" json:"scratch_script,omitempty"`
+	// Confirmed-cause resources this exception applies to; never excuses peers.
+	Resources     []*ObjectRef `protobuf:"bytes,5,rep,name=resources,proto3" json:"resources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -854,11 +856,18 @@ func (x *SdkGap) GetScratchScript() string {
 	return ""
 }
 
+func (x *SdkGap) GetResources() []*ObjectRef {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
 var File_sdodev_contracts_v1alpha1_worker_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\n" +
-	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a'sdodev/contracts/v1alpha1/program.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
+	"&sdodev/contracts/v1alpha1/worker.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a\x19google/protobuf/any.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a'sdodev/contracts/v1alpha1/program.proto\x1a&sdodev/contracts/v1alpha1/memory.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/outcome.proto\"\xe6\x04\n" +
 	"\x11AgentRegistration\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12\"\n" +
@@ -929,13 +938,14 @@ const file_sdodev_contracts_v1alpha1_worker_proto_rawDesc = "" +
 	"\x11artifact_proposal\x18\x05 \x01(\v26.sdodev.contracts.v1alpha1.OperationalArtifactProposalB\x02\x18\x01R\x10artifactProposal\x12<\n" +
 	"\bsdk_gaps\x18\x06 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12<\n" +
 	"\x0edecline_reason\x18\a \x01(\tB\x15\xbaH\x12r\x10R\x00R\fevidence_gapR\rdeclineReason:\xaa\x01\xbaH\xa6\x01\x1a\xa3\x01\n" +
-	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''\"\xaa\x01\n" +
+	"\x1freflection.no_change_has_reason\x12<a no_change or sdk_gap reflection requires a concrete reason\x1aBthis.learning_decision == 'updated' || this.no_change_reason != ''\"\xee\x01\n" +
 	"\x06SdkGap\x12(\n" +
 	"\vfault_class\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"faultClass\x12%\n" +
 	"\tprimitive\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tprimitive\x12\x1f\n" +
 	"\x06reason\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\x12.\n" +
-	"\x0escratch_script\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\rscratchScriptB\xfe\x01\n" +
+	"\x0escratch_script\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\rscratchScript\x12B\n" +
+	"\tresources\x18\x05 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\tresourcesB\xfe\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\vWorkerProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -971,6 +981,7 @@ var file_sdodev_contracts_v1alpha1_worker_proto_goTypes = []any{
 	(*ReflectionCauseWork)(nil),         // 16: sdodev.contracts.v1alpha1.ReflectionCauseWork
 	(*ReflectionWorkItem)(nil),          // 17: sdodev.contracts.v1alpha1.ReflectionWorkItem
 	(*OperationalArtifactProposal)(nil), // 18: sdodev.contracts.v1alpha1.OperationalArtifactProposal
+	(*ObjectRef)(nil),                   // 19: sdodev.contracts.v1alpha1.ObjectRef
 }
 var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	1,  // 0: sdodev.contracts.v1alpha1.AgentRegistration.capabilities:type_name -> sdodev.contracts.v1alpha1.AgentCapability
@@ -989,11 +1000,12 @@ var file_sdodev_contracts_v1alpha1_worker_proto_depIdxs = []int32{
 	17, // 13: sdodev.contracts.v1alpha1.ReflectionRequest.unassigned_work:type_name -> sdodev.contracts.v1alpha1.ReflectionWorkItem
 	18, // 14: sdodev.contracts.v1alpha1.ReflectionResult.artifact_proposal:type_name -> sdodev.contracts.v1alpha1.OperationalArtifactProposal
 	9,  // 15: sdodev.contracts.v1alpha1.ReflectionResult.sdk_gaps:type_name -> sdodev.contracts.v1alpha1.SdkGap
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	19, // 16: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_worker_proto_init() }
@@ -1001,6 +1013,7 @@ func file_sdodev_contracts_v1alpha1_worker_proto_init() {
 	if File_sdodev_contracts_v1alpha1_worker_proto != nil {
 		return
 	}
+	file_sdodev_contracts_v1alpha1_common_proto_init()
 	file_sdodev_contracts_v1alpha1_program_proto_init()
 	file_sdodev_contracts_v1alpha1_memory_proto_init()
 	file_sdodev_contracts_v1alpha1_messages_proto_init()

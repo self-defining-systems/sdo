@@ -86,3 +86,5 @@ capture provenance and corpus replay validator. No fixed snapshot is fabricated.
 A complete healthy controller verify with zero findings also proves individual
 repairs when the global closure is failed. It requires all evaluated detectors
 clear and no unresolved flag; classification stays failed. No peer fault is required.
+
+RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; another verified cause still requires its program and detector. First-encounter replay learning can earn one trust credit even when the program did not exist during the repair. This requires a broker-validated reflection commit associated with the controller-verified origin; a later real fast-path failure is not erased by replay. Controller corpus provenance is optional for session-evidence fixtures; no benchmark grade or recovery verdict is a verification source.

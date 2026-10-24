@@ -48,10 +48,10 @@ diagnostic; look it up here.
 - The responder writes playbooks, scripts, and the index during reflection. The health judge writes only the
   health-objective playbook during the initial health-judge stage. Enforced by: `ownership.denied`.
 
-- A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, including under consistent renaming. An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
-- Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors report skipped effect replay without proving repair. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
+- A mitigator must clear its diagnosis after its patches are applied to the faulted fixture, An already-faulty target value is not a repair. Enforced by: `program.mitigation-not-repaired`.
+- Prefer narrow typed SetField repairs when the damaged field is known; whole-object ReconcileFromSource requires whole-object justification. Observed and parameter-derived fields require valid patches and available observations; accepted-source field selectors require accepted manifests in the fixture. Enforced by: `program.mitigation-unreplayable`, `program.mitigation-not-repaired`.
 
-- CreateFromSource requires accepted-source presence; DeleteObject targets the incident namespace without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. Their skipped effect replay supplies no repair proof or origin credit. Enforced by: `program.mitigation-unreplayable`.
+- CreateFromSource requires accepted-source presence; DeleteObject targets the incident namespace without a source-absence gate. Both require direct current UID/absence verification. Delete is disclosed as irreversible and never auto-recreated. They must execute successfully in replay to prove repair. Enforced by: `program.mitigation-unreplayable`.
 
 ## Value provenance and runtime effects
 
@@ -72,11 +72,10 @@ controller RBAC and returns an exit code with no stdout/stderr; commands can rea
 
 ## Corpus evidence
 
-- Every added case requires captured provenance and matching snapshot digests, including cases for existing programs.
-  A synthetic NoMatch case needs a reason, only negative labels, and no incident provenance. Enforced by: `program.corpus-provenance`.
-- Captured cases require the provisioned capture directory and incident ID. If either is missing or the directory is
-  unavailable, restore the controller-provided context before retrying. Enforced by: `program.capture-unavailable`.
-- A case's incident ID must match the provisioned incident; its open, fixed and recorded primitive observations must
-  match the trusted capture bytes. An empty incident label cannot bypass comparison. Enforced by: `program.capture-provenance`.
+- Each verified cause needs diagnose and mitigation programs, a README, and detector coverage; one detector may
+  surface several playbooks. Only a typed SDK gap naming the cause resources can excuse missing coverage.
+  Enforced by: `reflection.program-required`, `reflection.detector-required`.
+- Build replay fixtures from recorded session observations. Controller capture files and snapshot digests are
+  optional. Mitigation must execute and clear diagnosis; skipped effects fail replay. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.

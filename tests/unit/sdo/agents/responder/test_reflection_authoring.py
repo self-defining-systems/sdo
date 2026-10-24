@@ -11,7 +11,30 @@ if TYPE_CHECKING:
 
 import pytest
 
-from sdo.agents.responder.reflection_authoring import authoring_reference, prepare_corpus
+from sdo.agents.responder.reflection_authoring import (
+    ResourceBinding,
+    SessionObservations,
+    authoring_reference,
+    prepare_corpus,
+    prepare_session_corpus,
+)
+
+
+def test_session_fixture_does_not_require_controller_open_or_fixed_captures(tmp_path: Path) -> None:
+    observed = '{"namespace":"app","services":[{"metadata":{"name":"api","namespace":"app"}}]}'
+    prepare_session_corpus(
+        tmp_path,
+        "first",
+        "routing",
+        ["routing"],
+        {"service": ResourceBinding(kind="Service", namespace="app", name="api")},
+        SessionObservations(snapshot_json=observed),
+    )
+    case = tmp_path / ".sdo/corpus/routing"
+    assert (case / "open.json").read_text() == observed
+    assert (case / "fixed.json").read_text() == observed
+    assert json.loads((case / "labels.json").read_text())["provenance"] == {"incident_id": "first"}
+    assert (case / "recordings.json").read_text() == "[]"
 
 
 def test_program_reference_uses_shipped_sdk_and_worked_example() -> None:

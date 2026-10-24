@@ -199,3 +199,7 @@ If no cause qualifies, `requires_reflection=false` and the durable
 When reflection runs, its usage follows the existing decision/result ledger path,
 including across retries. A pre-cleanup benchmark grade and cleanup status remain
 separate measurements; neither authorizes production learning.
+
+## RL1 learning content and isolation
+
+Verified full and partial causes require executable diagnosis and mitigation, a handling README, and detector coverage. Go reports reflection.program-required or reflection.detector-required and retries incomplete results; README-only updated is a failed attempt. The only exception is a typed SDK gap naming the cause resources and reason. Controller capture gaps are telemetry, not a learning gate: fixtures may be authored from recorded actions and existing session observations. Publication compiles programs and executes mitigation to prove Match becomes NoMatch. Capture digest matching and rename/peer generalization are no longer save-time prerequisites. Broker-validated new programs receive one origin trust credit from their verified cause/bound fixture. Benchmark learning is invoked before grading, oracle evaluation and cleanup; none of those verdicts supply verification or enter production outcomes or reflection requests.

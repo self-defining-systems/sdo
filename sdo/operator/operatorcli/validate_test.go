@@ -40,17 +40,21 @@ func TestIsolatedValidatorChecksProgramCorpus(t *testing.T) {
 	if output, err := copy.CombinedOutput(); err != nil {
 		t.Fatalf("copy fixture: %v: %s", err, output)
 	}
-	path := filepath.Join(app, ".sdo", "corpus", "targetport-mismatch", "fixed.json")
-	data, err := os.ReadFile(filepath.Join(app, ".sdo", "corpus", "targetport-mismatch", "open.json"))
+	path := filepath.Join(app, ".sdo", "playbooks", "service-targetport-mismatch", "mitigate.go")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// A plan that writes back the faulty port must fail actual repair replay.
+	data = []byte(strings.Replace(string(data), "Value: replacementValue", "Value: program.FromObserved(ref, \"spec.ports[0].targetPort\")", 1))
+	data = []byte(strings.Replace(string(data), "if !matched && replacement > 0 {", "if !matched && replacement > 0 { _ = replacementValue", 1))
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := RunValidate(context.Background(), builder.Config{ApplicationRoot: app, OperatorRoot: ".."}); err == nil || !strings.Contains(err.Error(), "fixed") {
-		t.Fatalf("invalid corpus accepted: %v", err)
+	if err := RunValidate(context.Background(), builder.Config{ApplicationRoot: app, OperatorRoot: ".."}); err == nil || !strings.Contains(err.Error(), "program.mitigation-not-repaired") {
+		t.Fatalf("ineffective mitigation accepted: %v", err)
 	}
+
 }
 
 func TestValidateAllowsPreDiagnosticsBootstrapStage(t *testing.T) {

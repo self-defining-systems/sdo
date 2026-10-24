@@ -247,11 +247,3 @@ func ReflectionTaskID(incident, outcomeCommit string, attempt uint32) string {
 func ReflectionDeadline(at time.Time, timeout time.Duration) *timestamppb.Timestamp {
 	return timestamppb.New(at.Add(timeout))
 }
-
-// EvidenceGapDiagnostics binds a typed decline to the controller's full index.
-func EvidenceGapDiagnostics(decision *contracts.ReflectionDecision, count uint32) []*contracts.MemoryDiagnostic {
-	if (decision.GetDeclineReason() == "evidence_gap" || decision.GetNoChangeReason() == "evidence gap") && count == 0 {
-		return []*contracts.MemoryDiagnostic{{Rule: "reflection.evidence_gap", Message: "evidence gap decline requires a Go-flagged missing resource/phase observation"}}
-	}
-	return nil
-}

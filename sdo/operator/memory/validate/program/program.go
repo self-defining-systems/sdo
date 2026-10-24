@@ -218,7 +218,7 @@ func checkCorpusLabels(root string, programs []Spec) error {
 		if err != nil {
 			return err
 		}
-		allowed := map[string]bool{"open.json": true, "fixed.json": true, "healthy.json": true, "recordings.json": true, "labels.json": true}
+		allowed := map[string]bool{"open.json": true, "fixed.json": true, "healthy.json": true, "recordings.json": true, "labels.json": true, "accepted.json": true, "accepted.yaml": true}
 		if marked {
 			allowed["operator.json"] = true
 			allowed["accepted.json"] = true
@@ -234,11 +234,6 @@ func checkCorpusLabels(root string, programs []Spec) error {
 		}
 		if len(caseData.RootCauseProgramIDs) == 0 && len(caseData.NoMatchProgramIDs) == 0 {
 			return fmt.Errorf("corpus %s needs root_cause_program_ids or no_match_program_ids", entry.Name())
-		}
-		if caseData.SyntheticNoMatchReason != "" {
-			if err := sdktest.ValidateCorpusProvenance(filepath.Join(root, entry.Name())); err != nil {
-				return fmt.Errorf("corpus %s: %w", entry.Name(), err)
-			}
 		}
 		for _, ID := range append(caseData.RootCauseProgramIDs, caseData.NoMatchProgramIDs...) {
 			if !known[ID] {
@@ -390,31 +385,38 @@ func noMatchCasesFor(root, programID string) ([]string, error) {
 	return result, nil
 }
 
-// ReplayTests generates mandatory corpus, rename-invariance and mitigation generalization tests.
+// ReplayTests checks the one save-time behavior contract: mitigation clears diagnosis.
 func ReplayTests(programs []Spec) string {
-	var test strings.Builder
-	test.WriteString("package generated\n\nimport (\n\t\"encoding/json\"\n\t\"os\"\n\t\"testing\"\n\t\"sdo.dev/operator/sdk/sdktest\"\n")
+	hasReplay := false
 	for _, item := range programs {
-		if len(item.Cases)+len(item.NegativeCases) > 0 {
-			test.WriteString("\t\"path/filepath\"\n\t\"sdo.dev/operator/sdk/program\"\n")
-			break
-		}
+		hasReplay = hasReplay || (item.Mitigator != "" && len(item.Cases) > 0)
 	}
-	test.WriteString(")\n\nfunc TestProgramCorpus(t *testing.T) {\n var notes []sdktest.MitigationReplayResult\n defer func(){ data,err:=json.Marshal(notes);if err!=nil {t.Fatal(err)};if err:=os.WriteFile(\"mitigation-replay.json\",data,0600);err!=nil {t.Fatal(err)} }()\n\tregistry, err := Programs()\n\tif err != nil { t.Fatal(err) }\n")
+	if !hasReplay {
+		return "package generated\n"
+	}
+	var test strings.Builder
+	test.WriteString(`package generated
+import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
+func TestProgramCorpus(t *testing.T){
+ var notes []sdktest.MitigationReplayResult
+ defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)}}()
+ registry,err:=Programs();if err!=nil{t.Fatal(err)}
+`)
 	for _, item := range programs {
-		fmt.Fprintf(&test, "\t{\n\t\tp, ok := registry.Diagnoser(%q)\n\t\tif !ok { t.Fatal(%q) }\n\t\tif p.Spec().ID != %q { t.Fatalf(\"program ID mismatch: %%s\", p.Spec().ID) }\n", item.ID, "missing diagnoser "+item.ID, item.ID)
-		for _, caseID := range item.Cases {
-			fmt.Fprintf(&test, "\t\t{\n\t\t\tc, err := sdktest.LoadCorpusCase(filepath.Join(\"..\", \"corpus\", %q))\n\t\t\tif err != nil { t.Fatal(err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil { t.Fatalf(\"case %s binding: %%v\", err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.PeerBindings); err != nil { t.Fatalf(\"case %s peer binding: %%v\", err) }\n\t\t\tsdktest.CheckGeneralization(t, p, c, c.PeerBindings)\n\t\t\tsdktest.CheckRenameInvariance(t, p, c)\n\t\t\tif m, ok := registry.Mitigator(%q); ok { sdktest.CheckMitigatorGeneralization(t, m, c); result,err:=sdktest.CheckMitigation(p,m,c); if err!=nil {t.Error(err)} else {result.CaseID=%q;notes=append(notes,result)} }\n\t\t}\n", caseID, caseID, caseID, item.ID, caseID)
+		if item.Mitigator == "" {
+			continue
 		}
-		for _, caseID := range item.NegativeCases {
-			fmt.Fprintf(&test, "\t\t{\n\t\t\tc, err := sdktest.LoadCorpusCase(filepath.Join(\"..\", \"corpus\", %q))\n\t\t\tif err != nil { t.Fatal(err) }\n\t\t\tif err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil { t.Fatal(err) }\n\t\t\tsdktest.CheckNoMatchCase(t, p, c)\n\t\t}\n", caseID)
+		for _, id := range item.Cases {
+			fmt.Fprintf(&test, `t.Run(%q,func(t *testing.T){
+ c,err:=replay.LoadRepairCase(filepath.Join("..","corpus",%q));if err!=nil{t.Fatal(err)}
+ p,ok:=registry.Diagnoser(%q);if !ok{t.Fatal("missing diagnoser")}
+ m,ok:=registry.Mitigator(%q);if !ok{t.Fatal("missing mitigator")}
+ r:=replay.CheckRepair(context.Background(),p,m,c);if r.Status!="replayed"{t.Fatalf("program.mitigation-not-repaired: mitigation must clear diagnosis: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)}
+ notes=append(notes,sdktest.MitigationReplayResult{ProgramID:p.Spec().ID,CaseID:%q,Status:sdktest.MitigationReplayPassed})
+ })
+`, item.ID+"/"+id, id, item.ID, item.ID, id)
 		}
-		test.WriteString("\t}\n")
 	}
 	test.WriteString("}\n")
-	if len(programs) == 0 {
-		test.Reset()
-		test.WriteString("package generated\n")
-	}
 	return test.String()
 }

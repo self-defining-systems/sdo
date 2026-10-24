@@ -102,6 +102,50 @@ def _config(tmp_path: Path, count: int, problems: tuple[str, ...] = ("p1",)) -> 
     return LoopConfig(run_id="run-1", problems=problems, incidents=count, results_path=tmp_path / "incidents.jsonl")
 
 
+@pytest.mark.parametrize(("oracle_success", "recover_fails"), [(False, False), (False, True), (True, False)])
+def test_learning_precedes_oracle_grade_and_cleanup_without_feedback(
+    tmp_path: Path, oracle_success: bool, recover_fails: bool
+) -> None:
+    from dataclasses import asdict
+
+    canary = "ORACLE_GRADER_PRIVATE_CANARY"
+    clock = FakeClock()
+    events: list[str] = []
+
+    class Driver(FakeDriver):
+        def oracle(self) -> OracleVerdict:
+            events.append("oracle")
+            return OracleVerdict(kind="sregym-mitigation-oracle", success=oracle_success, details={"private": canary})
+
+        def recover(self) -> float:
+            events.append("cleanup")
+            return super().recover()
+
+    class Agent(FakeAgent):
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            assert events == [], "learning must precede grading and cleanup"
+            assert canary not in json.dumps(asdict(outcome), default=str)
+            events.append("learn")
+            return super().learn(outcome)
+
+    class Grader:
+        def grade(self, _problems: tuple[str, ...], _diagnosis: str) -> DiagnosisGrade:
+            events.append("grade")
+            return DiagnosisGrade(error=canary)
+
+    agent = Agent(clock)
+    run_incidents(
+        agent,
+        Driver(clock, oracle_success=oracle_success, recover_fails=recover_fails),
+        _config(tmp_path, 1),
+        monotonic=clock.monotonic,
+        grader=Grader(),
+        diagnosis_grading="inline",
+    )
+    assert events[0] == "learn"
+    assert "learn:incident-0" in agent.events
+
+
 def test_repeated_cleanup_verifies_each_pass_before_next_incident(tmp_path: Path) -> None:
     from dataclasses import replace
 
@@ -508,7 +552,7 @@ def test_terminal_closure_error_records_evidence_and_stops_stream(tmp_path: Path
     assert record.tool_commands == {"verify": 1}
     assert record.response_loops_used == 1
     assert "closure failed permanently" in (record.error or "")
-    assert agent.events == ["close"]
+    assert agent.events == ["learn:None", "close"]
 
 
 def test_recovery_residue_fails_the_record_and_stops_before_next_injection(tmp_path: Path) -> None:

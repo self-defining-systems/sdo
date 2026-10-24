@@ -400,6 +400,15 @@ def _run_one(
         logger.exception("incident %d failed", index)
         errors.append(_describe(exc))
 
+    learning_complete = outcome is None or not outcome.terminal_error
+    if outcome is not None:
+        try:
+            outcome = agent.learn(outcome)
+        except Exception as exc:
+            logger.exception("learning failed for incident %d", index)
+            errors.append(f"learning failed: {_describe(exc)}")
+            learning_complete = False
+
     oracle: OracleVerdict | None = None
     infra_error: str | None = None
     recovery_oracle: OracleVerdict | None = None
@@ -454,19 +463,6 @@ def _run_one(
             recovery_error = f"fault recovery failed: {_describe(exc)}"
             errors.append(recovery_error)
             recovered = False
-
-    learning_complete = True
-    if outcome is not None and outcome.terminal_error:
-        learning_complete = False
-    elif outcome is not None:
-        # Benchmark cleanup cannot invalidate SDO's own outcome or suppress its
-        # reflection. The separate recovery gate still blocks the next injection.
-        try:
-            outcome = agent.learn(outcome)
-        except Exception as exc:
-            logger.exception("learning failed for incident %d", index)
-            errors.append(f"learning failed: {_describe(exc)}")
-            learning_complete = False
 
     if outcome is not None and outcome.error:
         errors.append(outcome.error)

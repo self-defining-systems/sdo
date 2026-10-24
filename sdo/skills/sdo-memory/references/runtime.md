@@ -50,13 +50,41 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
           "scratch_script": {
             "type": "string",
             "minLength": 1
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "api_version": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "api_version",
+                "kind",
+                "namespace",
+                "name"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
           "fault_class",
           "primitive",
           "reason",
-          "scratch_script"
+          "scratch_script",
+          "resources"
         ],
         "additionalProperties": false
       }
@@ -98,11 +126,13 @@ Read the references shipped with this worker, without guessed installation paths
 
 ## create_corpus
 
-Create a new positive corpus case from controller captures, with runtime provenance.
+Create a positive replay fixture from recorded session observations or optional captures.
 
-Select an available open phase that shows the confirmed cause. Bind the
-affected resources and a healthy same-kind peer. Snapshots and recordings
-are copied exactly; the broker independently verifies them.
+Pass observations to use the snapshot and primitive replies already in
+the responder session; include accepted_json for source-reading plans.
+Missing controller captures do not block this mode. Without observations,
+copy the selected available capture and peer context. In both modes the
+save gate executes mitigation and requires diagnosis to become NoMatch.
 
 ## evidence_inventory
 

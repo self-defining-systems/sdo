@@ -1,7 +1,7 @@
-"""Version-matched authoring references and captured corpus materialization.
+"""Version-matched authoring references and observed replay fixture materialization.
 
 These are proposal-checkout helpers. The Go broker still owns acceptance and
-independently validates every byte against the controller capture mount.
+independently compiles programs and executes mitigation replay on the fixture.
 """
 
 from __future__ import annotations
@@ -24,6 +24,15 @@ OpenPhase = Literal["detect", "pre-apply"]
 ReferenceTopic = Literal["programs", "sdk", "rules"]
 
 
+class ResourceBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    namespace: str = ""
+    name: str
+    api_version: str = "v1"
+
+
 class SdkGap(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -31,15 +40,15 @@ class SdkGap(BaseModel):
     primitive: str = Field(min_length=1)
     reason: str = Field(min_length=1)
     scratch_script: str = Field(min_length=1)
+    resources: list[ResourceBinding] = Field(default_factory=list)
 
 
-class ResourceBinding(BaseModel):
+class SessionObservations(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: str
-    namespace: str
-    name: str
-    api_version: str = "v1"
+    snapshot_json: str
+    recordings_json: str = "[]"
+    accepted_json: str | None = None
 
 
 def authoring_reference(topic: ReferenceTopic = "programs") -> str:
@@ -81,7 +90,7 @@ def prepare_corpus(
     bindings: dict[str, ResourceBinding],
     peer_bindings: dict[str, ResourceBinding],
 ) -> dict[str, str]:
-    """Copy immutable controller evidence and derive the provenance the validator expects."""
+    """Copy optional controller evidence and retain its capture attribution."""
     if not re.fullmatch(r"[a-z][a-z0-9_-]*", case_id) or not incident_id:
         raise ValueError("corpus requires a logical case ID and a provisioned incident")
     if open_phase not in get_args(OpenPhase):
@@ -117,23 +126,70 @@ def prepare_corpus(
     return {"case_id": case_id, "open_phase": open_phase}
 
 
+def prepare_session_corpus(
+    root: Path,
+    incident_id: str,
+    case_id: str,
+    program_ids: list[str],
+    bindings: dict[str, ResourceBinding],
+    observations: SessionObservations,
+) -> dict[str, str]:
+    """Materialize observed session inputs without requiring a controller capture."""
+    if not re.fullmatch(r"[a-z][a-z0-9_-]*", case_id) or not incident_id:
+        raise ValueError("corpus requires a logical case ID and a provisioned incident")
+    if not isinstance(json.loads(observations.snapshot_json), dict):
+        raise ValueError("session snapshot must be a JSON object")
+    if not isinstance(json.loads(observations.recordings_json), list):
+        raise ValueError("session recordings must be a JSON array")
+    if observations.accepted_json is not None:
+        json.loads(observations.accepted_json)
+    target = root / ".sdo/corpus" / case_id
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.mkdir()
+    # The legacy context files retain the observed bytes. Only executing the
+    # mitigation supplies a repaired post-state; these files prove no repair.
+    for name in ("open.json", "fixed.json", "healthy.json"):
+        (target / name).write_text(observations.snapshot_json)
+    (target / "recordings.json").write_text(observations.recordings_json)
+    (target / "labels.json").write_text(
+        json.dumps(
+            {
+                "root_cause_program_ids": program_ids,
+                "bindings": {key: value.model_dump() for key, value in bindings.items()},
+                "peer_bindings": {},
+                "provenance": {"incident_id": incident_id},
+            }
+        )
+    )
+    if observations.accepted_json is not None:
+        (target / "accepted.json").write_text(observations.accepted_json)
+    return {"case_id": case_id}
+
+
 def install_authoring_tools(server: FastMCP, root: Path) -> None:
     server.add_tool(authoring_reference)
 
     @server.tool()
     def create_corpus(
         case_id: str,
-        open_phase: OpenPhase,
         program_ids: list[str],
         bindings: dict[str, ResourceBinding],
-        peer_bindings: dict[str, ResourceBinding],
+        observations: SessionObservations | None = None,
+        open_phase: OpenPhase = "detect",
+        peer_bindings: dict[str, ResourceBinding] | None = None,
     ) -> dict[str, str]:
-        """Create a new positive corpus case from controller captures, with runtime provenance.
+        """Create a positive replay fixture from recorded session observations or optional captures.
 
-        Select an available open phase that shows the confirmed cause. Bind the
-        affected resources and a healthy same-kind peer. Snapshots and recordings
-        are copied exactly; the broker independently verifies them.
+        Pass observations to use the snapshot and primitive replies already in
+        the responder session; include accepted_json for source-reading plans.
+        Missing controller captures do not block this mode. Without observations,
+        copy the selected available capture and peer context. In both modes the
+        save gate executes mitigation and requires diagnosis to become NoMatch.
         """
+        if observations is not None:
+            return prepare_session_corpus(
+                root, os.environ.get("SDO_INCIDENT_ID", ""), case_id, program_ids, bindings, observations
+            )
         return prepare_corpus(
             root,
             Path(os.environ.get("SDO_CAPTURED_CORPUS_DIR", "/sdo/session/corpus")),
@@ -142,5 +198,5 @@ def install_authoring_tools(server: FastMCP, root: Path) -> None:
             open_phase,
             program_ids,
             bindings,
-            peer_bindings,
+            peer_bindings or {},
         )

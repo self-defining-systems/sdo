@@ -338,7 +338,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
  return program.Plan{Actions:[]program.Action{program.ReconcileFromSource{Ref:b.Objects["service"]}}},nil
 }
 `, 0644)
-		}, nil, true},
+		}, []string{"program.mitigation-not-repaired"}, false},
 
 		{"program README physical path", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -384,7 +384,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			put(t, r, path, string(data), 0644)
-		}, []string{validate.RuleDetectorTest}, false},
+		}, []string{validate.RuleProgramMitigationRepair}, false},
 		{"program corpus provenance", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			path := ".sdo/corpus/targetport-mismatch/labels.json"
@@ -402,7 +402,7 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			put(t, r, path, string(data), 0644)
-		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		}, nil, false},
 
 		{"program README shell policy", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
@@ -430,29 +430,29 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatal(err)
 			}
 			put(t, r, path, string(data)+" ", 0644)
-		}, []string{"program.capture-provenance"}, false},
+		}, []string{"diff.whitespace"}, false},
 
 		{"positive corpus without capture environment", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			if err := os.RemoveAll(filepath.Join(filepath.Dir(r), "captures")); err != nil {
 				t.Fatal(err)
 			}
-		}, []string{"program.capture-unavailable"}, false},
+		}, nil, false},
 		{"positive corpus with empty incident ID", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "" })
-		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		}, nil, false},
 		{"positive corpus references another incident", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityProgram(t, r)
 			parityLabel(t, r, func(label map[string]any) { label["provenance"].(map[string]any)["incident_id"] = "other" })
-		}, []string{"program.capture-provenance"}, false},
+		}, nil, false},
 		{"existing program adds unproven positive case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
 			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/another-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
 				t.Fatal(err)
 			}
 			parityCaseLabel(t, r, "another-case", func(label map[string]any) { delete(label, "provenance") })
-		}, []string{"program.capture-provenance", "program.corpus-provenance"}, false},
+		}, nil, false},
 		{"existing program adds captured positive case", validate.Responder, validate.ReflectionPhase, func(t *testing.T, r string) {
 			parityAcceptedProgram(t, r)
 			if err := os.CopyFS(filepath.Join(r, ".sdo/corpus/another-case"), os.DirFS(filepath.Join(r, ".sdo/corpus/targetport-mismatch"))); err != nil {
@@ -641,11 +641,6 @@ func (p Program) Mitigate(ctx context.Context,v program.ReadView,b program.Bindi
 				t.Fatalf("CLI output is not a MemoryCheckReport: %v\n%s", err, stdout.String())
 			}
 
-			if test.name == "program mitigation skips unreplayable effect" {
-				if len(report.GetMitigationReplayNotes()) != 1 || report.MitigationReplayNotes[0].GetStatus() != contracts.MitigationReplayNote_STATUS_SKIPPED_UNREPLAYABLE_EFFECT {
-					t.Fatalf("CLI accepted effect without typed skip note: %+v", report)
-				}
-			}
 			var publishErr error
 			var receipt broker.Receipt
 			if test.phase == validate.ReflectionPhase && test.actor == validate.Responder {
