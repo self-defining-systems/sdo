@@ -11,6 +11,29 @@ from benchmarks.sregym.fastloop.stream import load_stream_config
 ROOT = Path(__file__).resolve().parents[5]
 
 
+def test_toy_recovery_meets_the_warm_lane_protocol(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline
+    from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
+    from benchmarks.sregym.fastloop.toy import ToyWorker
+
+    deployments = [{"spec": {"replicas": 1}, "status": {"readyReplicas": 1}}] * 3
+    monkeypatch.setattr("benchmarks.sregym.fastloop.toy.command", lambda *args: json.dumps({"items": deployments}))
+    env = SimpleNamespace(kubeconfig=tmp_path / "config", namespace="toy", workspace=tmp_path)
+    cluster = SimpleNamespace(list_objects=lambda namespace: [], delete=lambda *args: None, apply=lambda *args: None)
+    driver = SregymFaultDriver(
+        ToyWorker(env),
+        namespace="toy",
+        baseline=ApplicationBaseline(namespace="toy", objects=[]),
+        cluster=cluster,
+        require_full_cleanup=True,
+    )
+    driver.recover()
+    assert driver.last_full_cleanup_verified
+
+
 def test_toy_latent_stream_covers_three_services_and_health_control():
     stream = load_stream_config(ROOT / "tests/fixtures/sregym/fastloop/toy_latent_repeat.json")
     specs = [fault_spec(ids[0]) for ids in stream.incidents]
