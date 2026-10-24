@@ -140,11 +140,15 @@ type RecordingReadView struct {
     RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
     must support concurrent reads; inspect Calls only after all readers finish.
 
+func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
+
 func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
+
+func (v *RecordingReadView) MetricResult(id string) (metrics.Result, bool)
 
 func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
 
@@ -156,9 +160,16 @@ func (v *RecordingReadView) ObservationStatuses() []sdk.ObservationStatus
 
 func (v *RecordingReadView) ObservedAt() time.Time
 
+func (v *RecordingReadView) ObservedView() (sdk.DetectionContext, func() error)
+
 func (v *RecordingReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
 func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
+
+func (v *RecordingReadView) QueryMetrics(q metrics.Query) metrics.Result
+
+func (v *RecordingReadView) RecordedReads() []PrimitiveCall
+    RecordedReads returns a detached, concurrency-safe copy of runtime evidence.
 
 func (v *RecordingReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
 
@@ -184,23 +195,35 @@ type ReplayReadView struct {
     diagnoses share the view. Snapshot and Calls must remain immutable during
     use.
 
+func (v *ReplayReadView) AlertsResult() (metrics.AlertsResult, bool)
+
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
+func (v *ReplayReadView) MetricResult(id string) (metrics.Result, bool)
+
 func (v *ReplayReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
+
+func (v *ReplayReadView) ObservedView() (sdk.DetectionContext, func() error)
 
 func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (program.ProbeResult, error)
 
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
+
+func (v *ReplayReadView) QueryMetrics(q metrics.Query) metrics.Result
 
 func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
 
 func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error)
 
 func (v *ReplayReadView) ScopedServices(namespace string) ([]corev1.Service, error)
+
+func (v *ReplayReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
+
+func (v *ReplayReadView) TrafficWindow(name string) (traffic.Window, bool)
 
 func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
@@ -223,11 +246,14 @@ type Snapshot struct {
 	EventList          []corev1.Event                          `json:"events"`
 	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
-	Traffic map[string]traffic.Window `json:"-"`
+	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
-	Metrics map[string]metrics.Result `json:"-"`
+	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
-	Alerts *metrics.AlertsResult `json:"-"`
+	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
+	// Readings are the runtime observations made on this exact snapshot.
+	Readings     []PrimitiveCall                   `json:"readings,omitempty"`
+	Reachability *servicehealth.ReachabilityWindow `json:"reachability,omitempty"`
 }
 
 func CaptureSnapshot(view sdk.DetectionContext, namespace string) (Snapshot, error)
@@ -266,17 +292,26 @@ func (s Snapshot) NetworkPolicies() []networkingv1.NetworkPolicy
 func (s Snapshot) ObservedAt() time.Time
     ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
 
+func (s Snapshot) ObservedView() (sdk.DetectionContext, func() error)
+    ObservedView binds detector reads to this snapshot's recorded evidence.
+
 func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 
 func (s Snapshot) Pods() []corev1.Pod
 
 func (s Snapshot) PodsForService(namespace string, service string) []corev1.Pod
 
+func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result
+
 func (s Snapshot) ReadyEndpointCountForService(namespace string, service string) int
 
 func (s Snapshot) RecentEventsFor(namespace string, kind string, name string) []corev1.Event
 
 func (s Snapshot) ReplicaSets() []appsv1.ReplicaSet
+
+func (s Snapshot) RuntimeReadView() program.ReadView
+
+func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
 
 func (s Snapshot) Services() []corev1.Service
 

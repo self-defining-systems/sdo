@@ -3,6 +3,7 @@
   "authority": "accepted-source-and-incident",
   "applications": {
     "astronomy_shop": "astronomy-shop",
+    "opentelemetry-demo": "astronomy-shop",
     "hotel_reservation": "hotel-res",
     "social_network": "social-network"
   },

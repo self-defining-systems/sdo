@@ -20,7 +20,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	policyv1 "k8s.io/api/policy/v1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -35,11 +38,13 @@ type PrimitiveProber interface {
 // dependencies expose reads only; no program receives a Kubernetes writer.
 type LiveReadView struct {
 	sdk.DetectionContext
-	Context        context.Context
-	Client         kubernetes.Interface
-	Prober         PrimitiveProber
-	Source         PlanSource
-	SourceCommit   string
+	Context      context.Context
+	Client       kubernetes.Interface
+	Prober       PrimitiveProber
+	Source       PlanSource
+	SourceCommit string
+	// SourceRevision resolves lazily, after snapshot acquisition has released controller locks.
+	SourceRevision func() string
 	Baseline       *StateChanges
 	BaselineSource StateBaseline
 }
@@ -70,6 +75,9 @@ func (v LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Durat
 	data, err := v.Client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, options).DoRaw(ctx)
 	if err != nil {
 		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
+	}
+	if len(data) > 64*1024 {
+		return "", errors.New("logs exceed 64 KiB cap")
 	}
 	return string(data), nil
 }
@@ -127,6 +135,9 @@ func (v LiveReadView) probe(ref sdk.ObjectRef, port int32, request *program.HTTP
 }
 
 func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	if v.SourceRevision != nil {
+		v.SourceCommit = v.SourceRevision()
+	}
 	if v.Source == nil || v.SourceCommit == "" {
 		return program.Diff{}, errors.New("accepted source is unavailable")
 	}
@@ -606,4 +617,42 @@ func (v LiveReadView) MutatingWebhookConfiguration(name string) (*admissionv1.Mu
 func (v LiveReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.DetectionContext).ValidatingWebhookConfiguration(name)
 	return result, err
+}
+
+func (v LiveReadView) MetricResult(id string) (metrics.Result, bool) {
+	return metrics.ResultFrom(v.DetectionContext, id)
+}
+func (v LiveReadView) AlertsResult() (metrics.AlertsResult, bool) {
+	return metrics.AlertsFrom(v.DetectionContext)
+}
+func (v LiveReadView) QueryMetrics(q metrics.Query) metrics.Result {
+	if source, ok := v.DetectionContext.(metrics.QuerySource); ok {
+		return source.QueryMetrics(q)
+	}
+	return program.ReadFrom(v.DetectionContext).QueryMetrics(q)
+}
+
+func (v LiveReadView) StatefulSets() []appsv1.StatefulSet {
+	if source, ok := v.DetectionContext.(interface{ StatefulSets() []appsv1.StatefulSet }); ok {
+		return source.StatefulSets()
+	}
+	return nil
+}
+
+func (v LiveReadView) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler {
+	if source, ok := v.DetectionContext.(interface {
+		HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	}); ok {
+		return source.HorizontalPodAutoscalers()
+	}
+	return nil
+}
+
+func (v LiveReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget {
+	if source, ok := v.DetectionContext.(interface {
+		PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	}); ok {
+		return source.PodDisruptionBudgets()
+	}
+	return nil
 }

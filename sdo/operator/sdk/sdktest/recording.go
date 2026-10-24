@@ -5,7 +5,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sdo.dev/operator/sdk/servicehealth"
-	"sdo.dev/operator/sdk/traffic"
 
 	"bytes"
 	"crypto/sha256"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -283,6 +283,44 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
+		case "QueryMetrics":
+			if len(args) != 1 {
+				return nil, errors.New("invalid QueryMetrics arguments")
+			}
+			var q metrics.Query
+			if err := json.Unmarshal(args[0], &q); err != nil {
+				return nil, err
+			}
+			_ = recorder.QueryMetrics(q)
+			continue
+		case "MetricResult", "TrafficWindow":
+			if len(args) != 1 {
+				return nil, fmt.Errorf("invalid %s arguments", call.Method)
+			}
+			var name string
+			if err := json.Unmarshal(args[0], &name); err != nil {
+				return nil, err
+			}
+			if call.Method == "MetricResult" {
+				_, _ = recorder.MetricResult(name)
+			} else {
+				_, _ = recorder.TrafficWindow(name)
+			}
+			continue
+		case "ServiceReachability":
+			if len(args) != 0 {
+				return nil, errors.New("invalid ServiceReachability arguments")
+			}
+			_, _ = recorder.ServiceReachability()
+			continue
+		case "AlertsResult":
+			if len(args) != 0 {
+				return nil, errors.New("invalid AlertsResult arguments")
+			}
+			_, _ = recorder.AlertsResult()
+			continue
+		}
+		switch call.Method {
 		case "ScopedDeployments", "ScopedServices", "ScopedEndpoints", "MutatingWebhookConfiguration", "ValidatingWebhookConfiguration":
 			if len(args) != 1 {
 				return nil, fmt.Errorf("invalid scoped recording arguments")
@@ -435,18 +473,10 @@ func (v *RecordingReadView) ObservedAt() time.Time {
 	return time.Time{}
 }
 
-func (v *RecordingReadView) TrafficWindow(name string) (traffic.Window, bool) {
-	if source, ok := v.ReadView.(traffic.Source); ok {
-		return source.TrafficWindow(name)
-	}
-	return traffic.Window{}, false
-}
-
 func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
-	if source, ok := v.ReadView.(servicehealth.ReachabilitySource); ok {
-		return source.ServiceReachability()
-	}
-	return servicehealth.ReachabilityWindow{}, false
+	r, ok := v.ReadView.ServiceReachability()
+	v.record("ServiceReachability", []any{}, reachabilityInput{r, ok}, nil)
+	return r, ok
 }
 
 func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {

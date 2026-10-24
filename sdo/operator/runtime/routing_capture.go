@@ -67,13 +67,8 @@ func recordRoutingProbeUnavailable(dir, incidentID, phase, reason, detail string
 // captureRoutingEvidence samples real TCP observations even before a program
 // exists. It uses the protected phase snapshot and never probes on corpus replay.
 func captureRoutingEvidence(ctx context.Context, root, incidentID, phase string, findings []sdk.Finding, view program.ReadView) error {
-	live, ok := view.(LiveReadView)
-	if !ok {
-		if pointer, yes := view.(*LiveReadView); yes && pointer != nil {
-			live = *pointer
-			ok = true
-		}
-	}
+	live, ok := routingLiveView(view)
+
 	routingCaptureMu.Lock()
 	defer routingCaptureMu.Unlock()
 	dir, err := memory.IncidentCorpusDir(root, incidentID)
@@ -348,4 +343,28 @@ func routingPodReady(pod corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// A routing sweep rebinds the protected boundary snapshot and its own timeout;
+// unwrap only runtime-owned cache/recording layers to obtain that live capability.
+func routingLiveView(view program.ReadView) (LiveReadView, bool) {
+	for {
+		switch v := view.(type) {
+		case LiveReadView:
+			return v, true
+		case *LiveReadView:
+			if v == nil {
+				return LiveReadView{}, false
+			}
+			return *v, true
+		case *CycleReadView:
+			view = v.RecordingReadView
+		case *sdktest.RecordingReadView:
+			view = v.ReadView
+		case *cachedReadView:
+			view = v.ReadView
+		default:
+			return LiveReadView{}, false
+		}
+	}
 }

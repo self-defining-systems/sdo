@@ -20,8 +20,13 @@ func ApplySetFieldAction(current map[string]any, a SetField, value any) error
     owns resolution and provenance; this helper owns field and document schema
     checks.
 
+func CheckReads(view ReadView) (sdk.DetectionContext, func() error)
+    CheckReads gives one evaluation its own failure tracking. A failed read
+    cannot be ignored to turn Unknown into clearance.
+
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector
-    DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
+    DetectorFromProgram promotes a diagnoser to a detector using the same
+    runtime read surface.
 
 func ExpandedSetField(f SetField) bool
     ExpandedSetField reports whether an action uses the structured vocabulary.
@@ -175,12 +180,26 @@ type ProgramSpec struct {
 
 type ReadView interface {
 	sdk.DetectionContext
+	sdk.ScopedObservationSource
+	sdk.ObservationClock
+	StatefulSets() []appsv1.StatefulSet
+	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
+	metrics.Source
+	metrics.AlertSource
+	metrics.QuerySource
+	traffic.Source
+	servicehealth.ReachabilitySource
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
 	DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error)
 }
+
+func ReadFrom(view sdk.DetectionContext) ReadView
+    ReadFrom exposes the shared runtime reads to a detector. An object-only
+    context returns explicit unavailable results for unsupported reads.
 
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
 

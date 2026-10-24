@@ -39,7 +39,17 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 				continue
 			}
 			bindings := []program.Bindings{}
-			if len(request.Bindings.Objects)+len(request.Bindings.Values) > 0 {
+			if request.ProgramID != "" && len(request.Parameters) > 0 {
+				bound, err := menuBindProgram(menuEntry{spec: spec, bindings: request.Bindings}, request.Parameters)
+				if err == nil {
+					err = program.ValidateBindings(spec, bound)
+				}
+				if err != nil {
+					response.Error = fmt.Sprintf("program parameters: %v", err)
+					return
+				}
+				bindings = append(bindings, bound)
+			} else if len(request.Bindings.Objects)+len(request.Bindings.Values) > 0 {
 				bindings = append(bindings, request.Bindings)
 			} else {
 				for _, finding := range l.Request.Findings {

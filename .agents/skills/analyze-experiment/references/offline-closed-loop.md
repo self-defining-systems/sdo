@@ -16,6 +16,14 @@ Accepted source inputs use per-case `accepted.yaml` or `accepted.json`, or a sha
 
 The existing SDK-only `sdktest.CheckMitigation` remains a compatibility helper for existing validation callers. Its legacy `skipped_unreplayable_effect` note is not a closed-loop result and proves no repair; the runtime checker never emits that status.
 
+Detectors now replay actual logs, TCP/HTTP probes, source/baseline diffs, PromQL,
+alerts and traffic through the same shared view as Diagnose. Phase snapshot
+`readings` are combined with the selected phase's recording file; absent or failed
+reads remain detector errors/Unknown even when agent code ignores accessor errors.
+Frozen snapshot telemetry is reusable. Only actual Open/Healthy observations are
+used for those phases. Post-plan observations are still unavailable unless the
+checker can independently derive them; Fixed recordings never prove a repair.
+
 ## Operator imports
 
 `human` / `import` accepted broker commits carry `SDO-Origin: operator`. This is operator authorship, not responder learning or a captured incident. Each hand-written positive case has an `operator.json` object (`schema_version: 1`, `origin: "operator"`, nonempty `description`) beside the normal five corpus files, plus an explicit `accepted.json` source inventory. Captured provenance must be absent; accepted cases remain immutable. Programs run the production `runtime/replay.Check` during the independent validator build, alongside unchanged generalization, compilation, vet, tests and secret rules. The import grants no accepted outcome, origin learning credit, or live trust. `memory import prepare` returns a base-bound broker checkout; `memory import publish` uses the ordinary isolated Kubernetes validator. Do not present an offline replay success as a live mitigation.

@@ -14,6 +14,8 @@ import (
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -36,11 +38,14 @@ type Snapshot struct {
 	EventList          []corev1.Event                          `json:"events"`
 	ObservedAtTime     *time.Time                              `json:"observedAt,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
-	Traffic map[string]traffic.Window `json:"-"`
+	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
-	Metrics map[string]metrics.Result `json:"-"`
+	Metrics map[string]metrics.Result `json:"metrics,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
-	Alerts *metrics.AlertsResult `json:"-"`
+	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
+	// Readings are the runtime observations made on this exact snapshot.
+	Readings     []PrimitiveCall                   `json:"readings,omitempty"`
+	Reachability *servicehealth.ReachabilityWindow `json:"reachability,omitempty"`
 }
 
 // ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
@@ -260,4 +265,30 @@ func lessObject(leftNamespace string, leftName string, rightNamespace string, ri
 		return leftNamespace < rightNamespace
 	}
 	return leftName < rightName
+}
+
+func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
+	if err := q.Validate(); err != nil {
+		return metrics.Result{Query: q, Error: err.Error()}
+	}
+	if r, ok := s.Metrics[q.ID]; ok && r.Query == q {
+		return r
+	}
+	return metrics.Result{Query: q, Error: "metric query not recorded"}
+}
+
+// ObservedView binds detector reads to this snapshot's recorded evidence.
+func (s Snapshot) ObservedView() (sdk.DetectionContext, func() error) {
+	return program.CheckReads(&ReplayReadView{Snapshot: s, Calls: s.Readings})
+}
+
+func (s Snapshot) RuntimeReadView() program.ReadView {
+	return &ReplayReadView{Snapshot: s, Calls: s.Readings}
+}
+
+func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	if s.Reachability == nil {
+		return servicehealth.ReachabilityWindow{}, false
+	}
+	return *s.Reachability, true
 }

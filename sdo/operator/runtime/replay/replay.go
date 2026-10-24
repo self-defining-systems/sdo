@@ -88,8 +88,8 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	}
 	r.Healthy = program.RunDiagnose(ctx, p, newReadView(ctx, c.Corpus.Healthy, c.Corpus.PhaseRecordings("healthy"), source), healthyBindings, 5*time.Second)
 	r.Faulted = program.RunDiagnose(ctx, p, newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source), bindings, 5*time.Second)
-	r.Detectors["healthy"] = detect(ctx, detectors, c.Corpus.Healthy)
-	r.Detectors["faulted"] = detect(ctx, detectors, c.Corpus.Open)
+	r.Detectors["healthy"] = detect(ctx, detectors, recordedPhase(c.Corpus, "healthy"))
+	r.Detectors["faulted"] = detect(ctx, detectors, recordedPhase(c.Corpus, "open"))
 	for _, phase := range []string{"healthy", "faulted"} {
 		for i, row := range r.Detectors[phase] {
 			r.scoreDetector(phase, row, detectorFamilyMatches(detectors[i], c), c)
@@ -240,7 +240,7 @@ func detect(ctx context.Context, ds []sdk.Detector, s sdktest.Snapshot) []Detect
 	out := []DetectorResult{}
 	for _, d := range ds {
 		r := DetectorResult{ID: d.Spec().ID, Class: d.Spec().Class}
-		fs, e := d.Detect(ctx, s)
+		fs, e := sdk.DetectObserved(ctx, d, s)
 		if e != nil {
 			r.Error = e.Error()
 		}
@@ -379,4 +379,13 @@ type cluster struct {
 	simCreated map[sdk.ObjectRef]*unstructured.Unstructured
 	simDeleted map[sdk.ObjectRef]bool
 	simStatus  map[sdk.ObjectRef]map[string]any
+}
+
+func recordedPhase(c sdktest.CorpusCase, phase string) sdktest.Snapshot {
+	s := c.Open
+	if phase == "healthy" {
+		s = c.Healthy
+	}
+	s.Readings = append(append([]sdktest.PrimitiveCall(nil), s.Readings...), c.PhaseRecordings(phase)...)
+	return s
 }

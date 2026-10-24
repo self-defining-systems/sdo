@@ -470,7 +470,7 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 	}
 	// Captures are immutable historical evidence. Every operational diagnosis,
 	// including a resumed initial diagnosis, uses this attempt's fresh snapshot.
-	view := l.ReadView(snapshot)
+	view := NewCycleReadView(l.ReadView(snapshot))
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
 		phase := l.capturePhase
 		return &sdktest.RecordingReadView{ReadView: view, OnRecord: func(call sdktest.PrimitiveCall) {

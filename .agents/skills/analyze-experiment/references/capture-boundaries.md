@@ -24,8 +24,15 @@ snapshot and protected capture write per incident, plus the existing tool
 request/response round trip for `sdo act`. Existing `responder_tool_timing`
 `capture_ms` and `total_ms` include this work.
 
-Captures do not invent primitive recordings. New pre-apply recordings begin
-empty; only actual primitive reads may supply replay answers. A late ConfigMap
+Captures do not invent primitive recordings. New pre-apply recording files begin
+empty; snapshot `readings` may already hold actual detector reads made on that exact snapshot.
+Only actual primitive reads may supply replay answers. Shared runtime reads add optional
+`metrics`, `alerts`, `traffic`, `reachability` and `readings` snapshot fields. These fields
+survive JSON capture/load, including unavailable results. `readings` uses the existing
+PrimitiveCall method/arguments/result/error shape. Later Diagnose calls remain in the
+existing phase-specific recording files; metrics/traffic calls are recorded there too.
+Repeated logical reads can appear even though the runtime served one cached source read.
+Count source cost separately; a recording count is not a network-request count. A late ConfigMap
 failure can be diagnosed from the Deployment reference, missing ConfigMap and
 current Pod state in the snapshot. A pre-apply capture is later open evidence,
 not proof of a fault type, listener behavior, or successful repair by itself.
