@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -73,7 +75,7 @@ def test_required_ci_still_accounts_for_every_job() -> None:
         ("controller", {"sdo-controller"}),
         ("validator", {"sdo-detector-validator"}),
         ("responder", {"sdo-responder"}),
-        ("benchmark", {"sdo-responder", "sdo-sregym-responder"}),
+        ("benchmark", {"sdo-sregym-responder"}),
         ("responder benchmark", {"sdo-responder", "sdo-sregym-responder"}),
     ],
 )
@@ -95,6 +97,9 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "SDO_TEST_CALLS": str(calls),
             "SDO_IMAGES": images,
+            "SDO_IMAGE_TAG": "ci-speed-test",
+            "SDO_SKIP_IMAGE_BUILD": "0",
+            "SDO_IMAGE_PREFLIGHT": "0",
         },
         capture_output=True,
         text=True,
@@ -102,11 +107,28 @@ def test_selected_images_are_built_and_smoked(tmp_path: Path, images: str, expec
     )
     assert result.returncode == 0, result.stderr
     lines = calls.read_text().splitlines()
-    built = {line.split("--tag ")[1].split(":")[0] for line in lines if line.startswith("build ")}
-    assert built == expected
-    # The benchmark-only build needs its base but smokes only selected outputs.
-    smoked = {image for image in expected if any(f"{image}:v0.1.0 sdo-operator validate" in line for line in lines)}
-    assert smoked == expected - ({"sdo-responder"} if images == "benchmark" else set())
+    builds = [shlex.split(line) for line in lines if line.startswith("buildx bake ")]
+    assert builds == [["buildx", "bake", "--file", "scripts/sdo-images.hcl", "--load", *images.split()]]
+    graph = (ROOT / builds[0][3]).read_text()
+    exported = set()
+    for target in images.split():
+        block = re.search(rf'^target "{target}" \{{(.*?)^\}}', graph, re.MULTILINE | re.DOTALL)
+        assert block is not None, f"missing Bake target: {target}"
+        tag = re.search(r'tags = \["([^:]+):\$\{SDO_IMAGE_TAG\}"\]', block[1])
+        assert tag is not None, f"missing tagged output: {target}"
+        exported.add(tag[1])
+        if target == "benchmark":
+            # Bake consumes the responder internally; it is exported only if selected.
+            assert 'responder-base = "target:responder"' in block[1]
+    assert exported == expected
+    smoked = {
+        token.removesuffix(":ci-speed-test")
+        for line in lines
+        if line.startswith("run --rm --user 65532:65532 ")
+        for token in line.split()
+        if token.endswith(":ci-speed-test")
+    }
+    assert smoked == expected
 
 
 @pytest.mark.parametrize(

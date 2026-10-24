@@ -42,6 +42,49 @@ is insufficient because adoption restores it. Check the accepted outcomes for
 `source="periodic program sweep"` and `binding_source=hint`. This is an explicit
 benchmark setup, not a change to production drift admission.
 
+`up` mounts the current worktree by default. Bare `--dev-mount` makes that
+explicit; `--dev-mount PATH` selects another worktree. SREGym lanes can opt out
+with `--no-dev-mount`, which warns that source edits require rebuilt images.
+Toy lanes require mounts. Run the cheap host gate before building new images:
+
+```bash
+uv run python -m benchmarks.sregym.fastloop preflight
+# Only for dependency, tool or Dockerfile changes; use a new tag:
+SDO_IMAGE_TAG=my-frozen-tag bash scripts/build_sdo_images.sh
+```
+
+`up` repeats host and requested-image checks before its first compiler or Docker
+build. Missing tools, an unavailable Docker daemon, an invalid worktree or a
+missing image fail immediately. Live launch assurance (quota, pins, parity and
+host capacity) still applies before spending model tokens.
+
+Each lane owns `<cluster>-registry` (`registry:3`), labelled `sdo.fastloop.lane`,
+with a dynamically allocated loopback port and storage retained across resets.
+It joins the kind network; containerd hosts.toml routes pulls to that container.
+Images keep their original names inside the nodes. Pushes retain layers and only
+missing layers transfer. Existing unlabelled registries are never adopted.
+`fastloop down --run-dir <lane> --delete-cluster` removes the cluster and then
+its ownership-checked registry container. Plain `down` and resets retain it.
+Unchanged warm lanes skip delivery; resets do no image work. Registry setup,
+push or pull failures trigger automatic archive fallback and a clear stderr
+WARNING containing the error, image list and elapsed fallback seconds.
+`fastloop.json` and every incident row record `image_delivery` and
+`image_delivery_reason`; `image_delivery.jsonl` keeps delivery history. Each
+incident row rereads that history after the incident, including source-deploy
+fallbacks triggered during the run. Run warns
+again while the lane remains in `kind-load-fallback` mode. A successful registry
+refresh of all affected images clears it. There is no manual flag to prefer archive loading.
+
+Only the controller image stores Go and the offline dependency/build caches.
+The installer passes that image as the required `--toolchain-image` setting,
+independently of `--prober-image`. Direct controller launches must set it too;
+missing configuration fails before building, migration or Kubernetes access.
+Worker and validator init containers use that image to populate a private
+emptyDir, mounted read-only into compiler-free runtime containers. The init
+container has no candidate or provider-credential mounts. Compilation, vet,
+replay and network isolation remain required. Scripted images omit model CLIs
+from their ancestry. Bake shares OS and dependency stages; never flatten images.
+
 Use an existing set of SDO controller, responder, and validator images for the
 first `up`. The worktree is mounted into every kind node at `/opt/sdo-dev`; the
 Pods use its Python packages and a host-built `sdo-operator` at
@@ -61,10 +104,15 @@ uv run python -m benchmarks.sregym.fastloop reset \
 uv run python -m benchmarks.sregym.fastloop run \
   --run-dir "$SDO_FASTLOOP_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/pbprog_repeat.json \
-  --diagnosis-grading off --time-scale 0.1 --continue-on-error
+  --diagnosis-grading off --time-scale 1 --continue-on-error
 ```
 
-`--time-scale` defaults to 1. It scales controller detector intervals, finding
+`--time-scale` defaults to 1. Live LLM runs, including smokes, use 1.
+Values below 1 are refused before runtime setup unless SDO uses the repository's
+`benchmarks/sregym/adapter/scripted_registrations` (explicitly selected, or the
+toy lane default). Custom registrations are conservatively treated as live.
+This keeps live verification and responder deadlines from being shortened.
+For scripted-agent runs it scales controller detector intervals, finding
 debounce, drift baseline settle, diagnosis settle, verification waits, the
 fastloop reflection wait, controller and fault-gate polling, recovery health
 polling, and composite stability and deadline waits. `--continue-on-error` records a failed incident and
@@ -215,22 +263,17 @@ Prepare matching runtime images once (or use already built image tags):
 ```bash
 export GOMAXPROCS=2 GOFLAGS='-p=2'
 SDO_IMAGE_TAG=fastloop SDO_SCRIPTED_WORKER=1 bash scripts/build_sdo_images.sh
-bash scripts/prepare_toy_node.sh sdo-toy-node:fastloop \
-  sdo-controller:fastloop sdo-sregym-responder:fastloop sdo-detector-validator:fastloop
 ```
 
-Node preparation creates a temporary Docker container, imports image content,
-preserves the base node entrypoint, commits the cache image, and removes its
-container and archive. It creates no Kubernetes cluster. Reuse this node image
-until runtime image content changes; `up` verifies complete manifest digests and
-loads any missing or changed images. An unprepared node is supported but pays the
-image transfer cost during `up`. Image preparation is separate from cluster startup.
+Up uses the standard kind node image and delivers runtime images through its
+lane registry. Reuse that cluster and reset it for source edits; no custom
+preloaded node image or archive preparation is needed.
 
 ```bash
 export SDO_TIME_SCALE=0.1
 export TOY_RUN="$PWD/.fastloop/toy"
 uv run python -m benchmarks.sregym.fastloop up --app toy \
-  --run-dir "$TOY_RUN" --toy-node-image sdo-toy-node:fastloop --dev-mount "$PWD"
+  --run-dir "$TOY_RUN" --cluster-prefix my-toy- --dev-mount "$PWD"
 uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo \
   --stream tests/fixtures/sregym/fastloop/toy_latent_repeat.json \
   --reflection-session fresh --diagnosis-grading off --time-scale 0.1 \
@@ -238,7 +281,7 @@ uv run python -m benchmarks.sregym.fastloop run --run-dir "$TOY_RUN" --agent sdo
 uv run python -m benchmarks.sregym.fastloop reset --run-dir "$TOY_RUN"
 ```
 
-The cluster defaults to `sdo-toy`; set `SDO_TOY_CLUSTER=gs1-toy` (or another owned lane name) to isolate a scratch run. Cluster creation refuses to adopt an existing
+The cluster name uses `--cluster-prefix` plus `--worker-id`; creation refuses to adopt an existing
 cluster without its environment record. The source mount is mandatory internally
 and defaults to this worktree. `run` and `reset` rebuild the host operator, so code
 changes need no runtime image rebuild. Scripted responder, reflector and drift
@@ -325,4 +368,4 @@ Fast path and `recorded-actions` are on by default, with trust threshold 1, 10 r
 
 One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
 
-For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. The toy transport's environment variable selects the cluster; `--cluster-prefix` is the SREGym-lane setting. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and fast-path reuse.
+For a private scripted lane (no model calls), set `SDO_TOY_CLUSTER=gs1-toy` for `up --app toy --dev-mount "$PWD"` and use a fresh run directory outside the repository. `--cluster-prefix gs1-` selects an isolated toy cluster with the configured worker ID; `SDO_TOY_CLUSTER` remains an explicit override. Subsequent commands use the saved kubeconfig and environment. A target-port incident followed by a repeat exercises learning, save-time validation and fast-path reuse.

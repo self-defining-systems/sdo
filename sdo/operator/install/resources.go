@@ -382,7 +382,7 @@ func controllerJob(c Config) *batchv1.Job {
 	args := []string{
 		"controller", "--app", "/workspace/application", "--namespace", c.Namespace,
 		"--application", c.Application, "--responder-image", c.ResponderImage,
-		"--prober-image", c.ControllerImage, "--repository-pvc", c.RepositoryPVC,
+		"--toolchain-image", c.ControllerImage, "--prober-image", c.ControllerImage, "--repository-pvc", c.RepositoryPVC,
 		"--repository-mount-path", "/workspace", "--credentials-secret", c.CredentialsSecret,
 		"--worktree-root", "/workspace/worktrees", "--response-timeout", fmt.Sprintf("%ds", c.TimeoutSeconds),
 		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(c)),

@@ -132,4 +132,8 @@ message ControllerConfig {
   string metrics_token_file = 71;
   reserved 72, 73, 74;
   reserved "plan_safety_policy_json", "plan_safety_policy_sha256", "plan_source_policy_json";
+
+  // Trusted controller image supplying Go to compiler-free workers and validators.
+  // Required at startup, independently of the optional traffic prober image.
+  string toolchain_image = 75;
 }

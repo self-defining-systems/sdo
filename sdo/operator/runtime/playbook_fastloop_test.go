@@ -309,7 +309,11 @@ func TestHermeticResponderProgramReuseThroughRealToolTransport(t *testing.T) {
 		}
 		serverCtx, stop := context.WithCancel(ctx)
 		serverErr := make(chan error, 1)
+		served := make(chan struct{})
+		// A failing assertion must not leave the server writing under tools.
+		t.Cleanup(func() { stop(); <-served })
 		go func() {
+			defer close(served)
 			err := server.Serve(serverCtx)
 			if err != nil {
 				t.Logf("tool server exited: %v", err)

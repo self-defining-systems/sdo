@@ -154,6 +154,7 @@ func testRunAttachesStateChanges(t *testing.T, observationBarrier, latent bool) 
 	ctx, cancel := context.WithCancel(context.Background())
 	exited := make(chan struct{})
 	var runErr error
+	// Register repository cleanup before controller-stop cleanup below.
 	repository := gitRepository(t)
 	runArgs := []string{"--namespace", hotel, "--control-namespace", hotel + "-sdo", "--app-root", repository,
 		"--application", "hotel", "--synthetic-traffic=false", "--lease-duration", "3s", "--drift-batch-window", "20ms"}

@@ -2,7 +2,7 @@
 
 from subprocess import CompletedProcess
 
-from benchmarks.sregym.fastloop.toy_images import load_images
+from benchmarks.sregym.fastloop.toy_images import _load_archive_images as load_images
 
 
 def test_complete_preloaded_manifest_avoids_archive_transfer(monkeypatch):

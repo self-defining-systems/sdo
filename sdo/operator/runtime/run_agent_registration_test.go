@@ -16,7 +16,7 @@ func TestRunRejectsUnregisteredResponderBeforeStarting(t *testing.T) {
 	}
 	err := RunWithOptions(context.Background(), nil, RuntimeOptions{Args: []string{
 		"--namespace", "demo", "--app-root", t.TempDir(), "--dispatcher-mode", "job",
-		"--repository-pvc", "repo", "--responder-credentials-secret", "agent-creds",
+		"--toolchain-image", "controller:compiler", "--repository-pvc", "repo", "--responder-credentials-secret", "agent-creds",
 		"--agent-registration-directory", directory, "--responder-agent-id", "missing",
 	}, NativeBroker: &NativeIncidentBroker{}})
 	if err == nil || !strings.Contains(err.Error(), `unknown agent "missing"`) {

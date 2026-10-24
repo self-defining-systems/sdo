@@ -27,6 +27,7 @@ import (
 	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	"sdo.dev/operator/devmount"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/toolchain"
 )
 
 var gitTreeID = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -35,6 +36,7 @@ var gitTreeID = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // broker-owned staging clone. It proves that the cluster enforces the Job's
 // default-deny NetworkPolicy before starting untrusted detector code.
 type KubernetesValidationJobClient struct {
+	ToolchainImage       string
 	Client               kubernetes.Interface
 	Namespace            string
 	Image                string
@@ -443,6 +445,7 @@ func (k KubernetesValidationJobClient) validationJob(name, subPath, tree string,
 		job.Spec.Template.Spec.Containers[0].VolumeMounts = append(job.Spec.Template.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{Name: "healthy-baseline", MountPath: "/sdo/healthy-baseline", SubPath: filepath.ToSlash(filepath.Join(k.RepositoryPVCSubPath, ".sdo-baseline/healthy")), ReadOnly: true})
 	}
+	toolchain.Apply(&job.Spec.Template.Spec, k.ToolchainImage)
 	if devmount.Enabled() {
 		devmount.Apply(&job.Spec.Template.Spec)
 	}

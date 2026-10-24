@@ -62,9 +62,10 @@ def require_scripted(images: Images) -> None:
             raise AssuranceError(f"{image} is not a scripted-codex image; build it with build_images.sh")
 
 
-def load_images(cluster: str, images: Images) -> None:
-    for image in (images.controller, images.responder, images.validator):
-        subprocess.run(["kind", "load", "docker-image", "--name", cluster, image], check=True, capture_output=True)
+def load_images(cluster: str, images: Images, *, record_path: Path | None = None) -> None:
+    from benchmarks.sregym.fastloop.toy_images import load_images as deliver
+
+    deliver(cluster, [images.controller, images.responder, images.validator], record_path=record_path)
 
 
 def reset_to_seed(environment: FastloopEnvironment) -> str:
@@ -118,7 +119,7 @@ def _run(args: argparse.Namespace) -> int:
     images = scripted_images(args.tag)
     require_scripted(images)
     if not args.skip_image_load:
-        load_images(environment.cluster, images)
+        load_images(environment.cluster, images, record_path=environment.run_dir / "image_delivery.jsonl")
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     if args.fresh:
         logger.info("fresh start: workspace reset to seed %s", reset_to_seed(environment))

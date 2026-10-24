@@ -6,6 +6,7 @@ Each row comes from `results/<timestamp>-sdo/incidents.jsonl`. The outcome docum
 
 | Report column | Source |
 | --- | --- |
+| Image delivery and fallback reason | row `image_delivery`, `image_delivery_reason`; also recorded in the lane fastloop.json and image_delivery.jsonl |
 | Fault, oracle result, diagnosis grade | row `problem_id`, `oracle`, `diagnosis_grade` |
 | Caught within the detection timeout | row `incident_id`, `detected_at`, `error`, checked against the opening finding in the outcome; a detection miss counts as uncaught even when recovery later passes |
 | Detection path (health, investigator, program sweep) | detector ID of the opening finding: `drift/investigator`, `drift/<program>`, or a health detector |
