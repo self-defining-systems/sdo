@@ -64,7 +64,8 @@ func openMigrationBroker(config *contracts.ControllerConfig) (lifecycle.Proposal
 		namespace = config.GetNamespace()
 	}
 	job := broker.KubernetesValidationJobClient{
-		Client: client, Namespace: namespace, Image: config.GetValidatorImage(),
+		ToolchainImage: config.GetProberImage(),
+		Client:         client, Namespace: namespace, Image: config.GetValidatorImage(),
 		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),

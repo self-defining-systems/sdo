@@ -26,6 +26,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/devmount"
+	"sdo.dev/operator/toolchain"
 )
 
 const (
@@ -71,6 +72,7 @@ func (err *RequestStagingError) Unwrap() error { return err.Err }
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
+	ToolchainImage         string
 	TaskPayload            string
 	CapturedCorpusReadOnly bool
 	RepositoryReadOnly     bool
@@ -421,8 +423,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 			},
 		},
 	}
+	toolchain.Apply(&job.Spec.Template.Spec, e.ToolchainImage)
 	if devmount.Enabled() {
-		devmount.Apply(&job.Spec.Template.Spec)
+		devmount.ApplyWorker(&job.Spec.Template.Spec)
 	}
 	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("create agent Job: %w", err)

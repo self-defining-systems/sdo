@@ -9,13 +9,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[5]
 
 
-def test_runtime_and_validator_images_carry_the_prebuilt_go_cache() -> None:
-    runtime = (ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
-    validator = (ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
-    assert "COPY --from=go-deps /go/build-cache /opt/sdo/go-build-cache" in runtime
-    assert "COPY --from=go-runtime /go/build-cache-delta/ /opt/sdo/go-build-cache/" in runtime
-    assert "SDO_GO_CACHE_SEED=/opt/sdo/go-build-cache" in runtime
-    assert "SDO_GO_CACHE_SEED=/go/build-cache" in validator
+def test_compiler_cache_lives_only_in_controller_image() -> None:
+    runtime = (ROOT / "sdo/operator/Dockerfile.runtime").read_text()
+    controller = runtime.split(" AS controller\n")[1].split("\nFROM ")[0]
+    assert "COPY --from=go-deps /go/build-cache /go/build-cache" in controller
+    assert "COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/" in controller
+    assert "SDO_GO_CACHE_SEED=/go/build-cache" in runtime
 
 
 def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> None:
@@ -43,9 +42,9 @@ def test_scripted_worker_build_uses_runtime_target_and_tag(tmp_path: Path) -> No
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    builds = [line for line in calls.read_text(encoding="utf-8").splitlines() if line.startswith("build ")]
-    scripted = [line for line in builds if "--tag sdo-sregym-responder:level1" in line]
-    assert len(scripted) == 1
-    assert "--file " + str(ROOT / "benchmarks/sregym/Dockerfile.worker") in scripted[0]
-    assert "--target scripted-worker" in scripted[0]
-    assert "--build-arg SDO_RESPONDER_IMAGE=sdo-responder:level1" in scripted[0]
+    builds = [line for line in calls.read_text().splitlines() if line.startswith("buildx bake ")]
+    assert len(builds) == 1
+    assert "--file scripts/sdo-images.hcl --load controller validator responder benchmark" in builds[0]
+    graph = (ROOT / "scripts/sdo-images.hcl").read_text()
+    assert "target = SDO_WORKER_TARGET" in graph
+    assert 'scripted-base = "target:scripted-runtime"' in graph

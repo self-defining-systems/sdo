@@ -48,10 +48,11 @@ func reflectionTestTask(t *testing.T) *contracts.AgentTask {
 }
 
 func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.T) {
+	t.Setenv("SDO_DEV_MOUNT", "1")
 	client := fake.NewSimpleClientset()
 	task := reflectionTestTask(t)
 	executor := KubernetesExecutor{
-		Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
+		ToolchainImage: "controller:compiler", Client: client, Namespace: "demo", Registry: reflectionTestRegistry(t), ServiceAccount: "sdo-worker",
 		RepositoryPVC: "repo", RepositoryMountPath: "/workspace", RepositoryPVCSubPath: "tenant", PollInterval: time.Millisecond,
 		SessionPVCSubPath:     "tenant/.sdo-runtime/sessions/incident-hash",
 		CredentialsSecret:     "agent-provider-credentials",
@@ -75,6 +76,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	}
 	if job == nil {
 		t.Fatal("agent Job was not created")
+	}
+	if len(job.Spec.Template.Spec.InitContainers) != 1 || job.Spec.Template.Spec.InitContainers[0].Image != "controller:compiler" {
+		t.Fatal("reflection job missing controller compiler")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
 	if container.Image != "example/reflector:1" || container.Command[0] != "/reflector" {

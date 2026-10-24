@@ -505,7 +505,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			catalog = memory.OpenCatalogReader(resolvedRoot)
 		}
 		dispatcher = KubernetesJobDispatcher{
-			Client: bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
+			ToolchainImage: *proberImage,
+			Client:         bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
 			RepositoryMountPath: *repositoryMountPath, RepositoryPVCSubPath: *repositoryPVCSubPath,
 			CredentialsSecret: *credentialsSecret, PollInterval: time.Second,

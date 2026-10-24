@@ -15,7 +15,7 @@ import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_DOCKERFILES = ("sdo/operator/Dockerfile.runtime",)
-ALL_DOCKERFILES = (*PYTHON_DOCKERFILES, "sdo/operator/Dockerfile.validator")
+ALL_DOCKERFILES = (*PYTHON_DOCKERFILES, "benchmarks/sregym/Dockerfile.worker")
 _PIN = re.compile(r"^\s+([A-Za-z0-9_.-]+)==([0-9][^\s\\]*)", re.MULTILINE)
 
 
@@ -109,16 +109,25 @@ def test_external_base_images_are_pinned_by_digest(dockerfile: str) -> None:
     text = (REPO_ROOT / dockerfile).read_text(encoding="utf-8")
     stages = set(re.findall(r"^FROM\s+\S+\s+AS\s+(\S+)", text, re.MULTILINE))
 
-    floating = [image for image in _FROM.findall(text) if image not in stages and "@sha256:" not in image]
+    floating = [
+        image
+        for image in _FROM.findall(text)
+        if image not in stages and not image.startswith("${") and "@sha256:" not in image
+    ]
 
     assert floating == []
 
 
 def test_validator_image_contains_no_python_dependency_install() -> None:
-    text = (REPO_ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
+    text = (
+        (REPO_ROOT / "sdo/operator/Dockerfile.runtime")
+        .read_text(encoding="utf-8")
+        .split(" AS validator\n", 1)[1]
+        .split("\nFROM ", 1)[0]
+    )
     assert "pip install" not in text
     assert "python3" not in text
-    assert "FROM go-runtime AS validator" in text
+    assert "COPY --from=go" not in text
 
 
 def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
@@ -131,7 +140,7 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     assert "GOPROXY=off" in dockerfile
     assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
     assert "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs" in dockerfile
-    assert dockerfile.count("GOCACHE=/go/build-cache go list ./program") == 2
+    assert "! command -v go" in (REPO_ROOT / "scripts/build_sdo_images.sh").read_text()
     for relative in (
         "playbooks/service-targetport-mismatch/diagnose.go",
         "playbooks/service-targetport-mismatch/mitigate.go",
@@ -145,14 +154,13 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
         assert (REPO_ROOT / "examples/playbook-programs" / relative).is_file(), relative
 
 
-def test_validator_image_builds_programs_offline() -> None:
-    dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.validator").read_text(encoding="utf-8")
-    assert 'cd "$dir" && go mod download all' in dockerfile
-    assert "for dir in sdo/operator/sdk sdo/operator/core sdo/operator/runtime sdo/operator; do" in dockerfile
-    assert "FROM go-runtime AS validator" in dockerfile
-    assert "GOPROXY=off" in dockerfile
-    assert 'GOFLAGS="-mod=mod -p=2"' in dockerfile
-    assert "GOCACHE=/go/build-cache go list ./program" in dockerfile
+def test_validator_image_uses_controller_supplied_offline_toolchain() -> None:
+    runtime = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text()
+    assert 'cd "$dir" && go mod download all' in runtime
+    assert "GOPROXY=off" in runtime
+    assert 'GOFLAGS="-mod=mod -p=2"' in runtime
+    source = (REPO_ROOT / "sdo/operator/broker/kubernetes_validator.go").read_text()
+    assert "toolchain.Apply(&job.Spec.Template.Spec, k.ToolchainImage)" in source
 
 
 def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
