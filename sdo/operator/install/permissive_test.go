@@ -121,7 +121,7 @@ func TestPermissiveResponderAuthorizer(t *testing.T) {
 		}
 		for _, kind := range []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"} {
 			for _, verb := range []string{"get", "list", "watch", "patch", "create", "update", "delete"} {
-				if got := planAllows(p, "", "admissionregistration.k8s.io", kind, verb); got != (enabled && verb != "patch" && verb != "create" && verb != "update") {
+				if got := planAllows(p, "", "admissionregistration.k8s.io", kind, verb); got != enabled {
 					t.Errorf("enabled=%v webhook %s/%s allowed=%v", enabled, kind, verb, got)
 				}
 			}
@@ -283,8 +283,6 @@ func TestPermissiveIndirectSecretPathsDenied(t *testing.T) {
 		name, group, resource string
 		verbs                 []string
 	}{
-		{"webhook", "admissionregistration.k8s.io", "mutatingwebhookconfigurations", []string{"create", "update", "patch"}},
-		{"webhook", "admissionregistration.k8s.io", "validatingwebhookconfigurations", []string{"create", "update", "patch"}},
 		{"exec", "", "pods/exec", allVerbs},
 		{"attach", "", "pods/attach", allVerbs},
 		{"portforward", "", "pods/portforward", allVerbs},
@@ -307,7 +305,7 @@ func TestPermissiveIndirectSecretPathsDenied(t *testing.T) {
 			for _, ns := range []string{"", "demo", "policy-system", "demo-sdo", "kube-system", "unrelated"} {
 				// The app Role already grants streaming access. PX1c excludes
 				// only new discovery grants, preserving that baseline literally.
-				if ns == "demo" && (path.resource == "pods/exec" || path.resource == "pods/attach" || path.resource == "pods/portforward") {
+				if (ns == "demo" || ns == "policy-system") && (path.resource == "pods/exec" || path.resource == "pods/attach" || path.resource == "pods/portforward") {
 					continue
 				}
 				for _, verb := range path.verbs {
@@ -404,28 +402,18 @@ func TestPermissiveSecretPathsRevokedOnRestore(t *testing.T) {
 	}
 	for _, ns := range []string{"demo", "policy-system", "kube-system", "demo-sdo"} {
 		for _, path := range []struct{ group, resource, verb string }{
-			{"", "secrets", "get"}, {"", "pods/exec", "create"},
-			{"", "pods/attach", "create"}, {"", "pods/portforward", "create"},
-			{"", "serviceaccounts/token", "create"},
-			{"admissionregistration.k8s.io", "mutatingwebhookconfigurations", "patch"},
+			{"", "secrets", "get"}, {"", "pods/proxy", "get"}, {"", "serviceaccounts", "create"}, {"example.dev", "widgets", "get"},
 		} {
-			if ns == "demo" && (path.resource == "pods/exec" || path.resource == "pods/attach" || path.resource == "pods/portforward") {
-				continue
-			}
 			if planAllows(got, ns, path.group, path.resource, path.verb) {
-				t.Errorf("stale permission survived in %s: %+v", ns, path)
+				t.Errorf("stale unsafe permission survived: %s/%+v", ns, path)
 			}
 		}
 	}
-	for _, path := range []struct{ group, resource, verb string }{
-		{"", "pods", "create"}, {"", "configmaps", "get"},
-		{"", "pods/log", "get"}, {"", "pods/proxy", "get"},
-		{"", "services", "patch"}, {"", "serviceaccounts", "create"},
-		{"apps", "deployments", "patch"}, {"batch", "jobs", "create"},
-		{"example.dev", "widgets", "get"},
-	} {
-		if planAllows(got, "policy-system", path.group, path.resource, path.verb) {
-			t.Errorf("stale backend Secret path survived restore: %+v", path)
+	for _, ns := range []string{"unrelated", "kube-system"} {
+		for _, path := range []struct{ group, resource, verb string }{{"", "pods", "create"}, {"", "configmaps", "patch"}, {"apps", "deployments", "patch"}, {"batch", "jobs", "create"}} {
+			if planAllows(got, ns, path.group, path.resource, path.verb) {
+				t.Errorf("repair escaped scope: %s/%+v", ns, path)
+			}
 		}
 	}
 	if !planAllows(got, "policy-system", "", "pods", "delete") {

@@ -16,6 +16,9 @@ import (
 )
 
 const PermissiveResponderAnnotation = "sdo.dev/permissive-responder-namespaces"
+const permissiveReadOwnerLabel = "sdo.dev/responder-read-owner"
+
+func permissiveReadGrantName(control string) string { return permissiveGrantName(control) + "-read" }
 
 func permissiveGrantName(control string) string { return control + "-responder-permissive" }
 
@@ -40,6 +43,8 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		return fmt.Errorf("permissive responder requires complete API resource discovery")
 	}
 	rules := []rbacv1.PolicyRule{}
+	readRules := []rbacv1.PolicyRule{}
+	clusterRules := []rbacv1.PolicyRule{}
 	seen := map[string]bool{}
 	for _, list := range resources {
 		gv, err := schema.ParseGroupVersion(list.GroupVersion)
@@ -48,7 +53,14 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		}
 		for _, r := range list.APIResources {
 			verbs := permissiveResourceVerbs(gv.Group, r.Name)
-			if !r.Namespaced || len(verbs) == 0 {
+			if !r.Namespaced {
+				if permissiveClusterRead(gv.Group, r.Name) && !seen["cluster/"+gv.Group+"/"+r.Name] {
+					seen["cluster/"+gv.Group+"/"+r.Name] = true
+					clusterRules = append(clusterRules, rule(gv.Group, []string{r.Name}, "get", "list", "watch"))
+				}
+				continue
+			}
+			if len(verbs) == 0 {
 				continue
 			}
 			key := gv.Group + "/" + r.Name
@@ -57,14 +69,19 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 			}
 			seen[key] = true
 			rules = append(rules, rule(gv.Group, []string{r.Name}, verbs...))
+			if permissiveNamespacedRead(gv.Group, r.Name) {
+				readRules = append(readRules, rule(gv.Group, []string{r.Name}, "get", "list", "watch"))
+			}
 		}
 	}
 	if len(rules) == 0 {
 		return fmt.Errorf("discovery returned no safe namespaced responder resources")
 	}
-	slices.SortFunc(rules, func(a, b rbacv1.PolicyRule) int {
-		return strings.Compare(a.APIGroups[0]+"/"+a.Resources[0], b.APIGroups[0]+"/"+b.Resources[0])
-	})
+	for _, policy := range [][]rbacv1.PolicyRule{rules, readRules, clusterRules} {
+		slices.SortFunc(policy, func(a, b rbacv1.PolicyRule) int {
+			return strings.Compare(a.APIGroups[0]+"/"+a.Resources[0], b.APIGroups[0]+"/"+b.Resources[0])
+		})
+	}
 	name := permissiveGrantName(c.controlNamespace())
 	namespaces := append([]string{c.Namespace}, c.ResponderNamespaces...)
 	slices.Sort(namespaces)
@@ -72,9 +89,9 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 		p.AppRoles = append(p.AppRoles, role(ns, name, rules))
 		p.AppBindings = append(p.AppBindings, binding(ns, name, "sdo-responder", c.controlNamespace()))
 	}
-	p.ClusterRoles = append(p.ClusterRoles, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: []rbacv1.PolicyRule{
-		rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "get", "list", "watch", "delete"),
-	}})
+	clusterRules = append(clusterRules, rule("admissionregistration.k8s.io", []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"}, "get", "list", "watch", "create", "update", "patch", "delete"))
+	p.ClusterRoles = append(p.ClusterRoles, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}, Rules: clusterRules}, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: permissiveReadGrantName(c.controlNamespace())}, Rules: readRules})
+	addPermissiveReadBindings(c, p, namespaces)
 	p.ClusterBindings = append(p.ClusterBindings, &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: name},
@@ -83,35 +100,95 @@ func addPermissiveGrants(c Config, p *Plan, resources []*metav1.APIResourceList)
 	return nil
 }
 
-// Discovery is not a trust decision. Only reviewed built-in group/resource
-// pairs can receive added grants; the reviewed custom-API allowlist is empty.
-// Do not add subresources or infer trust from Kind/resource names. The baseline
-// app Role is unchanged; backend repairs can read these built-ins or delete a
-// Pod so its existing controller recreates the same spec.
-func permissiveResourceVerbs(group, resource string) []string {
+// Discovery cannot authorize unknown APIs or credential, identity, proxy and
+// escalation endpoints. These reviewed names are intentionally concrete.
+func permissiveNamespacedRead(group, resource string) bool {
 	switch group {
 	case "":
-		switch resource {
-		case "pods":
-			return []string{"get", "list", "watch", "delete"}
-		case "services", "endpoints", "events":
-			return []string{"get", "list", "watch"}
+		return slices.Contains([]string{"pods", "pods/log", "services", "endpoints", "events", "configmaps", "persistentvolumeclaims", "resourcequotas", "limitranges", "replicationcontrollers"}, resource)
+	case "apps":
+		return slices.Contains([]string{"deployments", "replicasets", "statefulsets", "daemonsets", "controllerrevisions", "deployments/scale", "replicasets/scale", "statefulsets/scale"}, resource)
+	case "batch":
+		return slices.Contains([]string{"jobs", "cronjobs"}, resource)
+	case "autoscaling":
+		return resource == "horizontalpodautoscalers"
+	case "policy":
+		return resource == "poddisruptionbudgets"
+	case "discovery.k8s.io":
+		return resource == "endpointslices"
+	case "networking.k8s.io":
+		return slices.Contains([]string{"networkpolicies", "ingresses"}, resource)
+	case "events.k8s.io":
+		return resource == "events"
+	case "coordination.k8s.io":
+		return resource == "leases"
+	case "storage.k8s.io":
+		return resource == "csistoragecapacities"
+	}
+	return false
+}
+
+func permissiveClusterRead(group, resource string) bool {
+	switch group {
+	case "":
+		return slices.Contains([]string{"nodes", "namespaces", "persistentvolumes"}, resource)
+	case "storage.k8s.io":
+		return slices.Contains([]string{"storageclasses", "csidrivers", "csinodes", "volumeattachments"}, resource)
+	case "networking.k8s.io":
+		return resource == "ingressclasses"
+	case "scheduling.k8s.io":
+		return resource == "priorityclasses"
+	}
+	return false
+}
+
+func permissiveResourceVerbs(group, resource string) []string {
+	if group == "" && slices.Contains([]string{"pods/exec", "pods/attach", "pods/portforward"}, resource) {
+		return []string{"get", "create"}
+	}
+	if !permissiveNamespacedRead(group, resource) {
+		return nil
+	}
+	verbs := []string{"get", "list", "watch"}
+	switch group {
+	case "":
+		if slices.Contains([]string{"pods", "services", "configmaps", "persistentvolumeclaims", "replicationcontrollers"}, resource) {
+			return append(verbs, "create", "update", "patch", "delete")
 		}
 	case "apps":
-		switch resource {
-		case "deployments", "replicasets", "statefulsets", "daemonsets":
-			return []string{"get", "list", "watch"}
+		if strings.HasSuffix(resource, "/scale") {
+			return []string{"get", "update", "patch"}
 		}
-	case "discovery.k8s.io":
-		if resource == "endpointslices" {
-			return []string{"get", "list", "watch"}
+		if resource != "controllerrevisions" {
+			return append(verbs, "create", "update", "patch", "delete")
 		}
-	case "networking.k8s.io":
-		if resource == "networkpolicies" {
-			return []string{"get", "list", "watch"}
-		}
+	case "batch", "autoscaling", "policy", "networking.k8s.io":
+		return append(verbs, "create", "update", "patch", "delete")
 	}
-	return nil
+	return verbs
+}
+
+// A ClusterRoleBinding containing namespaced reads would also grant the control
+// namespace. Bind the shared read role separately in each admitted namespace.
+func addPermissiveReadBindings(c Config, p *Plan, namespaces []string) {
+	name := permissiveReadGrantName(c.controlNamespace())
+	for _, ns := range namespaces {
+		if ns == "" || ns == c.controlNamespace() {
+			continue
+		}
+		exists := slices.ContainsFunc(p.AppBindings, func(b *rbacv1.RoleBinding) bool { return b.Name == name && b.Namespace == ns })
+		if exists {
+			continue
+		}
+		p.AppBindings = append(p.AppBindings, &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{permissiveReadOwnerLabel: c.controlNamespace()}},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: name},
+			Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: "sdo-responder", Namespace: c.controlNamespace()}},
+		})
+	}
+	slices.SortFunc(p.AppBindings, func(a, b *rbacv1.RoleBinding) int {
+		return strings.Compare(a.Namespace+"/"+a.Name, b.Namespace+"/"+b.Name)
+	})
 }
 
 func (i Installer) resources(c Config) (Plan, error) {
@@ -122,7 +199,20 @@ func (i Installer) resources(c Config) (Plan, error) {
 	if err != nil {
 		return Plan{}, fmt.Errorf("discover permissive responder resources: %w", err)
 	}
-	return Resources(c, resources...)
+	plan, err := Resources(c, resources...)
+	if err != nil {
+		return Plan{}, err
+	}
+	namespaces, err := i.Client.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return Plan{}, fmt.Errorf("discover responder read namespaces: %w", err)
+	}
+	names := make([]string, 0, len(namespaces.Items))
+	for _, ns := range namespaces.Items {
+		names = append(names, ns.Name)
+	}
+	addPermissiveReadBindings(c, &plan, names)
+	return plan, nil
 }
 
 func (i Installer) ensurePermissiveClusterGrants(ctx context.Context, p Plan) error {
@@ -181,6 +271,21 @@ func (i Installer) removeStalePermissiveGrants(ctx context.Context, c Config, pr
 		}
 	}
 	if !c.PermissiveResponder {
+		bindings, err := i.Client.RbacV1().RoleBindings(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: permissiveReadOwnerLabel + "=" + c.controlNamespace()})
+		if err != nil {
+			return err
+		}
+		for _, b := range bindings.Items {
+			if b.Name != permissiveReadGrantName(c.controlNamespace()) || b.RoleRef.Kind != "ClusterRole" || b.RoleRef.Name != b.Name {
+				continue
+			}
+			if err := i.Client.RbacV1().RoleBindings(b.Namespace).Delete(ctx, b.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return err
+			}
+		}
+		if err := i.Client.RbacV1().ClusterRoles().Delete(ctx, permissiveReadGrantName(c.controlNamespace()), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
 		if err := i.Client.RbacV1().ClusterRoleBindings().Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}

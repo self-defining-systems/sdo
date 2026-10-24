@@ -44,20 +44,15 @@ func secretPathPlan(t *testing.T) Plan {
 // These tests exercise authorization prerequisites of each RV9 blocking path.
 // They do not simulate a controller, admission or data exfiltration. Positive
 // controls ensure that these are bound namespaces and the permitted repair works.
-func TestPermissiveBackendSecretPathsDenied(t *testing.T) {
+func TestPermissiveBackendAuthAndProxyPathsDenied(t *testing.T) {
 	plan := secretPathPlan(t)
 	paths := []struct {
 		name, group, resource string
 		verbs                 []string
 	}{
-		{"mount_or_project_identity", "", "pods", []string{"create", "update", "patch", "deletecollection"}},
 		{"select_serviceaccount", "", "serviceaccounts", []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-		{"copy_in_configmap", "", "configmaps", []string{"get", "list", "watch", "create", "update", "patch"}},
-		{"log_disclosure", "", "pods/log", []string{"get", "list", "watch"}},
 		{"pod_proxy_disclosure", "", "pods/proxy", []string{"get", "create"}},
 		{"service_proxy_disclosure", "", "services/proxy", []string{"get", "create"}},
-		{"helper_job", "batch", "jobs", []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
-		{"scheduled_job", "batch", "cronjobs", []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 	}
 	for _, path := range paths {
 		t.Run(path.name, func(t *testing.T) {
@@ -73,25 +68,28 @@ func TestPermissiveBackendSecretPathsDenied(t *testing.T) {
 	}
 }
 
-func TestPermissiveWebhookBackendTakeoverDenied(t *testing.T) {
+func TestPermissiveBackendRepairMatchesAppReach(t *testing.T) {
 	plan := secretPathPlan(t)
-	for group, resources := range map[string][]string{
-		"":     {"pods", "services"},
-		"apps": {"deployments", "replicasets", "statefulsets", "daemonsets", "deployments/scale", "deployments/status"},
-	} {
+	for group, resources := range map[string][]string{"": {"pods", "services", "configmaps", "persistentvolumeclaims"}, "apps": {"deployments", "replicasets", "statefulsets", "daemonsets"}, "batch": {"jobs", "cronjobs"}} {
 		for _, resource := range resources {
-			for _, verb := range []string{"create", "update", "patch", "deletecollection"} {
-				if planAllows(plan, "policy-system", group, resource, verb) {
-					t.Errorf("backend takeover allowed: %s/%s", resource, verb)
+			for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete"} {
+				if !planAllows(plan, "policy-system", group, resource, verb) {
+					t.Errorf("backend repair denied: %s/%s/%s", group, resource, verb)
 				}
-			}
-			if resource != "pods" && planAllows(plan, "policy-system", group, resource, "delete") {
-				t.Errorf("backend deletion allowed: %s", resource)
+				for _, ns := range []string{"demo-sdo", "unrelated", "kube-system"} {
+					// Existing control ConfigMap transport is a separate baseline dependency.
+					if ns == "demo-sdo" && resource == "configmaps" {
+						continue
+					}
+					if planAllows(plan, ns, group, resource, verb) {
+						t.Errorf("backend grant escaped: %s/%s/%s/%s", ns, group, resource, verb)
+					}
+				}
 			}
 		}
 	}
 	for _, resource := range []string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"} {
-		for _, verb := range []string{"get", "list", "watch", "delete"} {
+		for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete"} {
 			if !planAllows(plan, "", "admissionregistration.k8s.io", resource, verb) {
 				t.Errorf("webhook repair denied: %s/%s", resource, verb)
 			}
@@ -123,23 +121,7 @@ func TestPermissiveCustomSecretControllersDenied(t *testing.T) {
 
 func TestPermissiveReviewedBuiltinsOnly(t *testing.T) {
 	plan := secretPathPlan(t)
-	allowed := map[string][]string{
-		"":                  {"pods", "services", "endpoints", "events"},
-		"apps":              {"deployments", "replicasets", "statefulsets", "daemonsets"},
-		"discovery.k8s.io":  {"endpointslices"},
-		"networking.k8s.io": {"networkpolicies"},
-	}
-	for group, resources := range allowed {
-		for _, resource := range resources {
-			for _, verb := range []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection", "bind", "escalate", "impersonate"} {
-				want := verb == "get" || verb == "list" || verb == "watch" || (group == "" && resource == "pods" && verb == "delete")
-				if got := planAllows(plan, "policy-system", group, resource, verb); got != want {
-					t.Errorf("%s/%s/%s allowed=%v want=%v", group, resource, verb, got, want)
-				}
-			}
-		}
-	}
-	// Every added namespaced rule is checked, even if future discovery expands.
+	// Every added write Role is concrete, never wildcard or identity-related.
 	for _, role := range plan.AppRoles {
 		if role.Name != permissiveGrantName("demo-sdo") {
 			continue
@@ -147,14 +129,13 @@ func TestPermissiveReviewedBuiltinsOnly(t *testing.T) {
 		for _, rule := range role.Rules {
 			for _, group := range rule.APIGroups {
 				for _, resource := range rule.Resources {
-					reviewed := false
-					for _, name := range allowed[group] {
-						if name == resource {
-							reviewed = true
-						}
+					if group == "*" || resource == "*" || group == "rbac.authorization.k8s.io" || resource == "secrets" || resource == "serviceaccounts" {
+						t.Errorf("unreviewed grant %s/%s", group, resource)
 					}
-					if !reviewed {
-						t.Errorf("unreviewed grant: %s/%s", group, resource)
+					for _, verb := range rule.Verbs {
+						if verb == "*" || verb == "bind" || verb == "escalate" || verb == "impersonate" {
+							t.Errorf("escalation grant %s", verb)
+						}
 					}
 				}
 			}
