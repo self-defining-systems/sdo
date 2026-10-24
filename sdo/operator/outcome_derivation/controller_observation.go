@@ -65,14 +65,19 @@ func ObserveController(data []byte) *c.ControllerObservation {
 		result.Failure = &c.ControllerObservationFailure{Code: c.ControllerObservationFailure_CODE_CLOSURE_FAILED, IncidentId: id, Message: fmt.Sprintf("incident '%s' closure permanently failed after %d broker attempts: %s; %s", id, failure.GetAttempts(), failure.GetLastError(), failure.GetAction())}
 		return result
 	}
+	eligibleVerifiedID := func(id string) bool {
+		return id != "" && state.GetClosureState() != c.ClosureState_CLOSURE_STATE_FAILED &&
+			(request.GetIncidentId() == "" || id == request.GetIncidentId()) &&
+			!slices.Contains(request.GetKnownIncidentIds(), id)
+	}
 	closure := state.GetPendingClosure()
 	id := closure.GetRequest().GetIncidentId()
-	if id != "" && !slices.Contains(request.GetKnownIncidentIds(), id) && observedTimestamp(closure.GetVerifiedAt()) {
+	if eligibleVerifiedID(id) && observedTimestamp(closure.GetVerifiedAt()) {
 		result.VerifiedIncidentId = id
 		result.VerifiedClosure = proto.Clone(closure).(*c.IncidentClosure)
 		return result
 	}
-	if id = state.GetLastAcknowledgedIncidentId(); id != "" && !slices.Contains(request.GetKnownIncidentIds(), id) {
+	if id = state.GetLastAcknowledgedIncidentId(); eligibleVerifiedID(id) {
 		result.VerifiedIncidentId = id
 		return result
 	}
