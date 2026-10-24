@@ -127,3 +127,7 @@ limits and revision-bound failure signals, not mutation history.
 ## Seed recovery oracle
 
 A full seed-compatible cleanup intentionally removes fault-created objects. Its `recovery_oracle` is an independent baseline check plus a fresh HTTP probe, not another mitigation verdict for the removed injection. Keep the original `oracle` and its failed components unchanged. A failed or incomplete seed probe blocks reuse and keeps `full_cleanup_verified=False`; no benchmark verdict is supplied to production learning. Legacy drivers without this check retain their fault-oracle recovery behavior.
+
+### Startup versus resumed baseline timing
+
+The persistent fault gate keeps controller startup (including health refresh) separate from its 300-second resumed-baseline readiness budget. The matching maintenance `active` record starts that readiness clock once; later polls or pauses cannot restart it. Startup remains bounded by the existing lifecycle/startup budget. `controller_baseline_wait` retains the total pre-injection wait; `controller_startup_wait` and `controller_resumed_baseline_wait` split it. None belongs to incident TTM or per-incident responder/reflection usage.

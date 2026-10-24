@@ -37,7 +37,11 @@ from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter.cluster_resources import kubectl
-from benchmarks.sregym.adapter.fault_gate import RESUMED_BASELINE_TIMEOUT_SECONDS, inject_fault_after_resumed_baseline
+from benchmarks.sregym.adapter.fault_gate import (
+    BASELINE_TIMEOUT_SECONDS,
+    RESUMED_BASELINE_TIMEOUT_SECONDS,
+    inject_fault_after_resumed_baseline,
+)
 from benchmarks.sregym.adapter.native_operator import (
     NativeOperatorError,
     observe_controller_state,
@@ -453,6 +457,7 @@ class KubectlClusterOps:
             inject=inject,
             kubectl_runner=kubectl,
             timeout_seconds=RESUMED_BASELINE_TIMEOUT_SECONDS * scale,
+            startup_timeout_seconds=BASELINE_TIMEOUT_SECONDS * scale,
             poll_seconds=min(1.0, scale),
         )
 
