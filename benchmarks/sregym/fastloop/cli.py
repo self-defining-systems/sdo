@@ -248,6 +248,12 @@ def _up(args: argparse.Namespace) -> int:
             args.cluster_prefix = "fastloop-dev-w"
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+    prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
+    if prior is not None and prior.dev_mount != args.dev_mount:
+        raise ValueError(
+            "up --dev-mount must match the worktree used to create this environment; "
+            "use --no-dev-mount for a lane created without a dev mount"
+        )
     workspace = run_dir / "application_workspace"
     if not workspace.exists():
         if args.seed is None:
@@ -261,9 +267,6 @@ def _up(args: argparse.Namespace) -> int:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
         prepare_dev_mount(args.dev_mount, args.sregym_dir.resolve(), run_dir)
-    prior = FastloopEnvironment.load(run_dir) if (run_dir / "fastloop.json").is_file() else None
-    if prior is not None and prior.dev_mount != args.dev_mount:
-        raise ValueError("up --dev-mount must match the worktree used to create this environment")
     seed_commit = prior.seed_commit if prior is not None else None
     if seed_commit is None and (workspace / ".git").exists():
         seed_commit = subprocess.run(
@@ -569,6 +572,7 @@ def _run(args: argparse.Namespace) -> int:
         tracked = []
         tracked_ids = ()
     config = LoopConfig(
+        delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,
         run_id=run_id,
@@ -889,6 +893,9 @@ def _down(args: argparse.Namespace) -> int:
         logger.error("persistent controller teardown: %s", error)
     if args.delete_cluster:
         subprocess.run(["kind", "delete", "cluster", "--name", environment.cluster], check=True)
+        from benchmarks.sregym.fastloop.image_delivery import remove_registry
+
+        remove_registry(environment.cluster)
     return 1 if errors else 0
 
 

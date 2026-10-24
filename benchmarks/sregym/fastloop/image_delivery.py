@@ -48,10 +48,10 @@ def registry_delivery(cluster: str, images: list[str]) -> dict[str, dict[str, st
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", cluster):
         raise ValueError(f"invalid kind lane name: {cluster!r}")
     name = cluster + "-registry"
-    inspected = subprocess.run(["docker", "inspect", name], capture_output=True, text=True, check=False)
+    inspected = subprocess.run(["docker", "container", "inspect", name], capture_output=True, text=True, check=False)
     if inspected.returncode == 0:
         info = json.loads(inspected.stdout)[0]
-        if info.get("Config", {}).get("Labels", {}).get("sdo.fastloop.lane") != cluster:
+        if (info.get("Config", {}).get("Labels") or {}).get("sdo.fastloop.lane") != cluster:
             raise RuntimeError(f"refusing unowned registry container {name}")
         if not info["State"]["Running"]:
             _run(["docker", "start", name])
@@ -71,11 +71,11 @@ def registry_delivery(cluster: str, images: list[str]) -> dict[str, dict[str, st
                 "registry:3",
             ]
         )
-    info = json.loads(_run(["docker", "inspect", name]).stdout)[0]
+    info = json.loads(_run(["docker", "container", "inspect", name]).stdout)[0]
     if "kind" not in info["NetworkSettings"]["Networks"]:
         _run(["docker", "network", "connect", "kind", name])
     # Docker may reassign an ephemeral published port when a network is added.
-    info = json.loads(_run(["docker", "inspect", name]).stdout)[0]
+    info = json.loads(_run(["docker", "container", "inspect", name]).stdout)[0]
     port = info["NetworkSettings"]["Ports"]["5000/tcp"][0]["HostPort"]
     nodes = _run(["kind", "get", "nodes", "--name", cluster]).stdout.splitlines()
     if not nodes:
@@ -116,6 +116,22 @@ def registry_delivery(cluster: str, images: list[str]) -> dict[str, dict[str, st
             _run(["docker", "exec", node, "crictl", "inspecti", image])
             evidence[node][image] = digest
     return evidence
+
+
+def remove_registry(cluster: str) -> None:
+    """Remove only the registry container whose label proves lane ownership."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", cluster):
+        raise ValueError(f"invalid kind lane name: {cluster!r}")
+    name = cluster + "-registry"
+    inspected = subprocess.run(["docker", "container", "inspect", name], capture_output=True, text=True, check=False)
+    if inspected.returncode != 0:
+        if "No such container" in inspected.stderr:
+            return
+        inspected.check_returncode()
+    info = json.loads(inspected.stdout)[0]
+    if (info.get("Config", {}).get("Labels") or {}).get("sdo.fastloop.lane") != cluster:
+        raise RuntimeError(f"refusing to remove unowned registry container {name}")
+    _run(["docker", "container", "rm", "--force", name])
 
 
 def warn_fallback(reason: str, images: list[str], seconds: float) -> None:

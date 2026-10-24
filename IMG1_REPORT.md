@@ -150,3 +150,38 @@ initialized from inside its checkout; pin
 Only `img1-*` clusters/registries, task-owned new image tags and the task worktree were used. Lane 52,
 `luna-pilot-*`, `rs-*` and `rs-regcache-*` resources were never modified. No model
 was called and no Secret data was read.
+
+## PR #202 review fixes
+
+Each of the five review findings has a regression observed failing before its
+implementation. The initial Python run failed six parametrized cases covering
+mid-incident delivery changes, the existing-lane mount mismatch, container-only
+inspection/null labels, and registry deletion. The Go launch regression accepted
+a missing compiler image before the fix and now rejects it before any build or
+Kubernetes access.
+
+- `ControllerConfig.toolchain_image` and `--toolchain-image` supply workers,
+  reflection and validators independently of the optional traffic prober image.
+  The installer supplies its controller image. Decision: direct controller
+  launches require this explicit setting, including custom images; startup does
+  not guess whether a runtime image contains Go. Memory migration checks it too.
+- Incident rows reread delivery history when they are constructed, including
+  failed incidents and source deployments that fall back after run startup.
+- Existing-lane mount compatibility is checked before any host binary build or
+  workspace clone. An unmounted lane's error names `--no-dev-mount`.
+- Registry inspection uses `docker container inspect`; null ownership labels
+  are treated as unowned.
+- `down --delete-cluster` removes the lane's ownership-checked registry after
+  deleting its cluster. Ordinary `down` and resets keep it. Missing containers
+  are harmless; ownership mismatches and Docker failures remain visible.
+
+Review validation uses hermetic tests and no live cluster mutations or model
+calls. The timings and image sizes above are unchanged by these fixes.
+
+Review gates passed: formatting; `scripts/check_errors.sh` (Ruff, Tach,
+architecture, Pyright, proto generation, Go core checks and benchmark mains);
+270 focused Python tests in 93.85 s; Go toolchain, installer, CLI, worker and
+broker packages; the complete runtime module (143.65 s for its main package);
+and the hermetic fastloop gate (Go plus 18 Python tests). Skill lint has the
+same 16 pre-existing findings as HEAD, with no new findings. Pyright retains
+its existing responder `__all__` warning and reports zero errors.

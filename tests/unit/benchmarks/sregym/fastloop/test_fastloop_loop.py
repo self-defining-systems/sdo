@@ -508,3 +508,38 @@ def test_delivery_fallback_survives_failed_and_successful_incident_rows(tmp_path
     for record in load_records(config.results_path):
         assert record.image_delivery == "kind-load-fallback"
         assert record.image_delivery_reason == "registry offline"
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_incident_row_rereads_delivery_after_source_deployment(tmp_path, failed):
+    from dataclasses import replace
+
+    from benchmarks.sregym.fastloop.image_delivery import save_delivery
+
+    clock = FakeClock()
+    delivery_path = tmp_path / "image_delivery.jsonl"
+    save_delivery(delivery_path, {"path": "registry", "reason": "", "seconds": 1, "images": ["app:v1"]})
+    config = replace(_config(tmp_path, 1), image_delivery="registry", delivery_record_path=delivery_path)
+
+    class DeployingAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            save_delivery(
+                delivery_path,
+                {
+                    "path": "kind-load-fallback",
+                    "reason": "mid-run registry failure",
+                    "seconds": 2,
+                    "images": ["app:v2"],
+                },
+            )
+            return super().resolve(index, problem_id, inject)
+
+    records = run_incidents(
+        DeployingAgent(clock, fail_on={0} if failed else set()),
+        FakeDriver(clock),
+        config,
+        monotonic=clock.monotonic,
+    )
+    persisted = load_records(config.results_path)
+    assert records[0].image_delivery == persisted[0].image_delivery == "kind-load-fallback"
+    assert records[0].image_delivery_reason == "mid-run registry failure"

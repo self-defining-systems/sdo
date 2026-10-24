@@ -435,3 +435,15 @@ fallback warns on stderr and records `image_delivery: kind-load-fallback` plus
 See the [fastloop procedure](../benchmarks/sregym/experiments/fastloop/README.md)
 for ownership and cache details. Legacy live SREGym launches require
 `--allow-non-fastloop`; use fastloop for normal experiments.
+
+Fastloop image delivery regressions run without Docker or a cluster:
+
+```bash
+uv run pytest -q tests/unit/benchmarks/sregym/fastloop/test_fast_image_delivery.py tests/unit/benchmarks/sregym/fastloop/test_fastloop_loop.py
+(cd sdo/operator && go test ./toolchain ./install ./operatorcli)
+(cd sdo/operator/runtime && go test -run 'TestNativeStartupRejectsMissingToolchainBeforeKubernetes|TestNativeReflection|TestControllerConfig')
+```
+
+Direct controller launches require `--toolchain-image <controller-image>`;
+`install-existing` supplies it automatically. The traffic prober image is
+independent. Missing compiler configuration fails at startup.

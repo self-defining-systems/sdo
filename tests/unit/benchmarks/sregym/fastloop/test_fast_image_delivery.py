@@ -137,7 +137,7 @@ def test_registry_only_uses_owned_lane_and_configures_every_node(monkeypatch):
         nonlocal local, connected
         calls.append((argv, kwargs))
         output = ""
-        if argv[:2] == ["docker", "inspect"]:
+        if argv[:3] == ["docker", "container", "inspect"]:
             assert argv[-1] == "img1-contract-registry"
             output = json.dumps(
                 [
@@ -189,7 +189,7 @@ def test_registry_rejects_unowned_container_before_mutation(monkeypatch):
     monkeypatch.setattr(image_delivery.subprocess, "run", run)
     with pytest.raises(RuntimeError, match="unowned registry"):
         image_delivery.registry_delivery("img1-contract", ["image:v1"])
-    assert calls == [["docker", "inspect", "img1-contract-registry"]]
+    assert calls == [["docker", "container", "inspect", "img1-contract-registry"]]
 
 
 def test_legacy_opt_out_reaches_existing_launcher(monkeypatch, tmp_path):
@@ -286,3 +286,113 @@ def test_partial_registry_success_cannot_hide_another_image_fallback(tmp_path):
     save_delivery(path, {"path": "registry", "reason": "", "seconds": 1, "images": ["b:v1"], "cluster": "img1-test"})
     assert delivery_state(path)["path"] == "registry"
     assert json.loads((tmp_path / "fastloop.json").read_text())["image_delivery_reason"] == ""
+
+
+def _saved_lane(tmp_path):
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    lane = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="img1-review",
+        kubeconfig=tmp_path / "config",
+        namespace="toy",
+        application="toy",
+        workspace=tmp_path / "application_workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    lane.workspace.mkdir()
+    lane.save()
+    return lane
+
+
+def test_existing_unmounted_lane_rejects_default_mount_before_build(monkeypatch, tmp_path):
+    _saved_lane(tmp_path)
+    monkeypatch.setattr(cli, "up_preflight", lambda _: None)
+    builds = []
+    monkeypatch.setattr(dev, "prepare_dev_mount", lambda *a: builds.append(a))
+    with pytest.raises(ValueError, match="--no-dev-mount"):
+        cli.main(["up", "--run-dir", str(tmp_path)])
+    assert builds == []
+
+
+@pytest.mark.parametrize("labels", [None, {}])
+def test_registry_inspects_only_containers_and_rejects_null_labels(monkeypatch, labels):
+    import json
+    from subprocess import CompletedProcess
+
+    from benchmarks.sregym.fastloop import image_delivery
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert argv == ["docker", "container", "inspect", "img1-review-registry"]
+        return CompletedProcess(argv, 0, json.dumps([{"Config": {"Labels": labels}}]), "")
+
+    monkeypatch.setattr(image_delivery.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="unowned registry"):
+        image_delivery.registry_delivery("img1-review", ["image:v1"])
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("delete_cluster", [False, True])
+def test_down_removes_owned_registry_only_with_its_cluster(monkeypatch, tmp_path, delete_cluster):
+    import json
+    from subprocess import CompletedProcess
+
+    _saved_lane(tmp_path)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, json.dumps([{"Config": {"Labels": {"sdo.fastloop.lane": "img1-review"}}}]), "")
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+    assert cli.main(["down", "--run-dir", str(tmp_path), *(["--delete-cluster"] if delete_cluster else [])]) == 0
+    if delete_cluster:
+        assert calls == [
+            ["kind", "delete", "cluster", "--name", "img1-review"],
+            ["docker", "container", "inspect", "img1-review-registry"],
+            ["docker", "container", "rm", "--force", "img1-review-registry"],
+        ]
+    else:
+        assert calls == []
+
+
+@pytest.mark.parametrize("labels", [None, {}, {"sdo.fastloop.lane": "someone-else"}])
+def test_registry_cleanup_refuses_unowned_container(monkeypatch, labels):
+    import json
+    from subprocess import CompletedProcess
+
+    from benchmarks.sregym.fastloop import image_delivery
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return CompletedProcess(argv, 0, json.dumps([{"Config": {"Labels": labels}}]), "")
+
+    monkeypatch.setattr(image_delivery.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="refusing to remove unowned"):
+        image_delivery.remove_registry("img1-review")
+    assert calls == [["docker", "container", "inspect", "img1-review-registry"]]
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_registry_cleanup_only_ignores_missing_containers(monkeypatch, missing):
+    from subprocess import CalledProcessError, CompletedProcess
+
+    from benchmarks.sregym.fastloop import image_delivery
+
+    def run(argv, **kwargs):
+        return CompletedProcess(
+            argv, 1, "", "No such container: img1-review-registry" if missing else "daemon unavailable"
+        )
+
+    monkeypatch.setattr(image_delivery.subprocess, "run", run)
+    if missing:
+        image_delivery.remove_registry("img1-review")
+    else:
+        with pytest.raises(CalledProcessError):
+            image_delivery.remove_registry("img1-review")

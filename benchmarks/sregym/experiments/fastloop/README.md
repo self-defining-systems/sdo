@@ -63,15 +63,22 @@ with a dynamically allocated loopback port and storage retained across resets.
 It joins the kind network; containerd hosts.toml routes pulls to that container.
 Images keep their original names inside the nodes. Pushes retain layers and only
 missing layers transfer. Existing unlabelled registries are never adopted.
+`fastloop down --run-dir <lane> --delete-cluster` removes the cluster and then
+its ownership-checked registry container. Plain `down` and resets retain it.
 Unchanged warm lanes skip delivery; resets do no image work. Registry setup,
 push or pull failures trigger automatic archive fallback and a clear stderr
 WARNING containing the error, image list and elapsed fallback seconds.
 `fastloop.json` and every incident row record `image_delivery` and
-`image_delivery_reason`; `image_delivery.jsonl` keeps delivery history. Run warns
+`image_delivery_reason`; `image_delivery.jsonl` keeps delivery history. Each
+incident row rereads that history after the incident, including source-deploy
+fallbacks triggered during the run. Run warns
 again while the lane remains in `kind-load-fallback` mode. A successful registry
 refresh of all affected images clears it. There is no manual flag to prefer archive loading.
 
 Only the controller image stores Go and the offline dependency/build caches.
+The installer passes that image as the required `--toolchain-image` setting,
+independently of `--prober-image`. Direct controller launches must set it too;
+missing configuration fails before building, migration or Kubernetes access.
 Worker and validator init containers use that image to populate a private
 emptyDir, mounted read-only into compiler-free runtime containers. The init
 container has no candidate or provider-credential mounts. Compilation, vet,
