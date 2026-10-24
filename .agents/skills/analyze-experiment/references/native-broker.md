@@ -164,7 +164,8 @@ Cold first-generation repairs need no prior program or plan. Their trusted recor
 mutation receipts must follow dispatch and the original resource-bound triggering
 findings. The latest error-free controller `verify` must evaluate those detectors
 after the mutation, with no remaining finding on any cause resource (including
-related refs) while a peer resource remains active. A later write invalidates older
+related refs). A peer may remain active, or a complete controller all-clear may
+prove the repair even though the authoritative aggregate closure remains failed. A later write invalidates older
 clearance; missing triggers, stale evaluation, or same-resource cause ambiguity
 abstain. Read-only operations and worker-authored success claims do not qualify.
 

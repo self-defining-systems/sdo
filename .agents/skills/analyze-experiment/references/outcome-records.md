@@ -82,3 +82,7 @@ failed outcome remains authoritative; reflection receives only independently
 repaired cause groups and scoped verification evidence. This is learning eligibility,
 not global health or program trust; authored program bytes still pass the existing
 capture provenance and corpus replay validator. No fixed snapshot is fabricated.
+
+A complete healthy controller verify with zero findings also proves individual
+repairs when the global closure is failed. It requires all evaluated detectors
+clear and no unresolved flag; classification stays failed. No peer fault is required.
