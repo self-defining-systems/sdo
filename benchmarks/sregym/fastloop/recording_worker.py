@@ -29,12 +29,17 @@ _REGISTRATIONS = Path(__file__).resolve().parents[3] / "sdo" / "agents" / "regis
 def recording_registrations(results_dir: Path, image: str) -> Path:
     directory = results_dir / "recording_registrations"
     directory.mkdir(parents=True, exist_ok=True)
-    for role, stage in (("responder", "responder"), ("reflector", "reflection")):
+    recording_stages = {"responder": "responder", "reflector": "reflection"}
+    for role in ("deployer", "health-judge", "responder", "reflector"):
         registration = json.loads((_REGISTRATIONS / f"{role}.json").read_text(encoding="utf-8"))
-        registration["kubernetes_job"] = {
-            "image": image,
-            "command": ["python3", "-m", "benchmarks.sregym.fastloop.recording_worker", stage],
-        }
+        registration["kubernetes_job"]["image"] = image
+        if role in recording_stages:
+            registration["kubernetes_job"]["command"] = [
+                "python3",
+                "-m",
+                "benchmarks.sregym.fastloop.recording_worker",
+                recording_stages[role],
+            ]
         (directory / f"{role}.json").write_text(json.dumps(registration, indent=2) + "\n", encoding="utf-8")
     return directory
 

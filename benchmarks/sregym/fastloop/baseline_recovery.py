@@ -69,6 +69,8 @@ class KubectlApplicationCluster:
         )
 
     def apply(self, namespace: str, value: dict[str, Any]) -> None:
+        allocated_paths = _allocated_paths(value)
+        value = _manifest(value)
         resource = f"{value['kind'].lower()}/{value['metadata']['name']}"
         output = kubectl(
             ["get", resource, "-o", "json", "--ignore-not-found=true"],
@@ -77,6 +79,8 @@ class KubectlApplicationCluster:
         ).stdout
         if output.strip():
             current = json.loads(output)
+            for path in allocated_paths:
+                _replace_allocated(value, current, path)
             # SSA merges fields owned by other managers. In particular, restoring
             # an EnvVar literal can retain the injector's valueFrom and fail API
             # validation. Replace complete captured content, guarded against races.
@@ -141,12 +145,73 @@ def _managed(value: dict[str, Any], namespace: str) -> bool:
     )
 
 
+# Paths shared by capture, comparison, and restore. A wildcard selects list items.
+ALLOCATED_FIELDS = (
+    ("*", ("status",)),
+    *(
+        ("*", ("metadata", name))
+        for name in ("uid", "resourceVersion", "creationTimestamp", "generation", "managedFields", "selfLink")
+    ),
+    *(
+        ("Service", ("spec", name))
+        for name in ("clusterIP", "clusterIPs", "ipFamilies", "ipFamilyPolicy", "healthCheckNodePort")
+    ),
+    ("Service", ("spec", "ports", "*", "nodePort")),
+    ("PersistentVolumeClaim", ("spec", "volumeName")),
+    ("Pod", ("spec", "nodeName")),
+    ("Job", ("spec", "selector")),
+    *(
+        ("Job", (*prefix, label))
+        for prefix in (("metadata", "labels"), ("spec", "template", "metadata", "labels"))
+        for label in ("controller-uid", "batch.kubernetes.io/controller-uid")
+    ),
+)
+
+
+def _allocated_paths(value: dict[str, Any]) -> list[tuple[str, ...]]:
+    headless = value["kind"] == "Service" and value.get("spec", {}).get("clusterIP") == "None"
+    return [
+        path
+        for kind, path in ALLOCATED_FIELDS
+        if kind in ("*", value["kind"]) and not (headless and path in (("spec", "clusterIP"), ("spec", "clusterIPs")))
+    ]
+
+
+def _replace_allocated(target: Any, live: Any, path: tuple[str, ...]) -> None:
+    key, *remaining = path
+    if key == "*":
+        if not isinstance(target, list):
+            return
+        current = live if isinstance(live, list) else []
+        for index, item in enumerate(target):
+            # Service ports retain allocations by name when the desired list moves.
+            matches = [
+                v
+                for v in current
+                if isinstance(v, dict) and isinstance(item, dict) and item.get("name") and v.get("name") == item["name"]
+            ]
+            prior = matches[0] if matches else current[index] if index < len(current) else None
+            _replace_allocated(item, prior, tuple(remaining))
+        return
+    if not isinstance(target, dict):
+        return
+    current = live if isinstance(live, dict) else {}
+    if not remaining:
+        if key in current:
+            target[key] = deepcopy(current[key])
+        else:
+            target.pop(key, None)
+        return
+    if key not in target and key in current and isinstance(current[key], dict):
+        target[key] = {}
+    if key in target:
+        _replace_allocated(target[key], current.get(key), tuple(remaining))
+
+
 def _manifest(value: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(value)
-    result.pop("status", None)
-    metadata = result["metadata"]
-    for key in ("uid", "resourceVersion", "generation", "creationTimestamp", "managedFields", "selfLink"):
-        metadata.pop(key, None)
+    for path in _allocated_paths(result):
+        _replace_allocated(result, None, path)
     return result
 
 
@@ -155,6 +220,7 @@ def _identity(value: dict[str, Any]) -> tuple[str, str]:
 
 
 def _content(value: dict[str, Any]) -> tuple[Any, Any, Any]:
+    value = _manifest(value)
     return value.get("spec"), value.get("data"), value.get("binaryData")
 
 
@@ -215,10 +281,10 @@ def reconcile_application(
     cleanup = RecoveryCleanup()
     expected = {_identity(value): value for value in baseline.objects if _managed(value, namespace)}
     current = {_identity(value): value for value in cluster.list_objects(namespace) if _managed(value, namespace)}
-    for (kind, name), value in sorted(current.items()):
+    for kind, name in sorted(current):
         if (kind, name) in expected:
             continue
-        if kind == "PersistentVolumeClaim" and value.get("status", {}).get("phase") != "Pending":
+        if kind == "PersistentVolumeClaim":
             continue
         cluster.delete(namespace, kind, name)
         cleanup.deleted_counts[kind] = cleanup.deleted_counts.get(kind, 0) + 1

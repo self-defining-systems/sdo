@@ -19,9 +19,24 @@ def test_recording_registrations_route_workers_to_benchmark_boundary(tmp_path: P
     assert reflector["kubernetes_job"]["command"][-1] == "reflection"
 
 
-def test_recording_registrations_only_use_responder_and_reflector(tmp_path: Path) -> None:
+def test_recording_registrations_preserve_all_builtin_capabilities(tmp_path: Path) -> None:
     directory = recording_registrations(tmp_path, "worker:test")
-    assert {path.name for path in directory.glob("*.json")} == {"responder.json", "reflector.json"}
+    root = Path(__file__).resolve().parents[5]
+    builtins = root / "sdo/agents/registrations"
+    assert {path.name for path in directory.glob("*.json")} == {
+        "deployer.json",
+        "health-judge.json",
+        "responder.json",
+        "reflector.json",
+    }
+    for path in builtins.glob("*.json"):
+        original = json.loads(path.read_text())
+        recorded = json.loads((directory / path.name).read_text())
+        assert recorded["agent_id"] == original["agent_id"]
+        assert recorded["capabilities"] == original["capabilities"]
+        assert recorded["kubernetes_job"]["image"] == "worker:test"
+        if path.stem in {"deployer", "health-judge"}:
+            assert recorded["kubernetes_job"]["command"] == original["kubernetes_job"]["command"]
 
 
 def test_scripted_registrations_add_deterministic_health_refresh(tmp_path: Path) -> None:
@@ -29,15 +44,17 @@ def test_scripted_registrations_add_deterministic_health_refresh(tmp_path: Path)
     live = recording_registrations(tmp_path, "worker:test")
     scripted = root / "benchmarks/sregym/adapter/scripted_registrations"
 
-    def task_types(directory: Path) -> set[str]:
+    def task_types(directory: Path, roles: set[str] | None = None) -> set[str]:
         return {
             capability["task_type"]
             for path in directory.glob("*.json")
+            if roles is None or path.stem in roles
             for capability in json.loads(path.read_text())["capabilities"]
         }
 
-    assert task_types(live) == {"incident-response", "outcome-reflection-direct-v1"}
-    assert task_types(scripted) == task_types(live) | {"health-judgment-direct-v1"}
+    incident_types = task_types(live, {"responder", "reflector"})
+    assert incident_types == {"incident-response", "outcome-reflection-direct-v1"}
+    assert task_types(scripted) == incident_types | {"health-judgment-direct-v1"}
     health_judge = json.loads((scripted / "health-judge.json").read_text())
     assert health_judge["kubernetes_job"]["command"][-1] == "health-judge"
     assert health_judge["capabilities"][0]["request_type_url"].endswith(".HealthJudgeRequest")

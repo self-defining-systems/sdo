@@ -334,6 +334,36 @@ def test_continue_on_error_still_stops_when_baseline_recovery_fails(
     assert "reason=incident 0 did not clear the recovery and learning gate" in caplog.text
 
 
+def test_recovery_failure_keeps_grade_and_still_learns_from_the_same_sdo_outcome(tmp_path: Path) -> None:
+    clock = FakeClock()
+    resolved: list[AgentOutcome] = []
+    learned: list[AgentOutcome] = []
+
+    class Agent(FakeAgent):
+        def resolve(self, index: int, problem_id: str, inject: Callable[[], InjectionWindow]) -> AgentOutcome:
+            outcome = super().resolve(index, problem_id, inject)
+            resolved.append(outcome)
+            return outcome
+
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            learned.append(outcome)
+            return super().learn(outcome)
+
+    driver = FakeDriver(clock, oracle_success=False, recover_fails=True)
+
+    records = run_incidents(Agent(clock), driver, _config(tmp_path, 2), monotonic=clock.monotonic)
+
+    assert len(learned) == 1
+    assert learned[0] is resolved[0]
+    assert learned[0].responder_tokens == TokenCounts(input_tokens=100, output_tokens=10)
+    assert len(records) == 1  # Learning does not authorize injection into a broken baseline.
+    assert records[0].oracle is not None
+    assert records[0].oracle.success is False
+    assert records[0].recovery_oracle is None
+    assert "fault recovery failed: RuntimeError: cluster gone" in str(records[0].error)
+    assert records[0].reflection_tokens == TokenCounts(input_tokens=1000, output_tokens=20)
+
+
 def test_cleanup_exception_is_logged_with_a_run_end_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     class Agent(FakeAgent):
         def close(self) -> None:

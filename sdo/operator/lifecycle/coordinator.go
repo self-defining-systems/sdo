@@ -505,6 +505,11 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return broker.Receipt{}, false, "", nil, err
 		}
+		var failedJob *worker_registry.JobFailedError
+		if errors.As(err, &failedJob) {
+			// Preserve the failed attempt and proposal for the bounded retry.
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_failed", Message: err.Error()}}, nil
+		}
 		_ = c.Broker.ReleaseProposal(id, broker.InitialPhase)
 		return fail(err.Error())
 	}
