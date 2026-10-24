@@ -498,6 +498,12 @@ func (c Coordinator) judgeOnce(ctx context.Context, id string, cfg Config, attem
 		if ctx.Err() != nil {
 			return broker.Receipt{}, false, "", nil, ctx.Err()
 		}
+		var failedJob *worker_registry.JobFailedError
+		if errors.As(err, &failedJob) {
+			// Persist transport failure before redispatch: the retry gets a new
+			// immutable task/Job identity and the bound survives controller restarts.
+			return broker.Receipt{}, false, err.Error(), []*contracts.MemoryDiagnostic{{Rule: "worker.job_failed", Message: err.Error()}}, nil
+		}
 		return fail(err.Error())
 	}
 	expectedDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.TrimSpace(cfg.HealthObjective))))
