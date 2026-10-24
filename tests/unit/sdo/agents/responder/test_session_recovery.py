@@ -93,10 +93,16 @@ def test_new_controller_cannot_hide_lost_checkpoint_acknowledgment(
     assert len(recovered) == 1
 
 
-def test_first_checkpoint_waits_for_provider_transcript_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("initially_empty", [False, True])
+def test_first_checkpoint_waits_for_provider_transcript_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, initially_empty: bool
+) -> None:
     home = tmp_path / "provider"
     monkeypatch.setenv("CODEX_HOME", str(home))
     path = home / "sessions/2030/01/01/rollout-date-provider-session.jsonl"
+    if initially_empty:
+        path.parent.mkdir(parents=True)
+        path.touch()
 
     def flush_transcript(_seconds: float) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

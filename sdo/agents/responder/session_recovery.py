@@ -74,7 +74,15 @@ class SessionRecovery:
         # Codex can emit thread.started before its asynchronous rollout writer
         # creates the file. Only a fresh checkpoint waits; recovery still fails
         # immediately if an already accepted transcript has disappeared.
-        while not matches and time.monotonic() < deadline:
+        while time.monotonic() < deadline and (
+            not matches
+            or (
+                len(matches) == 1
+                and matches[0].resolve().is_relative_to(home)
+                and matches[0].is_file()
+                and matches[0].stat().st_size == 0
+            )
+        ):
             time.sleep(min(0.05, max(0, deadline - time.monotonic())))
             matches = list(home.glob(pattern))
         if len(matches) != 1 or not matches[0].resolve().is_relative_to(home):
