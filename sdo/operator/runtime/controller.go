@@ -971,7 +971,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 	generation := observationGeneration(snapshot)
-	driftClear := c.verifyClosureDrift(ctx, now, snapshot)
+	driftClear, driftFindings := c.verifyClosureDrift(ctx, now, snapshot)
 	c.mu.Lock()
 	finalStates, healthVerified := c.finalVerificationStates()
 	scopeCurrent := c.currentIncidentRequest.ObservationGeneration == generation
@@ -982,12 +982,12 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	// A terminal dispatch failure already closes as failed once health permits
 	// it. Unresolved drift must not delay it or count as verified recovery.
 	terminalFailure := !scopeCurrent || (healthVerified && c.dispatchError != "")
-	if !verified && scopeCurrent && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+	verification := c.continuationVerificationLocked(healthVerified, driftClear, driftFindings)
+	if !verified && (len(verification.Findings) > 0 || verification.Error != "") && scopeCurrent && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
-			ContinueAfterVerification(context.Context, IncidentRequest, []DetectorEvaluation, time.Time) (bool, error)
+			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {
-			states, _ := c.latestEvaluations(c.healthDetectorIDs, time.Time{}, false)
-			resumed, err := continuer.ContinueAfterVerification(ctx, *c.currentIncidentRequest, states, now)
+			resumed, err := continuer.ContinueAfterVerification(ctx, *c.currentIncidentRequest, verification, now)
 			if err != nil {
 				c.mu.Unlock()
 				c.reportBrokerError("resume unhealthy responder", err)
