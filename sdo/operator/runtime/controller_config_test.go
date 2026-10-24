@@ -69,6 +69,7 @@ func fullControllerConfig() *contractsv1alpha1.ControllerConfig {
 		SyntheticTrafficWarmup:     durationpb.New(5000000000),
 		ProberBinary:               "/workspace/prober",
 		ProberImage:                "registry/prober:latest",
+		ToolchainImage:             "registry/controller:compiler",
 		ProberUrl:                  "http://prober:8080",
 		MetricsUrl:                 "http://prometheus:9090",
 		MetricsTokenFile:           "/var/run/secrets/metrics/token",
@@ -183,6 +184,7 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 		"--response-timeout":        "30m0s",
 		"--lease-duration":          "1m0s",
 		"--metrics-url":             "http://prometheus:9090",
+		"--toolchain-image":         "registry/controller:compiler",
 		"--metrics-token-file":      "/var/run/secrets/metrics/token",
 	}
 	for flag, want := range wantValue {

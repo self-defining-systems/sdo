@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/toolchain"
 )
 
 // memoryMigrationOperationID names the accepted Upkeep migration for the
@@ -51,6 +52,10 @@ func resolveAcceptedDiagnostics(ctx context.Context, root string, repository lif
 // openMigrationBroker builds the controller's broker from its typed launch
 // config, with the same job validator the native incident broker uses.
 func openMigrationBroker(config *contracts.ControllerConfig) (lifecycle.ProposalBroker, error) {
+	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
+		return nil, err
+	}
+
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("memory migration in-cluster credentials: %w", err)
@@ -64,7 +69,8 @@ func openMigrationBroker(config *contracts.ControllerConfig) (lifecycle.Proposal
 		namespace = config.GetNamespace()
 	}
 	job := broker.KubernetesValidationJobClient{
-		Client: client, Namespace: namespace, Image: config.GetValidatorImage(),
+		ToolchainImage: config.GetToolchainImage(),
+		Client:         client, Namespace: namespace, Image: config.GetValidatorImage(),
 		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),

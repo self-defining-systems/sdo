@@ -58,13 +58,22 @@ class ToyWorker:
             ids = self.active if op == "oracle" else [args["problem_id"]]
             if "fault" in args:
                 ids = [ids[args["fault"]]]
-            checks = {problem: fault_spec(problem).oracle(config, env.namespace) for problem in ids}
+            checks = {
+                problem: fault_spec(problem).oracle(
+                    config, env.namespace, image=env.worker_env.get("FASTLOOP_TOY_IMAGE", IMAGE)
+                )
+                for problem in ids
+            }
             return {"kind": "health-check", "success": bool(checks) and all(checks.values()), "details": checks}
         if op == "recover":
             started = time.monotonic()
             command(config, env.namespace, "apply", "-f", str(env.workspace / "kubernetes"))
             return {"seconds": time.monotonic() - started}
         raise ValueError(f"unsupported toy worker operation: {op}")
+
+
+def cluster_name(args: Any) -> str:
+    return f"{args.cluster_prefix}{args.worker_id}"
 
 
 def up(args: Any) -> int:
@@ -76,6 +85,10 @@ def up(args: Any) -> int:
     from benchmarks.sregym.fastloop.dev import prepare_dev_mount
     from benchmarks.sregym.fastloop.toy_cni import CALICO_IMAGES, install_calico
 
+    if args.dev_mount is None:
+        raise ValueError("toy lanes require a development mount; omit --no-dev-mount")
+    cluster = cluster_name(args)
+    image = f"{IMAGE}-{cluster}"
     started = time.monotonic()
     run_dir = args.run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -86,6 +99,23 @@ def up(args: Any) -> int:
             raise ValueError("toy environment requires a development mount")
         if not ToyWorker(env).request("health")["healthy"]:
             raise ValueError("toy environment is unhealthy; run fastloop reset")
+        from benchmarks.sregym.fastloop.cli import node_images_match
+        from benchmarks.sregym.fastloop.toy_images import load_images
+
+        desired = Images(
+            controller=args.controller_image, responder=args.responder_image, validator=args.validator_image
+        )
+        if env.images != desired or not node_images_match(env.cluster, desired):
+            load_images(
+                env.cluster,
+                [desired.controller, desired.responder, desired.validator],
+                record_path=run_dir / "image_delivery.jsonl",
+            )
+            env = FastloopEnvironment.load(run_dir)
+            env.images = desired
+            env.save()
+        if env.dev_mount is None:
+            raise ValueError("toy environment requires a development mount")
         prepare_dev_mount(env.dev_mount, None, run_dir)
         config = install_controller(env)
         record_controller(env, config)
@@ -94,8 +124,8 @@ def up(args: Any) -> int:
     clusters = subprocess.run(
         ["kind", "get", "clusters"], check=True, capture_output=True, text=True
     ).stdout.splitlines()
-    if "sdo-toy" in clusters:
-        raise ValueError("sdo-toy already exists without this run directory; refusing to adopt it")
+    if cluster in clusters:
+        raise ValueError(f"{cluster} already exists without this run directory; refusing to adopt it")
     config = prepare_dev_mount(worktree, None, run_dir)
     build = run_dir / "image"
     build.mkdir(exist_ok=True)
@@ -105,7 +135,9 @@ def up(args: Any) -> int:
         env={**os.environ, "CGO_ENABLED": "0", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"},
     )
     shutil.copy(APP / "Dockerfile", build / "Dockerfile")
-    subprocess.run(["docker", "build", "--network=none", "--provenance=false", "-t", IMAGE, str(build)], check=True)
+    subprocess.run(
+        ["docker", "build", "--load", "--network=none", "--provenance=false", "-t", image, str(build)], check=True
+    )
     kubeconfig = run_dir / "kubeconfig"
     create_start = time.monotonic()
     subprocess.run(
@@ -114,7 +146,7 @@ def up(args: Any) -> int:
             "create",
             "cluster",
             "--name",
-            "sdo-toy",
+            cluster,
             "--image",
             args.toy_node_image,
             "--config",
@@ -130,13 +162,19 @@ def up(args: Any) -> int:
     images = Images(controller=args.controller_image, responder=args.responder_image, validator=args.validator_image)
     from benchmarks.sregym.fastloop.toy_images import load_images
 
-    load_images("sdo-toy", [IMAGE, images.controller, images.responder, images.validator, *CALICO_IMAGES])
+    load_images(
+        cluster,
+        [image, images.controller, images.responder, images.validator, *CALICO_IMAGES],
+        record_path=run_dir / "image_delivery.jsonl",
+    )
     images_loaded = time.monotonic()
     install_calico(kubeconfig, run_dir / "calico.yaml")
     loaded = time.monotonic()
     workspace = run_dir / "application_workspace"
     workspace.mkdir()
     shutil.copytree(APP / "kubernetes", workspace / "kubernetes")
+    for manifest in (workspace / "kubernetes").glob("*.yaml"):
+        manifest.write_text(manifest.read_text().replace(IMAGE, image))
     for name in ("main.go", "Dockerfile"):
         shutil.copy(APP / name, workspace / name)
     for git_args in (
@@ -180,7 +218,7 @@ def up(args: Any) -> int:
     env = FastloopEnvironment(
         run_dir=run_dir,
         app="toy",
-        cluster="sdo-toy",
+        cluster=cluster,
         kubeconfig=kubeconfig,
         namespace=NAMESPACE,
         application="toy",
@@ -191,7 +229,13 @@ def up(args: Any) -> int:
         seed_commit=seed,
         dev_mount=worktree,
         images=images,
+        worker_env={"FASTLOOP_TOY_IMAGE": image},
     )
+    from benchmarks.sregym.fastloop.image_delivery import delivery_state
+
+    delivery = delivery_state(run_dir / "image_delivery.jsonl")
+    env.image_delivery, env.image_delivery_reason = delivery["path"], delivery["reason"]
+    env.image_delivery_seconds, env.image_delivery_images = delivery["seconds"], delivery["images"]
     env.baseline_path.write_text("{}\n", encoding="utf-8")
     save_application_baseline(
         env.baseline_path, (capture_application_baseline(KubectlApplicationCluster(kubeconfig), NAMESPACE),)

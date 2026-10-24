@@ -23,6 +23,10 @@ class Images(BaseModel):
 class FastloopEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    image_delivery: str = "unknown"
+    image_delivery_reason: str = ""
+    image_delivery_seconds: float = 0
+    image_delivery_images: list[str] = Field(default_factory=list)
     app: str = "sregym"
     run_dir: Path
     cluster: str

@@ -1,14 +1,61 @@
-"""Verify prepared kind image content before spending time transferring archives."""
+"""Registry-first lane delivery, with a loud and recorded archive fallback."""
 
 from __future__ import annotations
 
 import platform
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
+from benchmarks.sregym.fastloop.image_delivery import registry_delivery, save_delivery, warn_fallback
 
-def load_images(cluster: str, images: list[str]) -> None:
+
+def load_images(cluster: str, images: list[str], *, record_path: Path | None = None) -> dict[str, dict[str, str]]:
+    started = time.monotonic()
+    reason = ""
+    path = "registry"
+    evidence: dict[str, dict[str, str]] = {}
+    try:
+        evidence = registry_delivery(cluster, images)
+    except (subprocess.SubprocessError, RuntimeError, ValueError, KeyError, OSError) as error:
+        reason = str(error)
+        if isinstance(error, subprocess.CalledProcessError):
+            reason += ": " + str(error.stderr or error.stdout or "").strip()[:1000]
+        import sys
+
+        print(
+            f"WARNING: registry delivery failed: {reason}; images: {', '.join(images)}; starting kind-load-fallback",
+            file=sys.stderr,
+        )
+        path = "kind-load-fallback"
+        fallback_started = time.monotonic()
+        try:
+            _load_archive_images(cluster, images)
+        finally:
+            seconds = time.monotonic() - fallback_started
+            warn_fallback(reason, images, seconds)
+            if record_path is not None:
+                save_delivery(
+                    record_path,
+                    {"path": path, "reason": reason, "seconds": seconds, "images": images, "cluster": cluster},
+                )
+        return evidence
+    if record_path is not None:
+        save_delivery(
+            record_path,
+            {
+                "path": path,
+                "reason": reason,
+                "seconds": time.monotonic() - started,
+                "images": images,
+                "cluster": cluster,
+            },
+        )
+    return evidence
+
+
+def _load_archive_images(cluster: str, images: list[str]) -> None:
     """Use content-complete manifest identities; Docker and CRI IDs can name different objects."""
     machine = platform.machine().lower()
     architecture = "arm64" if machine in {"aarch64", "arm64"} else "amd64"
@@ -88,5 +135,6 @@ def load_images(cluster: str, images: list[str]) -> None:
             subprocess.run(
                 ["docker", "image", "save", "--platform", image_platform, "-o", str(archive), *sorted(missing)],
                 check=True,
+                timeout=180,
             )
-            subprocess.run(["kind", "load", "image-archive", "--name", cluster, str(archive)], check=True)
+            subprocess.run(["kind", "load", "image-archive", "--name", cluster, str(archive)], check=True, timeout=180)

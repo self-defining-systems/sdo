@@ -51,11 +51,11 @@ docker build --load \
   --file "${repo_root}/tests/fixtures/sdo/native_smoke/Dockerfile" \
   --build-arg "SDO_IMAGE_TAG=${image_tag}" \
   --tag sdo-worker:native-smoke "${repo_root}"
-kind load docker-image \
+(cd "${repo_root}" && uv run python -m benchmarks.sregym.fastloop.image_delivery --cluster "${cluster_name}" --run-dir "${workspace}" \
   "sdo-controller:${image_tag}" \
   "sdo-responder:${image_tag}" \
   "sdo-detector-validator:${image_tag}" \
-  sdo-worker:native-smoke --name "${cluster_name}"
+  sdo-worker:native-smoke)
 
 kubectl create namespace "${control_namespace}"
 # Fixture workers do not use model credentials or image builds. The distinct

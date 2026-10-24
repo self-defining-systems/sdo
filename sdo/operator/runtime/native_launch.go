@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/toolchain"
 	"sdo.dev/operator/worker_registry"
 )
 
@@ -33,6 +34,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		config.GetBrokerWorktreeRoot() == "" || config.GetAppRoot() == "" || config.GetRepositoryPvc() == "" || config.GetRepositoryMountPath() == "" {
 		return nil, nil, errors.New("native broker requires validator, schema, responder identity, proposal root, and repository mount")
 	}
+	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
+		return nil, nil, err
+	}
 	if client == nil {
 		var err error
 		client, err = core.NewKubernetesClient()
@@ -48,7 +52,8 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		controlNamespace = config.GetNamespace()
 	}
 	job := broker.KubernetesValidationJobClient{
-		Client: client, Namespace: controlNamespace, Image: config.GetValidatorImage(),
+		ToolchainImage: config.GetToolchainImage(),
+		Client:         client, Namespace: controlNamespace, Image: config.GetValidatorImage(),
 		RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), SchemaIdentity: config.GetSchemaIdentity(),
 		HealthyBaseline: config.GetHealthyBaseline(),
@@ -98,7 +103,8 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		return err
 	}
 	freshExecutor := worker_registry.KubernetesExecutor{
-		Client: client, Namespace: namespace, Registry: registry,
+		ToolchainImage: config.GetToolchainImage(),
+		Client:         client, Namespace: namespace, Registry: registry,
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),
 		RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(),
 		Environment: mergeEnvironment(agentEnvironment, map[string]string{"CODEX_HOME": "/tmp/codex", "CLAUDE_CONFIG_DIR": "/tmp/claude"}),

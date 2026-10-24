@@ -93,9 +93,12 @@ def test_toy_kind_configuration_requires_network_policy_enforcement(tmp_path, mo
     worktree = tmp_path / "source"
     (worktree / "sdo/operator").mkdir(parents=True)
     (worktree / "sdo/operator/go.mod").write_text("module fixture\n")
-    monkeypatch.setattr(
-        "benchmarks.sregym.fastloop.dev.subprocess.run", lambda *args, **kwargs: CompletedProcess(args, 0)
-    )
+
+    def build(*args, **kwargs):
+        (worktree / ".fastloop/sdo-operator.new").touch()
+        return CompletedProcess(args, 0)
+
+    monkeypatch.setattr("benchmarks.sregym.fastloop.dev.subprocess.run", build)
     config = yaml.safe_load(prepare_dev_mount(worktree, None, tmp_path).read_text())
     assert config["networking"]["disableDefaultCNI"]
     assert config["networking"]["podSubnet"] == "192.168.0.0/16"

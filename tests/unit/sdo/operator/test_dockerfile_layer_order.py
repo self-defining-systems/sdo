@@ -10,7 +10,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 OPERATOR = REPO_ROOT / "sdo" / "operator"
-DOCKERFILES = ("Dockerfile.runtime", "Dockerfile.validator")
+DOCKERFILES = ("Dockerfile.runtime",)
 FULL_SOURCE_COPY = "COPY sdo/operator ./sdo/operator"
 
 
@@ -49,15 +49,52 @@ def test_every_operator_module_is_downloaded_from_its_manifest() -> None:
         assert {module or "." for module in copied} == modules
 
 
-def test_the_worker_image_takes_the_dependency_cache_from_the_stable_stage() -> None:
+def test_only_controller_copies_the_dependency_cache_from_the_stable_stage() -> None:
     text = "\n".join(_lines("Dockerfile.runtime"))
-    assert "COPY --from=go-deps /go/build-cache /opt/sdo/go-build-cache" in text
-    assert "COPY --from=go-runtime /go/build-cache-delta/ /opt/sdo/go-build-cache/" in text
+    assert "COPY --from=go-deps /go/build-cache /go/build-cache" in text
+    assert "COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/" in text
 
 
 def test_image_builds_run_concurrently_and_still_smoke_check_each_image() -> None:
     script = (REPO_ROOT / "scripts" / "build_sdo_images.sh").read_text(encoding="utf-8")
-    assert "wait " in script
+    assert "docker buildx bake" in script
     assert script.count("docker run --rm") >= 6
     syntax = subprocess.run(["bash", "-n", str(REPO_ROOT / "scripts" / "build_sdo_images.sh")], check=False)
     assert syntax.returncode == 0
+
+
+def test_non_controller_targets_share_the_compiler_free_base():
+    text = "\n".join(_lines("Dockerfile.runtime"))
+    stages = {}
+    current = None
+    for line in text.splitlines():
+        match = re.match(r"FROM (\S+) AS (\S+)", line)
+        if match:
+            current = match[2]
+            stages[current] = (match[1], [])
+        elif current:
+            stages[current][1].append(line)
+    for target in ("responder", "validator", "scripted-runtime"):
+        stage = target
+        lineage = []
+        while stage in stages:
+            lineage.append(stage)
+            parent, lines = stages[stage]
+            assert not parent.startswith("golang:")
+            assert not any(
+                "COPY --from=" in line
+                and any(path in line for path in ("/usr/local/go", "/go/pkg/mod", "/go/build-cache"))
+                for line in lines
+            )
+            stage = parent
+        assert "runtime-base" in lineage
+    assert stages["controller"][0] == "runtime-sources"
+    assert any("COPY --from=go-deps /usr/local/go" in line for line in stages["controller"][1])
+
+
+def test_build_scripts_never_flatten_image_layers():
+    for script in (REPO_ROOT / "scripts").glob("*.sh"):
+        text = script.read_text()
+        assert not re.search(r"docker\s+(?:container\s+)?export\b|docker\s+(?:image\s+)?import\b|--squash", text), (
+            script
+        )

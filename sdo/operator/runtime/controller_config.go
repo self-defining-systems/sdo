@@ -128,6 +128,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	optBool("--synthetic-traffic", config.SyntheticTraffic)
 	dur("--synthetic-traffic-warmup", config.GetSyntheticTrafficWarmup())
 	str("--prober-binary", config.GetProberBinary())
+	str("--toolchain-image", config.GetToolchainImage())
 	str("--prober-image", config.GetProberImage())
 	str("--prober-url", config.GetProberUrl())
 	str("--metrics-url", config.GetMetricsUrl())

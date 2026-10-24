@@ -60,7 +60,8 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 		control = config.Lifecycle.Namespace
 	}
 	validation := broker.KubernetesValidationJobClient{
-		Client: client, Namespace: control, Image: config.Install.ValidatorImage,
+		ToolchainImage: config.Install.ControllerImage,
+		Client:         client, Namespace: control, Image: config.Install.ValidatorImage,
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		SchemaIdentity: sdkSchemaIdentity, HealthyBaseline: config.Install.HealthyBaseline,
 	}
@@ -85,7 +86,8 @@ func RunOperate(ctx context.Context, config OperateConfig) (lifecycle.Result, er
 	}
 	readiness.AcceptedRoot = config.ApplicationRoot
 	workers := worker_registry.KubernetesExecutor{
-		Client: client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
+		ToolchainImage: config.Install.ControllerImage,
+		Client:         client, Namespace: control, Registry: registry, ServiceAccount: "sdo-responder",
 		RepositoryPVC: config.Install.RepositoryPVC, RepositoryMountPath: config.RepositoryMount,
 		CredentialsSecret: config.Install.CredentialsSecret,
 		Environment: map[string]string{

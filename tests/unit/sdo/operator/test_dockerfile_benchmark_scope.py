@@ -105,9 +105,9 @@ def test_controller_and_plain_responder_stages_copy_no_benchmarks_code() -> None
 
 def test_controller_image_is_separate_from_python_agent_runtime() -> None:
     text = RUNTIME_DOCKERFILE.read_text(encoding="utf-8")
-    go_stage, controller = text.split("FROM go-runtime AS controller", 1)
-    controller = controller.split("FROM node:", 1)[0]
-    assert "COPY --from=kubectl" in go_stage.split("AS go-runtime", 1)[1]
+    go_stage, controller = text.split("FROM runtime-sources AS controller", 1)
+    controller = controller.split("FROM runtime-sources AS validator", 1)[0]
+    assert "COPY --from=kubectl" in go_stage.split("AS runtime-base", 1)[1]
     assert "python3" not in controller
     assert "npm " not in controller
     assert "FROM worker-runtime AS responder" in text
@@ -132,12 +132,13 @@ def test_sregym_responder_image_copies_no_forbidden_paths() -> None:
     scripted = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "scripted-worker"))
     assert scripted == {"benchmarks/sregym/adapter/scripted_worker.py", *SCRIPTED_PROGRAM_FILES}
     guard_build = _expand(_stage_copy_sources(BENCHMARK_DOCKERFILE, "submission-guard-build"))
-    assert guard_build == {
+    assert {path for path in guard_build if path.startswith("benchmarks/")} == {
         "benchmarks/sregym/protocol/submission_go/go.mod",
         "benchmarks/sregym/protocol/submission_go/go.sum",
         "benchmarks/sregym/protocol/submission_go/guard.go",
         "benchmarks/sregym/protocol/submission_go/cmd/sdo-submission-guard/main.go",
     }
+    assert all(path.startswith(("benchmarks/", "sdo/operator/contracts/")) for path in guard_build)
     assert guard_build.isdisjoint(copied)
     assert (
         "COPY --from=submission-guard-build /usr/local/bin/sdo-submission-guard /usr/local/bin/sdo-submission-guard"

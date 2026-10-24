@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""SREGym experiment launcher.
+"""Legacy SREGym experiment launcher; every launch requires --allow-non-fastloop.
+
+Use benchmarks.sregym.fastloop for normal runs.
 
 Supports both single experiments and multi-stage pipelines with
 application-workspace chaining.
@@ -69,6 +71,11 @@ def _parse_stage_arg(args: list[str]) -> tuple[int | None, list[str]]:
 
 
 def main() -> None:
+    if "--allow-non-fastloop" not in sys.argv[1:]:
+        raise SystemExit(
+            "Use benchmarks.sregym.fastloop for warm lanes; legacy live launches require --allow-non-fastloop"
+        )
+    sys.argv.remove("--allow-non-fastloop")
     if len(sys.argv) < 2:
         print(
             "Usage: run_sregym.py <config.toml | experiment_dir> [--stage N]",

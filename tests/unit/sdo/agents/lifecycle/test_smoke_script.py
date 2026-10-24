@@ -16,8 +16,10 @@ def test_runtime_smoke_runs_native_lifecycle_with_typed_fixture_workers() -> Non
 def test_image_build_checks_the_benchmark_adapter_as_the_runtime_uid() -> None:
     script = (Path(__file__).parents[5] / "scripts/build_sdo_images.sh").read_text()
 
-    assert "worker_target=sregym-responder" in script
-    assert '--target "${worker_target}"' in script
+    assert "export SDO_WORKER_TARGET=sregym-responder" in script
+    assert 'docker buildx bake --file scripts/sdo-images.hcl --load "${selected[@]}"' in script
+    graph = (Path(__file__).parents[5] / "scripts/sdo-images.hcl").read_text()
+    assert "target = SDO_WORKER_TARGET" in graph
     assert "--user 65532:65532" in script
     assert "benchmarks.sregym.adapter.submission --help" in script
     assert "from sdo.agents.responder import run_worker_task" in script
@@ -26,8 +28,10 @@ def test_image_build_checks_the_benchmark_adapter_as_the_runtime_uid() -> None:
 def test_scripted_image_build_checks_the_merged_workers_as_the_runtime_uid() -> None:
     script = (Path(__file__).parents[5] / "scripts/build_sdo_images.sh").read_text()
 
-    assert "worker_target=scripted-worker" in script
-    assert '--target "${worker_target}"' in script
+    assert "export SDO_WORKER_TARGET=scripted-worker" in script
+    assert 'docker buildx bake --file scripts/sdo-images.hcl --load "${selected[@]}"' in script
+    graph = (Path(__file__).parents[5] / "scripts/sdo-images.hcl").read_text()
+    assert "target = SDO_WORKER_TARGET" in graph
     entry_point = "from benchmarks.sregym.adapter.scripted_worker import scripted_responder, ScriptedReflector"
     assert entry_point in script
 
