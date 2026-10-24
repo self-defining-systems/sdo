@@ -148,7 +148,8 @@ def test_fail_soft_controller_reset_preserves_accepted_repository(
     monkeypatch.setattr("benchmarks.sregym.fastloop.reset.kubectl", fake_kubectl)
     KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller("a" * 40, preserve_repository=True)
 
-    assert not payloads, "warm reset must preserve broker ledger and accepted repository"
+    assert payloads, "warm reset must remove proposal scratch without deleting accepted history"
+    assert "git -C" not in payloads[0]["spec"]["containers"][0]["command"][2]
     stopped = next(i for i, args in enumerate(calls) if args[:2] == ["delete", "jobs"])
     retired = next(i for i, args in enumerate(calls) if args[:3] == ["delete", "configmap", "sdo-controller-state"])
     assert stopped < retired
@@ -292,10 +293,18 @@ def test_reset_cancels_and_awaits_workers_before_deleting_captures(tmp_path: Pat
     assert cleaned
 
 
-@pytest.mark.parametrize(("has_job", "orphan_pod"), [(True, False), (False, False), (False, True)])
+@pytest.mark.parametrize(
+    ("has_job", "orphan_phase"), [(True, None), (False, None), (False, "Running"), (False, "Pending")]
+)
 @pytest.mark.parametrize("preserve", [True, False])
+@pytest.mark.parametrize("stop_fails_once", [False, True])
 def test_pending_reset_retires_state_and_preserves_durable_history(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, has_job: bool, orphan_pod: bool, preserve: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    has_job: bool,
+    orphan_phase: str | None,
+    preserve: bool,
+    stop_fails_once: bool,
 ) -> None:
     """Execute the actual cleanup script on synthetic Git and ledger files."""
     import shlex
@@ -322,8 +331,18 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
     session = workspace / ".sdo-runtime/sessions/prior/evidence.json"
     session.parent.mkdir(parents=True)
     session.write_text("{}\n")
+    proposal = workspace / "worktrees/proposal-prior/proposal.txt"
+    proposal.parent.mkdir(parents=True)
+    proposal.write_text("scratch\n")
+    unrelated = workspace / "credentials/opaque"
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_bytes(b"synthetic-do-not-touch")
+    historical = {"sdo-prior-request": "evidence", "sdo-prior-result": "evidence"}
+    transient = {"sdo-controller-state", "sdo-controller-state-drift-verdicts"}
+    configmaps = {**historical, **dict.fromkeys(transient, "pending")}
     state: dict[str, Any] = {"incident_open": True, "incident_request": {"incident_id": "prior"}}
     stopped = False
+    fail_stop = stop_fails_once
     orphan_stopped: list[bool] = []
     spec = {
         "containers": [
@@ -337,11 +356,11 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
     }
 
     def fake_kubectl(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        nonlocal stopped
+        nonlocal stopped, fail_stop
         if args[:2] == ["get", "pods"]:
             items = (
-                [{"metadata": {"name": "orphan-controller"}, "status": {"phase": "Running"}, "spec": spec}]
-                if orphan_pod
+                [{"metadata": {"name": "orphan-controller"}, "status": {"phase": orphan_phase}, "spec": spec}]
+                if orphan_phase
                 else []
             )
             return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
@@ -353,6 +372,9 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
                 "NotFound" if not has_job else "",
             )
         if args[:2] == ["delete", "jobs"]:
+            if fail_stop:
+                fail_stop = False
+                raise RuntimeError("synthetic writer stop failed")
             assert "--wait=true" in args
             assert "--cascade=foreground" in args
             stopped = True
@@ -361,7 +383,9 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
             orphan_stopped.append(True)
         if args[:3] == ["delete", "configmap", "sdo-controller-state"]:
             assert stopped, "reset retired state while a controller could recreate it"
-            assert not orphan_pod or orphan_stopped, "orphan controller still running"
+            assert not orphan_phase or orphan_stopped, "orphan controller still running"
+            for name in args[2:]:
+                configmaps.pop(name, None)
             state.clear()
         if args[:1] == ["apply"]:
             assert stopped
@@ -372,9 +396,19 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(reset, "kubectl", fake_kubectl)
-    KubectlResetCluster(tmp_path / "kubeconfig", "sdo").reset_controller(seed, preserve_repository=preserve)
+    cluster = KubectlResetCluster(tmp_path / "kubeconfig", "sdo")
+    if stop_fails_once:
+        with pytest.raises(RuntimeError, match="synthetic writer stop failed"):
+            cluster.reset_controller(seed, preserve_repository=preserve)
+        assert state["incident_open"] is True
+        assert set(configmaps) == set(historical) | transient
+        assert ledger.read_bytes() == ledger_bytes
+        assert proposal.exists()
+        assert session.exists()
+        assert memory.exists()
+    cluster.reset_controller(seed, preserve_repository=preserve)
     head = subprocess.check_output([*commit, "rev-parse", "HEAD"], text=True).strip()
-    if preserve or not (has_job or orphan_pod):
+    if preserve or not (has_job or orphan_phase):
         assert head == accepted
         assert memory.is_file()
         assert ledger.read_bytes() == ledger_bytes, "warm reset destroyed durable broker history"
@@ -383,3 +417,8 @@ def test_pending_reset_retires_state_and_preserves_durable_history(
         assert not ledger.exists()
         assert not session.exists()
     assert state == {}, "next controller would resume an expired prior incident"
+    assert configmaps == historical, "reset must retire transient drift cache and retain historical evidence"
+    assert unrelated.read_bytes() == b"synthetic-do-not-touch"
+    if has_job or orphan_phase:
+        assert not proposal.exists(), "proposal checkout must not survive a completed reset"
+        assert not session.exists(), "session scratch must not survive a completed reset"
