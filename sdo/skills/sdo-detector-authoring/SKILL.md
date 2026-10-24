@@ -46,7 +46,7 @@ a source exists.
 - An unreachable source, a failed query or a missing result is a detector error, never a clear and never a finding.
   Do not turn it into one.
 - Findings carry the query, value, threshold and labels as evidence, so each series is a distinct finding.
-- Query IDs are unique and non-empty, expressions non-empty, and a controller evaluates at most `metrics.MaxQueries`.
+- Query IDs are unique and non-empty, expressions non-empty, and a declared query bundle contains at most `metrics.MaxQueries`.
   The generated registration tests check this.
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a metrics URL is configured; do not author it.
