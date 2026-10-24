@@ -24,7 +24,7 @@ NoMatch tool evidence; every repair action is one of those applications; every m
 applied and every confirmed root cause is covered by an applied binding; and there is no program
 failure signal, drift event, exhausted loop or source repair. The prompt is then a few KB and the
 expected decision is `no_change`. Empty or `full` (fresh fallback, retries, anything else) is the
-complete authoring reflection. The closure's `request.state_changes` (absent in older ledgers or without a healthy baseline) is the controller's configuration diff against its last healthy baseline when the incident opened: `baseline_at`, `observed_at`, `changes` (`kind`, `name`, `change` of `added`/`removed`/`modified`, and field-level `before`/`after`, where ConfigMap data appears only as `sha256:` digests; current Secret fields are only `uid` and `resourceVersion`, with the object name on the change. Secret content drift is a resourceVersion change, never a data digest. Strict metadata-only list/watch has no full-object fallback; unsupported or forbidden metadata reads mark `Secret` unobserved. Secret type and key names are unavailable in PartialObjectMetadata and omitted. Older ledgers may contain Secret data digests), `omitted`, and `unobserved_kinds`; objects that existed unchanged at the baseline, such as SREGym's `failure-admin-*` decoys, never appear. The closure's `final_state_changes` (absent in ledgers before the verification-time state diff, and without a healthy baseline) is the same shape of diff, recomputed at verification time instead of dispatch time: a composite fault's later component can land a few seconds after dispatch while the incident is still open (K2's readiness-probe fault about 6s after its selector fault), so it can appear here without appearing in `request.state_changes`. Current derivation records these diffs for context without checking diagnosis references. Historical closures may also carry `observed_state_changes` to date cited changes against repairs; current closures omit it. `health_cleared_at` records the start of the final health-clear streak, without root-cause attribution. Program trust retains its separate bound application and NoMatch checks. The closure's `cleaned_helpers` (absent in older ledgers) lists the responder helper pods and Jobs (`sdo.dev/responder-helper=true`) the controller deleted when the responder completed. The closure's `incident_detector_states` (absent in older ledgers) holds the latest post-response evaluation of each non-health detector that raised a finding; it is learning evidence, not a closure gate. A closure with empty `final_detector_states` means health never cleared within the controller's verification window; the broker classifies it `failed` (no reflection) and strict receipt validation rejects it. A missing proposal commit is valid under `recorded-actions`; current success classification uses successful repair actions, while verified clearing without a repair is `cleared_without_action`. Receipts do not re-check diagnosis or repair evidence. Require incident IDs and commit hashes to agree with the receipt and outcome.
+complete authoring reflection. The closure's `request.state_changes` (absent in older ledgers or without a healthy baseline) is the controller's configuration diff against its last healthy baseline when the incident opened: `baseline_at`, `observed_at`, `changes` (`kind`, `name`, `change` of `added`/`removed`/`modified`, and field-level `before`/`after`, where ConfigMap data appears only as `sha256:` digests; current Secret fields are only `uid` and `resourceVersion`, with the object name on the change. Secret content drift is a resourceVersion change, never a data digest. Strict metadata-only list/watch has no full-object fallback; unsupported or forbidden metadata reads mark `Secret` unobserved. Secret type and key names are unavailable in PartialObjectMetadata and omitted. Older ledgers may contain Secret data digests), `omitted`, and `unobserved_kinds`; objects that existed unchanged at the baseline, such as SREGym's `failure-admin-*` decoys, never appear. The closure's `final_state_changes` (absent in ledgers before the verification-time state diff, and without a healthy baseline) is the same shape of diff, recomputed at verification time instead of dispatch time: a composite fault's later component can land a few seconds after dispatch while the incident is still open (K2's readiness-probe fault about 6s after its selector fault), so it can appear here without appearing in `request.state_changes`. Current derivation records these diffs for context without checking diagnosis references. Historical closures may also carry `observed_state_changes` to date cited changes against repairs; current closures omit it. `health_cleared_at` records the start of the final health-clear streak, without root-cause attribution. Program trust retains its separate bound application and NoMatch checks. The closure's `cleaned_helpers` (absent in older ledgers) lists the responder helper pods and Jobs (`sdo.dev/responder-helper=true`) the controller deleted when the responder completed. The closure's `incident_detector_states` (absent in older ledgers) holds the latest post-response evaluation of each non-health detector that raised a finding; it is learning evidence, not a closure gate. A closure with empty `final_detector_states` means health never cleared within the controller's verification window; the broker classifies it `failed` and strict receipt validation rejects it as a full mitigation. Reflection can still run for an independently verified partial repair, as described below. A missing proposal commit is valid under `recorded-actions`; current success classification uses successful repair actions, while verified clearing without a repair is `cleared_without_action`. Receipts do not re-check diagnosis or repair evidence. Require incident IDs and commit hashes to agree with the receipt and outcome.
 
 
 ### Historical Python broker fields
@@ -149,3 +149,47 @@ Source-comparison recordings preserve the accepted manifest fields and the full 
 
 
 Responder continuation retains the same incident, proposal checkout, provider session and original deadline. The native dispatcher independently verifies each returned response and persists a bounded continuation before creating its distinct immutable task/Job. Controller verification can resume a dispatch that initially looked healthy. A failed model return is not terminal while continuation time/loop budget remains. Inspect responder tool state Continuation, per-task checkpoints and controller verification evidence; sum incremental per-turn usage, deduplicate repair action IDs, and do not count continued jobs as separate incidents. Optional usage totals remain unknown if any component is unknown. ResponseLoopsUsed includes returned response attempts as well as the maximum observed apply-batch count.
+### Partial repair reflection
+
+Aggregate `classification=failed` does not erase independently verified repairs.
+For an existing executable repair, the broker admits a confirmed cause only when every cause resource has a successful,
+timed repair receipt linked to its controller application (or exact-equivalent manual repair): not dry-run or
+rolled back, no application/rollback error, affirmative verification and final exact
+equivalence, and revision/binding-scoped post-apply NoMatch in its matching tool
+transcript. A successful command, flat NoMatch, or worker-authored verification
+claim alone is insufficient. This includes controller-verified equivalent manual
+repairs. Missing independent proof remains unlearned. Overlapping cause groups on one object are ambiguous under resource-level receipts and conservatively abstain; an unverified application cannot inherit another application’s proof on the same object. No benchmark grade is used.
+
+Cold first-generation repairs need no prior program or plan. Their trusted recorded
+mutation receipts must follow dispatch and the original resource-bound triggering
+findings. The latest error-free controller `verify` must evaluate those detectors
+after the mutation, with no remaining finding on any cause resource (including
+related refs) while a peer resource remains active. A later write invalidates older
+clearance; missing triggers, stale evaluation, or same-resource cause ambiguity
+abstain. Read-only operations and worker-authored success claims do not qualify.
+
+Controller verification records above the existing 2KiB opaque-response cap retain
+a typed `verification_summary`: version, completeness, exact open-finding count,
+all distinct primary/related open-resource refs, and detector IDs/status/timestamps.
+The controller derives it before dropping verbose findings. If even this summary
+cannot fit, it is omitted; learning abstains instead of using counts or mutable
+response files. Historical truncated calls without this summary remain unknown.
+The worker sees only repaired refs, supporting evaluations/time, and the count of
+other open findings, without the peer cause or opaque transcript.
+
+The committed outcome retains all causes, receipts, and its failed classification.
+Its `reflection_eligibility.causes` contains only verified repaired cause groups,
+with indices into the full outcome; unassigned questions are excluded. The worker
+receives compact cause indices and only those causes, verified receipts and typed
+applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
+claims are omitted from that learning view. No global recovery, positive fixed
+capture, program trust credit, or repaired peer is inferred from partial repair.
+A missing fixed capture remains an evidence gap. Full-success reflection retains
+its existing behavior.
+
+If no cause qualifies, `requires_reflection=false` and the durable
+`reflection_decision` is `no_change` with
+`no_change_reason=no_independently_verified_repair`; no model is dispatched.
+When reflection runs, its usage follows the existing decision/result ledger path,
+including across retries. A pre-cleanup benchmark grade and cleanup status remain
+separate measurements; neither authorizes production learning.
