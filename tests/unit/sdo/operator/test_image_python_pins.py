@@ -163,6 +163,12 @@ def test_validator_image_uses_controller_supplied_offline_toolchain() -> None:
     assert "toolchain.Apply(&job.Spec.Template.Spec, k.ToolchainImage)" in source
 
 
+def test_health_refresh_forwards_the_typed_controller_toolchain() -> None:
+    # This launch wiring must hold before an in-cluster judge can compile health.
+    source = (REPO_ROOT / "sdo/operator/operatorcli/health_refresh.go").read_text()
+    assert re.search(r"ToolchainImage:\s*config\.GetToolchainImage\(\)", source)
+
+
 def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     script = (REPO_ROOT / "scripts/build_sdo_images.sh").read_text(encoding="utf-8")
     for image in ("sdo-detector-validator", "sdo-controller", "sdo-responder", "sdo-sregym-responder"):
