@@ -26,7 +26,10 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if err != nil {
 		return err
 	}
-	return generatePrograms(workspace, module, programs)
+	if err := generatePrograms(workspace, module, programs); err != nil {
+		return err
+	}
+	return operatorReplayTests(workspace, programs)
 }
 
 func generatePrograms(root, module string, programs []programvalidation.Spec) error {

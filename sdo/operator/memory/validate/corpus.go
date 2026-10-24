@@ -9,12 +9,13 @@ import (
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	programvalidation "sdo.dev/operator/memory/validate/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// validateNewProgramCorpus requires a captured matching case when a new
-// diagnoser enters operational memory. Existing programs keep their cases.
-func validateNewProgramCorpus(candidate, baseline string) error {
+// validateNewProgramCorpus requires captured matching evidence for responder
+// learning, or explicitly operator-origin positive cases in a human import.
+func validateNewProgramCorpus(candidate, baseline string, operatorImport bool, changed []string) error {
 	programRoot := filepath.Join(candidate, layout.PlaybooksDir)
 	programs, err := os.ReadDir(programRoot)
 	if os.IsNotExist(err) {
@@ -41,7 +42,13 @@ func validateNewProgramCorpus(candidate, baseline string) error {
 			return err
 		}
 		if _, err := os.Stat(filepath.Join(baseline, layout.PlaybookDir(item.Name()), "diagnose.go")); err == nil {
-			continue
+			touched := false
+			for _, p := range changed {
+				touched = touched || strings.HasPrefix(p, layout.PlaybookDir(item.Name())+"/")
+			}
+			if !operatorImport || !touched {
+				continue
+			}
 		} else if !os.IsNotExist(err) {
 			return err
 		}
@@ -59,6 +66,16 @@ func validateNewProgramCorpus(candidate, baseline string) error {
 				if id != item.Name() {
 					continue
 				}
+				if operatorImport {
+					marked, err := programvalidation.OperatorCorpus(dir)
+					if err != nil {
+						return err
+					}
+					if marked {
+						captured = true
+					}
+					continue
+				}
 				if err := sdktest.ValidateCorpusProvenance(dir); err != nil {
 					return fmt.Errorf("new program %s corpus %s: %w", item.Name(), entry.Name(), err)
 				}
@@ -68,6 +85,9 @@ func validateNewProgramCorpus(candidate, baseline string) error {
 			}
 		}
 		if !captured {
+			if operatorImport {
+				return fmt.Errorf("new program %s requires an operator-origin corpus case", item.Name())
+			}
 			return fmt.Errorf("new program %s requires a captured incident corpus case", item.Name())
 		}
 	}
@@ -114,6 +134,16 @@ func (s *run) corpusRules(baseline string) error {
 			}
 		}
 		dir := filepath.Join(s.req.Root, rel)
+		marked, operatorErr := programvalidation.OperatorCorpus(dir)
+		if marked || operatorErr != nil {
+			if operatorErr != nil {
+				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: rel, Message: operatorErr.Error()})
+			}
+			if s.req.Actor != Human || s.req.Phase != ImportPhase {
+				s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: rel, Message: "operator-origin corpus may only be added by human in import phase"})
+			}
+			continue
+		}
 		if err := sdktest.ValidateCorpusProvenance(dir); err != nil {
 			s.add(Semantic, Diagnostic{Rule: RuleCorpusProvenance, Path: rel, Message: err.Error()})
 		}

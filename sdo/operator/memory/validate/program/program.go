@@ -21,6 +21,7 @@ import (
 type Spec struct {
 	ID, Diagnoser, Mitigator string
 	Cases, NegativeCases     []string
+	OperatorCases            []string
 }
 
 var programID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -155,6 +156,15 @@ func inspect(workspace, module, detectors string) ([]Spec, error) {
 			return nil, fmt.Errorf("playbook %s needs a labeled corpus case", ID)
 		}
 		item.Cases = Cases
+		for _, caseID := range Cases {
+			marked, err := OperatorCorpus(filepath.Join(workspace, "corpus", caseID))
+			if err != nil {
+				return nil, err
+			}
+			if marked {
+				item.OperatorCases = append(item.OperatorCases, caseID)
+			}
+		}
 		item.NegativeCases, err = noMatchCasesFor(filepath.Join(workspace, "corpus"), ID)
 		if err != nil {
 			return nil, err
@@ -188,7 +198,15 @@ func checkCorpusLabels(root string, programs []Spec) error {
 		if err != nil {
 			return err
 		}
+		marked, err := OperatorCorpus(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return err
+		}
 		allowed := map[string]bool{"open.json": true, "fixed.json": true, "healthy.json": true, "recordings.json": true, "labels.json": true}
+		if marked {
+			allowed["operator.json"] = true
+			allowed["accepted.json"] = true
+		}
 		for _, file := range files {
 			if file.IsDir() || !allowed[file.Name()] {
 				return fmt.Errorf("unexpected corpus file %s; only snapshots, recordings, and labels are allowed", filepath.Join(entry.Name(), file.Name()))

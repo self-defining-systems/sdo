@@ -317,7 +317,7 @@ func TestEveryKindIsOwnedByEveryoneOrNoAgent(t *testing.T) {
 	// the controller: no actor may change them in any phase.
 	for _, kind := range []layout.Kind{layout.KindOutcome, layout.KindLifecycleProvenance, layout.KindLegacyOutcomes} {
 		for _, actor := range []Actor{Human, Deployer, HealthJudge, Responder, Upkeep} {
-			for _, phase := range []Phase{ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase} {
+			for _, phase := range []Phase{ProposalPhase, ReflectionPhase, InitialPhase, OutcomePhase, ImportPhase} {
 				if allowed(actor, phase, kind, "") {
 					t.Errorf("%s may change %s in %s", actor, kind, phase)
 				}

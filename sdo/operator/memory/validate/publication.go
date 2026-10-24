@@ -303,7 +303,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 // PhaseDiagnostics is shared with publication before it selects a proposal.
 func PhaseDiagnostics(phase Phase) []Diagnostic {
 	if !knownPhase(phase) {
-		return []Diagnostic{{Rule: RuleUnknownPhase, Message: fmt.Sprintf("unknown phase %q", phase), Hint: "phases are proposal, reflection, initial, and outcome"}}
+		return []Diagnostic{{Rule: RuleUnknownPhase, Message: fmt.Sprintf("unknown phase %q", phase), Hint: "phases are proposal, reflection, initial, import, and outcome"}}
 	}
 	return nil
 }

@@ -218,7 +218,7 @@ func Classify(p string) (Kind, string, bool) {
 	case "corpus":
 		if len(parts) == 3 && ValidPlaybookID(parts[1]) {
 			switch parts[2] {
-			case "open.json", "fixed.json", "healthy.json", "recordings.json", "labels.json":
+			case "open.json", "fixed.json", "healthy.json", "recordings.json", "labels.json", "operator.json", "accepted.json":
 				return KindCorpus, parts[1], true
 			}
 		}
