@@ -89,7 +89,7 @@ func publishReachabilityBaseline(ctx context.Context, root string, authority *br
 
 // acceptStartupReachabilityBaseline requires the existing explicit healthy-
 // baseline opt-in, fresh probes, and independent goal checks throughout capture.
-// A restored investigation/closure can only consume accepted data, never learn
+// A restored investigation/active closure can only consume accepted data, never learn
 // an exclusion from its incident state. Publication asks the builder to adopt
 // the new accepted diagnostic revision before any incident can start.
 func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root string, authority *broker.Broker, enabled bool, observer *ServiceReachabilityObserver, provider SnapshotProvider, detectors []sdk.Detector) error {
@@ -97,7 +97,7 @@ func acceptStartupReachabilityBaseline(ctx context.Context, c *Controller, root 
 		return nil
 	}
 	c.mu.Lock()
-	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.pendingClosure != nil || c.closureReceipt != nil
+	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	if busy {
 		return nil

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/prober"
 	"sdo.dev/operator/sdk"
@@ -99,7 +100,7 @@ func TestStartupReachabilityBaselineNeverCapturesRestoredIncident(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []*Controller{{incidentOpen: true}, {currentIncidentRequest: &IncidentRequest{}}, {pendingClosure: &IncidentClosure{}}, {closureReceipt: &ClosureReceipt{}}} {
+	for _, c := range []*Controller{{incidentOpen: true}, {currentIncidentRequest: &IncidentRequest{}}, {pendingClosure: &IncidentClosure{}, closureState: contracts.ClosureState_CLOSURE_STATE_PENDING}, {closureReceipt: &ClosureReceipt{}, closureState: contracts.ClosureState_CLOSURE_STATE_COMMITTED}, {pendingClosure: &IncidentClosure{}, closureReceipt: &ClosureReceipt{}, closureState: contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING}} {
 		// Nil observation dependencies deliberately panic if a restored incident
 		// reaches measurement, rather than proving only that publication was skipped.
 		if err := acceptStartupReachabilityBaseline(context.Background(), c, root, authority, true, &ServiceReachabilityObserver{}, nil, nil); err != nil {
@@ -187,5 +188,49 @@ func TestStartupReachabilityBaselineRejectsGoalFailureDuringMeasurement(t *testi
 	b, err := memory.ReadReachabilityBaseline(ctx, root, "HEAD")
 	if err != nil || b != nil {
 		t.Fatalf("unhealthy baseline persisted: %+v %v", b, err)
+	}
+}
+
+func TestStartupReachabilityBaselineAfterTerminalClosureAndSourceChange(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root, authority := baselineRepository(t)
+	snapshots := &mutableSnapshots{snapshot: reachabilityApp(9600)}
+	dialer, err := prober.New(prober.Config{Namespace: "shop", LinkAddress: func(link traffic.Link) string { return link.To }, DialContext: func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := NewServiceReachabilityObserver(ServiceReachabilityConfig{Prober: reachabilityDirect{dialer}, Snapshots: snapshots, Interval: time.Millisecond})
+	defer observer.Stop()
+	provider := TrafficSnapshotProvider{Base: snapshots, Reachability: observer}
+	goal := controllerDetector("health-objective", time.Second, sdk.Finding{})
+	goal.spec.Class = sdk.DetectorClassHealth
+	capture := func(c *Controller) {
+		t.Helper()
+		if err := acceptStartupReachabilityBaseline(ctx, c, root, authority, true, observer, provider, []sdk.Detector{goal}); !errors.Is(err, memory.ErrHealthRefreshRequired) {
+			t.Fatalf("healthy source revision did not publish/adopt: %v", err)
+		}
+		observer.Stop()
+	}
+	capture(&Controller{})
+	previous, err := memory.ReadReachabilityBaseline(ctx, root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "application-config.yaml"), []byte("version: 2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	nativeGit(t, root, "add", "application-config.yaml")
+	nativeGit(t, root, "commit", "-qm", "change accepted source after terminal incident")
+	failed := &Controller{closureState: contracts.ClosureState_CLOSURE_STATE_FAILED, pendingClosure: &IncidentClosure{}, closureReceipt: &ClosureReceipt{}}
+	capture(failed)
+	current, err := memory.ReadReachabilityBaseline(ctx, root, "HEAD")
+	if err != nil || current.Authorization.SourceInputs == previous.Authorization.SourceInputs {
+		t.Fatalf("stale baseline survived source change: %v", err)
+	}
+	if failed.pendingClosure == nil || failed.closureReceipt == nil || failed.closureState != contracts.ClosureState_CLOSURE_STATE_FAILED {
+		t.Fatal("baseline acceptance discarded failed closure evidence")
 	}
 }
