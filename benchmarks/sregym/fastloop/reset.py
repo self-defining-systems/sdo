@@ -85,17 +85,33 @@ class KubectlResetCluster(KubectlApplicationCluster):
             namespace=namespace,
             kubeconfig=self.kubeconfig,
         )
-        if cleanup_spec is None:
+        # A controller Pod can outlive its Job. Await those observed writers
+        # too before deleting the state that their next write could recreate.
+        for pod in running:
+            kubectl(
+                ["delete", "pod", pod["metadata"]["name"], "--ignore-not-found=true", "--wait=true", "--timeout=120s"],
+                namespace=namespace,
+                kubeconfig=self.kubeconfig,
+            )
+        # Retire only transient controller state after all writers stop. The
+        # next incident must not resume an expired request/proposal checkout.
+        kubectl(
+            ["delete", "configmap", "sdo-controller-state", "--ignore-not-found=true", "--wait=true"],
+            namespace=namespace,
+            kubeconfig=self.kubeconfig,
+        )
+        # Native broker ledgers live under worktrees. A warm reset preserves
+        # that history, accepted Git and session evidence for the whole stream.
+        if preserve_repository or cleanup_spec is None:
             return
         controller = next(container for container in cleanup_spec["containers"] if container["name"] == "controller")
         mount = next(mount for mount in controller["volumeMounts"] if mount["mountPath"] == "/workspace")
         volume = next(volume for volume in cleanup_spec["volumes"] if volume["name"] == mount["name"])
-        cleanup = "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees"
-        if not preserve_repository:
-            cleanup = (
-                'git -C /workspace/application reset --hard "$1" && '
-                "git -C /workspace/application clean -fd && " + cleanup
-            )
+        cleanup = (
+            'git -C /workspace/application reset --hard "$1" && '
+            "git -C /workspace/application clean -fd && "
+            "rm -rf /workspace/.sdo-runtime/sessions /workspace/worktrees"
+        )
         pod = {
             "apiVersion": "v1",
             "kind": "Pod",
