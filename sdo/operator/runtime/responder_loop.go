@@ -104,6 +104,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	continuation                    responderContinuation
 	MenuConfig                      *ResponderMenuConfig
 	menu                            *contracts.MitigationMenu
 	menuEntries                     map[string]menuEntry

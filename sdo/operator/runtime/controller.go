@@ -982,6 +982,27 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	// A terminal dispatch failure already closes as failed once health permits
 	// it. Unresolved drift must not delay it or count as verified recovery.
 	terminalFailure := !scopeCurrent || (healthVerified && c.dispatchError != "")
+	if !verified && scopeCurrent && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+		if continuer, ok := c.dispatcher.(interface {
+			ContinueAfterVerification(context.Context, IncidentRequest, []DetectorEvaluation, time.Time) (bool, error)
+		}); ok {
+			states, _ := c.latestEvaluations(c.healthDetectorIDs, time.Time{}, false)
+			resumed, err := continuer.ContinueAfterVerification(ctx, *c.currentIncidentRequest, states, now)
+			if err != nil {
+				c.mu.Unlock()
+				c.reportBrokerError("resume unhealthy responder", err)
+				return
+			}
+			if resumed {
+				c.responderDone = false
+				c.responderCompletedAt = time.Time{}
+				c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
+				c.resetDispatchRetryLocked()
+				c.mu.Unlock()
+				return
+			}
+		}
+	}
 	if !verified {
 		// One timeout bounds how long a stuck incident can block the stream. It
 		// closes as a normal failed incident: with no final detector states
