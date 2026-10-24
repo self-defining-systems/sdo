@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -343,5 +344,27 @@ func TestPendingDriftAloneStillWaitsForBatchWindow(t *testing.T) {
 	}
 	if !c.IncidentOpen() {
 		t.Fatal("drift-only batch never opened after the batch window")
+	}
+}
+
+func TestUnexplainedDriftFindingUsesAcceptedSourceRestorationDefault(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := sdk.DriftEvent{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "flags"}, Classification: sdk.DriftUnexplained}
+	c.ConfigureDrift(DriftControllerConfig{})
+	c.queueUnexplainedFinding(now, event)
+	findings := exportState(t, c).PendingBatch.Findings
+	if len(findings) != 1 {
+		t.Fatalf("lost drift evidence: %+v", findings)
+	}
+	finding := findings[0]
+	if !strings.Contains(finding.Summary, "restore accepted-source differences") || !strings.Contains(finding.Summary, "positive evidence") {
+		t.Fatalf("finding still requires impact before restoration: %s", finding.Summary)
+	}
+	if finding.PrimaryResource.Name != event.Ref.Name || finding.DetectorId != "drift.unexplained" {
+		t.Fatalf("changed drift identity: %+v", finding)
 	}
 }

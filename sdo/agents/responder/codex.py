@@ -632,11 +632,9 @@ def _responder_prompt(request: IncidentRequest) -> str:
         else ""
     )
     drift_guidance = (
-        "Unexplained drift is a question: first determine whether it is a fault. Before any mutation, "
-        "establish a concrete contradiction with accepted source AND a violated application relation or "
-        "observed impact using captured or tool observations. Source absence and missing containerPort "
-        "declarations alone are insufficient evidence. Missing evidence means unsure: take no action and "
-        "leave the finding unresolved. Quiet health alone does not establish benign drift. "
+        "By default, restore app-namespace drift to accepted source and verify the restoration unless "
+        "positive evidence shows the difference is intended, such as a runtime-managed field or a "
+        "recorded accepted change; uncertainty alone must not block restoration. "
         "For a checked benign observation, return its exact ref, fields and manager in drift_events with "
         "investigation_verdict benign, a concrete reason and observation evidence. A wholly benign no-op "
         "may return completed with no repairs; it earns no mitigation or learning credit. "

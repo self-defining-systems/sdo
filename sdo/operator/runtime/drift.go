@@ -596,7 +596,7 @@ func (c *Controller) attachDrift(finding sdk.Finding) bool {
 func (c *Controller) queueUnexplainedFinding(now time.Time, event sdk.DriftEvent) {
 	encoded, _ := json.Marshal(event)
 	finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent,
-		Summary: "unexplained drift; establish a source contradiction and violated relation or impact before action", Evidence: bounded(string(encoded)), PrimaryResource: event.Ref, ParameterBindings: map[string]sdk.ObjectRef{"resource": event.Ref}, Metadata: map[string]any{"drift_event": event}}
+		Summary: "unexplained drift; in the app namespace restore accepted-source differences unless positive evidence shows intended drift, then verify", Evidence: bounded(string(encoded)), PrimaryResource: event.Ref, ParameterBindings: map[string]sdk.ObjectRef{"resource": event.Ref}, Metadata: map[string]any{"drift_event": event}}
 	finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sha256.Sum256([]byte(driftEventKey(event))))
 	c.observeUnexplainedDrift(now, finding)
 	if c.attachDrift(finding) {
