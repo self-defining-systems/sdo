@@ -393,7 +393,14 @@ func noMatchCasesFor(root, programID string) ([]string, error) {
 // ReplayTests generates mandatory corpus, rename-invariance and mitigation generalization tests.
 func ReplayTests(programs []Spec) string {
 	var test strings.Builder
-	test.WriteString("package generated\n\nimport (\n\t\"encoding/json\"\n\t\"os\"\n\t\"testing\"\n\t\"path/filepath\"\n\t\"sdo.dev/operator/sdk/program\"\n\t\"sdo.dev/operator/sdk/sdktest\"\n)\n\nfunc TestProgramCorpus(t *testing.T) {\n var notes []sdktest.MitigationReplayResult\n defer func(){ data,err:=json.Marshal(notes);if err!=nil {t.Fatal(err)};if err:=os.WriteFile(\"mitigation-replay.json\",data,0600);err!=nil {t.Fatal(err)} }()\n\tregistry, err := Programs()\n\tif err != nil { t.Fatal(err) }\n")
+	test.WriteString("package generated\n\nimport (\n\t\"encoding/json\"\n\t\"os\"\n\t\"testing\"\n\t\"sdo.dev/operator/sdk/sdktest\"\n")
+	for _, item := range programs {
+		if len(item.Cases)+len(item.NegativeCases) > 0 {
+			test.WriteString("\t\"path/filepath\"\n\t\"sdo.dev/operator/sdk/program\"\n")
+			break
+		}
+	}
+	test.WriteString(")\n\nfunc TestProgramCorpus(t *testing.T) {\n var notes []sdktest.MitigationReplayResult\n defer func(){ data,err:=json.Marshal(notes);if err!=nil {t.Fatal(err)};if err:=os.WriteFile(\"mitigation-replay.json\",data,0600);err!=nil {t.Fatal(err)} }()\n\tregistry, err := Programs()\n\tif err != nil { t.Fatal(err) }\n")
 	for _, item := range programs {
 		fmt.Fprintf(&test, "\t{\n\t\tp, ok := registry.Diagnoser(%q)\n\t\tif !ok { t.Fatal(%q) }\n\t\tif p.Spec().ID != %q { t.Fatalf(\"program ID mismatch: %%s\", p.Spec().ID) }\n", item.ID, "missing diagnoser "+item.ID, item.ID)
 		for _, caseID := range item.Cases {

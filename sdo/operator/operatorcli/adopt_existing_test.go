@@ -57,6 +57,16 @@ func TestAdoptionCompilesAsIsAndLaterValidationStillRejects(t *testing.T) {
 	if !strings.Contains(message, "SDO-Origin: adopted-existing") || !strings.Contains(message, "SDO-Validation: skipped") {
 		t.Fatal(message)
 	}
+	// Unchanged inherited programs must still compile and pass vet/tests when
+	// a later ordinary broker proposal is checked.
+	w, err := builder.BuildWorkspace(context.Background(), builder.Config{ApplicationRoot: root, DiagnosticsRoot: filepath.Join(root, ".sdo/diagnostics"), OperatorRoot: operator})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := w.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	// Changing adopted program bytes must pass normal corpus validation.
 	if err := os.WriteFile(filepath.Join(root, ".sdo/playbooks/service-targetport-mismatch/diagnose.go"), []byte("package targetport\n"), 0644); err != nil {
 		t.Fatal(err)
