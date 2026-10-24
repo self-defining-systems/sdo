@@ -66,6 +66,11 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
 		for _, application := range outcome.GetPlanApplications() {
+			// Pending rollout is neither an independent success nor a failure.
+			// Explicit settlement and failure signals below remain authoritative.
+			if application.GetRolloutPending() != nil {
+				continue
+			}
 			if !application.GetApplied() && !strings.HasPrefix(application.GetApplicationId(), "fast-path") {
 				continue
 			}
