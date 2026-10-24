@@ -16,7 +16,7 @@ A live LLM run costs tens of minutes and millions of tokens, while the hermetic 
 | 2a toy cluster | Three-service kind app, Calico, real controller/broker, scripted workers | `fastloop up --app toy --dev-mount` | measured cold 130 s; reset 8.7 s; warm incident 15–19 s |
 | 2b | Hotel kind cluster with scripted agents and mounted source | `fastloop up --dev-mount`, then `fastloop reset` between runs | reset about 7 s, run a few minutes |
 | 3 | One recorded stage re-executed offline | `fastloop replay --run-dir <results/run-id> --incident 0 --stage reflection` | seconds |
-| 4 | Live models on kind | `fastloop run` on a warm lane; follow [references/live-run.md](references/live-run.md), which links [report.md](references/report.md) and [failure-modes.md](references/failure-modes.md) | tens of minutes per incident |
+| 4 | Live models on kind | [run-experiment](../run-experiment/SKILL.md) | tens of minutes per incident |
 
 The exact flags for tiers 0–1 are in [the testing guide](../../../docs/testing-guide.md), and for tiers 2–3 in [the fastloop README](../../../benchmarks/sregym/experiments/fastloop/README.md). Use those commands; do not restate them.
 
@@ -30,15 +30,7 @@ Climb only as far as the change's risk requires, and only from green: run a tier
 - Platform wiring (images, permissions, mounts, config): tier 2.
 - Prompts or model behavior: only tiers 3 and 4 show anything, so keep each such change small and isolated.
 
-In a brief, state the change's risk classes, the tiers required before handoff, and which tier gates the next live run. A handoff that skips a required tier is not done.
-
-## Live runs need approval
-
-Tier 4 spends real money and quota.
-
-1. The first time, ask the user which live runs are pre-approved, before one is near. Recommend: small smokes on the cheapest approved model are pre-approved; each full experiment is approved separately.
-2. Save the answer in your persistent agent state (for example `~/.agent-state/test-sdo/live-approval.md`) and reuse it; update it as soon as the user changes it.
-3. A live run outside the saved preference waits for explicit approval. Keep running the cheaper tiers meanwhile.
+In a brief, state the change's risk classes, the tiers required before handoff, and which tier gates the next live run. A handoff that skips a required tier is not done. Live runs follow [run-experiment](../run-experiment/SKILL.md), including its approval policy.
 
 ## When something fails
 
