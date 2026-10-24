@@ -205,8 +205,6 @@ _PARENT_PATH = re.compile(r"(?:^|[\s'\"=;(])\.\.(?:/[^\s'\";|&)]*)?(?=$|[\s'\";|
 _WRITE_REDIRECT_ABSOLUTE_PATH = re.compile(r"(?:^|[ \t])(?:\d*>>?|&>)\s*['\"]?(/[A-Za-z0-9_./*?{}$@%+=:,~-]+)")
 _GIT_OBJECT_PATH = re.compile(r"\b[0-9a-fA-F]{7,64}:(/[A-Za-z0-9_./*?{}$@%+=,~-]+)")
 _SYSTEM_COMMAND_ROOTS = tuple(Path(path) for path in ("/bin", "/usr/bin", "/usr/local/bin"))
-# Provisioned SDO skills live in the CLI home, outside the checkout, and are read by design.
-_SDO_SKILL_PATH = re.compile(r"/skills/sdo-(?:memory|detector-authoring|playbook-authoring)(?:/[^\s]*)?$")
 # One literal path segment: no globs, variables, or ``.``/``..`` traversal.
 _LITERAL_SEGMENT = r"[A-Za-z0-9_-][A-Za-z0-9_.-]*"
 
@@ -460,7 +458,11 @@ It compiles and tests the complete candidate, including the health detector and 
         except StructuredTurnError as exc:
             raise LifecycleAgentError(f"{role} failed: {exc}") from exc
         task_outputs = ClaudeTaskOutputs.for_session(turn.session_id, environ=os.environ, uid=os.getuid())
-        escaped_command = _first_repository_escape(turn.shell_commands, repository.resolve(), task_outputs=task_outputs)
+        home_variable = "CODEX_HOME" if self.provider == "codex" else "CLAUDE_CONFIG_DIR"
+        skills = {home_variable: turn.skill_directory} if turn.skill_directory is not None else {}
+        escaped_command = _first_repository_escape(
+            turn.shell_commands, repository.resolve(), task_outputs=task_outputs, skill_directories=skills
+        )
         if escaped_command is not None:
             raise LifecycleAgentError(
                 f"{role} read outside the application repository; discarding its output: {escaped_command[:300]}"
@@ -479,14 +481,20 @@ class ClaudeLifecycleBackend(CodexLifecycleBackend):
 
 
 def _first_repository_escape(
-    commands: Sequence[str], repository: Path, *, task_outputs: ClaudeTaskOutputs | None = None
+    commands: Sequence[str],
+    repository: Path,
+    *,
+    task_outputs: ClaudeTaskOutputs | None = None,
+    skill_directories: Mapping[str, Path] | None = None,
 ) -> str | None:
     """Return the first shell command that reaches outside *repository*, if any."""
     return next(
         (
             command
             for command in commands
-            if _command_escapes_repository(command, repository, task_outputs=task_outputs)
+            if _command_escapes_repository(
+                command, repository, task_outputs=task_outputs, skill_directories=skill_directories
+            )
         ),
         None,
     )
@@ -532,8 +540,36 @@ def _mask_quoted_pattern_alternatives(script: str) -> str:
     return "".join(masked)
 
 
+def _readonly_skill_access(command: str, raw_path: str) -> bool:
+    """Admit ordinary skill readers, never writes or find's execution actions."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        chunks: list[list[str]] = [[]]
+        for token in lexer:
+            if token and all(character in ";&|" for character in token):
+                chunks.append([])
+            else:
+                chunks[-1].append(token)
+    except ValueError:
+        return False
+    readers = {"cat", "find", "ls", "head", "tail", "sed", "rg", "grep", "stat", "wc", "test", "["}
+    matching = [chunk for chunk in chunks if raw_path in chunk]
+    forbidden = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+    return bool(matching) and all(
+        chunk
+        and Path(chunk[0]).name in readers
+        and not any(token in forbidden or token.startswith((">", "-i", "--in-place")) for token in chunk[1:])
+        for chunk in matching
+    )
+
+
 def _command_escapes_repository(
-    command: str, repository: Path, *, task_outputs: ClaudeTaskOutputs | None = None
+    command: str,
+    repository: Path,
+    *,
+    task_outputs: ClaudeTaskOutputs | None = None,
+    skill_directories: Mapping[str, Path] | None = None,
 ) -> bool:
     if _PARENT_PATH.search(command):
         return True
@@ -544,18 +580,32 @@ def _command_escapes_repository(
         lambda match: match.group(0).replace(match.group(1), ".git-object-path"), command
     )
     audited_command = _mask_quoted_pattern_alternatives(_unwrap_shell_command(audited_command))
+    if skill_directories is None:
+        skill_directories = {
+            variable: Path(home).expanduser() / "skills"
+            for variable in ("CODEX_HOME", "CLAUDE_CONFIG_DIR")
+            if (home := os.environ.get(variable))
+        }
+    for variable in ("CODEX_HOME", "CLAUDE_CONFIG_DIR"):
+        skills = skill_directories.get(variable)
+        home = skills.parent if skills is not None else Path("/__untrusted_cli_home__")
+        audited_command = re.sub(r"\$(?:" + variable + r"\b|\{" + variable + r"\})", str(home), audited_command)
     write_only_paths = {match.group(1) for match in _WRITE_REDIRECT_ABSOLUTE_PATH.finditer(audited_command)}
     for raw_path in _ABSOLUTE_PATH.findall(audited_command):
+        candidate = Path(raw_path)
+        if ".." in candidate.parts:
+            return True
+        if any(candidate == root or root in candidate.parents for root in skill_directories.values()):
+            if raw_path in write_only_paths or not _readonly_skill_access(audited_command, raw_path):
+                return True
+            continue
         if raw_path in write_only_paths:
             continue
         if task_outputs is not None and task_outputs.allows(raw_path):
             continue
-        candidate = Path(raw_path)
         # ``Path`` keeps ``..`` segments, so ``<repository>/../x`` would look contained.
         if ".." in candidate.parts:
             return True
-        if _SDO_SKILL_PATH.search(raw_path):
-            continue
         if candidate == repository or repository in candidate.parents:
             continue
         if any(candidate == root or root in candidate.parents for root in _SYSTEM_COMMAND_ROOTS):

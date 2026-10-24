@@ -386,6 +386,15 @@ def test_every_shell_command_is_reported_in_order(provider: str, tmp_path: Path)
 
 
 @pytest.mark.parametrize("provider", AGENT_PROVIDERS)
+def test_turn_reports_its_own_installed_skill_directory(provider: str, tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / provider
+    variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
+    monkeypatch.setenv(variable, str(home))
+    turn, _ = _run(provider, tmp_path, access="read-only")
+    assert turn.skill_directory == home / "skills"
+
+
+@pytest.mark.parametrize("provider", AGENT_PROVIDERS)
 def test_a_failed_cli_reports_both_streams(provider: str, tmp_path: Path) -> None:
     with pytest.raises(StructuredTurnError) as raised:
         _run(provider, tmp_path, run=failure(stdout="event log detail\n", stderr="the real cause\n"))
