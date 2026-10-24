@@ -95,7 +95,7 @@ def test_toy_kind_configuration_requires_network_policy_enforcement(tmp_path, mo
     (worktree / "sdo/operator/go.mod").write_text("module fixture\n")
 
     def build(*args, **kwargs):
-        (worktree / ".fastloop/sdo-operator.new").touch()
+        Path(args[0][args[0].index("-o") + 1]).write_bytes(b"synthetic operator")
         return CompletedProcess(args, 0)
 
     monkeypatch.setattr("benchmarks.sregym.fastloop.dev.subprocess.run", build)

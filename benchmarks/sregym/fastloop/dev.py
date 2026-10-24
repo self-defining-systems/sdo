@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
-from typing import TYPE_CHECKING
+import tempfile
+from pathlib import Path
 
 import yaml
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def write_kind_config(source: Path, destination: Path, worktree: Path) -> Path:
@@ -31,12 +30,18 @@ def prepare_dev_mount(worktree: Path, sregym_dir: Path | None, run_dir: Path) ->
         raise ValueError(f"--dev-mount is not an SDO worktree: {worktree}")
     output = worktree / ".fastloop" / "sdo-operator"
     output.parent.mkdir(exist_ok=True)
-    subprocess.run(
-        ["go", "build", "-buildvcs=false", "-o", str(output.with_suffix(".new")), "./cmd/sdo-operator"],
-        cwd=worktree / "sdo" / "operator",
-        check=True,
-    )
-    output.with_suffix(".new").replace(output)
+    # Each lane owns its build output; publication stays atomic for running binaries.
+    with tempfile.NamedTemporaryFile(dir=output.parent, prefix=f"{output.name}.", suffix=".new", delete=False) as temp:
+        temporary_output = Path(temp.name)
+    try:
+        subprocess.run(
+            ["go", "build", "-buildvcs=false", "-o", str(temporary_output), "./cmd/sdo-operator"],
+            cwd=worktree / "sdo" / "operator",
+            check=True,
+        )
+        os.replace(temporary_output, output)
+    finally:
+        temporary_output.unlink(missing_ok=True)
     if sregym_dir is None:
         destination = run_dir / "kind-dev.yaml"
         destination.write_text(
