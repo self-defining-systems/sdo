@@ -214,6 +214,11 @@ a live worker may still be rejoined. The archive is persisted before another
 incident's effects can execute. This terminal archive has no health success or
 new learning credit. New observations can open a fresh incident even when the
 old fault is still firing. Already committed closures retain their receipts.
+Stale-health evidence retirement precedes expiry retirement and preserves its
+original visible failure and single notification. Expiry skips incidents already
+claimed by a pending or terminal closure; a failed closure from an earlier
+incident does not claim the current incident.
+
 Learning-origin Git reads use the durable accepted repository, not a retired
 proposal checkout. Missing optional origin evidence logs Git stderr and earns
 no extra credit, while responder dispatch remains available.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -305,4 +306,118 @@ func TestExpiredIncidentEffectPumpRefusesDispatchWithoutAnotherEvaluation(t *tes
 		t.Fatal("effect pump resumed expired request")
 	}
 	assertNoRequest(t, dispatcher.requests)
+}
+
+func TestExpiredIncidentPreservesClaimedClosure(t *testing.T) {
+	for _, phase := range []contracts.ClosureState{
+		contracts.ClosureState_CLOSURE_STATE_PENDING,
+		contracts.ClosureState_CLOSURE_STATE_PROCESSING,
+		contracts.ClosureState_CLOSURE_STATE_COMMITTED,
+		contracts.ClosureState_CLOSURE_STATE_ACKNOWLEDGING,
+		contracts.ClosureState_CLOSURE_STATE_FAILED,
+	} {
+		t.Run(phase.String(), func(t *testing.T) {
+			ctx := context.Background()
+			start := time.Unix(1000, 0)
+			config := testControllerConfig()
+			config.FiringThreshold = 1
+			controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{}, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := controller.Step(ctx, start, nil); err != nil {
+				t.Fatal(err)
+			}
+			request := *cloneIncidentRequest(controller.currentIncidentRequest)
+			controller.pendingClosure = &IncidentClosure{Request: request, DetectedAt: start, DispatchedAt: start, ResponderCompletedAt: start, VerifiedAt: start}
+			controller.closureState = phase
+			if phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
+				controller.closureFailure = &ClosureFailure{IncidentID: request.IncidentID, Permanent: true, LastError: ErrStaleHealthInvestigation.Error(), Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR}
+			}
+			before := exportState(t, controller)
+			if err := controller.retireExpiredIncident(ctx, request.ResponseDeadline.Add(time.Second)); err != nil {
+				t.Fatalf("expiry interfered with claimed closure: %v", err)
+			}
+			if after := exportState(t, controller); !proto.Equal(before, after) {
+				t.Fatalf("expiry replaced a closure claimed by another path: %v", after)
+			}
+		})
+	}
+}
+
+func TestExpiredIncidentHealthRetirementHasPriority(t *testing.T) {
+	for _, entry := range []struct {
+		name string
+		run  func(context.Context, *Controller, time.Time) error
+	}{
+		{"evaluation", func(ctx context.Context, c *Controller, at time.Time) error { return c.Step(ctx, at, nil) }},
+		{"effects", func(ctx context.Context, c *Controller, _ time.Time) error { return executePendingEffects(ctx, c) }},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			ctx := context.Background()
+			start := time.Unix(1000, 0)
+			config := testControllerConfig()
+			config.FiringThreshold = 1
+			controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{}, start)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := controller.Step(ctx, start, nil); err != nil {
+				t.Fatal(err)
+			}
+			now := controller.currentIncidentRequest.ResponseDeadline.Add(time.Second)
+			controller.now = func() time.Time { return now }
+			controller.CheckHealth = func(context.Context) error {
+				if controller.currentIncidentRequest != nil {
+					return ErrStaleHealthInvestigation
+				}
+				return nil
+			}
+			controller.checkInvestigationHealth = func(context.Context, string) error { return ErrStaleHealthInvestigation }
+			notified := 0
+			controller.OnClosureFailed = func(f ClosureFailure) {
+				if f.LastError == ErrStaleHealthInvestigation.Error() {
+					notified++
+				}
+			}
+			if err := entry.run(ctx, controller, now); err != nil {
+				t.Fatal(err)
+			}
+			if notified != 1 || controller.closureFailure == nil || controller.closureFailure.LastError != ErrStaleHealthInvestigation.Error() {
+				t.Fatalf("health retirement lost ownership: notifications=%d failure=%v", notified, controller.closureFailure)
+			}
+		})
+	}
+}
+
+func TestExpiredIncidentDoesNotInheritEarlierFailure(t *testing.T) {
+	ctx := context.Background()
+	start := time.Unix(1000, 0)
+	config := testControllerConfig()
+	config.FiringThreshold = 1
+	controller, err := NewController(config, []sdk.Detector{controllerDetector("fault", time.Hour, stateFinding("fault"))}, staticProvider{snapshot: sdktest.Snapshot{}}, &recordingDispatcher{}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.Step(ctx, start, nil); err != nil {
+		t.Fatal(err)
+	}
+	request := *cloneIncidentRequest(controller.currentIncidentRequest)
+	earlier := request
+	earlier.IncidentID = "earlier"
+	controller.pendingClosure = &IncidentClosure{Request: earlier, DetectedAt: start, DispatchedAt: start, ResponderCompletedAt: start, VerifiedAt: start}
+	controller.closureState = contracts.ClosureState_CLOSURE_STATE_FAILED
+	controller.closureFailure = &ClosureFailure{IncidentID: earlier.IncidentID, Permanent: true, LastError: ErrStaleHealthInvestigation.Error(), Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR}
+	archived := &contracts.FailedIncidentClosure{Closure: mustProject(t, incidentClosureContract, *controller.pendingClosure), Failure: closureFailureContract(controller.closureFailure)}
+	controller.failedClosures = []*contracts.FailedIncidentClosure{archived}
+	if err := controller.retireExpiredIncident(ctx, request.ResponseDeadline.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	state := exportState(t, controller)
+	if state.IncidentOpen || len(state.FailedClosures) != 2 || !proto.Equal(state.FailedClosures[0], archived) {
+		t.Fatalf("earlier failure blocked or was lost during expiry: %v", state)
+	}
+	if failure := state.FailedClosures[1].Failure; failure.IncidentId != request.IncidentID || failure.Reason != contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT {
+		t.Fatalf("current incident not expired: %v", failure)
+	}
 }

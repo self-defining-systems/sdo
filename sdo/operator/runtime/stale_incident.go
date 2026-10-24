@@ -61,8 +61,7 @@ func (d KubernetesJobDispatcher) IncidentWorkActive(ctx context.Context, inciden
 func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) error {
 	c.mu.Lock()
 	request := cloneIncidentRequest(c.currentIncidentRequest)
-	eligible := c.incidentOpen && request != nil && !request.ResponseDeadline.IsZero() && !now.Before(request.ResponseDeadline) && !c.responderDone &&
-		c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING && c.dispatchState != contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING
+	eligible := c.canRetireExpiredIncidentLocked(now)
 	c.mu.Unlock()
 	if !eligible {
 		return nil
@@ -79,7 +78,7 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 		}
 	}
 	c.mu.Lock()
-	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID {
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID || !c.canRetireExpiredIncidentLocked(now) {
 		c.mu.Unlock()
 		return nil
 	}
@@ -123,6 +122,22 @@ func (c *Controller) retireExpiredIncident(ctx context.Context, now time.Time) e
 		c.OnIncidentClosed(closure)
 	}
 	return nil
+}
+
+// canRetireExpiredIncidentLocked leaves claimed closures with their owner,
+// including terminal failures whose original reason and notification must survive.
+// A failed closure from an earlier incident does not claim the current incident.
+func (c *Controller) canRetireExpiredIncidentLocked(now time.Time) bool {
+	request := c.currentIncidentRequest
+	if !c.incidentOpen || request == nil || request.ResponseDeadline.IsZero() || now.Before(request.ResponseDeadline) || c.responderDone ||
+		c.dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING || c.dispatchState == contracts.DispatchState_DISPATCH_STATE_WORKSPACE_RUNNING {
+		return false
+	}
+	if c.closureBlocksNextLocked() || c.pendingClosure != nil && c.pendingClosure.Request.IncidentID == request.IncidentID ||
+		c.closureFailure != nil && c.closureFailure.IncidentID == request.IncidentID {
+		return false
+	}
+	return true
 }
 
 func (c *Controller) clearIncidentLocked() {

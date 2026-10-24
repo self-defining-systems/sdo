@@ -257,10 +257,10 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
-	if err := c.retireExpiredIncident(ctx, now); err != nil {
+	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
-	if err := c.prepareHealthEffects(ctx, now); err != nil {
+	if err := c.retireExpiredIncident(ctx, now); err != nil {
 		return err
 	}
 	c.processDispatchCompletions(now)

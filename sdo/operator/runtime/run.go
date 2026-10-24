@@ -1451,12 +1451,13 @@ func executePausedEffects(ctx context.Context, controller *Controller) (err erro
 }
 
 func executePendingEffects(ctx context.Context, controller *Controller) (err error) {
+	// Stale health evidence owns retirement before the generic expiry fallback.
+	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	// Completions pump effects without a detector Step. Recheck the deadline
 	// here too, before retrying a prepared workspace or responder request.
 	if err := controller.retireExpiredIncident(ctx, controller.clock()); err != nil {
-		return err
-	}
-	if err := controller.prepareHealthEffects(ctx, time.Now().UTC()); err != nil {
 		return err
 	}
 	// A failed state write leaves effects pending for the next successful save.
