@@ -11,6 +11,7 @@ import (
 // plans or mutation/rollback records. Version 1 journals are read only for these
 // facts; their application fields are deliberately ignored.
 type responderToolState struct {
+	Continuation   responderContinuation
 	SessionID      string
 	MenuSession    *contracts.MitigationSession
 	MenuReports    []*contracts.MitigationReport
@@ -28,7 +29,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 	if l.saveToolState == nil {
 		return nil
 	}
-	payload, err := json.Marshal(responderToolState{Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
+	payload, err := json.Marshal(responderToolState{Continuation: l.continuation, Version: 2, SessionID: l.sessionID, MenuSession: l.menuSession, MenuReports: l.menuReports, MenuRepairs: l.menuRepairs, MenuExecutions: l.menuExecutions, IncidentID: l.Request.IncidentID, SourceCommit: l.Request.SourceCommit, FailureSignals: l.failureSignals, Batches: l.batches, MaxBatches: l.MaxBatches})
 	if err != nil {
 		return fmt.Errorf("encode responder attempt state: %w", err)
 	}
@@ -45,6 +46,12 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	if (state.Version != 1 && state.Version != 2) || state.IncidentID != l.Request.IncidentID || state.SourceCommit != l.Request.SourceCommit {
 		return fmt.Errorf("responder attempt state does not match incident/revision")
 	}
+	if state.Continuation.Attempts < 0 || (state.Continuation.Attempts > 0) != (state.Continuation.Result != nil) || (state.Continuation.Done && state.Continuation.Result == nil) {
+		return fmt.Errorf("invalid responder continuation state")
+	}
+	if state.Continuation.Result != nil && state.Continuation.Result.GetIncidentId() != l.Request.IncidentID {
+		return fmt.Errorf("responder continuation belongs to another incident")
+	}
 	if state.Batches < 0 || state.MaxBatches < 0 {
 		return fmt.Errorf("invalid responder attempt budget")
 	}
@@ -54,6 +61,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 	if state.SessionID != "" {
 		l.sessionID = state.SessionID
 	}
+	l.continuation = state.Continuation
 	l.menuSession = state.MenuSession
 	l.menuReports = state.MenuReports
 	l.menuRepairs = state.MenuRepairs

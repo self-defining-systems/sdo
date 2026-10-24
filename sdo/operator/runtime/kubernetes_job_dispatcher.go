@@ -267,9 +267,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		tools.Add(1)
 		go func() { defer tools.Done(); _ = server.Serve(toolCtx) }()
 		environment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
-		if loop.MenuConfig.valid() {
-			environment["SDO_MITIGATION_SESSION"] = "1"
-		}
+		environment["SDO_MITIGATION_SESSION"] = "1"
 	}
 	executor := worker_registry.KubernetesExecutor{
 		APIProxyImage:  d.APIProxyImage,
@@ -282,16 +280,12 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		LateFindingsConfigMap:  lateConfigMap,
 		TaskPayload:            request.PreparedAgentTask,
 	}
-	agentResult, err := executor.Execute(ctx, task)
+	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
 		var failed *worker_registry.JobFailedError
 		if errors.As(err, &failed) {
 			return IncidentResult{}, &ResponderJobFailedError{JobName: failed.JobName}
 		}
-		return IncidentResult{}, err
-	}
-	result, err := incidentResultFromAgent(agentResult, task, d.Registry)
-	if err != nil {
 		return IncidentResult{}, err
 	}
 	if loop != nil {
@@ -309,12 +303,15 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		}
 		result.RepairActions = append(result.RepairActions, loop.MenuRepairActions()...)
 		result.ProgramFailureSignals = loop.FailureSignals()
-		result.ResponseLoopsUsed = loop.LoopsUsed()
+		loop.mu.Lock()
+		attempts := loop.continuation.Attempts
+		loop.mu.Unlock()
+		result.ResponseLoopsUsed = max(loop.LoopsUsed(), attempts)
 		result.ResolutionPath = "responder"
 		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
 		result.FastPathSkippedReason = loop.fastPathSkippedReason
 		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
-		result.ResponseLoopExhausted = loop.Exhausted()
+		result.ResponseLoopExhausted = result.ResponseLoopExhausted || loop.Exhausted()
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed
 			result.Error = "response loop budget exhausted with unresolved findings"

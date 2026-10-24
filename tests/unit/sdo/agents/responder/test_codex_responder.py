@@ -679,3 +679,40 @@ def test_memory_matches_do_not_override_accepted_source(tmp_path: Path) -> None:
         assert "repair exactly" not in prompt
         assert "do not explore the repository or cluster" not in prompt
         assert "Prefer a matching program's plan" not in prompt
+
+
+def test_controller_continuation_requires_existing_provider_session(monkeypatch) -> None:
+    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", '{"healthy":false,"attempt":1}')
+    monkeypatch.setattr("sdo.agents.responder.codex.open_recovery", lambda *_: None)
+    with pytest.raises(ResponderExecutionError, match="existing provider session"):
+        execute_incident(_request(), provider="codex")
+
+
+def test_controller_verification_resumes_same_session_with_remaining_budget(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from libs.agent_cli.structured import StructuredTurn
+
+    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable"}'
+    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
+    recovery = SimpleNamespace(
+        resume_session_id=lambda: "same-provider-session",
+        recovered_prompt=lambda: "",
+        remaining_seconds=lambda: 43.0,
+        checkpoint=lambda _: None,
+        acknowledge_reports=lambda: None,
+    )
+    monkeypatch.setattr("sdo.agents.responder.codex.open_recovery", lambda *_: recovery)
+    captured = {}
+
+    def run_turn(provider, prompt, **options):
+        captured.update(provider=provider, prompt=prompt, **options)
+        return StructuredTurn(output_json=json.dumps(_reply(_result())), session_id="same-provider-session", usage=None)
+
+    monkeypatch.setattr("sdo.agents.responder.codex.run_structured_turn", run_turn)
+    monkeypatch.setattr("sdo.agents.responder.codex.turn_usage", lambda _: {"llm_calls": 1})
+    monkeypatch.setattr("sdo.agents.responder.codex.recorded_actions.merge_into", lambda _: None)
+    execute_incident(_request(), provider="codex")
+    assert captured["resume_session_id"] == "same-provider-session"
+    assert captured["timeout_seconds"] == 43.0
+    assert feedback in captured["prompt"]
