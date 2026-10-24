@@ -89,6 +89,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	peer.Name = "peer"
 	peer.Spec.Template.Spec.Containers[0].Image = "good:v1"
 	open.DeploymentList = append(open.DeploymentList, *peer)
+	open.Objects = sdk.TypedObjects(open)
 	peerSource := source.DeepCopy()
 	peerSource.SetName("peer")
 	sourceReader.objects = append(sourceReader.objects, peerSource)
@@ -96,6 +97,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	var fixed sdktest.Snapshot
 	_ = json.Unmarshal(raw, &fixed)
 	fixed.DeploymentList[0].Spec.Template.Spec.Containers[0].Image = "good:v1"
+	fixed.Objects = sdk.TypedObjects(fixed)
 	p := sourceimage.Program{}
 	corpus := sdktest.CorpusCase{Open: open, Fixed: fixed, Healthy: fixed, Bindings: program.Bindings{Objects: program.ObjectBindings{"deployment": ref}}}
 	for _, phase := range []string{"open", "fixed"} {
