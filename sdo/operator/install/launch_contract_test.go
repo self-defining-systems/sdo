@@ -35,6 +35,12 @@ func TestInstallerOperateOptionalArgumentsRoundTripToController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Parse inside the environment the real operate Pod receives, including opt-out.
+	for _, entry := range job.Spec.Template.Spec.Containers[0].Env {
+		if entry.Name == "SDO_RESPONDER_MENU" {
+			t.Setenv(entry.Name, entry.Value)
+		}
+	}
 	launch, err := operatorcli.ParseOperateLaunch(job.Spec.Template.Spec.Containers[0].Args)
 	if err != nil {
 		t.Fatal(err)

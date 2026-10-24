@@ -199,8 +199,8 @@ func TestControllerConfigExpandsValues(t *testing.T) {
 	if !contains(args, "--exit-after-closure") {
 		t.Fatalf("expected --exit-after-closure in args: %v", args)
 	}
-	if !contains(args, "--program-fast-path") {
-		t.Fatalf("expected --program-fast-path in args: %v", args)
+	if !contains(args, "--program-fast-path=true") {
+		t.Fatalf("expected --program-fast-path=true in args: %v", args)
 	}
 	// Repeated fields expand once per element as --flag=value.
 	for _, flag := range []string{"--responder-env=FOO=bar", "--responder-env=BAZ=qux", "--deployed-manifest-path=kubernetes"} {

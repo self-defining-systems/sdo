@@ -471,10 +471,7 @@ func controllerJob(c Config) *batchv1.Job {
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}},
 	}}
 	policyJSON, _ := json.Marshal(c.ObservationCeiling)
-	menu := "0"
-	if c.ResponderMenu {
-		menu = "1"
-	}
+	menu := responderMenuValue(c.ResponderMenu)
 	pod.Containers = []corev1.Container{{
 		Name: "controller", Image: c.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: command, Args: args,

@@ -112,7 +112,6 @@ type ResponderLoop struct {
 	menuReports                     []*contracts.MitigationReport
 	menuExecutions                  map[string][]MenuRoundExecution
 	menuRepairs                     []RepairActionReceipt
-	CheckHealth                     func(context.Context) error
 	CurrentEvidence                 func() *IncidentRequest
 	Request                         IncidentRequest
 	Programs                        program.ProgramRegistry

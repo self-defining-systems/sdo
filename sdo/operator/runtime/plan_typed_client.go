@@ -116,9 +116,6 @@ func planUnstructured(object any, ref sdk.ObjectRef) (*unstructured.Unstructured
 	return result, nil
 }
 
-// TokenlessServiceAccount returns only identity metadata after rejecting token
-// references and implicit automount. It never reads a referenced Secret.
-
 func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	if c.Client == nil || object == nil || !samePlanRef(object, ref) || ref.Namespace == "" {
 		return nil, fmt.Errorf("matching named object is required")
