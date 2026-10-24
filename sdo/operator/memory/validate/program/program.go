@@ -30,15 +30,25 @@ var shellFence = regexp.MustCompile(`(?i)^(?:` + "```" + `|~~~)[ \t]*(bash|sh|zs
 
 // Inspect validates a compiler workspace containing detectors and program memory.
 func Inspect(workspace, module string) ([]Spec, error) {
-	return inspect(workspace, module, filepath.Join(workspace, "detectors"))
+	return inspect(workspace, module, filepath.Join(workspace, "detectors"), false)
 }
 
 // InspectMemory validates an application memory root before it is projected into a compiler workspace.
 func InspectMemory(memoryRoot, module string) ([]Spec, error) {
-	return inspect(memoryRoot, module, filepath.Join(memoryRoot, "diagnostics", "detectors"))
+	return inspect(memoryRoot, module, filepath.Join(memoryRoot, "diagnostics", "detectors"), false)
 }
 
-func inspect(workspace, module, detectors string) ([]Spec, error) {
+// InspectForAdoption discovers constructors without accepting corpus or replay evidence.
+// It is only used by explicit initial adoption and identical accepted-memory builds.
+func InspectMemoryForAdoption(root, module string) ([]Spec, error) {
+	return inspect(root, module, filepath.Join(root, "diagnostics", "detectors"), true)
+}
+
+func InspectForAdoption(workspace, module string) ([]Spec, error) {
+	return inspect(workspace, module, filepath.Join(workspace, "detectors"), true)
+}
+
+func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error) {
 	for _, part := range []string{detectors, filepath.Join(workspace, "playbooks"), filepath.Join(workspace, "lib")} {
 		if err := checkProgramImports(part, module); err != nil {
 			return nil, err
@@ -148,6 +158,10 @@ func inspect(workspace, module, detectors string) ([]Spec, error) {
 		if len(mitigate) == 1 {
 			item.Mitigator = mitigate[0]
 		}
+		if adoption {
+			programs = append(programs, item)
+			continue
+		}
 		Cases, err := corpusCasesFor(filepath.Join(workspace, "corpus"), ID)
 		if err != nil {
 			return nil, err
@@ -172,8 +186,10 @@ func inspect(workspace, module, detectors string) ([]Spec, error) {
 		programs = append(programs, item)
 	}
 	sort.Slice(programs, func(i, j int) bool { return programs[i].ID < programs[j].ID })
-	if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs); err != nil {
-		return nil, err
+	if !adoption {
+		if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs); err != nil {
+			return nil, err
+		}
 	}
 	return programs, nil
 }

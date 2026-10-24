@@ -24,6 +24,9 @@ import (
 const MemoryUsage = `usage: sdo-operator memory <command> [flags]
 
 commands:
+  adopt-existing --root DIR [--operator-root DIR]
+        Explicitly compile and adopt supplied memory as an unvalidated base.
+        Records SDO-Origin: adopted-existing; later edits require the broker.
   import prepare --root DIR --worktree-root DIR --id ID
         Create a broker proposal for operator-authored memory. Edit only the
         returned checkout. Each positive corpus case needs operator.json and
@@ -79,6 +82,8 @@ func RunMemory(ctx context.Context, args []string, getenv func(string) string, s
 	var code int
 	var err error
 	switch args[0] {
+	case "adopt-existing":
+		err = memoryAdoptExisting(ctx, args[1:], getenv, stdout)
 	case "import":
 		err = memoryImport(ctx, args[1:], getenv, stdout)
 	case "check":

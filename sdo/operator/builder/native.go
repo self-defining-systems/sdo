@@ -22,12 +22,15 @@ type Config struct {
 	DiagnosticsRoot string
 	OperatorRoot    string
 	HealthyBaseline string
+	// CompileOnly is reserved for an explicit, unvalidated adoption build.
+	CompileOnly bool
 }
 
 type Workspace struct {
-	Directory  string
-	ModulePath string
-	HasProber  bool
+	Directory   string
+	ModulePath  string
+	HasProber   bool
+	compileOnly bool
 	// StageTimings lists each Go toolchain stage run by Check or
 	// ValidateAndBuild, including a rejected final stage.
 	StageTimings []StageTiming
@@ -71,6 +74,9 @@ func (workspace *Workspace) ValidateAndBuild(ctx context.Context) (string, error
 // full detector acceptance gate.
 // A rejected stage is reported as a *StageError.
 func (workspace *Workspace) Check(ctx context.Context) error {
+	if workspace != nil && workspace.compileOnly {
+		return errors.New("unvalidated adoption workspace cannot run the acceptance checker")
+	}
 	_, err := workspace.validate(ctx, true)
 	return err
 }
@@ -87,7 +93,12 @@ func (workspace *Workspace) validate(ctx context.Context, vet bool) (string, err
 	if vet {
 		stages = append(stages, []string{"build", "-buildvcs=false", "./..."}, []string{"vet", "./..."})
 	}
-	stages = append(stages, []string{"test", "./..."}, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
+	if workspace.compileOnly {
+		stages = append(stages, []string{"build", "-buildvcs=false", "./..."})
+	} else {
+		stages = append(stages, []string{"test", "./..."})
+	}
+	stages = append(stages, []string{"build", "-buildvcs=false", "-o", binary, "./cmd/controller"})
 	for _, args := range stages {
 		started := time.Now()
 		err := workspace.runGo(ctx, args...)
@@ -240,7 +251,7 @@ func BuildWorkspace(ctx context.Context, config Config) (_ *Workspace, err error
 	if err != nil {
 		return nil, err
 	}
-	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber}, nil
+	return &Workspace{Directory: directory, ModulePath: module, HasProber: hasProber, compileOnly: config.CompileOnly}, nil
 }
 
 func validateDetectors(detectors []layout.Detector) error {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/memory"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"strings"
 )
@@ -22,7 +23,15 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 			return err
 		}
 	}
-	programs, err := programvalidation.Inspect(workspace, module)
+	inspect := programvalidation.Inspect
+	adopted, err := memory.AdoptedBuild(ctx, config.ApplicationRoot, "HEAD")
+	if err != nil {
+		return err
+	}
+	if config.CompileOnly || adopted {
+		inspect = programvalidation.InspectForAdoption
+	}
+	programs, err := inspect(workspace, module)
 	if err != nil {
 		return err
 	}
