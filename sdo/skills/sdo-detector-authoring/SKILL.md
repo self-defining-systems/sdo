@@ -5,7 +5,7 @@ description: Author or refine deterministic Go health and incident detectors fro
 
 # Authoring a detector
 
-A detector reads a Kubernetes snapshot and returns findings. Keep it deterministic: no model, environment,
+A detector reads the runtime snapshot and returns findings. Keep it deterministic: no model, environment,
 clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. The installed `sdo-memory` skill explains ownership and logical IDs.
 
 1. Compare the confirmed mechanism with accepted detectors. Widen one when only resource identity or a
@@ -22,6 +22,16 @@ clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(
 
 Read [validator rules](references/rules.md) before changing a manifest or when a diagnostic names a detector rule.
 
+## Runtime reads
+
+Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
+[generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
+It adds logs, TCP/HTTP probes, source/baseline diffs, `QueryMetrics(metrics.Query)`, alerts and traffic to objects.
+The runtime caches identical reads per snapshot and records actual results and failures for offline replay.
+Logs are capped at 64 KiB / 5 s; probes at 5 s. Read failures are errors/Unknown, never clearance;
+a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
+Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
+
 ## Metrics detectors (optional input)
 
 When the controller runs with a metrics source (`--metrics-url`, a Prometheus-compatible API), a health detector can
@@ -36,7 +46,7 @@ a source exists.
 - An unreachable source, a failed query or a missing result is a detector error, never a clear and never a finding.
   Do not turn it into one.
 - Findings carry the query, value, threshold and labels as evidence, so each series is a distinct finding.
-- Query IDs are unique and non-empty, expressions non-empty, and a controller evaluates at most `metrics.MaxQueries`.
+- Query IDs are unique and non-empty, expressions non-empty, and a declared query bundle contains at most `metrics.MaxQueries`.
   The generated registration tests check this.
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a metrics URL is configured; do not author it.

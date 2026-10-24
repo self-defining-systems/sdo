@@ -17,7 +17,7 @@ type programDetector struct {
 	spec    sdk.DetectorSpec
 }
 
-// DetectorFromProgram promotes a snapshot-only diagnoser to a detector.
+// DetectorFromProgram promotes a diagnoser to a detector using the same runtime read surface.
 func DetectorFromProgram(p Diagnoser, locate Locator, spec sdk.DetectorSpec) sdk.Detector {
 	if spec.Playbooks == nil {
 		spec.Playbooks = []string{p.Spec().ID}
@@ -30,8 +30,11 @@ func (d programDetector) Spec() sdk.DetectorSpec { return d.spec }
 func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]sdk.Finding, error) {
 	findings := make([]sdk.Finding, 0)
 	for _, bindings := range d.locate(snapshot) {
-		view := snapshotReadView{DetectionContext: snapshot, ScopedObservationSource: sdk.ScopedSource(snapshot)}
+		view := ReadFrom(snapshot)
 		verdict := RunDiagnose(ctx, d.program, view, bindings, 10*time.Second)
+		if verdict.Result == Unknown {
+			return nil, fmt.Errorf("detector diagnosis unavailable: %v", verdict.Evidence)
+		}
 		if verdict.Result != Match {
 			continue
 		}

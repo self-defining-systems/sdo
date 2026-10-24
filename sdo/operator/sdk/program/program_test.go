@@ -141,7 +141,7 @@ func TestExampleProgramEndToEnd(t *testing.T) {
 	}
 }
 
-func TestDetectorCannotUseLiveReadView(t *testing.T) {
+func TestDetectorReportsUnavailableRuntimeRead(t *testing.T) {
 	p := diagnostic{fn: func(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
 		_, err := v.ProbeTCP(serviceRef, 80)
 		return program.Verdict{}, err
@@ -150,7 +150,7 @@ func TestDetectorCannotUseLiveReadView(t *testing.T) {
 		return []program.Bindings{{Objects: program.ObjectBindings{"service": serviceRef}}}
 	}, sdk.DetectorSpec{ID: "test"})
 	findings, err := d.Detect(context.Background(), sdktest.Snapshot{})
-	if err != nil || len(findings) != 0 {
+	if err == nil || len(findings) != 0 {
 		t.Fatalf("findings: %+v, %v", findings, err)
 	}
 }

@@ -32,7 +32,7 @@ func TestProgramDetectorPreservesScopedWebhookSnapshot(t *testing.T) {
 		t.Fatalf("scoped snapshot lost: findings=%v error=%v", findings, err)
 	}
 	findings, err = d.Detect(context.Background(), sdktest.Snapshot{NamespaceName: "demo"})
-	if err != nil || len(findings) != 0 {
+	if err == nil || len(findings) != 0 {
 		t.Fatalf("unconfigured scope acquired evidence: %v %v", findings, err)
 	}
 }

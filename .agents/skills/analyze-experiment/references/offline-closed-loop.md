@@ -15,3 +15,11 @@ The checker compares final objects with production executor after-images, plus e
 Accepted source inputs use per-case `accepted.yaml` or `accepted.json`, or a shared `-source` file. Empty source inventories must be explicit. No Secret manifests belong in these inputs. Timing summaries measure replay after one compilation; distinguish repeated execution of one fixture from distinct fixtures and from a live experiment.
 
 The existing SDK-only `sdktest.CheckMitigation` remains a compatibility helper for existing validation callers. Its legacy `skipped_unreplayable_effect` note is not a closed-loop result and proves no repair; the runtime checker never emits that status.
+
+Detectors now replay actual logs, TCP/HTTP probes, source/baseline diffs, PromQL,
+alerts and traffic through the same shared view as Diagnose. Phase snapshot
+`readings` are combined with the selected phase's recording file; absent or failed
+reads remain detector errors/Unknown even when agent code ignores accessor errors.
+Frozen snapshot telemetry is reusable. Only actual Open/Healthy observations are
+used for those phases. Post-plan observations are still unavailable unless the
+checker can independently derive them; Fixed recordings never prove a repair.
