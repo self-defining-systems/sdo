@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"time"
 
 	"sdo.dev/operator/runtime/prometheus"
 	"sdo.dev/operator/sdk"
@@ -41,7 +42,11 @@ func withMetrics(
 		return nil, nil, err
 	}
 	if observer == nil {
-		return provider, nil, nil
+		if api == nil {
+			return provider, nil, nil
+		}
+		// Configured sources also serve on-demand Diagnose queries.
+		observer = &MetricsObserver{api: api, timeout: DefaultMetricsQueryTimeout, clock: time.Now}
 	}
 	if api == nil && requireSource {
 		return nil, nil, errors.New("metrics health evaluation requires --metrics-url")

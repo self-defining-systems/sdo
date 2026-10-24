@@ -239,20 +239,32 @@ func TestMetricsObserverDoesNotQueryUntilADetectorReadsAndRefreshesEachCycle(t *
 	}
 }
 
-func TestMetricsObserverFetchesOnlyDeclaredInputs(t *testing.T) {
+func TestMetricsObserverFetchesDeclaredInputsAndExplicitAlertReads(t *testing.T) {
 	fake, server := newFakePrometheus(t)
 	fake.queries[errorQuery.Expr] = vector()
+	fake.alerts = `{"status":"success","data":{"alerts":[]}}`
 	snapshot, _ := snapshotWith(t, prometheus.Client{BaseURL: server.URL}, []sdk.Detector{metricsDetector("a", errorQuery)}, MetricsObserverOptions{Clock: fixedClock()})
-	if _, ok := metrics.AlertsFrom(snapshot); ok {
-		t.Fatal("alerts were not declared and must not be fetched")
-	}
 	if _, ok := metrics.ResultFrom(snapshot, "undeclared"); ok {
-		t.Fatal("undeclared queries have no result")
+		t.Fatal("undeclared query has a result")
 	}
 	for _, path := range fake.paths() {
 		if path == "/api/v1/alerts" {
-			t.Fatal("alerts endpoint was called")
+			t.Fatal("unread alerts were fetched")
 		}
+	}
+	for range 2 {
+		if r, ok := metrics.AlertsFrom(snapshot); !ok || r.Error != "" {
+			t.Fatalf("explicit alerts=%+v %v", r, ok)
+		}
+	}
+	count := 0
+	for _, path := range fake.paths() {
+		if path == "/api/v1/alerts" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("alert requests=%d", count)
 	}
 }
 

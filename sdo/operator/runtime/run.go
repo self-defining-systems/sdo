@@ -626,6 +626,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
+	// Detectors and plan verification read through the same capped runtime view.
+	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
+			if controller != nil {
+				return controller.CurrentAcceptedCommit()
+			}
+			return resolvedSourceCommit
+		}, BaselineSource: stateTracker}
+	}}
 	start := time.Now().UTC()
 	corpusSessionRoot := ""
 	if options.NativeBroker != nil {
@@ -650,8 +659,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller.ConfigureDrift(DriftControllerConfig{Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, Programs: options.Programs, ProgramPersistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: *programMinDuration}, Deadline: *diagnosisDeadline, SweepInterval: *driftSweepInterval, BatchWindow: *driftBatchWindow,
 		View: func(snapshot sdk.DetectionContext) program.ReadView {
-			return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
-				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker}
+			if cycle, ok := snapshot.(*CycleReadView); ok {
+				return cycle
+			}
+			return NewCycleReadView(LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, Prober: primitiveProber,
+				Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: stateTracker})
 		},
 	})
 	if options.NativeBroker != nil {
@@ -1336,6 +1348,20 @@ func evaluateOnce(
 		}
 		provider = kubernetesProvider
 	}
+	var readClient kubernetes.Interface
+	if kube, ok := provider.(*core.KubernetesSnapshotProvider); ok {
+		readClient = kube.Client
+	}
+	var readSource PlanSource
+	readCommit := ""
+	if *appRoot != "" {
+		revision, _, err := resolveRepositoryCommits(*appRoot, "", "")
+		if err != nil {
+			return err
+		}
+		readCommit = revision
+		readSource = GitPlanSource{Repository: *appRoot}
+	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if *proberURL == "" {
@@ -1373,6 +1399,16 @@ func evaluateOnce(
 	if err != nil {
 		return err
 	}
+	provider = ReadSnapshotProvider{Base: provider, View: func(snapshot sdk.DetectionContext) program.ReadView {
+		if readClient == nil && readSource == nil && *proberURL == "" {
+			return program.ReadFrom(snapshot)
+		}
+		var probe PrimitiveProber
+		if *proberURL != "" {
+			probe = HTTPProberClient{BaseURL: StaticProberURL(*proberURL)}
+		}
+		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: readClient, Prober: probe, Source: readSource, SourceCommit: readCommit}
+	}}
 	start := time.Now().UTC()
 	controller, err := NewController(ControllerConfig{
 		Application: *application, Namespace: *namespace,

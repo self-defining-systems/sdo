@@ -21,7 +21,7 @@ type readView struct {
 }
 
 func newReadView(ctx context.Context, s sdktest.Snapshot, calls []sdktest.PrimitiveCall, source *source) *readView {
-	return &readView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: s, Calls: calls}, source: source, ctx: ctx}
+	return &readView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: s, Calls: append(append([]sdktest.PrimitiveCall(nil), s.Readings...), calls...)}, source: source, ctx: ctx}
 }
 func (v *readView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	return (operator.LiveReadView{DetectionContext: v.Snapshot, Context: v.ctx, Source: v.source, SourceCommit: "offline-accepted"}).DiffAgainstSource(ref)
@@ -41,8 +41,8 @@ func checkDetector(ctx context.Context, d sdk.Detector, c Case) (r Result) {
 	if d.Spec().Class == sdk.DetectorClassHealth {
 		r.ExpectedMatch = healthImpact(c)
 	}
-	r.Detectors["healthy"] = detect(ctx, []sdk.Detector{d}, c.Corpus.Healthy)
-	r.Detectors["faulted"] = detect(ctx, []sdk.Detector{d}, c.Corpus.Open)
+	r.Detectors["healthy"] = detect(ctx, []sdk.Detector{d}, recordedPhase(c.Corpus, "healthy"))
+	r.Detectors["faulted"] = detect(ctx, []sdk.Detector{d}, recordedPhase(c.Corpus, "open"))
 	for _, phase := range []string{"healthy", "faulted"} {
 		for _, row := range r.Detectors[phase] {
 			r.scoreDetector(phase, row, familyMatch, c)
