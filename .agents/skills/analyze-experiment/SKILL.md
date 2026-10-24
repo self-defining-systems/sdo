@@ -51,6 +51,7 @@ When multiple runs are in scope and subagents are available, assign one run or o
 
 At evidence discovery, read [evidence hierarchy and provenance](references/trajectory-schema.md).
 Before judging mitigation or learning, read [outcomes and program evidence](references/outcome-records.md).
+When Pods are Ready but creation or admission fails, read [admission health evidence](references/admission-health.md).
 For offline fake-cluster checks, simulated effects and false positives, read [offline closed-loop reports](references/offline-closed-loop.md).
 For menu selections, round reports and recovery receipts, read [mitigation menu receipts](references/mitigation-menu.md).
 For first-mutation capture and evidence-gap semantics, read [capture boundaries](references/capture-boundaries.md).

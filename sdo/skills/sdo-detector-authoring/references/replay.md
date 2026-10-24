@@ -228,6 +228,7 @@ func (v *ReplayReadView) TrafficWindow(name string) (traffic.Window, bool)
 func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
 
 type Snapshot struct {
+	Admission *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
 	// SourceName names the file a loaded snapshot came from, for messages.
 	SourceName         string `json:"-"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
@@ -294,6 +295,8 @@ func (s Snapshot) ObservedAt() time.Time
 
 func (s Snapshot) ObservedView() (sdk.DetectionContext, func() error)
     ObservedView binds detector reads to this snapshot's recorded evidence.
+
+func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool)
 
 func (s Snapshot) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 

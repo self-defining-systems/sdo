@@ -1279,6 +1279,7 @@ func evaluateOnce(
 	}
 	var readClient kubernetes.Interface
 	if kube, ok := provider.(*core.KubernetesSnapshotProvider); ok {
+		kube.PodAdmission = sdk.ConsumesPodAdmission(detectors)
 		readClient = kube.Client
 	}
 	var readSource PlanSource

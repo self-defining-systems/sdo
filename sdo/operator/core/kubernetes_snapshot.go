@@ -27,11 +27,12 @@ import (
 )
 
 type KubernetesSnapshotProvider struct {
-	Scope      sdk.ObservationScope
-	Ceiling    sdk.ObservationScope
-	Generation string
-	Namespace  string
-	Client     kubernetes.Interface
+	PodAdmission bool
+	Scope        sdk.ObservationScope
+	Ceiling      sdk.ObservationScope
+	Generation   string
+	Namespace    string
+	Client       kubernetes.Interface
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -147,7 +148,13 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 	if err != nil {
 		return nil, err
 	}
+	var admission *sdk.PodAdmissionResult
+	if p.PodAdmission {
+		result := ObservePodAdmission(ctx, p.Client, namespace, pods.Items)
+		admission = &result
+	}
 	return DetectionSnapshot{
+		Admission:         admission,
 		ScopedSnapshot:    scoped,
 		NamespaceName:     namespace,
 		ConfigMapList:     configMaps.Items,
@@ -168,6 +175,7 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 }
 
 type DetectionSnapshot struct {
+	Admission          *sdk.PodAdmissionResult `json:"pod_admission,omitempty"`
 	sdk.ScopedSnapshot `json:"scoped_observation,omitempty"`
 	NamespaceName      string
 	ConfigMapList      []corev1.ConfigMap
@@ -411,4 +419,11 @@ func kubernetesConfig() (*rest.Config, error) {
 		return nil, fmt.Errorf("load kubernetes config: %w", err)
 	}
 	return config, nil
+}
+
+func (s DetectionSnapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
+	if s.Admission == nil {
+		return sdk.PodAdmissionResult{}, false
+	}
+	return *s.Admission, true
 }
