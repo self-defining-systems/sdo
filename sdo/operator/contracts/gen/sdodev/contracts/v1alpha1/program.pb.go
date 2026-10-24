@@ -1838,8 +1838,11 @@ type PlanApplication struct {
 	ObjectEffects            []*PlanObjectEffect `protobuf:"bytes,19,rep,name=object_effects,json=objectEffects,proto3" json:"object_effects,omitempty"`
 	ActionReports            []*ActionReport     `protobuf:"bytes,20,rep,name=action_reports,json=actionReports,proto3" json:"action_reports,omitempty"`
 	RolloutPending           *RolloutPending     `protobuf:"bytes,21,opt,name=rollout_pending,json=rolloutPending,proto3" json:"rollout_pending,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// Bound NoMatch, cleared covered findings and no new post-apply finding.
+	// This proof is independent of whole-incident health.
+	CoveredFindingsVerified *bool `protobuf:"varint,22,opt,name=covered_findings_verified,json=coveredFindingsVerified,proto3,oneof" json:"covered_findings_verified,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *PlanApplication) Reset() {
@@ -2003,6 +2006,13 @@ func (x *PlanApplication) GetRolloutPending() *RolloutPending {
 		return x.RolloutPending
 	}
 	return nil
+}
+
+func (x *PlanApplication) GetCoveredFindingsVerified() bool {
+	if x != nil && x.CoveredFindingsVerified != nil {
+		return *x.CoveredFindingsVerified
+	}
+	return false
 }
 
 type ProgramToolCall struct {
@@ -2549,7 +2559,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x0eRolloutBlocker\x126\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\x12%\n" +
-	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\"\xcf\b\n" +
+	"\x0ewarning_events\x18\x03 \x03(\tR\rwarningEvents\"\xae\t\n" +
 	"\x0fPlanApplication\x12;\n" +
 	"\x04plan\x18\x01 \x01(\v2\x1f.sdodev.contracts.v1alpha1.PlanB\x06\xbaH\x03\xc8\x01\x01R\x04plan\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\x12\x17\n" +
@@ -2573,8 +2583,10 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\x1afinal_equivalence_verified\x18\x12 \x01(\bH\x00R\x18finalEquivalenceVerified\x88\x01\x01\x12R\n" +
 	"\x0eobject_effects\x18\x13 \x03(\v2+.sdodev.contracts.v1alpha1.PlanObjectEffectR\robjectEffects\x12N\n" +
 	"\x0eaction_reports\x18\x14 \x03(\v2'.sdodev.contracts.v1alpha1.ActionReportR\ractionReports\x12R\n" +
-	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPendingB\x1d\n" +
-	"\x1b_final_equivalence_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
+	"\x0frollout_pending\x18\x15 \x01(\v2).sdodev.contracts.v1alpha1.RolloutPendingR\x0erolloutPending\x12?\n" +
+	"\x19covered_findings_verified\x18\x16 \x01(\bH\x01R\x17coveredFindingsVerified\x88\x01\x01B\x1d\n" +
+	"\x1b_final_equivalence_verifiedB\x1c\n" +
+	"\x1a_covered_findings_verifiedJ\x04\b\v\x10\fJ\x04\b\r\x10\x0eR\n" +
 	"pre_imagesR\apatches\"\xcf\x01\n" +
 	"\x0fProgramToolCall\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12*\n" +

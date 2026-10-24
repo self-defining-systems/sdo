@@ -26,7 +26,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 		}
 		plan.Actions = append(plan.Actions, converted)
 	}
-	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, RolloutPending: r.RolloutPending}
+	application := &contracts.PlanApplication{CoveredFindingsVerified: r.CoveredFindingsVerified, RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, RolloutPending: r.RolloutPending}
 	for _, action := range r.ActionsApplied {
 		converted, err := planActionProto(action)
 		if err != nil {
@@ -70,7 +70,7 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 }
 
 func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
-	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, RolloutPending: application.GetRolloutPending()}
+	result := PlanApplicationResult{CoveredFindingsVerified: application.CoveredFindingsVerified, RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, RolloutPending: application.GetRolloutPending()}
 	if application.GetPlan() != nil {
 		result.Plan.Rationale = application.GetPlan().GetRationale()
 		for _, action := range application.GetPlan().GetActions() {

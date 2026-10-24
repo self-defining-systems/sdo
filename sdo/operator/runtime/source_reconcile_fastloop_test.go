@@ -278,7 +278,9 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	}
 	failedLoop := makeLoop(request)
 	failedLoop.Trust = trust
-	failedLoop.Executor.Verifier = planFakeVerifier{passed: false}
+	// A new post-apply finding is a cause-scoped failure. An unrelated
+	// aggregate verifier failure alone must never revoke the image repair.
+	failedLoop.Detectors = append(failedLoop.Detectors, newFindingAfterImageRepair{})
 	failedAttempt := failedLoop.TryTrustedFastPath(ctx, 3)
 	if !failedAttempt.Attempted || failedAttempt.Resolved || !failedAttempt.RolledBack {
 		t.Fatalf("live failure did not roll back: %+v", failedAttempt)

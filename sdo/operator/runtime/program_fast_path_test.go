@@ -266,6 +266,7 @@ func (d imagePullChangingDetector) Detect(context.Context, sdk.DetectionContext)
 
 func TestTrustedProgramFastPathFailureRollsBackForResponder(t *testing.T) {
 	loop, client := trustedPortLoop(t, false, true, false)
+	installIneffectivePortProgram(t, loop)
 	attempt := loop.TryTrustedFastPath(context.Background(), 3)
 	if !attempt.Attempted || attempt.Resolved || !attempt.RolledBack || !strings.Contains(attempt.Summary, "service-targetport-mismatch") {
 		t.Fatalf("failed attempt: %+v", attempt)
@@ -325,7 +326,7 @@ func TestSuccessfulFastPathAddsBoundTrustCredit(t *testing.T) {
 		t.Fatalf("successful fast path lost bound evidence: %+v calls=%+v", state, message.ProgramToolCalls)
 	}
 	outcome.Classification = "failed"
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]; state.Trusted || state.VerifiedSuccesses != 0 {
-		t.Fatalf("unverified fast path earned credit: %+v", state)
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)["service-targetport-mismatch"]; !state.Trusted || state.VerifiedSuccesses != 1 || state.Failures != 0 {
+		t.Fatalf("unrelated incident failure penalized verified fast path: %+v", state)
 	}
 }

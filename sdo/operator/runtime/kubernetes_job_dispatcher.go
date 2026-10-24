@@ -201,6 +201,24 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 				return IncidentResult{}, fmt.Errorf("decode prepared incident for fast-path handoff: %w", err)
 			}
 			prepared.FastPathSummary = summary
+			if len(loop.fastPathRepairs) > 0 {
+				request.FastPathRepairs = append([]FastPathRepair(nil), loop.fastPathRepairs...)
+				prepared.FastPathRepairs, err = fastPathRepairsContract(request.FastPathRepairs)
+				if err != nil {
+					return IncidentResult{}, err
+				}
+				if len(loop.findings) > 0 {
+					prepared.Findings = nil
+					for _, finding := range loop.findings {
+						converted, err := findingContract(finding)
+						if err != nil {
+							return IncidentResult{}, err
+						}
+						prepared.Findings = append(prepared.Findings, converted)
+					}
+				}
+				prepared.InitialProgramRuns = fastPathHandoffRuns(loop.runs)
+			}
 			task.Request, err = anypb.New(prepared)
 			if err != nil {
 				return IncidentResult{}, err
@@ -297,7 +315,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		fillProgramRevisions(ctx, result.ProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 		result.PlanApplications = loop.PlanApplications()
 		result.RepairActions = ProgramRepairReceipts(result.PlanApplications, result.RepairActions)
-		if result.Status == IncidentCompleted {
+		if result.Status == IncidentCompleted || len(loop.fastPathRepairs) > 0 {
 			loop.CreditEquivalentRepairs(ctx, result.RepairActions)
 			result.PlanApplications = loop.PlanApplications()
 			result.ProgramToolCalls = loop.ToolCalls()
@@ -314,6 +332,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		result.FastPathPrograms = append([]string(nil), loop.fastPathPrograms...)
 		result.FastPathSkippedReason = loop.fastPathSkippedReason
 		result.FastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), loop.fastPathRelationCoveredFindings...)
+		result = includeFastPathRepairs(result, loop.fastPathRepairs)
 		result.ResponseLoopExhausted = result.ResponseLoopExhausted || loop.Exhausted()
 		if result.ResponseLoopExhausted {
 			result.Status = IncidentFailed

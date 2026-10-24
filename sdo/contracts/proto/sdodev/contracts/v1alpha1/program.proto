@@ -228,6 +228,9 @@ message PlanApplication {
   repeated PlanObjectEffect object_effects = 19;
   repeated ActionReport action_reports = 20;
   RolloutPending rollout_pending = 21;
+  // Bound NoMatch, cleared covered findings and no new post-apply finding.
+  // This proof is independent of whole-incident health.
+  optional bool covered_findings_verified = 22;
 }
 
 message ProgramToolCall {

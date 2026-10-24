@@ -16,6 +16,7 @@ type FastPathAttempt struct {
 	Attempted               bool
 	SkippedReason           FastPathSkipReason
 	Resolved                bool
+	Verified                bool
 	Programs                []string
 	Summary                 string
 	RolledBack              bool
@@ -221,6 +222,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	selectedPlans := make([]selectedPlan, 0, len(selected))
 	attempt := FastPathAttempt{Programs: make([]string, 0, len(selected)), Findings: append([]sdk.Finding(nil), findings...), RelationCoveredFindings: related}
 	l.fastPathRelationCoveredFindings = append([]RelationCoveredFinding(nil), related...)
+	l.fastPathScope = fastPathScope(findings, selected, eligible, related)
 	for _, run := range selected {
 		_, ok := l.Programs.Mitigator(run.ProgramID)
 		if !ok {
@@ -258,7 +260,8 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	}
 	l.batches++
 	attempt.Attempted = true
-	l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true})
+	unverified := false
+	l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch, CoveredFindingsVerified: &unverified}, StartedAt: started, Pending: true})
 	if err := l.persistToolState(ctx); err != nil {
 		attempt.Summary = err.Error()
 		return attempt
@@ -273,52 +276,48 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	}
 	if prepareErr != nil {
 		attempt.Summary = fmt.Sprintf("trusted programs %s attempted; plan preparation failed: %v", strings.Join(attempt.Programs, ", "), prepareErr)
-		for _, id := range attempt.Programs {
-			l.addFailureSignal("fast_path_failure:" + id)
-		}
-		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
+		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch, CoveredFindingsVerified: &unverified}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
 		return attempt
 	}
 
 	executor := l.Executor
-	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
+	// Apply still waits for its writes and rollouts. Its final verifier checks
+	// only this cause, so an unrelated fault cannot spend the global timeout.
 	response := ToolResponse{}
-	if result.Applied && result.RolloutPending == nil {
+	executor.Verifier = fastPathVerifier{loop: l, selected: selectedPlans, scope: l.fastPathScope, response: &response}
+	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
+	if result.Applied && !result.VerificationCompleted && result.RolloutPending == nil {
 		l.verify(ctx, selectedPlans, &response)
 	}
 	fillProgramRevisions(ctx, response.ProgramRuns, l.Request.RepositoryWorktree, l.Request.SourceCommit)
 	attempt.Verification = response
-	attempt.Resolved = applyErr == nil && result.VerificationPassed && response.Healthy
-	if attempt.Resolved {
-		attempt.Resolved = boundPlansNoMatch(selectedPlans, response.ProgramRuns) && fastPathFindingsVerified(attempt.Findings, response.DetectorStates)
-	}
-	if attempt.Resolved {
-		for _, run := range response.ProgramRuns {
-			if run.Verdict.Result != program.NoMatch {
-				attempt.Resolved = false
-				break
-			}
-		}
-	}
-	if attempt.Resolved {
-		attempt.Summary = fmt.Sprintf("trusted programs %s resolved incident", strings.Join(attempt.Programs, ", "))
+	attempt.Verified = applyErr == nil && result.Applied && result.VerificationPassed && fastPathCauseVerified(selectedPlans, l.fastPathScope, response)
+	verified := attempt.Verified
+	result.CoveredFindingsVerified = &verified
+	attempt.Resolved = attempt.Verified && response.Healthy
+	failed := result.Applied && fastPathCauseFailed(selectedPlans, l.fastPathScope, response)
+	if attempt.Verified {
+		l.rememberFastPathRepairs(selected, l.fastPathScope)
+		attempt.Summary = fmt.Sprintf("trusted programs %s verified covered findings; repair kept; %d remaining findings", strings.Join(attempt.Programs, ", "), len(response.Findings))
 	} else if result.RolloutPending != nil {
 		response.RolloutPending = result.RolloutPending
 		attempt.Verification = response
 		attempt.Summary = "applied repair remains rollout_pending; repair the blocking peer before independent verification: " + result.RolloutPending.Reason
 	} else {
 		result.VerificationPassed = false
-		for _, id := range attempt.Programs {
-			l.addFailureSignal("fast_path_failure:" + id)
+		if failed {
+			for _, signal := range l.fastPathTrustFailureSignals(attempt.Programs) {
+				l.addFailureSignal(signal)
+			}
 		}
-		if len(result.ActionsApplied) > 0 {
+		if failed && len(result.ActionsApplied) > 0 {
 			if rollbackErr := executor.rollback(ctx, &result); rollbackErr != nil {
 				attempt.RollbackErr = rollbackErr.Error()
 			} else {
 				attempt.RolledBack = true
 			}
 		}
-		attempt.Summary = fmt.Sprintf("trusted programs %s attempted; verification failed; rollback %t", strings.Join(attempt.Programs, ", "), attempt.RolledBack)
+		attempt.Summary = fmt.Sprintf("trusted programs %s attempted; cause verification incomplete; rollback %t", strings.Join(attempt.Programs, ", "), attempt.RolledBack)
 		if applyErr != nil {
 			attempt.Summary += ": " + applyErr.Error()
 		}
@@ -355,7 +354,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if applyErr != nil {
 		response.Error = applyErr.Error()
 	}
-	if !attempt.Resolved && response.Error == "" {
+	if !attempt.Verified && response.Error == "" {
 		response.Error = "trusted fast-path verification failed"
 	}
 	requestJSON, _ := json.Marshal(ToolRequest{Command: "apply", PlanIDs: planIDs})

@@ -72,6 +72,7 @@ type PlanApplicationResult struct {
 	RollbackError            string
 	VerificationPassed       bool
 	VerificationCompleted    bool
+	CoveredFindingsVerified  *bool
 	RolloutPending           *contracts.RolloutPending
 	FinalEquivalenceVerified *bool
 	ActionsApplied           []program.Action

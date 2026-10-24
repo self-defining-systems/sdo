@@ -9,11 +9,12 @@ import (
 // recheckFastPath is read-only. Bound diagnoses are observations, never plans
 // to replay. A NoMatch for every original binding and fresh independent health
 // verification are both required before the controller may close the incident.
-func (l *ResponderLoop) recheckFastPath(ctx context.Context, runs []ProgramRun) FastPathAttempt {
+func (l *ResponderLoop) recheckFastPath(ctx context.Context, runs []ProgramRun, scope fastPathVerificationScope) FastPathAttempt {
 	l.operationMu.Lock()
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.fastPathRepairs = nil
 	attempt := FastPathAttempt{Findings: l.Request.Findings, Summary: "no bound prior diagnosis"}
 	if len(runs) == 0 || l.Programs == nil {
 		return attempt
@@ -40,8 +41,22 @@ func (l *ResponderLoop) recheckFastPath(ctx context.Context, runs []ProgramRun) 
 		attempt.Programs = append(attempt.Programs, run.ProgramID)
 	}
 	response := ToolResponse{}
+	if len(scope.Baseline) > 0 {
+		l.findings = append(l.findings[:0], scope.Baseline...)
+	}
 	l.verify(ctx, selected, &response)
 	attempt.Verification = response
+	if len(scope.Covered) > 0 {
+		attempt.Verified = fastPathCauseVerified(selected, scope, response)
+		if attempt.Verified {
+			l.rememberFastPathRepairs(runs, scope)
+			l.fastPathPrograms = append([]string(nil), attempt.Programs...)
+			attempt.Summary = "live bound diagnoses NoMatch and covered findings clear; prior repair kept"
+		}
+		if !response.Healthy {
+			return attempt
+		}
+	}
 	if !response.Healthy {
 		attempt.Summary = "independent verification did not clear"
 		return attempt
