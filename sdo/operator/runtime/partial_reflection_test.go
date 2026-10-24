@@ -389,3 +389,48 @@ func TestColdVerificationSummaryKeepsBoundAndAbstainsOnOverflow(t *testing.T) {
 		t.Fatalf("omitted resource proof admitted: %v", got)
 	}
 }
+
+func TestFailedGlobalClosureCanLearnControllerAllClearRepair(t *testing.T) {
+	o := coldPartialRepairOutcome(t)
+	response := ToolResponse{Command: "verify", Summary: "verification: healthy; return the structured incident result immediately", Healthy: true, DetectorStates: []DetectorEvaluation{{DetectorID: "health-objective", EvaluatedAt: time.Unix(110, 0), Status: DetectorEvaluationClear}}}
+	for _, compact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compact=%v", compact), func(t *testing.T) {
+			r := response
+			if compact {
+				r.Summary = strings.Repeat("complete healthy evaluation ", 200)
+				o.ProgramToolCalls[0].ResponseJson = string(recordedToolResponseJSON(r, nil))
+			} else {
+				o.ProgramToolCalls[0].ResponseJson = string(t1JSON(t, r))
+			}
+			if got := partialRepairCauses(o); len(got) != 1 || got[0] != 0 {
+				t.Fatalf("all-clear controller proof rejected because global failed: %v", got)
+			}
+			view := partialReflectionOutcome(o)
+			if view.Classification != "failed" || len(view.ConfirmedRootCauses) != 1 || len(view.RepairActions) != 1 {
+				t.Fatalf("all-clear learning upgraded or leaked global outcome: %v", view)
+			}
+		})
+	}
+}
+
+func TestAllClearPartialEvidenceStillRejectsContradictions(t *testing.T) {
+	cases := map[string]func(*ToolResponse){
+		"healthy with open finding": func(r *ToolResponse) {
+			r.Findings = []sdk.Finding{{PrimaryResource: objectRefState(t1Ref("unverified"))}}
+		},
+		"healthy with firing evaluation": func(r *ToolResponse) { r.DetectorStates[0].Status = DetectorEvaluationFiring },
+		"healthy with unresolved":        func(r *ToolResponse) { r.Unresolved = true },
+		"empty but not healthy":          func(r *ToolResponse) { r.Healthy = false },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			o := coldPartialRepairOutcome(t)
+			r := ToolResponse{Command: "verify", Healthy: true, DetectorStates: []DetectorEvaluation{{DetectorID: "health-objective", EvaluatedAt: time.Unix(110, 0), Status: DetectorEvaluationClear}}}
+			mutate(&r)
+			o.ProgramToolCalls[0].ResponseJson = string(t1JSON(t, r))
+			if got := partialRepairCauses(o); len(got) > 0 {
+				t.Fatalf("contradictory all-clear proof admitted: %v", got)
+			}
+		})
+	}
+}

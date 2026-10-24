@@ -77,7 +77,7 @@ func latestPartialVerification(outcome *contracts.OutcomeRecord) (*VerificationS
 		return nil, nil
 	}
 	_, response, ok := parseProgramToolCall(latest)
-	if !ok || response.Healthy {
+	if !ok {
 		return nil, nil
 	}
 	var record struct {
@@ -96,12 +96,19 @@ func latestPartialVerification(outcome *contracts.OutcomeRecord) (*VerificationS
 	if !record.Truncated {
 		summary = compactVerification(response)
 	}
-	if summary == nil || summary.Version != 1 || !summary.Complete || summary.FindingsCount <= 0 || len(summary.OpenResources) == 0 || len(summary.Evaluations) == 0 {
+	if summary == nil || summary.Version != 1 || !summary.Complete || summary.FindingsCount < 0 || len(summary.Evaluations) == 0 {
+		return nil, nil
+	}
+	if summary.FindingsCount == 0 {
+		if !response.Healthy || response.Unresolved || len(summary.OpenResources) != 0 {
+			return nil, nil
+		}
+	} else if response.Healthy || len(summary.OpenResources) == 0 {
 		return nil, nil
 	}
 	seen := map[string]bool{}
 	for _, state := range summary.Evaluations {
-		if state.DetectorID == "" || seen[state.DetectorID] || state.At.IsZero() || state.At.After(latest.GetAt().AsTime()) || (state.Status != DetectorEvaluationClear && state.Status != DetectorEvaluationFiring) {
+		if (response.Healthy && state.Status != DetectorEvaluationClear) || state.DetectorID == "" || seen[state.DetectorID] || state.At.IsZero() || state.At.After(latest.GetAt().AsTime()) || (state.Status != DetectorEvaluationClear && state.Status != DetectorEvaluationFiring) {
 			return nil, nil
 		}
 		seen[state.DetectorID] = true
