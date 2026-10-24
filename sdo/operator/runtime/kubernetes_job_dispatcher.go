@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sdo.dev/operator/contracts/wire"
 	"strings"
@@ -29,6 +30,9 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
+	// AcceptedRepository is the durable broker-owned checkout used for trust.
+	// Proposal checkouts belong to individual incidents and may be retired.
+	AcceptedRepository    string
 	APIProxyImage         string
 	ToolchainImage        string
 	Client                kubernetes.Interface
@@ -341,6 +345,9 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	if err != nil {
 		return nil, fmt.Errorf("read program trust outcomes: %w", err)
 	}
+	if d.AcceptedRepository != "" {
+		request.RepositoryWorktree = d.AcceptedRepository
+	}
 	stored, err = memory.AfterAdoption(ctx, request.RepositoryWorktree, stored)
 	if err != nil {
 		return nil, fmt.Errorf("read adoption learning boundary: %w", err)
@@ -355,7 +362,9 @@ func (d KubernetesJobDispatcher) programTrust(ctx context.Context, request Incid
 	threshold := max(1, d.ProgramTrustThreshold)
 	if request.RepositoryWorktree != "" && gitRevision.MatchString(request.SourceCommit) {
 		if err := creditLearnedPrograms(ctx, request, records, stats, threshold); err != nil {
-			return nil, fmt.Errorf("read broker-validated learning credit: %w", err)
+			// Origin credit is optional. Keep ordinary settled trust when the
+			// extra Git evidence is unavailable; never invent origin credit.
+			slog.WarnContext(ctx, "optional program learning credit unavailable", "incident_id", request.IncidentID, "error", err)
 		}
 	}
 	return stats, nil

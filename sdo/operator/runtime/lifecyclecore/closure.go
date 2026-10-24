@@ -27,6 +27,7 @@ const (
 	ArchivesPersisted
 	AgentTimeout
 	Superseded
+	ResponseExpired
 )
 
 type RetryPolicy struct {
@@ -110,11 +111,18 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		})
 		return next, nil
 	}
-	if event.Kind == Superseded {
+	if event.Kind == ResponseExpired && phase != contracts.ClosureState_CLOSURE_STATE_PENDING && phase != contracts.ClosureState_CLOSURE_STATE_PROCESSING {
+		return next, nil
+	}
+	if event.Kind == Superseded || event.Kind == ResponseExpired {
 		if pending == nil || phase == contracts.ClosureState_CLOSURE_STATE_FAILED {
 			return next, nil
 		}
 		failure := &contracts.ClosureFailure{IncidentId: pending.GetRequest().GetIncidentId(), Attempts: 1, MaxAttempts: 1, LastError: event.Error, FirstFailedAt: timestamppb.New(event.At), LastFailedAt: timestamppb.New(event.At), Permanent: true, Reason: contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_BROKER_ERROR, Action: "obsolete health evidence archived; investigate with the adopted health policy"}
+		if event.Kind == ResponseExpired {
+			failure.Reason = contracts.ClosureFailureReason_CLOSURE_FAILURE_REASON_AGENT_TIMEOUT
+			failure.Action = "expired incident without live work archived; detect a fresh incident"
+		}
 		next.ClosureFailure = failure
 		next.ClosureReceipt = nil
 		next.ClosureState = contracts.ClosureState_CLOSURE_STATE_FAILED

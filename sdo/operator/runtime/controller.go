@@ -257,6 +257,9 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
+	if err := c.retireExpiredIncident(ctx, now); err != nil {
+		return err
+	}
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
@@ -1091,17 +1094,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.reportBrokerError("freeze closure", err)
 		return
 	}
-	c.incidentOpen = false
-	c.responderDone = false
-	c.currentIncidentRequest = nil
-	c.currentIncidentResult = nil
-	c.dispatchError = ""
-	c.incidentDetectedAt = time.Time{}
-	c.incidentDispatchedAt = time.Time{}
-	c.responderCompletedAt = time.Time{}
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_IDLE
-	c.incidentFindingKeys = nil
-	c.cleanedHelpers = nil
+	c.clearIncidentLocked()
 	c.mu.Unlock()
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)

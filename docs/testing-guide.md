@@ -463,6 +463,13 @@ registry require separate ownership evidence for any unregistered processes.
 Graceful `teardown --state ...` still drains before calling the production stop
 step. `sdo-operator stop --control-namespace ... --inspect` inventories production
 runtime without modifying it; stop leaves memory, Secrets and ConfigMaps intact.
+The expiry guard archives abandoned requests
+with typed `AGENT_TIMEOUT` evidence and requires fresh observations for a new
+incident. These hermetic regressions run with:
+
+```bash
+(cd sdo/operator/runtime && go test -race . ./lifecyclecore -run 'TestExpiredIncident|TestResponseExpiry|TestLearningTrustUsesAccepted|TestMissingOptionalLearning|TestMissingLearningCommit|TestPreparedResponderRequestSurvives|TestLearningEvidenceGitError' -count=1 -timeout=5m)
+```
 
 ### Detached launches
 

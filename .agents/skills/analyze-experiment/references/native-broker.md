@@ -203,3 +203,17 @@ separate measurements; neither authorizes production learning.
 ## RL1 learning content and isolation
 
 Verified full and partial causes require executable diagnosis and mitigation, a handling README, and detector coverage. Go reports reflection.program-required or reflection.detector-required and retries incomplete results; README-only updated is a failed attempt. The only exception is a typed SDK gap naming the cause resources and reason. Controller capture gaps are telemetry, not a learning gate: fixtures may be authored from recorded actions and existing session observations. Publication compiles programs and executes mitigation to prove Match becomes NoMatch. Capture digest matching and rename/peer generalization are no longer save-time prerequisites. Broker-validated new programs receive one origin trust credit from their verified cause/bound fixture. Benchmark learning is invoked before grading, oracle evaluation and cleanup; none of those verdicts supply verification or enter production outcomes or reflection requests.
+
+
+### Expired incident retirement between encounters
+
+As a restart backstop, an expired response request with no active Job or orphan
+worker Pod is archived through the failed-closure outbox with typed reason
+`CLOSURE_FAILURE_REASON_AGENT_TIMEOUT`. API uncertainty preserves the binding;
+a live worker may still be rejoined. The archive is persisted before another
+incident's effects can execute. This terminal archive has no health success or
+new learning credit. New observations can open a fresh incident even when the
+old fault is still firing. Already committed closures retain their receipts.
+Learning-origin Git reads use the durable accepted repository, not a retired
+proposal checkout. Missing optional origin evidence logs Git stderr and earns
+no extra credit, while responder dispatch remains available.
