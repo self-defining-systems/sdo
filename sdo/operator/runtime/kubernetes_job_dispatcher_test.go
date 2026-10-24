@@ -251,7 +251,7 @@ func TestHermeticTrustedLatentDriftSkipsResponderAndRetainsLearningClassificatio
 }
 
 func TestFailedFastPathRollsBackAndDispatchesResponderWithSummary(t *testing.T) {
-	loop, client := trustedPortLoop(t, false, true, false)
+	loop, client := trustedPortLoop(t, true, true, false)
 	request := goldenRequest(t)
 	request.Namespace = "app"
 	request.RepairPolicy = "recorded-actions"

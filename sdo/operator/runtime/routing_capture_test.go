@@ -437,7 +437,8 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		t.Fatalf("SetField was not replayed: %+v", notes)
 	}
 
-	// A trusted generalized routing program can cover both targetPort faults.
+	// With two faults, the best single binding runs, then whole-incident verification
+	// rolls it back before responder handoff because the other fault remains.
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "accepted recorded routing fixture")
 	commit := nativeGit(t, root, "rev-parse", "HEAD")
@@ -477,19 +478,24 @@ func TestHermeticRoutingCaptureCompilesReplayableMitigator(t *testing.T) {
 		loop.DiagnosisSettleDelay = time.Millisecond
 		return loop
 	}}
-	repeated, err = warm.PrepareDispatch(ctx, repeated)
+	loop := warm.LoopFactory(repeated)
+	loop.Trust, err = warm.programTrust(ctx, repeated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := warm.Dispatch(ctx, repeated)
-	if err != nil || result.ResolutionPath != "fast_path" || len(result.PlanApplications) != 1 || len(result.PlanApplications[0].Result.ActionsApplied) != 2 || result.Usage.GetInputTokens() != 0 {
-		t.Fatalf("two-targetPort fast path: %+v %v", result, err)
+	loop.InitialDiagnose(ctx)
+	attempt := loop.TryTrustedFastPath(ctx, 1)
+	applications := loop.PlanApplications()
+	if !attempt.Attempted || attempt.Resolved || !attempt.RolledBack || len(applications) != 1 || len(applications[0].Result.ActionsApplied) != 1 {
+		t.Fatalf("single-binding attempt: %+v applications=%+v", attempt, applications)
 	}
-	jobs, err := client.BatchV1().Jobs("app").List(ctx, metav1.ListOptions{})
-	if err != nil || len(jobs.Items) != 0 {
-		t.Fatalf("routing responder dispatched: %+v %v", jobs, err)
+	for _, name := range []string{snapshot.ServiceList[0].Name, snapshot.ServiceList[1].Name} {
+		live, err := client.CoreV1().Services("app").Get(ctx, name, metav1.GetOptions{})
+		if err != nil || live.Spec.Ports[0].TargetPort.IntVal != 9999 {
+			t.Fatalf("verification failure left a partial repair: %+v %v", live, err)
+		}
 	}
-	t.Log("captured TCP evidence passes fixed/healthy peer, rename and SetField repair replay; at three prior credits both targetPort faults resolve with fresh live probes and no responder Job")
+	t.Log("captured routing repair passes save-time replay; two faults attempt one binding and roll back before responder handoff")
 }
 
 func TestRoutingCaptureRecordsUnavailableCapabilityOnce(t *testing.T) {

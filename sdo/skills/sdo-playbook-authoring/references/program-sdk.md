@@ -84,9 +84,8 @@ type DeleteObject struct {
 	Ref    sdk.ObjectRef
 	Reason string
 }
-    DeleteObject irreversibly deletes a named object absent from accepted
-    source. Its receipt retains a nonsecret preimage; compensation never
-    recreates it.
+    DeleteObject irreversibly deletes a named object in the incident namespace.
+    Its receipt retains a nonsecret preimage; compensation never recreates it.
 
 type DeletePod struct{ Ref sdk.ObjectRef }
     DeletePod removes one named pod with UID/version preconditions.

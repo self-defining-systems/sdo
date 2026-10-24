@@ -55,21 +55,15 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	model := flags.String("model", "", "agent model")
 	provider := flags.String("agent-provider", "codex", "agent provider")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed accepted-source and incident policy JSON")
-	planSourceFile := flags.String("plan-source-policy-file", "", "reviewed source policy file; defaults to SDO_PLAN_SOURCE_POLICY_FILE")
-	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
-	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
-	var planWebhookNames repeatable
-	flags.Var(&planWebhookNames, "plan-webhook-name", "exact reviewed webhook name authorized for controller get/delete")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
+	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
@@ -88,10 +82,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
 	}
-	sourcePolicyInput, sourcePolicyErr := readSourcePolicyInput(*planSourceFile, *planSourceJSON)
-	if sourcePolicyErr != nil {
-		return InstallExistingConfig{}, sourcePolicyErr
-	}
+
 	if flags.NArg() != 0 {
 		return InstallExistingConfig{}, fmt.Errorf("unexpected install-existing arguments: %v", flags.Args())
 	}
@@ -140,10 +131,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 		ControllerImage: *controllerImage, ResponderImage: *responderImage, ValidatorImage: *validatorImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret, Model: *model,
 		RepairPolicy: *repairPolicy, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, AgentProvider: *provider,
-		MaxResponseLoops:     *maxResponseLoops,
-		ResponderMenu:        menu == "1",
-		PlanSourcePolicyJSON: sourcePolicyInput, PlanSafetyPolicyJSON: *planSafetyJSON, PlanSafetyPolicySHA256: *planSafetySHA, PlanWebhookNames: planWebhookNames,
-		ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
+		MaxResponseLoops: *maxResponseLoops,
+		ResponderMenu:    menu != "0",
+		ProgramFastPath:  *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 		LateFindings:    *lateFindings,
 		HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
 		TimeoutSeconds: int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()),

@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,13 +8,11 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
-	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -104,15 +101,11 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	if !ok || e.Client == nil {
 		return result, fmt.Errorf("named object lifecycle client is required")
 	}
-	if e.Source == nil {
-		return result, fmt.Errorf("accepted source is required for object actions")
-	}
+
 	if !dryRun && (e.Rollouts == nil || e.Verifier == nil) {
 		return result, fmt.Errorf("rollout waiter and health verifier are required")
 	}
-	if err := e.validateAcceptedRevision(incident); err != nil {
-		return result, err
-	}
+
 	counts := map[sdk.ObjectRef]int{}
 	lifecycle := map[sdk.ObjectRef]bool{}
 	for _, action := range plan.Actions {
@@ -131,21 +124,19 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	current := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	originals := map[sdk.ObjectRef]*unstructured.Unstructured{}
 	var refs []sdk.ObjectRef
-	// Complete every source/safety/pre-image check before the first mutation.
+	// Capture and validate every pre-image before the first mutation.
 	for _, action := range plan.Actions {
 		ref, _ := planActionRef(action)
 		if err := validatePlanRef(ref); err != nil {
 			return result, err
 		}
-		if ref.Namespace != "" && incident.Namespace != "" && ref.Namespace != incident.Namespace {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace {
 			return result, fmt.Errorf("object action is outside the incident namespace")
 		}
 		if _, exists := current[ref]; exists {
 			continue
 		}
-		if err := e.Safety.authorizeRead(ref, incident.SourceCommit, e.safetyNow()); err != nil {
-			return result, err
-		}
+
 		object, getErr := e.Client.Get(ctx, ref)
 		if objectActionOperation(action) == "create" {
 			if !apierrors.IsNotFound(getErr) {
@@ -153,15 +144,13 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			}
 			object = nil
 		} else {
-			if getErr != nil || object == nil {
+			if getErr != nil || object == nil || !samePlanRef(object, ref) {
 				return result, fmt.Errorf("object pre-image is unavailable")
 			}
 			if object.GetUID() == "" || object.GetResourceVersion() == "" {
 				return result, fmt.Errorf("object identity/version preconditions are required")
 			}
-			if err := e.Safety.checkObject(object, ref); err != nil {
-				return result, err
-			}
+
 		}
 		current[ref] = object.DeepCopy()
 		originals[ref] = object.DeepCopy()
@@ -172,7 +161,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 		e.report = &result.ActionReports[index]
 		ref, _ := planActionRef(action)
 		operation := objectActionOperation(action)
-		patch := PlanPatch{Authorization: planAuthorizationMode(action, e.SourceAuthority != nil), Ref: ref, Operation: operation, Before: current[ref].DeepCopy(), Structured: true, SourceCommit: incident.SourceCommit, Irreversible: operation == "delete"}
+		patch := PlanPatch{Authorization: planAuthorizationMode(action), Ref: ref, Operation: operation, Before: current[ref].DeepCopy(), Structured: true, SourceCommit: incident.SourceCommit, Irreversible: operation == "delete"}
 		if operation != "" {
 			patch.After, err = e.prepareObjectAction(ctx, incident, action, current[ref])
 			if err != nil {
@@ -185,16 +174,11 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			}
 			result.ObjectEffects = append(result.ObjectEffects, effect)
 		} else {
-			patch.After, err = e.prepareAction(ctx, incident, action, current[ref], true)
+			patch.After, err = e.prepareAction(ctx, incident, action, current[ref])
 			if err != nil {
 				return result, err
 			}
-			if err := e.Safety.checkObject(patch.After, ref); err != nil {
-				return result, err
-			}
-			if _, err := e.validateSourceRepair(ctx, incident, ref, originals[ref], current[ref], patch.After); err != nil {
-				return result, err
-			}
+
 			before, _ := json.Marshal(current[ref].Object)
 			after, _ := json.Marshal(patch.After.Object)
 			patch.Patch, err = createConditionalObjectPatch(before, after, current[ref])
@@ -212,12 +196,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 	written := map[sdk.ObjectRef]bool{}
 	for index := range result.Patches {
 		patch := &result.Patches[index]
-		if err := e.validateAcceptedRevision(incident); err != nil {
-			return result, err
-		}
-		if err := e.Safety.authorizeRead(patch.Ref, incident.SourceCommit, e.safetyNow()); err != nil {
-			return result, err
-		}
+
 		pending := index
 		result.PendingAction = &pending
 		effect := objectEffectFor(&result, patch.Ref)
@@ -229,9 +208,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			if _, getErr := e.Client.Get(ctx, patch.Ref); !apierrors.IsNotFound(getErr) {
 				return result, fmt.Errorf("CreateFromSource lost its absence precondition")
 			}
-			if err := e.Safety.checkObject(patch.After, patch.Ref); err != nil {
-				return result, err
-			}
+
 			created, createErr := client.Create(ctx, patch.Ref, patch.After.DeepCopy())
 			if createErr != nil {
 				return result, fmt.Errorf("create receipt unknown")
@@ -247,9 +224,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 			if getErr != nil {
 				return result, fmt.Errorf("delete precondition read failed")
 			}
-			if err := e.Safety.checkObject(live, patch.Ref); err != nil {
-				return result, err
-			}
+
 			if live.GetUID() != patch.Before.GetUID() || live.GetResourceVersion() != patch.Before.GetResourceVersion() {
 				return result, fmt.Errorf("delete identity/version changed")
 			}
@@ -263,9 +238,7 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 					return result, err
 				}
 			}
-			if err := e.Safety.checkObject(patch.After, patch.Ref); err != nil {
-				return result, err
-			}
+
 			if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
 				return result, fmt.Errorf("field write receipt unknown")
 			}
@@ -310,41 +283,17 @@ func (e PlanExecutor) applyObjectPlan(ctx context.Context, incident IncidentRequ
 
 func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident IncidentRequest, action program.Action, before *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	ref, _ := planActionRef(action)
-	proof := e.Safety.Objects[ref]
-	var source *unstructured.Unstructured
-	var err error
-	if ref.Namespace == "" {
-		// Cluster absence is anchored to the application's current accepted render
-		// selection, never an empty-namespace lock or a failed source lookup.
-		scoped, ok := e.Source.(interface {
-			AcceptedScopedManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
-		})
-		if !ok || incident.Namespace == "" {
-			return nil, fmt.Errorf("cluster object action requires application-scoped accepted source evidence")
-		}
-		source, err = scoped.AcceptedScopedManifest(ctx, incident.SourceCommit, incident.Namespace, ref)
-	} else {
-		source, err = e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
-	}
 	if objectActionOperation(action) == "delete" {
-		if !proof.DeleteAllowed {
-			return nil, fmt.Errorf("plan safety: irreversible delete effect is not authorized")
-		}
-		if !errors.Is(err, rendered.ErrAcceptedManifestAbsent) {
-			return nil, fmt.Errorf("DeleteObject requires authoritative accepted-source absence")
-		}
-		if err := e.Safety.checkObject(before, ref); err != nil {
-			return nil, err
-		}
 		encoded, _ := json.Marshal(before.Object)
 		if len(encoded) > 256*1024 {
 			return nil, fmt.Errorf("delete pre-image exceeds receipt limit")
 		}
 		return nil, nil
 	}
-	if !proof.CreateAllowed {
-		return nil, fmt.Errorf("plan safety: create effect is not authorized")
+	if e.Source == nil || incident.SourceCommit == "" {
+		return nil, fmt.Errorf("accepted source is required for CreateFromSource")
 	}
+	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
 	if err != nil || source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("CreateFromSource requires a matching accepted object")
 	}
@@ -355,41 +304,12 @@ func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident Incident
 	desired.SetManagedFields(nil)
 	desired.SetGeneration(0)
 	desired.SetCreationTimestamp(metav1.Time{})
-	if err := e.Safety.checkObject(desired, ref); err != nil {
-		return nil, err
-	}
-	if err := validateCreateSchema(desired); err != nil {
-		return nil, err
-	}
+
 	return desired, nil
 }
 
-func validateCreateSchema(object *unstructured.Unstructured) error {
-	var typed any
-	switch object.GetAPIVersion() + "/" + object.GetKind() {
-	case "v1/ConfigMap":
-		typed = &corev1.ConfigMap{}
-	case "v1/Service":
-		typed = &corev1.Service{}
-	default:
-		return fmt.Errorf("create kind is unsupported")
-	}
-	raw, err := json.Marshal(object.Object)
-	if err != nil {
-		return fmt.Errorf("invalid accepted object")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(typed) != nil {
-		return fmt.Errorf("accepted object has invalid schema kinds")
-	}
-	return nil
-}
-
 func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) error {
-	if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
-		return err
-	}
+
 	live, err := e.Client.Get(ctx, patch.Ref)
 	if patch.Operation == "delete" {
 		if apierrors.IsNotFound(err) {
@@ -397,15 +317,13 @@ func (e PlanExecutor) observeObjectEffect(ctx context.Context, patch PlanPatch) 
 		}
 		return fmt.Errorf("delete observation unknown: named object is not confirmed absent")
 	}
-	if err != nil || live == nil {
+	if err != nil || live == nil || !samePlanRef(live, patch.Ref) {
 		return fmt.Errorf("create observation unknown: current object is unavailable")
 	}
 	if patch.After.GetUID() == "" || live.GetUID() != patch.After.GetUID() {
 		return fmt.Errorf("create observation unknown: UID changed or unavailable")
 	}
-	if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, true); err != nil {
-		return err
-	}
+
 	for _, field := range []string{"spec", "data", "binaryData"} {
 		if expected, exists := patch.After.Object[field]; exists && !planValueContains(live.Object[field], expected) {
 			return fmt.Errorf("create observation unknown: source fields differ")
@@ -419,12 +337,7 @@ func (e PlanExecutor) restoreCreatedObject(ctx context.Context, patch PlanPatch)
 	if !ok {
 		return fmt.Errorf("create compensation requires lifecycle client")
 	}
-	if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
-		return err
-	}
-	if err := e.validateAcceptedRevision(IncidentRequest{SourceCommit: patch.SourceCommit}); err != nil {
-		return err
-	}
+
 	live, err := e.Client.Get(ctx, patch.Ref)
 	if apierrors.IsNotFound(err) {
 		return nil
@@ -435,9 +348,7 @@ func (e PlanExecutor) restoreCreatedObject(ctx context.Context, patch PlanPatch)
 	if patch.After == nil || patch.After.GetUID() == "" || live.GetUID() != patch.After.GetUID() {
 		return fmt.Errorf("create compensation UID conflict")
 	}
-	if err := e.Safety.checkObservedObject(live, patch.After, patch.Ref, true); err != nil {
-		return err
-	}
+
 	// Do not delete a create whose source-owned fields were changed by another writer.
 	for _, field := range []string{"spec", "data", "binaryData"} {
 		if expected, exists := patch.After.Object[field]; exists && !planValueContains(live.Object[field], expected) {

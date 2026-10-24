@@ -188,7 +188,7 @@ func TestHermeticSourceReconcileLearningAndTrustAtThreeSkipsResponder(t *testing
 	request.RepositoryWorktree = root
 	request.SourceCommit = commit
 	request.RepositoryBaseCommit = commit
-	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, ProgramFastPath: true, LoopFactory: makeLoop}
+	dispatcher := KubernetesJobDispatcher{Client: client, Namespace: "app", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t), ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root, ProgramFastPath: true, ProgramTrustThreshold: 3, LoopFactory: makeLoop}
 	for index := 0; index < 3; index++ {
 		dispatcher.Outcomes = priorOutcomeReader{outcomes: outcomes}
 		trust, err := dispatcher.programTrust(ctx, request)

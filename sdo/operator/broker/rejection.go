@@ -16,7 +16,7 @@ import (
 // MaxValidationRetries bounds how often Go re-dispatches an agent task after
 // the broker rejected its proposal with validator diagnostics. A task is
 // therefore dispatched at most 1+MaxValidationRetries times.
-const MaxValidationRetries = 2
+const MaxValidationRetries = 5
 
 // RejectionDiagnostics returns the typed validator diagnostics carried by a
 // broker rejection. Errors that are not validator failures (infrastructure,

@@ -2,10 +2,11 @@ package runtime
 
 import (
 	"context"
+	"testing"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"testing"
 )
 
 type revisionAnnotationClient struct{ *planFakeClient }
@@ -25,10 +26,8 @@ func TestPlanDeploymentRevisionAnnotationVerificationAndCompensation(t *testing.
 	after := before.DeepCopy()
 	_ = unstructured.SetNestedSlice(after.Object, []any{map[string]any{"name": "api", "args": []any{"after"}}}, "spec", "template", "spec", "containers")
 	client := revisionAnnotationClient{&planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
-	e := PlanExecutor{Client: client, Safety: fixturePlanSafety(t, ref, before, after), AcceptedRevision: func() string { return "accepted" }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
-	proof := e.Safety.Objects[ref]
-	proof.UID = "u"
-	e.Safety.Objects[ref] = proof
+	e := PlanExecutor{Client: client, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
 	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.SetField{Ref: ref, Path: "spec.template.spec.containers[name=api].args", Value: testPlanValue([]string{"after"})}}}, false)
 	if err != nil || !result.VerificationPassed {
 		t.Fatalf("revision annotation broke verification: %v", err)

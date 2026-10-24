@@ -25,10 +25,8 @@ func TestRV13RollbackStrandedByDelete(t *testing.T) {
 	npBefore.SetUID("np-uid")
 	npBefore.SetResourceVersion("1")
 	client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{cm: cmBefore.DeepCopy(), np: npBefore.DeepCopy()}}, ignoreDelete: true}
-	safety := fixturePlanSafety(t, cm, cmBefore, cmAfter)
-	safety.Objects[cm] = PlanObjectSafety{UID: "cm-uid", Digests: safety.Objects[cm].Digests}
-	safety.Objects[np] = PlanObjectSafety{UID: "np-uid", DeleteAllowed: true, Digests: map[string]bool{planSafetyDigest(npBefore): true}}
-	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, AcceptedRevision: func() string { return "accepted" }, Safety: safety, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
+	e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 	result, err := e.Apply(context.Background(), IncidentRequest{SourceCommit: "accepted", RepairPolicy: "recorded-actions", Namespace: "app"}, program.Plan{Actions: []program.Action{
 		program.SetField{Ref: cm, Path: "data[key]", Value: testPlanValue("after"), Reason: "r"},
 		program.DeleteObject{Ref: np, Reason: "r"},

@@ -6,7 +6,12 @@ import (
 	"strings"
 
 	"errors"
+
+	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -113,27 +118,19 @@ func planUnstructured(object any, ref sdk.ObjectRef) (*unstructured.Unstructured
 
 // TokenlessServiceAccount returns only identity metadata after rejecting token
 // references and implicit automount. It never reads a referenced Secret.
-func (c TypedPlanClient) TokenlessServiceAccount(ctx context.Context, ref sdk.ObjectRef) (string, error) {
-	if c.Client == nil || ref.APIVersion != "v1" || ref.Kind != "ServiceAccount" {
-		return "", fmt.Errorf("existing service account reader is unavailable")
-	}
-	account, err := c.Client.CoreV1().ServiceAccounts(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("existing service account is unavailable")
-	}
-	if account.UID == "" || account.AutomountServiceAccountToken == nil || *account.AutomountServiceAccountToken || len(account.Secrets) > 0 || len(account.ImagePullSecrets) > 0 {
-		return "", fmt.Errorf("service account is token-bearing or unproven")
-	}
-	return string(account.UID), nil
-}
 
 func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if c.Client == nil || object == nil || !samePlanRef(object, ref) {
+	if c.Client == nil || object == nil || !samePlanRef(object, ref) || ref.Namespace == "" {
 		return nil, fmt.Errorf("matching named object is required")
 	}
 	var result any
 	var err error
 	switch ref.APIVersion + "/" + ref.Kind {
+	case "v1/Pod":
+		typed := new(corev1.Pod)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.CoreV1().Pods(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
 	case "v1/ConfigMap":
 		typed := new(corev1.ConfigMap)
 		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
@@ -144,8 +141,33 @@ func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *
 		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
 			result, err = c.Client.CoreV1().Services(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
 		}
+	case "apps/v1/Deployment":
+		typed := new(appsv1.Deployment)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.AppsV1().Deployments(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
+	case "apps/v1/StatefulSet":
+		typed := new(appsv1.StatefulSet)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.AppsV1().StatefulSets(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
+	case "networking.k8s.io/v1/NetworkPolicy":
+		typed := new(networkingv1.NetworkPolicy)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.NetworkingV1().NetworkPolicies(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
+	case "autoscaling/v2/HorizontalPodAutoscaler":
+		typed := new(autoscalingv2.HorizontalPodAutoscaler)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.AutoscalingV2().HorizontalPodAutoscalers(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
+	case "policy/v1/PodDisruptionBudget":
+		typed := new(policyv1.PodDisruptionBudget)
+		if err = kruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, typed); err == nil {
+			result, err = c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
+		}
 	default:
-		return nil, fmt.Errorf("object create kind is unsupported")
+		return nil, fmt.Errorf("object create transport is unavailable for %s/%s", ref.APIVersion, ref.Kind)
 	}
 	if err != nil {
 		return nil, err
@@ -165,18 +187,18 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 		return c.Client.CoreV1().ConfigMaps(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "v1/Service":
 		return c.Client.CoreV1().Services(ref.Namespace).Delete(ctx, ref.Name, options)
+	case "apps/v1/Deployment":
+		return c.Client.AppsV1().Deployments(ref.Namespace).Delete(ctx, ref.Name, options)
+	case "apps/v1/StatefulSet":
+		return c.Client.AppsV1().StatefulSets(ref.Namespace).Delete(ctx, ref.Name, options)
 	case "networking.k8s.io/v1/NetworkPolicy":
 		return c.Client.NetworkingV1().NetworkPolicies(ref.Namespace).Delete(ctx, ref.Name, options)
-	case "admissionregistration.k8s.io/v1/MutatingWebhookConfiguration":
-		if ref.Namespace == "" {
-			return c.Client.AdmissionregistrationV1().MutatingWebhookConfigurations().Delete(ctx, ref.Name, options)
-		}
-	case "admissionregistration.k8s.io/v1/ValidatingWebhookConfiguration":
-		if ref.Namespace == "" {
-			return c.Client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Delete(ctx, ref.Name, options)
-		}
+	case "autoscaling/v2/HorizontalPodAutoscaler":
+		return c.Client.AutoscalingV2().HorizontalPodAutoscalers(ref.Namespace).Delete(ctx, ref.Name, options)
+	case "policy/v1/PodDisruptionBudget":
+		return c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Delete(ctx, ref.Name, options)
 	}
-	return fmt.Errorf("object delete kind/scope is unsupported")
+	return fmt.Errorf("object delete transport is unavailable for %s/%s", ref.APIVersion, ref.Kind)
 }
 
 // Exec requests no stdout/stderr streams. Kubernetes requires at least one I/O

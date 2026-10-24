@@ -22,7 +22,7 @@ The six durable artifact classes are `.sdo/goal.md`, `.sdo/arch.md`, `.sdo/playb
 
 The Go `operator/memory` interface reads outcomes by incident ID and does not expose filenames. Its JSON adapter stores one versioned document per incident at `.sdo/outcomes/<sha256(incident_id)>.json` and can import the retired `.sdo/outcomes.jsonl` stream. Agent requests carry logical memory snapshots. Reflection edits final files, checks them with `sdo-operator memory check`, and returns decisions and logical playbook IDs. The judge uses the versioned direct-edit capability; Go explicitly installs generic health and traffic policy detectors in the shared check. Deprecated proposal payloads are rejected. The broker derives the diff, independently repeats the shared check and alone publishes accepted commits.
 
-Programs use `operator/sdk/program` to diagnose through namespace-scoped read views and propose typed plans. The controller owns execution, rollback preimages, event-time confirmation and revision-bound trust. The shared memory validator checks captures, labels, imports, ownership and deterministic replay before the broker accepts authored bytes. Reflection returns optional typed SDK gaps alongside decisions and logical playbook IDs.
+Programs use `operator/sdk/program` to diagnose through namespace-scoped read views and propose typed plans. The controller owns execution, rollback preimages, event-time confirmation and verified repair trust. The shared memory validator checks captures, labels, imports, ownership and deterministic replay before the broker accepts authored bytes. Reflection returns optional typed SDK gaps alongside decisions and logical playbook IDs.
 
 ## Development rules
 

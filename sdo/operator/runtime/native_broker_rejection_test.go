@@ -72,9 +72,9 @@ func writeGoodPlaybook(w IncidentWorkspace) (ReflectionDecision, error) {
 	return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"base"}}, os.WriteFile(filepath.Join(w.Worktree, ".sdo", "playbooks", "base", "README.md"), []byte(body), 0o644)
 }
 
-func TestMaxValidationRetriesIsTwo(t *testing.T) {
-	if broker.MaxValidationRetries != 2 {
-		t.Fatalf("MaxValidationRetries = %d, want 2", broker.MaxValidationRetries)
+func TestMaxValidationRetriesIsFive(t *testing.T) {
+	if broker.MaxValidationRetries != 5 {
+		t.Fatalf("MaxValidationRetries = %d, want 5", broker.MaxValidationRetries)
 	}
 }
 

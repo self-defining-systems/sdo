@@ -117,7 +117,7 @@ func TestSimXV2ActionsAndValuesUnderServerFaults(t *testing.T) {
 						value = program.FromObserved(ref, "spec.replicas")
 					}
 					head := "accepted"
-					e := PlanExecutor{Client: kube, Source: planFakeSource{source: accepted}, AcceptedRevision: func() string { return head }, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Now: newSimClock().Now, Values: program.ValueInputs{Observed: func(sdk.ObjectRef) (map[string]any, error) { return observed.Object, nil }}}
+					e := PlanExecutor{Client: kube, Source: planFakeSource{source: accepted}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{passed: true}, Now: newSimClock().Now, Values: program.ValueInputs{Observed: func(sdk.ObjectRef) (map[string]any, error) { return observed.Object, nil }}}
 					plan := program.Plan{Actions: []program.Action{program.ScaleWorkload{Ref: ref, Replicas: value}}}
 					incident := IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}
 					if mode == "epoch-bump" {

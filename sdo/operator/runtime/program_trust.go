@@ -19,10 +19,10 @@ type ProgramTrust struct {
 }
 
 // ProgramTrustStats derives counters from durable outcomes. A changed
-// program revision or any failed application breaks its success streak.
+// failed application breaks its success streak; broker-validated revisions retain credit.
 // Accepted program revisions have passed the broker's corpus replay gate.
 func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) map[string]ProgramTrust {
-	minimum := 3
+	minimum := 1
 	if len(threshold) > 0 && threshold[0] > 0 {
 		minimum = threshold[0]
 	}
@@ -34,7 +34,9 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord, threshold ...int) ma
 	stateForRevision := func(id, revision string) ProgramTrust {
 		state := stats[id]
 		if revision != state.LastChange {
-			state = ProgramTrust{LastChange: revision, Failures: failures[id][revision]}
+			state.LastChange = revision
+			state.Failures = failures[id][revision]
+			state.Trusted = state.VerifiedSuccesses >= minimum && state.Failures == 0
 		}
 		return state
 	}

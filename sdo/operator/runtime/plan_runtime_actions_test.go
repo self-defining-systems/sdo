@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,12 +20,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
-	"net/http"
-	"net/http/httptest"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"testing"
-	"time"
 )
 
 type runtimeActionClient struct {
@@ -145,7 +146,7 @@ func TestXV2TypedExecUsesRBACAndRequestsNoOutput(t *testing.T) {
 func TestXV2ExecWithoutConfigReportsRefused(t *testing.T) {
 	e, _, ref := runtimeActionFixture()
 	client := kubernetesfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace, UID: "pod-uid", ResourceVersion: "7"}})
-	e.Client = healthGuardedPlanClient{PlanObjectClient: TypedPlanClient{Client: client}}
+	e.Client = TypedPlanClient{Client: client}
 	e.Values = program.ValueInputs{Spec: program.ProgramSpec{Params: []program.ParamSpec{{Name: "command", ValueKind: program.StringValue, Default: "/bin/true"}}}}
 	result, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{program.Exec{Pod: ref, Container: "app", Command: []program.Value{program.FromParam("command")}}}}, false)
 	if err == nil || result.Applied || result.VerificationPassed || result.ActionReports[0].Status != "refused" {

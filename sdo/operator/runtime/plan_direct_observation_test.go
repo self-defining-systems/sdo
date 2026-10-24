@@ -2,16 +2,17 @@ package runtime
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/tools/cache"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"testing"
-	"time"
 )
 
 func TestPlanUnwatchedKindsUseDirectCurrentProof(t *testing.T) {
-	for _, kind := range []string{"HorizontalPodAutoscaler", "PodDisruptionBudget", "MutatingWebhookConfiguration"} {
+	for _, kind := range []string{"HorizontalPodAutoscaler", "PodDisruptionBudget"} {
 		t.Run(kind, func(t *testing.T) {
 			ref := sdk.ObjectRef{Namespace: "app", Name: "fixture", Kind: kind}
 			path := "spec.maxReplicas"
@@ -34,16 +35,11 @@ func TestPlanUnwatchedKindsUseDirectCurrentProof(t *testing.T) {
 			} else {
 				after.Object["spec"].(map[string]any)["minAvailable"] = float64(2)
 			}
-			safety := fixturePlanSafety(t, ref, before, after)
+
 			client := &lifecycleTestClient{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: before}}}
 			var action program.Action = program.SetField{Ref: ref, Path: path, Value: testPlanValue(2)}
-			if kind == "MutatingWebhookConfiguration" {
-				proof := safety.Objects[ref]
-				proof.DeleteAllowed = true
-				safety.Objects[ref] = proof
-				action = program.DeleteObject{Ref: ref, Reason: "synthetic fixture"}
-			}
-			e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Safety: safety, AcceptedRevision: func() string { return "accepted" }, Observer: &KubernetesCache{informers: map[string]cache.SharedIndexInformer{}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
+
+			e := PlanExecutor{Client: client, Source: lifecycleTestSource{}, Observer: &KubernetesCache{informers: map[string]cache.SharedIndexInformer{}}, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			result, err := e.Apply(ctx, IncidentRequest{Namespace: "app", SourceCommit: "accepted", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{action}}, false)

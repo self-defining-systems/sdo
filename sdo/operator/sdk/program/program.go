@@ -215,7 +215,7 @@ type CreateFromSource struct {
 
 func (CreateFromSource) action() {}
 
-// DeleteObject irreversibly deletes a named object absent from accepted source.
+// DeleteObject irreversibly deletes a named object in the incident namespace.
 // Its receipt retains a nonsecret preimage; compensation never recreates it.
 type DeleteObject struct {
 	Ref    sdk.ObjectRef

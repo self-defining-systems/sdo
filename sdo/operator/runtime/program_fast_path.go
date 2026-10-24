@@ -53,70 +53,75 @@ const (
 )
 
 func selectTrustedFastPathRuns(findings []sdk.Finding, runs []ProgramRun, trust map[string]ProgramTrust, minSuccesses int, view sdk.DetectionContext) ([]ProgramRun, []RelationCoveredFinding, FastPathSkipReason) {
-	matches := make(map[string]map[string]ProgramRun)
+	type candidate struct {
+		run     ProgramRun
+		covered map[string]bool
+	}
+	candidates := map[string]*candidate{}
+	matched := false
+	active := map[string]bool{}
+	for _, finding := range findings {
+		active[FindingFingerprint(finding)] = true
+	}
 	for _, run := range runs {
-		if run.Verdict.Result == program.NeedsJudgement {
-			return nil, nil, FastPathSkipNeedsJudgement
-		}
-		if run.Verdict.Result != program.Match || run.FindingFingerprint == "" {
+		if run.Verdict.Result != program.Match || !active[run.FindingFingerprint] {
 			continue
 		}
-		if matches[run.FindingFingerprint] == nil {
-			matches[run.FindingFingerprint] = map[string]ProgramRun{}
+		matched = true
+		state := trust[run.ProgramID]
+		if !state.Trusted || state.Failures != 0 || state.VerifiedSuccesses < minSuccesses {
+			continue
 		}
 		key := run.ProgramID + "\x00" + bindingKey(run.Bindings)
-		matches[run.FindingFingerprint][key] = run
-	}
-	selected := make([]ProgramRun, 0, len(findings))
-	seen := map[string]bool{}
-	uncovered := make([]sdk.Finding, 0)
-	for _, finding := range findings {
-		covered := matches[FindingFingerprint(finding)]
-		if len(covered) == 0 {
-			uncovered = append(uncovered, finding)
-			continue
+		if candidates[key] == nil {
+			candidates[key] = &candidate{run: run, covered: map[string]bool{}}
 		}
-		if len(covered) != 1 {
-			return nil, nil, FastPathSkipAmbiguousMatch
-		}
-		for key, run := range covered {
-			state := trust[run.ProgramID]
-			if !state.Trusted || state.Failures != 0 || state.VerifiedSuccesses < minSuccesses || run.ProgramRevision == "" || state.LastChange != run.ProgramRevision {
-				return nil, nil, FastPathSkipUntrustedProgram
-			}
-			if !seen[key] {
-				selected = append(selected, run)
-				seen[key] = true
-			}
+		candidates[key].covered[run.FindingFingerprint] = true
+		// Choose a stable representative for duplicate diagnoses of the same binding.
+		if run.FindingFingerprint < candidates[key].run.FindingFingerprint {
+			candidates[key].run = run
 		}
 	}
-	if len(selected) == 0 {
-		if len(uncovered) > 0 {
-			return nil, nil, FastPathSkipUncoveredFinding
+	keys := make([]string, 0, len(candidates))
+	for key, candidate := range candidates {
+		for _, finding := range findings {
+			for _, bound := range candidate.run.Bindings.Objects {
+				if fastPathDirectlyRelated(view, finding.PrimaryResource, bound) {
+					candidate.covered[FindingFingerprint(finding)] = true
+					break
+				}
+			}
+		}
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := candidates[keys[i]], candidates[keys[j]]
+		if len(a.covered) != len(b.covered) {
+			return len(a.covered) > len(b.covered)
+		}
+		return keys[i] < keys[j]
+	})
+	if len(keys) == 0 {
+		if matched {
+			return nil, nil, FastPathSkipUntrustedProgram
 		}
 		return nil, nil, FastPathSkipNoSelectedProgram
 	}
-	related := make([]RelationCoveredFinding, 0, len(uncovered))
-	for _, finding := range uncovered {
-		matched := false
-		for _, run := range selected {
-			for _, bound := range run.Bindings.Objects {
-				if !fastPathDirectlyRelated(view, finding.PrimaryResource, bound) {
-					continue
-				}
-				related = append(related, RelationCoveredFinding{FindingFingerprint: FindingFingerprint(finding), ProgramID: run.ProgramID, Bindings: run.Bindings})
-				matched = true
-				break
-			}
-			if matched {
-				break
-			}
-		}
-		if !matched {
-			return nil, nil, FastPathSkipUncoveredFinding
+	best := candidates[keys[0]]
+	direct := map[string]bool{}
+	for _, run := range runs {
+		if run.ProgramID == best.run.ProgramID && bindingKey(run.Bindings) == bindingKey(best.run.Bindings) && run.Verdict.Result == program.Match {
+			direct[run.FindingFingerprint] = true
 		}
 	}
-	return selected, related, ""
+	related := []RelationCoveredFinding{}
+	for _, finding := range findings {
+		fp := FindingFingerprint(finding)
+		if best.covered[fp] && !direct[fp] {
+			related = append(related, RelationCoveredFinding{FindingFingerprint: fp, ProgramID: best.run.ProgramID, Bindings: best.run.Bindings})
+		}
+	}
+	return []ProgramRun{best.run}, related, ""
 }
 
 // TryTrustedFastPath makes one settled, verified plan attempt for an incident.
@@ -157,12 +162,8 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		if !state.Trusted || state.Failures != 0 || state.VerifiedSuccesses < minSuccesses {
 			continue
 		}
-		runs := []ProgramRun{{ProgramID: spec.ID}}
-		fillProgramRevisions(ctx, runs, l.Request.RepositoryWorktree, l.Request.SourceCommit)
-		if runs[0].ProgramRevision != "" && state.LastChange == runs[0].ProgramRevision {
-			reason = ""
-			break
-		}
+		reason = ""
+		break
 	}
 	if reason != "" {
 		return skip(reason)
@@ -182,11 +183,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if refreshError != "" {
 		return skip(FastPathSkipRefreshFailed)
 	}
-	for _, finding := range findings {
-		if finding.DetectorID == "drift.unexplained" {
-			return skip(FastPathSkipUnexplainedDrift)
-		}
-	}
+
 	if len(findings) == 0 {
 		return skip(FastPathSkipNoFindings)
 	}
@@ -213,7 +210,13 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 	if view == nil {
 		return skip(FastPathSkipSnapshotFailed)
 	}
-	selected, related, reason := selectTrustedFastPathRuns(findings, runs, l.Trust, minSuccesses, view)
+	eligible := make([]ProgramRun, 0, len(runs))
+	for _, run := range runs {
+		if _, ok := l.Programs.Mitigator(run.ProgramID); ok {
+			eligible = append(eligible, run)
+		}
+	}
+	selected, related, reason := selectTrustedFastPathRuns(findings, eligible, l.Trust, minSuccesses, view)
 	if reason != "" {
 		return skip(reason)
 	}
@@ -279,11 +282,7 @@ func (l *ResponderLoop) TryTrustedFastPath(ctx context.Context, minSuccesses int
 		l.applicationsLog[len(l.applicationsLog)-1] = RecordedPlanApplication{ID: "fast-path-1", ProgramIDs: attempt.Programs, Result: PlanApplicationResult{Plan: batch}, Error: prepareErr.Error(), StartedAt: started, CompletedAt: time.Now().UTC()}
 		return attempt
 	}
-	if l.CheckHealth != nil {
-		if err := l.CheckHealth(ctx); err != nil {
-			return skip(FastPathSkipRefreshFailed)
-		}
-	}
+
 	executor := l.Executor
 	result, applyErr := executor.Apply(ctx, l.Request, batch, false)
 	response := ToolResponse{}

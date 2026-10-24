@@ -22,19 +22,12 @@ func (e PlanExecutor) Reconcile(ctx context.Context, result PlanApplicationResul
 	if patch.Before == nil || patch.After == nil {
 		return result, fmt.Errorf("pending write has no in-process field images")
 	}
-	if patch.Structured {
-		if err := e.Safety.authorizeRead(patch.Ref, patch.SourceCommit, e.safetyNow()); err != nil {
-			return result, err
-		}
-	}
 	live, err := e.Client.Get(ctx, patch.Ref)
 	if err != nil {
 		return result, err
 	}
 	if patch.Structured {
-		if err := e.Safety.checkObject(live, patch.Ref); err != nil {
-			return result, err
-		}
+
 		if live.GetUID() == "" || live.GetUID() != patch.Before.GetUID() {
 			return result, fmt.Errorf("structured receipt unknown: UID changed")
 		}

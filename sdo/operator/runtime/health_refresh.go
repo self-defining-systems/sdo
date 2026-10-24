@@ -6,11 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/lifecyclecore"
-	"sdo.dev/operator/sdk"
 )
 
 // acceptedHealthGuard binds every evaluation/effect to the policy compiled into
@@ -138,22 +136,6 @@ func checkInvestigationHealth(ctx context.Context, root, incidentRevision, compi
 		return ErrStaleHealthInvestigation
 	}
 	return nil
-}
-
-// healthGuardedPlanClient checks again at the write boundary. A source advance
-// during plan preparation must not turn a previously authorized plan into a write.
-type healthGuardedPlanClient struct {
-	PlanObjectClient
-	Check func(context.Context) error
-}
-
-func (c healthGuardedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
-	if c.Check != nil {
-		if err := c.Check(ctx); err != nil {
-			return err
-		}
-	}
-	return c.PlanObjectClient.Patch(ctx, ref, kind, patch)
 }
 
 // discardRestoredHealthObservations prevents a queued finding from the previous

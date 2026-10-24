@@ -126,18 +126,8 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.MaxResponseLoops > 0 {
 		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
 	}
-	if cfg.PlanSourcePolicyJSON != "" {
-		args = append(args, "--plan-source-policy-json", cfg.PlanSourcePolicyJSON)
-	}
-	if cfg.PlanSafetyPolicyJSON != "" || cfg.PlanSafetyPolicySHA256 != "" {
-		args = append(args, "--plan-safety-policy-json", cfg.PlanSafetyPolicyJSON, "--plan-safety-policy-sha256", cfg.PlanSafetyPolicySHA256)
-	}
-	for _, name := range cfg.planWebhookNames() {
-		args = append(args, "--plan-webhook-name", name)
-	}
-	if cfg.ProgramFastPath {
-		args = append(args, "--program-fast-path")
-	}
+
+	args = append(args, fmt.Sprintf("--program-fast-path=%t", cfg.ProgramFastPath))
 	if cfg.ProgramTrustThreshold > 0 {
 		args = append(args, "--program-trust-threshold", fmt.Sprint(cfg.ProgramTrustThreshold))
 	}
@@ -189,7 +179,7 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	container := corev1.Container{Name: "operate", Image: cfg.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: append([]string{}, cfg.NativeCommand...), Args: args, SecurityContext: containerSecurity(), Resources: limits("250m", "512Mi", "2", "4Gi"), EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.CredentialsSecret}}}}, Env: []corev1.EnvVar{{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"}, {Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"}, {Name: "TMPDIR", Value: "/tmp"}, {Name: "GIT_AUTHOR_NAME", Value: "sdo-controller"}, {Name: "GIT_AUTHOR_EMAIL", Value: "sdo-controller@invalid"}, {Name: "GIT_COMMITTER_NAME", Value: "sdo-controller"}, {Name: "GIT_COMMITTER_EMAIL", Value: "sdo-controller@invalid"}}, VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}, {Name: "scratch", MountPath: "/tmp"}, {Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true}}}
 	policyJSON, _ := json.Marshal(cfg.ObservationCeiling)
-	container.Env = append(container.Env, corev1.EnvVar{Name: observation.CeilingEnvironment, Value: string(policyJSON)})
+	container.Env = append(container.Env, corev1.EnvVar{Name: observation.CeilingEnvironment, Value: string(policyJSON)}, corev1.EnvVar{Name: "SDO_RESPONDER_MENU", Value: fmt.Sprint(boolMenuValue(cfg.ResponderMenu))})
 	if cfg.RegistrationConfigMap != "" {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
@@ -213,7 +203,7 @@ func defaultRepairPolicy(c Config) string {
 	if c.RepairPolicy != "" {
 		return c.RepairPolicy
 	}
-	return "commit"
+	return "recorded-actions"
 }
 func reflectionSession(c Config) string {
 	if c.ReflectionSession != "" {

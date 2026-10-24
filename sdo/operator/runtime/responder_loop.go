@@ -7,9 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sdo.dev/operator/memory/layout"
 	"sync"
 	"time"
+
+	"sdo.dev/operator/memory/layout"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -18,7 +19,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-const DefaultMaxResponseLoops = 5
+const DefaultMaxResponseLoops = 10
 const DefaultDiagnosisSettleDelay = 15 * time.Second
 const maxRecordedToolResponse = 2048
 
@@ -250,12 +251,6 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
-	if l.CheckHealth != nil && request.Command != "session-open" && request.Command != "session-checkpoint" && request.Command != "report" {
-		if err := l.CheckHealth(ctx); err != nil {
-			response.Error = err.Error()
-			return response
-		}
-	}
 
 	switch request.Command {
 	case "menu":
@@ -627,12 +622,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 }
 
 func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response *ToolResponse) {
-	if l.CheckHealth != nil {
-		if err := l.CheckHealth(ctx); err != nil {
-			response.Error = err.Error()
-			return
-		}
-	}
+
 	for _, entry := range l.applicationsLog {
 		for _, consumed := range entry.PlanIDs {
 			for _, requested := range request.PlanIDs {

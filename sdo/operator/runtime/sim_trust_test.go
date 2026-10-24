@@ -26,13 +26,12 @@ const (
 	// simInterruptedElsewhere: the same signal bound to another revision.
 	simInterruptedElsewhere
 	// simEdited: a run of the program with no application; at a new revision it
-	// restarts the streak, at the current one it changes nothing.
+	// preserves the streak, as does the current revision.
 	simEdited
 )
 
 // simTrustModel restates the trust rules independently of ProgramTrustStats:
-// Verified successes form a streak at one revision. Failures and revision
-// changes reset it; questions preserve prior credit without extending it.
+// Verified successes form a streak at one revision. Failures reset it; questions preserve prior credit without extending it.
 // Failures are remembered per revision and prevent trust at that revision.
 type simTrustModel struct {
 	revision string
@@ -42,7 +41,7 @@ type simTrustModel struct {
 
 func (m *simTrustModel) enter(revision string) {
 	if revision != m.revision {
-		m.revision, m.streak = revision, 0
+		m.revision = revision
 	}
 }
 

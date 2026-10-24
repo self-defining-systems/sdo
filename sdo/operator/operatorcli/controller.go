@@ -19,7 +19,7 @@ import (
 	"sdo.dev/operator/memory"
 )
 
-const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.b636177843996657"
+const sdkSchemaIdentity = "sdo.dev/v1alpha1+sdk.5d8413fd20fbdc03"
 
 type repeatable []string
 
@@ -58,20 +58,16 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	sourceCommit := flags.String("source-commit", "", "source commit")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit")
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 2*time.Minute, "verification timeout")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy")
+	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
 	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
 	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
 	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
 	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL that metric and alert detectors query once per evaluation cycle")
-	maxResponseLoops := flags.Int("max-response-loops", 5, "maximum sdo apply batches per incident")
-	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed accepted-source and incident policy JSON")
-	planSourceFile := flags.String("plan-source-policy-file", "", "reviewed source policy file; defaults to SDO_PLAN_SOURCE_POLICY_FILE")
-	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture authorization JSON")
-	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently reviewed policy SHA256")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve incidents")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum sdo apply batches per incident")
+	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve incidents")
+	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	programMinDuration := flags.Duration("program-min-duration", 10*time.Second, "minimum sustained learned-program firing and clearing duration")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", 15*time.Second, "settle delay before a trusted-program fast-path attempt")
@@ -85,10 +81,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if err := flags.Parse(args[1:]); err != nil {
 		return builder.RunConfig{}, false, err
 	}
-	sourcePolicyInput, sourcePolicyErr := readSourcePolicyInput(*planSourceFile, *planSourceJSON)
-	if sourcePolicyErr != nil {
-		return builder.RunConfig{}, false, sourcePolicyErr
-	}
+
 	if flags.NArg() != 0 {
 		return builder.RunConfig{}, false, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
 	}
@@ -104,9 +97,7 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 	if *programMinDuration < 0 {
 		return builder.RunConfig{}, false, errors.New("program minimum duration must be nonnegative")
 	}
-	if *programFastPath && *repairPolicy != "recorded-actions" {
-		return builder.RunConfig{}, false, errors.New("program fast path requires recorded-actions repair policy")
-	}
+
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
 		*credentialsSecret == "" || *worktreeRoot == "" || *validatorImage == "" || *model == "" || *backend == "" || *schemaIdentity == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return builder.RunConfig{}, false, errors.New("native launch requires application, namespace, images, repository, credentials, validator, schema, and responder identity")
@@ -118,7 +109,6 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, bool, error) {
 		*application = filepath.Base(*app)
 	}
 	launch := &contracts.ControllerConfig{
-		PlanSourcePolicyJson: sourcePolicyInput, PlanSafetyPolicyJson: *planSafetyJSON, PlanSafetyPolicySha256: *planSafetySHA,
 		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
 		DeployedManifestPaths: deployedManifestPaths,

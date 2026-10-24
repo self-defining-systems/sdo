@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,11 +11,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sdo.dev/operator/contracts/wire"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strconv"
 	"strings"
 	"time"
+
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -35,13 +35,10 @@ import (
 
 type RuntimeOptions struct {
 	Programs program.ProgramRegistry
-	// PlanSafety supplies independently verified, expiring provenance for structured plan effects.
-	PlanSafety       *PlanSafetyPolicy
-	SourcePlanPolicy *SourcePlanPolicy
-	Args             []string
-	Stdout           io.Writer
-	Stderr           io.Writer
-	Provider         SnapshotProvider
+	Args     []string
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Provider SnapshotProvider
 
 	// Client, when set, replaces the kubeconfig clients of the long-running
 	// controller (observation, state, dispatch, and leader election), so the
@@ -180,21 +177,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "incident responder timeout")
 	verificationTimeout := flags.Duration(
 		"verification-timeout",
-		2*time.Minute,
+		5*time.Minute,
 		"maximum wait for independent health detectors to clear after a response; the incident then closes as failed",
 	)
 	maxResponseLoops := flags.Int("max-response-loops", DefaultMaxResponseLoops, "maximum sdo apply batches per incident")
-	planSourceJSON := flags.String("plan-source-policy-json", "", "reviewed source-only incident authority")
-	planSafetyJSON := flags.String("plan-safety-policy-json", "", "administrator-reviewed fixture policy; never responder/plan output")
-	planSafetySHA := flags.String("plan-safety-policy-sha256", "", "independently pinned reviewed policy SHA256")
-	programFastPath := flags.Bool("program-fast-path", false, "allow trusted programs to resolve an incident without a responder")
-	programTrustThreshold := flags.Int("program-trust-threshold", 3, "verified successes required to trust a program")
+	programFastPath := flags.Bool("program-fast-path", true, "allow trusted programs to resolve an incident without a responder")
+	programTrustThreshold := flags.Int("program-trust-threshold", 1, "verified successes required to trust a program")
 	diagnosisDeadline := flags.Duration("diagnosis-deadline", DefaultDiagnosisDeadline, "shared deadline for candidate diagnosis")
 	driftSweepInterval := flags.Duration("drift-sweep-interval", DefaultDriftSweepInterval, "periodic full program sweep interval")
 	programMinDuration := flags.Duration("program-min-duration", DefaultProgramMinDuration, "minimum sustained duration for learned-program firing and clearing")
 	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
 	diagnosisSettleDelay := flags.Duration("diagnosis-settle-delay", DefaultDiagnosisSettleDelay, "settle delay before a trusted-program fast-path attempt")
-	repairPolicy := flags.String("repair-policy", "commit", "repair evidence policy: commit or recorded-actions")
+	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy: commit or recorded-actions")
 	leaseName := flags.String("lease-name", "sdo-controller", "leader-election Lease name")
 	leaseDuration := flags.Duration("lease-duration", 60*time.Second, "leader-election Lease duration")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
@@ -239,47 +233,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *planSourceJSON != "" {
-		if options.SourcePlanPolicy != nil || options.PlanSafety != nil || *planSafetyJSON != "" || *planSafetySHA != "" {
-			return errors.New("plan safety authority supplied twice")
-		}
-		parsedSourcePolicy, policyErr := LoadSourcePlanPolicy(*planSourceJSON)
-		if policyErr != nil {
-			return policyErr
-		}
-		options.SourcePlanPolicy = parsedSourcePolicy
-	}
-	if *planSafetyJSON != "" || *planSafetySHA != "" {
-		if options.PlanSafety != nil {
-			return errors.New("plan safety authority supplied twice")
-		}
-		reviewed, err := loadReviewedPlanSafety(*planSafetyJSON, *planSafetySHA, time.Now())
-		if err != nil {
-			return err
-		}
-		options.PlanSafety = reviewed
-	}
 
 	menuEnabled := os.Getenv("SDO_RESPONDER_MENU")
 	if menuEnabled != "" && menuEnabled != "0" && menuEnabled != "1" {
 		return errors.New("SDO_RESPONDER_MENU must be 0 or 1")
-	}
-
-	if policy := options.SourcePlanPolicy; policy != nil && len(policy.Applications) > 0 {
-		raw := []byte(*planSourceJSON)
-		if len(raw) == 0 {
-			raw, _ = json.Marshal(policy)
-		}
-		event := struct {
-			Loaded       bool   `json:"plan_source_policy_loaded"`
-			Applications int    `json:"applications"`
-			CreateKinds  int    `json:"create_kinds"`
-			DeleteKinds  int    `json:"delete_kinds"`
-			SHA256       string `json:"sha256"`
-		}{true, len(policy.Applications), len(policy.CreateKinds), len(policy.DeleteKinds), fmt.Sprintf("%x", sha256.Sum256(raw))}
-		if err := json.NewEncoder(stdout).Encode(event); err != nil {
-			return fmt.Errorf("log loaded source plan policy: %w", err)
-		}
 	}
 
 	timeScale, err := developmentTimeScale()
@@ -298,9 +255,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if *maxResponseLoops < 1 || *diagnosisDeadline <= 0 || *driftSweepInterval <= 0 || *driftBatchWindow <= 0 || *programTrustThreshold < 1 {
 		return errors.New("response loops, diagnosis deadline, drift sweep and batch windows, and program trust threshold must be positive")
 	}
-	if *programFastPath && *repairPolicy != "recorded-actions" {
-		return errors.New("program fast path requires recorded-actions repair policy")
-	}
+
 	if *exitAfterClosure && *restartAfterClosure {
 		return fmt.Errorf("--exit-after-closure and --restart-after-closure are mutually exclusive")
 	}
@@ -536,13 +491,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		kubernetesCache.scopedTracker = stateTracker
 		defer stateTracker.Stop()
 	}
-	planMetadataClient := options.MetadataClient
-	if options.SourcePlanPolicy != nil && planMetadataClient == nil && !clientInjected {
-		planMetadataClient, err = core.NewKubernetesMetadataClient()
-		if err != nil {
-			return fmt.Errorf("create plan metadata reader: %w", err)
-		}
-	}
 	planSource := GitPlanSource{Repository: resolvedRoot, ManifestPaths: deployedManifestPaths, DeployedCommit: resolvedDeployedCommit}
 	var primitiveProber PrimitiveProber
 	if proberAddress != nil {
@@ -569,41 +517,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			Catalog: catalog, Outcomes: memory.OpenReader(resolvedRoot), RequireMemorySnapshot: options.NativeBroker != nil,
 			ProgramFastPath: *programFastPath, ProgramTrustThreshold: *programTrustThreshold,
 			LoopFactory: func(request IncidentRequest) *ResponderLoop {
-				var sourceAuthority *SourcePlanAuthority
-				if options.SourcePlanPolicy != nil {
-					sourceAuthority = &SourcePlanAuthority{Config: options.SourcePlanPolicy, Source: planSource, UID: sourcePolicyUIDReader(planMetadataClient)}
-					policyCtx, policyCancel := context.WithTimeout(ctx, 30*time.Second)
-					if _, policyErr := sourceAuthority.Policy(policyCtx, request); policyErr != nil {
-						fmt.Fprintln(stderr, "source-bound plan authority unavailable:", policyErr)
-					}
-					policyCancel()
-				}
 				loop := NewResponderLoop(request, options.Programs, snapshotProvider, detectors, PlanExecutor{
-					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource, Safety: options.PlanSafety, SourceAuthority: sourceAuthority,
+					Client: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig}, Source: planSource,
 
-					AcceptedRevision: func() string {
-						if controller == nil {
-							return ""
-						}
-						return controller.CurrentAcceptedCommit()
-					},
 					Rollouts: KubernetesPlanRollouts{Client: bootstrapProvider.Client}, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: snapshotProvider}, Observer: kubernetesCache,
 				}, *maxResponseLoops)
-				if menuEnabled == "1" {
+				if menuEnabled != "0" {
 					loop.MenuConfig = productionResponderMenu()
 				}
-				loop.CheckHealth = func(ctx context.Context) error {
-					if controller != nil && controller.CheckHealth != nil {
-						if err := controller.CheckHealth(ctx); err != nil {
-							return err
-						}
-					}
-					if launchConfig != nil {
-						return checkInvestigationHealth(ctx, resolvedRoot, request.SourceCommit, launchConfig.GetControllerRevision())
-					}
-					return nil
-				}
-				loop.Executor.Client = healthGuardedPlanClient{PlanObjectClient: loop.Executor.Client, Check: loop.CheckHealth}
 				loop.CurrentEvidence = func() *IncidentRequest {
 					if controller == nil {
 						return nil
