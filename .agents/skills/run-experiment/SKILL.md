@@ -52,6 +52,7 @@ The experiment is the incidents; everything else is overhead to remove.
 
 - Use only your own lanes; never touch other users' clusters or processes.
 - Stop a run as soon as it is known to run stale or broken code. Fix, refreeze, rebuild.
+- Suspect the eval before SDO. A bad or surprising result may be a benchmark or harness bug that measures the wrong thing. Before any injection, prove each precondition independently: the app serves real traffic, and SDO's own health signal rests on observed success, not just "clear". Confirm setup and restore leave the app as installed, and test every admission guard against real SDO behavior. Record eval bugs apart from SDO findings, and rerun before comparing.
 - Deliver one image set per lane, once. Scripted gates and live slots share it: switch agents with `fastloop reset` and run flags, never with a second image set.
 - Time scaling is for scripted-agent runs only; live LLM runs, including smokes, use `--time-scale 1`.
 - Source-only fixes use the mounted worktree and a warm reset; dependency fixes use a new frozen tag.

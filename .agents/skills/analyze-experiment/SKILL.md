@@ -34,7 +34,7 @@ Agent-specific trajectories may exist for generic CLI benchmark agents. Treat th
 3. For an SDO run, validate the strict receipt shape and correlate its incident and commits with lifecycle provenance, outcomes, and broker evidence.
 4. Reconstruct the timeline: lifecycle bootstrap or reuse, detector firing, batching, dispatch, proposal, independent verification, outcome, reflection, rollout, acknowledgement, and cleanup.
 5. Compare agent logs or trajectories with authoritative state. Flag contradictions instead of choosing the more favorable source.
-6. Identify failed invariants, detours, repeated hypotheses, stale memory, uncorrelated commits, or missing evidence.
+6. Identify failed invariants, detours, repeated hypotheses, stale memory, uncorrelated commits, or missing evidence. Rule out eval confounds before attributing a result to SDO (see the eval rule in [run-experiment](../run-experiment/SKILL.md#rules)).
 7. Report configuration, evidence paths, findings, and confidence. Separate production-lifecycle completion from benchmark diagnosis/mitigation scores.
 
 When multiple runs are in scope and subagents are available, assign one run or one evidence layer per subagent, then reconcile incident IDs, commits, timestamps, and classifications centrally.
