@@ -42,7 +42,7 @@ func TestDatabaseConfigMapOneCallNeverEmitsCredentialArtifacts(t *testing.T) {
 	a.Target.Auth = &program.DatabaseAuth{Database: "admin", Username: key("ROOT_USER"), Password: key("ROOT_PASSWORD")}
 	a.Password = key("APP_PASSWORD")
 	pod := corev1.Pod{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"}, ObjectMeta: metav1.ObjectMeta{Name: a.Target.Pod.Name, Namespace: "app", UID: "one", ResourceVersion: "1"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mongo"}}}}
-	cm := corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "app"}, Data: map[string]string{"k8s-geo-mongo.sh": "ROOT_USER='synthetic-root'\nROOT_PASSWORD='" + sentinel + "'\nAPP_PASSWORD=\"" + sentinel + "\"\n"}}
+	cm := corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "app"}, Data: map[string]string{"k8s-geo-mongo.sh": "ROOT_USER='" + sentinel + "_USER'\nROOT_PASSWORD='" + sentinel + "_ROOT'\nAPP_PASSWORD=\"" + sentinel + "_APP\"\n"}}
 	var mu sync.Mutex
 	repaired := false
 	refsRead, mutations := 0, 0
@@ -115,7 +115,7 @@ func TestDatabaseConfigMapOneCallNeverEmitsCredentialArtifacts(t *testing.T) {
 			}
 		}
 		raw, err := io.ReadAll(input)
-		if err != nil || !strings.Contains(string(raw), sentinel) || !strings.Contains(string(raw), "authDB.auth") {
+		if err != nil || (!strings.Contains(string(raw), sentinel+"_USER") || !strings.Contains(string(raw), sentinel+"_ROOT") || (output == nil && !strings.Contains(string(raw), sentinel+"_APP"))) || !strings.Contains(string(raw), "authDB.auth") {
 			t.Error("executor did not privately resolve credential references")
 			return
 		}
@@ -219,7 +219,10 @@ func TestDatabaseConfigMapOneCallNeverEmitsCredentialArtifacts(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "transport.log"), []byte(logs.String()+capturedLogs.String()+urlArtifact), 0600); err != nil {
 		t.Fatal(err)
 	}
-	encoded := base64.StdEncoding.EncodeToString([]byte(sentinel))
+	encoded := []string{}
+	for _, suffix := range []string{"_USER", "_ROOT", "_APP"} {
+		encoded = append(encoded, base64.StdEncoding.EncodeToString([]byte(sentinel+suffix)))
+	}
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -231,7 +234,11 @@ func TestDatabaseConfigMapOneCallNeverEmitsCredentialArtifacts(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if bytes.Contains(raw, []byte(sentinel)) || bytes.Contains(raw, []byte(encoded)) {
+		leaked := bytes.Contains(raw, []byte(sentinel))
+		for _, value := range encoded {
+			leaked = leaked || bytes.Contains(raw, []byte(value))
+		}
+		if leaked {
 			t.Errorf("credential persisted in emitted artifact %s", filepath.Base(path))
 		}
 		return nil

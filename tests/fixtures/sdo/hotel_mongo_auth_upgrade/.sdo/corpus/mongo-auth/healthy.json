@@ -94,7 +94,7 @@
             "name": "mongodb-geo"
           },
           "container": "mongo",
-          "database": "geo",
+          "database": "geo-db",
           "auth": {
             "database": "admin",
             "username": {
@@ -108,7 +108,7 @@
               "config_map": {
                 "name": "mongo-geo-script",
                 "key": "k8s-geo-mongo.sh",
-                "assignment": "ROOT_PASSWORD"
+                "assignment": "ROOT_PWD"
               }
             }
           }
@@ -128,7 +128,7 @@
           "name": "admin",
           "roles": [
             {
-              "database": "geo",
+              "database": "geo-db",
               "name": "readWrite"
             }
           ]

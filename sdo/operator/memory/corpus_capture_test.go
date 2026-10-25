@@ -2,6 +2,7 @@ package memory
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -93,5 +96,71 @@ func TestIncidentCaptureNeverPersistsConfigMapValues(t *testing.T) {
 	}
 	if view.ConfigMapList[0].Data["ca.crt"] != canary {
 		t.Fatal("live ConfigMap changed")
+	}
+}
+
+func TestDatabaseCatalogCaptureKeepsBoundaryFirstObservation(t *testing.T) {
+	root := t.TempDir()
+	const incident = "database-recording-boundary"
+	if err := CaptureIncidentSnapshot(root, incident, "open@pre-apply", sdktest.Snapshot{NamespaceName: "app"}, "app"); err != nil {
+		t.Fatal(err)
+	}
+	target := program.DatabaseTarget{Engine: program.MongoDB, Pod: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "database"}, Container: "mongo", Database: "app"}
+	args, _ := json.Marshal([]program.DatabaseTarget{target})
+	first := sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: args, Result: json.RawMessage(`[]`)}
+	if err := AppendCapturedRecording(root, incident, "open@pre-apply", first); err != nil {
+		t.Fatal(err)
+	}
+	// A second responder action sees the restored catalog. This is a later
+	// observation, not a replacement for the immutable pre-repair boundary.
+	later := first
+	later.Result = json.RawMessage(`[{"name":"app","roles":[]}]`)
+	if err := AppendCapturedRecording(root, incident, "open@pre-apply", later); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := IncidentCorpusDir(root, incident)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "open@pre-apply-recordings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []sdktest.PrimitiveCall
+	if err := json.Unmarshal(data, &calls); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || string(calls[0].Result) != "[]" {
+		t.Fatal("later database read replaced/conflicted with the open catalog")
+	}
+	target.Shell = "mongosh"
+	target.Auth = &program.DatabaseAuth{Database: "admin", Username: program.CredentialRef{Env: "NEW_USER"}, Password: program.CredentialRef{Env: "NEW_PASSWORD"}}
+	later.Arguments, _ = json.Marshal([]program.DatabaseTarget{target})
+	if err := AppendCapturedRecording(root, incident, "open@pre-apply", later); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "open@pre-apply-recordings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &calls); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatal("post-repair authentication configuration became open evidence")
+	}
+	later.Phase = "fixed"
+	if err := AppendCapturedRecording(root, incident, "open@pre-apply", later); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "open@pre-apply-recordings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &calls); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || calls[1].Phase != "fixed" {
+		t.Fatal("independent fixed observation was discarded")
 	}
 }

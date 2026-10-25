@@ -13,7 +13,7 @@ func (Program) Spec() program.ProgramSpec {
 	return program.ProgramSpec{ID: "mongo-auth-bootstrap", Params: []program.ParamSpec{
 		{Name: "pod", Kind: "Pod", Required: true},
 
-		{Name: "database", ValueKind: program.StringValue, Default: "geo"},
+		{Name: "database", ValueKind: program.StringValue, Default: "geo-db"},
 		{Name: "user", ValueKind: program.StringValue, Default: "admin"},
 	}}
 }
@@ -23,7 +23,7 @@ func (Program) Spec() program.ProgramSpec {
 // only. Diagnosis and replay never inspect or reconstruct credential contents.
 func configuration(v program.ReadView, b program.Bindings) (program.DatabaseTarget, string, program.CredentialRef, error) {
 	ref := b.Objects["pod"]
-	database, user := "geo", "admin"
+	database, user := "geo-db", "admin"
 	if value, ok := b.Values["database"].(string); ok {
 		database = value
 	}
@@ -57,8 +57,8 @@ func configuration(v program.ReadView, b program.Bindings) (program.DatabaseTarg
 							credential := func(assignment string) program.CredentialRef {
 								return program.CredentialRef{ConfigMap: &program.ConfigMapCredentialRef{Name: cm.Name, Key: item.Key, Assignment: assignment}}
 							}
-							target := program.DatabaseTarget{Engine: program.MongoDB, Pod: ref, Container: container.Name, Database: database, Auth: &program.DatabaseAuth{Database: "admin", Username: credential("ROOT_USER"), Password: credential("ROOT_PASSWORD")}}
-							return target, user, credential("APP_PASSWORD"), nil
+							target := program.DatabaseTarget{Engine: program.MongoDB, Pod: ref, Container: container.Name, Database: database, Auth: &program.DatabaseAuth{Database: "admin", Username: credential("ROOT_USER"), Password: credential("ROOT_PWD")}}
+							return target, user, credential("ADMIN_PWD"), nil
 						}
 					}
 				}

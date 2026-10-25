@@ -16,7 +16,7 @@ func (Program) Mitigate(_ context.Context, v program.ReadView, b program.Binding
 	var application sdk.ObjectRef
 	count := 0
 	for _, deployment := range v.Deployments() {
-		if deployment.Namespace == target.Pod.Namespace && deployment.Name == target.Database {
+		if deployment.Namespace == target.Pod.Namespace && deployment.Name == "geo" {
 			application = sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: deployment.Namespace, Name: deployment.Name}
 			count++
 		}

@@ -31,13 +31,13 @@ func (Detector) Detect(_ context.Context, v sdk.DetectionContext) ([]sdk.Finding
 				credential := func(assignment string) program.CredentialRef {
 					return program.CredentialRef{ConfigMap: &program.ConfigMapCredentialRef{Name: volume.ConfigMap.Name, Key: item.Key, Assignment: assignment}}
 				}
-				target := program.DatabaseTarget{Engine: program.MongoDB, Pod: ref, Container: "mongo", Database: "geo", Auth: &program.DatabaseAuth{Database: "admin", Username: credential("ROOT_USER"), Password: credential("ROOT_PASSWORD")}}
+				target := program.DatabaseTarget{Engine: program.MongoDB, Pod: ref, Container: "mongo", Database: "geo-db", Auth: &program.DatabaseAuth{Database: "admin", Username: credential("ROOT_USER"), Password: credential("ROOT_PWD")}}
 				users, err := program.ReadFrom(v).DatabaseUsers(target)
 				if err != nil {
 					return nil, err
 				}
 				for _, user := range users {
-					if user.Name == "admin" && len(user.Roles) == 1 && user.Roles[0] == (program.DatabaseRole{Database: "geo", Name: "readWrite"}) {
+					if user.Name == "admin" && len(user.Roles) == 1 && user.Roles[0] == (program.DatabaseRole{Database: "geo-db", Name: "readWrite"}) {
 						return nil, nil
 					}
 				}

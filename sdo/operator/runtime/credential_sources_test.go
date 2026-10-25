@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +14,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -151,5 +154,19 @@ func TestLegacyBootstrapDoesNotShadowCredentialEnv(t *testing.T) {
 	args := mongoCommandArgs("mongo", program.CredentialRef{Env: "_SDO_DATABASE_SCRIPT"}, program.CredentialRef{Env: "_SDO_DATABASE_SCRIPT_"})
 	if !strings.Contains(args[2], "read -r _SDO_DATABASE_SCRIPT__ ") || args[len(args)-1] != `eval(_getEnv("_SDO_DATABASE_SCRIPT__"))` {
 		t.Fatal("private stdin bootstrap shadows a declared credential env")
+	}
+}
+
+func TestConfigMapCredentialReadErrorNeverIncludesResponse(t *testing.T) {
+	const canary = "DBC_CONFIGMAP_ERROR_VALUE_CANARY"
+	client := kubefake.NewSimpleClientset()
+	client.PrependReactor("get", "configmaps", func(action ktesting.Action) (bool, kruntime.Object, error) {
+		return true, nil, fmt.Errorf("upstream response: %s", canary)
+	})
+	ref := program.CredentialRef{ConfigMap: &program.ConfigMapCredentialRef{Name: "mongo-geo-script", Key: "k8s-geo-mongo.sh", Assignment: "ROOT_PWD"}}
+	_, err := (TypedPlanClient{Client: client}).resolveCredential(context.Background(), "app", ref)
+	var typed *CredentialReferenceError
+	if !errors.As(err, &typed) || !strings.Contains(err.Error(), "mongo-geo-script") || strings.Contains(err.Error(), canary) {
+		t.Fatal("upstream credential read failure was not sanitized")
 	}
 }
