@@ -132,10 +132,11 @@ Mutating commands always store complete per-action results, evidence, program ru
 
 usage: sdo verify [-h] [--wait SECONDS]
 
-Reads the controller's cached health and inventory verdict immediately. Wait
-on SDO's verification instead of sleeping. After closure, incident_verified is
-an informational warning on every response; reads and reports remain
-available, while mutations are rejected.
+Reads the controller's cached health and inventory verdict immediately.
+Pending observation windows, including unproven synthetic scenarios, are not
+healthy. Wait on SDO's verification instead of sleeping. After closure,
+incident_verified is an informational warning on every response; reads and
+reports remain available, while mutations are rejected.
 
 options:
   -h, --help      show this help message and exit

@@ -222,6 +222,9 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		if err != nil {
 			return fmt.Errorf("closure observation detector %s: %w", id, err)
 		}
+		if !detectorConfirmed(detector, snapshot) {
+			return fmt.Errorf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot))
+		}
 		for _, finding := range findings {
 			if finding.DetectorID == "" {
 				finding.DetectorID = id

@@ -80,6 +80,8 @@ message DetectorEvaluation {
   string status = 3 [(buf.validate.field).string = {in: ["firing", "clear", "error", "pending"]}];
   repeated string fingerprints = 4;
   optional string error = 5;
+  // Informational explanation for an unconfirmed observation, not an error.
+  optional string reason = 6;
 }
 
 message SurfacedPlaybook {

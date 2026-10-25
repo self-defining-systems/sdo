@@ -21,7 +21,8 @@ type ScenarioObservations struct {
 	Samples  []Sample   `json:"samples"`
 	// Qualified reports whether the scenario has succeeded at least once
 	// since observation began. A scenario that never succeeded is not a
-	// health signal: its generator may not match this deployment.
+	// firing health signal: its generator may not match this deployment.
+	// It remains unproven and must not establish confirmed health.
 	Qualified bool `json:"qualified"`
 	// Invalid counts iterations whose requests could not be built or broke a
 	// safety rule; LastInvalid explains the latest one.

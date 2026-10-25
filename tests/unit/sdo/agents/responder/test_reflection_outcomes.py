@@ -480,3 +480,14 @@ def test_pending_history_survives_contract_and_reflection_projection() -> None:
     assert [run["status"] for run in runs] == ["pending", "clear", "firing", "pending"]
     assert [run["evaluations"] for run in runs] == [2, 1, 1, 1]
     assert all(not run["fingerprints"] for run in runs if run["status"] == "pending")
+
+
+def test_collapse_pending_history_preserves_qualification_reasons() -> None:
+    history = _evaluations("traffic-health", ["pending", "pending", "pending"])
+    history[0].reason = history[1].reason = "no synthetic scenario has succeeded since observation began: search, login"
+    history[2].reason = "synthetic scenarios have not succeeded since observation began: login"
+    runs = collapse_detector_history(history)
+    assert [(run["reason"], run["evaluations"]) for run in runs] == [
+        (history[0].reason, 2),
+        (history[2].reason, 1),
+    ]

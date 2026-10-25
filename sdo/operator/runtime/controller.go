@@ -444,7 +444,8 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			continue
 		}
 		if len(findings) == 0 && !detectorConfirmed(detector, snapshot) {
-			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending})
+			c.resetGate(spec.ID)
+			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReason(detector, snapshot)})
 			if len(c.history) > 100 {
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 			}
@@ -477,6 +478,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.observeGate(spec.ID, now, validFindings)
 		sampleFindings = append(sampleFindings, validFindings...)
 		c.recordEvaluation(spec.ID, now, validFindings)
+		c.history[len(c.history)-1].Reason = detectorConfirmationReason(detector, snapshot)
 		c.batcher.RemoveKeys(changes.Cleared)
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
 			c.scheduler.Expedite(spec.ID, now.Add(c.config.ConfirmationInterval))
@@ -979,7 +981,7 @@ func compactDetectorHistory(history []DetectorEvaluation) []DetectorEvaluation {
 	keys := make([]string, 0, len(history))
 	for _, evaluation := range history {
 		key := evaluation.DetectorID + "\x00" + string(evaluation.Status) + "\x00" +
-			strings.Join(evaluation.Fingerprints, "\x00") + "\x00" + evaluation.Error
+			strings.Join(evaluation.Fingerprints, "\x00") + "\x00" + evaluation.Error + "\x00" + evaluation.Reason
 		if len(keys) >= 2 && key == keys[len(keys)-1] && key == keys[len(keys)-2] {
 			compacted[len(compacted)-1] = evaluation
 			continue
