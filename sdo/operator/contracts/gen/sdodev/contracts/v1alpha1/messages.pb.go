@@ -3103,8 +3103,10 @@ type IncidentClosure struct {
 	HealthClearedAt                     *timestamppb.Timestamp   `protobuf:"bytes,15,opt,name=health_cleared_at,json=healthClearedAt,proto3,oneof" json:"health_cleared_at,omitempty"`
 	CleanedHelpers                      []string                 `protobuf:"bytes,19,rep,name=cleaned_helpers,json=cleanedHelpers,proto3" json:"cleaned_helpers,omitempty"`
 	ObservationGeneration               string                   `protobuf:"bytes,20,opt,name=observation_generation,json=observationGeneration,proto3" json:"observation_generation,omitempty"`
-	unknownFields                       protoimpl.UnknownFields
-	sizeCache                           protoimpl.SizeCache
+	// Confirmed per-finding observations on a failed closure; never global health authority.
+	PartialDetectorStates []*DetectorEvaluation `protobuf:"bytes,21,rep,name=partial_detector_states,json=partialDetectorStates,proto3" json:"partial_detector_states,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *IncidentClosure) Reset() {
@@ -3254,6 +3256,13 @@ func (x *IncidentClosure) GetObservationGeneration() string {
 		return x.ObservationGeneration
 	}
 	return ""
+}
+
+func (x *IncidentClosure) GetPartialDetectorStates() []*DetectorEvaluation {
+	if x != nil {
+		return x.PartialDetectorStates
+	}
+	return nil
 }
 
 var File_sdodev_contracts_v1alpha1_messages_proto protoreflect.FileDescriptor
@@ -3601,7 +3610,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01:\x9d\x02\xbaH\x99\x02\x1a\x80\x01\n" +
 	"\x1etimeline.last_seen_after_first\x120last_seen_at must not precede first_activated_at\x1a,this.last_seen_at >= this.first_activated_at\x1a\x93\x01\n" +
 	"\x1ctimeline.cleared_after_first\x12.cleared_at must not precede first_activated_at\x1aC!has(this.cleared_at) || this.cleared_at >= this.first_activated_atB\r\n" +
-	"\v_cleared_at\"\x9b\v\n" +
+	"\v_cleared_at\"\x82\f\n" +
 	"\x0fIncidentClosure\x12L\n" +
 	"\arequest\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestB\x06\xbaH\x03\xc8\x01\x01R\arequest\x12A\n" +
 	"\x06result\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.IncidentResultR\x06result\x12*\n" +
@@ -3622,7 +3631,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"verifiedAt\x12K\n" +
 	"\x11health_cleared_at\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampH\x01R\x0fhealthClearedAt\x88\x01\x01\x12'\n" +
 	"\x0fcleaned_helpers\x18\x13 \x03(\tR\x0ecleanedHelpers\x125\n" +
-	"\x16observation_generation\x18\x14 \x01(\tR\x15observationGenerationB\x11\n" +
+	"\x16observation_generation\x18\x14 \x01(\tR\x15observationGeneration\x12e\n" +
+	"\x17partial_detector_states\x18\x15 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x15partialDetectorStatesB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
 	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reasonB\x80\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\rMessagesProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
@@ -3771,15 +3781,16 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	40, // 79: sdodev.contracts.v1alpha1.IncidentClosure.responder_completed_at:type_name -> google.protobuf.Timestamp
 	40, // 80: sdodev.contracts.v1alpha1.IncidentClosure.verified_at:type_name -> google.protobuf.Timestamp
 	40, // 81: sdodev.contracts.v1alpha1.IncidentClosure.health_cleared_at:type_name -> google.protobuf.Timestamp
-	38, // 82: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	38, // 83: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	38, // 84: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	38, // 85: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	86, // [86:86] is the sub-list for method output_type
-	86, // [86:86] is the sub-list for method input_type
-	86, // [86:86] is the sub-list for extension type_name
-	86, // [86:86] is the sub-list for extension extendee
-	0,  // [0:86] is the sub-list for field type_name
+	4,  // 82: sdodev.contracts.v1alpha1.IncidentClosure.partial_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	38, // 83: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	38, // 84: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	38, // 85: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	38, // 86: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	87, // [87:87] is the sub-list for method output_type
+	87, // [87:87] is the sub-list for method input_type
+	87, // [87:87] is the sub-list for extension type_name
+	87, // [87:87] is the sub-list for extension extendee
+	0,  // [0:87] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_messages_proto_init() }

@@ -12,7 +12,7 @@ import (
 // ResponderMenuConfig enables a convenience catalog over the ordinary executor.
 type ResponderMenuConfig struct {
 	Plans             []ResponderMenuPlan
-	Unexplained       func(context.Context) ([]UnexplainedRemoval, error)
+	Unexplained       func(context.Context) (UnexplainedRemovalAssessment, error)
 	RemoveUnexplained func(context.Context, UnexplainedRemoval, PlanLifecycleClient, sdk.ObjectRef, types.UID, string) error
 }
 type ResponderMenuPlan struct {

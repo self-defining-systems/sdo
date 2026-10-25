@@ -140,7 +140,7 @@ type RepairActionReceipt struct {
 }
 
 type IncidentResult struct {
- UnresolvedFindings []sdk.Finding
+	UnresolvedFindings    []sdk.Finding
 	DriftEvents           []sdk.DriftEvent
 	SchemaVersion         string
 	IncidentID            string
@@ -188,6 +188,9 @@ type IncidentClosure struct {
 	// non-health detector that raised a finding in this incident. It is
 	// learning evidence for the broker, not a closure gate.
 	IncidentDetectorStates []DetectorEvaluation
+	// PartialDetectorStates preserves confirmed per-finding observations on failed
+	// closures without granting global health or source-publication authority.
+	PartialDetectorStates []DetectorEvaluation
 	// DetectorTimeline summarizes, per finding, when each detector fired in this
 	// incident window and how that relates to dispatch. The booleans derive
 	// from it for analysis: a learned incident detector that fired before the

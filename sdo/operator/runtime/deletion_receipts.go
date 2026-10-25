@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"time"
 
@@ -82,4 +83,92 @@ func authorizationDeniedNoProgress(previous string, verification ToolResponse, r
 		}
 	}
 	return len(verification.Findings) > 0
+}
+
+// Only unchanged, stable source-absent inventory with completed, known failed
+// attempts can stop early. Health and uncertain effects retain the response
+// budget; a finding fingerprint alone says nothing about recovery progress.
+func responderNoProgress(previous string, verification ToolResponse, repairs []continuationRepair) bool {
+	var prior responderFeedback
+	if verification.Healthy || verification.Error != "" || previous == "" || json.Unmarshal([]byte(previous), &prior) != nil || prior.Error != "" || len(prior.StillBroken) == 0 || len(prior.StillBroken) != len(verification.Findings) {
+		return false
+	}
+	before := map[string]sdkFindingFeedback{}
+	for _, finding := range prior.StillBroken {
+		before[finding.Fingerprint] = finding
+	}
+	remaining := map[sdk.ObjectRef]bool{}
+	for _, finding := range verification.Findings {
+		stable, _ := finding.Metadata["stable_inventory"].(bool)
+		if !inventoryFinding(finding) || !stable || inventoryEvent(finding).Source != "absent from accepted source" {
+			return false
+		}
+		old, found := before[FindingFingerprint(finding)]
+		if !found || old.Resource != finding.PrimaryResource || old.DetectorID != finding.DetectorID || old.RuleID != finding.RuleID || old.Summary != finding.Summary || inventoryProgressEvidence(old.Evidence) != inventoryProgressEvidence(finding.Evidence) {
+			return false
+		}
+		delete(before, FindingFingerprint(finding))
+		remaining[finding.PrimaryResource] = true
+	}
+	if len(before) != 0 {
+		return false
+	}
+	oldAttempts, oldOK := failedInventoryAttempts(prior.AlreadyDone, remaining)
+	attempts, ok := failedInventoryAttempts(repairs, remaining)
+	return oldOK && ok && reflect.DeepEqual(oldAttempts, attempts)
+}
+
+// SourceInventory evidence includes the sample time. Ignore only that clock
+// field, preserving the accepted commit and every substantive evidence field.
+func inventoryProgressEvidence(evidence string) string {
+	prefix, payload, found := strings.Cut(evidence, "; ")
+	var event map[string]json.RawMessage
+	if !found || json.Unmarshal([]byte(payload), &event) != nil || event == nil {
+		return evidence
+	}
+	delete(event, "observed_at")
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return evidence
+	}
+	return prefix + "; " + string(encoded)
+}
+
+func failedInventoryAttempts(repairs []continuationRepair, remaining map[sdk.ObjectRef]bool) (map[string]string, bool) {
+	attempts := map[string]string{}
+	covered := map[sdk.ObjectRef]bool{}
+	for _, repair := range repairs {
+		receipt := repair.Receipt
+		// An unknown target cannot prove failure coverage.
+  if len(receipt.Resources) == 0 {
+   return nil, false
+  }
+		relevant := false
+		for _, ref := range receipt.Resources {
+			if remaining[ref] {
+				relevant = true
+				covered[ref] = true
+			}
+		}
+		if !relevant {
+			continue
+		}
+		if repair.ActionID == "" || repair.RolledBack || receipt.Success || receipt.CompletedAt.IsZero() || receipt.CompletedAt.Before(receipt.StartedAt) {
+			return nil, false
+		}
+		switch receipt.FailureReason {
+		case "authorization_denied", "execution_failed":
+		default:
+			return nil, false
+		}
+		encoded, err := json.Marshal(repair)
+		if err != nil {
+			return nil, false
+		}
+		if _, duplicate := attempts[repair.ActionID]; duplicate {
+			return nil, false
+		}
+		attempts[repair.ActionID] = string(encoded)
+	}
+	return attempts, len(covered) == len(remaining)
 }
