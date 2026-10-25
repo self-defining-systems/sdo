@@ -64,6 +64,18 @@ and requires identical rejection diagnostics for a README with a physical memory
 New replay fixtures are hand-written toy data or constructed during tests; experiment
 outputs stay outside the repository.
 
+Reflection checks its exact returned decision and final checkout through the real memory
+CLI before publishing a worker result. Failed checks resume the same provider session,
+with at most three correction turns inside the original deadline. The real-CLI tests in
+`tests/unit/sdo/agents/responder/test_reflection_final_check.py` cover both providers,
+fresh and resumed sessions, changed bytes after an earlier passing check, withheld
+invalid results, and validator process cleanup. Shared compile checks evaluate learned
+detectors over complete corpus snapshots, including unlabelled locator bindings;
+program and shared-library edits retain the healthy-baseline input. The broker parity
+tests compare exact rejection diagnostics for missing coverage, inconclusive diagnoses,
+missing source evidence, and a program-only edit against a wider healthy snapshot.
+
+
 Historical plumbing regressions have focused checks in the same suites:
 
 | Regression | Contract check |

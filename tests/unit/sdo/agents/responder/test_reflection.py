@@ -95,7 +95,11 @@ def _fresh_closure(worktree: Path, *, evidence: str = "Deployment unavailable") 
     )
 
 
-def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_path: Path) -> None:
+def test_codex_reflection_resumes_structured_session_in_incident_worktree(
+    tmp_path: Path, prepare_reflection_memory
+) -> None:
+    prepare_reflection_memory(tmp_path)
+
     def respond(request: CommandRequest) -> FakeRun:
         return reply(
             "codex",
@@ -129,7 +133,8 @@ def test_codex_reflection_resumes_structured_session_in_incident_worktree(tmp_pa
     assert request.timeout == 456
 
 
-def test_claude_reflection_resumes_structured_session(tmp_path: Path) -> None:
+def test_claude_reflection_resumes_structured_session(tmp_path: Path, prepare_reflection_memory) -> None:
+    prepare_reflection_memory(tmp_path)
     agent = ScriptedAgent(
         lambda _request: reply(
             "claude",

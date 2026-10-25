@@ -190,9 +190,24 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 	var decision *contracts.ReflectionDecision
 	if phase == string(validate.ReflectionPhase) {
-		decision, err = validate.LoadReflectionDecision(ctx, absolute, *decisionPath)
+		decision, err = validate.LoadCheckedReflectionDecision(ctx, absolute, *decisionPath)
 		if err != nil {
-			return exitInfra, err
+			var failure *validate.Failure
+			if !errors.As(err, &failure) {
+				return exitInfra, err
+			}
+			if *asJSON {
+				if err := writeJSON(stdout, &contracts.MemoryCheckReport{
+					Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base,
+				}); err != nil {
+					return exitInfra, err
+				}
+			} else {
+				for _, diagnostic := range failure.Diagnostics {
+					fmt.Fprintln(stdout, diagnosticLine(diagnostic))
+				}
+			}
+			return exitDiagnostics, nil
 		}
 	}
 

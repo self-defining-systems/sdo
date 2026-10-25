@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/worker_registry/registrytest"
 )
 
@@ -253,6 +255,17 @@ func TestRegisteredReflectionWorkerDirectEdits(t *testing.T) {
 			_, err := worker.Reflect(context.Background(), nativeClosure(workspace), workspace, &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "current", Classification: "success"}, "repair", base, ReflectionFeedback{})
 			if (err != nil) != tc.wantError {
 				t.Fatalf("error = %v, wantError %v", err, tc.wantError)
+			}
+			if tc.wantError {
+				var failure *validate.Failure
+				if !errors.As(err, &failure) || len(failure.Diagnostics) == 0 {
+					t.Fatalf("result rejection omitted shared diagnostics: %v", err)
+				}
+				for _, diagnostic := range failure.Diagnostics {
+					if diagnostic.Rule != validate.RuleReflectionDecision {
+						t.Fatalf("result rejection rule = %q", diagnostic.Rule)
+					}
+				}
 			}
 		})
 	}

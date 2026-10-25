@@ -14,6 +14,7 @@ import (
 )
 
 const maxCompileOutput = 4096
+const detectorCorpusObservation = "detector.corpus-observation"
 
 // Go test timings and cache hits differ on repeated runs; they are log detail,
 // not part of a diagnostic's identity.
@@ -71,7 +72,7 @@ func (s *run) compile(ctx context.Context) error {
 		rule = RuleDetectorTest
 	}
 	mitigationFailure := false
-	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay} {
+	for _, rule := range []string{RuleProgramMitigationRepair, RuleProgramMitigationReplay, detectorCorpusObservation} {
 		if strings.Contains(stage.Output, rule) {
 			messages := map[string]bool{}
 			for _, line := range strings.Split(stage.Output, "\n") {
@@ -91,7 +92,13 @@ func (s *run) compile(ctx context.Context) error {
 			if len(message) > maxCompileOutput {
 				message = message[:maxCompileOutput]
 			}
-			s.add(Compile, Diagnostic{Rule: rule, Path: layout.PlaybooksDir, Message: message, Hint: "mitigation must replay on the faulted fixture and clear its diagnosis"})
+			path, hint := layout.PlaybooksDir, "mitigation must replay on the faulted fixture and clear its diagnosis"
+			if rule == detectorCorpusObservation {
+				rule = RuleDetectorTest
+				path = layout.DiagnosticsDir
+				hint = "evaluate every locator binding on complete corpus snapshots; unavailable observations cannot establish detector coverage"
+			}
+			s.add(Compile, Diagnostic{Rule: rule, Path: path, Message: message, Hint: hint})
 			mitigationFailure = true
 		}
 	}

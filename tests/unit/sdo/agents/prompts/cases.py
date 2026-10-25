@@ -22,6 +22,7 @@ from sdo.agents.responder import codex, reflection
 from sdo.agents.responder.codex import _responder_prompt
 from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.incident_context import prepared_incident_data
+from sdo.agents.responder.memory_check import ValidationResult
 from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.session_recovery import SessionRecovery
@@ -312,6 +313,11 @@ def rendered_cases() -> dict[str, str]:
             ],
         )
         prompts["reflection_cause_work"] = capture.prompt
+
+        prompts["reflection_memory_check_correction"] = reflection.memory_check_correction(
+            ValidationResult(1, False, "reflection.program-required: verified cause 1 lacks replay coverage", ""),
+            "reflection:toy-incident:outcome",
+        )
 
         class CapturedPrompt(Exception):
             pass

@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/worker_registry"
@@ -265,26 +266,8 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 	} else if len(encoded) > 700<<10 {
 		return ReflectionDecision{}, fmt.Errorf("reflection result exceeds transport limit: %d bytes", len(encoded))
 	}
-	if err := wire.Validate(response); err != nil {
+	if err := validate.Err(validate.ReflectionResultDiagnostics(response)); err != nil {
 		return ReflectionDecision{}, err
-	}
-	if response.GetLearningDecision() == "sdk_gap" && len(response.GetSdkGaps()) == 0 {
-		return ReflectionDecision{}, errors.New("sdk_gap reflection requires a typed SDK gap")
-	}
-	if response.GetLearningDecision() == "no_change" && len(response.GetSdkGaps()) > 0 {
-		return ReflectionDecision{}, errors.New("no-change reflection cannot report SDK gaps")
-	}
-	if response.GetLearningDecision() == "sdk_gap" && response.GetArtifactProposal() != nil {
-		return ReflectionDecision{}, errors.New("sdk_gap reflection cannot propose artifacts")
-	}
-	for _, gap := range response.GetSdkGaps() {
-		if gap.GetFaultClass() == "" || gap.GetPrimitive() == "" || gap.GetReason() == "" || gap.GetScratchScript() == "" {
-			return ReflectionDecision{}, errors.New("SDK gap requires fault class, primitive, reason, and scratch script")
-		}
-	}
-	// The direct-edit capability never accepts the retired content payload.
-	if response.GetArtifactProposal() != nil {
-		return ReflectionDecision{}, errors.New("direct-edit reflection rejects deprecated artifact_proposal")
 	}
 	decision := ReflectionDecision{DeclineReason: response.GetDeclineReason(), LearningDecision: response.GetLearningDecision(), NoChangeReason: response.GetNoChangeReason(), PlaybookIDs: append([]string(nil), response.GetProposedArtifactIds()...), SDKGaps: response.GetSdkGaps()}
 	return w.withUsage(decision, workspace.IncidentID)
