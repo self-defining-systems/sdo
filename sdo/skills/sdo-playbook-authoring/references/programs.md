@@ -138,17 +138,25 @@ showing the removed listener and preservation of other ports and Service fields.
 `ReadView.DatabaseUsers(DatabaseTarget)` observes nonsecret user names and directly granted roles.
 Targets select `Engine: program.MongoDB`, a bound application Pod, container, database, and optional
 `Shell` (`mongo` default or `mongosh`). Optional `DatabaseAuth` names the authentication database and
-username/password `CredentialRef{Env: name}`. Environment variables may be populated by Secret refs;
-programs never carry credential literals, resolve Secret data, or store passwords or hashes.
+username/password references. `CredentialRef` selects exactly one of `Env: name` or
+`ConfigMap: &program.ConfigMapCredentialRef{Name: name, Key: key, Assignment: optionalName}`.
+ConfigMaps are read in the target Pod namespace. An omitted assignment selects the entire key;
+an assignment selects exactly one literal `NAME=value` line (shell or dotenv, quoted or bare).
+Missing/duplicate assignments, expansions and command substitution fail with a typed reference error.
+Only the executor resolves ConfigMap bytes and sends them through exec stdin; programs, receipts,
+recordings and corpus retain references only. Env refs resolve inside the container, including
+Secret-backed env. Direct Secret keys are unavailable under the existing metadata-only RBAC;
+never add a grant or read Secret data to work around it.
 
-`EnsureDatabaseUser{Target, User, Roles, Password: CredentialRef{Env: name}, Reason}` creates a missing
-user with a password resolved inside the container. For an existing user it restores exact direct roles
+`EnsureDatabaseUser{Target, User, Roles, Password: reference, Reason}` creates a missing
+user with a password resolved privately by the executor. For an existing user it restores exact direct roles
 and preserves its password. Other users remain unchanged. Local unauthenticated bootstrap requires the
 database's existing policy; the action creates no Kubernetes grants. It is irreversible and never
 re-executed from a durable receipt. Diagnosis must inspect the typed catalog and propagate unavailable
 reads as Unknown. Build replay from recorded open `DatabaseUsers` results; fixed-phase replies never
 prove a repair. The simulator changes only the named user's direct roles/catalog membership and does
 not simulate credentials, arbitrary Exec, authentication policy, connectivity, or server availability.
+Include `RestartRollout` for a dependent bound Deployment when recovery also needs a reconnect.
 Independent live health verification remains required.
 
 General object edits, replayable commands/HTTP, and one-off scripts use the [general action vocabulary](general-actions.md).

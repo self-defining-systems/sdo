@@ -476,11 +476,23 @@ class RemoveServicePort(_message.Message):
     reason: str
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., name: _Optional[str] = ..., port: _Optional[int] = ..., protocol: _Optional[str] = ..., allow_empty: _Optional[bool] = ..., reason: _Optional[str] = ...) -> None: ...
 
+class ConfigMapCredentialRef(_message.Message):
+    __slots__ = ("name", "key", "assignment")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    ASSIGNMENT_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    key: str
+    assignment: str
+    def __init__(self, name: _Optional[str] = ..., key: _Optional[str] = ..., assignment: _Optional[str] = ...) -> None: ...
+
 class CredentialRef(_message.Message):
-    __slots__ = ("env",)
+    __slots__ = ("env", "config_map")
     ENV_FIELD_NUMBER: _ClassVar[int]
+    CONFIG_MAP_FIELD_NUMBER: _ClassVar[int]
     env: str
-    def __init__(self, env: _Optional[str] = ...) -> None: ...
+    config_map: ConfigMapCredentialRef
+    def __init__(self, env: _Optional[str] = ..., config_map: _Optional[_Union[ConfigMapCredentialRef, _Mapping]] = ...) -> None: ...
 
 class DatabaseAuth(_message.Message):
     __slots__ = ("database", "username", "password")

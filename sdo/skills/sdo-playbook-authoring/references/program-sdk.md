@@ -120,6 +120,15 @@ type Command struct {
 
 func (c Command) Validate() error
 
+type ConfigMapCredentialRef struct {
+	Name       string `json:"name"`
+	Key        string `json:"key"`
+	Assignment string `json:"assignment,omitempty"`
+}
+    ConfigMapCredentialRef selects a key in the target Pod namespace. Assignment
+    optionally selects exactly one literal NAME=value line (shell or dotenv).
+    Expansion, command substitution and duplicate assignments are refused.
+
 type CreateFromSource struct {
 	Ref    sdk.ObjectRef
 	Reason string
@@ -127,11 +136,11 @@ type CreateFromSource struct {
     CreateFromSource restores a missing named object from accepted source.
 
 type CredentialRef struct {
-	Env string `json:"env"`
+	Env       string                  `json:"env,omitempty"`
+	ConfigMap *ConfigMapCredentialRef `json:"config_map,omitempty"`
 }
-    CredentialRef names a container environment variable, possibly populated
-    by a Kubernetes Secret reference. Credential bytes never enter plans or
-    recordings.
+    CredentialRef selects exactly one reference kind. Values are resolved only
+    by the executor and never enter plans or recordings.
 
 func (r CredentialRef) Validate() error
 
@@ -208,9 +217,9 @@ type EnsureDatabaseUser struct {
 	Reason   string
 }
     EnsureDatabaseUser creates a missing user or restores its exact direct
-    roles. Password is read inside the container only when creating the user.
-    Existing passwords and all unrelated users are preserved. This effect is
-    irreversible.
+    roles. Password is an executor-resolved reference, used only to create
+    a missing user. Existing passwords and unrelated users are preserved.
+    This effect is irreversible.
 
 func (a EnsureDatabaseUser) Validate() error
 

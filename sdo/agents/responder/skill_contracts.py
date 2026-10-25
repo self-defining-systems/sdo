@@ -39,6 +39,9 @@ async def render_contract() -> str:
         "same responder session, with up to five rounds per incident. Pick from the menu when an option "
         "fits; if it fails, read the report and pick another or fix it directly. "
         "Current unexplained objects have controller-checked removal options; typed failure reasons guide recovery. "
+        "EnsureDatabaseUser accepts env or namespace-local ConfigMap key credential references, optionally "
+        "narrowed to one literal assignment. Only the executor resolves values into private stdin; plans, "
+        "receipts and recordings retain references. Direct Secret keys require a separate security review. "
         "Author Mitigators as "
         "self-contained repairs with declared parameters and specific failure context. Intermediate reports "
         "are not independent incident outcomes or program trust credit.",
