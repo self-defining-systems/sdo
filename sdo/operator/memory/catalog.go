@@ -97,6 +97,14 @@ func CandidateSnapshot(root, acceptedCommit string) (*contracts.OperationalMemor
 	if err != nil {
 		return nil, err
 	}
+	retired := map[string]bool{}
+	for _, book := range tree.Playbooks {
+		inactive, err := layout.PlaybookRetired(book.Document)
+		if err != nil {
+			return nil, fmt.Errorf("playbook %s: %w", book.ID, err)
+		}
+		retired[book.ID] = inactive
+	}
 	snapshot := &contracts.OperationalMemorySnapshot{AcceptedCommit: acceptedCommit, GoalMarkdown: goal, ArchitectureMarkdown: architecture}
 	for _, detector := range tree.Detectors {
 		manifest := detector.Manifest
@@ -128,10 +136,17 @@ func CandidateSnapshot(root, acceptedCommit string) (*contracts.OperationalMemor
 		for _, watch := range manifest.Watches {
 			entry.Watches = append(entry.Watches, &contracts.MemoryWatch{ApiVersion: watch.APIVersion, Kind: watch.Kind})
 		}
-		entry.PossiblePlaybookIds = append(entry.PossiblePlaybookIds, manifest.PossiblePlaybooks...)
+		for _, id := range manifest.PossiblePlaybooks {
+			if !retired[id] {
+				entry.PossiblePlaybookIds = append(entry.PossiblePlaybookIds, id)
+			}
+		}
 		snapshot.Detectors = append(snapshot.Detectors, entry)
 	}
 	for _, source := range tree.Playbooks {
+		if retired[source.ID] {
+			continue
+		}
 		markdown, err := layout.LogicalText(source.Document.Source)
 		if err != nil {
 			return nil, fmt.Errorf("playbook %s: %w", source.ID, err)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
 	"strings"
 )
@@ -21,6 +22,41 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 		}
 		if err := copyTree(ctx, source, filepath.Join(workspace, part)); err != nil {
 			return err
+		}
+	}
+	// Keep retired READMEs so immutable corpus labels remain resolvable, but
+	// exclude executable files before any ./... compilation or replay.
+	entries, err := os.ReadDir(filepath.Join(workspace, "playbooks"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		base := filepath.Join(workspace, "playbooks", entry.Name())
+		if _, err := os.Stat(filepath.Join(base, layout.PlaybookFileName)); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		retired, err := layout.ReadPlaybookRetired(base)
+		if err != nil {
+			return fmt.Errorf("playbook %s: %w", entry.Name(), err)
+		}
+		if !retired {
+			continue
+		}
+		files, err := os.ReadDir(base)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if file.Name() != layout.PlaybookFileName {
+				if err := os.RemoveAll(filepath.Join(base, file.Name())); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	inspect := programvalidation.Inspect

@@ -99,6 +99,9 @@ func (s *run) documents() {
 			continue
 		}
 		doc, at := book.readme.doc, book.readme.path
+		if _, err := layout.PlaybookRetired(doc); err != nil {
+			s.add(Semantic, Diagnostic{Rule: RulePlaybookStatus, Path: at, Message: err.Error()})
+		}
 		if doc.Meta["owner"] != "responder" {
 			s.add(Semantic, Diagnostic{Rule: RulePlaybookOwner, Path: at, Message: "playbook owner must be responder"})
 		}
