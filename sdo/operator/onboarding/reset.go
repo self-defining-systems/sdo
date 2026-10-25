@@ -20,7 +20,7 @@ func ResetControlState(ctx context.Context, client kubernetes.Interface, control
 		return deleted, fmt.Errorf("reset control state requires an explicit control namespace")
 	}
 	var records []*corev1.ConfigMap
-	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName} {
+	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, "sdo-controller-state"} {
 		cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue
@@ -28,7 +28,15 @@ func ResetControlState(ctx context.Context, client kubernetes.Interface, control
 		if err != nil {
 			return deleted, fmt.Errorf("inspect ConfigMap %s/%s: %w", control, name, err)
 		}
-		if cm.Labels["app.kubernetes.io/managed-by"] != "sdo" {
+		owned := cm.Labels["app.kubernetes.io/managed-by"] == "sdo"
+		// The legacy runtime storage edge predates managed-by labels. Its
+		// exact checkpoint name, CAS annotation and typed data key jointly
+		// identify SDO state; names alone never authorize deletion.
+		if name == "sdo-controller-state" {
+			_, hasState := cm.Data["runtime-state.json"]
+			owned = owned || cm.Annotations["sdo.dev/state-revision"] != "" && hasState
+		}
+		if !owned {
 			return deleted, fmt.Errorf("refuse unowned ConfigMap %s/%s", control, name)
 		}
 		records = append(records, cm)

@@ -69,9 +69,12 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 			return err
 		}
 	}
-	reference, err := onboarding.LoadReachability(ctx, client, control, c.config.Namespace)
+	reference, note, err := onboarding.LoadReachabilityWithNote(ctx, client, control, c.config.Namespace)
 	if err != nil {
 		return err
+	}
+	if note != nil {
+		slog.InfoContext(ctx, "namespace onboarding reachability reference absent; no exclusions", "note", note)
 	}
 	if reference != nil && reference.Authorization.ObjectiveDigest != c.reachabilityObjectiveDigest() {
 		reference = nil
