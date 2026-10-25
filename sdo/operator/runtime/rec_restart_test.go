@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/anypb"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -17,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
@@ -32,8 +32,8 @@ func recRestartRequest(t *testing.T, id string, attempt int, conflict bool) *cor
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &contracts.AgentTask{TaskId: taskID, Request: request}
-	payload, err := protojson.Marshal(task)
+	task := &contracts.AgentTask{SchemaVersion: ProtocolSchemaVersion, TaskId: taskID, AgentId: "responder", TaskType: "incident", Request: request}
+	payload, err := wire.Marshal(task)
 	if err != nil {
 		t.Fatal(err)
 	}

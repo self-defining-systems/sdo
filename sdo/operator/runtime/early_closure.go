@@ -5,17 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/apihistory"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
@@ -223,40 +219,13 @@ func (d KubernetesJobDispatcher) responderJobNames(ctx context.Context, id strin
 	for attempt := 1; attempt <= attempts; attempt++ {
 		names[IncidentJobName(fmt.Sprintf("%s-continue-%d", id, attempt))] = true
 	}
-	requests, err := d.Client.CoreV1().ConfigMaps(d.Namespace).List(ctx, metav1.ListOptions{})
+	// The worker registry owns physical execution identity, including bound
+	// standby Jobs whose names differ from their original/continuation task.
+	executions, err := worker_registry.IncidentExecutionNames(ctx, d.Client, d.Namespace, d.RepositoryMountPath, id, false)
 	if err != nil {
-		return nil, fmt.Errorf("enumerate responder requests: %w", err)
+		return nil, fmt.Errorf("enumerate responder executions: %w", err)
 	}
-	for _, request := range requests.Items {
-		if !strings.HasPrefix(request.Name, "sdo-") || !strings.HasSuffix(request.Name, "-request") {
-			continue
-		}
-		task := new(contracts.AgentTask)
-		if err := protojson.Unmarshal([]byte(request.Data[jobRequestDataKey]), task); err != nil {
-			return nil, fmt.Errorf("decode worker request %s: %w", request.Name, err)
-		}
-		if !task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
-			continue
-		}
-		incident := new(contracts.IncidentRequest)
-		if err := task.GetRequest().UnmarshalTo(incident); err != nil {
-			return nil, fmt.Errorf("decode incident request %s: %w", request.Name, err)
-		}
-		if incident.GetIncidentId() != id {
-			continue
-		}
-		taskID := task.GetTaskId()
-		if taskID != id {
-			suffix, continuation := strings.CutPrefix(taskID, id+"-continue-")
-			attempt, err := strconv.Atoi(suffix)
-			if !continuation || err != nil || attempt <= 0 || strconv.Itoa(attempt) != suffix {
-				return nil, fmt.Errorf("unexpected responder task identity %q", taskID)
-			}
-		}
-		name := strings.TrimSuffix(request.Name, "-request")
-		if name != IncidentJobName(taskID) && name != worker_registry.TaskJobName(task) {
-			return nil, fmt.Errorf("responder request %s does not match task identity", request.Name)
-		}
+	for _, name := range executions {
 		names[name] = true
 	}
 	return names, nil
