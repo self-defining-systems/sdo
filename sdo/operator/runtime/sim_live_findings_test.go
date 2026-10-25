@@ -37,6 +37,7 @@ const (
 	simForeignPodCreate      simScheduleEventKind = "foreign-pod-create"
 	simForeignPodDelete      simScheduleEventKind = "foreign-pod-delete"
 	simRestartFailingTraffic simScheduleEventKind = "restart-failing-traffic"
+	simRestartChangedScope   simScheduleEventKind = "restart-changed-closure-scope"
 )
 
 type simScheduleEvent struct {
@@ -55,6 +56,9 @@ func (w *simWorld) applyScheduleEvent(event simScheduleEvent) {
 		if err := w.controller.ResumeObservation(context.Background(), w.clock.Now()); err != nil {
 			w.t.Fatal(err)
 		}
+	case simRestartChangedScope:
+		w.restart()
+		w.controller.provider = simChangedScopeProvider{SnapshotProvider: w.controller.provider, generation: fmt.Sprintf("scope-after-restart-%d", w.restarts)}
 	case simForeignPodCreate:
 		pod := inventoryObject("v1", "Pod", "app", simForeignPodRef.Name)
 		pod.SetUID("foreign-probe-uid")
@@ -182,6 +186,21 @@ func (r *simReportingResponder) StopResponder(context.Context, string, int) erro
 	return nil
 }
 
+// The scope changes independently of the API objects and persisted closure.
+type simChangedScopeProvider struct {
+	SnapshotProvider
+	generation string
+}
+type simChangedScopeSnapshot struct {
+	sdk.DetectionContext
+	sdk.ScopedObservationSource
+}
+
+func (p simChangedScopeProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	snapshot, err := p.SnapshotProvider.Snapshot(ctx)
+	return simChangedScopeSnapshot{DetectionContext: snapshot, ScopedObservationSource: sdk.ScopedSnapshot{Version: 1, Generation: p.generation}}, err
+}
+
 func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64) {
 	t.Helper()
 	restart := seed%2 == 0
@@ -197,10 +216,15 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			t.Fatal(err)
 		}
 		reflections := 0
+		interrupted := false
 		native := NativeIncidentBroker{Now: w.clock.Now, Repository: repository, LedgerRoot: filepath.Join(t.TempDir(), "ledger"), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "scripted", ResponderModel: "none",
 			Reflector: ReflectionWorkerFunc(func(_ context.Context, closure IncidentClosure, _ IncidentWorkspace, outcome *contracts.OutcomeRecord, _, outcomeCommit string, _ ReflectionFeedback) (ReflectionDecision, error) {
 				if closure.Result.ResponderSessionID != "sim-live-responder" || outcome.GetIncidentId() != closure.Request.IncidentID || outcomeCommit == "" {
 					return ReflectionDecision{}, fmt.Errorf("reflection lost closure/session/outcome binding")
+				}
+				if !interrupted {
+					interrupted = true
+					return ReflectionDecision{}, errors.New("simulated validator transport interruption")
 				}
 				reflections++
 				return ReflectionDecision{
@@ -332,6 +356,33 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			}
 		}
 		w.await(func() bool { return len(w.controller.closureResults) > 0 })
+		// Crash after the native broker durably commits its outcome, before a
+		// receipt exists. Restart with a new observation scope, as after policy
+		// adoption while a reflection validator is interrupted.
+		ledgerBefore, err := native.readLedger(closure.Request.IncidentID)
+		if err != nil || ledgerBefore.OutcomeCommit == "" || ledgerBefore.Receipt != nil {
+			t.Fatalf("missing interrupted outcome checkpoint: %v", err)
+		}
+		if ledgerBefore.ReflectionProcessed || ledgerBefore.ReflectionCommit != "" {
+			t.Fatal("interrupted reflection received learning credit")
+		}
+		frozen, ok := w.controller.PendingIncidentClosure()
+		if !ok {
+			t.Fatal("interrupted closure disappeared")
+		}
+		if ok, err := native.committedOutcomeClosure(ctx, frozen); err != nil || !ok {
+			t.Fatalf("accepted outcome not authenticated: %v", err)
+		}
+		changed := *cloneIncidentClosure(&frozen)
+		changed.DispatchError = "different frozen evidence"
+		if ok, err := native.committedOutcomeClosure(ctx, changed); err != nil || ok {
+			t.Fatalf("different closure authenticated against accepted outcome: %v", err)
+		}
+		w.applyScheduleEvent(simScheduleEvent{kind: simRestartChangedScope})
+		if err := executeStartupEffects(ctx, w.controller, true); err != nil {
+			t.Fatalf("persisted superseded closure crashed restart: %v", err)
+		}
+		w.await(func() bool { return len(w.controller.closureResults) > 0 })
 		if err := executePausedEffects(ctx, w.controller); err != nil {
 			t.Fatal(err)
 		}
@@ -352,9 +403,13 @@ func runSimPausedClosurePublishesOutcomeAndReflection(t *testing.T, seed uint64)
 			}
 			t.Fatalf("paused closure stranded reflection/ack: reflections=%d decision=%v acknowledged=%v err=%v", reflections, ledger.GetReflectionDecision(), ledger.GetAcknowledged(), err)
 		}
+		if ledger.OutcomeCommit != ledgerBefore.OutcomeCommit || ledger.OutcomeDocument.GetClassification() != ledgerBefore.OutcomeDocument.GetClassification() || ledger.ReflectionCommit != "" {
+			t.Fatal("scope restart rewrote historical outcome or credited interrupted learning")
+		}
 		if reporter.stops != reporter.terminating+1 || w.controller.LastAcknowledgedIncidentID() != id {
 			t.Fatal("report grace did not retire worker and acknowledge closure")
 		}
+		w.controller.provider = w.controller.provider.(simChangedScopeProvider).SnapshotProvider
 		w.applyScheduleEvent(simScheduleEvent{kind: simResume})
 		w.step()
 		w.drain()

@@ -830,3 +830,33 @@ func (n NativeIncidentBroker) committedRepairHealthReceipt(ctx context.Context, 
 	})
 	return recovered, err
 }
+
+// committedOutcomeClosure authenticates a historical outcome before allowing
+// restart to resume reflection/receipt work. Exact frozen evidence and the
+// broker's accepted Git commit are both required; no receipt is needed yet.
+func (n NativeIncidentBroker) committedOutcomeClosure(ctx context.Context, closure IncidentClosure) (bool, error) {
+	committed := false
+	err := n.withLock(func() error {
+		if n.Repository == nil || closure.Request.IncidentID == "" {
+			return nil
+		}
+		ledger, err := n.readLedger(closure.Request.IncidentID)
+		if err != nil {
+			return err
+		}
+		projected, err := incidentClosureContract(closure)
+		if err != nil {
+			return err
+		}
+		if ledger.OutcomeCommit == "" || ledger.OutcomeDocument == nil || ledger.OutcomeDocument.GetIncidentId() != closure.Request.IncidentID || !proto.Equal(ledger.Closure, projected) {
+			return nil
+		}
+		accepted, ok, err := n.Repository.AcceptedCommit(ctx, closure.Request.IncidentID, broker.OutcomePhase)
+		if err != nil {
+			return err
+		}
+		committed = ok && accepted.Commit == ledger.OutcomeCommit
+		return nil
+	})
+	return committed, err
+}

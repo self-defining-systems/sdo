@@ -304,9 +304,25 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	if err := c.prepareHealthEffects(ctx, now); err != nil {
 		return err
 	}
+	before, err := c.ExportState()
+	if err != nil {
+		return err
+	}
 	c.processDispatchCompletions(now)
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
+	after, err := c.ExportState()
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	retry := !c.pausedEffectRetryAt.IsZero()
+	c.mu.Unlock()
+	// prepareHealthEffects already persists retirement archives. Avoid a second
+	// write that would consume that outbox before any paused work changes.
+	if proto.Equal(before, after) && !retry {
+		return nil
+	}
 	if err := c.PersistState(ctx); err != nil {
 		c.mu.Lock()
 		c.pausedEffectRetryAt = now.Add(time.Second)
