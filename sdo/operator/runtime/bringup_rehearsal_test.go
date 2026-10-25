@@ -346,7 +346,11 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	if err != nil || !proto.Equal(final, pending) {
 		t.Fatalf("onboarding missing at install_to_record=21s (same 34s confirmation budget), or changed frozen install: %v %v", final, err)
 	}
-	t.Log("install_to_record=21s; scheduler startup full, second batch partial, confirmed full sweep at third probe; confirmation budget=34s")
+	installToRecord := c.evaluationAt.Sub(final.EstablishedAt.AsTime())
+	if installToRecord != 21*time.Second {
+		t.Fatalf("install_to_record exceeded the original three-probe schedule: %s", installToRecord)
+	}
+	t.Logf("install_to_record=%s; scheduler startup full, second batch partial, confirmed full sweep at third probe; confirmation budget=34s", installToRecord)
 	reference, err := onboarding.LoadReachability(ctx, client, "demo-sdo", "demo")
 	if err != nil || reference == nil || len(reference.Exclusions) != 2 {
 		t.Fatalf("never-served reference: %+v %v", reference, err)

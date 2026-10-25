@@ -77,7 +77,6 @@ type Controller struct {
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
 	pendingOnboarding           *contracts.NamespaceOnboarding
-	onboardingNeedsSweep        bool
 	onboardingReachability      *onboardingReachabilityState
 	onboardingClient            kubernetes.Interface
 	onboardingControl           string
@@ -315,7 +314,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 	deferInventory := c.pendingOnboarding != nil
-	if !deferInventory {
+	if deferInventory {
+		c.observePendingOnboarding(ctx, now)
+	} else {
 		c.observeSourceInventory(now)
 	}
 	detectors := c.scheduler.SelectEvents(now, events)
@@ -352,8 +353,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	confirmed := detectorsConfirmed(onboardingDetectors, snapshot)
 	confirmationExpired := c.onboardingConfirmationExpired(now, snapshot)
 	if c.pendingOnboarding != nil {
-		c.onboardingNeedsSweep = c.onboardingNeedsSweep || !confirmed
-		if c.onboardingNeedsSweep && (confirmed || confirmationExpired) {
+		if len(detectors) != len(onboardingDetectors) && detectorsNeedConfirmation(onboardingDetectors) && (confirmed || confirmationExpired) {
 			// This extra install sweep must not postpone ordinary fault checks.
 			deadlines := c.scheduler.Deadlines()
 			c.scheduler.ExpediteAll(now)
