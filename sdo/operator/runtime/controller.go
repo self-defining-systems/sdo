@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
@@ -31,17 +32,19 @@ type Dispatcher interface {
 }
 
 type ControllerConfig struct {
-	Application         string
-	Namespace           string
-	SourceCommit        string
-	DeployedCommit      string
-	RepositoryWorktree  string
-	CorpusSessionRoot   string
-	ResponseTimeout     time.Duration
-	VerificationTimeout time.Duration
-	FiringThreshold     int
-	ClearThreshold      int
-	BatchDebounce       time.Duration
+	Application            string
+	Namespace              string
+	SourceCommit           string
+	DeployedCommit         string
+	RepositoryWorktree     string
+	CorpusSessionRoot      string
+	ResponseTimeout        time.Duration
+	VerificationTimeout    time.Duration
+	ClosureStabilityWindow time.Duration
+	ResponderReportGrace   time.Duration
+	FiringThreshold        int
+	ClearThreshold         int
+	BatchDebounce          time.Duration
 	// ConfirmationInterval bounds how long a detector with a finding below its
 	// firing threshold waits for its next evaluation. Zero leaves confirmation
 	// to watch events and the detector's own interval.
@@ -114,20 +117,30 @@ type Controller struct {
 	// durable is the state stateStore last confirmed durable. With a store
 	// attached, an effect runs only while this state records it, so a
 	// restarted controller can recover every effect that ran.
-	durable                *contracts.ControllerState
-	incidentOpen           bool
-	responderDone          bool
-	currentIncidentRequest *IncidentRequest
-	dispatchState          contracts.DispatchState
-	incidentFindingKeys    []string
-	cleanedHelpers         []string
-	healthDetectorIDs      []string
-	detectorSpecs          map[string]sdk.DetectorSpec
-	currentIncidentResult  *IncidentResult
-	dispatchError          string
-	incidentDetectedAt     time.Time
-	incidentDispatchedAt   time.Time
-	responderCompletedAt   time.Time
+	durable                 *contracts.ControllerState
+	incidentOpen            bool
+	responderDone           bool
+	responderLoop           *ResponderLoop
+	responderCancel         context.CancelFunc
+	earlyStopRetryAt        time.Time
+	closureStableSince      time.Time
+	closureMutationRevision string
+	earlyLastMutationAt     time.Time
+	cachedVerification      *ToolResponse
+	cachedIncidentID        string
+	verificationChanged     chan struct{}
+	findingGeneration       uint64
+	currentIncidentRequest  *IncidentRequest
+	dispatchState           contracts.DispatchState
+	incidentFindingKeys     []string
+	cleanedHelpers          []string
+	healthDetectorIDs       []string
+	detectorSpecs           map[string]sdk.DetectorSpec
+	currentIncidentResult   *IncidentResult
+	dispatchError           string
+	incidentDetectedAt      time.Time
+	incidentDispatchedAt    time.Time
+	responderCompletedAt    time.Time
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
@@ -204,6 +217,15 @@ func NewController(
 	}
 	if config.ResponseTimeout <= 0 {
 		return nil, fmt.Errorf("response timeout must be positive")
+	}
+	if config.ClosureStabilityWindow < 0 || config.ResponderReportGrace < 0 {
+		return nil, fmt.Errorf("closure stability window and report grace must not be negative")
+	}
+	if config.ClosureStabilityWindow == 0 {
+		config.ClosureStabilityWindow = 15 * time.Second
+	}
+	if config.ResponderReportGrace == 0 {
+		config.ResponderReportGrace = 30 * time.Second
 	}
 	if config.VerificationTimeout < 0 {
 		return nil, fmt.Errorf("verification timeout must not be negative")
@@ -284,6 +306,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		return err
 	}
 	c.processDispatchCompletions(now)
+	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()
 	c.mu.Lock()
@@ -443,6 +466,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
 			c.scheduler.Expedite(spec.ID, now.Add(c.config.ConfirmationInterval))
 		}
+		if len(changes.Activated) > 0 {
+			c.mu.Lock()
+			c.closureStableSince = time.Time{}
+			c.mu.Unlock()
+		}
 		for _, finding := range changes.Activated {
 			if c.mergeIntoOpenIncident(finding) {
 				continue
@@ -468,6 +496,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	c.probeGate(ctx, now, snapshot, probes)
 	c.forgetGate()
+	if len(objectChanges) > 0 {
+		c.resetEarlyStability()
+	}
 	if len(detectors) > 0 {
 		sort.Slice(sampleFindings, func(left int, right int) bool {
 			return sampleFindings[left].Fingerprint < sampleFindings[right].Fingerprint
@@ -593,7 +624,7 @@ func (c *Controller) canAttachBeforeLaunchLocked() bool {
 
 func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
 	c.mu.Lock()
-	incidentOpen := c.incidentOpen
+	incidentOpen := c.incidentOpen || c.earlyReportPendingLocked()
 	closurePending := c.closureBlocksNextLocked() && c.broker != nil
 	c.mu.Unlock()
 	if incidentOpen {
@@ -640,6 +671,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
 	c.mu.Lock()
+	c.cachedVerification = nil
+	c.cachedIncidentID = ""
+	c.closureStableSince = time.Time{}
+	c.closureMutationRevision = ""
+	c.earlyLastMutationAt = time.Time{}
+	c.responderLoop = nil
 	c.incidentOpen = true
 	c.responderDone = false
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
@@ -742,7 +779,20 @@ func (c *Controller) NextWake() time.Time {
 	c.mu.Lock()
 	verificationDeadline := c.responderCompletedAt.Add(c.config.VerificationTimeout)
 	verificationPending := c.incidentOpen && c.responderDone
+	earlyDeadline := time.Time{}
+	if c.incidentOpen && !c.responderDone && !c.closureStableSince.IsZero() {
+		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
+	}
+	if c.earlyReportPendingLocked() {
+		earlyDeadline = c.pendingClosure.VerifiedAt.Add(c.config.ResponderReportGrace)
+		if !c.earlyStopRetryAt.IsZero() {
+			earlyDeadline = c.earlyStopRetryAt
+		}
+	}
 	c.mu.Unlock()
+	if !earlyDeadline.IsZero() && (next.IsZero() || earlyDeadline.Before(next)) {
+		next = earlyDeadline
+	}
 	if verificationPending && (next.IsZero() || verificationDeadline.Before(next)) {
 		next = verificationDeadline
 	}
@@ -969,6 +1019,24 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		)
 		return
 	}
+	if c.earlyReportPendingLocked() {
+		if completion.err == nil {
+			prior, _ := incidentResultContract(*c.pendingClosure.Result)
+			result := accumulateResponderResult(prior, completion.result)
+			if result.ResponderSessionID == "" {
+				result.ResponderSessionID = c.pendingClosure.Result.ResponderSessionID
+			}
+			c.pendingClosure.Result = cloneIncidentResult(&result)
+			c.pendingClosure.ResponderCompletedAt = observedAt.UTC()
+		}
+		var terminal *ResponderJobFailedError
+		if completion.err == nil || errors.As(completion.err, &terminal) {
+			c.responderDone = true
+			c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(observedAt), IncidentId: completion.incidentID, DispatchError: completion.err != nil})
+		}
+		c.mu.Unlock()
+		return
+	}
 	var jobFailed *ResponderJobFailedError
 	if errors.As(completion.err, &jobFailed) {
 		// A failed Job is terminal and exactly-once dispatch forbids a second
@@ -1053,15 +1121,36 @@ func (c *Controller) cleanupHelpers() {
 
 func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) {
 	c.mu.Lock()
-	if !c.incidentOpen || !c.responderDone || c.currentIncidentRequest == nil {
+	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
 		return
 	}
+	early := !c.responderDone
+	if early && (c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.incidentDispatchedAt.IsZero()) {
+		c.mu.Unlock()
+		return
+	}
+	loop := c.responderLoop
 	c.mu.Unlock()
+	var guard *apihistory.MutationObservation
+	release := func() {}
+	safe := true
+	if early {
+		guard, release, safe = acquireClosureGuard(loop)
+	} else if loop != nil && loop.MutationGate != nil {
+		var err error
+		guard, err = loop.MutationGate.TryObserve()
+		if err != nil || guard == nil {
+			return
+		}
+		release = func() { guard.Close() }
+	}
+	defer release()
 	if snapshot == nil {
 		var err error
 		snapshot, err = c.provider.Snapshot(ctx)
 		if err != nil {
+			c.resetEarlyStability()
 			c.reportBrokerError("verify observation scope", err)
 			return
 		}
@@ -1069,7 +1158,21 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	generation := observationGeneration(snapshot)
 	driftClear, driftFindings := c.verifyClosureDrift(ctx, now, snapshot)
 	c.mu.Lock()
+	if early && safe && guard != nil && c.closureMutationRevision != guard.Revision {
+		c.closureMutationRevision = guard.Revision
+		c.closureStableSince = time.Time{}
+		c.earlyLastMutationAt = now
+	}
 	finalStates, healthVerified := c.finalVerificationStates()
+	if early && healthVerified && !c.earlyLastMutationAt.IsZero() {
+		ids := c.healthDetectorIDs
+		if len(ids) == 0 {
+			for _, finding := range c.currentIncidentRequest.Findings {
+				ids = append(ids, finding.DetectorID)
+			}
+		}
+		finalStates, healthVerified = c.latestEvaluations(ids, c.earlyLastMutationAt, true)
+	}
 	scopeCurrent := c.currentIncidentRequest.ObservationGeneration == generation
 	verified := healthVerified && driftClear && scopeCurrent
 	if !scopeCurrent {
@@ -1079,6 +1182,48 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	// it. Unresolved drift must not delay it or count as verified recovery.
 	terminalFailure := !scopeCurrent || (healthVerified && c.dispatchError != "")
 	verification := c.continuationVerificationLocked(healthVerified, driftClear, driftFindings)
+	if !scopeCurrent {
+		verification.Healthy = false
+		verification.Error = "observation scope changed; incident evidence superseded"
+	}
+	if early {
+		seen := map[string]bool{}
+		for _, finding := range verification.Findings {
+			seen[FindingFingerprint(finding)] = true
+		}
+		for _, state := range c.tracker.Snapshot() {
+			if state.Active && !seen[FindingFingerprint(state.Finding)] {
+				verification.Findings = append(verification.Findings, state.Finding)
+			}
+		}
+		sortFindings(verification.Findings)
+		if len(verification.Findings) > 0 {
+			verification.Healthy = false
+			verified = false
+		}
+	}
+	c.cacheVerificationLocked(verification)
+	if early {
+		if !safe || guard != nil && guard.Pending {
+			c.closureStableSince = time.Time{}
+			c.mu.Unlock()
+			return
+		}
+		if !verified {
+			c.closureStableSince = time.Time{}
+		}
+		if !verified {
+			c.mu.Unlock()
+			return
+		}
+		if c.closureStableSince.IsZero() {
+			c.closureStableSince = now
+		}
+		if now.Before(c.closureStableSince.Add(c.config.ClosureStabilityWindow)) {
+			c.mu.Unlock()
+			return
+		}
+	}
 	if healthVerified && c.terminalInventoryBlockerLocked(verification) {
 		terminalFailure = true
 		slog.Info("incident_terminal_blocker", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "unchanged_non_transient_findings", "findings", len(verification.Findings))
@@ -1151,6 +1296,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			}
 		}
 	}
+	if verified && guard != nil {
+		if err := guard.Fence(now); err != nil {
+			c.mu.Unlock()
+			c.reportBrokerError("fence verified responder", err)
+			return
+		}
+	}
 	verifiedAt := now.UTC()
 	if verifiedAt.Before(c.responderCompletedAt) {
 		verifiedAt = c.responderCompletedAt
@@ -1161,9 +1313,15 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		healthClearedAt = c.healthClearedAtLocked(finalStates)
 		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
+	windowUsed := time.Duration(0)
+	if early {
+		windowUsed = c.config.ClosureStabilityWindow
+	}
 	closure := IncidentClosure{
-		ObservationGeneration: generation,
-		Request:               *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
+		VerifiedWhileResponderRunning: early,
+		ClosureStabilityWindow:        windowUsed,
+		ObservationGeneration:         generation,
+		Request:                       *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
 		IncidentDetectorStates: c.incidentDetectorStates(),
 		PartialDetectorStates:  c.reflectionDetectorStates(verified, scopeCurrent),
@@ -1172,6 +1330,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
+	}
+	if early {
+		closure.ResponderCompletedAt = verifiedAt
+		closure.Result = earlyResultSnapshot(loop, *c.currentIncidentRequest, verifiedAt)
 	}
 	if verified {
 		c.retainSourceInventoryAcceptancesLocked(c.currentIncidentResult)
@@ -1182,8 +1344,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		closure.NoIncidentDetectorFired = timelineSummary(closure.DetectorTimeline)
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
-		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt),
-		DispatchError:   closure.DispatchError != "",
+		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
+		DispatchError:                 closure.DispatchError != "",
+		VerifiedWhileResponderRunning: early,
+		ClosureStabilityWindowSeconds: windowUsed.Seconds(),
 	})
 	c.timeline = nil
 	projected, err := incidentClosureContract(closure)
@@ -1195,7 +1359,14 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.reportBrokerError("freeze closure", err)
 		return
 	}
-	c.clearIncidentLocked()
+	if early {
+		c.incidentOpen = false
+		warning := apihistory.VerificationWarning(verifiedAt)
+		verification.IncidentVerified = warning
+		c.cacheVerificationLocked(verification)
+	} else {
+		c.clearIncidentLocked()
+	}
 	c.mu.Unlock()
 	if c.OnIncidentClosed != nil {
 		c.OnIncidentClosed(closure)
@@ -1221,6 +1392,14 @@ func logVerificationTimeout(incidentID string, timeout time.Duration, active []s
 // logIncidentVerified records the verification wait: how long after the
 // responder completed the health detectors cleared and the incident verified.
 func logIncidentVerified(incidentID string, healthClearedAt *time.Time, responderCompletedAt, verifiedAt time.Time) {
+	if responderCompletedAt.IsZero() {
+		attrs := []any{"incident_id", incidentID, "verified_at", verifiedAt, "verified_while_responder_running", true}
+		if healthClearedAt != nil {
+			attrs = append(attrs, "health_cleared_at", *healthClearedAt)
+		}
+		slog.Info("incident_verified", attrs...)
+		return
+	}
 	attrs := []any{"incident_id", incidentID, "responder_completed_at", responderCompletedAt, "verified_at", verifiedAt,
 		"responder_completed_to_verified_ms", verifiedAt.Sub(responderCompletedAt).Milliseconds()}
 	if healthClearedAt != nil {

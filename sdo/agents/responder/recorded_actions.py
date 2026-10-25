@@ -13,6 +13,7 @@ it, so a call killed mid-command still leaves a receipt of an unfinished mutatio
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import logging
 import os
@@ -406,7 +407,55 @@ def _confirm_deleted(command: Sequence[str], resources: Sequence[dict[str, str]]
     return ""
 
 
+@contextlib.contextmanager
+def _mutation_lease() -> Iterator[dict[str, Any] | None]:
+    directory = os.environ.get("SDO_API_HISTORY_DIR")
+    if not directory:
+        yield None
+        return
+    # The worker's existing history mount is read-only. Shared flock requires
+    # only read access; the controller owns the lock inode and verification marker.
+    with (Path(directory) / "mutation.lock").open("rb") as lease:
+        fcntl.flock(lease, fcntl.LOCK_SH)
+        marker = Path(directory) / "incident-verified.json"
+        warning = json.loads(marker.read_text()) if marker.exists() else None
+        yield warning
+
+
 def run_and_record(
+    command: Sequence[str],
+    resources: Sequence[dict[str, str]],
+    *,
+    summary: str | None = None,
+    reversible: bool = True,
+    on_completed: Callable[[int, str, dict[str, Any]], None] | None = None,
+) -> int:
+    """Hold the incident write lease through execution and final receipt publication."""
+    with _mutation_lease() as warning:
+        if warning is not None:
+            now = datetime.now(UTC)
+            receipt = _receipt(
+                f"sdo-act-{uuid.uuid4()}",
+                command,
+                resources,
+                summary=summary,
+                reversible=reversible,
+                started=now,
+                finished=now,
+                code=1,
+                output="incident_verified",
+            )
+            receipt["failure_reason"] = "incident_verified"
+            path = actions_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _append(path, _FINISHED, receipt)
+            if on_completed is not None:
+                on_completed(1, "incident_verified", receipt)
+            return 1
+        return _run_and_record(command, resources, summary=summary, reversible=reversible, on_completed=on_completed)
+
+
+def _run_and_record(
     command: Sequence[str],
     resources: Sequence[dict[str, str]],
     *,

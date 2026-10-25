@@ -408,8 +408,10 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	// whole memory snapshot) that every later reader of the closure would otherwise copy.
 	request.PreparedAgentTask = ""
 	message := &contracts.IncidentClosure{
-		ObservationGeneration: closure.ObservationGeneration,
-		Request:               request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
+		VerifiedWhileResponderRunning: closure.VerifiedWhileResponderRunning,
+		ClosureStabilityWindow:        durationpb.New(closure.ClosureStabilityWindow),
+		ObservationGeneration:         closure.ObservationGeneration,
+		Request:                       request, FinalDetectorStates: evaluationsContract(closure.FinalDetectorStates),
 		IncidentDetectorStates:              evaluationsContract(closure.IncidentDetectorStates),
 		PartialDetectorStates:               evaluationsContract(closure.PartialDetectorStates),
 		IncidentDetectorFiredBeforeDispatch: closure.IncidentDetectorFiredBeforeDispatch,
@@ -420,6 +422,9 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		ResponderCompletedAt: contractTimestamp(closure.ResponderCompletedAt), VerifiedAt: contractTimestamp(closure.VerifiedAt),
 		HealthClearedAt: optionalContractTimestamp(closure.HealthClearedAt),
 		CleanedHelpers:  append([]string(nil), closure.CleanedHelpers...),
+	}
+	if closure.ClosureStabilityWindow == 0 {
+		message.ClosureStabilityWindow = nil
 	}
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
@@ -583,8 +588,10 @@ func optionalTimeState(at *timestamppb.Timestamp) *time.Time {
 
 func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 	closure := IncidentClosure{
-		ObservationGeneration: message.GetObservationGeneration(),
-		DispatchError:         message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
+		VerifiedWhileResponderRunning: message.GetVerifiedWhileResponderRunning(),
+		ClosureStabilityWindow:        message.GetClosureStabilityWindow().AsDuration(),
+		ObservationGeneration:         message.GetObservationGeneration(),
+		DispatchError:                 message.GetDispatchError(), FinalDetectorStates: evaluationsState(message.GetFinalDetectorStates()),
 		IncidentDetectorStates:              evaluationsState(message.GetIncidentDetectorStates()),
 		PartialDetectorStates:               evaluationsState(message.GetPartialDetectorStates()),
 		DetectorTimeline:                    detectorTimelineState(message.GetDetectorTimeline()),

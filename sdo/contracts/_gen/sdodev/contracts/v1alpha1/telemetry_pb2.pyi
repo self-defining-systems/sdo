@@ -65,7 +65,7 @@ class FiringRecord(_message.Message):
     def __init__(self, schema_version: _Optional[str] = ..., event_id: _Optional[str] = ..., event: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., evaluation_iteration: _Optional[int] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., severity: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., firing_count: _Optional[int] = ..., firing_threshold: _Optional[int] = ..., clear_count: _Optional[int] = ..., clear_threshold: _Optional[int] = ..., incident_id: _Optional[str] = ..., dispatch_relation: _Optional[str] = ...) -> None: ...
 
 class LifecycleEvent(_message.Message):
-    __slots__ = ("schema_version", "event_id", "event", "recorded_at", "evaluation_iteration", "application", "namespace", "incident_id", "reason", "finding_keys", "surfaced_playbooks", "worktree", "base_commit", "proposal_commit", "outcome_commit", "reflection_commit", "health_cleared_at", "dispatch_error")
+    __slots__ = ("schema_version", "event_id", "event", "recorded_at", "evaluation_iteration", "application", "namespace", "incident_id", "reason", "finding_keys", "surfaced_playbooks", "worktree", "base_commit", "proposal_commit", "outcome_commit", "reflection_commit", "health_cleared_at", "dispatch_error", "verified_while_responder_running", "closure_stability_window_seconds")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     EVENT_ID_FIELD_NUMBER: _ClassVar[int]
     EVENT_FIELD_NUMBER: _ClassVar[int]
@@ -84,6 +84,8 @@ class LifecycleEvent(_message.Message):
     REFLECTION_COMMIT_FIELD_NUMBER: _ClassVar[int]
     HEALTH_CLEARED_AT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
+    VERIFIED_WHILE_RESPONDER_RUNNING_FIELD_NUMBER: _ClassVar[int]
+    CLOSURE_STABILITY_WINDOW_SECONDS_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     event_id: str
     event: str
@@ -102,4 +104,6 @@ class LifecycleEvent(_message.Message):
     reflection_commit: str
     health_cleared_at: _timestamp_pb2.Timestamp
     dispatch_error: bool
-    def __init__(self, schema_version: _Optional[str] = ..., event_id: _Optional[str] = ..., event: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., evaluation_iteration: _Optional[int] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., reason: _Optional[str] = ..., finding_keys: _Optional[_Iterable[str]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., worktree: _Optional[str] = ..., base_commit: _Optional[str] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatch_error: _Optional[bool] = ...) -> None: ...
+    verified_while_responder_running: bool
+    closure_stability_window_seconds: float
+    def __init__(self, schema_version: _Optional[str] = ..., event_id: _Optional[str] = ..., event: _Optional[str] = ..., recorded_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., evaluation_iteration: _Optional[int] = ..., application: _Optional[str] = ..., namespace: _Optional[str] = ..., incident_id: _Optional[str] = ..., reason: _Optional[str] = ..., finding_keys: _Optional[_Iterable[str]] = ..., surfaced_playbooks: _Optional[_Iterable[str]] = ..., worktree: _Optional[str] = ..., base_commit: _Optional[str] = ..., proposal_commit: _Optional[str] = ..., outcome_commit: _Optional[str] = ..., reflection_commit: _Optional[str] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatch_error: _Optional[bool] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window_seconds: _Optional[float] = ...) -> None: ...

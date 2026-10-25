@@ -53,3 +53,12 @@ func PrepareIncidentAPIAttempt(repositoryMount, pvcSubPath, incidentID string) (
 	}
 	return sub, nil
 }
+
+// IncidentMutationGate opens only this incident's existing private session.
+func IncidentMutationGate(repositoryMount, incidentID string) (*apihistory.MutationGate, error) {
+	relative, err := PrepareIncidentSession(repositoryMount, "", incidentID)
+	if err != nil {
+		return nil, err
+	}
+	return apihistory.PrepareMutationGate(filepath.Join(repositoryMount, relative, "api-history"))
+}

@@ -99,12 +99,17 @@ func (r ToolResponse) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	receipt, err := toolContractJSON(r.Receipt)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(struct {
 		plain
+		Receipt json.RawMessage `json:"receipt,omitempty"`
 		Menu    json.RawMessage `json:"menu,omitempty"`
 		Report  json.RawMessage `json:"report,omitempty"`
 		Session json.RawMessage `json:"session,omitempty"`
-	}{plain(r), menu, report, session})
+	}{plain(r), receipt, menu, report, session})
 }
 
 // Defining an outer marshaler prevents the embedded ToolResponse marshaler
@@ -164,4 +169,20 @@ func menuParameterJSON(menu json.RawMessage, parameters map[string][]MenuParamet
 	}
 	fields["options"] = options
 	return json.Marshal(fields)
+}
+
+func (r *ToolResponse) UnmarshalJSON(data []byte) error {
+	type plain ToolResponse
+	envelope := struct {
+		*plain
+		Receipt json.RawMessage `json:"receipt"`
+	}{plain: (*plain)(r)}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+	if len(envelope.Receipt) > 0 && string(envelope.Receipt) != "null" {
+		r.Receipt = new(contracts.RepairActionReceipt)
+		return protojson.Unmarshal(envelope.Receipt, r.Receipt)
+	}
+	return nil
 }

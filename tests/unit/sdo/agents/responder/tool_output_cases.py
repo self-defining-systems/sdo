@@ -102,6 +102,9 @@ def rendered_stdout_cases() -> dict[str, str]:
                 text = output.getvalue()
                 details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
                 full = json.loads(details.read_text())
+                if command in {"mitigate", "act", "apply"}:
+                    assert len(full["actions"]) == 1
+                    full = full["actions"][0]
                 assert full["command"] == command
                 assert "healthy=true" not in text.split()
                 if command in ("detect", "status", "verify"):
@@ -124,6 +127,9 @@ def rendered_stdout_cases() -> dict[str, str]:
                 assert tools_cli.main([command, *args]) == 1
             text = output.getvalue()
             details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
-            assert json.loads(details.read_text())["error"]
+            full = json.loads(details.read_text())
+            if command in {"mitigate", "act", "apply"}:
+                full = full["actions"][0]
+            assert full["error"]
             samples[f"{command}.error"] = text
     return samples

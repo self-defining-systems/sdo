@@ -234,7 +234,7 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 		if len(parts) != 2 {
 			t.Fatalf("compact sdo %v must name complete JSON: %s", args, output)
 		}
-		detailsFile := strings.TrimSpace(parts[1])
+		detailsFile := strings.TrimSpace(strings.SplitN(parts[1], "\n", 2)[0])
 		if len([]rune(string(output))) > 3001 {
 			t.Fatalf("compact sdo %s: %d characters exceeds 3001", args[0], len([]rune(string(output))))
 		}
@@ -249,14 +249,26 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Remove(detailsFile) })
+		encoded = fullCommandReportPayload(t, encoded)
 		var full ToolResponse
 		if err := json.Unmarshal(encoded, &full); err != nil {
 			t.Fatal(err)
 		}
-		if full.Healthy && !strings.Contains(string(output), "healthy=true") {
+		if full.Healthy && !strings.Contains(string(output), "healthy=true") && !strings.Contains(string(output), "Incident: NOT verified") && !strings.Contains(string(output), "Incident: verified") {
 			t.Fatal("compact output omitted verified health")
 		}
 	}
+	var envelope struct {
+		DetailsFile string `json:"details_file"`
+	}
+	if json.Unmarshal(encoded, &envelope) == nil && envelope.DetailsFile != "" {
+		encoded, err = os.ReadFile(envelope.DetailsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(envelope.DetailsFile) })
+	}
+	encoded = fullCommandReportPayload(t, encoded)
 	if err := json.Unmarshal(encoded, &response); err != nil {
 		t.Fatalf("decode sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
 	}
@@ -455,4 +467,23 @@ func TestImageProgramsRecognizeBothPullFailurePhases(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The scripted client follows the production file contract instead of treating
+// compact display metadata as the completed execution result.
+func fullCommandReportPayload(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var report struct {
+		Actions []json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal(encoded, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Actions == nil {
+		return encoded
+	}
+	if len(report.Actions) != 1 {
+		t.Fatalf("single command has %d full action results", len(report.Actions))
+	}
+	return report.Actions[0]
 }
