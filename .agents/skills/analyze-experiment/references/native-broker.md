@@ -185,7 +185,9 @@ other open findings, without the peer cause or opaque transcript.
 
 The committed outcome retains all causes, receipts, and its failed classification.
 Its `reflection_eligibility.causes` contains only verified repaired cause groups,
-with indices into the full outcome; unassigned questions are excluded. The worker
+with indices into the full outcome. Unverified causes are represented separately
+as typed `unassigned` questions with `reason=evidence_gap`; they do not authorize
+executable learning. The worker
 receives compact cause indices and only those causes, verified receipts and typed
 applications/diagnoses and scoped cold-verification evidence. Opaque tool transcripts and unattributed playbook/drift
 claims are omitted from that learning view. No global recovery, positive fixed
@@ -193,9 +195,16 @@ capture, program trust credit, or repaired peer is inferred from partial repair.
 A missing fixed capture remains an evidence gap. Full-success reflection retains
 its existing behavior.
 
-If no cause qualifies, `requires_reflection=false` and the durable
-`reflection_decision` is `no_change` with
-`no_change_reason=no_independently_verified_repair`; no model is dispatched.
+Every closed incident with a resumable responder session requires reflection,
+including failed, cancelled and self-healed incidents with no verified repair.
+The worker resumes that session by default, independently of the response budget
+and benchmark cleanup. Settled corpus work does not bypass this dispatch.
+Without a verified repaired cause, reflection may return `no_change` with a
+concrete evidence-gap reason or typed SDK gaps; it cannot publish an `updated`
+README or executable claim. Without a resumable session or verified cause, the
+legacy observable `no_independently_verified_repair` skip remains.
+The persisted broker ledger, task ID and task payload preserve one logical
+reflection across restarts; validation corrections are separate attempts.
 When reflection runs, its usage follows the existing decision/result ledger path,
 including across retries. A pre-cleanup benchmark grade and cleanup status remain
 separate measurements; neither authorizes production learning.

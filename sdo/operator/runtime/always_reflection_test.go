@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -210,5 +211,44 @@ func TestReflectionFailedTaskRestartResumesSameSessionAndIdentity(t *testing.T) 
 	}
 	if calls != 2 {
 		t.Fatalf("transport calls=%d", calls)
+	}
+}
+
+func TestReflectionUnverifiedRepairCannotPublishReadmeOnlyLearning(t *testing.T) {
+	ctx := context.Background()
+	root := nativeRepository(t)
+	repository, err := broker.New(root, filepath.Join(t.TempDir(), "proposals"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	native := NativeIncidentBroker{Repository: repository, LedgerRoot: t.TempDir(), Deriver: ProtoOutcomeDeriver{}, ResponderBackend: "test", ResponderModel: "test",
+		Reflector: ReflectionWorkerFunc(func(_ context.Context, _ IncidentClosure, workspace IncidentWorkspace, _ *contracts.OutcomeRecord, _, _ string, _ ReflectionFeedback) (ReflectionDecision, error) {
+			calls++
+			path := filepath.Join(workspace.Worktree, ".sdo/playbooks/unverified/README.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				return ReflectionDecision{}, err
+			}
+			err := os.WriteFile(path, []byte("# An unverified reported repair is not learning\n"), 0644)
+			return ReflectionDecision{LearningDecision: "updated", PlaybookIDs: []string{"unverified"}}, err
+		}),
+	}
+	workspace, err := native.PrepareIncident(ctx, "unverified-readme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := native.ProcessClosure(ctx, socialRepeatClosure(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := native.readLedger(workspace.IncidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || receipt.ReflectionCommit != "" || !ledger.ReflectionProcessed || ledger.ReflectionDecision.GetLearningDecision() != "failed" || ledger.ReflectionDecision.GetError() == "" {
+		t.Fatalf("unverified learning accepted: calls=%d ledger=%v", calls, ledger)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sdo/playbooks/unverified/README.md")); !os.IsNotExist(err) {
+		t.Fatalf("unverified README reached accepted memory: %v", err)
 	}
 }
