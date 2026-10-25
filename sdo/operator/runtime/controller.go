@@ -294,6 +294,21 @@ func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKi
 	return c.StepEvents(ctx, now, []sdk.WatchKind{*event})
 }
 
+// stepPaused advances only work belonging to an already accepted closure. A
+// maintenance pause suspends observation/admission, not the report deadline or
+// outcome and reflection bookkeeping. Persist before exposing broker effects.
+func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
+	c.observationMu.Lock()
+	defer c.observationMu.Unlock()
+	if err := c.prepareHealthEffects(ctx, now); err != nil {
+		return err
+	}
+	c.processDispatchCompletions(now)
+	c.finishEarlyReport(ctx, now)
+	c.processBrokerCompletions()
+	return c.PersistState(ctx)
+}
+
 // StepEvents evaluates, against one snapshot, every detector that is due or
 // watches any of the coalesced watch events.
 func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk.WatchKind) error {
