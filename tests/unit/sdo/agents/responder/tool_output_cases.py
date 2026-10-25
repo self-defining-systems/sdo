@@ -52,7 +52,13 @@ def large_response(command: str, count: int) -> dict[str, Any]:
             ],
         }
     if command in ("mitigate", "apply", "rollback"):
-        response.update(application_id="application", targeted_healthy=True)
+        response.update(
+            application_id="application",
+            targeted_healthy=True,
+            before_findings=[],
+            controller_findings=findings,
+            progress={"fixed": [], "new": findings, "unchanged": []},
+        )
         response["report"] = {"status": "STATUS_UNRESOLVED", "attempt_id": "attempt", "rounds": findings}
         response["mitigation_health"] = {"findings": findings, "healthy": False, "targeted_healthy": True}
     if command == "report":
@@ -102,7 +108,7 @@ def rendered_stdout_cases() -> dict[str, str]:
                 text = output.getvalue()
                 details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
                 full = json.loads(details.read_text())
-                if command in {"mitigate", "act", "apply"}:
+                if command in {"mitigate", "act", "apply", "rollback"}:
                     assert len(full["actions"]) == 1
                     full = full["actions"][0]
                 assert full["command"] == command
@@ -128,7 +134,7 @@ def rendered_stdout_cases() -> dict[str, str]:
             text = output.getvalue()
             details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
             full = json.loads(details.read_text())
-            if command in {"mitigate", "act", "apply"}:
+            if command in {"mitigate", "act", "apply", "rollback"}:
                 full = full["actions"][0]
             assert full["error"]
             samples[f"{command}.error"] = text

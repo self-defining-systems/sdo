@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -51,34 +52,72 @@ def _line(finding: Mapping[str, Any]) -> str:
     return f"- {detector} {resource}: {reason}"
 
 
+def _bounded_text(value: Any, limit: int) -> str:
+    """Bound UTF-8 JSON string content, including escaping, without splitting code points."""
+    text = " ".join(str(value).split())
+
+    def size(candidate: str) -> int:
+        return len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) - 2
+
+    if size(text) <= limit:
+        return text
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if size(text[:middle] + "…") <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low] + "…"
+
+
+def _warning(action: Mapping[str, Any]) -> dict[str, str] | None:
+    warning = action.get("incident_verified")
+    if not warning:
+        return None
+    return {key: _bounded_text(warning.get(key, ""), 120) for key in ("verified_at", "message")}
+
+
 def compact_mutation_envelope(text: str, path: Path, action: Mapping[str, Any]) -> dict[str, Any]:
     """The bounded JSON view carries typed errors plus the full-report pointer."""
     return {
         "summary": text,
         "details_file": str(path),
         "command": action.get("command", "mitigate"),
-        "incident_verified": action.get("incident_verified"),
-        **{key: tool_output._brief(action[key], 160) for key in ("error", "failure_reason") if action.get(key)},
+        "incident_verified": _warning(action),
+        **{key: _bounded_text(action[key], 80) for key in ("error", "failure_reason") if action.get(key)},
     }
 
 
 def format_mutation_response(
-    before: Sequence[Mapping[str, Any]],
-    after: Sequence[Mapping[str, Any]],
+    before: Sequence[Mapping[str, Any]] | None,
+    after: Sequence[Mapping[str, Any]] | None,
     action_results: Sequence[dict[str, Any]],
     *,
     json_output: bool = False,
+    controller_progress: Mapping[str, Any] | None = None,
 ) -> tuple[str, Path]:
     """Return bounded summary text and its complete JSON file; supports multiple actions."""
     actions = list(action_results)
-    progress = finding_progress(before, after)
+    progress = (
+        {key: list(controller_progress.get(key) or []) for key in ("fixed", "new", "unchanged")}
+        if controller_progress is not None
+        else finding_progress(before, after)
+        if before is not None and after is not None
+        else {key: [] for key in ("fixed", "new", "unchanged")}
+    )
+    snapshots_known = controller_progress is not None or (before is not None and after is not None)
+    if after is None and controller_progress is not None:
+        after = [*progress["new"], *progress["unchanged"]]
     option_reports = [item for action in actions for item in action.get("option_reports", [])]
     if not option_reports:
         option_reports = [action["report"] for action in actions if action.get("report")]
-    report = {"actions": actions, "option_reports": option_reports, "findings": list(after), **progress}
+    report = {"actions": actions, "option_reports": option_reports, "findings": list(after or []), **progress}
     # Workers set SDO_SESSION_SCRATCH to their private session work directory.
     # Standalone invocations retain the existing private tool-output directory.
     command = str(actions[-1].get("command", "mitigate")) if actions else "mitigate"
+    # Rollback already has a stricter shipped stdout policy than other mutations.
+    output_budget = 1500 if command == "rollback" else MAX_MUTATION_OUTPUT_BYTES
     directory = os.environ.get("SDO_SESSION_SCRATCH")
     path = tool_output.write_json(report, command=command, root=Path(directory) / "sdo-reports" if directory else None)
     warning = next(
@@ -87,26 +126,29 @@ def format_mutation_response(
     if len(actions) == 1:
         action = actions[0]
         if action.get("error") or action.get("success") is False or action.get("exit_code"):
-            result = "failed: " + tool_output._brief(action.get("error") or action.get("summary", "see receipt"), 100)
+            result = "failed: " + _bounded_text(action.get("error") or action.get("summary", "see receipt"), 80)
         elif action.get("targeted_healthy"):
             result = "target finding cleared"
         elif action.get("success"):
             result = "mutation completed; verification follows the controller"
         else:
-            result = tool_output._brief(action.get("summary", "completed; see report"), 100)
+            result = _bounded_text(action.get("summary", "completed; see report"), 80)
         lines = [f"This action: {result}."]
     else:
         failed = sum(bool(action.get("error") or action.get("success") is False) for action in actions)
         lines = [f"Actions: {len(actions) - failed} completed; {failed} failed (see individual receipts)."]
+    remaining = len(after) if after is not None else "unknown"
     lines += [
-        f"Incident: {'verified' if warning else 'NOT verified'}, still broken: {len(after)}",
+        f"Incident: {'verified' if warning else 'NOT verified'}, still broken: {remaining}",
         f"fixed by/since this action: {len(progress['fixed'])}",
         f"new since this action: {len(progress['new'])} (possible regression)",
         f"still broken, unchanged: {len(progress['unchanged'])}",
     ]
+    if not snapshots_known:
+        lines[2:] = ["Controller snapshots unavailable; progress unknown (see full report)."]
     schema = command_report_schema()
     tail = [
-        f"incident_verified: {warning['message'] if warning else 'false'}",
+        f"incident_verified: {_bounded_text(warning['message'], 120) if warning else 'false'}",
         f"Full JSON: {path}",
         "Schema (top-level keys):",
     ]
@@ -128,12 +170,31 @@ def format_mutation_response(
             )
         return len(text.encode("utf-8")) + 1
 
+    # Preserve the exported original. A short duplicate keeps the pointer usable
+    # even when scratch contains a very long path or line/control characters.
+    if not str(path).isprintable() or emitted_bytes([*lines, *tail]) > output_budget:
+        identity = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+        path = tool_output.write_json(report, command=command, incident_id=identity, root=Path("/tmp/sdo"))
+        tail[1] = f"Full JSON: {path}"
+    if emitted_bytes([*lines, *tail]) > output_budget:
+        tail[2:] = [
+            "Schema (top-level keys):",
+            *(
+                f"{key}[]: {description.removeprefix('array of ').split(': ', 1)[0]}"
+                for key, description in schema.items()
+            ),
+        ]
+
     omitted = "Additional finding lines are in the full report's new[] and unchanged[] arrays."
     for index, row in enumerate(rows):
         remainder = [omitted] if index + 1 < len(rows) else []
-        if emitted_bytes([*lines, row, *remainder, *tail]) > MAX_MUTATION_OUTPUT_BYTES:
-            lines.append(omitted)
+        if emitted_bytes([*lines, row, *remainder, *tail]) > output_budget:
+            if emitted_bytes([*lines, omitted, *tail]) <= output_budget:
+                lines.append(omitted)
             break
         lines.append(row)
-    text = "\n".join([*lines, *tail])
+    final_lines = [*lines, *tail]
+    if emitted_bytes(final_lines) > MAX_MUTATION_OUTPUT_BYTES:
+        raise ValueError(f"mutation response exceeds 2048-byte hard limit; full report: {path}")
+    text = "\n".join(final_lines)
     return text, path

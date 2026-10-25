@@ -51,8 +51,8 @@ type ToolRequest struct {
 
 type ToolResponse struct {
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
-	BeforeFindings             []sdk.Finding                  `json:"before_findings,omitempty"`
-	ControllerFindings         []sdk.Finding                  `json:"controller_findings,omitempty"`
+	BeforeFindings             []sdk.Finding                  `json:"before_findings"`
+	ControllerFindings         []sdk.Finding                  `json:"controller_findings"`
 	Progress                   *FindingProgress               `json:"progress,omitempty"`
 	IncidentVerified           *apihistory.IncidentVerified   `json:"incident_verified,omitempty"`
 	FailureReason              string                         `json:"failure_reason,omitempty"`

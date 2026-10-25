@@ -331,6 +331,8 @@ def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypat
         "menu": {"round_limit": 3, "options": [{"option_id": "repair", "program_id": "repair"}]},
         "source": {"spec": {"arbitrary": "accepted intent " * 1000}},
     }
+    if command == "mitigate":
+        response.update(before_findings=[], controller_findings=response["findings"])
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
     args = {
         "menu": ["menu"],

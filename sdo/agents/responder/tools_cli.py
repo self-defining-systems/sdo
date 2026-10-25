@@ -162,14 +162,16 @@ def _parser() -> argparse.ArgumentParser:
         help="wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)",
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
-    for name in ("mitigate", "act", "apply"):
+    for name in ("mitigate", "act", "apply", "rollback"):
         example = ("Example: " + ACT_EXAMPLE + "\n\n") if name == "act" else ""
         commands.choices[name].epilog = example + (
             "Action output separates target progress from incident verification and lists fixed, new "
-            "(possible regression), and unchanged findings from controller snapshots. Every invocation saves "
+            "(possible regression), and unchanged findings from authoritative controller progress. "
+            "Mutation stdout is at most 2048 UTF-8 bytes, including JSON framing and newline. Every invocation saves "
             "the complete findings/evidence, program_runs, execution reports and receipts under "
             "$SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. The response includes "
-            "that path and a generated schema for querying its arrays. incident_verified is an extra "
+            "a readable path (a compact copy if needed) and a generated schema for querying its arrays. "
+            "incident_verified is an extra "
             "informational warning; reads/reports keep their normal results, and new mutations are rejected."
         )
     for command in commands.choices.values():
@@ -366,6 +368,8 @@ def _act(args: argparse.Namespace) -> int:
                 response["before_findings"] = before
                 response["controller_findings"] = verified.get("findings", [])
                 response["healthy"] = verified.get("healthy", False)
+                if verified.get("progress") is not None:
+                    response["progress"] = verified["progress"]
                 if verified.get("incident_verified"):
                     response["incident_verified"] = verified["incident_verified"]
             _print_response(response, full_json=args.json)
@@ -385,12 +389,12 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
         marker = Path(history) / "incident-verified.json"
         if marker.exists():
             response["incident_verified"] = json.loads(marker.read_text())
-    if response.get("command") in {"mitigate", "act", "apply"}:
-        before = response.get("before_findings", response.get("findings", []))
-        after = response.get(
-            "controller_findings", response.get("findings", response.get("mitigation_health", {}).get("findings", []))
+    if response.get("command") in {"mitigate", "act", "apply", "rollback"}:
+        before = response.get("before_findings")
+        after = response.get("controller_findings")
+        text, path = format_mutation_response(
+            before, after, [response], json_output=full_json, controller_progress=response.get("progress")
         )
-        text, path = format_mutation_response(before, after, [response], json_output=full_json)
         if full_json:
             # JSON callers receive the same bounded summary and discoverable schema.
             print(
