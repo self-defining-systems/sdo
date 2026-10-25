@@ -20,7 +20,7 @@ func ResetControlState(ctx context.Context, client kubernetes.Interface, control
 		return deleted, fmt.Errorf("reset control state requires an explicit control namespace")
 	}
 	var records []*corev1.ConfigMap
-	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, "sdo-controller-state"} {
+	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName, "sdo-controller-state"} {
 		cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue

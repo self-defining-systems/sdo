@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -52,6 +53,7 @@ type onboardingReachabilityState struct {
 	configurations map[string]string
 	invalid        bool
 	startedAt      time.Time
+	waitReason     string
 }
 
 type onboardingSnapshotProvider struct {
@@ -108,10 +110,27 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 		return snapshot
 	}
 	if state.startedAt.IsZero() {
+		actionCtx, cancel, err := c.actionContext(ctx)
+		if err != nil {
+			return snapshot
+		}
+		err = onboarding.MarkWindow(actionCtx, c.onboardingClient, c.onboardingControl)
+		cancel()
+		if err != nil {
+			if c.OnError != nil {
+				c.OnError(err)
+			}
+			return snapshot
+		}
 		state.startedAt = now
 	}
 	state.candidate = nil
-	if !c.onboardingCommitVerified(ctx, c.pendingOnboarding.AcceptedCommit) {
+	verified, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit)
+	if err != nil {
+		c.waitForOnboarding(ctx, "accepted lineage unavailable")
+		return snapshot
+	}
+	if !verified {
 		state.invalid = true
 		return snapshot
 	}

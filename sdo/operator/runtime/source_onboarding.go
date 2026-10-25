@@ -91,11 +91,39 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 	c.pendingOnboarding = record
 	c.onboardingClient = client
 	c.onboardingControl = control
+	for _, name := range []string{onboarding.RejectedConfigMapName, onboarding.WindowConfigMapName} {
+		marked, err := onboarding.Marked(ctx, client, control, name)
+		if err != nil {
+			return err
+		}
+		if marked && record != nil {
+			// Attachment runs before leadership acquisition. Retain the
+			// rejection locally; only a guarded Step may persist effects.
+			c.onboardingReachability.invalid = true
+		}
+	}
 	return nil
 }
 
-func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detector) *contracts.NamespaceOnboarding {
+func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detector, now time.Time) *contracts.NamespaceOnboarding {
 	if c.pendingOnboarding == nil || len(detectors) != len(c.detectors) {
+		return nil
+	}
+	// Availability is checked before the create-once claim. Missing inventory
+	// is not a failed evaluation and can recover on a later iteration.
+	if len(c.healthDetectorIDs) == 0 {
+		c.waitForOnboarding(ctx, "health detectors unavailable")
+		return nil
+	}
+	if ConsumesServiceReachability(detectors) && (c.onboardingReachability == nil || c.onboardingReachability.startedAt.IsZero()) {
+		return nil
+	}
+	if !c.pendingInventoryClear(c.pendingOnboarding, now) {
+		c.waitForOnboarding(ctx, "accepted inventory or informer readiness unavailable")
+		return nil
+	}
+	if ready, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit); err != nil || !ready {
+		c.waitForOnboarding(ctx, "accepted lineage unavailable or unverified")
 		return nil
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
@@ -104,13 +132,13 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 	}
 	defer cancel()
 	record := c.pendingOnboarding
-	c.pendingOnboarding = nil
 	claimed, err := onboarding.Claim(actionCtx, c.onboardingClient, c.onboardingControl)
 	if err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("claim onboarding evaluation: %w", err))
 	}
 	if !claimed {
 		if err == nil {
+			c.pendingOnboarding = nil
 			existing, loadErr := onboarding.Load(ctx, c.onboardingClient, c.onboardingControl, c.config.Namespace)
 			if loadErr == nil {
 				loadErr = c.SetNamespaceOnboarding(existing)
@@ -124,6 +152,7 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 		}
 		return nil
 	}
+	c.pendingOnboarding = nil
 	return record
 }
 
@@ -183,7 +212,11 @@ func (c *Controller) observePendingOnboarding(ctx context.Context, now time.Time
 	if c.pendingOnboarding == nil || c.onboardingReachability == nil {
 		return
 	}
-	if !c.onboardingCommitVerified(ctx, c.pendingOnboarding.AcceptedCommit) {
+	c.mu.Lock()
+	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked() || c.lastAcknowledgedIncidentID != "" || !c.incidentDetectedAt.IsZero() || len(c.failedClosures) != 0
+	c.mu.Unlock()
+	verified, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit)
+	if busy || err == nil && !verified {
 		c.onboardingReachability.invalid = true
 	}
 	if findings, observed := c.pendingInventoryFindings(c.pendingOnboarding, now); observed && len(findings) != 0 {
@@ -195,7 +228,7 @@ func (c *Controller) pendingInventoryFindings(record *contracts.NamespaceOnboard
 	if c.drift == nil || !c.drift.Inventory {
 		return nil, true
 	}
-	if c.sourceInventory == nil {
+	if c.sourceInventory == nil || c.sourceInventory.Revision != c.CurrentAcceptedCommit() {
 		return nil, false
 	}
 	reader, ok := c.drift.Events.(interface {
@@ -221,9 +254,44 @@ func (c *Controller) onboardingCommitVerified(ctx context.Context, installed str
 	if current == installed {
 		return true
 	}
-	ok, err := memory.HealthRefreshPreservesInstall(ctx, c.config.RepositoryWorktree, installed, current)
+	ok, err := c.onboardingCommitReady(ctx, installed)
 	if err != nil && c.OnError != nil {
 		c.OnError(fmt.Errorf("verify onboarding health refresh: %w", err))
 	}
 	return err == nil && ok
+}
+
+// Rejection is durable, distinct from consuming a ready evaluation attempt.
+// Monitoring resumes even when automatic onboarding cannot establish authority.
+func (c *Controller) rejectPendingOnboarding(ctx context.Context, reason string) error {
+	actionCtx, cancel, err := c.actionContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	if err := onboarding.Reject(actionCtx, c.onboardingClient, c.onboardingControl, reason); err != nil {
+		return err
+	}
+	c.pendingOnboarding = nil
+	if c.onboardingReachability != nil {
+		c.onboardingReachability.candidate = nil
+		c.onboardingReachability.invalid = true
+	}
+	slog.InfoContext(ctx, "namespace onboarding rejected", "reason", reason)
+	return nil
+}
+
+func (c *Controller) onboardingCommitReady(ctx context.Context, installed string) (bool, error) {
+	current := c.CurrentAcceptedCommit()
+	if current == installed {
+		return true, nil
+	}
+	return memory.HealthRefreshPreservesInstall(ctx, c.config.RepositoryWorktree, installed, current)
+}
+func (c *Controller) waitForOnboarding(ctx context.Context, reason string) {
+	if c.onboardingReachability == nil || c.onboardingReachability.waitReason == reason {
+		return
+	}
+	c.onboardingReachability.waitReason = reason
+	slog.InfoContext(ctx, "namespace onboarding not ready", "reason", reason)
 }

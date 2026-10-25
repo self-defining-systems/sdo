@@ -8,7 +8,7 @@ import (
 
 func TestHealthRefreshPreservesOnlyVerifiedInstallLineage(t *testing.T) {
 	const judge = "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed"
-	for _, mode := range []string{"two-judges", "source-reverted", "objective-reverted", "merge", "unrelated-install", "advanced-head", "unverified-adoption"} {
+	for _, mode := range []string{"two-judges", "render-only", "forged-render", "source-reverted", "objective-reverted", "merge", "unrelated-install", "advanced-head", "unverified-adoption"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			root := t.TempDir()
@@ -50,6 +50,13 @@ func TestHealthRefreshPreservesOnlyVerifiedInstallLineage(t *testing.T) {
 				healthTestGit(t, root, "switch", "-q", branch)
 				healthTestGit(t, root, "merge", "--no-ff", "-qm", judge, "side")
 			}
+			if mode == "render-only" || mode == "forged-render" {
+				healthWrite(t, root, ".sdo/rendered/lock.json", "synthetic lock")
+				if mode == "forged-render" {
+					healthWrite(t, root, ".sdo/playbooks/unrelated/README.md", "unrelated")
+				}
+				healthCommit(t, root, "render bookkeeping")
+			}
 			current := strings.TrimSpace(healthTestGit(t, root, "rev-parse", "HEAD"))
 			if mode == "unrelated-install" {
 				installed = strings.Repeat("a", 40)
@@ -66,7 +73,7 @@ func TestHealthRefreshPreservesOnlyVerifiedInstallLineage(t *testing.T) {
 				}
 			}
 			ok, err := HealthRefreshPreservesInstall(ctx, root, installed, current)
-			if mode == "two-judges" {
+			if mode == "two-judges" || mode == "render-only" {
 				if err != nil || !ok {
 					t.Fatalf("verified lineage refused: %v %v", ok, err)
 				}

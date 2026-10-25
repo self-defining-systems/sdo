@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
@@ -122,8 +123,15 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "unverified P35-shaped adopted seed")
 	installed := nativeGit(t, root, "rev-parse", "HEAD")
-	installed = seedRenderedLock(t, GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}, installed, "demo")
-	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-sdo"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}, snapshot.ServiceList[0].DeepCopy(), deployment.DeepCopy(), snapshot.PodList[0].DeepCopy())
+	// P35 installs without a rendered lock and with pre-existing identities
+	// absent from source. Only the frozen install snapshot may acknowledge them.
+	if (GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}).LockCurrent(ctx, installed, "demo") {
+		t.Fatal("fixture pre-created its missing lock")
+	}
+	extra := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "failure-admin-geo", Namespace: "demo"}, Data: map[string]string{"synthetic": "pre-existing"}}
+	baseline = append(baseline, extra)
+	clientObjects := append([]kruntime.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-sdo"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}}, baseline...)
+	client := fake.NewSimpleClientset(clientObjects...)
 	// Prior install authority and a completed worker result are both leftovers.
 	if err := onboarding.Stage(ctx, client, "demo-sdo", "demo", strings.Repeat("a", 40), nil, time.Unix(50, 0)); err != nil {
 		t.Fatal(err)
@@ -276,6 +284,21 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}, DeployedCommit: installed}
+		reconciler := RenderedLockReconciler{Source: source, Client: client, Broker: repository}
+		c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
+			return reconciler.Reconcile(ctx, revision, "demo")
+		}
+		objects := []*unstructured.Unstructured{}
+		for _, obj := range baseline {
+			doc, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(obj)
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects = append(objects, &unstructured.Unstructured{Object: doc})
+		}
+		c.ConfigureDrift(DriftControllerConfig{Inventory: true, Source: source, Events: &inventoryStore{objects: objects}})
 		c.CheckHealth = acceptedHealthGuard(root, accepted.Commit)
 		if err := c.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo-sdo", "sdo-controller-state")); err != nil {
 			t.Fatal(err)
@@ -311,6 +334,15 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 		if err := c.StepEvents(ctx, at, []sdk.WatchKind{{APIVersion: "v1", Kind: "Service", Namespace: "demo"}}); err != nil {
 			t.Fatal(err)
 		}
+		if round == 0 {
+			source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}
+			if !source.LockCurrent(ctx, c.CurrentAcceptedCommit(), "demo") || c.CurrentAcceptedCommit() == installed {
+				t.Fatal("controller did not publish the missing lock before inventory")
+			}
+			if c.sourceInventory == nil || c.sourceInventory.Revision != c.CurrentAcceptedCommit() {
+				t.Fatal("controller did not load current rendered inventory")
+			}
+		}
 		if round == 1 {
 			evaluated := c.history[historyStart:]
 			if len(evaluated) != 1 || evaluated[0].DetectorID != "service-reachability" {
@@ -345,6 +377,13 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	final, err := onboarding.Load(ctx, client, "demo-sdo", "demo")
 	if err != nil || !proto.Equal(final, pending) {
 		t.Fatalf("onboarding missing at install_to_record=21s (same 34s confirmation budget), or changed frozen install: %v %v", final, err)
+	}
+	acknowledgedExtra := false
+	for _, ref := range final.Objects {
+		acknowledgedExtra = acknowledgedExtra || ref.Kind == "ConfigMap" && ref.Name == extra.Name
+	}
+	if !acknowledgedExtra {
+		t.Fatal("lockless bring-up lost the pre-existing install identity")
 	}
 	installToRecord := c.evaluationAt.Sub(final.EstablishedAt.AsTime())
 	if installToRecord != 21*time.Second {

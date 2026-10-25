@@ -16,7 +16,7 @@ import (
 
 func TestResetControlStateDeletesOnlyOwnedOnboarding(t *testing.T) {
 	objects := []runtime.Object{&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "application", Namespace: "control"}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "control"}}}
-	names := []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName}
+	names := []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName}
 	for _, name := range names {
 		objects = append(objects, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "control", UID: types.UID(name), ResourceVersion: "7", Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}})
 	}
