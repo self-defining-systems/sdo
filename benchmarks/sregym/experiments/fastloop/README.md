@@ -21,8 +21,8 @@ at this commit but lack accepted source ownership for first responder assessment
 Use the trial's structural-health objective, `--detection-timeout 180` and
 `--continue-on-error`. The assurance seed also enables functional traffic
 detectors, so its detections must be reported as health catches. Record the
-accepted seed and opening detector; a program detection path does not imply
-responder-free mitigation. No live result is claimed for this stream.
+accepted seed and opening detector; report program detection separately from
+agent-selected learned mitigation. No live result is claimed for this stream.
 
 # Mounted-source development loop
 

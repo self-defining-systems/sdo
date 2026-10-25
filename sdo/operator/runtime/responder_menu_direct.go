@@ -202,13 +202,6 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 		started := time.Now().UTC()
 		result, applyErr := l.Executor.Apply(ctx, l.Request, plan, false)
 		completed := time.Now().UTC()
-		// Preserve program/raw-action attribution in the durable outcome, even
-		// when the larger menu response is truncated in the tool-call journal.
-		application := RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
-		if applyErr != nil {
-			application.Error = applyErr.Error()
-		}
-		l.applicationsLog = append(l.applicationsLog, application)
 		if result.Applied || result.PendingAction != nil {
 			l.applications[applicationID] = result
 			response.ApplicationID = applicationID
@@ -271,6 +264,13 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 			rr.IndependentlyHealthy = result.VerificationPassed
 		}
 		rr.Verification = verdictContract(targetVerdict)
+		// Preserve program/raw-action attribution in the durable outcome, even
+		// when the larger menu response is truncated in the tool-call journal.
+		application := RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: result, StartedAt: started, CompletedAt: completed, RolledBack: result.RolledBack, RollbackError: result.RollbackError}
+		if applyErr != nil {
+			application.Error = applyErr.Error()
+		}
+		l.applicationsLog = append(l.applicationsLog, application)
 		if result.Applied {
 			l.applications[applicationID] = result
 		}

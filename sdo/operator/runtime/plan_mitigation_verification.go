@@ -91,7 +91,7 @@ func mitigationFindingRelated(view sdk.DetectionContext, finding sdk.Finding, re
 	}
 	for _, subject := range subjects {
 		for _, ref := range refs {
-			if sameResource(subject, ref) || fastPathDirectlyRelated(view, subject, ref) || fastPathDirectlyRelated(view, ref, subject) {
+			if sameResource(subject, ref) || coverageDirectlyRelated(view, subject, ref) || coverageDirectlyRelated(view, ref, subject) {
 				return true
 			}
 		}

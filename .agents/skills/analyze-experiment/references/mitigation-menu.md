@@ -28,10 +28,16 @@ preimages are never persisted or restored. Only partial write failures auto-comp
 A report query reflects a later explicit rollback; already returned response snapshots stay stable.
 
 Menu action receipts enter `IncidentResult.repair_actions` with action identity,
-resources, timing, details and success. Menu reports are not legacy PlanApplication
-proof and add no positive program trust credit. Intermediate rounds are not independent
+resources, timing, details and success. Corresponding `plan_applications` retain the
+selected program and final scoped verification, including the bound diagnosis check.
+Menu reports alone add no positive program credit. Intermediate rounds are not independent
 incidents. Terminal menu success alone is not controller health verification, broker
 ACK or a strict benchmark receipt.
+
+Continuation `already_done` lists each applied program once when its canonical
+application receipt is available. It retains individual menu-action receipts when no
+application summary exists. The outcome keeps both evidence granularities; correlate
+them as described in [agent-selected repair evidence](automatic-repair.md).
 
 ## Mitigation health scope
 

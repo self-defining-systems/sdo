@@ -219,6 +219,11 @@ func TestDatabaseUnknownMenuReceiptEarnsNoRepairCredit(t *testing.T) {
 	if response.Report == nil || len(loop.MenuRepairActions()) != 0 {
 		t.Fatalf("unconfirmed catalog change earned repair credit: %+v", response)
 	}
+	for _, receipt := range ProgramRepairReceipts(loop.PlanApplications(), nil) {
+		if receipt.Success {
+			t.Fatalf("unconfirmed catalog change earned aggregate application credit: %+v", receipt)
+		}
+	}
 	for _, round := range response.Report.Rounds {
 		for _, receipt := range round.Actions {
 			if receipt.State == contracts.MitigationActionReceipt_STATE_APPLIED {

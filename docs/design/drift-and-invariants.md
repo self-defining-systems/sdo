@@ -80,7 +80,7 @@ The program sweep runs **on change** for the affected bindings, with a periodic 
 
 ### 3. Unexplained drift handling
 
-**D1 — full merge (accepted):** unexplained drift opens an ordinary latent `drift.unexplained` incident carrying the existing event and capture. The responder first asks “is this a fault?”, then diagnoses and repairs in one session. Learned matches retain `drift.<program>` and the trusted-program path. Delete the investigator task, Job and queue.
+**D1 — full merge (accepted):** unexplained drift opens an ordinary latent `drift.unexplained` incident carrying the existing event and capture. The responder first asks “is this a fault?”, then diagnoses and repairs in one session. Learned matches retain `drift.<program>` and appear in the responder coverage view. Delete the investigator task, Job and queue.
 
 Go retains feed/admission, classifier, dedupe, batching and learned sweeps. Drift-only batches coalesce for 20 s / 8 events and are otherwise admitted like health findings; the per-hour dispatch and token budgets were removed (S1 PR 1). Charge responder usage once. Delete the investigator-specific execution/state path.
 

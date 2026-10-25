@@ -64,7 +64,7 @@ Add `--dry-run` to print the directive and runner arguments without touching a
 cluster, Docker, coordination state, or the environment. Real execution checks the
 lease, calls `coord gate`, resets to seed, generates a single-entry stream outside
 the repository, and invokes the existing fastloop stream runner. It uses scripted
-responder/reflection registrations, trust threshold 1, full cleanup and an official
+responder/reflection registrations, responder-selected learned mitigations, full cleanup and an official
 faulty-oracle check while the controller is paused. Oracle errors are invalid
 injections, never fault proof. `pre-repair-oracle.json` retains this benchmark-only
 evidence. Diagnosis grading is off; no model is invoked.
