@@ -1,0 +1,122 @@
+package memory
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory/layout"
+)
+
+// AppendSDKGaps appends controller-recorded reflection annotations. It accepts
+// no replacement incident evidence. The broker invokes it in its private clone
+// and serializes publication; Put retains its immutable incident contract.
+func (s *JSONStore) AppendSDKGaps(ctx context.Context, id string, gaps []*contracts.SdkGap) (Outcome, error) {
+	previous, err := s.Get(ctx, id)
+	if err != nil {
+		return Outcome{}, err
+	}
+	next := proto.Clone(previous.Record).(*contracts.OutcomeRecord)
+	for _, gap := range gaps {
+		if gap == nil {
+			return Outcome{}, fmt.Errorf("nil SDK gap")
+		}
+		exists := false
+		for _, old := range next.SdkGaps {
+			exists = exists || proto.Equal(old, gap)
+		}
+		if !exists {
+			next.SdkGaps = append(next.SdkGaps, proto.Clone(gap).(*contracts.SdkGap))
+		}
+	}
+	sort.SliceStable(next.SdkGaps, func(i, j int) bool {
+		a, _ := wire.MarshalFull(next.SdkGaps[i])
+		b, _ := wire.MarshalFull(next.SdkGaps[j])
+		return string(a) < string(b)
+	})
+	encoded, err := wire.MarshalFull(next)
+	if err != nil {
+		return Outcome{}, err
+	}
+	// Preserve unknown historical fields byte-for-value. Only sdk_gaps changes.
+	var document, updated map[string]json.RawMessage
+	if err = json.Unmarshal(previous.document, &document); err != nil {
+		return Outcome{}, err
+	}
+	if err = json.Unmarshal(encoded, &updated); err != nil {
+		return Outcome{}, err
+	}
+	document["sdk_gaps"] = updated["sdk_gaps"]
+	raw, err := json.Marshal(document)
+	if err != nil {
+		return Outcome{}, err
+	}
+	outcome, err := parse(raw)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if proto.Equal(previous.Record, next) {
+		return previous, nil
+	}
+	if err = ctx.Err(); err != nil {
+		return Outcome{}, err
+	}
+	directory := filepath.Join(s.root, layout.OutcomesDir)
+	if err = safeDirectory(directory); err != nil {
+		return Outcome{}, err
+	}
+	file, err := os.CreateTemp(directory, ".sdk-gaps-*")
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(raw); err != nil {
+		file.Close()
+		return Outcome{}, err
+	}
+	if err = file.Sync(); err != nil {
+		file.Close()
+		return Outcome{}, err
+	}
+	if err = file.Close(); err != nil {
+		return Outcome{}, err
+	}
+	if err = os.Chmod(file.Name(), 0644); err != nil {
+		return Outcome{}, err
+	}
+	if err = os.Rename(file.Name(), filepath.Join(s.root, layout.OutcomePath(id))); err != nil {
+		return Outcome{}, err
+	}
+	return outcome, nil
+}
+
+// originalOutcomeRetry accepts replay of immutable evidence after annotation,
+// retaining every appended gap and rejecting a replacement/addition via Put.
+func originalOutcomeRetry(previous, requested *contracts.OutcomeRecord) bool {
+	if previous == nil || requested == nil || len(previous.GetSdkGaps()) == 0 {
+		return false
+	}
+	old := proto.Clone(previous).(*contracts.OutcomeRecord)
+	next := proto.Clone(requested).(*contracts.OutcomeRecord)
+	old.SdkGaps = nil
+	next.SdkGaps = nil
+	if !proto.Equal(old, next) {
+		return false
+	}
+	for _, gap := range requested.SdkGaps {
+		found := false
+		for _, stored := range previous.SdkGaps {
+			found = found || proto.Equal(gap, stored)
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

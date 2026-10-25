@@ -75,7 +75,7 @@ func (s *JSONStore) putDocument(ctx context.Context, document []byte) (Outcome, 
 		if readErr != nil {
 			return Outcome{}, readErr
 		}
-		if !bytes.Equal(previous.document, outcome.document) {
+		if !bytes.Equal(previous.document, outcome.document) && !originalOutcomeRetry(previous.Record, outcome.Record) {
 			return Outcome{}, fmt.Errorf("%w: %s", ErrConflict, outcome.IncidentID)
 		}
 		return previous, nil

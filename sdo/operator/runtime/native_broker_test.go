@@ -416,6 +416,10 @@ func TestNativeBrokerPersistsSDKGapForVerifiedIncident(t *testing.T) {
 	if !ledger.ReflectionProcessed || ledger.ReflectionDecision == nil || len(ledger.ReflectionDecision.SdkGaps) != 1 || ledger.ReflectionDecision.SdkGaps[0].Primitive != "ProbeUDP" {
 		t.Fatalf("SDK gap missing from incident ledger: %+v", ledger.ReflectionDecision)
 	}
+	outcome, err := memory.NewJSONStore(target).Get(context.Background(), workspace.IncidentID)
+	if err != nil || len(outcome.Record.GetSdkGaps()) != 1 || outcome.Record.SdkGaps[0].ScratchScript != "kubectl run probe" {
+		t.Fatalf("SDK gap missing from accepted outcome: %+v %v", outcome, err)
+	}
 }
 
 func TestNativeBrokerCompletesAfterDeterministicReflectionRejectionAndRunsNextIncident(t *testing.T) {
