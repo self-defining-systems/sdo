@@ -491,3 +491,29 @@ def test_restore_finishes_recovery_mutations_before_ready_snapshot(tmp_path: Pat
     reset.restore_application(environment, FakeCluster(), SimpleNamespace(request=request), checks=checks)
     assert events[-2:] == ["ready", "complete"]
     assert events.count("baseline_oracle") == 2
+
+
+def test_restore_rejects_malformed_lock_before_any_application_mutation(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.baseline_recovery import save_application_baseline
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fake",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel",
+        application="hotel",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    environment.baseline_path.write_text("{}")
+    save_application_baseline(environment.baseline_path, (ApplicationBaseline("hotel", FakeCluster().objects),))
+    rendered = environment.workspace / ".sdo/rendered"
+    rendered.mkdir(parents=True)
+    (rendered / "lock.json").write_text(
+        json.dumps({"objects": [{"ref": {"kind": "Deployment", "name": "app"}, "error": "unknown gap"}]})
+    )
+    worker = FakeWorker()
+    with pytest.raises(ValueError, match="rendered.*gap"):
+        reset.restore_application(environment, FakeCluster(), worker)
+    assert worker.calls == []
