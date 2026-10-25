@@ -82,3 +82,46 @@ func writeMemoryFile(root, rel string, content []byte, mode fs.FileMode) error {
 	}
 	return os.Chmod(target, mode)
 }
+
+// PlaybookRetired validates optional lifecycle metadata. An omitted status is
+// active. A retired reason is preserved in history, never offered as advice.
+func PlaybookRetired(doc Document) (bool, error) {
+	value, present := doc.Meta["status"]
+	status := "active"
+	if present {
+		var ok bool
+		status, ok = value.(string)
+		if !ok || (status != "active" && status != "retired") {
+			return false, errors.New("playbook status must be active or retired")
+		}
+	}
+	reason, hasReason := doc.Meta["retired_reason"]
+	if status == "retired" {
+		text, ok := reason.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return false, errors.New("retired playbook requires a nonempty string retired_reason")
+		}
+		return true, nil
+	}
+	if hasReason {
+		return false, errors.New("retired_reason requires status: retired")
+	}
+	return false, nil
+}
+
+// ReadPlaybookRetired reads the lifecycle marker before program discovery or
+// staging; malformed metadata fails closed rather than reactivating a program.
+func ReadPlaybookRetired(directory string) (bool, error) {
+	data, err := readRegular(filepath.Join(directory, PlaybookFileName), PlaybookFileName)
+	if err != nil {
+		return false, err
+	}
+	if !strings.HasPrefix(string(data), "---\n") {
+		return false, nil
+	}
+	doc, err := ParseDocument(data)
+	if err != nil {
+		return false, err
+	}
+	return PlaybookRetired(doc)
+}

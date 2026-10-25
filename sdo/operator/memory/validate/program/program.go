@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -65,12 +66,25 @@ func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error)
 		return nil, err
 	}
 	var programs []Spec
+	retired := map[string]bool{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 		ID := entry.Name()
 		base := filepath.Join(workspace, "playbooks", ID)
+		if _, err := os.Stat(filepath.Join(base, "README.md")); err == nil {
+			inactive, err := layout.ReadPlaybookRetired(base)
+			if err != nil {
+				return nil, fmt.Errorf("playbook %s: %w", ID, err)
+			}
+			if inactive {
+				retired[ID] = true
+				continue
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
 		files, err := filepath.Glob(filepath.Join(base, "*.go"))
 		if err != nil {
 			return nil, err
@@ -187,14 +201,14 @@ func inspect(workspace, module, detectors string, adoption bool) ([]Spec, error)
 	}
 	sort.Slice(programs, func(i, j int) bool { return programs[i].ID < programs[j].ID })
 	if !adoption {
-		if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs); err != nil {
+		if err := checkCorpusLabels(filepath.Join(workspace, "corpus"), programs, retired); err != nil {
 			return nil, err
 		}
 	}
 	return programs, nil
 }
 
-func checkCorpusLabels(root string, programs []Spec) error {
+func checkCorpusLabels(root string, programs []Spec, retired map[string]bool) error {
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
 		return nil
@@ -203,6 +217,9 @@ func checkCorpusLabels(root string, programs []Spec) error {
 		return err
 	}
 	known := map[string]bool{}
+	for id := range retired {
+		known[id] = true
+	}
 	for _, item := range programs {
 		known[item.ID] = true
 	}
@@ -279,6 +296,19 @@ func checkProgramImports(root, module string) error {
 		}
 		if walkErr != nil {
 			return walkErr
+		}
+		if entry.IsDir() && filepath.Base(root) == "playbooks" && filepath.Dir(path) == root {
+			if _, err := os.Stat(filepath.Join(path, "README.md")); err == nil {
+				retired, err := layout.ReadPlaybookRetired(path)
+				if err != nil {
+					return err
+				}
+				if retired {
+					return filepath.SkipDir
+				}
+			} else if !os.IsNotExist(err) {
+				return err
+			}
 		}
 		if entry.IsDir() || !strings.HasSuffix(path, ".go") {
 			return nil
@@ -396,7 +426,8 @@ func ReplayTests(programs []Spec) string {
 	}
 	var test strings.Builder
 	test.WriteString(`package generated
-import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest")
+import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay";"sdo.dev/operator/sdk/sdktest"
+ "sdo.dev/operator/memory/layout")
 func TestProgramCorpus(t *testing.T){
  var notes []sdktest.MitigationReplayResult
  defer func(){data,err:=json.Marshal(notes);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("mitigation-replay.json",data,0600);err!=nil{t.Fatal(err)}}()
