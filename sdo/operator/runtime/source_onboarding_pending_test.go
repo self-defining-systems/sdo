@@ -41,6 +41,8 @@ func stagedInstallerController(t *testing.T, health sdk.Detector) (*Controller, 
 	}
 	config := testControllerConfig()
 	config.Namespace, config.SourceCommit = "app", commit
+	// This fixture uses synthetic revisions and an in-memory accepted source.
+	config.RepositoryWorktree = ""
 	c, err := NewController(config, []sdk.Detector{health}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &recordingDispatcher{requests: make(chan IncidentRequest, 10)}, time.Unix(100, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -170,21 +172,21 @@ func TestSourceInventoryPendingOnboardingWaitsForCompleteEvaluation(t *testing.T
 	}
 }
 
-func TestSourceInventoryPendingOnboardingPrecedesStartupReconciliation(t *testing.T) {
+func TestSourceInventoryPendingOnboardingReconcilesBeforeEvaluation(t *testing.T) {
 	c, client := stagedInstallerController(t, inventoryHealth())
 	calls := 0
-	c.ReconcileRendered = func(context.Context, string) (string, error) { calls++; return strings.Repeat("b", 40), nil }
+	c.ReconcileRendered = func(_ context.Context, revision string) (string, error) { calls++; return revision, nil }
 	if err := c.EvaluateAll(context.Background(), time.Unix(101, 0)); err != nil {
 		t.Fatal(err)
 	}
 	record, err := onboarding.Load(context.Background(), client, "control", "app")
-	if err != nil || record == nil || record.AcceptedCommit != strings.Repeat("a", 40) || calls != 0 {
+	if err != nil || record == nil || record.AcceptedCommit != strings.Repeat("a", 40) || calls != 1 {
 		t.Fatalf("startup publication invalidated install verification: record=%v err=%v reconciliations=%d", record, err, calls)
 	}
 	if err := c.EvaluateAll(context.Background(), time.Unix(102, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 {
+	if calls != 2 {
 		t.Fatalf("normal reconciliation did not resume after onboarding: %d", calls)
 	}
 }
@@ -232,8 +234,25 @@ func TestSourceInventoryPendingOnboardingConfirmedSweep(t *testing.T) {
 			if err := c.StepEvents(ctx, time.Unix(102, 0), event); err != nil {
 				t.Fatal(err)
 			}
-			if evaluated := c.history[historyStart:]; len(evaluated) != 1 || evaluated[0].DetectorID != peer.spec.ID || evaluated[0].Status != DetectorEvaluationPending {
-				t.Fatalf("expected partial pending event batch: %+v", evaluated)
+			evaluatedPeer := 0
+			for _, evaluation := range c.history[historyStart:] {
+				if evaluation.DetectorID == peer.spec.ID && evaluation.Status == DetectorEvaluationPending {
+					evaluatedPeer++
+				}
+				if evaluation.DetectorID == goal.spec.ID {
+					t.Fatal("partial event unexpectedly selected goal")
+				}
+			}
+			if evaluatedPeer != 1 {
+				t.Fatal("partial event did not retain pending peer")
+			}
+			if mode == "transient-inventory" || mode == "transient-commit" {
+				if rejected, err := onboarding.Marked(ctx, client, "control", onboarding.RejectedConfigMapName); err != nil || !rejected {
+					t.Fatalf("contradiction not durably rejected: %v %v", rejected, err)
+				}
+				if len(c.sourceInventoryFindings) == 0 {
+					t.Fatal("rejection suppressed ordinary inventory detection")
+				}
 			}
 			if _, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.AttemptConfigMapName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 				t.Fatalf("partial unconfirmed batch consumed attempt: %v", err)
@@ -286,8 +305,13 @@ func TestSourceInventoryPendingOnboardingConfirmedSweep(t *testing.T) {
 			for _, evaluation := range c.history[historyStart:] {
 				evaluated[evaluation.DetectorID]++
 			}
-			if evaluated[goal.spec.ID] != 1 || evaluated[peer.spec.ID] != 1 {
-				t.Fatalf("confirmed event batch did not sweep every detector exactly once: %+v", evaluated)
+			rejectedBeforeSweep := mode == "commit" || mode == "prior-incident" || mode == "inventory" || mode == "transient-inventory" || mode == "transient-commit"
+			expectedGoal := 1
+			if rejectedBeforeSweep {
+				expectedGoal = 0
+			}
+			if evaluated[goal.spec.ID] != expectedGoal || evaluated[peer.spec.ID] != 1 {
+				t.Fatalf("confirmed event sweep/ordinary selection mismatch: %+v", evaluated)
 			}
 			if next := c.scheduler.Deadlines()[goal.spec.ID]; !next.Equal(deadline) {
 				t.Fatalf("install sweep postponed ordinary fault detection: %s -> %s", deadline, next)
@@ -296,8 +320,16 @@ func TestSourceInventoryPendingOnboardingConfirmedSweep(t *testing.T) {
 			if err != nil || (record != nil) != (mode == "clear" || mode == "restart") {
 				t.Fatalf("full-sweep authority: mode=%s record=%v err=%v", mode, record, err)
 			}
-			if _, err := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.AttemptConfigMapName, metav1.GetOptions{}); err != nil {
-				t.Fatalf("confirmed full sweep did not durably consume attempt: %v", err)
+			_, attemptErr := client.CoreV1().ConfigMaps("control").Get(ctx, onboarding.AttemptConfigMapName, metav1.GetOptions{})
+			if rejectedBeforeSweep {
+				if !apierrors.IsNotFound(attemptErr) {
+					t.Fatalf("unmet prerequisites consumed attempt: %v", attemptErr)
+				}
+				if rejected, err := onboarding.Marked(ctx, client, "control", onboarding.RejectedConfigMapName); err != nil || !rejected {
+					t.Fatalf("rejection not durable: %v %v", rejected, err)
+				}
+			} else if attemptErr != nil {
+				t.Fatalf("ready full sweep did not durably claim: %v", attemptErr)
 			}
 			if mode != "clear" && mode != "restart" {
 				goal.errors, peer.errors = nil, nil

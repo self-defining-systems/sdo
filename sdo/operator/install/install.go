@@ -60,7 +60,8 @@ type SyncConfig struct {
 const MaintenanceConfigMap = "sdo-controller-maintenance"
 
 // SetMaintenance pauses observation during a planned application redeploy.
-// A new generation on resume makes the controller relist application state.
+// A paused-to-active transition relists application state; generation-only
+// active updates retain running observations.
 func SetMaintenance(ctx context.Context, client kubernetes.Interface, namespace string, paused bool, generation string) error {
 	return SetMaintenanceWithOptions(ctx, client, namespace, paused, generation, MaintenanceOptions{})
 }
@@ -86,7 +87,7 @@ func SetMaintenanceWithOptions(ctx context.Context, client kubernetes.Interface,
 		state = "paused"
 	}
 	configMaps := client.CoreV1().ConfigMaps(namespace)
-	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMap, Namespace: namespace}, Data: map[string]string{"state": state, "generation": generation}}
+	want := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMap, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"state": state, "generation": generation}}
 	if paused && options.PreserveBaseline {
 		want.Data["preserve_baseline"] = "true"
 	}

@@ -16,7 +16,7 @@ import (
 
 func TestResetControlStateDeletesOnlyOwnedOnboarding(t *testing.T) {
 	objects := []runtime.Object{&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "application", Namespace: "control"}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "control"}}}
-	names := []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName}
+	names := []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName}
 	for _, name := range names {
 		objects = append(objects, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "control", UID: types.UID(name), ResourceVersion: "7", Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}})
 	}
@@ -103,5 +103,43 @@ func TestResetControlStateRefusesUnownedCheckpoint(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "sdo-controller-state", Namespace: "control"}, Data: map[string]string{"runtime-state.json": "{}"}})
 	if _, err := ResetControlState(context.Background(), client, "control"); err == nil {
 		t.Fatal("a checkpoint name/data key without ownership was deleted")
+	}
+}
+
+func TestResetControlStateRetiresOwnedMaintenanceForFreshInstall(t *testing.T) {
+	ctx := context.Background()
+	const name = "sdo-controller-maintenance"
+	client := fake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "control", Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"state": "active", "generation": "previous-install"}})
+	deleted, err := ResetControlState(ctx, client, "control")
+	if err != nil || !reflect.DeepEqual(deleted, []string{name}) {
+		t.Fatalf("fresh install inherited old maintenance: %v %v", deleted, err)
+	}
+}
+
+func TestResetControlStateLegacyMaintenanceHasExactOwnedShape(t *testing.T) {
+	for _, mode := range []string{"active", "paused", "malformed", "foreign-owner", "extra-data"} {
+		t.Run(mode, func(t *testing.T) {
+			cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "sdo-controller-maintenance", Namespace: "control"}, Data: map[string]string{"state": "active", "generation": "old-install"}}
+			switch mode {
+			case "paused":
+				cm.Data["state"] = "paused"
+				cm.Data["preserve_baseline"] = "true"
+			case "malformed":
+				cm.Data["generation"] = ""
+			case "foreign-owner":
+				cm.Labels = map[string]string{"app.kubernetes.io/managed-by": "someone-else"}
+			case "extra-data":
+				cm.Data["application-data"] = "retain"
+			}
+			client := fake.NewSimpleClientset(cm)
+			deleted, err := ResetControlState(context.Background(), client, "control")
+			if mode == "active" || mode == "paused" {
+				if err != nil || len(deleted) != 1 {
+					t.Fatalf("legacy install maintenance retained: %v %v", deleted, err)
+				}
+			} else if err == nil || len(deleted) != 0 {
+				t.Fatalf("unowned maintenance deleted: %v %v", deleted, err)
+			}
+		})
 	}
 }

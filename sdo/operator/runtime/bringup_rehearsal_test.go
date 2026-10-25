@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/fake"
@@ -86,7 +87,11 @@ func (w *rehearsalJudge) Execute(ctx context.Context, task *contracts.AgentTask)
 
 // Rehearse the native bring-up, including the benchmark's actual HY restore,
 // against one shared fake cluster. Simulated probe time avoids a minute sleep.
-func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
+func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) { rehearseNativeOnboarding(t, false) }
+func TestHermeticBringupMaintenanceGenerationDuringOnboarding(t *testing.T) {
+	rehearseNativeOnboarding(t, true)
+}
+func rehearseNativeOnboarding(t *testing.T, maintenanceChange bool) {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Second)
 	defer cancel()
@@ -122,8 +127,16 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	nativeGit(t, root, "add", ".")
 	nativeGit(t, root, "commit", "-qm", "unverified P35-shaped adopted seed")
 	installed := nativeGit(t, root, "rev-parse", "HEAD")
-	installed = seedRenderedLock(t, GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}, installed, "demo")
-	client := fake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-sdo"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}, snapshot.ServiceList[0].DeepCopy(), deployment.DeepCopy(), snapshot.PodList[0].DeepCopy())
+	// P35 installs without a rendered lock and with pre-existing identities
+	// absent from source. Only the frozen install snapshot may acknowledge them.
+	if (GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}).LockCurrent(ctx, installed, "demo") {
+		t.Fatal("fixture pre-created its missing lock")
+	}
+	extra := &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: "failure-admin-geo", Namespace: "demo"}, Data: map[string]string{"synthetic": "pre-existing"}}
+	baseline = append(baseline, extra)
+	clientObjects := append([]kruntime.Object{&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo-sdo"}}, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}}, baseline...)
+	clientObjects = append(clientObjects, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: MaintenanceConfigMapName, Namespace: "demo-sdo"}, Data: map[string]string{"state": "active", "generation": "previous-install"}})
+	client := fake.NewSimpleClientset(clientObjects...)
 	// Prior install authority and a completed worker result are both leftovers.
 	if err := onboarding.Stage(ctx, client, "demo-sdo", "demo", strings.Repeat("a", 40), nil, time.Unix(50, 0)); err != nil {
 		t.Fatal(err)
@@ -174,6 +187,9 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	kubeconfig := bringupRehearsalAPI(t, client, func() error {
 		if record, err := onboarding.Load(ctx, client, "demo-sdo", "demo"); err != nil || record != nil {
 			return errors.New("fresh-stream install ran before real reset")
+		}
+		if _, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, MaintenanceConfigMapName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			return errors.New("fresh install inherited prior maintenance generation")
 		}
 		installs.Add(1)
 		_, err := installer.InstallPrepared(ctx, config, root)
@@ -276,6 +292,21 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}, DeployedCommit: installed}
+		reconciler := RenderedLockReconciler{Source: source, Client: client, Broker: repository}
+		c.ReconcileRendered = func(ctx context.Context, revision string) (string, error) {
+			return reconciler.Reconcile(ctx, revision, "demo")
+		}
+		objects := []*unstructured.Unstructured{}
+		for _, obj := range baseline {
+			doc, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(obj)
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects = append(objects, &unstructured.Unstructured{Object: doc})
+		}
+		c.ConfigureDrift(DriftControllerConfig{Inventory: true, Source: source, Events: &inventoryStore{objects: objects}})
 		c.CheckHealth = acceptedHealthGuard(root, accepted.Commit)
 		if err := c.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "demo-sdo", "sdo-controller-state")); err != nil {
 			t.Fatal(err)
@@ -290,9 +321,10 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 	for _, port := range snapshot.ServiceList[0].Spec.Ports {
 		window.Targets = append(window.Targets, servicehealth.TargetObservations{Target: servicehealth.ReachabilityTarget{Service: "geo", Port: port.Port, PortName: port.Name}})
 	}
+	var maintenanceShift int64
 	probe := func(round int) {
 		t.Helper()
-		at := time.Unix(int64(101+round*10), 0)
+		at := time.Unix(int64(101+round*10)+maintenanceShift, 0)
 		window.ObservedAt = at
 		for i := range window.Targets {
 			sample := servicehealth.DialSample{At: at, OK: i == 0}
@@ -310,6 +342,15 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 		historyStart := len(c.history)
 		if err := c.StepEvents(ctx, at, []sdk.WatchKind{{APIVersion: "v1", Kind: "Service", Namespace: "demo"}}); err != nil {
 			t.Fatal(err)
+		}
+		if round == 0 {
+			source := GitPlanSource{Repository: root, ManifestPaths: []string{"deploy/tracing.yaml"}}
+			if !source.LockCurrent(ctx, c.CurrentAcceptedCommit(), "demo") || c.CurrentAcceptedCommit() == installed {
+				t.Fatal("controller did not publish the missing lock before inventory")
+			}
+			if c.sourceInventory == nil || c.sourceInventory.Revision != c.CurrentAcceptedCommit() {
+				t.Fatal("controller did not load current rendered inventory")
+			}
 		}
 		if round == 1 {
 			evaluated := c.history[historyStart:]
@@ -329,9 +370,13 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 		default:
 		}
 	}
-	for round := 0; round < 3; round++ {
+	probeRounds := 3
+	if maintenanceChange {
+		probeRounds = 5
+	}
+	for round := 0; round < probeRounds; round++ {
 		probe(round)
-		if round < 2 {
+		if round < probeRounds-1 {
 			assertNoAttempt()
 			state, _, err := lifecycleio.NewConfigMapStateStore(client, "demo-sdo", "sdo-controller-state").Load(ctx)
 			if err != nil {
@@ -341,19 +386,59 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 				t.Fatal("unconfirmed probe persisted as clear")
 			}
 		}
+		if maintenanceChange && round == 1 {
+			if err := install.SetMaintenance(ctx, client, "demo-sdo", true, "sampling-paused"); err != nil {
+				t.Fatal(err)
+			}
+			for i := range window.Targets {
+				window.Targets[i].Samples = nil
+				window.Targets[i].LastSuccess = nil
+			}
+			window.ObservedAt = time.Unix(130, 0)
+			provider.set(snapshot)
+			if err := install.SetMaintenance(ctx, client, "demo-sdo", false, "sampling-resumed"); err != nil {
+				t.Fatal(err)
+			}
+			// Use the same fresh-sampling entry point as the production driver.
+			if err := c.ResumeObservation(ctx, time.Unix(130, 0)); err != nil {
+				t.Fatal(err)
+			}
+			maintenanceShift = 20
+			assertNoAttempt()
+		}
 	}
 	final, err := onboarding.Load(ctx, client, "demo-sdo", "demo")
 	if err != nil || !proto.Equal(final, pending) {
-		t.Fatalf("onboarding missing at install_to_record=21s (same 34s confirmation budget), or changed frozen install: %v %v", final, err)
+		t.Fatalf("onboarding missing after the complete sampling window, or changed frozen install: %v %v", final, err)
+	}
+	acknowledgedExtra := false
+	for _, ref := range final.Objects {
+		acknowledgedExtra = acknowledgedExtra || ref.Kind == "ConfigMap" && ref.Name == extra.Name
+	}
+	if !acknowledgedExtra {
+		t.Fatal("lockless bring-up lost the pre-existing install identity")
 	}
 	installToRecord := c.evaluationAt.Sub(final.EstablishedAt.AsTime())
-	if installToRecord != 21*time.Second {
-		t.Fatalf("install_to_record exceeded the original three-probe schedule: %s", installToRecord)
+	expectedLatency := 21 * time.Second
+	if maintenanceChange {
+		expectedLatency = 61 * time.Second
 	}
-	t.Logf("install_to_record=%s; scheduler startup full, second batch partial, confirmed full sweep at third probe; confirmation budget=34s", installToRecord)
+	if installToRecord != expectedLatency {
+		t.Fatalf("install_to_record did not match the expected sampling schedule: %s", installToRecord)
+	}
+	t.Logf("install_to_record=%s; startup full, partial pending batches, three confirmed probes per sampling window; confirmation budget=34s", installToRecord)
 	reference, err := onboarding.LoadReachability(ctx, client, "demo-sdo", "demo")
 	if err != nil || reference == nil || len(reference.Exclusions) != 2 {
 		t.Fatalf("never-served reference: %+v %v", reference, err)
+	}
+	if maintenanceChange {
+		for _, exclusion := range reference.Exclusions {
+			for _, sample := range exclusion.Samples {
+				if sample.At.Before(time.Unix(130, 0)) {
+					t.Fatal("reference retained a pre-resume sample")
+				}
+			}
+		}
 	}
 	recordBefore, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, onboarding.ConfigMapName, metav1.GetOptions{})
 	if err != nil {
@@ -389,11 +474,11 @@ func TestHermeticBringupPersistsPendingAndRestarts(t *testing.T) {
 			t.Fatalf("evaluator wrote cluster: %s %s", action.GetVerb(), action.GetResource().Resource)
 		}
 	}
-	for round := 3; round < 9; round++ {
+	for round := probeRounds; round < probeRounds+6; round++ {
 		probe(round)
 	}
-	c = newController(time.Unix(200, 0))
-	probe(10)
+	c = newController(c.evaluationAt.Add(time.Second))
+	probe(probeRounds + 7)
 	recordAfter, err := client.CoreV1().ConfigMaps("demo-sdo").Get(ctx, onboarding.ConfigMapName, metav1.GetOptions{})
 	if err != nil || !reflect.DeepEqual(recordBefore.Data, recordAfter.Data) {
 		t.Fatal("restart recaptured native authority")

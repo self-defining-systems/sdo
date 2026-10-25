@@ -6,7 +6,7 @@ import (
 )
 
 // HealthRefreshPreservesInstall admits only an unbroken first-parent chain of
-// independently validated judge publications after an installation. It preserves
+// validated initial-judge or render-only publications after installation. It preserves
 // the frozen install snapshot; it does not grant health authority to adoption.
 func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, current string) (bool, error) {
 	if repository == "" || installed == "" || current == "" {
@@ -36,8 +36,26 @@ func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, c
 			return false, nil
 		}
 		trailers := "\n" + strings.TrimSpace(parts[1]) + "\n"
+		judge := true
 		for _, required := range []string{"SDO-Actor: health_judge", "SDO-Phase: initial", "SDO-Validation: passed"} {
-			if !strings.Contains(trailers, "\n"+required+"\n") {
+			judge = judge && strings.Contains(trailers, "\n"+required+"\n")
+		}
+		if !judge {
+			paths, err := healthGit(ctx, repository, "diff-tree", "--no-commit-id", "--name-only", "-r", "-z", parents[0], revision)
+			if err != nil {
+				return false, err
+			}
+			changed := false
+			for _, path := range strings.Split(string(paths), "\x00") {
+				if path == "" {
+					continue
+				}
+				changed = true
+				if !strings.HasPrefix(path, ".sdo/rendered/") {
+					return false, nil
+				}
+			}
+			if !changed {
 				return false, nil
 			}
 		}

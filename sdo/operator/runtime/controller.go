@@ -283,18 +283,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.retireExpiredIncident(ctx, now); err != nil {
 		return err
 	}
-	if err := c.prepareSourceInventory(ctx); err != nil {
-		return err
-	}
 	c.processDispatchCompletions(now)
 	c.processBrokerCompletions()
 	c.attachPendingDrift()
 	c.mu.Lock()
 	reconcileReady := !c.incidentOpen && (c.broker == nil || !c.closureBlocksNextLocked())
 	c.mu.Unlock()
-	// Preserve the install commit until its first complete observation. A
-	// bookkeeping publication must not invalidate pending onboarding itself.
-	if c.ReconcileRendered != nil && reconcileReady && c.pendingOnboarding == nil {
+	// Rendering is an onboarding prerequisite. Verified render-only lineage
+	// preserves the install boundary while making its inventory available.
+	if c.ReconcileRendered != nil && reconcileReady {
 		actionCtx, cancel, err := c.actionContext(ctx)
 		revision := c.CurrentAcceptedCommit()
 		if err == nil {
@@ -309,13 +306,26 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if revision != "" && revision != c.CurrentAcceptedCommit() {
 			c.mu.Lock()
 			c.config.SourceCommit = revision
+			c.sourceInventoryRetryAt = time.Time{}
 			c.adoptionNeeded = true
 			c.mu.Unlock()
 		}
 	}
+	if err := c.prepareSourceInventory(ctx); err != nil {
+		return err
+	}
 	deferInventory := c.pendingOnboarding != nil
 	if deferInventory {
 		c.observePendingOnboarding(ctx, now)
+		// Persist known contradictions before snapshot acquisition or an idle
+		// return: either may fail, and a restart must not erase this evidence.
+		if c.onboardingReachability != nil && c.onboardingReachability.invalid {
+			if err := c.rejectPendingOnboarding(ctx, "install boundary contradicted or interrupted"); err != nil {
+				return err
+			}
+			deferInventory = false
+			c.observeSourceInventory(now)
+		}
 	} else {
 		c.observeSourceInventory(now)
 	}
@@ -348,10 +358,16 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if c.pendingOnboarding != nil {
 		onboardingDetectors = c.detectorList()
 	}
+	unreferencedSnapshot := snapshot
 	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, onboardingDetectors)
 	var onboardingCandidate *contracts.NamespaceOnboarding
 	confirmed := detectorsConfirmed(onboardingDetectors, snapshot)
 	confirmationExpired := c.onboardingConfirmationExpired(now, snapshot)
+	if c.pendingOnboarding != nil && (confirmationExpired || c.onboardingReachability != nil && c.onboardingReachability.invalid) {
+		if err := c.rejectPendingOnboarding(ctx, "install window contradicted or expired"); err != nil {
+			return err
+		}
+	}
 	if c.pendingOnboarding != nil {
 		if len(detectors) != len(onboardingDetectors) && detectorsNeedConfirmation(onboardingDetectors) && (confirmed || confirmationExpired) {
 			// This extra install sweep must not postpone ordinary fault checks.
@@ -364,7 +380,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 	if confirmed || confirmationExpired {
-		onboardingCandidate = c.beginOnboarding(ctx, detectors)
+		onboardingCandidate = c.beginOnboarding(ctx, detectors, now)
+	}
+	// An earlier claimed/crashed attempt cannot lend provisional exclusions to
+	// this process. A successfully published record uses its durable reference.
+	if onboardingCandidate == nil && c.pendingOnboarding == nil && c.namespaceOnboarding == nil {
+		snapshot = unreferencedSnapshot
+		if c.onboardingReachability != nil {
+			c.onboardingReachability.candidate = nil
+		}
 	}
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := confirmationExpired
@@ -451,7 +475,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if c.OnEvaluation != nil {
 			c.OnEvaluation(sampleFindings)
 		}
-		healthy := !errored && c.quiet() && c.completeHealthyEvaluation()
+		healthy := !errored && c.pendingOnboarding == nil && (onboardingCandidate == nil || c.namespaceOnboarding != nil) && c.quiet() && c.completeHealthyEvaluation()
 		if c.Baseline != nil {
 			c.Baseline.Observe(now, healthy)
 		}

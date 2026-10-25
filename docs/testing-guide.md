@@ -112,7 +112,7 @@ workload cannot render, with the render gap recorded for retry; application
 source changes must never reuse the old deployment images.
 The gate needs Go and `uv`, but no cluster or container runtime.
 
-`TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, partial event-driven batches through the real scheduler, a confirmed full sweep, six quiet probe cycles, and restart. It asserts the original 21-second simulated install-to-record schedule and uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
+`TestHermeticBringupPersistsPendingAndRestarts` rehearses a cold native bring-up from a lockless P35-shaped seed against one fake Kubernetes API: retained onboarding and worker-result records, the production fresh-control reset, HY clean restore through kubectl, native prepared installation, a scripted startup judge with real broker/builder validation, real rendered-lock publication before inventory loading, confirmed never-served-port observations, real ConfigMap ControllerState validation, the read-only inventory evaluator, partial event-driven batches through the real scheduler, a confirmed full sweep, six quiet probe cycles, and restart. It asserts the original 21-second simulated install-to-record schedule and uses simulated probe time and a two-minute test budget. This is the offline gate before repeating a live bring-up.
 
 ### Rendered deployment lock (LK1)
 
@@ -602,3 +602,5 @@ immediately on mismatch, including binaries without a stamp. This cache has no
 prefix fallback. Go's separate compiler/module caches remain content-addressed
 and can be shared across source revisions. To check an existing binary, run
 `uv run python scripts/operator_test_binary.py --check /absolute/path/to/sdo-operator`.
+
+`TestHermeticBringupMaintenanceGenerationDuringOnboarding` repeats that same native bring-up with a known pause/resume mid-window. It retains the original install identities, starts a new sampling budget, and finalizes at simulated61s (three new probe rounds); wall time remains below two minutes. `TestRunOnboardingMaintenanceGenerationPreservesSamples` exercises the actual runtime loop and real prober HTTP boundary: ACTIVE generation-only updates retain samples, while true pause/resume resets both traffic and reachability. Post-resume authority requires fresh samples and retains prior successful ports/configuration contradictions. Supported reset removes owned maintenance state so the next install starts ACTIVE with no inherited generation.

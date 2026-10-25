@@ -189,7 +189,7 @@ func TestSourceInventoryOnboardingConfirmsReachabilityReference(t *testing.T) {
 // A provisional reference cannot be learned from a window that contained an
 // independently unhealthy goal, changed configuration, or uncertain probes.
 func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testing.T) {
-	for _, mode := range []string{"goal", "configuration", "timeout", "transport", "commit", "served"} {
+	for _, mode := range []string{"goal", "configuration", "timeout", "transport", "commit", "served", "restart-clear", "restart-goal", "incident", "maintenance-served", "maintenance-configuration"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			goal := inventoryHealth().(*sequenceDetector)
@@ -209,8 +209,40 @@ func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testi
 				t.Fatal(err)
 			}
 			w := &servicehealth.ReachabilityWindow{Failures: 3, Interval: 10 * time.Second, Targets: []servicehealth.TargetObservations{{Target: servicehealth.ReachabilityTarget{Service: "geo", Port: 8083, PortName: "grpc"}}}}
-			for round := 0; round < 3; round++ {
+			rounds := 3
+			if strings.HasPrefix(mode, "maintenance-") {
+				rounds = 5
+			}
+			for round := 0; round < rounds; round++ {
 				now := time.Unix(int64(101+10*round), 0)
+				if strings.HasPrefix(mode, "maintenance-") && round == 1 {
+					w.Targets[0].Samples = nil
+					w.Targets[0].LastSuccess = nil
+					if mode == "maintenance-configuration" {
+						snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8888)
+					}
+					w.ObservedAt = now
+					snapshot.Reachability = w
+					provider.set(snapshot)
+					if err := c.ResumeObservation(ctx, now); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if mode == "restart-goal" && round == 0 {
+					goal.errors = map[int]error{goal.calls: fmt.Errorf("goal observation interrupted")}
+				}
+				if (mode == "restart-clear" || mode == "restart-goal") && round == 1 {
+					c, err = NewController(staged.config, []sdk.Detector{goal, reach}, provider, staged.dispatcher, now)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := c.AttachPendingOnboarding(ctx, client, "control"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if mode == "incident" && round == 1 {
+					c.lastAcknowledgedIncidentID = "incident-during-window"
+				}
 				class := servicehealth.DialRefused
 				if mode == "timeout" {
 					class = servicehealth.DialTimeout
@@ -228,7 +260,7 @@ func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testi
 					snapshot.ServiceList[0].Spec.Ports[0].TargetPort = intstr.FromInt32(8888)
 				}
 				w.ObservedAt = now
-				w.Targets[0].Samples = append(w.Targets[0].Samples, servicehealth.DialSample{At: now, Class: class, OK: mode == "served" && round == 0})
+				w.Targets[0].Samples = append(w.Targets[0].Samples, servicehealth.DialSample{At: now, Class: class, OK: (mode == "served" || mode == "maintenance-served") && round == 0})
 				snapshot.Reachability = w
 				provider.set(snapshot)
 				if err := c.EvaluateAll(ctx, now); err != nil {
@@ -237,6 +269,14 @@ func TestSourceInventoryOnboardingRejectsUnhealthyReachabilityReference(t *testi
 			}
 			if record, err := onboarding.Load(ctx, client, "control", "app"); err != nil || record != nil {
 				t.Fatalf("unhealthy window granted authority: %v %v", record, err)
+			}
+			if mode == "restart-clear" || mode == "restart-goal" || mode == "incident" {
+				if marked, err := onboarding.Marked(ctx, client, "control", onboarding.RejectedConfigMapName); err != nil || !marked {
+					t.Fatalf("window rejection not durable: %v %v", marked, err)
+				}
+				if marked, err := onboarding.Marked(ctx, client, "control", onboarding.AttemptConfigMapName); err != nil || marked {
+					t.Fatalf("unready window consumed sole attempt: %v %v", marked, err)
+				}
 			}
 		})
 	}

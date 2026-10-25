@@ -213,6 +213,9 @@ func TestMaintenanceRequiresGenerationAndRecordsState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cm.Labels["app.kubernetes.io/managed-by"] != "sdo" {
+		t.Fatal("maintenance record lacks SDO ownership")
+	}
 	if cm.Data["state"] != "paused" || cm.Data["generation"] != "rollout-1" {
 		t.Fatalf("maintenance ConfigMap=%v", cm.Data)
 	}
