@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"time"
 
@@ -84,33 +85,89 @@ func authorizationDeniedNoProgress(previous string, verification ToolResponse, r
 	return len(verification.Findings) > 0
 }
 
-// One unchanged continuation without a newly successful mutation is terminal,
-// regardless of whether attempts failed by authorization, planning or execution.
-// Observation grace stays in the controller's independent closure checker.
+// Only unchanged, stable source-absent inventory with completed, known failed
+// attempts can stop early. Health and uncertain effects retain the response
+// budget; a finding fingerprint alone says nothing about recovery progress.
 func responderNoProgress(previous string, verification ToolResponse, repairs []continuationRepair) bool {
 	var prior responderFeedback
-	if verification.Healthy || verification.Error != "" || previous == "" || json.Unmarshal([]byte(previous), &prior) != nil || len(prior.StillBroken) == 0 || len(prior.StillBroken) != len(verification.Findings) {
+	if verification.Healthy || verification.Error != "" || previous == "" || json.Unmarshal([]byte(previous), &prior) != nil || prior.Error != "" || len(prior.StillBroken) == 0 || len(prior.StillBroken) != len(verification.Findings) {
 		return false
 	}
-	before := map[string]bool{}
+	before := map[string]sdkFindingFeedback{}
 	for _, finding := range prior.StillBroken {
-		before[finding.Fingerprint] = true
+		before[finding.Fingerprint] = finding
 	}
+	remaining := map[sdk.ObjectRef]bool{}
 	for _, finding := range verification.Findings {
-		if !before[FindingFingerprint(finding)] {
+		stable, _ := finding.Metadata["stable_inventory"].(bool)
+		if !inventoryFinding(finding) || !stable || inventoryEvent(finding).Source != "absent from accepted source" {
 			return false
 		}
-	}
-	successful := map[string]bool{}
-	for _, repair := range prior.AlreadyDone {
-		if repair.Receipt.Success && !repair.RolledBack {
-			successful[repair.ActionID] = true
+		old, found := before[FindingFingerprint(finding)]
+		if !found || old.Resource != finding.PrimaryResource || old.DetectorID != finding.DetectorID || old.RuleID != finding.RuleID || old.Summary != finding.Summary || inventoryProgressEvidence(old.Evidence) != inventoryProgressEvidence(finding.Evidence) {
+			return false
 		}
+		delete(before, FindingFingerprint(finding))
+		remaining[finding.PrimaryResource] = true
 	}
+	if len(before) != 0 {
+		return false
+	}
+	oldAttempts, oldOK := failedInventoryAttempts(prior.AlreadyDone, remaining)
+	attempts, ok := failedInventoryAttempts(repairs, remaining)
+	return oldOK && ok && reflect.DeepEqual(oldAttempts, attempts)
+}
+
+// SourceInventory evidence includes the sample time. Ignore only that clock
+// field, preserving the accepted commit and every substantive evidence field.
+func inventoryProgressEvidence(evidence string) string {
+	prefix, payload, found := strings.Cut(evidence, "; ")
+	var event map[string]json.RawMessage
+	if !found || json.Unmarshal([]byte(payload), &event) != nil || event == nil {
+		return evidence
+	}
+	delete(event, "observed_at")
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return evidence
+	}
+	return prefix + "; " + string(encoded)
+}
+
+func failedInventoryAttempts(repairs []continuationRepair, remaining map[sdk.ObjectRef]bool) (map[string]string, bool) {
+	attempts := map[string]string{}
+	covered := map[sdk.ObjectRef]bool{}
 	for _, repair := range repairs {
-		if repair.Receipt.Success && !repair.RolledBack && !successful[repair.ActionID] {
-			return false
+		receipt := repair.Receipt
+		if len(receipt.Resources) == 0 {
+			return nil, false
+		} // unknown target cannot prove failure coverage
+		relevant := false
+		for _, ref := range receipt.Resources {
+			if remaining[ref] {
+				relevant = true
+				covered[ref] = true
+			}
 		}
+		if !relevant {
+			continue
+		}
+		if repair.ActionID == "" || repair.RolledBack || receipt.Success || receipt.CompletedAt.IsZero() || receipt.CompletedAt.Before(receipt.StartedAt) {
+			return nil, false
+		}
+		switch receipt.FailureReason {
+		case "authorization_denied", "execution_failed":
+		default:
+			return nil, false
+		}
+		encoded, err := json.Marshal(repair)
+		if err != nil {
+			return nil, false
+		}
+		if _, duplicate := attempts[repair.ActionID]; duplicate {
+			return nil, false
+		}
+		attempts[repair.ActionID] = string(encoded)
 	}
-	return true
+	return attempts, len(covered) == len(remaining)
 }

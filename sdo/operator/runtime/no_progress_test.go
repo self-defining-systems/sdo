@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
 	"path/filepath"
 	"sdo.dev/operator/sdk"
@@ -15,10 +16,25 @@ func TestResponderMixedFailuresNoProgress(t *testing.T) {
 	request.ResponseDeadline = time.Now().Add(time.Minute)
 	request.RepositoryWorktree = filepath.Join(t.TempDir(), "proposal")
 	request.MaxResponseLoops = 5
-	findings := []sdk.Finding{
-		{Status: sdk.FindingActive, Severity: sdk.SeverityLatent, Summary: "unexplained object", Evidence: "live inventory", DetectorID: "drift.unexplained", RuleID: "unexplained", Fingerprint: "role", PrimaryResource: sdk.ObjectRef{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRole", Name: "cleanup"}},
-		{Status: sdk.FindingActive, Severity: sdk.SeverityLatent, Summary: "unexplained object", Evidence: "live inventory", DetectorID: "drift.unexplained", RuleID: "unexplained", Fingerprint: "sa", PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}},
+	role := inventoryObject("rbac.authorization.k8s.io/v1", "ClusterRole", "", "cleanup")
+	sa := inventoryObject("v1", "ServiceAccount", "app", "cleanup")
+	binding := inventoryObject("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", "", "cleanup")
+	binding.Object["roleRef"] = map[string]any{"kind": "ClusterRole", "name": "cleanup"}
+	binding.Object["subjects"] = []any{map[string]any{"kind": "ServiceAccount", "namespace": "app", "name": "cleanup"}}
+	findings := []sdk.Finding{}
+	for _, finding := range NewSourceInventory("app", "accepted", nil).Findings([]*unstructured.Unstructured{role, sa, binding}, time.Now()) {
+		if finding.PrimaryResource.Kind != "ClusterRoleBinding" {
+			findings = append(findings, finding)
+		}
 	}
+	if len(findings) != 2 {
+		t.Fatalf("mixed-failure inventory incomplete: %+v", findings)
+	}
+	// Keep resource ordering explicit for the mixed execution/authorization receipts.
+	if findings[0].PrimaryResource.Kind != "ClusterRole" {
+		findings[0], findings[1] = findings[1], findings[0]
+	}
+
 	loop := NewResponderLoop(request, nil, nil, nil, PlanExecutor{}, 5)
 	loop.VerifyResult = func(context.Context, IncidentResult) ToolResponse {
 		return ToolResponse{Summary: "remaining unexplained inventory", Findings: findings}
@@ -56,19 +72,20 @@ func TestResponderMixedFailuresNoProgress(t *testing.T) {
 }
 
 func TestResponderNoProgressRequiresUnchangedFindingsAndSuccesses(t *testing.T) {
-	finding := sdk.Finding{Fingerprint: "unchanged"}
+	finding := noProgressInventory(t)
 	verification := ToolResponse{Findings: []sdk.Finding{finding}}
-	success := continuationRepair{ActionID: "first", Receipt: continuationReceipt{Success: true}}
-	previous, err := continuationFeedback(1, verification, success)
+	failed := noProgressFailure(finding)
+	previous, err := continuationFeedback(1, verification, failed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !responderNoProgress(string(previous), verification, []continuationRepair{success}) {
-		t.Fatal("unchanged successful receipts prevented terminal no progress")
+	if !responderNoProgress(string(previous), verification, []continuationRepair{failed}) {
+		t.Fatal("unchanged known failures prevented terminal no progress")
 	}
-	newSuccess := success
+	newSuccess := failed
+	newSuccess.Receipt.Success = true
 	newSuccess.ActionID = "second"
-	if responderNoProgress(string(previous), verification, []continuationRepair{success, newSuccess}) {
+	if responderNoProgress(string(previous), verification, []continuationRepair{failed, newSuccess}) {
 		t.Fatal("new successful mutation was ignored")
 	}
 	changed := ToolResponse{Findings: []sdk.Finding{{Fingerprint: "changed"}}}

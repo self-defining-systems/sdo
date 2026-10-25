@@ -136,7 +136,7 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 }
 
 func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
-	for _, mode := range []string{"exhausted", "denied", "no-progress", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership"} {
+	for _, mode := range []string{"exhausted", "denied", "no-progress", "changed", "pending-delete", "not-terminal", "ttl-job", "delayed-informer", "unknown-mutation", "shared-ownership", "changed-evidence"} {
 		t.Run(mode, func(t *testing.T) {
 			now := time.Now().UTC()
 			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
@@ -168,7 +168,7 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			result.Status = IncidentFailed
 			result.ResponseLoopExhausted = true
 			result.UnresolvedFindings = findings
-			if mode == "no-progress" {
+			if mode == "no-progress" || mode == "changed-evidence" {
 				result.ResponseLoopExhausted = false
 				result.Error = "no_progress"
 			}
@@ -193,6 +193,11 @@ func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
 			}
 			if mode == "delayed-informer" || mode == "unknown-mutation" {
 				result.RepairActions = []RepairActionReceipt{{Resources: []sdk.ObjectRef{ref}, Success: mode == "delayed-informer", FailureReason: "outcome_unknown", CompletedAt: now}}
+			}
+			if mode == "changed-evidence" {
+				// Keep identity fixed while the independent observation changes.
+				result.UnresolvedFindings = append([]sdk.Finding(nil), result.UnresolvedFindings...)
+				result.UnresolvedFindings[0].Evidence += "; previous different evidence"
 			}
 			controller.currentIncidentResult = &result
 			controller.incidentOpen = true

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/sdk"
 )
 
 // Caller holds c.mu. Stable source-absent objects cannot become accepted merely
@@ -15,9 +16,9 @@ func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) b
 	if result.Error == "shared_ownership" && !sharedOwnershipBlocker(verification, nil) {
 		return false
 	}
-	prior := map[string]bool{}
+	prior := map[string]sdk.Finding{}
 	for _, finding := range result.UnresolvedFindings {
-		prior[FindingFingerprint(finding)] = true
+		prior[FindingFingerprint(finding)] = finding
 	}
 	if c.drift == nil {
 		return false
@@ -30,14 +31,17 @@ func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) b
 	}
 	objects := source.SourceDriftObjects()
 	for _, finding := range verification.Findings {
-		if !prior[FindingFingerprint(finding)] || !inventoryFinding(finding) || inventoryEvent(finding).Source != "absent from accepted source" {
+		previous, found := prior[FindingFingerprint(finding)]
+		if !found || !inventoryFinding(finding) || inventoryEvent(finding).Source != "absent from accepted source" {
+			return false
+		}
+		if result.Error == "no_progress" && (previous.Summary != finding.Summary || inventoryProgressEvidence(previous.Evidence) != inventoryProgressEvidence(finding.Evidence)) {
 			return false
 		}
 		stable := false
 		for _, object := range objects {
 			if object != nil && inventoryRef(object) == finding.PrimaryResource {
-				_, ttl, _ := unstructured.NestedInt64(object.Object, "spec", "ttlSecondsAfterFinished")
-				stable = object.GetDeletionTimestamp() == nil && len(object.GetOwnerReferences()) == 0 && !(object.GetKind() == "Job" && ttl)
+				stable = stableInventoryObject(object)
 				for _, receipt := range result.RepairActions {
 					for _, ref := range receipt.Resources {
 						if ref == finding.PrimaryResource && (receipt.Success || receipt.FailureReason == "outcome_unknown" || receipt.FailureReason == "delete_not_confirmed") {
