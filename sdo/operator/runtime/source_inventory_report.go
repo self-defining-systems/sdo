@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -21,13 +22,22 @@ func WriteSourceInventoryReport(stdout io.Writer, path string, index *SourceInve
 		return fmt.Errorf("source-drift-report requires an absolute output path")
 	}
 	findings := index.Findings(objects, time.Now().UTC())
+	var acknowledgement json.RawMessage
+	if index.NamespaceOnboarding != nil {
+		data, err := protojson.Marshal(index.NamespaceOnboarding)
+		if err != nil {
+			return err
+		}
+		acknowledgement = data
+	}
 	report := struct {
-		Namespace    string                          `json:"namespace"`
-		Revision     string                          `json:"accepted_commit"`
-		Healthy      bool                            `json:"healthy"`
-		Findings     []sdk.Finding                   `json:"findings"`
-		EvidenceGaps []rendered.InventoryEvidenceGap `json:"evidence_gaps"`
-	}{index.Namespace, index.Revision, len(findings) == 0, findings, index.EvidenceGaps}
+		NamespaceOnboarding json.RawMessage                 `json:"namespace_onboarding,omitempty"`
+		Namespace           string                          `json:"namespace"`
+		Revision            string                          `json:"accepted_commit"`
+		Healthy             bool                            `json:"healthy"`
+		Findings            []sdk.Finding                   `json:"findings"`
+		EvidenceGaps        []rendered.InventoryEvidenceGap `json:"evidence_gaps"`
+	}{acknowledgement, index.Namespace, index.Revision, len(findings) == 0, findings, index.EvidenceGaps}
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err

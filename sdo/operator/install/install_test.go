@@ -615,9 +615,22 @@ func TestPreparedInstallUsesAcceptedPVCWithoutBootstrapPrivileges(t *testing.T) 
 	cfg := testConfig()
 	cfg.AcceptedCommit = strings.TrimSpace(string(head))
 	client := fake.NewSimpleClientset()
-	installer := Installer{Client: client}
+	beforeCalled := false
+	installer := Installer{Client: client, BeforeControllerStart: func(ctx context.Context, actual Config) error {
+		beforeCalled = true
+		if actual.AcceptedCommit != cfg.AcceptedCommit {
+			t.Fatal("onboarding lost accepted commit")
+		}
+		if _, err := client.BatchV1().Jobs(cfg.ControlNamespace).Get(ctx, ControllerJobName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("controller started before onboarding: %v", err)
+		}
+		return nil
+	}}
 	if _, err := installer.InstallPrepared(context.Background(), cfg, root); err != nil {
 		t.Fatalf("prepared install failed under namespaced RBAC: %v", err)
+	}
+	if !beforeCalled {
+		t.Fatal("trusted onboarding hook did not run")
 	}
 	if _, err := client.BatchV1().Jobs(cfg.ControlNamespace).Get(context.Background(), ControllerJobName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("controller Job missing: %v", err)

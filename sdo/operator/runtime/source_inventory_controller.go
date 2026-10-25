@@ -42,7 +42,13 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 		return nil
 	}
 	index := NewSourceInventory(c.config.Namespace, revision, inventory.Objects)
-	index.EvidenceGaps = inventory.EvidenceGaps
+	index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
+	c.mu.Lock()
+	acknowledgement := cloneNamespaceOnboarding(c.namespaceOnboarding)
+	c.mu.Unlock()
+	if err := index.SetNamespaceOnboarding(acknowledgement); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	c.sourceInventory = index
 	c.sourceInventoryError = ""
@@ -53,7 +59,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 	}
 	c.mu.Unlock()
 	if c.OnError != nil {
-		for _, gap := range inventory.EvidenceGaps {
+		for _, gap := range index.EvidenceGaps {
 			c.OnError(fmt.Errorf("source inventory remains available with field evidence gap: %w", gap))
 		}
 	}

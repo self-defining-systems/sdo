@@ -26,6 +26,7 @@ import (
 	"sdo.dev/operator/latefindings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/observation"
+	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -631,6 +632,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	stateStore := lifecycleio.NewConfigMapStateStore(bootstrapProvider.Client, *controlNamespace, controllerStateConfigMap, filepath.Join(*repositoryMountPath, ".sdo-runtime", "controller-evidence"))
 	if err := controller.AttachStateStore(ctx, stateStore); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
+	}
+	acknowledgement, err := onboarding.Load(ctx, bootstrapProvider.Client, *controlNamespace, *namespace)
+	if err != nil {
+		return err
+	}
+	if err := controller.SetNamespaceOnboarding(acknowledgement); err != nil {
+		return err
 	}
 	if launchConfig != nil {
 		controller.discardRestoredHealthObservations(start)
@@ -1271,6 +1279,7 @@ func evaluateOnce(
 	flags.Var(&deployedManifestPaths, "deployed-manifest-path", "accepted deployed manifest path; repeat for each selection")
 	appRoot := flags.String("app-root", "", "accepted application repository root")
 	proberURL := flags.String("prober-url", "", "live traffic prober URL for bounded health evaluation")
+	sourceDriftAcknowledgement := flags.String("source-drift-acknowledgement", "", "installer onboarding acknowledgement ProtoJSON file for the read-only source inventory check")
 	sourceDriftReport := flags.String("source-drift-report", "", "read-only accepted-source inventory check; write full JSON to this path and print a summary")
 	acceptSeed := flags.Bool("accept-seed", false, "reject a seed unless the entire detector bundle evaluates without findings")
 	metricsURL := flags.String("metrics-url", "", "Prometheus-compatible API URL for metric and alert health evaluation")
@@ -1341,7 +1350,20 @@ func evaluateOnce(
 			return err
 		}
 		index := NewSourceInventory(*namespace, readCommit, inventory.Objects)
-		index.EvidenceGaps = inventory.EvidenceGaps
+		index.EvidenceGaps = append(index.EvidenceGaps, inventory.EvidenceGaps...)
+		if *sourceDriftAcknowledgement != "" {
+			data, err := os.ReadFile(*sourceDriftAcknowledgement)
+			if err != nil {
+				return err
+			}
+			record, err := onboarding.Decode(data, *namespace)
+			if err != nil {
+				return err
+			}
+			if err := index.SetNamespaceOnboarding(record); err != nil {
+				return err
+			}
+		}
 		return WriteSourceInventoryReport(stdout, *sourceDriftReport, index, cache.SourceDriftObjects())
 	}
 	trafficProvider := TrafficSnapshotProvider{Base: provider}

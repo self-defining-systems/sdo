@@ -214,6 +214,15 @@ message OperationalArtifactProposal {
 }
 
 // IncidentRequest is the snapshot the controller dispatches to the responder.
+// NamespaceOnboarding is controller-owned identity acknowledgement at verified
+// initial installation. It never asserts content correctness or repair credit.
+message NamespaceOnboarding {
+  string namespace = 1;
+  string accepted_commit = 2;
+  google.protobuf.Timestamp established_at = 3;
+  repeated ObjectRef objects = 4;
+}
+
 message IncidentRequest {
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
   string application = 2 [(buf.validate.field).string.min_len = 1];
@@ -243,6 +252,7 @@ message IncidentRequest {
   string prepared_agent_task = 25;
   string observation_generation = 26;
   PlaybookCoverage playbook_coverage = 27;
+  NamespaceOnboarding namespace_onboarding = 28;
 }
 
 message RootCauseEvidence {

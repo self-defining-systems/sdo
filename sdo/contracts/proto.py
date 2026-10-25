@@ -136,6 +136,7 @@ PriorOutcomeEvidence = messages_pb2.PriorOutcomeEvidence
 StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
+NamespaceOnboarding = messages_pb2.NamespaceOnboarding
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
@@ -283,6 +284,7 @@ __all__ = [
     "validate",
     "IncidentClosure",
     "IncidentRequest",
+    "NamespaceOnboarding",
     "IncidentResult",
     "LateFindingsPull",
     "MemoryDetector",

@@ -26,7 +26,10 @@ type HealthProbe interface {
 }
 
 type AcceptedDetectorProbe struct {
-	Limit time.Duration
+	RequireComplete bool
+	Kubeconfig      string
+	MetricsURL      string
+	Limit           time.Duration
 }
 
 func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, operatorRoot, namespace string) (string, error) {
@@ -50,6 +53,16 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 		return "", fmt.Errorf("compile accepted health detectors: %w", err)
 	}
 	args := []string{"--evaluate-once", "--namespace", namespace, "--app-root", acceptedRoot}
+	if probe.RequireComplete {
+		args = append(args, "--accept-seed")
+	}
+	if probe.MetricsURL != "" {
+		args = append(args, "--metrics-url", probe.MetricsURL)
+	}
+	environment := os.Environ()
+	if probe.Kubeconfig != "" {
+		environment = append(environment, "KUBECONFIG="+probe.Kubeconfig)
+	}
 	if workspace.HasProber {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -59,6 +72,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 		_ = listener.Close()
 		prober := exec.CommandContext(bounded, filepath.Join(workspace.Directory, "sdo-prober"), "--namespace", namespace, "--listen", address)
 		prober.Dir = workspace.Directory
+		prober.Env = environment
 		if err := prober.Start(); err != nil {
 			return "", fmt.Errorf("start bounded health prober: %w", err)
 		}
@@ -67,6 +81,7 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	}
 	command := exec.CommandContext(bounded, binary, args...)
 	command.Dir = workspace.Directory
+	command.Env = environment
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err = command.Run()

@@ -197,6 +197,15 @@ def _findings_section(closure: IncidentClosure) -> str:
         ),
         render_prompt("responder", "brief_heading_01", part="reflection_brief.instructions"),
     ]
+    if request.HasField("namespace_onboarding"):
+        lines.append(
+            render_prompt(
+                "responder",
+                "namespace_onboarding",
+                part="reflection_brief.findings",
+                onboarding_json=to_canonical_json(request.namespace_onboarding),
+            )
+        )
     if request.HasField("state_changes"):
         lines.append(render_prompt("responder", "findings_section_04", part="reflection_brief.instructions"))
         lines.append(_fenced(_clip(to_canonical_json(request.state_changes), 2_000)))
