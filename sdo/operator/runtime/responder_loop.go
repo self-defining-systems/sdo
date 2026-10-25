@@ -256,8 +256,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	if l.Request.MaxResponseLoops > 0 {
 		response.ResponseLoopsAllowed = min(response.ResponseLoopsAllowed, l.Request.MaxResponseLoops)
 	}
-	defer func() { response.MitigationRoundsUsed = l.batches; response.MitigationRoundsAllowed = l.batchLimit() }()
 	defer func() {
+		response.MitigationRoundsUsed = l.batches
+		response.MitigationRoundsAllowed = l.batchLimit()
 		if response.Error != "" {
 			response.Summary = response.Error
 		}

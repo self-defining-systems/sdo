@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -13,6 +14,9 @@ import (
 	"net/url"
 	"sdo.dev/operator/sdk/program"
 )
+
+// ErrKubernetesAPITransportUnavailable means no request crossed the API boundary.
+var ErrKubernetesAPITransportUnavailable = errors.New("Kubernetes API transport unavailable")
 
 func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.KubernetesRequest) (json.RawMessage, error) {
 	if err := r.Validate(); err != nil {
@@ -25,22 +29,22 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 		config := rest.CopyConfig(c.ExecConfig)
 		client, err = rest.HTTPClientFor(config)
 		if err != nil {
-			return nil, fmt.Errorf("Kubernetes API transport unavailable")
+			return nil, ErrKubernetesAPITransportUnavailable
 		}
 		base, err = url.Parse(config.Host)
 		if err != nil {
-			return nil, fmt.Errorf("invalid API host")
+			return nil, fmt.Errorf("%w: invalid API host", ErrKubernetesAPITransportUnavailable)
 		}
 		base.Path += r.Path
 	} else if c.Client != nil {
 		transport, ok := c.Client.Discovery().RESTClient().(*rest.RESTClient)
 		if !ok || transport == nil || transport.Client == nil {
-			return nil, fmt.Errorf("Kubernetes API transport unavailable")
+			return nil, ErrKubernetesAPITransportUnavailable
 		}
 		client = transport.Client
 		base = transport.Verb(r.Method).AbsPath(r.Path).URL()
 	} else {
-		return nil, fmt.Errorf("Kubernetes API transport unavailable")
+		return nil, ErrKubernetesAPITransportUnavailable
 	}
 	// Reuse the supplied client's authenticated transport, with bounded bodies
 	// and redirects disabled just as for an explicitly supplied rest.Config.
@@ -53,7 +57,7 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	base.RawQuery = values.Encode()
 	request, err := http.NewRequestWithContext(ctx, r.Method, base.String(), bytes.NewReader(r.Body))
 	if err != nil {
-		return nil, fmt.Errorf("invalid API request")
+		return nil, fmt.Errorf("%w: invalid API request", ErrKubernetesAPITransportUnavailable)
 	}
 	if r.ContentType != "" {
 		request.Header.Set("Content-Type", r.ContentType)

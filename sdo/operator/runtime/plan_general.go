@@ -157,9 +157,6 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 		if !ok {
 			return r, fmt.Errorf("Kubernetes API transport unavailable")
 		}
-		if capabilities, ok := e.Client.(interface{ hasAPITransport() bool }); ok && !capabilities.hasAPITransport() {
-			return r, fmt.Errorf("Kubernetes API transport unavailable")
-		}
 		if dry {
 			return r, nil
 		}
@@ -189,7 +186,7 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 			effect.Before, effect.BeforeKnown = readImage()
 		}
 		effect.Response, err = client.KubernetesRequest(ctx, a)
-		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+		if errors.Is(err, ErrKubernetesAPITransportUnavailable) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
 			r.Applied = false
 			r.ActionsApplied = nil
 			r.Patches = nil

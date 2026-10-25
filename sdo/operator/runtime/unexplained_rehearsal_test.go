@@ -195,6 +195,7 @@ func TestHermeticUnexplainedCleanupRemediation(t *testing.T) {
 						feedback = env.Value
 					}
 				}
+				checkURContinuationRenderer(t, feedback)
 				var parsed responderFeedback
 				if err := json.Unmarshal([]byte(feedback), &parsed); err != nil || len(parsed.StillBroken) != 3 {
 					t.Fatalf("continuation lost blocker set: %s", feedback)
@@ -323,4 +324,28 @@ func cleanupTool(t *testing.T, directory string, args ...string) ToolResponse {
 		}
 	}
 	return response
+}
+
+// Exercise CC's merged renderer on UR's actual persisted transport payload.
+func checkURContinuationRenderer(t *testing.T, payload string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	script := `import sys
+from sdo.agents.responder.continuation import continuation_prompt
+prompt = continuation_prompt(sys.stdin.read())
+broken = prompt.split("still_broken:", 1)[1].split("already_done:", 1)[0]
+assert broken.count("authorization_denied") == 3, prompt
+assert broken.count("failed") == 3, prompt
+assert len(prompt) <= 1500, len(prompt)
+print("UR+CC actual Go payload: three typed denials under still_broken, <=1500 chars")
+`
+	command := exec.CommandContext(ctx, "uv", "run", "python", "-c", script)
+	command.Dir = filepath.Join("..", "..", "..")
+	command.Stdin = strings.NewReader(payload)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("CC renderer rejected UR payload: %v %s", err, output)
+	}
+	t.Log(strings.TrimSpace(string(output)))
 }
