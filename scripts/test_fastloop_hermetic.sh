@@ -7,7 +7,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 (
     cd "$root/sdo/operator"
-    go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption' -count=1 ./operatorcli
+    go test -run '^TestInstallExisting.*Onboarding|^TestInstallExistingClearAdoption|^TestInstallExistingAdoptedVerifiedSeedOnboarding$' -count=1 ./operatorcli
 )
 
 (
