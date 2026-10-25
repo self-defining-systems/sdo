@@ -6,6 +6,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 	"path/filepath"
 	"sdo.dev/operator/sdk"
 	"testing"
@@ -123,5 +124,21 @@ func TestSharedOwnershipEndsResponseWithoutContinuation(t *testing.T) {
 	resumed, err := d.ContinueAfterVerification(ctx, request, ToolResponse{Findings: []sdk.Finding{blocked}}, time.Now())
 	if err != nil || resumed {
 		t.Fatalf("terminal shared ownership resumed: %v %v", resumed, err)
+	}
+}
+
+func TestRemovalForeignBindingDeletionOnlyWakesOwnership(t *testing.T) {
+	c, err := NewKubernetesCache(KubernetesCacheConfig{Namespace: "app", Client: fake.NewSimpleClientset(), TrackDrift: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "other"}}
+	handler := c.eventHandler(sdk.WatchKind{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "RoleBinding", Namespace: "app"})
+	handler.OnDelete(cache.DeletedFinalStateUnknown{Key: "other/unrelated", Obj: binding})
+	if changes := c.TakeObjectChanges(); len(changes) != 0 {
+		t.Fatalf("foreign tombstone admitted as application drift: %+v", changes)
+	}
+	if len(c.TakeEvents()) != 1 {
+		t.Fatal("ownership graph was not woken")
 	}
 }

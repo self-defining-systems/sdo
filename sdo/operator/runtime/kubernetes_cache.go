@@ -369,8 +369,8 @@ func (c *KubernetesCache) eventHandler(watch sdk.WatchKind) cache.ResourceEventH
 			identity = previous
 		}
 		if watch.Kind == "RoleBinding" {
-			accessor, err := meta.Accessor(identity)
-			if err == nil && accessor.GetNamespace() != c.config.Namespace {
+			binding := driftObject(identity, watch)
+			if binding != nil && binding.GetNamespace() != c.config.Namespace {
 				c.enqueue(watch)
 				return
 			}
