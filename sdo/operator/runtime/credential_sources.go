@@ -54,8 +54,9 @@ func assignmentCredential(content, name string) (string, bool) {
 				continue
 			}
 			end++
-			tail := strings.TrimSpace(raw[end+1:])
-			if tail != "" && !strings.HasPrefix(tail, "#") {
+			remainder := raw[end+1:]
+			tail := strings.TrimSpace(remainder)
+			if tail != "" && (!strings.HasPrefix(tail, "#") || (remainder[0] != ' ' && remainder[0] != '\t')) {
 				valid = false
 				continue
 			}

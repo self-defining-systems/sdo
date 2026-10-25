@@ -36,6 +36,7 @@ func TestConfigMapCredentialAssignment(t *testing.T) {
 		{"ROOT_PASSWORD=$(echo sentinel)", ""},
 		{"ROOT_PASSWORD=\"${OTHER}\"", ""},
 		{"ROOT_PASSWORD=sentinel; echo dangerous", ""},
+		{"ROOT_PASSWORD='sentinel'#suffix", ""},
 	} {
 		t.Run(tc.content, func(t *testing.T) {
 			client := TypedPlanClient{Client: kubefake.NewSimpleClientset(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "mongo-geo-script", Namespace: "app"}, Data: map[string]string{"k8s-geo-mongo.sh": tc.content}})}
