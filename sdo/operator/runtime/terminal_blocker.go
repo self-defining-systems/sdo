@@ -33,7 +33,25 @@ func (c *Controller) terminalInventoryBlockerLocked(verification ToolResponse) b
 		stable := false
 		for _, object := range objects {
 			if object != nil && inventoryRef(object) == finding.PrimaryResource {
-				stable = object.GetDeletionTimestamp() == nil && len(object.GetOwnerReferences()) == 0
+				_, ttl, _ := unstructured.NestedInt64(object.Object, "spec", "ttlSecondsAfterFinished")
+				stable = object.GetDeletionTimestamp() == nil && len(object.GetOwnerReferences()) == 0 && !(object.GetKind() == "Job" && ttl)
+				for _, receipt := range result.RepairActions {
+					for _, ref := range receipt.Resources {
+						if ref == finding.PrimaryResource && (receipt.Success || receipt.FailureReason == "outcome_unknown" || receipt.FailureReason == "delete_not_confirmed") {
+							stable = false
+						}
+					}
+				}
+				for _, application := range result.PlanApplications {
+					if !application.Result.Applied {
+						continue
+					}
+					for _, patch := range application.Result.Patches {
+						if patch.Ref == finding.PrimaryResource {
+							stable = false
+						}
+					}
+				}
 				break
 			}
 		}

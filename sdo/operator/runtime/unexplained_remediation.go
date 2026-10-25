@@ -40,6 +40,12 @@ func (c *Controller) unexplainedRemovalsLocked(incidentID, controlNamespace stri
 		return nil, fmt.Errorf("accepted source inventory is unavailable")
 	}
 	objects := source.SourceDriftObjects()
+	eligible := map[sdk.ObjectRef]bool{}
+	for _, finding := range findings {
+		if inventoryEvent(finding).Source == "absent from accepted source" {
+			eligible[finding.PrimaryResource] = true
+		}
+	}
 	var removals []UnexplainedRemoval
 	for _, finding := range findings {
 		if finding.DetectorID != "drift.unexplained" || inventoryEvent(finding).Source != "absent from accepted source" {
@@ -47,6 +53,9 @@ func (c *Controller) unexplainedRemovalsLocked(incidentID, controlNamespace stri
 		}
 		for _, object := range objects {
 			if object == nil || inventoryRef(object) != finding.PrimaryResource || inventoryOwned(object) || object.GetNamespace() == controlNamespace || object.GetKind() == "Secret" {
+				continue
+			}
+			if !exclusiveRemovalOwnership(object, c.sourceInventory.Namespace, objects, eligible) {
 				continue
 			}
 			if object.GetUID() == "" || object.GetResourceVersion() == "" {

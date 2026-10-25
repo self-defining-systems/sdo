@@ -508,6 +508,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if proberAddress != nil {
 		primitiveProber = HTTPProberClient{BaseURL: proberAddress}
 	}
+	removalClient, err := newUnexplainedRemovalClient(planExecConfig, genericCapture, *controlNamespace)
+	if err != nil {
+		return err
+	}
 	var controller *Controller
 	dispatcher := options.Dispatcher
 	if dispatcher == nil {
@@ -544,7 +548,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 						return controller.unexplainedRemovals(request.IncidentID, *controlNamespace)
 					}
 					loop.MenuConfig.RemoveUnexplained = func(ctx context.Context, selected UnexplainedRemoval, client PlanLifecycleClient, ref sdk.ObjectRef, uid types.UID, rv string) error {
-						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, client, ref, uid, rv)
+						if removalClient == nil {
+							return fmt.Errorf("removal-only client is unavailable")
+						}
+						return controller.removeUnexplained(ctx, request.IncidentID, *controlNamespace, selected, removalClient, ref, uid, rv)
 					}
 				}
 				loop.VerifyClosure = func(ctx context.Context) ToolResponse {

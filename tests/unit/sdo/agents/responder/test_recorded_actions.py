@@ -779,3 +779,7 @@ def test_patch_receipt_attributes_only_the_executed_target(scratch: Path, tmp_pa
     assert receipt["success"] is True
     assert receipt["resources"] == [recorded_actions.resource_ref("ConfigMap/app/token")]
     assert receipt["target"] == "ConfigMap/app/token"
+
+
+def test_zero_executed_delete_targets_are_not_confirmed() -> None:
+    assert recorded_actions._confirm_deleted(["kubectl", "delete", "service/other"], []) == "delete_not_confirmed"

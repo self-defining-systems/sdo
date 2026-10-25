@@ -151,8 +151,22 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 			Evidence: fmt.Sprintf("Accepted commit %s; %s", s.Revision, encoded), PrimaryResource: ref,
 			ParameterBindings: map[string]sdk.ObjectRef{"resource": ref}, Metadata: map[string]any{"drift_event": event, "source_inventory": true},
 		}
+
 		finding.Fingerprint = fmt.Sprintf("%s/%x", FindingFingerprint(finding), sum)
 		findings = append(findings, finding)
+	}
+	eligible := map[sdk.ObjectRef]bool{}
+	for _, finding := range findings {
+		if inventoryEvent(finding).Source == "absent from accepted source" {
+			eligible[finding.PrimaryResource] = true
+		}
+	}
+	for i := range findings {
+		finding := &findings[i]
+		if eligible[finding.PrimaryResource] && !exclusiveRemovalOwnership(observed[finding.PrimaryResource], s.Namespace, objects, eligible) {
+			finding.Metadata["removal_blocker"] = "shared_ownership"
+			finding.Summary += "; removal blocked: shared_ownership"
+		}
 	}
 	sortFindings(findings)
 	return findings
