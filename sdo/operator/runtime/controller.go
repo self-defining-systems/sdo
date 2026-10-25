@@ -291,7 +291,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.mu.Lock()
 	reconcileReady := !c.incidentOpen && (c.broker == nil || !c.closureBlocksNextLocked())
 	c.mu.Unlock()
-	if c.ReconcileRendered != nil && reconcileReady {
+	// Preserve the install commit until its first complete observation. A
+	// bookkeeping publication must not invalidate pending onboarding itself.
+	if c.ReconcileRendered != nil && reconcileReady && c.pendingOnboarding == nil {
 		actionCtx, cancel, err := c.actionContext(ctx)
 		revision := c.CurrentAcceptedCommit()
 		if err == nil {

@@ -166,3 +166,22 @@ func TestSourceInventoryPendingOnboardingWaitsForCompleteEvaluation(t *testing.T
 		t.Fatalf("complete clear sample did not establish record: %v %v", record, err)
 	}
 }
+
+func TestSourceInventoryPendingOnboardingPrecedesStartupReconciliation(t *testing.T) {
+	c, client := stagedInstallerController(t, inventoryHealth())
+	calls := 0
+	c.ReconcileRendered = func(context.Context, string) (string, error) { calls++; return strings.Repeat("b", 40), nil }
+	if err := c.EvaluateAll(context.Background(), time.Unix(101, 0)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := onboarding.Load(context.Background(), client, "control", "app")
+	if err != nil || record == nil || record.AcceptedCommit != strings.Repeat("a", 40) || calls != 0 {
+		t.Fatalf("startup publication invalidated install verification: record=%v err=%v reconciliations=%d", record, err, calls)
+	}
+	if err := c.EvaluateAll(context.Background(), time.Unix(102, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("normal reconciliation did not resume after onboarding: %d", calls)
+	}
+}
