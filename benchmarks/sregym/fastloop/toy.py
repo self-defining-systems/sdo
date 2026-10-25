@@ -38,6 +38,11 @@ class ToyWorker:
     def request(self, op: str, *, timeout: float = 120, **args: Any) -> dict[str, Any]:
         env = self.environment
         config = str(env.kubeconfig)
+        if op == "clean_start":
+            from benchmarks.sregym.fastloop.clean_start import remove_injected_objects
+
+            remove_injected_objects(env.kubeconfig)
+            return {"success": True}
         if op == "deploy":
             return {"deployed": False, "seconds": 0}
         if op == "health":

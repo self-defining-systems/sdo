@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -15,8 +16,6 @@ def main() -> int:
     handle = worker.FastloopWorker.handle
 
     def prepare_astronomy() -> None:
-        from pathlib import Path
-
         from benchmarks.sregym.adapter import prepare_oracle_observability
 
         assert worker.__file__ is not None
@@ -27,6 +26,35 @@ def main() -> int:
         )
 
     def extended_handle(self: Any, request: dict[str, Any]) -> dict[str, Any]:
+        from benchmarks.sregym.fastloop.clean_start import (
+            assert_clean_baseline,
+            prepare_harness_traffic,
+            remove_injected_objects,
+        )
+
+        # All problem instances, including those made only for grading, must read
+        # the same harness traffic namespace. Existing oracle manager references
+        # are preserved by changing the manager in place.
+        if hasattr(self, "_problem_factory") and not getattr(self, "_harness_factory_ready", False):
+            factory = self._problem_factory
+
+            def isolated_factory(problem_id: str) -> Any:
+                problem = factory(problem_id)
+                if hasattr(problem, "app"):
+                    prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"]))
+                return problem
+
+            self._problem_factory = isolated_factory
+            self._harness_factory_ready = True
+        op = request.get("op")
+        if op in {"deploy", "clean_start"}:
+            remove_injected_objects(Path(os.environ["KUBECONFIG"]))
+        if op == "clean_start":
+            problem = self._problem_factory(str(request["problem_id"]))
+            if prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"])):
+                problem.app.start_workload()
+            assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
+            return {"success": True}
         astronomy = (
             request.get("op") == "deploy"
             and self._problem_factory(str(request["problem_id"])).namespace == "astronomy-shop"
@@ -40,6 +68,7 @@ def main() -> int:
             return refresh_baseline_clients(problem)
         if request.get("op") == "baseline_oracle":
             problem = self._problem_factory(str(request["problem_id"]))
+            assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
             verdict = self._grade(problem)
             if request.get("verify_traffic"):
                 from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
@@ -47,9 +76,16 @@ def main() -> int:
                 return verify_baseline_traffic(problem, verdict)
             return verdict
         reply = handle(self, request)
+        if op == "recover" and request.get("fault") is None and reply.get("success") is True:
+            remove_injected_objects(Path(os.environ["KUBECONFIG"]))
+        if op == "deploy" and reply.get("deployed") is False:
+            problem = self._problem_factory(str(request["problem_id"]))
+            if prepare_harness_traffic(problem.app, Path(os.environ["KUBECONFIG"])):
+                problem.app.start_workload()
+        if op == "deploy":
+            problem = self._problem_factory(str(request["problem_id"]))
+            assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
         if astronomy:
-            from pathlib import Path
-
             from benchmarks.sregym.adapter import route_astronomy_traces
 
             route_astronomy_traces(Path(os.environ["KUBECONFIG"]))
@@ -57,8 +93,6 @@ def main() -> int:
 
     if "FASTLOOP_KIND_CONFIG" in os.environ:
         worker_infra.worker_kind_config_path = lambda: os.environ["FASTLOOP_KIND_CONFIG"]
-    from pathlib import Path
-
     from benchmarks.sregym.fastloop.toy_images import load_images
 
     def deliver(cluster: str, images: list[str]) -> dict[str, dict[str, str]]:

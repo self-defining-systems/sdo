@@ -39,6 +39,8 @@ class Lane:
         assert preserve_repository
 
     def request(self, op: str, **kwargs: Any) -> dict[str, Any]:
+        if op == "clean_start":
+            return {"success": True}
         if op == "health":
             return {"healthy": True}
         if op == "baseline_oracle":

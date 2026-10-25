@@ -5,11 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.sregym import adapter
-from benchmarks.sregym.fastloop import worker_bridge
+from benchmarks.sregym.fastloop import clean_start, worker_bridge
 
 
 def test_legacy_astronomy_problem_gets_telemetry_before_deployment(monkeypatch: pytest.MonkeyPatch):
     calls = []
+    monkeypatch.setattr(clean_start, "remove_injected_objects", lambda *_: calls.append("cleanup"))
+    monkeypatch.setattr(clean_start, "assert_clean_baseline", lambda *_, **__: calls.append("admission"))
 
     class Worker:
         def _problem_factory(self, _problem_id):
@@ -32,4 +34,4 @@ def test_legacy_astronomy_problem_gets_telemetry_before_deployment(monkeypatch: 
         worker_bridge.importlib, "import_module", lambda name: module if name.endswith(".worker") else SimpleNamespace()
     )
     assert worker_bridge.main() == {"deployed": True}
-    assert calls == ["telemetry", "deploy", "traces"]
+    assert calls == ["cleanup", "telemetry", "deploy", "admission", "traces"]
