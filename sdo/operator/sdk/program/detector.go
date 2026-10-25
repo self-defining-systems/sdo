@@ -2,6 +2,7 @@ package program
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -32,8 +33,9 @@ func (d programDetector) Detect(ctx context.Context, snapshot sdk.DetectionConte
 	for _, bindings := range d.locate(snapshot) {
 		view := ReadFrom(snapshot)
 		verdict := RunDiagnose(ctx, d.program, view, bindings, 10*time.Second)
-		if verdict.Result == Unknown {
-			return nil, fmt.Errorf("detector diagnosis unavailable: %v", verdict.Evidence)
+		if verdict.Result != Match && verdict.Result != NoMatch {
+			bound, _ := json.Marshal(bindings)
+			return nil, fmt.Errorf("detector diagnosis unavailable: program %q, bindings %s, result %s, question %q, evidence %v", d.program.Spec().ID, bound, verdict.Result, verdict.Question, verdict.Evidence)
 		}
 		if verdict.Result != Match {
 			continue

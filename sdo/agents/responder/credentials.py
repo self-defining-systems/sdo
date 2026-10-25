@@ -15,7 +15,7 @@ SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills"
 #: messages with no skills field, so the list is a per-worker constant here.
 AGENT_SKILLS = MappingProxyType(
     {
-        "responder": ("sdo-memory",),
+        "responder": ("sdo-memory", "sdo-incident-response"),
         "reflector": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"),
         "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring"),
         "deployer": ("sdo-memory",),

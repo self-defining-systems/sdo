@@ -1,1 +1,0 @@
-Operational memory is read-only. The controller verifies recovery and records the authoritative outcome; a separate reflection task may later edit operational memory in its own checkout. Report applied playbooks by logical playbook_id, with no repository memory paths. 

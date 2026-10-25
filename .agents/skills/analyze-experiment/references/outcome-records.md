@@ -94,3 +94,16 @@ RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; 
 `plan_applications[].rollout_pending` is controller-owned evidence that writes landed but a rollout did not complete within its per-mitigation budget (90 seconds, capped by the original response deadline). Its blockers contain resource identities, observed conditions and owned warning events, including Pod creation/admission errors. It is not a verified repair: `verification_completed` and `verification_passed` remain false and the verdict is Unknown. Pending writes stay applied; rollback remains an explicit responder decision. A pending rollout supplies no success/failure credit by itself. Later independent verification remains authoritative. A truncated tool record may retain only a bounded blocker excerpt; the typed native application keeps full evidence.
 
 Incident-open `playbook_coverage` is copied from the controller request into outcome field 35. The match and unexplained-finding lists retain their initial deterministic ordering. Match IDs and bindings link to application/action receipts; coverage alone is not repair attribution. See [agent-selected repair evidence](automatic-repair.md).
+
+Responder prompt accounting now groups the short workflow routing under
+`responder.instructions` and the compact request, accepted intent and latest
+detector evaluations under `responder.incident_data`. Warm/cold strategy,
+inlined playbook bodies, separate verification/no-action paragraphs and their
+former part names were removed; the responder loads `sdo-incident-response`
+instead. Optional transport instructions remain `responder.additional_context`.
+The request still carries controller-built playbook coverage and actionable
+initial program evidence, with NoMatch sweeps counted as omitted. Large facts
+use a private temporary JSON file for the response turn; the bounded inline
+pointer is not evidence that findings or intent were discarded. Full worker
+requests and durable outcomes remain authoritative. Reflection prompt context
+and responder-session resume behavior are unchanged by this responder rewrite.

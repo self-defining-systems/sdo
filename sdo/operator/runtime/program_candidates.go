@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sdo.dev/operator/memory/layout"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -161,6 +162,21 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 		if !valid {
 			continue
 		}
+		// Prune unrelated watch events before enumerating assignments. Learned
+		// programs may have many roles of the same kind; their Cartesian
+		// product must not consume the deadline for an unbindable event.
+		affectedSuffix := make([]bool, len(refs)+1)
+		for i := len(refs) - 1; i >= 0; i-- {
+			affectedSuffix[i] = affectedSuffix[i+1]
+			for _, ref := range refs[i] {
+				if candidateAffected(ref, options.Affected) {
+					affectedSuffix[i] = true
+				}
+			}
+		}
+		if len(options.Affected) > 0 && !affectedSuffix[0] {
+			continue
+		}
 		indices := make([]int, len(refs))
 		if cursor := options.SweepCursors[spec.ID]; cursor != "" {
 			parts := strings.Split(cursor, ",")
@@ -180,21 +196,28 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 			}
 			return strings.Join(parts, ",")
 		}
-		start := encode()
+		start := slices.Clone(indices)
+		wraps := 0
 		count := 0
 		for ctx.Err() == nil {
 			bindings := program.Bindings{Objects: program.ObjectBindings{}}
 			valid := true
+			matched := len(options.Affected) == 0
+			advanceAt := len(indices) - 1
 			for i, param := range spec.Params {
-				if param.ValueKind != "" || !param.Required && indices[i] == 0 {
-					continue
+				if param.ValueKind == "" && (param.Required || indices[i] != 0) {
+					ref := refs[i][indices[i]]
+					if bindingUses(bindings, ref) {
+						valid, advanceAt = false, i
+						break
+					}
+					bindings.Objects[param.Name] = ref
+					matched = matched || candidateAffected(ref, options.Affected)
 				}
-				ref := refs[i][indices[i]]
-				if bindingUses(bindings, ref) {
-					valid = false
+				if !matched && !affectedSuffix[i+1] {
+					valid, advanceAt = false, i
 					break
 				}
-				bindings.Objects[param.Name] = ref
 			}
 			if valid {
 				before := len(candidates)
@@ -203,18 +226,26 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 					count++
 				}
 			}
-			for i := len(indices) - 1; i >= 0; i-- {
+			// An invalid prefix rules out every suffix, not just this leaf.
+			// Advance that prefix directly, preserving mixed-radix cursors.
+			for i := advanceAt + 1; i < len(indices); i++ {
+				indices[i] = 0
+			}
+			for i := advanceAt; i >= 0; i-- {
 				indices[i]++
 				if indices[i] < len(refs[i]) {
 					break
 				}
 				indices[i] = 0
+				if i == 0 {
+					wraps++
+				}
 			}
 			next := encode()
 			if options.SweepCursors != nil {
 				options.SweepCursors[spec.ID] = next
 			}
-			if count >= limit || next == start {
+			if count >= limit || wraps > 1 || wraps == 1 && slices.Compare(indices, start) >= 0 {
 				break
 			}
 		}
@@ -267,6 +298,15 @@ func SelectProgramCandidatesWithOptions(ctx context.Context, registry program.Pr
 	}
 	sortProgramRuns(runs)
 	return runs
+}
+
+func candidateAffected(ref sdk.ObjectRef, affected []sdk.ObjectRef) bool {
+	for _, item := range affected {
+		if ref.Kind == item.Kind && ref.Namespace == item.Namespace && ref.Name == item.Name {
+			return true
+		}
+	}
+	return false
 }
 
 func sweepRefs(view program.ReadView, kind program.Kind) []sdk.ObjectRef {
