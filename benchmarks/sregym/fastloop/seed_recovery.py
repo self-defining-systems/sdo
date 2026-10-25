@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import secrets
+import shlex
 from typing import Any
 
 
@@ -35,4 +36,26 @@ def verify_baseline_traffic(problem: Any, baseline: dict[str, Any]) -> dict[str,
         "kind": "health-check",
         "success": phase == "Succeeded" and result.ok and result.complete,
         "details": details,
+    }
+
+
+def refresh_baseline_clients(problem: Any) -> dict[str, Any]:
+    """Re-register hotel clients after a restored Consul loses its in-memory catalog.
+
+    This is a benchmark restoration action, never an agent repair or health verdict.
+    The caller must independently re-check HTTP after the bounded rollout.
+    """
+    if problem.app.name != "Hotel Reservation":
+        return {"success": False, "reason": "application has no baseline client refresh contract"}
+    clients = ("frontend", "geo", "profile", "rate", "recommendation", "reservation", "search", "user")
+    resources = " ".join(f"deployment/{name}" for name in clients)
+    problem.kubectl.exec_command(f"kubectl rollout restart {resources} -n {shlex.quote(problem.namespace)}")
+    clusters = importlib.import_module("sregym.conductor.problems.colocated_composite")
+    settled = clusters.KubeClusterIO().wait_for_rollouts(problem.namespace, timeout_s=90)
+    return {
+        "success": settled.settled,
+        "scope": "application-clients",
+        "deployments": list(clients),
+        "waited_s": settled.waited_s,
+        "reason": settled.reason,
     }
