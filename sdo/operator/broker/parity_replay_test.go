@@ -68,8 +68,11 @@ func TestCLIAndBrokerAgreeOnVerifiedCauseReplayCoverage(t *testing.T) {
 				t.Fatal(err)
 			}
 			parityProgram(t, proposal.Path)
-			// The existing detector now references the authored replay-backed program.
-			replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - base\n  - service-targetport-mismatch\n")
+			// The learned detector is bound to the verified port repair; the
+			// unrelated accepted cache detector retains its original playbook.
+			if err := os.CopyFS(filepath.Join(proposal.Path, ".sdo/diagnostics/detectors/incidents/service-targetport-mismatch"), os.DirFS("../../../tests/fixtures/sdo/service_port_detector")); err != nil {
+				t.Fatal(err)
+			}
 			decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 			result := &contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds}
 			check := func() *contracts.MemoryCheckReport {
@@ -181,7 +184,7 @@ func checkUnobservableDetectorLocator(t *testing.T, mode string) {
   return result
  }, Detector{}.Spec())
 }`, 1)
-	detector = strings.Replace(detector, `[]string{"base"}`, `[]string{"base", "service-targetport-mismatch"}`, 1)
+	detector = strings.Replace(detector, `[]string{"base"}`, `[]string{"service-targetport-mismatch"}`, 1)
 	if mode != "unknown" {
 		detector = strings.Replace(detector, "targetport.Program{}, func", "locatedProgram{}, func", 1)
 		behavior := `return program.Verdict{Result:program.NeedsJudgement, Question:"Which listener is intended?"}, nil`
@@ -205,7 +208,7 @@ func (p locatedProgram) Diagnose(ctx context.Context, view program.ReadView, bin
 `
 	}
 	put(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/detector.go", detector, 0644)
-	replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - base\n  - service-targetport-mismatch\n")
+	replaceParityText(t, proposal.Path, ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml", "  - base\n", "  - service-targetport-mismatch\n")
 	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
 	data, err := protojson.Marshal(&contracts.ReflectionResult{LearningDecision: decision.LearningDecision, ProposedArtifactIds: decision.PlaybookIds})
 	if err != nil {

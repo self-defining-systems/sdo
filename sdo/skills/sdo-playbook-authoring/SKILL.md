@@ -30,6 +30,7 @@ Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evide
 Mitigation returns to accepted or observed state;
 intended-state changes are source repairs. An emergency literal is a declared parameter the responder fills
 and justifies.
+
 Before returning memory edits, run the complete memory check and resolve every diagnostic until it passes.
 
 Read [validator rules](references/rules.md) when a diagnostic names a playbook, script or corpus rule.
