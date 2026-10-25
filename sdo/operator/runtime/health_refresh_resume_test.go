@@ -4,10 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"testing"
+
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
-	"testing"
 )
 
 func TestRV6InterruptedProposalWithMemoryAdvance(t *testing.T) {

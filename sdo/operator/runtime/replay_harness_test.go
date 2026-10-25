@@ -33,11 +33,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"

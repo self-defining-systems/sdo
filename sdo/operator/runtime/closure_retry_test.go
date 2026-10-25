@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"

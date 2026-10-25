@@ -3,13 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"reflect"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
 	"sort"
 	"strings"
 	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 )
 
 // checkRetainedDrift never infers clearance from missing namespace bindings or

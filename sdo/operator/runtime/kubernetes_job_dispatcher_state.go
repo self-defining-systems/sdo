@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/runtime/internal/lifecycleio"

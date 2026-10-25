@@ -1,10 +1,11 @@
 package lifecyclecore
 
 import (
-	"google.golang.org/protobuf/proto"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/proto"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 func TestHealthSupersessionArchivesEveryPendingPhase(t *testing.T) {

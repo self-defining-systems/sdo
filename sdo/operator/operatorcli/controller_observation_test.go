@@ -2,10 +2,11 @@ package operatorcli
 
 import (
 	"bytes"
-	"google.golang.org/protobuf/encoding/protojson"
-	c "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protojson"
+	c "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 func TestControllerObservationCLITransportsFailureAsData(t *testing.T) {

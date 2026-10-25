@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )

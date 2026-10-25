@@ -2,11 +2,12 @@ package install
 
 import (
 	"context"
+	"testing"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/fake"
-	"testing"
 )
 
 func TestPermissiveBaselineReachAndAddedGrantControlExclusion(t *testing.T) {

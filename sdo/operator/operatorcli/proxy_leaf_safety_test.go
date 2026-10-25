@@ -11,10 +11,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/operatorcli"
 	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/operatorcli"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"time"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
-	"time"
 )
 
 // RuntimeStateVersion comes from the durable generated contract.

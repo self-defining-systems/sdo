@@ -46,8 +46,6 @@ type Config struct {
 	RepairPolicy, AgentProvider                     string
 	ReflectionSession, ReflectionGuidance           string
 	ForceReflection                                 bool
-	ProgramFastPath                                 bool
-	ProgramTrustThreshold                           int
 	LateFindings                                    string
 	MaxResponseLoops                                int
 	HealthyBaseline                                 bool
@@ -188,9 +186,6 @@ func (c Config) validate() error {
 	}
 	if c.MaxResponseLoops < 0 {
 		return errors.New("max response loops cannot be negative")
-	}
-	if c.ProgramTrustThreshold < 0 {
-		return errors.New("program trust threshold cannot be negative")
 	}
 
 	for _, arg := range c.ExtraControllerArgs {
@@ -408,10 +403,6 @@ func controllerJob(c Config) *batchv1.Job {
 		args = append(args, "--max-response-loops", fmt.Sprint(c.MaxResponseLoops))
 	}
 
-	args = append(args, fmt.Sprintf("--program-fast-path=%t", c.ProgramFastPath))
-	if c.ProgramTrustThreshold > 0 {
-		args = append(args, "--program-trust-threshold", fmt.Sprint(c.ProgramTrustThreshold))
-	}
 	if c.RepairPolicy != "" {
 		args = append(args, "--repair-policy", c.RepairPolicy)
 	}

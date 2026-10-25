@@ -5,11 +5,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"testing"
+	"time"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
-	"time"
 )
 
 // Schedule bytes choose restart frequency followed by ten (tick, Service)

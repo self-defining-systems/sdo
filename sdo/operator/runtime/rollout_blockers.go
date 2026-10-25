@@ -3,14 +3,15 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
-	"sort"
-	"strings"
 )
 
 func (w KubernetesPlanRollouts) rolloutBlocker(ctx context.Context, d *appsv1.Deployment) *contracts.RolloutBlocker {

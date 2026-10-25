@@ -2,9 +2,10 @@ package runtime
 
 import (
 	"context"
-	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sort"
 	"time"
+
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"

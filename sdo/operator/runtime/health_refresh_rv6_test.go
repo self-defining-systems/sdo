@@ -3,11 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/sdk"
 	"strings"
 	"testing"
 	"time"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk"
 )
 
 func rv6Guard(c *Controller, root, compiled string) {

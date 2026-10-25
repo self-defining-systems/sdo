@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"testing"
-	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -55,26 +54,11 @@ func simFastPathLoop(t *testing.T, seed uint64) (*ResponderLoop, *simKube) {
 	loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: snapshot.(sdktest.Snapshot)}
 	}
-	loop.DiagnosisSettleDelay = time.Millisecond
-	loop.CorpusReplayPassed = true
 	loop.InitialDiagnose(context.Background())
-	loop.Trust = map[string]ProgramTrust{"service-targetport-mismatch": {VerifiedSuccesses: 3, LastChange: "tree-a", Trusted: true}}
+	loop.Trust = map[string]ProgramTrust{"service-targetport-mismatch": {VerifiedSuccesses: 3, LastChange: "tree-a"}}
 	return loop, kube
 }
 
 // TestSimTrustedFastPathNeverRollsBackAVerifiedFix: the cluster is repaired by
 // a correct plan, so no read lag of the informer cache may make the fast path
 // undo it (live incident 6: rolled back 14.5 ms after a correct write).
-func TestSimTrustedFastPathNeverRollsBackACorrectFix(t *testing.T) {
-	sweepSimSeeds(t, func(t *testing.T, seed uint64) {
-		loop, kube := simFastPathLoop(t, seed)
-		attempt := loop.TryTrustedFastPath(context.Background(), 3)
-		port, _ := testField(kube.objects[sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}], "spec.ports.0.targetPort")
-		if attempt.RolledBack || attempt.RollbackErr != "" {
-			t.Fatalf("correct fix rolled back (live port %v): %s", port, attempt.Summary)
-		}
-		if !attempt.Resolved {
-			t.Fatalf("correct fix not resolved: %s", attempt.Summary)
-		}
-	})
-}

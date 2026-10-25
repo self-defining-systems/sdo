@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
+
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -11,7 +13,6 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
-	"time"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"

@@ -4,10 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"

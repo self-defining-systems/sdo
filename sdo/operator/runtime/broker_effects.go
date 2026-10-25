@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk"
-	"sort"
-	"strings"
 )
 
 type WorkspaceEffect struct {

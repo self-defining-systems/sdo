@@ -2,8 +2,9 @@ package operatorcli
 
 import (
 	"fmt"
-	"google.golang.org/protobuf/encoding/protojson"
 	"io"
+
+	"google.golang.org/protobuf/encoding/protojson"
 	c "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/outcome_derivation"
 )

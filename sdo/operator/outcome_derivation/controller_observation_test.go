@@ -1,13 +1,14 @@
 package outcome_derivation
 
 import (
+	"slices"
+	"testing"
+	"time"
+
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	c "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"slices"
-	"testing"
-	"time"
 )
 
 func observationJSON(t testing.TB, request *c.ControllerObservationRequest) []byte {

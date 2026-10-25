@@ -3,16 +3,17 @@ package install
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"slices"
+	"testing"
+	"time"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
-	"math/rand"
-	"slices"
-	"testing"
-	"time"
 )
 
 func TestStopWithoutControllerIsIdempotentAndPreservesMemory(t *testing.T) {

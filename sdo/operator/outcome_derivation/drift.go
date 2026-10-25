@@ -1,9 +1,10 @@
 package outcome_derivation
 
 import (
+	"strings"
+
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"strings"
 )
 
 // CheckedDriftAssessments overlays dispositions only onto controller-owned

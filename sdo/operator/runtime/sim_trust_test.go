@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -67,8 +66,7 @@ func (m *simTrustModel) apply(event simTrustEvent, revision, other string) {
 }
 
 func (m *simTrustModel) state(threshold int) ProgramTrust {
-	return ProgramTrust{VerifiedSuccesses: m.streak, Failures: m.failures[m.revision], LastChange: m.revision,
-		Trusted: m.streak >= threshold && m.failures[m.revision] == 0}
+	return ProgramTrust{VerifiedSuccesses: m.streak, Failures: m.failures[m.revision], LastChange: m.revision}
 }
 
 func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) *contracts.OutcomeRecord {
@@ -87,9 +85,9 @@ func simTrustOutcome(t *testing.T, event simTrustEvent, revision, other string) 
 		settleTestOutcome(outcome)
 		return outcome
 	case simInterrupted:
-		return &contracts.OutcomeRecord{SourceCommit: revision, ProgramFailureSignals: []string{"fast_path_failure:" + id}}
+		return &contracts.OutcomeRecord{SourceCommit: revision, ProgramFailureSignals: []string{"application_verification_failure:" + id}}
 	case simInterruptedElsewhere:
-		return &contracts.OutcomeRecord{SourceCommit: revision, ProgramFailureSignals: []string{"fast_path_failure:" + id + "@" + other}}
+		return &contracts.OutcomeRecord{SourceCommit: revision, ProgramFailureSignals: []string{"application_verification_failure:" + id + "@" + other}}
 	}
 	return &contracts.OutcomeRecord{SourceCommit: revision, ProgramRuns: []*contracts.ProgramRun{{ProgramId: id, ProgramRevision: revision}}}
 }
@@ -122,13 +120,10 @@ func TestSimProgramTrustFollowsOnlyVerifiedRepairs(t *testing.T) {
 			outcomes = append(outcomes, simTrustOutcome(t, event, revision, other))
 			model.apply(event, revision, other)
 			history = append(history, fmt.Sprintf("%d@%s", event, revision))
-			got := ProgramTrustStats(outcomes, threshold)["targetport"]
+			got := ProgramTrustStats(outcomes)["targetport"]
 			want := model.state(threshold)
 			if got != want {
 				t.Fatalf("history %v threshold %d: trust %+v, model %+v", history, threshold, got, want)
-			}
-			if got.Trusted && (got.VerifiedSuccesses < threshold || got.Failures != 0) {
-				t.Fatalf("trusted without %d verified repairs and no failures: %+v", threshold, got)
 			}
 		}
 	})
@@ -137,26 +132,3 @@ func TestSimProgramTrustFollowsOnlyVerifiedRepairs(t *testing.T) {
 // TestSimFastPathFiresExactlyAtTrustThreshold: the trusted fast path is
 // attempted after the third verified repair and not after the second, and a
 // failure afterward closes it again.
-func TestSimFastPathFiresExactlyAtTrustThreshold(t *testing.T) {
-	const threshold = 3
-	for verified := 0; verified <= threshold+2; verified++ {
-		for _, failure := range []bool{false, true} {
-			t.Run(fmt.Sprintf("verified=%d/failure=%t", verified, failure), func(t *testing.T) {
-				var outcomes []*contracts.OutcomeRecord
-				for i := 0; i < verified; i++ {
-					outcomes = append(outcomes, verifiedTrustOutcome(t, "service-targetport-mismatch", "tree-a"))
-				}
-				if failure {
-					outcomes = append(outcomes, &contracts.OutcomeRecord{SourceCommit: "tree-a", ProgramFailureSignals: []string{"fast_path_failure:service-targetport-mismatch"}})
-				}
-				loop, _ := simFastPathLoop(t, uint64(verified))
-				loop.Trust = ProgramTrustStats(outcomes, threshold)
-				attempt := loop.TryTrustedFastPath(context.Background(), threshold)
-				want := verified >= threshold && !failure
-				if attempt.Attempted != want || (want && !attempt.Resolved) {
-					t.Fatalf("attempted=%t resolved=%t skipped=%q, want attempted=%t", attempt.Attempted, attempt.Resolved, attempt.SkippedReason, want)
-				}
-			})
-		}
-	}
-}

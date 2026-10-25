@@ -2,9 +2,10 @@ package outcome_derivation
 
 import (
 	"context"
+	"testing"
+
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"testing"
 )
 
 func TestBenignDriftAssessmentUsesExactControllerObservation(t *testing.T) {

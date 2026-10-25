@@ -2,8 +2,9 @@ package runtime
 
 import (
 	"encoding/json"
-	"sdo.dev/operator/sdk/program"
 	"sort"
+
+	"sdo.dev/operator/sdk/program"
 )
 
 // ResponderMenuConfig enables a convenience catalog over the ordinary executor.

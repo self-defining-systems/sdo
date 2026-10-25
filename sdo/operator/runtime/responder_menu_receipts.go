@@ -1,8 +1,9 @@
 package runtime
 
 import (
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"strings"
+
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
 // MenuRepairActions projects executor effects into ordinary repair evidence.

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"regexp"
+
 	"sdo.dev/operator/rendered"
 )
 

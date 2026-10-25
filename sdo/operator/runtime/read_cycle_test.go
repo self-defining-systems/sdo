@@ -6,13 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/memory"
-	"sdo.dev/operator/runtime/prometheus"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/memory"
+	"sdo.dev/operator/runtime/prometheus"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"

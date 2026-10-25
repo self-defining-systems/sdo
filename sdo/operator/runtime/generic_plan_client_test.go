@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"testing"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -11,7 +13,6 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 	"sdo.dev/operator/core"
 	"sdo.dev/operator/sdk"
-	"testing"
 )
 
 func TestGenericPlanTransportSupportsNewKindWithoutRegistration(t *testing.T) {

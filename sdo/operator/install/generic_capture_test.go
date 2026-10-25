@@ -1,8 +1,9 @@
 package install
 
 import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestDiscoveryCaptureGrantsCoverNewKindsWithoutSecretReads(t *testing.T) {

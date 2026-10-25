@@ -2,12 +2,13 @@ package replay
 
 import (
 	"context"
+	"testing"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
-	"testing"
 )
 
 func TestGenericClusterCapturesAndPatchesUnregisteredKinds(t *testing.T) {
