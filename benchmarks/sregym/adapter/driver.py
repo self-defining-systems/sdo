@@ -272,18 +272,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="explicit deployed manifest file/directory; repeat to select multiple paths (replaces configured list)",
     )
-    parser.add_argument(
-        "--program-fast-path",
-        action=argparse.BooleanOptionalAction,
-        default=config.get("program_fast_path", True),
-        help="enable trusted playbook programs to resolve incidents without a responder",
-    )
-    parser.add_argument(
-        "--program-trust-threshold",
-        type=int,
-        default=config.get("program_trust_threshold", 1),
-        help="successful verified repairs required before a program is trusted (positive integer)",
-    )
+
     parser.add_argument(
         "--permissive-responder",
         action=argparse.BooleanOptionalAction,
@@ -344,10 +333,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if not isinstance(paths, list) or any(not isinstance(path, str) or not path.strip() for path in paths):
         raise ValueError("deployed_manifest_paths must be a list of non-empty strings")
     args.deployed_manifest_paths = tuple(paths)
-    if type(args.program_fast_path) is not bool:
-        raise ValueError("program_fast_path must be a boolean")
-    if type(args.program_trust_threshold) is not int or args.program_trust_threshold <= 0:
-        raise ValueError("program_trust_threshold must be a positive integer")
+
     if type(args.permissive_responder) is not bool:
         raise ValueError("permissive_responder must be a boolean")
     namespaces = args.responder_namespaces
@@ -668,8 +654,6 @@ def _launch_native_lifecycle(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployed_manifest_paths=args.deployed_manifest_paths,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         healthy_baseline=args.healthy_baseline,
@@ -776,8 +760,6 @@ def _native_install_for_run(
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployed_manifest_paths=args.deployed_manifest_paths,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         max_response_loops=args.max_response_loops,
@@ -978,8 +960,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployed_manifest_paths=args.deployed_manifest_paths,
-        program_fast_path=args.program_fast_path,
-        program_trust_threshold=args.program_trust_threshold,
         permissive_responder=args.permissive_responder,
         responder_namespaces=args.responder_namespaces,
         late_findings=args.late_findings,

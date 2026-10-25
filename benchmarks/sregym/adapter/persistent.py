@@ -689,6 +689,8 @@ def run_persistent_stage(
     paused_ready = clock.monotonic()
     stage_evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
+    raw_request = closure.get("request")
+    incident_request = raw_request if isinstance(raw_request, dict) else {}
     raw_result = closure.get("result")
     result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
     resolution: dict[str, Any] = {
@@ -698,10 +700,8 @@ def run_persistent_stage(
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
         "usage": result.get("usage"),
+        "playbook_coverage": incident_request.get("playbook_coverage"),
         "resolution_path": result.get("resolution_path"),
-        "fast_path_programs": result.get("fast_path_programs", []),
-        "fast_path_relation_covered_findings": result.get("fast_path_relation_covered_findings", []),
-        "fast_path_skipped_reason": result.get("fast_path_skipped_reason"),
         # Names the responder's rollout in the stage-end evidence.
         "responder_session_id": result.get("responder_session_id"),
         "lifecycle_reused": lifecycle_reused,
@@ -843,6 +843,8 @@ def collect_followup_incident(
     config = replace(inputs.runtime_config, persistent=True, wait_for_completion=False)
     evidence = _export_stage_end_evidence(ops, control, config, inputs.receipt_dir, clock)
     closure = verified.closure or {}
+    raw_request = closure.get("request")
+    incident_request = raw_request if isinstance(raw_request, dict) else {}
     raw_result = closure.get("result")
     result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
     base = dict(record.served_stage_receipt) if record.served_stage_receipt else {}
@@ -853,10 +855,8 @@ def collect_followup_incident(
         "confirmed_root_causes": result.get("confirmed_root_causes", []),
         "repair_actions": result.get("repair_actions", []),
         "usage": result.get("usage"),
+        "playbook_coverage": incident_request.get("playbook_coverage"),
         "resolution_path": result.get("resolution_path"),
-        "fast_path_programs": result.get("fast_path_programs", []),
-        "fast_path_relation_covered_findings": result.get("fast_path_relation_covered_findings", []),
-        "fast_path_skipped_reason": result.get("fast_path_skipped_reason"),
         "responder_session_id": result.get("responder_session_id"),
         "followup_incident": True,
         "stage_end_runtime_artifacts": evidence,

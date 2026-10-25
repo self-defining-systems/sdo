@@ -6,13 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
-	"slices"
-	"strings"
-	"testing"
 
 	"google.golang.org/protobuf/proto"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -132,7 +133,7 @@ func TestCompletionReadsEachFinalObjectOnceAcrossApplications(t *testing.T) {
 func TestHistoricalOutcomeWithoutSettlementCannotCreateSuccessCredit(t *testing.T) {
 	o := verifiedTrustOutcome(t, "targetport", "revision")
 	o.ReflectionEligibility = nil
-	if got := ProgramTrustStats([]*contracts.OutcomeRecord{o}, 1)["targetport"]; got.VerifiedSuccesses != 0 || got.Trusted {
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{o})["targetport"]; got.VerifiedSuccesses != 0 || (got.VerifiedSuccesses > 0 && got.Failures == 0) {
 		t.Fatalf("historical compatibility created proof: %+v", got)
 	}
 }
@@ -221,7 +222,7 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 		if len(feedback.Diagnostics) == 0 {
 			t.Fatal("model ran before deterministic replay rejected")
 		}
-		if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome}, 1)[repeatProgram]; state.VerifiedSuccesses != 0 || state.Trusted {
+		if state := ProgramTrustStats([]*contracts.OutcomeRecord{outcome})[repeatProgram]; state.VerifiedSuccesses != 0 || (state.VerifiedSuccesses > 0 && state.Failures == 0) {
 			t.Fatalf("false match credited before rejection: %+v", state)
 		}
 		return ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "cannot safely refine"}, nil
@@ -250,7 +251,7 @@ func TestFalseFixedMatchIsDurableBeforeReflectionRejectionAndNeverCredited(t *te
 	if len(ledger.ReflectionRejections) == 0 || ledger.ReflectionRejections[0].Diagnostics[0].Rule != "reflection.program-required" {
 		t.Fatalf("missing mandatory-learning rejection: %v", ledger.ReflectionRejections)
 	}
-	if state := ProgramTrustStats([]*contracts.OutcomeRecord{stored.Record}, 1)[repeatProgram]; state.VerifiedSuccesses != 0 || state.Trusted {
+	if state := ProgramTrustStats([]*contracts.OutcomeRecord{stored.Record})[repeatProgram]; state.VerifiedSuccesses != 0 || (state.VerifiedSuccesses > 0 && state.Failures == 0) {
 		t.Fatalf("rejected reflection left credit: %+v", state)
 	}
 }

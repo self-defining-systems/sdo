@@ -3,15 +3,15 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	appsv1 "k8s.io/api/apps/v1"
 	"sdo.dev/operator/memory"
@@ -123,7 +123,6 @@ func TestResponderPlanUsesSettledMatchedImagePullView(t *testing.T) {
 	loop.ReadView = func(view sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: view.(sdktest.Snapshot)}
 	}
-	loop.DiagnosisSettleDelay = time.Millisecond
 	if runs := loop.InitialDiagnose(context.Background()); len(runs) == 0 || runs[0].Verdict.Result != program.NoMatch {
 		t.Fatalf("initial diagnosis: %+v", runs)
 	}

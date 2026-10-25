@@ -110,9 +110,9 @@ be reported with a typed SDK gap naming its cause resources, primitive, reason a
 
 Automatic plans require no source-policy file, reviewed-fixture digest, content predicate or credential-delta approval. Explicit FromSource selectors and CreateFromSource read accepted manifests at the incident commit; other repairs may use observed or declared parameter values. DeleteObject does not require source absence. All actions remain within the controller-derived incident namespace, with Kubernetes RBAC and schema checks. Cluster-scoped webhook mutations are outside this scope.
 
-Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. Failed fast-path attempts compensate all reversible writes before responder dispatch; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
+Compilation and repair replay remain mandatory. Direct observation and independent post-apply verification still judge the executed plan. A partially failed write batch compensates its reversible writes; deletes and exec are explicitly irreversible and are never auto-recreated or replayed. UID, conditional-write, lifecycle exclusivity and rollback conflict checks remain correctness constraints.
 
-The fast path defaults on and chooses one trusted program/binding by findings covered, then stable program ID/bindings order. Uncovered findings go to the responder after whole-incident verification; failed verification rolls back the attempt. Success credit survives broker-validated revisions; real fast-path failure still revokes trust.
+At incident open, Go sends all matching diagnoses and unexplained findings to the responder. The agent selects mitigations and decides rollback. Verified program counters are information only; failed verification retains completed writes.
 
 Receipts report value provenance (`accepted-source`, `parameter`, `observed`, `incident-namespace`), not an administrator grant. JSON/YAML ConfigMap entry edits preserve unrelated values and numeric precision, including untouched large integers and exponent literals; document serialization may normalize formatting.
 

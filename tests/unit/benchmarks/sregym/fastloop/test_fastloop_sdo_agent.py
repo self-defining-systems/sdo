@@ -22,32 +22,11 @@ from benchmarks.sregym.fastloop.records import OracleVerdict, load_records
 from benchmarks.sregym.fastloop.sdo_agent import SdoAgentSettings, SdoPersistentAgent
 
 
-def test_program_metrics_exports_fast_path_resolution() -> None:
-    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
-
-    relation = {
-        "finding_fingerprint": "health/service/api",
-        "program_id": "repair",
-        "bindings": [{"name": "deployment", "object": {"kind": "Deployment", "namespace": "app", "name": "api"}}],
-    }
-    fields = _program_metrics(
-        {
-            "resolution_path": "fast_path",
-            "fast_path_programs": ["targetport"],
-            "fast_path_relation_covered_findings": [relation],
-        }
-    )
-    assert fields["resolution_path"] == "fast_path"
-    assert fields["fast_path_programs"] == ("targetport",)
-    assert fields["fast_path_relation_covered_findings"] == (relation,)
-
-
 def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
     from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
 
     fields = _program_metrics(
         {
-            "fast_path_skipped_reason": "uncovered_finding",
             "program_runs": [
                 {
                     "program_id": "targetport",
@@ -64,7 +43,6 @@ def test_program_metrics_exports_match_evidence_and_skip_reason() -> None:
     )
     assert fields["match_reasons"] == ("wrong target port",)
     assert fields["binding_sources"] == ("hint", "finding")
-    assert fields["fast_path_skipped_reason"] == "uncovered_finding"
 
 
 def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path) -> None:
@@ -75,16 +53,6 @@ def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path
     receipt["native_ledger"] = {
         "outcome_document": {
             "resolution_path": "responder",
-            "fast_path_skipped_reason": "uncovered_finding",
-            "fast_path_relation_covered_findings": [
-                {
-                    "finding_fingerprint": "health/service/api",
-                    "program_id": "repair",
-                    "bindings": [
-                        {"name": "deployment", "object": {"kind": "Deployment", "namespace": "app", "name": "api"}}
-                    ],
-                }
-            ],
             "program_runs": [
                 {
                     "program_id": "targetport",
@@ -116,8 +84,6 @@ def test_fastloop_record_persists_program_match_and_skip_evidence(tmp_path: Path
     row = load_records(path)[0]
     assert row.match_reasons == ["wrong target port"]
     assert row.binding_sources == ["hint", "finding"]
-    assert row.fast_path_skipped_reason == "uncovered_finding"
-    assert row.fast_path_relation_covered_findings[0]["finding_fingerprint"] == "health/service/api"
 
 
 if TYPE_CHECKING:
@@ -500,7 +466,7 @@ def test_learning_exports_monotonic_closure_phase_durations(tmp_path: Path) -> N
 
 def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_next_incident(tmp_path: Path) -> None:
     ops, calls = (
-        FakeOps(reject_receipts=True, controller_result_override={"fast_path_skipped_reason": "untrusted_program"}),
+        FakeOps(reject_receipts=True, controller_result_override={}),
         [],
     )
     agent = _agent(tmp_path, ops, calls)
@@ -510,7 +476,6 @@ def test_a_rejected_receipt_keeps_its_tokens_reports_the_error_and_unblocks_the_
     assert learned.error is not None
     assert "receipt" in learned.error
     assert learned.responder_tokens.input_tokens == 300000
-    assert learned.fast_path_skipped_reason == "untrusted_program"
     assert (
         PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers["hotel-reservation"].pending
         is None
@@ -663,3 +628,13 @@ def test_evidence_gap_count_preserves_unknown_zero_and_recorded_counts() -> None
     assert _receipt_evidence_gap_count({"native_ledger": {"reflection_evidence_gap_count": 0}}) == 0
     assert _receipt_evidence_gap_count({"native_ledger": {"reflection_evidence_gap_count": 2}}) == 2
     assert _receipt_evidence_gap_count({"native_ledger": {"reflection_evidence_gap_count": True}}) is None
+
+
+def test_program_metrics_exports_incident_open_coverage() -> None:
+    from benchmarks.sregym.fastloop.sdo_agent import _program_metrics
+
+    coverage = {
+        "matches": [{"playbook_id": "routing", "explained_finding_fingerprints": ["one", "two"]}],
+        "unexplained_finding_fingerprints": ["three"],
+    }
+    assert _program_metrics({"playbook_coverage": coverage})["playbook_coverage"] == coverage

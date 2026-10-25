@@ -437,13 +437,6 @@ def test_program_prompt_guides_codex_and_claude_sessions() -> None:
     assert "targetport" in prompt
 
 
-def test_program_prompt_includes_failed_fast_path_handoff() -> None:
-    raw = json.loads(_fixture("incident_request.json"))
-    raw["fast_path_summary"] = "trusted targetport attempted; verification failed; rollback true"
-    prompt = _responder_prompt(from_dict(IncidentRequest, raw))
-    assert raw["fast_path_summary"] in prompt
-
-
 def test_responder_prompt_no_longer_asks_for_scratch_scripts() -> None:
     prompt = _responder_prompt(from_dict(IncidentRequest, json.loads(_fixture("incident_request.json"))))
     assert "parameterized script" not in prompt

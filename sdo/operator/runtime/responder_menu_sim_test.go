@@ -135,7 +135,6 @@ func testSimResponderMenuSchedule(t *testing.T, seed uint64, schedule string) {
 			loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 				return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 			}
-			loop.DiagnosisSettleDelay = time.Nanosecond
 			loop.saveToolState = func(_ context.Context, payload []byte) error { saved = append([]byte(nil), payload...); return nil }
 			return loop
 		}

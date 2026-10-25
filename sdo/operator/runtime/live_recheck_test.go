@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"testing"
-	"time"
 
-	corev1 "k8s.io/api/core/v1"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -19,104 +18,7 @@ import (
 func restartPortLoop(original *ResponderLoop) *ResponderLoop {
 	loop := NewResponderLoop(original.Request, original.Programs, original.Provider, original.Detectors, original.Executor, original.MaxBatches)
 	loop.ReadView, loop.Trust = original.ReadView, original.Trust
-	loop.CorpusReplayPassed = true
-	loop.DiagnosisSettleDelay = time.Millisecond
 	return loop
-}
-
-func TestRestartFastPathRechecksLiveStateAtEveryCrashPoint(t *testing.T) {
-	for _, crash := range []string{"after_write", "after_resolution", "lost_receipt"} {
-		for _, liveFault := range []bool{false, true} {
-			name := crash + "/fixed"
-			if liveFault {
-				name = crash + "/fault_present"
-			}
-			t.Run(name, func(t *testing.T) {
-				ctx := context.Background()
-				loop, kube := trustedPortLoop(t, false, true, true)
-				request := goldenRequest(t)
-				request.Namespace, request.RepairPolicy, request.SourceCommit = "app", "recorded-actions", "tree-a"
-				request.Findings = loop.Request.Findings
-				loop.Request = request
-				dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
-				attachRecoveryStore(t, dispatcher, loop)
-				if crash == "after_write" {
-					loop.Executor.Client = &liveCrashClient{PlanObjectClient: loop.Executor.Client}
-					func() {
-						defer func() {
-							if recover() == nil {
-								t.Error("crash did not fire")
-							}
-						}()
-						_, _, _, _ = dispatcher.tryFastPath(ctx, request, loop)
-					}()
-				} else if crash == "lost_receipt" {
-					loop.Executor.Client = &recoveryOutageClient{objectClient: loop.Executor.Client, loseReceipt: true}
-					_, _, _, _ = dispatcher.tryFastPath(ctx, request, loop)
-				} else {
-					if _, _, resolved, err := dispatcher.tryFastPath(ctx, request, loop); err != nil || !resolved {
-						t.Fatalf("initial: %v %v", resolved, err)
-					}
-				}
-				service, err := kube.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if liveFault {
-					service.Spec.Ports[0].TargetPort = intstr.FromInt32(9999)
-					if _, err = kube.CoreV1().Services("app").Update(ctx, service, metav1.UpdateOptions{}); err != nil {
-						t.Fatal(err)
-					}
-				} else if service.Spec.Ports[0].TargetPort.IntVal != 8080 {
-					t.Fatalf("crash fixture did not leave fix: %+v", service)
-				}
-				restarted := restartPortLoop(loop)
-				attachRecoveryStore(t, dispatcher, restarted)
-				writes := 0
-				restarted.Executor.Client = countingPlanClient{PlanObjectClient: TypedPlanClient{Client: kube}, writes: &writes}
-				result, summary, resolved, err := dispatcher.tryFastPath(ctx, request, restarted)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !liveFault {
-					if !resolved || len(result.VerificationEvidence) == 0 {
-						t.Fatalf("fixed state did not verify: %v %s", resolved, summary)
-					}
-					if writes != 0 {
-						t.Fatalf("restart mutated a correct fix: %d writes", writes)
-					}
-					noMatch := false
-					for _, run := range result.ProgramRuns {
-						if run.Verdict.Result == program.NoMatch {
-							noMatch = true
-						}
-					}
-					if !noMatch {
-						t.Fatal("success without fresh NoMatch")
-					}
-				} else if resolved && writes == 0 {
-					t.Fatal("cached success with live fault")
-				}
-				service, _ = kube.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
-				if resolved && service.Spec.Ports[0].TargetPort.IntVal != 8080 {
-					t.Fatal("success while fault remains")
-				}
-				if restarted.LoopsUsed() < 1 {
-					t.Fatal("restart reset attempt budget")
-				}
-			})
-		}
-	}
-}
-
-type countingPlanClient struct {
-	PlanObjectClient
-	writes *int
-}
-
-func (c countingPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.PatchType, patch []byte) error {
-	*c.writes++
-	return c.PlanObjectClient.Patch(ctx, ref, kind, patch)
 }
 
 type liveCrashClient struct{ PlanObjectClient }
@@ -126,30 +28,6 @@ func (c *liveCrashClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind typ
 		return err
 	}
 	panic("crash after write")
-}
-
-func TestRestartResolvedMarkerRequiresFreshIndependentVerification(t *testing.T) {
-	ctx := context.Background()
-	loop, kube := trustedPortLoop(t, false, true, true)
-	request := goldenRequest(t)
-	request.Namespace, request.RepairPolicy, request.SourceCommit = "app", "recorded-actions", "tree-a"
-	request.Findings = loop.Request.Findings
-	loop.Request = request
-	dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
-	attachRecoveryStore(t, dispatcher, loop)
-	if _, _, resolved, err := dispatcher.tryFastPath(ctx, request, loop); err != nil || !resolved {
-		t.Fatalf("initial: %v %v", resolved, err)
-	}
-	restarted := restartPortLoop(loop)
-	restarted.Executor.Verifier = planFakeVerifier{passed: false}
-	attachRecoveryStore(t, dispatcher, restarted)
-	if _, _, resolved, err := dispatcher.tryFastPath(ctx, request, restarted); err != nil || resolved {
-		t.Fatalf("stale verification accepted: %v %v", resolved, err)
-	}
-	service, _ := kube.CoreV1().Services("app").Get(ctx, "api", metav1.GetOptions{})
-	if service.Spec.Ports[0].TargetPort.IntVal != 8080 {
-		t.Fatal("verification failure undid prior fix")
-	}
 }
 
 type restartVerdictProgram struct {
@@ -168,40 +46,6 @@ func (p restartVerdictProgram) Diagnose(context.Context, program.ReadView, progr
 	}
 	return verdict, nil
 }
-func TestRestartFastPathEscalatesInconclusiveLiveDiagnosis(t *testing.T) {
-	for _, verdict := range []program.Result{program.Unknown, program.NeedsJudgement, program.Match, "error"} {
-		t.Run(string(verdict), func(t *testing.T) {
-			ctx := context.Background()
-			loop, kube := trustedPortLoop(t, false, true, true)
-			request := goldenRequest(t)
-			request.Namespace, request.RepairPolicy, request.SourceCommit = "app", "recorded-actions", "tree-a"
-			request.Findings = loop.Request.Findings
-			loop.Request = request
-			dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
-			attachRecoveryStore(t, dispatcher, loop)
-			if _, _, resolved, err := dispatcher.tryFastPath(ctx, request, loop); err != nil || !resolved {
-				t.Fatalf("initial %v %v", resolved, err)
-			}
-			restarted := restartPortLoop(loop)
-			p := restartVerdictProgram{result: verdict, fail: verdict == "error"}
-			registry, err := program.NewRegistry([]program.Diagnoser{p}, []program.Mitigator{p})
-			if err != nil {
-				t.Fatal(err)
-			}
-			restarted.Programs = registry
-			attachRecoveryStore(t, dispatcher, restarted)
-			writes := 0
-			restarted.Executor.Client = countingPlanClient{PlanObjectClient: restarted.Executor.Client, writes: &writes}
-			if _, summary, resolved, err := dispatcher.tryFastPath(ctx, request, restarted); err != nil || resolved || summary == "" {
-				t.Fatalf("inconclusive diagnosis accepted: %v %s %v", resolved, summary, err)
-			}
-			if writes != 0 {
-				t.Fatal("restart wrote while diagnosis was inconclusive")
-			}
-		})
-	}
-}
-
 func TestResponderRestartRediagnosesWithoutUndoOrRestoredHandles(t *testing.T) {
 	for _, faultPresent := range []bool{false, true} {
 		t.Run(fmt.Sprint(faultPresent), func(t *testing.T) {
@@ -305,38 +149,5 @@ func TestResponderFailedVerificationIsRecordedAndLeftInPlace(t *testing.T) {
 				t.Fatalf("an unverified application must be recorded as such and kept: %+v", apps)
 			}
 		})
-	}
-}
-
-func TestRestartLegacyMutationRecordsNeverAuthorizeWrites(t *testing.T) {
-	ctx := context.Background()
-	loop, kube := trustedPortLoop(t, false, true, true)
-	dispatcher := KubernetesJobDispatcher{Client: kube, Namespace: "app"}
-	attachRecoveryStore(t, dispatcher, loop)
-	payload := []byte(`{"Version":1,"IncidentID":"fast","SourceCommit":"tree-a","Batches":2,"FailureSignals":["fast_path_failure:service-targetport-mismatch@revision-a"],"Plans":"invalid retired journal","ApplicationsLog":"invalid retired journal"}`)
-	if err := loop.saveToolState(ctx, payload); err != nil {
-		t.Fatal(err)
-	}
-	_, err := kube.CoreV1().ConfigMaps("app").Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: IncidentJobName(loop.Request.IncidentID) + "-fast-path"}, Data: map[string]string{
-		"state": "failed", "program_ids": `["service-targetport-mismatch"]`, "trust_failure_signals": `["fast_path_failure:service-targetport-mismatch@revision-a"]`,
-		"application": "invalid retired journal", "tool_state": "invalid retired journal", "preimages": "invalid retired journal", "result": "invalid cached success",
-	}}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for restart := 0; restart < 2; restart++ {
-		restarted := restartPortLoop(loop)
-		attachRecoveryStore(t, dispatcher, restarted)
-		writes := 0
-		restarted.Executor.Client = countingPlanClient{PlanObjectClient: restarted.Executor.Client, writes: &writes}
-		if _, summary, resolved, err := dispatcher.tryFastPath(ctx, loop.Request, restarted); err != nil || resolved || summary == "" {
-			t.Fatalf("legacy handoff: %v %s %v", resolved, summary, err)
-		}
-		if writes != 0 || len(restarted.PlanApplications()) != 0 || restarted.LoopsUsed() != 2 {
-			t.Fatal("legacy journal mutated application or reset budget")
-		}
-		if !contains(restarted.FailureSignals(), "fast_path_failure:service-targetport-mismatch@revision-a") {
-			t.Fatal("lost original revision failure")
-		}
 	}
 }
