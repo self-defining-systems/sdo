@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -89,6 +90,7 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 		users   []program.DatabaseUser
 	}
 	items := make([]prepared, len(plan.Actions))
+	projectedCatalogs := map[string][]program.DatabaseUser{}
 	for i, original := range plan.Actions {
 		a := concreteRuntimeAction(original)
 		ref, refErr := planActionRef(a)
@@ -116,7 +118,16 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				if readErr != nil {
 					return result, fmt.Errorf("database catalog observation unavailable")
 				}
+				keyTarget := a.Target
+				keyTarget.Auth = nil
+				keyTarget.Shell = ""
+				keyRaw, _ := json.Marshal(keyTarget)
+				key := string(keyRaw)
+				if projected, ok := projectedCatalogs[key]; ok {
+					users = projected
+				}
 				items[i].users, readErr = program.ApplyEnsureDatabaseUser(users, a)
+				projectedCatalogs[key] = items[i].users
 				if readErr != nil {
 					return result, readErr
 				}
@@ -180,16 +191,28 @@ func (e PlanExecutor) applyRuntimePlan(ctx context.Context, incident IncidentReq
 				return result, fmt.Errorf("database operation refused: Pod identity/version changed")
 			}
 			catalog := e.Client.(DatabaseCatalogClient)
+			// Dispatch may have changed the catalog even if transport fails. Retain
+			// irreversible uncertainty; only successful direct read-back confirms it.
+			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "ensure_database_user", Irreversible: true})
+			result.ActionsApplied = append(result.ActionsApplied, original)
+			result.Applied = true
 			if effectErr := catalog.EnsureDatabaseUser(ctx, a); effectErr != nil {
 				result.ActionReports[i].Status = "unknown"
 				return result, fmt.Errorf("database operation outcome unknown")
 			}
-			// A successful transport may have changed state even if read-back fails.
-			result.Patches = append(result.Patches, PlanPatch{Ref: ref, Operation: "ensure_database_user", Irreversible: true})
-			result.ActionsApplied = append(result.ActionsApplied, original)
-			result.Applied = true
+			observedPod, podErr := e.Client.Get(ctx, ref)
+			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
+				result.ActionReports[i].Status = "unknown"
+				return result, fmt.Errorf("database operation identity unverified")
+			}
+
 			users, readErr := catalog.DatabaseUsers(ctx, a.Target)
 			actual, normalizeErr := program.NormalizeDatabaseUsers(users)
+			observedPod, podErr = e.Client.Get(ctx, ref)
+			if podErr != nil || observedPod == nil || observedPod.GetUID() != items[i].uid {
+				result.ActionReports[i].Status = "unknown"
+				return result, fmt.Errorf("database operation identity unverified")
+			}
 			if readErr != nil || normalizeErr != nil || !planValuesEqual(actual, items[i].users) {
 				result.ActionReports[i].Status = "unknown"
 				return result, fmt.Errorf("database user change unverified")

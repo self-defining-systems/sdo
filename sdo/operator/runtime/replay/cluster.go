@@ -256,8 +256,9 @@ func (c *cluster) snapshot(ctx context.Context) (sdktest.Snapshot, error) {
 			}
 		}
 	}
-	for _, catalog := range c.catalogs {
-		args, _ := json.Marshal([]any{catalog.target})
+	for _, target := range c.catalogConfigurations {
+		catalog := c.catalogs[databaseKey(target)]
+		args, _ := json.Marshal([]any{target})
 		result, _ := json.Marshal(catalog.users)
 		s.Readings = append(s.Readings, sdktest.PrimitiveCall{Method: "DatabaseUsers", Arguments: args, Result: result})
 	}

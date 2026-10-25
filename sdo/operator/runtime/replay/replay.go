@@ -160,7 +160,7 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 		incident.Findings = append(incident.Findings, sdk.Finding{PrimaryResource: ref})
 	}
 	for _, d := range detectors {
-		findings, e := d.Detect(ctx, c.Corpus.Open)
+		findings, e := sdk.DetectObserved(ctx, d, recordedPhase(c.Corpus, "open"))
 		if e != nil {
 			return fail(e)
 		}
@@ -195,6 +195,10 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	for _, a := range application.ActionReports {
 		if a.Status == "applied" {
 			r.Effects = append(r.Effects, fmt.Sprintf("real:%T:action:%d", plan.Actions[a.ActionIndex], a.ActionIndex))
+			switch plan.Actions[a.ActionIndex].(type) {
+			case program.EnsureDatabaseUser, *program.EnsureDatabaseUser:
+				r.Effects = append(r.Effects, "simulated:mongodb-user-catalog")
+			}
 		}
 	}
 	if err != nil {
@@ -373,13 +377,14 @@ func comparable(o *unstructured.Unstructured) ([]byte, error) {
 // client-go's tracker is synthesized. No action implementation lives here.
 type cluster struct {
 	operator.TypedPlanClient
-	fake       *kubefake.Clientset
-	initial    map[sdk.ObjectRef]*unstructured.Unstructured
-	original   sdktest.Snapshot
-	catalogs   map[string]databaseCatalog
-	simCreated map[sdk.ObjectRef]*unstructured.Unstructured
-	simDeleted map[sdk.ObjectRef]bool
-	simStatus  map[sdk.ObjectRef]map[string]any
+	fake                  *kubefake.Clientset
+	initial               map[sdk.ObjectRef]*unstructured.Unstructured
+	original              sdktest.Snapshot
+	catalogs              map[string]databaseCatalog
+	catalogConfigurations map[string]program.DatabaseTarget
+	simCreated            map[sdk.ObjectRef]*unstructured.Unstructured
+	simDeleted            map[sdk.ObjectRef]bool
+	simStatus             map[sdk.ObjectRef]map[string]any
 }
 
 func recordedPhase(c sdktest.CorpusCase, phase string) sdktest.Snapshot {

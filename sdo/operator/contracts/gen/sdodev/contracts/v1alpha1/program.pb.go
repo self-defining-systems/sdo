@@ -3048,34 +3048,35 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"unassigned\x18\x03 \x03(\v2-.sdodev.contracts.v1alpha1.ReflectionWorkItemR\n" +
 	"unassigned\x121\n" +
 	"\x12evidence_gap_count\x18\x04 \x01(\rH\x00R\x10evidenceGapCount\x88\x01\x01B\x15\n" +
-	"\x13_evidence_gap_count\"\xd0\x01\n" +
+	"\x13_evidence_gap_count\"\xad\x03\n" +
 	"\x11RemoveServicePort\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
-	"\x04port\x18\x03 \x01(\x05R\x04port\x12\x1a\n" +
-	"\bprotocol\x18\x04 \x01(\tR\bprotocol\x12\x1f\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
+	"\x04port\x18\x03 \x01(\x05B\v\xbaH\b\x1a\x06\x18\xff\xff\x03(\x00R\x04port\x123\n" +
+	"\bprotocol\x18\x04 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x03TCPR\x03UDPR\x04SCTPR\bprotocol\x12\x1f\n" +
 	"\vallow_empty\x18\x05 \x01(\bR\n" +
 	"allowEmpty\x12\x16\n" +
-	"\x06reason\x18\x06 \x01(\tR\x06reason\"*\n" +
-	"\rCredentialRef\x12\x19\n" +
-	"\x03env\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x03env\"\xb6\x01\n" +
-	"\fDatabaseAuth\x12\x1a\n" +
-	"\bdatabase\x18\x01 \x01(\tR\bdatabase\x12D\n" +
-	"\busername\x18\x02 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefR\busername\x12D\n" +
-	"\bpassword\x18\x03 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefR\bpassword\"\xed\x01\n" +
-	"\x0eDatabaseTarget\x12\x16\n" +
-	"\x06engine\x18\x01 \x01(\tR\x06engine\x126\n" +
-	"\x03pod\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03pod\x12\x1c\n" +
-	"\tcontainer\x18\x03 \x01(\tR\tcontainer\x12\x1a\n" +
-	"\bdatabase\x18\x04 \x01(\tR\bdatabase\x12;\n" +
-	"\x04auth\x18\x05 \x01(\v2'.sdodev.contracts.v1alpha1.DatabaseAuthR\x04auth\x12\x14\n" +
-	"\x05shell\x18\x06 \x01(\tR\x05shell\">\n" +
-	"\fDatabaseRole\x12\x1a\n" +
-	"\bdatabase\x18\x01 \x01(\tR\bdatabase\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\x98\x02\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason:\xb4\x01\xbaH\xb0\x01\x1a\xad\x01\n" +
+	"\x15service_port.identity\x12Aselect exactly one name or port; protocol requires a numeric port\x1aQ(this.name != '') != (this.port != 0) && (this.name == '' || this.protocol == '')\"D\n" +
+	"\rCredentialRef\x123\n" +
+	"\x03env\x18\x01 \x01(\tB!\xbaH\x1er\x1c\x10\x012\x18^[A-Za-z_][A-Za-z0-9_]*$R\x03env\"\xcf\x01\n" +
+	"\fDatabaseAuth\x12#\n" +
+	"\bdatabase\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bdatabase\x12L\n" +
+	"\busername\x18\x02 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefB\x06\xbaH\x03\xc8\x01\x01R\busername\x12L\n" +
+	"\bpassword\x18\x03 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefB\x06\xbaH\x03\xc8\x01\x01R\bpassword\"\xb0\x02\n" +
+	"\x0eDatabaseTarget\x12&\n" +
+	"\x06engine\x18\x01 \x01(\tB\x0e\xbaH\vr\tR\amongodbR\x06engine\x12>\n" +
+	"\x03pod\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03pod\x12%\n" +
+	"\tcontainer\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tcontainer\x12#\n" +
+	"\bdatabase\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bdatabase\x12;\n" +
+	"\x04auth\x18\x05 \x01(\v2'.sdodev.contracts.v1alpha1.DatabaseAuthR\x04auth\x12-\n" +
+	"\x05shell\x18\x06 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x05mongoR\amongoshR\x05shell\"P\n" +
+	"\fDatabaseRole\x12#\n" +
+	"\bdatabase\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bdatabase\x12\x1b\n" +
+	"\x04name\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04name\"\xa1\x02\n" +
 	"\x12EnsureDatabaseUser\x12I\n" +
-	"\x06target\x18\x01 \x01(\v2).sdodev.contracts.v1alpha1.DatabaseTargetB\x06\xbaH\x03\xc8\x01\x01R\x06target\x12\x12\n" +
-	"\x04user\x18\x02 \x01(\tR\x04user\x12=\n" +
+	"\x06target\x18\x01 \x01(\v2).sdodev.contracts.v1alpha1.DatabaseTargetB\x06\xbaH\x03\xc8\x01\x01R\x06target\x12\x1b\n" +
+	"\x04user\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04user\x12=\n" +
 	"\x05roles\x18\x03 \x03(\v2'.sdodev.contracts.v1alpha1.DatabaseRoleR\x05roles\x12L\n" +
 	"\bpassword\x18\x04 \x01(\v2(.sdodev.contracts.v1alpha1.CredentialRefB\x06\xbaH\x03\xc8\x01\x01R\bpassword\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reasonB\xff\x01\n" +

@@ -69,3 +69,33 @@ func TestDatabaseUserClosedLoopUsesOpenCatalog(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseReplayRefusesUnrecordedAuthenticationConfiguration(t *testing.T) {
+	c := databaseCase()
+	cluster, err := newCluster(c.Corpus.Open)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cluster.seedDatabases(c.Corpus.PhaseRecordings("open")); err != nil {
+		t.Fatal(err)
+	}
+	a := dbAction()
+	a.Target.Auth = &program.DatabaseAuth{Database: "admin", Username: program.CredentialRef{Env: "UNRECORDED_USERNAME"}, Password: program.CredentialRef{Env: "UNRECORDED_PASSWORD"}}
+	if _, err = cluster.DatabaseUsers(context.Background(), a.Target); err == nil {
+		t.Fatal("invented authentication capability")
+	}
+	a = dbAction()
+	a.Target.Shell = "mongosh"
+	if err = cluster.EnsureDatabaseUser(context.Background(), a); err == nil {
+		t.Fatal("invented shell capability")
+	}
+}
+
+func TestDatabaseProjectedCatalogAlsoClearsPromotedDetector(t *testing.T) {
+	p := databaseProgram{}
+	detector := program.DetectorFromProgram(p, func(sdk.DetectionContext) []program.Bindings { return []program.Bindings{{}} }, sdk.DetectorSpec{ID: "db-catalog", Class: sdk.DetectorClassIncident, Playbooks: []string{"database-user"}})
+	result := Check(context.Background(), p, p, []sdk.Detector{detector}, databaseCase())
+	if result.Status != "replayed" {
+		t.Fatalf("%+v", result)
+	}
+}

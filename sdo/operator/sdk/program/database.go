@@ -69,7 +69,7 @@ func (r CredentialRef) Validate() error {
 	return nil
 }
 func databaseNameValid(s string) bool {
-	return s != "" && !strings.ContainsAny(s, "/\\. \"$\x00\n\r\t") && !strings.HasPrefix(s, "-") && len(s) <= 63
+	return s != "" && !strings.ContainsAny(s, "/\\. \"$:\x00\n\r\t") && !strings.HasPrefix(s, "-") && len(s) <= 63
 }
 
 func (t DatabaseTarget) Validate() error {

@@ -31,12 +31,26 @@ func (v LiveReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Databas
 	if t.Pod.Namespace != v.Namespace() {
 		return nil, fmt.Errorf("database catalog outside snapshot namespace")
 	}
-	if _, err := v.Object(t.Pod); err != nil {
+	captured, err := v.Object(t.Pod)
+	if err != nil || captured == nil || captured.GetUID() == "" {
 		return nil, fmt.Errorf("database Pod absent from snapshot")
 	}
 	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
 	defer cancel()
-	return (TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig}).DatabaseUsers(ctx, t)
+	client := TypedPlanClient{Client: v.Client, ExecConfig: v.DatabaseExecConfig}
+	current, err := client.Get(ctx, t.Pod)
+	if err != nil || current == nil || current.GetUID() != captured.GetUID() {
+		return nil, fmt.Errorf("database Pod identity differs from snapshot")
+	}
+	users, err := client.DatabaseUsers(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	current, err = client.Get(ctx, t.Pod)
+	if err != nil || current == nil || current.GetUID() != captured.GetUID() {
+		return nil, fmt.Errorf("database Pod identity differs from snapshot")
+	}
+	return users, nil
 }
 
 func (v *cachedReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error) {
@@ -99,7 +113,7 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget, a 
 	if shell == "" {
 		shell = "mongo"
 	}
-	command := []string{shell, "--quiet", "--norc", t.Database, "--eval", mongoScript(t, a)}
+	command := []string{shell, "--quiet", "--norc", "--host", "127.0.0.1", "--port", "27017", "--eval", mongoScript(t, a)}
 	request := c.Client.CoreV1().RESTClient().Post().Resource("pods").Name(t.Pod.Name).Namespace(t.Pod.Namespace).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: t.Container, Command: command, Stdin: true, Stdout: a == nil, Stderr: false, TTY: false}, scheme.ParameterCodec)
 	config := rest.CopyConfig(c.ExecConfig)
 	executor, err := remotecommand.NewSPDYExecutor(config, "POST", request.URL())
@@ -114,6 +128,10 @@ func (c TypedPlanClient) mongo(ctx context.Context, t program.DatabaseTarget, a 
 	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: strings.NewReader(""), Stdout: stdout})
 	if err != nil {
 		return nil, fmt.Errorf("database operation failed or outcome unknown")
+	}
+	current, readErr := c.Get(ctx, t.Pod)
+	if readErr != nil || current == nil || current.GetUID() != object.GetUID() {
+		return nil, fmt.Errorf("database operation Pod identity changed")
 	}
 	return output.Bytes(), nil
 }

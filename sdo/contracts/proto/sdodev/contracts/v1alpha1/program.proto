@@ -282,36 +282,37 @@ message ReflectionEligibility {
 }
 
 message RemoveServicePort {
+  option (buf.validate.message).cel = {id: "service_port.identity" message: "select exactly one name or port; protocol requires a numeric port" expression: "(this.name != '') != (this.port != 0) && (this.name == '' || this.protocol == '')"};
   ObjectRef ref = 1 [(buf.validate.field).required = true];
   string name = 2;
-  int32 port = 3;
-  string protocol = 4;
+  int32 port = 3 [(buf.validate.field).int32 = {gte: 0, lte: 65535}];
+  string protocol = 4 [(buf.validate.field).string = {in: ["", "TCP", "UDP", "SCTP"]}];
   bool allow_empty = 5;
   string reason = 6;
 }
 message CredentialRef {
-  string env = 1 [(buf.validate.field).string.min_len = 1];
+  string env = 1 [(buf.validate.field).string = {min_len: 1, pattern: "^[A-Za-z_][A-Za-z0-9_]*$"}];
 }
 message DatabaseAuth {
-  string database = 1;
-  CredentialRef username = 2;
-  CredentialRef password = 3;
+  string database = 1 [(buf.validate.field).string.min_len = 1];
+  CredentialRef username = 2 [(buf.validate.field).required = true];
+  CredentialRef password = 3 [(buf.validate.field).required = true];
 }
 message DatabaseTarget {
-  string engine = 1;
-  ObjectRef pod = 2;
-  string container = 3;
-  string database = 4;
+  string engine = 1 [(buf.validate.field).string = {in: ["mongodb"]}];
+  ObjectRef pod = 2 [(buf.validate.field).required = true];
+  string container = 3 [(buf.validate.field).string.min_len = 1];
+  string database = 4 [(buf.validate.field).string.min_len = 1];
   DatabaseAuth auth = 5;
-  string shell = 6;
+  string shell = 6 [(buf.validate.field).string = {in: ["", "mongo", "mongosh"]}];
 }
 message DatabaseRole {
-  string database = 1;
-  string name = 2;
+  string database = 1 [(buf.validate.field).string.min_len = 1];
+  string name = 2 [(buf.validate.field).string.min_len = 1];
 }
 message EnsureDatabaseUser {
   DatabaseTarget target = 1 [(buf.validate.field).required = true];
-  string user = 2;
+  string user = 2 [(buf.validate.field).string.min_len = 1];
   repeated DatabaseRole roles = 3;
   CredentialRef password = 4 [(buf.validate.field).required = true];
   string reason = 5;

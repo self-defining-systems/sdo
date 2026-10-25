@@ -12,6 +12,7 @@ import (
 )
 
 type databaseFake struct {
+	replaceOnRead bool
 	*planFakeClient
 	users  []program.DatabaseUser
 	fail   bool
@@ -22,6 +23,11 @@ type databaseFake struct {
 func (c *databaseFake) DatabaseUsers(context.Context, program.DatabaseTarget) ([]program.DatabaseUser, error) {
 	if c.fail {
 		return nil, fmt.Errorf("canary-password")
+	}
+	if c.replaceOnRead && c.writes > 0 {
+		for _, object := range c.objects {
+			object.SetUID("replacement")
+		}
 	}
 	return program.NormalizeDatabaseUsers(c.users)
 }
@@ -39,18 +45,18 @@ func databaseAction() program.EnsureDatabaseUser {
 	return program.EnsureDatabaseUser{Target: program.DatabaseTarget{Engine: program.MongoDB, Pod: sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "database"}, Container: "mongo", Database: "app"}, User: "app", Roles: []program.DatabaseRole{{Database: "app", Name: "readWrite"}}, Password: program.CredentialRef{Env: "APP_PASSWORD"}}
 }
 func TestEnsureDatabaseUserProductionContract(t *testing.T) {
-	for _, mode := range []string{"missing", "revoked", "refused", "ignored"} {
+	for _, mode := range []string{"missing", "revoked", "refused", "ignored", "replaced"} {
 		t.Run(mode, func(t *testing.T) {
 			a := databaseAction()
 			ref := a.Target.Pod
 			object := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": map[string]any{"namespace": "app", "name": "database", "uid": "one", "resourceVersion": "1"}, "spec": map[string]any{"containers": []any{map[string]any{"name": "mongo"}}}}}
-			c := &databaseFake{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}, users: []program.DatabaseUser{{Name: "unrelated", Roles: []program.DatabaseRole{{Database: "admin", Name: "read"}}}}, fail: mode == "refused", ignore: mode == "ignored"}
+			c := &databaseFake{planFakeClient: &planFakeClient{objects: map[sdk.ObjectRef]*unstructured.Unstructured{ref: object}}, users: []program.DatabaseUser{{Name: "unrelated", Roles: []program.DatabaseRole{{Database: "admin", Name: "read"}}}}, fail: mode == "refused", ignore: mode == "ignored", replaceOnRead: mode == "replaced"}
 			if mode == "revoked" {
 				c.users = append(c.users, program.DatabaseUser{Name: "app"})
 			}
 			e := PlanExecutor{Client: c, Rollouts: &planFakeRollout{}, Verifier: planFakeVerifier{true}}
 			r, err := e.Apply(context.Background(), IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions"}, program.Plan{Actions: []program.Action{a}}, false)
-			if mode == "refused" || mode == "ignored" {
+			if mode == "refused" || mode == "ignored" || mode == "replaced" {
 				if mode == "ignored" && (len(r.ActionReports) != 1 || r.ActionReports[0].Status != "unknown") {
 					t.Fatalf("unconfirmed write lost unknown status: %+v", r.ActionReports)
 				}

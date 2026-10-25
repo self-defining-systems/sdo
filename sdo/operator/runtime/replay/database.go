@@ -13,9 +13,15 @@ type databaseCatalog struct {
 	users  []program.DatabaseUser
 }
 
-func databaseKey(t program.DatabaseTarget) string { raw, _ := json.Marshal(t); return string(raw) }
+func databaseKey(t program.DatabaseTarget) string {
+	t.Auth = nil
+	t.Shell = ""
+	raw, _ := json.Marshal(t)
+	return string(raw)
+}
 func (c *cluster) seedDatabases(calls []sdktest.PrimitiveCall) error {
 	c.catalogs = map[string]databaseCatalog{}
+	c.catalogConfigurations = map[string]program.DatabaseTarget{}
 	for _, call := range calls {
 		if call.Method != "DatabaseUsers" || call.Error != "" {
 			continue
@@ -45,6 +51,7 @@ func (c *cluster) seedDatabases(calls []sdktest.PrimitiveCall) error {
 			}
 		}
 		c.catalogs[key] = databaseCatalog{target: target, users: normalized}
+		c.catalogConfigurations[databaseConfigurationKey(target)] = target
 	}
 	return nil
 }
@@ -54,6 +61,9 @@ func (c *cluster) DatabaseUsers(ctx context.Context, t program.DatabaseTarget) (
 	}
 	if err := t.Validate(); err != nil {
 		return nil, err
+	}
+	if _, ok := c.catalogConfigurations[databaseConfigurationKey(t)]; !ok {
+		return nil, fmt.Errorf("database target auth/shell configuration was not recorded at open")
 	}
 	catalog, ok := c.catalogs[databaseKey(t)]
 	if !ok {
@@ -81,4 +91,12 @@ func (v *readView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUs
 		return v.catalog.DatabaseUsers(v.ctx, t)
 	}
 	return v.ReplayReadView.DatabaseUsers(t)
+}
+
+func databaseConfigurationKey(t program.DatabaseTarget) string {
+	if t.Shell == "" {
+		t.Shell = "mongo"
+	}
+	raw, _ := json.Marshal(t)
+	return string(raw)
 }
