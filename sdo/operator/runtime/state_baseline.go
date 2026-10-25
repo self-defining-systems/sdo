@@ -238,6 +238,28 @@ func (t *StateTracker) Observe(now time.Time, healthy bool) {
 	}
 }
 
+// BaselineAt exposes the exact clear observation adopted by Observe, so the
+// controller's replay capture and closure configuration diff share one boundary.
+func (t *StateTracker) BaselineAt() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.baseline == nil {
+		return time.Time{}
+	}
+	return t.baseline.at
+}
+
+// BaselineCandidateAt exposes the beginning of the next healthy settle
+// interval. Replay observations must be captured then, before any later fault.
+func (t *StateTracker) BaselineCandidateAt() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.candidate == nil {
+		return time.Time{}
+	}
+	return t.candidate.at
+}
+
 // Changes implements StateBaseline.
 func (t *StateTracker) Changes(now time.Time) *StateChanges {
 	t.mu.Lock()

@@ -58,7 +58,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		CredentialsSecret:     "agent-provider-credentials",
 		HealthyBaseline:       true,
 		LateFindingsConfigMap: "sdo-late-incident",
-		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged"},
+		Environment:           map[string]string{"SDO_ACTOR": "human", "SDO_PHASE": "initial", "SDO_BASE_COMMIT": "forged", "SDO_CAPTURED_CORPUS_DIR": "forged-capture", "SDO_HEALTHY_BASELINE": "forged-baseline"},
 	}
 	results := make(chan *contracts.AgentResult, 1)
 	errs := make(chan error, 1)
@@ -87,7 +87,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 	if container.WorkingDir != task.Workspace.CheckoutPath {
 		t.Fatalf("wrong working directory: %q", container.WorkingDir)
 	}
-	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/healthy-baseline"} {
+	for name, want := range map[string]string{"SDO_ACTOR": "responder", "SDO_PHASE": "reflection", "SDO_BASE_COMMIT": "abc", "SDO_HEALTHY_BASELINE": "/sdo/session/corpus/healthy", "SDO_CAPTURED_CORPUS_DIR": "/sdo/session/corpus"} {
 		found := 0
 		for _, env := range container.Env {
 			if env.Name == name {
@@ -102,6 +102,7 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 		}
 	}
 	foundSession := false
+	foundCorpus := false
 	repositoryVolumes := 0
 	for _, volume := range job.Spec.Template.Spec.Volumes {
 		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "repo" {
@@ -130,9 +131,13 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			}
 			continue
 		}
-		if mount.MountPath == "/sdo/healthy-baseline" {
-			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-baseline/healthy" {
-				t.Fatalf("baseline must be narrow and read-only: %+v", mount)
+		if mount.MountPath == "/sdo/healthy-baseline" || strings.Contains(mount.SubPath, ".sdo-baseline") {
+			t.Fatalf("reflection still depends on legacy caller baseline: %+v", mount)
+		}
+		if mount.MountPath == "/sdo/session/corpus" {
+			foundCorpus = true
+			if !mount.ReadOnly || mount.SubPath != "tenant/.sdo-runtime/sessions/incident-hash/corpus" {
+				t.Fatalf("controller corpus must be protected: %+v", mount)
 			}
 			continue
 		}
@@ -140,6 +145,9 @@ func TestKubernetesExecutorRunsRegisteredReflectionInPrivateCheckout(t *testing.
 			(mount.MountPath != task.Workspace.CheckoutPath || mount.SubPath != "tenant/proposals/reflection-1") {
 			t.Fatalf("repository mount leaks outside proposal checkout: %#v", mount)
 		}
+	}
+	if !foundCorpus {
+		t.Fatal("reflection has no read-only controller corpus projection")
 	}
 	if !foundSession {
 		t.Fatal("isolated incident session mount missing")

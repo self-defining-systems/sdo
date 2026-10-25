@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/outcome_derivation"
@@ -19,6 +20,14 @@ func (ProtoOutcomeDeriver) Derive(ctx context.Context, closure IncidentClosure, 
 	result, err := outcome_derivation.Derive(ctx, message, repairCommit, backend, model)
 	if err != nil {
 		return DerivedOutcome{}, err
+	}
+	// A failed global closure can still have a complete controller verify
+	// proving individual findings cleared. Preserve those actual evaluations
+	// (including peer fingerprints) for the shared publication validator.
+	if summary, _ := latestPartialVerification(result.Record); summary != nil {
+		for _, evaluation := range summary.Evaluations {
+			result.Record.DetectorHistory = append(result.Record.DetectorHistory, &contracts.DetectorEvaluation{DetectorId: evaluation.DetectorID, EvaluatedAt: timestamppb.New(evaluation.At), Status: string(evaluation.Status), Fingerprints: append([]string(nil), evaluation.Fingerprints...)})
+		}
 	}
 	return DerivedOutcome{Record: result.Record, RequiresReflection: result.RequiresReflection}, nil
 }

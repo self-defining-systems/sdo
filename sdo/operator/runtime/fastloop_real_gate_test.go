@@ -240,8 +240,30 @@ func fastloopGateIncident(t *testing.T, ctx context.Context, client *fake.Client
 	if err := controller.AttachStateStore(ctx, lifecycleio.NewConfigMapStateStore(client, "app", stateName)); err != nil {
 		t.Fatal(err)
 	}
+	// This fixture starts with the injected targetPort already in the fake
+	// API. Observe the actual healthy state before injecting it, so learned
+	// detector publication is checked against controller-owned evidence.
+	services, err := client.CoreV1().Services("app").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var injectedServices []corev1.Service
+	for _, service := range services.Items {
+		if (service.Name == "api" || service.Name == "peer") && service.Spec.Ports[0].TargetPort.IntVal == 9999 {
+			injectedServices = append(injectedServices, *service.DeepCopy())
+			service.Spec.Ports[0].TargetPort = intstr.FromInt32(8080)
+			if _, err := client.CoreV1().Services("app").Update(ctx, &service, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if err := controller.EvaluateAll(ctx, at.Add(-time.Second)); err != nil {
 		t.Fatal(err)
+	}
+	for _, service := range injectedServices {
+		if _, err := client.CoreV1().Services("app").Update(ctx, &service, metav1.UpdateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, setup := range configure {
 		setup(controller)
@@ -500,9 +522,18 @@ func (detector) Detect(context.Context,sdk.DetectionContext)([]sdk.Finding,error
 		}
 		fastloopWriteProgram(t, task.Workspace.CheckoutPath, captureDir, incidentID)
 		if recurrence {
-			// Fixtures retain session observations; controller captures are absent.
-			if err := os.RemoveAll(captureDir); err != nil {
+			// Positive corpus may come from session observations, but the
+			// independent controller healthy reference remains mandatory.
+			entries, err := os.ReadDir(captureDir)
+			if err != nil {
 				return nil, err
+			}
+			for _, entry := range entries {
+				if entry.Name() != "healthy" {
+					if err := os.RemoveAll(filepath.Join(captureDir, entry.Name())); err != nil {
+						return nil, err
+					}
+				}
 			}
 		}
 		response, err := anypb.New(&contracts.ReflectionResult{LearningDecision: "updated", ProposedArtifactIds: []string{"service-targetport-mismatch"}})

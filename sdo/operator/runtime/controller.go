@@ -73,6 +73,11 @@ type Controller struct {
 	history     []DetectorEvaluation
 	drift       *DriftControllerConfig
 	driftEvents []sdk.DriftEvent
+	// Healthy capture state shares the observation loop's serialization.
+	healthyMemoryCaptured   bool
+	healthyMemoryBaselineAt time.Time
+	healthyMemoryReference  string
+	healthyMemoryCandidates map[time.Time]string
 	// routingSweeps tracks background open@detect routing sweeps so tests can
 	// join them before removing the capture directory.
 	routingSweeps     sync.WaitGroup
@@ -385,9 +390,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if c.OnEvaluation != nil {
 			c.OnEvaluation(sampleFindings)
 		}
+		healthy := !errored && c.quiet() && c.completeHealthyEvaluation()
 		if c.Baseline != nil {
-			c.Baseline.Observe(now, !errored && c.quiet())
+			c.Baseline.Observe(now, healthy)
 		}
+		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
 	}
 	if c.adoptionNeeded {
 		c.mu.Lock()
@@ -539,6 +546,9 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	request := c.incidentRequest(now, batch)
 	request.ObservationGeneration = observationGeneration(snapshot)
 	if c.config.CorpusSessionRoot != "" {
+		if err := c.bindIncidentHealthyBaseline(request.IncidentID); err != nil {
+			c.reportHealthyCaptureError(err)
+		}
 		c.captureOpenDetect(ctx, snapshot, request)
 	}
 	if c.Baseline != nil {

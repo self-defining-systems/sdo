@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,6 +30,12 @@ func TestReadmeOnlyVerifiedReflectionIsRejectedAndRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	outcome := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "first", Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Summary: "routing fault", Resources: []*contracts.ObjectRef{t1Ref("api")}}}}
+	// The publication obligation applies to an independently repaired opening
+	// finding, not merely to a responder claim in an overall successful result.
+	at := time.Unix(100, 0)
+	outcome.Findings = []*contracts.Finding{{DetectorId: "routing", RuleId: "target-port", Status: "active", Severity: "critical", Summary: "synthetic routing fault", Evidence: "synthetic independent opening observation", PrimaryResource: t1Ref("api"), Fingerprint: "routing/api"}}
+	outcome.RepairActions = []*contracts.RepairActionReceipt{{ActionId: "sdo-act-repair", Kind: "kubectl-patch", Target: "Service/app/api", Summary: "restore target port", Details: "synthetic controller receipt", Success: true, Resources: []*contracts.ObjectRef{t1Ref("api")}, StartedAt: timestamppb.New(at), CompletedAt: timestamppb.New(at.Add(time.Second))}}
+	outcome.FinalHealthDetectorState = []*contracts.DetectorEvaluation{{DetectorId: "routing", Status: "clear", EvaluatedAt: timestamppb.New(at.Add(2 * time.Second))}}
 	accepted, err := repository.RecordOutcome(context.Background(), "first", outcome)
 	if err != nil {
 		t.Fatal(err)
