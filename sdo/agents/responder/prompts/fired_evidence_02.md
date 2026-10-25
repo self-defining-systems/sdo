@@ -1,1 +1,0 @@
-- `${path}`: the finding(s) ${findings} come from its validated incident detector. That evidence supports the playbook's preconditions. Check them against accepted source and intended behavior. Confirm the specific finding evidence is still live (for example the missing resource is still absent and the affected workload still fails).

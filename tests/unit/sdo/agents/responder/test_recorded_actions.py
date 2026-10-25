@@ -22,11 +22,13 @@ from hypothesis import strategies as st
 
 from benchmarks.sregym.protocol import validate_production_receipt
 from sdo.agents.responder import recorded_actions, tools_cli
-from sdo.agents.responder.codex import ResponderExecutionError, _responder_prompt, execute_incident
+from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
+from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.reflection_brief import responder_shell_commands
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
+from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -188,6 +190,17 @@ def test_act_warns_about_a_kubectl_object_no_resource_covers(
     assert "svc/geo" in stderr
     assert "deploy/api" not in stderr
     assert len(_recorded(scratch)) == 1
+
+
+def test_undecodable_redacted_command_is_rejected_before_execution(scratch: Path, tmp_path: Path) -> None:
+    marker = tmp_path / "executed"
+    command = tmp_path / "secret-command"
+    command.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\n", encoding="utf-8")
+    command.chmod(0o755)
+    with pytest.raises(ValueError, match="cannot record an invalid repair receipt"):
+        recorded_actions.run_and_record([str(command), "\udc80"], [recorded_actions.resource_ref("Deployment/app/api")])
+    assert not marker.exists()
+    assert not recorded_actions.actions_path().exists()
 
 
 def test_act_withholds_the_command_line_when_a_secret_is_involved(scratch: Path) -> None:
@@ -397,13 +410,13 @@ def test_a_receipt_the_model_returns_never_replaces_a_recorded_one(scratch: Path
     assert [action.action_id for action in completed.repair_actions][: len(model_ids)] == model_ids
 
 
-def test_prompt_routes_mutations_through_act_and_leaves_receipts_to_it() -> None:
+def test_prompt_routes_mutations_through_the_recorder_and_leaves_receipts_to_it() -> None:
     prompt = _responder_prompt(_request())
-
-    assert "sdo act" in prompt
-    assert "The recorder supplies receipts; do not hand-write them" in prompt
-    assert "repair-actions" not in prompt
-    assert "parameterized script" not in prompt
+    assert "sdo-incident-response/SKILL.md" in prompt
+    workflow = (SKILLS_ROOT / "sdo-incident-response/SKILL.md").read_text(encoding="utf-8")
+    assert "Use recorded actions for live mutations" in workflow
+    assert "declare every changed resource" in workflow
+    assert "never hand-write receipts" in workflow
 
 
 def test_the_prompt_example_is_a_command_the_cli_accepts() -> None:

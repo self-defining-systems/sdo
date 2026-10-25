@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.sregym.adapter.runtime import _responder_instructions
 from sdo.agents.deployer import worker
 from sdo.agents.lifecycle.agents import (
     ActiveTopologyResourceDTO,
@@ -20,6 +21,7 @@ from sdo.agents.lifecycle.agents import (
 from sdo.agents.responder import codex, reflection
 from sdo.agents.responder.codex import _responder_prompt
 from sdo.agents.responder.continuation import continuation_prompt
+from sdo.agents.responder.incident_context import prepared_incident_data
 from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_brief import incident_brief
 from sdo.agents.responder.session_recovery import SessionRecovery
@@ -144,6 +146,11 @@ def incident(
     return request
 
 
+def responder_prompt(request: IncidentRequest) -> str:
+    with prepared_incident_data(request) as data:
+        return _responder_prompt(request, incident_data=data)
+
+
 class ReflectionCapture:
     def __init__(self) -> None:
         self.prompt = ""
@@ -223,7 +230,7 @@ def rendered_cases() -> dict[str, str]:
             "oversized": incident(5, oversized=True),
             "warm_oversized": incident(warm=True, oversized=True),
         }.items():
-            prompts[f"responder_{name}"] = _responder_prompt(request)
+            prompts[f"responder_{name}"] = responder_prompt(request)
         matched = incident(5, warm=True)
         matched.initial_program_runs.add(
             program_id="repair-0",
@@ -231,10 +238,26 @@ def rendered_cases() -> dict[str, str]:
             verdict={"result": "RESULT_MATCH"},
         )
         matched.initial_program_runs.add(program_id="unrelated", verdict={"result": "RESULT_NO_MATCH"})
-        prompts["responder_matched_programs"] = _responder_prompt(matched)
+        match = matched.playbook_coverage.matches.add(
+            playbook_id="repair-0",
+            program_revision="d" * 40,
+            can_mitigate=True,
+            mitigation_selection="restore-port",
+            verified_successes=2,
+            verified_failures=1,
+            explained_finding_fingerprints=["fingerprint-0"],
+        )
+        match.bindings.add(name="service").object.CopyFrom(matched.findings[0].primary_resource)
+        matched.playbook_coverage.unexplained_finding_fingerprints.extend(
+            finding.fingerprint for finding in matched.findings[1:]
+        )
+        prompts["responder_matched_programs"] = responder_prompt(matched)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
         patch.setenv("SDO_LATE_FINDINGS", "pull")
-        prompts["responder_optional"] = _responder_prompt(incident())
+        prompts["responder_optional"] = responder_prompt(incident())
+        patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
+        prompts["responder_transport"] = responder_prompt(incident())
+        patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
         for mode in ("resume", "fresh", "retry"):
             for count in (2, 5):

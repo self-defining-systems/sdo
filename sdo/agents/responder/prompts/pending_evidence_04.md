@@ -1,1 +1,0 @@
- Run `${script}` inside that check with the incident's values; a verify script is expected to fail before the repair, and its failure must point at the playbook's fault.

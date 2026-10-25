@@ -198,6 +198,15 @@ def reset_environment(
     health = worker.request("health", namespace=environment.namespace, timeout=60)
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
-    oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, timeout=60)
+    oracle = worker.request("baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200)
     if not oracle.get("success"):
-        raise RuntimeError(f"reset left the fault oracle failing for {environment.deploy_problem}: {oracle}")
+        refreshed = worker.request("refresh_baseline_clients", problem_id=environment.deploy_problem, timeout=120)
+        if refreshed.get("success") is not True:
+            raise RuntimeError(
+                f"reset client refresh failed for {environment.namespace}: {refreshed}; traffic: {oracle}"
+            )
+        oracle = worker.request(
+            "baseline_oracle", problem_id=environment.deploy_problem, verify_traffic=True, timeout=200
+        )
+        if not oracle.get("success"):
+            raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")
