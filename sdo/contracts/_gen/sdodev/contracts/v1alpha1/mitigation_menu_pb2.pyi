@@ -107,6 +107,33 @@ class MitigationSelection(_message.Message):
     round_limit: int
     def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., dispatch_epoch: _Optional[int] = ..., request_id: _Optional[str] = ..., menu_id: _Optional[str] = ..., option_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., dependency_revision: _Optional[str] = ..., source_commit: _Optional[str] = ..., scope_digest: _Optional[str] = ..., policy_digest: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., round_limit: _Optional[int] = ...) -> None: ...
 
+class MitigationSelectionSet(_message.Message):
+    __slots__ = ("version", "options")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    OPTIONS_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    options: _containers.RepeatedCompositeFieldContainer[MitigationOptionSelection]
+    def __init__(self, version: _Optional[int] = ..., options: _Optional[_Iterable[_Union[MitigationOptionSelection, _Mapping]]] = ...) -> None: ...
+
+class MitigationOptionSelection(_message.Message):
+    __slots__ = ("option_id", "bindings", "parameters", "finding_fingerprints")
+    class ParametersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    OPTION_ID_FIELD_NUMBER: _ClassVar[int]
+    BINDINGS_FIELD_NUMBER: _ClassVar[int]
+    PARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    option_id: str
+    bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
+    parameters: _containers.ScalarMap[str, str]
+    finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, option_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., parameters: _Optional[_Mapping[str, str]] = ..., finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
+
 class MitigationReportQuery(_message.Message):
     __slots__ = ("version", "incident_id", "session_id", "dispatch_epoch", "attempt_id")
     VERSION_FIELD_NUMBER: _ClassVar[int]
@@ -122,7 +149,7 @@ class MitigationReportQuery(_message.Message):
     def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., dispatch_epoch: _Optional[int] = ..., attempt_id: _Optional[str] = ...) -> None: ...
 
 class MitigationReport(_message.Message):
-    __slots__ = ("version", "incident_id", "session_id", "request_id", "attempt_id", "acceptance_epoch", "status", "failed_phase", "rounds", "barriers", "remaining_batches", "residuals", "reason_code", "writes_frozen")
+    __slots__ = ("version", "incident_id", "session_id", "request_id", "attempt_id", "acceptance_epoch", "status", "failed_phase", "rounds", "barriers", "remaining_batches", "residuals", "reason_code", "writes_frozen", "option_id", "application_id")
     class Status(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         STATUS_UNSPECIFIED: _ClassVar[MitigationReport.Status]
@@ -157,6 +184,8 @@ class MitigationReport(_message.Message):
     RESIDUALS_FIELD_NUMBER: _ClassVar[int]
     REASON_CODE_FIELD_NUMBER: _ClassVar[int]
     WRITES_FROZEN_FIELD_NUMBER: _ClassVar[int]
+    OPTION_ID_FIELD_NUMBER: _ClassVar[int]
+    APPLICATION_ID_FIELD_NUMBER: _ClassVar[int]
     version: int
     incident_id: str
     session_id: str
@@ -171,7 +200,9 @@ class MitigationReport(_message.Message):
     residuals: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
     reason_code: str
     writes_frozen: bool
-    def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., request_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., acceptance_epoch: _Optional[int] = ..., status: _Optional[_Union[MitigationReport.Status, str]] = ..., failed_phase: _Optional[str] = ..., rounds: _Optional[_Iterable[_Union[MitigationRoundReport, _Mapping]]] = ..., barriers: _Optional[_Iterable[_Union[MitigationBarrier, _Mapping]]] = ..., remaining_batches: _Optional[int] = ..., residuals: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., reason_code: _Optional[str] = ..., writes_frozen: _Optional[bool] = ...) -> None: ...
+    option_id: str
+    application_id: str
+    def __init__(self, version: _Optional[int] = ..., incident_id: _Optional[str] = ..., session_id: _Optional[str] = ..., request_id: _Optional[str] = ..., attempt_id: _Optional[str] = ..., acceptance_epoch: _Optional[int] = ..., status: _Optional[_Union[MitigationReport.Status, str]] = ..., failed_phase: _Optional[str] = ..., rounds: _Optional[_Iterable[_Union[MitigationRoundReport, _Mapping]]] = ..., barriers: _Optional[_Iterable[_Union[MitigationBarrier, _Mapping]]] = ..., remaining_batches: _Optional[int] = ..., residuals: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., reason_code: _Optional[str] = ..., writes_frozen: _Optional[bool] = ..., option_id: _Optional[str] = ..., application_id: _Optional[str] = ...) -> None: ...
 
 class MitigationRoundReport(_message.Message):
     __slots__ = ("round_index", "round_id", "actions", "diagnosis", "verification", "barrier_ids", "independently_healthy", "original_findings_clear")

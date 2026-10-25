@@ -62,6 +62,30 @@ type KubernetesPlanRollouts struct {
 	Client kubernetes.Interface
 }
 
+// Observe checks touched Deployments once. Pending never consumes a rollout wait.
+func (w KubernetesPlanRollouts) Observe(ctx context.Context, refs []sdk.ObjectRef) error {
+	if w.Client == nil {
+		return errors.New("Kubernetes rollout client is required")
+	}
+	var blockers []*contracts.RolloutBlocker
+	for _, ref := range refs {
+		if ref.Kind != "Deployment" || ref.APIVersion != "apps/v1" {
+			continue
+		}
+		object, err := w.Client.AppsV1().Deployments(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("observe rollout %s/%s: %w", ref.Namespace, ref.Name, err)
+		}
+		if !deployment.DeploymentRolloutComplete(object) {
+			blockers = append(blockers, w.rolloutBlocker(ctx, object))
+		}
+	}
+	if len(blockers) > 0 {
+		return &rolloutBlockedError{blockers: blockers, cause: context.DeadlineExceeded}
+	}
+	return nil
+}
+
 func (w KubernetesPlanRollouts) Wait(ctx context.Context, refs []sdk.ObjectRef) error {
 	if w.Client == nil {
 		return errors.New("Kubernetes rollout client is required")

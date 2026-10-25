@@ -32,6 +32,7 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
+	SelectionSet        *contracts.MitigationSelectionSet      `json:"-"`
 	WaitSeconds         float64                                `json:"wait_seconds,omitempty"`
 	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
 	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
@@ -50,6 +51,7 @@ type ToolRequest struct {
 }
 
 type ToolResponse struct {
+	OptionReports              []*contracts.MitigationReport  `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker    `json:"unexplained_removal_blockers,omitempty"`
 	BeforeFindings             []sdk.Finding                  `json:"before_findings,omitempty"`
 	ControllerFindings         []sdk.Finding                  `json:"controller_findings,omitempty"`
@@ -126,6 +128,7 @@ type selectedPlan struct {
 
 // ResponderLoop holds one incident's tool state while its responder Job runs.
 type ResponderLoop struct {
+	pendingWrites     map[string]pendingMitigation
 	MutationGate      *apihistory.MutationGate
 	Now               func() time.Time
 	CachedFindings    func() ToolResponse
@@ -275,6 +278,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			l.Request.DriftEvents = append([]sdk.DriftEvent(nil), current.DriftEvents...)
 		}
 	}
+	if len(l.pendingWrites) > 0 {
+		l.settlePending(ctx)
+	}
 	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.batchLimit(),
 		MitigationRoundsUsed: l.batches, MitigationRoundsAllowed: l.batchLimit(), ResponseLoopsUsed: l.continuation.Attempts, ResponseLoopsAllowed: l.MaxBatches}
 	if l.Request.MaxResponseLoops > 0 {
@@ -357,7 +363,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.Error = err.Error()
 			break
 		}
-		l.mitigateMenu(ctx, request.Selection, request.Parameters, request.FindingFingerprints, &response)
+		l.mitigateSelection(ctx, request, &response)
 	case "session-open":
 		l.openMenuSession(ctx, &response)
 	case "session-checkpoint":
@@ -448,6 +454,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.TargetedHealthy = result.VerificationPassed
 		}
 	case "pre-apply":
+		if l.pendingConflict(request.Refs, &response) {
+			break
+		}
 		if l.CachedFindings != nil {
 			response.Findings = l.CachedFindings().Findings
 		}
@@ -800,6 +809,14 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
 
+	refs, refErr := l.menuPlanWriteRefs(batch)
+	if len(l.pendingWrites) > 0 && refErr != nil {
+		l.refuseSelection(response, "write_set_unknown", refErr.Error())
+		return
+	}
+	if l.pendingConflict(refs, response) {
+		return
+	}
 	// A missing capture is an evidence gap; it must not block the repair.
 	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
 	l.batches++
@@ -816,8 +833,12 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		return
 	}
 	executor := l.Executor
+	executor.PollRollouts = true
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
 	completed := time.Now().UTC()
+	if result.RolloutPending != nil {
+		l.reservePending(id, batch, "", "", program.Bindings{}, request.FindingFingerprints)
+	}
 	if result.Applied || result.PendingAction != nil {
 		l.applications[id] = result
 		response.ApplicationID = id
@@ -863,7 +884,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	entry.Result = result
 	entry.CompletedAt = completed
-	entry.Pending = result.PendingAction != nil || result.RollingBack
+	entry.Pending = planApplicationPending(result)
 	entry.RolledBack = result.RolledBack
 	entry.RollbackError = result.RollbackError
 	entry.Error = response.Error
@@ -1030,6 +1051,9 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 		response.Error = fmt.Sprintf("unknown application %q", request.ApplicationID)
 		return
 	}
+	if l.pendingConflict(planCaptureRefs(application.Plan), response) {
+		return
+	}
 	executor := l.Executor
 	reconciled, err := executor.Reconcile(ctx, application)
 	if err != nil {
@@ -1046,6 +1070,7 @@ func (l *ResponderLoop) rollbackApplication(ctx context.Context, request ToolReq
 	for i := range l.applicationsLog {
 		if l.applicationsLog[i].ID == request.ApplicationID {
 			l.applicationsLog[i].Result = application
+			l.applicationsLog[i].Pending = planApplicationPending(application)
 			l.applicationsLog[i].RolledBack = application.RolledBack
 			l.applicationsLog[i].RollbackError = application.RollbackError
 		}

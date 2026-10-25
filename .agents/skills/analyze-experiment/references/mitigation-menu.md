@@ -3,9 +3,35 @@
 The menu is a convenience over direct commands. The controller enables it with
 `SDO_RESPONDER_MENU=1`; unset or `0` leaves it off. `menu` lists accepted Mitigators
 with declared object/value parameters and registered raw actions as one-action plans.
-`mitigate OPTION [--NAME VALUE ...] [--rounds N]` uses the ordinary PlanExecutor,
+`mitigate OPTION [--NAME VALUE ...] [--rounds N]` and multi-option calls use the ordinary PlanExecutor,
 existing controller RBAC and always-on executor checks. There are no menu-specific
 selection-ledger, fencing, quiescence, provenance, health-reader or credential-delta gates.
+
+## Multiple options and pending rollouts
+
+Several independent options can be applied in one call with repeated `--option ID`
+followed by each option's `--param NAME=VALUE`, or `--selection-set FILE`.
+The version 1 `MitigationSelectionSet` contains `options`, each with `option_id`,
+`bindings`, `parameters` and `finding_fingerprints`. The controller prepares all
+options before writes. Same-object write sets are refused together with typed
+`write_set_conflict` naming both options and the object; no option is half-applied
+because of a detected conflict. One selection set consumes one mitigation round.
+Each option still uses ordinary ownership, identity and conditional-write checks.
+
+Responses retain `option_reports` in selection order, a combined `report`, and
+per-option `report.execution` rows. Option reports identify `option_id` and
+`application_id`; action receipts retain their existing typed effect states.
+A selection set's two program applications are two attribution records and one
+round, not two incidents. Execution failures after successful preflight remain
+per-option outcomes; independent applied fixes are left for the responder to assess.
+
+Menu mitigation and ordinary plan apply observe rollout once and return
+`rollout_pending` plus application identity while it settles. Read-only tools
+continue serving. `pending_write_conflict` refuses later mutations touching a
+reserved object, while disjoint targets remain available. Reservations survive
+controller restart as observation state, without restoring write/rollback authority.
+Fresh tool observations release settled reservations and update in-process reports;
+pending is never independent repair or incident closure evidence.
 
 ## Reports and incident evidence
 

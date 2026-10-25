@@ -208,6 +208,36 @@ func fastloopPodWaiting(t *testing.T, ctx context.Context, client *fake.Clientse
 	}
 }
 
+// Full command reports retain the original controller response under actions[].
+// Read that complete typed output for assertions; summaries are presentation only.
+func fullToolAction(t *testing.T, encoded []byte) []byte {
+	t.Helper()
+	var envelope struct {
+		DetailsFile string            `json:"details_file"`
+		Actions     []json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.DetailsFile != "" {
+		data, err := os.ReadFile(envelope.DetailsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = json.Unmarshal(data, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Remove(envelope.DetailsFile) })
+	}
+	if envelope.Actions != nil {
+		if len(envelope.Actions) != 1 {
+			t.Fatalf("one invocation must retain one complete raw controller response, got %d", len(envelope.Actions))
+		}
+		return envelope.Actions[0]
+	}
+	return encoded
+}
+
 func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -249,26 +279,27 @@ func fastloopTool(t *testing.T, directory string, args ...string) ToolResponse {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Remove(detailsFile) })
-		encoded = fullCommandReportPayload(t, encoded)
+		encoded = fullToolAction(t, encoded)
 		var full ToolResponse
 		if err := json.Unmarshal(encoded, &full); err != nil {
 			t.Fatal(err)
 		}
-		if full.Healthy && !strings.Contains(string(output), "healthy=true") && !strings.Contains(string(output), "Incident: NOT verified") && !strings.Contains(string(output), "Incident: verified") {
+		mutation := args[0] == "mitigate" || args[0] == "apply" || args[0] == "act"
+		if mutation {
+			if len(output) > 2048 {
+				t.Fatalf("mutation summary exceeds 2KiB: %d bytes", len(output))
+			}
+			if !strings.Contains(string(output), "Incident:") || !strings.Contains(string(output), "incident_verified:") {
+				t.Fatal("mutation summary omitted closure status")
+			}
+			if full.IncidentVerified == nil && !strings.Contains(string(output), "Incident: NOT verified") {
+				t.Fatal("action health was promoted to incident closure")
+			}
+		} else if full.Healthy && !strings.Contains(string(output), "healthy=true") {
 			t.Fatal("compact output omitted verified health")
 		}
 	}
-	var envelope struct {
-		DetailsFile string `json:"details_file"`
-	}
-	if json.Unmarshal(encoded, &envelope) == nil && envelope.DetailsFile != "" {
-		encoded, err = os.ReadFile(envelope.DetailsFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.Remove(envelope.DetailsFile) })
-	}
-	encoded = fullCommandReportPayload(t, encoded)
+	encoded = fullToolAction(t, encoded)
 	if err := json.Unmarshal(encoded, &response); err != nil {
 		t.Fatalf("decode sdo %v: %v: stdout: %s; stderr: %s", args, err, output, stderr.String())
 	}

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from sdo.agents.responder import recorded_actions
-from sdo.agents.responder.mutation_output import compact_mutation_envelope, format_mutation_response
+from sdo.agents.responder.mutation_output import compact_mutation_envelope
 from sdo.agents.responder.tool_output import render_summary, write_response
 
 PLAN_ACTIONS = (
@@ -43,6 +43,36 @@ def _binding(value: str) -> tuple[str, str]:
         raise argparse.ArgumentTypeError("binding must be name=Kind/namespace/name")
     # Go owns object-reference parsing and API-version resolution.
     return name, target
+
+
+class _OptionArgument(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        groups = list(getattr(namespace, "option_groups", None) or [])
+        groups.append({"option_id": values, "parameters": {}})
+        namespace.option_groups = groups
+
+
+class _OptionParameter(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        groups = getattr(namespace, "option_groups", None)
+        if groups:
+            if not isinstance(values, tuple):
+                raise argparse.ArgumentError(self, "parameter must be NAME=VALUE")
+            name, value = values
+            if name in groups[-1]["parameters"]:
+                parser.error("duplicate parameter name for option")
+            groups[-1]["parameters"][name] = value
+        else:
+            namespace.param = [*getattr(namespace, "param", []), values]
+
+
+class _OptionFinding(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        groups = getattr(namespace, "option_groups", None)
+        if groups:
+            groups[-1].setdefault("finding_fingerprints", []).append(values)
+        else:
+            namespace.finding = [*getattr(namespace, "finding", []), values]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -102,23 +132,40 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("apply", help="apply a previously planned repair").add_argument("plan_ids", nargs="+")
     mitigate = commands.add_parser(
         "mitigate",
-        help="run a program or one-action plan; show progress and a complete JSON report",
+        help="apply several independent options in one call; overlapping options refused; show progress and full JSON",
         description=(
-            "Run an option with --NAME VALUE parameters. Read the typed report before trying another option. "
+            "Apply several independent options in one call; overlapping object write sets are refused before writes. "
+            "Use repeated --option ID followed by that option's --param NAME=VALUE, or --selection-set FILE "
+            "with version 1 and options [{option_id, bindings, parameters, finding_fingerprints}]. "
+            "Each option has its own receipt; one call uses one round. Pending rollout returns its application ID "
+            "and read-only tools remain available. A single option also accepts --NAME VALUE parameters. "
             "Uses the ordinary executor and controller RBAC; up to five rounds per incident."
         ),
     )
     mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")
     mitigate.add_argument(
         "--finding",
-        action="append",
+        action=_OptionFinding,
         default=[],
         metavar="FINGERPRINT",
         help="target finding fingerprint; repeat for each intended finding",
     )
     mitigate.add_argument("--rounds", type=int, help="maximum rounds within the remaining incident allowance")
     mitigate.add_argument("--selection", type=Path, metavar="FILE")
-    mitigate.add_argument("--param", action="append", type=_binding, default=[], metavar="NAME=VALUE")
+    mitigate.add_argument(
+        "--selection-set",
+        type=Path,
+        metavar="FILE",
+        help="version 1 selection set with per-option bindings and parameters",
+    )
+    mitigate.add_argument(
+        "--option",
+        action=_OptionArgument,
+        dest="option_groups",
+        metavar="ID",
+        help="independent option ID; repeat, with per-option --param arguments",
+    )
+    mitigate.add_argument("--param", action=_OptionParameter, type=_binding, default=[], metavar="NAME=VALUE")
     report = commands.add_parser("report", help="retrieve a settled mitigation report")
     report.add_argument("attempt_id")
     report.add_argument("--incident-id", required=True)
@@ -193,6 +240,7 @@ def command_surface() -> dict[str, object]:
             name: " ".join(command.format_usage().removeprefix("usage: ").split())
             for name, command in subcommands.choices.items()
         },
+        "mitigation": subcommands.choices["mitigate"].description,
         "output": "Full JSON: path retains complete evidence. Mutations print progress and the file schema; "
         "--json keeps mutations compact and prints other complete responses. Extract needed fields.",
     }
@@ -218,6 +266,23 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
                 raise ValueError("duplicate binding name")
             request["bindings"] = bindings
     elif args.command == "mitigate":
+        groups = getattr(args, "option_groups", None)
+        selection_set = getattr(args, "selection_set", None)
+        if groups or selection_set:
+            if (
+                args.selection
+                or args.option
+                or (groups and selection_set)
+                or args.param
+                or getattr(args, "named_parameters", None)
+                or args.finding
+                or args.rounds not in (None, 1)
+            ):
+                raise ValueError("choose repeated options or a selection set; batch inputs belong to each option")
+            request["selection_set"] = (
+                _selection_set(selection_set) if selection_set else {"version": 1, "options": groups}
+            )
+            return request
         if bool(args.selection) == bool(args.option):
             raise ValueError("choose an option or a selection file")
         parameters = dict(args.param)
@@ -283,6 +348,19 @@ def _option_selection(args: argparse.Namespace, parameters: dict[str, str]) -> d
     return selection
 
 
+def _selection_set(path: Path) -> dict[str, object]:
+    from google.protobuf.json_format import ParseError
+
+    from sdo.contracts import MitigationSelectionSet, parse_json, to_canonical_json, validate
+
+    try:
+        selection = parse_json(path.read_text(encoding="utf-8"), MitigationSelectionSet())
+        validate(selection)
+    except (OSError, UnicodeError, ValueError, ParseError) as exc:
+        raise ValueError("invalid version 1 mitigation selection set") from exc
+    return json.loads(to_canonical_json(selection))
+
+
 def _selection(path: Path) -> dict[str, object]:
     # Keep help and all existing tools independent of protobuf startup costs.
     from google.protobuf.json_format import ParseError
@@ -328,6 +406,10 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
     raise TimeoutError("SDO tool response timed out")
 
 
+class _PendingMutationConflict(ValueError):
+    pass
+
+
 def _act(args: argparse.Namespace) -> int:
     command = args.act_command[1:] if args.act_command[:1] == ["--"] else args.act_command
     try:
@@ -341,8 +423,13 @@ def _act(args: argparse.Namespace) -> int:
                 {"command": "pre-apply", "refs": args.resource},
                 Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
             )
+            report = response.get("report")
+            if isinstance(report, dict) and report.get("reason_code") == "pending_write_conflict":
+                raise _PendingMutationConflict(str(response.get("error", "mutation overlaps a pending application")))
             if response.get("error"):
                 raise ValueError(str(response["error"]))
+        except _PendingMutationConflict:
+            raise
         except (OSError, ValueError, TimeoutError) as exc:
             print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
 
@@ -390,7 +477,9 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
         after = response.get(
             "controller_findings", response.get("findings", response.get("mitigation_health", {}).get("findings", []))
         )
-        text, path = format_mutation_response(before, after, [response], json_output=full_json)
+        from sdo.agents.responder.multi_output import format_selection_response
+
+        text, path = format_selection_response(before, after, response, json_output=full_json)
         if full_json:
             # JSON callers receive the same bounded summary and discoverable schema.
             print(
