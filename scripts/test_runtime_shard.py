@@ -20,6 +20,7 @@ INTEGRATION = (
     "TestRestartClassHermetic",
     "TestReflectionDirectFilesCLIAndBroker",
     "TestReflectionLearnedProgramCLIAndBroker",
+    "TestT1ScriptedBrokerMatrix",
     "TestRenderedLockImageInputScope",
     "TestExhaustiveReflectionLifecycle",
     "TestSimSchedule",
