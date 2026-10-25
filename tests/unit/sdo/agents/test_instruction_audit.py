@@ -100,3 +100,17 @@ def test_checker_resolves_skill_paths_under_dynamic_install_root() -> None:
     catalogs = check.catalogs(ROOT)
     assert check.check_text("{SKILLS_ROOT}/sdo-missing/SKILL.md", catalogs)
     assert not check.check_text("../sdo-memory/SKILL.md", catalogs)
+
+
+def test_extract_counts_overflow_incident_summary_as_data(tmp_path: Path) -> None:
+    extract = load("extract_prompt")
+    data = 'Incident request summary:\n{"finding_count":5}\nFull incident facts: /tmp/private-facts.json\n'
+    row = {
+        "type": "response_item",
+        "payload": {"type": "message", "role": "user", "content": "Check live state.\n" + data},
+    }
+    path = tmp_path / "overflow.jsonl"
+    path.write_text(json.dumps(row), encoding="utf-8")
+    report = extract.extract(path)
+    assert report["sizes"]["our_instructions"] == len("Check live state.\n")
+    assert report["sizes"]["request_data"] == len(data)
