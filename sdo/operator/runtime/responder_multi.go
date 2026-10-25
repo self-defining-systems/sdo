@@ -406,3 +406,25 @@ func mergeMitigationStatus(combined, part *contracts.MitigationReport) {
 		combined.ReasonCode = part.ReasonCode
 	}
 }
+
+// RefreshPendingMitigations performs observation only. The controller may call
+// it between tool requests so a silent responder cannot leave settled targets
+// reserved. Busy tools and persistence failures remain pending conservatively.
+func (l *ResponderLoop) RefreshPendingMitigations(ctx context.Context) bool {
+	if !l.operationMu.TryLock() {
+		return true
+	}
+	defer l.operationMu.Unlock()
+	if !l.mu.TryLock() {
+		return true
+	}
+	defer l.mu.Unlock()
+	if len(l.pendingWrites) == 0 {
+		return false
+	}
+	l.settlePending(ctx)
+	if err := l.persistToolState(ctx); err != nil {
+		return true
+	}
+	return len(l.pendingWrites) > 0
+}
