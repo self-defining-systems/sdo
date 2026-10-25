@@ -51,7 +51,10 @@ from agentshim import (
     TokenUsage,
     ToolCall,
     TurnRequest,
+    cost_usd,
+    default_pricing,
     normalized_usage,
+    price_for,
 )
 from agentshim.providers.codex import install_rules
 
@@ -277,11 +280,7 @@ def run_structured_turn(
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
 
     structured_output: object = result.structured_output
-    if not isinstance(structured_output, dict):
-        raise StructuredTurnError(f"{provider} turn returned no structured output")
-    session_id = result.session_id or resume_session_id
-    if not session_id:
-        raise StructuredTurnError(f"{provider} turn did not report a session id")
+    session_id = result.session_id or resume_session_id or ""
     model_requests: int | None = None
     model_requests_source: str | None = None
     usage = result.usage
@@ -308,7 +307,13 @@ def run_structured_turn(
         resumed=resume_session_id is not None,
         skill_directory=skill_directory,
     )
+    # A model can spend tokens and then fail the structured-response contract.
+    # Persist its observed accounting before rejecting that response.
     _append_turn_usage(provider, model, workspace, turn, time.monotonic() - started)
+    if not isinstance(structured_output, dict):
+        raise StructuredTurnError(f"{provider} turn returned no structured output")
+    if not session_id:
+        raise StructuredTurnError(f"{provider} turn did not report a session id")
     return turn
 
 
@@ -356,6 +361,15 @@ def _append_turn_usage(
         "shell_command_lines": [_bounded_command(command) for command in turn.shell_commands],
         "usage": turn_usage(turn),
     }
+    if turn.usage.total_cost_usd is not None:
+        record["cost_usd"] = turn.usage.total_cost_usd
+        record["cost_source"] = "provider"
+    elif (pricing := price_for(provider, model, default_pricing())) is not None:
+        record["cost_usd"] = cost_usd(turn.usage.tokens, pricing)
+        record["cost_source"] = "agentshim-pricing"
+    else:
+        record["cost_usd"] = None
+        record["cost_source"] = "pricing-unavailable"
     log = Path(path).expanduser()
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as handle:

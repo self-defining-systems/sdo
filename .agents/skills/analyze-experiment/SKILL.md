@@ -58,6 +58,7 @@ For first-mutation capture and evidence-gap semantics, read [capture boundaries]
 For acceptance, ownership and restart analysis, read [native broker and memory](references/native-broker.md).
 For incident deadlines and restart recovery, read [native incident recovery](references/native-incident-recovery.md).
 For per-cause learning, reflection skips and retired incidents, read [native reflection](references/native-reflection.md).
+For startup judge reuse and setup costs, read [setup usage evidence](references/setup-usage.md).
 Before validating benchmark verdicts or costs, read [receipts and benchmark results](references/benchmark-results.md).
 For fastloop timing, trust and learned findings, read [fastloop results](references/fastloop-results.md).
 For scripted repair gates, read [scripted rehearsal evidence](references/scripted-rehearsals.md).
