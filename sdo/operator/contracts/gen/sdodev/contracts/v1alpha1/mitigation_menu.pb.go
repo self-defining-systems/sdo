@@ -2130,7 +2130,7 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"session_id\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tsessionId\x12.\n" +
 	"\x0edispatch_epoch\x18\x04 \x01(\x04B\a\xbaH\x042\x02 \x00R\rdispatchEpoch\x12&\n" +
 	"\n" +
-	"attempt_id\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tattemptId\"\x88\t\n" +
+	"attempt_id\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tattemptId\"\x91\t\n" +
 	"\x10MitigationReport\x12!\n" +
 	"\aversion\x18\x01 \x01(\rB\a\xbaH\x04*\x02\b\x01R\aversion\x12(\n" +
 	"\vincident_id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
@@ -2143,9 +2143,9 @@ const file_sdodev_contracts_v1alpha1_mitigation_menu_proto_rawDesc = "" +
 	"attempt_id\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tattemptId\x122\n" +
 	"\x10acceptance_epoch\x18\x06 \x01(\x04B\a\xbaH\x042\x02 \x00R\x0facceptanceEpoch\x12V\n" +
 	"\x06status\x18\a \x01(\x0e22.sdodev.contracts.v1alpha1.MitigationReport.StatusB\n" +
-	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12\x94\x01\n" +
-	"\ffailed_phase\x18\b \x01(\tBq\xbaHnrlR\x00R\n" +
-	"acceptanceR\tdiagnosisR\bplanningR\x06safetyR\aforwardR\fcompensationR\abarrierR\fverificationR\brecoveryR\aclosureR\vfailedPhase\x12R\n" +
+	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x06status\x12\x9d\x01\n" +
+	"\ffailed_phase\x18\b \x01(\tBz\xbaHwruR\x00R\n" +
+	"acceptanceR\tdiagnosisR\bplanningR\x06safetyR\aforwardR\fcompensationR\abarrierR\arolloutR\fverificationR\brecoveryR\aclosureR\vfailedPhase\x12R\n" +
 	"\x06rounds\x18\t \x03(\v20.sdodev.contracts.v1alpha1.MitigationRoundReportB\b\xbaH\x05\x92\x01\x02\x10dR\x06rounds\x12H\n" +
 	"\bbarriers\x18\n" +
 	" \x03(\v2,.sdodev.contracts.v1alpha1.MitigationBarrierR\bbarriers\x12+\n" +

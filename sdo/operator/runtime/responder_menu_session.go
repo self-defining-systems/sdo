@@ -29,6 +29,9 @@ func (l *ResponderLoop) selectionReport(_ context.Context, query *contracts.Miti
 		for _, report := range l.menuReports {
 			if report.AttemptId == query.AttemptId {
 				response.Report = cloneSelectionReport(report)
+				if report.OptionId == "" {
+					response.OptionReports = l.optionReportsFor(report.AttemptId)
+				}
 				response.MenuExecution = cloneMenuExecution(l.menuExecutions[report.AttemptId])
 				return
 			}

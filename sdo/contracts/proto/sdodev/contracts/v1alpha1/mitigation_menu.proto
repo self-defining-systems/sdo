@@ -125,7 +125,7 @@ message MitigationReport {
   // Immutable epoch of acceptance, even when a replacement owner adopts it.
   uint64 acceptance_epoch = 6 [(buf.validate.field).uint64.gt = 0];
   Status status = 7 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
-  string failed_phase = 8 [(buf.validate.field).string = {in: ["", "acceptance", "diagnosis", "planning", "safety", "forward", "compensation", "barrier", "verification", "recovery", "closure"]}];
+  string failed_phase = 8 [(buf.validate.field).string = {in: ["", "acceptance", "diagnosis", "planning", "safety", "forward", "compensation", "barrier", "rollout", "verification", "recovery", "closure"]}];
   repeated MitigationRoundReport rounds = 9 [(buf.validate.field).repeated.max_items = 100];
   repeated MitigationBarrier barriers = 10;
   uint32 remaining_batches = 11;

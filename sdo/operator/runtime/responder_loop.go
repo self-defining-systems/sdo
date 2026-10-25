@@ -731,7 +731,12 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		batch.Actions = append(batch.Actions, plan.plan.Actions...)
 	}
 
-	if l.pendingConflict(planCaptureRefs(batch), response) {
+	refs, refErr := l.menuPlanWriteRefs(batch)
+	if len(l.pendingWrites) > 0 && refErr != nil {
+		l.refuseSelection(response, "write_set_unknown", refErr.Error())
+		return
+	}
+	if l.pendingConflict(refs, response) {
 		return
 	}
 	// A missing capture is an evidence gap; it must not block the repair.

@@ -64,6 +64,15 @@ class _OptionParameter(argparse.Action):
             namespace.param = [*getattr(namespace, "param", []), values]
 
 
+class _OptionFinding(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        groups = getattr(namespace, "option_groups", None)
+        if groups:
+            groups[-1].setdefault("finding_fingerprints", []).append(values)
+        else:
+            namespace.finding = [*getattr(namespace, "finding", []), values]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sdo",
@@ -130,7 +139,7 @@ def _parser() -> argparse.ArgumentParser:
     mitigate.add_argument("option", nargs="?", help="option ID or unambiguous program ID from the current menu")
     mitigate.add_argument(
         "--finding",
-        action="append",
+        action=_OptionFinding,
         default=[],
         metavar="FINGERPRINT",
         help="target finding fingerprint; repeat for each intended finding",
@@ -225,6 +234,7 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
                 or (groups and selection_set)
                 or args.param
                 or getattr(args, "named_parameters", None)
+                or args.finding
                 or args.rounds not in (None, 1)
             ):
                 raise ValueError("choose repeated options or a selection set; batch inputs belong to each option")

@@ -107,15 +107,11 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 				return
 			}
 			owners[key] = owner
-			for application, pendingWrite := range l.pendingWrites {
-				for _, pending := range pendingWrite.Refs {
-					if writeObjectKey(pending) == key {
-						l.refuseSelection(response, "pending_write_conflict", fmt.Sprintf("%s conflicts with pending application %s on %s", owner, application, key))
-						return
-					}
-				}
-			}
 		}
+		if l.pendingConflict(refs, response) {
+			return
+		}
+
 		entry.bindings = bindings
 		entry.plan = &plan
 		entry.action = nil
@@ -142,11 +138,7 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		l.menuEntries[item.selection.OptionId] = original
 		if part.Report != nil {
 			response.OptionReports = append(response.OptionReports, part.Report)
-			if part.Report.Status != contracts.MitigationReport_STATUS_SUCCESS {
-				combined.Status = part.Report.Status
-				combined.ReasonCode = part.Report.ReasonCode
-				combined.FailedPhase = part.Report.FailedPhase
-			}
+			mergeMitigationStatus(combined, part.Report)
 			for _, round := range part.Report.Rounds {
 				combined.Rounds[0].Actions = append(combined.Rounds[0].Actions, round.Actions...)
 			}
@@ -194,7 +186,10 @@ func (l *ResponderLoop) reservePending(application string, plan program.Plan, at
 	if l.pendingWrites == nil {
 		l.pendingWrites = map[string]pendingMitigation{}
 	}
-	refs, _ := l.menuPlanWriteRefs(plan)
+	refs, err := l.menuPlanWriteRefs(plan)
+	if err != nil {
+		refs = planCaptureRefs(plan)
+	}
 	sort.Slice(refs, func(i, j int) bool { return writeObjectKey(refs[i]) < writeObjectKey(refs[j]) })
 	l.pendingWrites[application] = pendingMitigation{Refs: refs, AttemptID: attempt, ProgramID: programID, Bindings: cloneProgramBindings(bindings), FindingFingerprints: append([]string(nil), fingerprints...)}
 }
@@ -202,16 +197,23 @@ func (l *ResponderLoop) reservePending(application string, plan program.Plan, at
 // Reservations are observation state, never restored write or rollback authority.
 func (l *ResponderLoop) settlePending(ctx context.Context) {
 	executor := l.Executor
+	if executor.Rollouts == nil {
+		return
+	}
 	executor.PollRollouts = true
 	for application, pending := range l.pendingWrites {
+		if len(pending.Refs) == 0 {
+			continue
+		}
 		if _, err := executor.waitForRollouts(ctx, l.Request, pending.Refs); err != nil {
 			continue
 		}
 		delete(l.pendingWrites, application)
 		result, hasResult := l.applications[application]
 		if !hasResult {
-			continue
-		} // Restart cannot recreate process-local verification authority.
+			l.updatePendingReport(application, pending.AttemptID, false, "verification_unavailable")
+			continue // Restart cannot recreate process-local verification authority.
+		}
 		result.RolloutPending = nil
 		result.VerificationCompleted = true
 		verifier := scopedMitigationVerifier(executor.Verifier, result.Plan, l.mitigationIncident([]selectedPlan{{programID: pending.ProgramID, bindings: pending.Bindings, targetFingerprints: pending.FindingFingerprints}}).Findings)
@@ -227,6 +229,7 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 				result.VerificationPassed = result.VerificationPassed && err == nil
 				if err == nil {
 					verdict := program.RunDiagnose(ctx, diagnoser, view, pending.Bindings, l.deadline())
+					l.runs = append(l.runs, ProgramRun{ProgramID: pending.ProgramID, Bindings: cloneProgramBindings(pending.Bindings), Verdict: verdict})
 					result.VerificationPassed = result.VerificationPassed && verdict.Result == program.NoMatch
 				}
 			}
@@ -239,33 +242,17 @@ func (l *ResponderLoop) settlePending(ctx context.Context) {
 				l.applicationsLog[i].CompletedAt = time.Now().UTC()
 			}
 		}
-		for _, report := range l.menuReports {
-			if report.AttemptId != pending.AttemptID {
-				continue
-			}
-			report.FailedPhase = "verification"
-			report.ReasonCode = "direct_verification_unresolved"
-			if result.VerificationPassed {
-				report.Status = contracts.MitigationReport_STATUS_SUCCESS
-				report.FailedPhase = ""
-				report.ReasonCode = ""
-			}
-		}
-		for attempt, executions := range l.menuExecutions {
-			for i := range executions {
-				if executions[i].ApplicationID == application {
-					executions[i].Pending = false
-					executions[i].Error = ""
-				}
-			}
-			l.menuExecutions[attempt] = executions
-		}
+		l.updatePendingReport(application, pending.AttemptID, result.VerificationPassed, "direct_verification_unresolved")
 	}
 }
 
 func (l *ResponderLoop) pendingConflict(refs []sdk.ObjectRef, response *ToolResponse) bool {
 	for _, ref := range refs {
 		for application, pending := range l.pendingWrites {
+			if len(pending.Refs) == 0 {
+				l.refuseSelection(response, "pending_write_conflict", "pending application "+application+" has unknown write scope")
+				return true
+			}
 			for _, target := range pending.Refs {
 				if writeObjectKey(ref) == writeObjectKey(target) {
 					l.refuseSelection(response, "pending_write_conflict", fmt.Sprintf("%s conflicts with pending application %s", writeObjectKey(ref), application))
@@ -337,4 +324,85 @@ func (l *ResponderLoop) menuPlanWriteRefs(plan program.Plan) ([]sdk.ObjectRef, e
 		refs = append(refs, ref)
 	}
 	return refs, nil
+}
+
+func (l *ResponderLoop) updatePendingReport(application, attempt string, passed bool, reason string) {
+	for _, report := range l.menuReports {
+		if report.AttemptId != attempt {
+			continue
+		}
+		report.FailedPhase = "verification"
+		report.ReasonCode = reason
+		if passed {
+			report.Status = contracts.MitigationReport_STATUS_SUCCESS
+			report.FailedPhase = ""
+			report.ReasonCode = ""
+		}
+		for _, round := range report.Rounds {
+			round.Verification = verdictContract(program.Verdict{Result: program.Unknown})
+			if passed {
+				round.Verification = verdictContract(program.Verdict{Result: program.NoMatch})
+			}
+		}
+	}
+	for attempt, executions := range l.menuExecutions {
+		for i := range executions {
+			if executions[i].ApplicationID == application {
+				executions[i].Pending = false
+				executions[i].Error = ""
+			}
+		}
+		l.menuExecutions[attempt] = executions
+	}
+	l.refreshCombinedReports()
+}
+
+// Aggregate reports are recomputed from their own option reports. A later peer
+// success cannot hide a pending or failed option in the same selection set.
+func (l *ResponderLoop) refreshCombinedReports() {
+	for _, report := range l.menuReports {
+		if report.OptionId != "" {
+			continue
+		}
+		parts := l.optionReportsFor(report.AttemptId)
+		if len(parts) == 0 {
+			continue
+		}
+		report.Status = contracts.MitigationReport_STATUS_SUCCESS
+		report.FailedPhase = ""
+		report.ReasonCode = ""
+		for _, part := range parts {
+			mergeMitigationStatus(report, part)
+		}
+	}
+}
+func (l *ResponderLoop) optionReportsFor(attempt string) []*contracts.MitigationReport {
+	var reports []*contracts.MitigationReport
+	for _, execution := range l.menuExecutions[attempt] {
+		for _, report := range l.menuReports {
+			if report.OptionId != "" && report.ApplicationId != "" && report.ApplicationId == execution.ApplicationID {
+				reports = append(reports, cloneSelectionReport(report))
+				break
+			}
+		}
+	}
+	return reports
+}
+
+func mergeMitigationStatus(combined, part *contracts.MitigationReport) {
+	priority := func(status contracts.MitigationReport_Status) int {
+		switch status {
+		case contracts.MitigationReport_STATUS_SUCCESS:
+			return 0
+		case contracts.MitigationReport_STATUS_UNRESOLVED:
+			return 1
+		default:
+			return 2
+		}
+	}
+	if priority(part.Status) > priority(combined.Status) {
+		combined.Status = part.Status
+		combined.FailedPhase = part.FailedPhase
+		combined.ReasonCode = part.ReasonCode
+	}
 }

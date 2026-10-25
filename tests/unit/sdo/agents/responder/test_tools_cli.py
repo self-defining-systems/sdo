@@ -494,3 +494,29 @@ def test_act_does_not_bypass_pending_mutation_refusal(monkeypatch):
     monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kw: called.append(True) or 0)
     assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 2
     assert not called
+
+
+def test_repeated_options_keep_finding_scope_per_option(monkeypatch):
+    seen = []
+    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "ok"})
+    assert (
+        tools_cli.main(
+            [
+                "--json",
+                "mitigate",
+                "--option",
+                "one",
+                "--finding",
+                "fault-one",
+                "--option",
+                "two",
+                "--finding",
+                "fault-two",
+            ]
+        )
+        == 0
+    )
+    assert [option["finding_fingerprints"] for option in seen[0]["selection_set"]["options"]] == [
+        ["fault-one"],
+        ["fault-two"],
+    ]

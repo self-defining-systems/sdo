@@ -50,7 +50,8 @@ func TestHermeticAgentRepairsTwoCoveredFaultsAndOneUnexplained(t *testing.T) {
 }
 
 func TestHermeticMultiMitigationThreeFaultShape(t *testing.T) {
-	testHermeticThreeFaultSelfCheck(t, true, true)
+	t.Run("settled", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true, true) })
+	t.Run("pending", func(t *testing.T) { testHermeticThreeFaultSelfCheck(t, true, true, true) })
 }
 
 func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms ...bool) {
@@ -87,6 +88,9 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms 
 	request.RepositoryWorktree = filepath.Join(root, "application")
 	loop := NewResponderLoop(request, registry, provider, []sdk.Detector{detector}, PlanExecutor{Client: TypedPlanClient{Client: client}, Rollouts: &planFakeRollout{}, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: provider}}, 5)
 	loop.MenuConfig = &ResponderMenuConfig{}
+	if len(batchPrograms) > 1 && batchPrograms[1] {
+		loop.Executor.Rollouts = peerBlockedRollout{entered: make(chan struct{}, 1)}
+	}
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 	}
@@ -163,6 +167,27 @@ func testHermeticThreeFaultSelfCheck(t *testing.T, combined bool, batchPrograms 
 		if len(remaining) != 1 || remaining[0].RuleID != "unlearned-port" {
 			t.Fatalf("multi-program repair must leave only third fault: %+v", remaining)
 		}
+		if len(batchPrograms) > 1 && batchPrograms[1] {
+			if response.RolloutPending == nil {
+				t.Fatal("scripted batch omitted pending rollout")
+			}
+			for _, command := range []string{"status", "detect"} {
+				fresh := fastloopTool(t, tools, command)
+				if fresh.Error != "" {
+					t.Fatalf("%s unavailable during rollout: %s", command, fresh.Error)
+				}
+			}
+			for _, match := range typed.PlaybookCoverage.Matches {
+				if match.PlaybookId == "image-pull-failure" {
+					multiCLIRefusal(t, tools, match.MitigationSelection, "pending_write_conflict")
+				}
+			}
+			if loop.LoopsUsed() != 1 {
+				t.Fatal("refused overlap consumed a round")
+			}
+			loop.Executor.Rollouts = &planFakeRollout{}
+		}
+
 	} else {
 		for _, match := range typed.PlaybookCoverage.Matches {
 			response := fastloopTool(t, tools, "mitigate", match.MitigationSelection)
