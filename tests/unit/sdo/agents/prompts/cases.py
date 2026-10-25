@@ -17,7 +17,7 @@ from sdo.agents.lifecycle.agents import (
     HealthJudgeDraft,
     TopologyResourceDTO,
 )
-from sdo.agents.responder import reflection
+from sdo.agents.responder import codex, reflection
 from sdo.agents.responder.codex import _responder_prompt
 from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
 from sdo.agents.responder.reflection_brief import incident_brief
@@ -158,6 +158,10 @@ class ReflectionCapture:
 def rendered_cases() -> dict[str, str]:
     prompts: dict[str, str] = {}
     with pytest.MonkeyPatch.context() as patch:
+        # Infrastructure configuration is an explicit fixture input, independent
+        # of the checkout that runs the production builders.
+        patch.setattr(codex, "SKILLS_ROOT", Path("/opt/sdo/skills"))
+        patch.setattr(reflection, "SKILLS_ROOT", Path("/opt/sdo/skills"))
         for name in ("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "SDO_LATE_FINDINGS", "SDO_API_HISTORY_DIR"):
             patch.delenv(name, raising=False)
         for name, request in {
