@@ -209,7 +209,7 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if err := validatePlanRef(ref); err != nil {
 			return result, err
 		}
-		if incident.Namespace != "" && ref.Namespace != incident.Namespace && !genericIncidentRef(incident, action, ref) {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace && !genericIncidentRef(incident, action, ref) && !e.acceptedClusterReconcile(ctx, incident, action, ref) {
 			return result, fmt.Errorf("plan object %s/%s is outside incident namespace %q", ref.Namespace, ref.Name, incident.Namespace)
 		}
 		if _, exists := current[ref]; exists {
@@ -620,7 +620,7 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if e.Source == nil || incident.SourceCommit == "" {
 			return nil, errors.New("accepted source is required for reconcile")
 		}
-		source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, a.Ref)
+		source, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, a.Ref)
 		if err != nil {
 			return nil, err
 		}
@@ -738,22 +738,34 @@ func sourceFields(current, source *unstructured.Unstructured, ref sdk.ObjectRef)
 				case "name", "namespace", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "managedFields":
 					continue
 				}
-				if key == "annotations" || key == "labels" {
-					values, _ := declared.(map[string]any)
-					for name, item := range values {
-						if err := unstructured.SetNestedField(current.Object, runtime.DeepCopyJSONValue(item), "metadata", key, name); err != nil {
-							return nil, err
-						}
-					}
-				} else if err := unstructured.SetNestedField(current.Object, runtime.DeepCopyJSONValue(declared), "metadata", key); err != nil {
-					return nil, err
+				currentMetadata, _ := current.Object["metadata"].(map[string]any)
+				if currentMetadata == nil {
+					currentMetadata = map[string]any{}
+					current.Object["metadata"] = currentMetadata
 				}
+				currentMetadata[key] = restoreDeclaredValue(currentMetadata[key], declared)
 			}
 		default:
-			current.Object[field] = runtime.DeepCopyJSONValue(value)
+			current.Object[field] = restoreDeclaredValue(current.Object[field], value)
 		}
 	}
 	return current, nil
+}
+
+// Maps restore their declared keys; lists/scalars restore their entire declared
+// value. Unspecified server defaults and other controllers' map entries survive.
+func restoreDeclaredValue(current, declared any) any {
+	if source, ok := declared.(map[string]any); ok {
+		result, _ := current.(map[string]any)
+		if result == nil {
+			result = map[string]any{}
+		}
+		for key, value := range source {
+			result[key] = restoreDeclaredValue(result[key], value)
+		}
+		return result
+	}
+	return runtime.DeepCopyJSONValue(declared)
 }
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {

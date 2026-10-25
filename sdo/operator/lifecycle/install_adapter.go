@@ -45,14 +45,17 @@ func (s KubernetesInstallStrategy) WithVerifiedDeployment(root, commit, namespac
 		if control == "" {
 			control = namespace
 		}
-		existing, err := onboarding.Load(ctx, s.Installer.Client, control, namespace)
-		if err != nil || existing != nil {
-			return err
-		}
 		source := rendered.Source{Repository: root, ManifestPaths: paths}
 		objects, err := source.RawManifests(ctx, commit, namespace)
 		if err != nil {
 			return fmt.Errorf("onboarding accepted source: %w", err)
+		}
+		if err := install.ReconcileAcceptedSourceGrants(ctx, s.Installer.Client, namespace, control, objects); err != nil {
+			return err
+		}
+		existing, err := onboarding.Load(ctx, s.Installer.Client, control, namespace)
+		if err != nil || existing != nil {
+			return err
 		}
 		return onboarding.Stage(ctx, s.Installer.Client, control, namespace, commit, objects, time.Now())
 	}

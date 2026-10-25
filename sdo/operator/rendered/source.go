@@ -107,6 +107,9 @@ func (s Source) rawManifests(ctx context.Context, revision, namespace string, qu
 			} else if object.GetNamespace() != "" && object.GetNamespace() != namespace {
 				continue
 			}
+			if ClusterScopedKind(object.GetKind()) {
+				objectNamespace = ""
+			}
 			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: objectNamespace, Name: object.GetName()}
 
 			if seen[ref] {
@@ -265,4 +268,21 @@ func (s Source) AcceptedScopedManifest(ctx context.Context, revision, applicatio
 		}
 	}
 	return nil, ErrAcceptedManifestAbsent
+}
+
+// AcceptedApplicationManifest reads a source-declared object through the owning
+// application's accepted render lock, including named cluster-scoped objects.
+// Its full locked fields are usable for source restoration; arbitrary foreign
+// observations still use the separately restricted AcceptedScopedManifest.
+func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	snapshot, err := s.readLock(ctx, revision, namespace)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range snapshot.Lock.Objects {
+		if entry.Ref == ref {
+			return s.lockedObject(ctx, revision, snapshot, entry)
+		}
+	}
+	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
 }

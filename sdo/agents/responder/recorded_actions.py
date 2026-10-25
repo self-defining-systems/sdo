@@ -43,6 +43,8 @@ _STARTED, _FINISHED = "started", "finished"
 #: Mirror of ``objectKinds`` in ``sdo/operator/sdk/object_ref.go``: kubectl alias -> canonical kind.
 #: ``test_recorded_actions.py`` checks the two tables are equal.
 OBJECT_KINDS = {
+    "clusterrole": "ClusterRole", "clusterroles": "ClusterRole",
+    "clusterrolebinding": "ClusterRoleBinding", "clusterrolebindings": "ClusterRoleBinding",
     "cm": "ConfigMap", "configmap": "ConfigMap", "configmaps": "ConfigMap",
     "cj": "CronJob", "cronjob": "CronJob", "cronjobs": "CronJob",
     "ds": "DaemonSet", "daemonset": "DaemonSet", "daemonsets": "DaemonSet",
@@ -75,6 +77,8 @@ API_VERSIONS = {
     "HorizontalPodAutoscaler": "autoscaling/v2",
     "Role": "rbac.authorization.k8s.io/v1",
     "RoleBinding": "rbac.authorization.k8s.io/v1",
+    "ClusterRole": "rbac.authorization.k8s.io/v1",
+    "ClusterRoleBinding": "rbac.authorization.k8s.io/v1",
     "ConfigMap": "v1",
     "Secret": "v1",
     "Pod": "v1",

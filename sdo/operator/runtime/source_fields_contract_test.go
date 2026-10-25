@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func TestReconcileRestoresAllSourceConfigurationFields(t *testing.T) {
@@ -44,5 +45,37 @@ func TestSourceReconcilePreservesExternalAnnotations(t *testing.T) {
 	next, err := sourceFields(live, source, ref)
 	if err != nil || next.GetAnnotations()["another-controller.example/completed"] != "true" {
 		t.Fatalf("external annotation erased: %v %v", next, err)
+	}
+}
+
+func TestSourceDiffPreservesIndependentCompletionAndDetectsMissingController(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "worker"}
+	source := planObject(ref, map[string]any{"replicas": int64(1)})
+	live := source.DeepCopy()
+	live.SetAnnotations(map[string]string{"another-controller.example/completed": "true"})
+	snapshot := sdktest.Snapshot{NamespaceName: "app", Objects: []unstructured.Unstructured{*live}}
+	view := LiveReadView{DetectionContext: snapshot, Source: planFakeSource{source: source}, SourceCommit: "accepted"}
+	if diff, err := view.DiffAgainstSource(ref); err != nil || diff.Changed {
+		t.Fatalf("external completion annotation flagged: %+v %v", diff, err)
+	}
+	snapshot.Objects = nil
+	view.DetectionContext = snapshot
+	if diff, err := view.DiffAgainstSource(ref); err != nil || !diff.Changed || diff.SourceAbsent {
+		t.Fatalf("deleted source controller invisible: %+v %v", diff, err)
+	}
+}
+
+func TestSourceReconcilePreservesUndeclaredNestedServerFields(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "api"}
+	source := planObject(ref, map[string]any{"selector": map[string]any{"app": "api"}})
+	live := planObject(ref, map[string]any{"clusterIP": "10.0.0.1", "selector": map[string]any{"app": "wrong"}})
+	next, err := sourceFields(live, source, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip, _, _ := unstructured.NestedString(next.Object, "spec", "clusterIP")
+	selector, _, _ := unstructured.NestedString(next.Object, "spec", "selector", "app")
+	if ip != "10.0.0.1" || selector != "api" {
+		t.Fatalf("source reconcile lost server fields or source values: %v", next)
 	}
 }

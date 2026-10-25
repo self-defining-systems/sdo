@@ -103,6 +103,7 @@ sdo plan [-h] [--finding FINGERPRINT] [--bind NAME=Kind/namespace/name] program_
 
 SetField updates a schema-checked field by index or unique name, optionally from accepted source; ConfigMap JSON/YAML entries preserve unrelated keys.
 CreateFromSource restores a named missing object from accepted source.
+ReconcileFromSource restores declared configuration, including source-named cluster objects, while preserving undeclared fields.
 DeleteObject irreversibly removes an allowed named source-absent object and never auto-recreates it.
 
 - `--finding`: target finding fingerprint; repeat for each intended finding

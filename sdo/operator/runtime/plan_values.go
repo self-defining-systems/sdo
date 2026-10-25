@@ -52,14 +52,14 @@ func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest)
 		if err := program.FromSource(ref, "metadata.name").Validate(); err != nil {
 			return nil, err
 		}
-		if incident.Namespace != "" && ref.Namespace != incident.Namespace {
+		if incident.Namespace != "" && ref.Namespace != incident.Namespace && ref.Namespace != "" {
 			return nil, fmt.Errorf("value source is outside incident namespace")
 		}
 		if e.Source == nil {
 			return nil, fmt.Errorf("accepted source is required")
 		}
 
-		object, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+		object, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, ref)
 		if err != nil || object == nil || !samePlanRef(object, ref) {
 			return nil, fmt.Errorf("accepted value object unavailable")
 		}
