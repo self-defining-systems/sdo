@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"testing"
 	"time"
@@ -34,6 +35,9 @@ func TestResponderSelfCheckClosureParity(t *testing.T) {
 				finding.DetectorID = "drift.unexplained"
 				finding.Metadata = map[string]any{"drift_event": sdk.DriftEvent{Ref: finding.PrimaryResource, Fields: []sdk.DriftField{{Path: "spec.ports[0].targetPort"}}}}
 				request.Findings = []sdk.Finding{finding}
+				c.ConfigureDrift(DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
+					return driftReadView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "synthetic accepted/live target port mismatch"}}
+				}})
 			case "prober-unavailable":
 				state.Status = DetectorEvaluationError
 				state.Error = "prober unavailable"
