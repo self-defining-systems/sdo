@@ -11,7 +11,7 @@ import (
 )
 
 func TestResponderSelfCheckClosureParity(t *testing.T) {
-	for _, scenario := range []string{"healthy", "health-firing", "drift-remaining", "prober-unavailable"} {
+	for _, scenario := range []string{"healthy", "health-firing", "drift-remaining", "prober-unavailable", "pending"} {
 		t.Run(scenario, func(t *testing.T) {
 			now := time.Now().UTC()
 			c, err := NewController(testControllerConfig(), nil, staticProvider{snapshot: sdktest.Snapshot{}}, &verificationRetryDispatcher{}, now)
@@ -39,6 +39,8 @@ func TestResponderSelfCheckClosureParity(t *testing.T) {
 				c.ConfigureDrift(DriftControllerConfig{View: func(sdk.DetectionContext) program.ReadView {
 					return driftReadView{ReplayReadView: &sdktest.ReplayReadView{}, diff: program.Diff{Changed: true, Text: "synthetic accepted/live target port mismatch"}}
 				}})
+			case "pending":
+				state.Status = DetectorEvaluationPending
 			case "prober-unavailable":
 				state.Status = DetectorEvaluationError
 				state.Error = "prober unavailable"

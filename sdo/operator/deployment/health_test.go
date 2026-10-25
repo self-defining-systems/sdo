@@ -60,13 +60,29 @@ func TestIndependentHealthVerifierBindsAcceptedDetectorsAndDeployedSource(t *tes
 	if err != nil || !healthy || feedback != "" {
 		t.Fatalf("healthy accepted revision rejected: %v %q %v", healthy, feedback, err)
 	}
-	verifier.Probe = fakeHealthProbe{status: "firing"}
-	healthy, feedback, err = verifier.Verify(ctx, judgeCommit, "default", "application is healthy", source)
-	if err != nil || healthy || !strings.Contains(feedback, "firing") {
-		t.Fatalf("firing detector accepted: %v %q %v", healthy, feedback, err)
+	for _, status := range []string{"firing", "pending", "unavailable"} {
+		verifier.Probe = fakeHealthProbe{status: status}
+		healthy, feedback, err = verifier.Verify(ctx, judgeCommit, "default", "application is healthy", source)
+		if err != nil || healthy || !strings.Contains(feedback, status) {
+			t.Fatalf("%s detector accepted: %v %q %v", status, healthy, feedback, err)
+		}
 	}
 	source.ProposalTreeDigest = strings.Repeat("b", 40)
 	if _, _, err := verifier.Verify(ctx, judgeCommit, "default", "application is healthy", source); err == nil {
 		t.Fatal("unaccepted source evidence passed")
+	}
+}
+
+func TestHealthVerdictPendingIsKnownWithoutEstablishingHealth(t *testing.T) {
+	status, err := decodeHealthVerdict([]byte(`{"status":"pending","findings":[]}`), nil)
+	if err != nil || status != "pending" {
+		t.Fatalf("pending verdict: %s %v", status, err)
+	}
+}
+
+func TestHealthVerdictUnavailableIsKnownWithoutEstablishingHealth(t *testing.T) {
+	status, err := decodeHealthVerdict([]byte(`{"status":"unavailable","findings":[],"unavailable":[{"detector_id":"service-reachability","reason":"requires --prober-url"}]}`), nil)
+	if err != nil || status != "unavailable" {
+		t.Fatalf("unavailable verdict: %s %v", status, err)
 	}
 }

@@ -258,6 +258,9 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 		}
 		observed, err := sdk.DetectObserved(ctx, detector, view)
 		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: time.Now().UTC(), Status: DetectorEvaluationClear}
+		if err == nil && len(observed) == 0 && !detectorConfirmed(detector, view) {
+			state.Status = DetectorEvaluationPending
+		}
 		if err != nil {
 			state.Status = DetectorEvaluationError
 			state.Error = err.Error()

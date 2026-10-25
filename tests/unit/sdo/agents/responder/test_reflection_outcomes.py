@@ -466,3 +466,17 @@ def test_reflection_prior_evidence_reference_is_readable_during_the_turn(tmp_pat
     assert result.learning_decision == "no_change"
     assert references
     assert all(not path.exists() for path in references)
+
+
+def test_pending_history_survives_contract_and_reflection_projection() -> None:
+    from sdo.contracts import IncidentRequest, ReflectionRequest
+    from sdo.contracts.proto import parse_json, to_canonical_json
+
+    evaluations = _evaluations("service-reachability", ["pending", "pending", "clear", "firing", "pending"])
+    incident = parse_json(to_canonical_json(IncidentRequest(detector_history=evaluations)), IncidentRequest())
+    reflection = ReflectionRequest(outcome=OutcomeRecord(detector_history=incident.detector_history))
+    restored = parse_json(to_canonical_json(reflection), ReflectionRequest())
+    runs = collapse_detector_history(restored.outcome.detector_history)
+    assert [run["status"] for run in runs] == ["pending", "clear", "firing", "pending"]
+    assert [run["evaluations"] for run in runs] == [2, 1, 1, 1]
+    assert all(not run["fingerprints"] for run in runs if run["status"] == "pending")

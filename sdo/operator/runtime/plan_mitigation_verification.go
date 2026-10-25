@@ -65,6 +65,20 @@ func (v *mitigationHealthVerifier) Verify(ctx context.Context) (bool, error) {
 		observation.TargetedHealthy = false
 		return false, err
 	}
+	for _, detector := range health {
+		if detectorConfirmed(detector, snapshot) {
+			continue
+		}
+		observation.Healthy = false
+		if len(v.targets) == 0 {
+			observation.TargetedHealthy = false
+		}
+		for _, target := range v.targets {
+			if target.DetectorID == detector.Spec().ID {
+				observation.TargetedHealthy = false
+			}
+		}
+	}
 	return observation.TargetedHealthy, nil
 }
 

@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -267,14 +269,46 @@ func TestEvaluateOnceCollectsReachabilityRounds(t *testing.T) {
 }
 
 func TestEvaluateOnceSkipsReachabilityWithoutAProber(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
-	err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
-		Args: []string{"--evaluate-once", "--namespace", "shop"}, Stdout: &stdout, Stderr: &stderr,
-		Provider: staticProvider{snapshot: reachabilityApp(8083)},
+	for _, seed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("accept-seed=%t", seed), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			detector := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "service-reachability", Interval: 10 * time.Second})
+			args := []string{"--evaluate-once", "--namespace", "shop"}
+			if seed {
+				args = append(args, "--accept-seed")
+			}
+			err := RunWithOptions(context.Background(), []sdk.Detector{detector}, RuntimeOptions{
+				Args: args, Stdout: &stdout, Stderr: &stderr,
+				Provider: staticProvider{snapshot: reachabilityApp(8083)},
+			})
+			var output struct {
+				Status      string        `json:"status"`
+				Findings    []sdk.Finding `json:"findings"`
+				Unavailable []struct {
+					DetectorID string `json:"detector_id"`
+					Reason     string `json:"reason"`
+				} `json:"unavailable"`
+			}
+			if decodeErr := json.Unmarshal(stdout.Bytes(), &output); decodeErr != nil {
+				t.Fatalf("decode %q: %v (evaluation error: %v)", stdout.String(), decodeErr, err)
+			}
+			if (err != nil) != seed || output.Status != "unavailable" || len(output.Findings) != 0 ||
+				len(output.Unavailable) != 1 || output.Unavailable[0].DetectorID != "service-reachability" ||
+				!strings.Contains(output.Unavailable[0].Reason, "requires --prober-url") ||
+				!bytes.Contains(stderr.Bytes(), []byte("service reachability unavailable")) {
+				t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
+func TestSeedAcceptanceCannotUseInventoryOnlyEvaluation(t *testing.T) {
+	var stdout bytes.Buffer
+	err := RunWithOptions(context.Background(), nil, RuntimeOptions{
+		Args:   []string{"--evaluate-once", "--namespace", "shop", "--accept-seed", "--source-drift-report", "unused.json"},
+		Stdout: &stdout, Provider: staticProvider{snapshot: reachabilityApp(8083)},
 	})
-	if err != nil || !bytes.Contains(stdout.Bytes(), []byte(`"status":"clear"`)) ||
-		!bytes.Contains(stderr.Bytes(), []byte("service reachability skipped")) {
-		t.Fatalf("err %v stdout %q stderr %q", err, stdout.String(), stderr.String())
+	if err == nil || !strings.Contains(err.Error(), "seed acceptance cannot use source-drift-report") || stdout.Len() != 0 {
+		t.Fatalf("inventory-only evaluation accepted as seed health: %v %s", err, stdout.String())
 	}
 }

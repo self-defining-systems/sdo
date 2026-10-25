@@ -827,10 +827,11 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	budget := v.Timeout
 	if budget <= 0 {
 		sink := &planFindingSink{}
-		if err := (core.Runner{Detectors: health, Provider: v.Provider, Sink: sink}).RunOnce(ctx); err != nil {
+		confirmed, err := v.sample(ctx, health, sink)
+		if err != nil {
 			return false, err
 		}
-		return !sink.firing, nil
+		return confirmed && !sink.firing, nil
 	}
 	interval := v.PollInterval
 	if interval <= 0 {
@@ -840,13 +841,14 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 	defer cancel()
 	for {
 		sink := &planFindingSink{}
-		if err := (core.Runner{Detectors: health, Provider: v.Provider, Sink: sink}).RunOnce(verification); err != nil {
+		confirmed, err := v.sample(verification, health, sink)
+		if err != nil {
 			if ctx.Err() == nil && errors.Is(verification.Err(), context.DeadlineExceeded) {
 				return false, nil
 			}
 			return false, err
 		}
-		if !sink.firing {
+		if confirmed && !sink.firing {
 			return true, nil
 		}
 		timer := time.NewTimer(interval)
@@ -860,6 +862,21 @@ func (v PlanHealthVerifier) Verify(ctx context.Context) (bool, error) {
 		case <-timer.C:
 		}
 	}
+}
+
+// Confirmation and findings must come from the same fresh snapshot.
+func (v PlanHealthVerifier) sample(ctx context.Context, detectors []sdk.Detector, sink *planFindingSink) (bool, error) {
+	if v.Provider == nil {
+		return false, errors.New("snapshot provider is required")
+	}
+	snapshot, err := v.Provider.Snapshot(ctx)
+	if err != nil {
+		return false, fmt.Errorf("create detection snapshot: %w", err)
+	}
+	if err := (core.Runner{Detectors: detectors, Provider: core.StaticSnapshotProvider{SnapshotValue: snapshot}, Sink: sink}).RunOnce(ctx); err != nil {
+		return false, err
+	}
+	return detectorsConfirmed(detectors, snapshot), nil
 }
 
 type planFindingSink struct{ firing bool }
