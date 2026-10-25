@@ -217,6 +217,8 @@ def test_no_script_prefers_kind_load():
 
 @pytest.mark.parametrize("problem", ["disk", "neighbors"])
 def test_host_capacity_fails_before_builds(monkeypatch, problem):
+    monkeypatch.setattr(cli, "assert_host_headroom", lambda: {"passed": True})
+    monkeypatch.setattr(cli, "assert_host_disk_headroom", lambda: {"passed": True})
     from subprocess import CompletedProcess
 
     monkeypatch.setattr(cli, "_neighbor_capacity", lambda: 1 if problem == "neighbors" else 65536)
