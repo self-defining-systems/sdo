@@ -445,12 +445,14 @@ func (x *DriftEvidence) GetObservation() string {
 // DetectorEvaluation is one detector's status at a point in time.
 // Pending means observations are incomplete: it establishes neither a fault nor health.
 type DetectorEvaluation struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DetectorId    string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
-	EvaluatedAt   *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=evaluated_at,json=evaluatedAt,proto3" json:"evaluated_at,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	Fingerprints  []string               `protobuf:"bytes,4,rep,name=fingerprints,proto3" json:"fingerprints,omitempty"`
-	Error         *string                `protobuf:"bytes,5,opt,name=error,proto3,oneof" json:"error,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	DetectorId   string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
+	EvaluatedAt  *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=evaluated_at,json=evaluatedAt,proto3" json:"evaluated_at,omitempty"`
+	Status       string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	Fingerprints []string               `protobuf:"bytes,4,rep,name=fingerprints,proto3" json:"fingerprints,omitempty"`
+	Error        *string                `protobuf:"bytes,5,opt,name=error,proto3,oneof" json:"error,omitempty"`
+	// Informational explanation for an unconfirmed observation, not an error.
+	Reason        *string `protobuf:"bytes,6,opt,name=reason,proto3,oneof" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -516,6 +518,13 @@ func (x *DetectorEvaluation) GetFingerprints() []string {
 func (x *DetectorEvaluation) GetError() string {
 	if x != nil && x.Error != nil {
 		return *x.Error
+	}
+	return ""
+}
+
+func (x *DetectorEvaluation) GetReason() string {
+	if x != nil && x.Reason != nil {
+		return *x.Reason
 	}
 	return ""
 }
@@ -3333,15 +3342,17 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x18investigation_capture_id\x18\x0e \x01(\tR\x16investigationCaptureId\"\x86\x01\n" +
 	"\rDriftEvidence\x12S\n" +
 	"\x04kind\x18\x01 \x01(\tB?\xbaH<r:R\x14source_contradictionR\x11violated_relationR\x0fobserved_impactR\x04kind\x12 \n" +
-	"\vobservation\x18\x02 \x01(\tR\vobservation\"\xa4\x02\n" +
+	"\vobservation\x18\x02 \x01(\tR\vobservation\"\xcc\x02\n" +
 	"\x12DetectorEvaluation\x12@\n" +
 	"\vdetector_id\x18\x01 \x01(\tB\x1f\xbaH\x1cr\x1a\x10\x012\x16^[a-z0-9][a-z0-9_.-]*$R\n" +
 	"detectorId\x12E\n" +
 	"\fevaluated_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vevaluatedAt\x12<\n" +
 	"\x06status\x18\x03 \x01(\tB$\xbaH!r\x1fR\x06firingR\x05clearR\x05errorR\apendingR\x06status\x12\"\n" +
 	"\ffingerprints\x18\x04 \x03(\tR\ffingerprints\x12\x19\n" +
-	"\x05error\x18\x05 \x01(\tH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error\"\xaf\x02\n" +
+	"\x05error\x18\x05 \x01(\tH\x00R\x05error\x88\x01\x01\x12\x1b\n" +
+	"\x06reason\x18\x06 \x01(\tH\x01R\x06reason\x88\x01\x01B\b\n" +
+	"\x06_errorB\t\n" +
+	"\a_reason\"\xaf\x02\n" +
 	"\x10SurfacedPlaybook\x12<\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\x1b\xbaH\x18r\x16\x10\x012\x12^[a-z][a-z0-9_-]*$R\n" +
 	"playbookId\x12q\n" +

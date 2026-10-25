@@ -32,7 +32,7 @@ def _timestamp(evaluation: DetectorEvaluation) -> str:
 
 
 def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list[dict[str, Any]]:
-    """Run-length encode each detector's evaluations by (status, fingerprints, error).
+    """Run-length encode each detector's evaluations by (status, fingerprints, error, reason).
 
     Consecutive identical evaluations of one detector become a single run with
     its first and last timestamps and count; every status or fingerprint
@@ -43,7 +43,7 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
     for evaluation in evaluations:
         detector_runs = runs.setdefault(evaluation.detector_id, [])
         error = evaluation.error if evaluation.HasField("error") else None
-        signature = (evaluation.status, tuple(evaluation.fingerprints), error)
+        signature = (evaluation.status, tuple(evaluation.fingerprints), error, evaluation.reason)
         if detector_runs and detector_runs[-1]["_signature"] == signature:
             detector_runs[-1]["last_evaluated_at"] = _timestamp(evaluation)
             detector_runs[-1]["evaluations"] += 1
@@ -55,6 +55,7 @@ def collapse_detector_history(evaluations: Sequence[DetectorEvaluation]) -> list
                 "status": evaluation.status,
                 "fingerprints": list(evaluation.fingerprints),
                 "error": error,
+                **({"reason": evaluation.reason} if evaluation.reason else {}),
                 "first_evaluated_at": _timestamp(evaluation),
                 "last_evaluated_at": _timestamp(evaluation),
                 "evaluations": 1,

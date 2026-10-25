@@ -1372,9 +1372,10 @@ type unavailableEvaluation struct {
 }
 
 type evaluationResult struct {
-	Findings    []sdk.Finding           `json:"findings"`
-	Status      evaluationStatus        `json:"status"`
-	Unavailable []unavailableEvaluation `json:"unavailable,omitempty"`
+	Findings       []sdk.Finding           `json:"findings"`
+	Status         evaluationStatus        `json:"status"`
+	Unavailable    []unavailableEvaluation `json:"unavailable,omitempty"`
+	DetectorStates []DetectorEvaluation    `json:"detector_states,omitempty"`
 }
 
 func evaluateOnce(
@@ -1561,9 +1562,13 @@ func evaluateOnce(
 		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 	}
 	status := evaluationStatus(DetectorEvaluationClear)
+	var unconfirmed []DetectorEvaluation
 	for _, evaluation := range controller.history {
 		if evaluation.Status == DetectorEvaluationPending {
 			status = evaluationStatus(DetectorEvaluationPending)
+		}
+		if evaluation.Status == DetectorEvaluationPending || evaluation.Reason != "" {
+			unconfirmed = append(unconfirmed, evaluation)
 		}
 	}
 	if len(unavailable) > 0 {
@@ -1575,7 +1580,7 @@ func evaluateOnce(
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluationResult{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
 		return err
 	}
 	if *acceptSeed && status != evaluationStatus(DetectorEvaluationClear) {

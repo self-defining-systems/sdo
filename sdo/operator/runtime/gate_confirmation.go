@@ -125,6 +125,10 @@ func (c *Controller) probeGate(
 			}
 			continue
 		}
+		if len(findings) == 0 && !detectorConfirmed(detector, snapshot) {
+			c.resetGate(spec.ID)
+			continue
+		}
 		c.observeGate(spec.ID, now, findings)
 	}
 }

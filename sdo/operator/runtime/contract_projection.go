@@ -132,6 +132,9 @@ func evaluationsContract(items []DetectorEvaluation) []*contracts.DetectorEvalua
 			DetectorId: item.DetectorID, EvaluatedAt: contractTimestamp(item.EvaluatedAt), Status: string(item.Status),
 			Fingerprints: append([]string(nil), item.Fingerprints...),
 		}
+		if item.Reason != "" {
+			message.Reason = &item.Reason
+		}
 		if item.Error != "" {
 			message.Error = &item.Error
 		}
@@ -145,7 +148,7 @@ func evaluationsState(items []*contracts.DetectorEvaluation) []DetectorEvaluatio
 	for _, item := range items {
 		result = append(result, DetectorEvaluation{
 			DetectorID: item.GetDetectorId(), EvaluatedAt: controllerTime(item.GetEvaluatedAt()),
-			Status: DetectorEvaluationStatus(item.GetStatus()), Fingerprints: append([]string(nil), item.GetFingerprints()...), Error: item.GetError(),
+			Status: DetectorEvaluationStatus(item.GetStatus()), Fingerprints: append([]string(nil), item.GetFingerprints()...), Error: item.GetError(), Reason: item.GetReason(),
 		})
 	}
 	return result

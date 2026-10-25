@@ -40,8 +40,8 @@ type sloDetector struct {
 
 // NewDetector returns a health detector that reports every qualified
 // scenario of a health-probe workload that violates its SLO. It decides
-// purely from the prober's observed samples; with no observations it reports
-// nothing. A health-class spec that leaves Persistence.MinDuration unset
+// purely from the prober's observed samples; missing or unproven observations
+// remain unconfirmed and cannot establish health. A health-class spec that leaves Persistence.MinDuration unset
 // gets DefaultHealthMinDuration, so judge-authored and lifecycle-generated
 // traffic-health detectors alike require a sustained violation before they
 // fire, not just an evaluation count.
@@ -55,6 +55,63 @@ func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector {
 func (d sloDetector) Spec() sdk.DetectorSpec { return d.spec }
 
 func (d sloDetector) TrafficWorkloads() []string { return []string{d.workload} }
+
+// Confirmed implements the observation confirmation contract. Every scenario
+// must have succeeded since observation began and have enough usable samples
+// for its current SLO window. Unproven scenarios never manufacture findings.
+func (d sloDetector) Confirmed(ctx sdk.DetectionContext) bool {
+	return d.ConfirmationReason(ctx) == ""
+}
+
+// ConfirmationReason explains why an empty steady verdict cannot establish
+// health. Qualified violations remain findings even alongside unproven peers.
+func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	window, ok := WindowFrom(ctx, d.workload)
+	if !ok {
+		return "no synthetic scenario has succeeded since observation began"
+	}
+	if window.LoadError != "" {
+		// Detect reports unavailable observations as an error, not pending.
+		return ""
+	}
+	if len(window.Scenarios) == 0 {
+		return "no synthetic scenario has succeeded since observation began"
+	}
+	var unqualified, incomplete []string
+	qualified := 0
+	seen := make(map[string]bool, len(window.Scenarios))
+	for _, observed := range window.Scenarios {
+		id := observed.Scenario.ID
+		seen[id] = true
+		if !observed.Qualified {
+			unqualified = append(unqualified, id)
+			continue
+		}
+		qualified++
+		if !Evaluate(id, window.Workload.ScenarioSLO(id), observed.Samples, window.ObservedAt).Evaluated {
+			incomplete = append(incomplete, id)
+		}
+	}
+	for _, scenario := range window.Workload.Scenarios {
+		if !seen[scenario.ID] {
+			unqualified = append(unqualified, scenario.ID)
+		}
+	}
+	sort.Strings(unqualified)
+	sort.Strings(incomplete)
+	var reasons []string
+	if len(unqualified) > 0 {
+		reason := "synthetic scenarios have not succeeded since observation began: "
+		if qualified == 0 {
+			reason = "no synthetic scenario has succeeded since observation began: "
+		}
+		reasons = append(reasons, reason+strings.Join(unqualified, ", "))
+	}
+	if len(incomplete) > 0 {
+		reasons = append(reasons, "insufficient usable synthetic samples: "+strings.Join(incomplete, ", "))
+	}
+	return strings.Join(reasons, "; ")
+}
 
 func (d sloDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Finding, error) {
 	window, ok := WindowFrom(ctx, d.workload)
