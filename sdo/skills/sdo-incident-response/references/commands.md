@@ -22,6 +22,27 @@ Mutation files contain these generated top-level arrays:
 - `-h, --help`: show this help message and exit
 - `--json`: print JSON for scripts (mutations: compact envelope and complete report path)
 
+## General help
+
+```text
+Examples (replace names with incident resources):
+  sdo source Deployment/app/api
+  sdo diagnose targetport --bind service=Service/app/api
+  sdo plan targetport --bind service=Service/app/api
+```
+
+## Shared help: plan, menu
+
+```text
+Example: sdo plan targetport --bind service=Service/app/api
+```
+
+## Shared help: apply, mitigate, act, rollback
+
+```text
+Action output separates target progress from incident verification and lists fixed, new (possible regression), and unchanged findings from authoritative controller progress. Mutation stdout is at most 2048 UTF-8 bytes, including JSON framing and newline. Every invocation saves the complete findings/evidence, program_runs, execution reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. The response includes a readable path (a compact copy if needed) and a generated schema for querying its arrays. incident_verified is an extra informational warning; reads/reports keep their normal results, and new mutations are rejected.
+```
+
 ## status
 
 read fresh findings and detector confirmation; pending is not healthy
@@ -65,6 +86,10 @@ sdo diagnose [-h] [--bind NAME=Kind/namespace/name] [program_id]
 ```
 
 - `--bind`: named program parameter; repeat for each binding
+
+```text
+Example: sdo diagnose targetport --bind service=Service/app/api
+```
 
 Key JSON fields: `program_runs[].{program_id, verdict, can_mitigate}`.
 
@@ -143,6 +168,10 @@ inspect accepted source for one resource
 sdo source [-h] Kind/namespace/name
 ```
 
+```text
+Example: sdo source Deployment/app/api
+```
+
 Key JSON fields: `source (accepted Kubernetes object)`.
 
 ## act
@@ -159,6 +188,10 @@ Run one live mutation and record its repair receipt (target, resources, timing, 
 - `--summary`: one line describing the repair
 - `--irreversible`: the mutation cannot be undone
 - `act_command`: the mutating command
+
+```text
+Example: sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2
+```
 
 Complete report fields (`details_file`): `actions[].{success, exit_code, receipt, output, failure_reason}`.
 

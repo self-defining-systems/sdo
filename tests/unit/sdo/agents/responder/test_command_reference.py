@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import argparse
 
 import pytest
 
@@ -88,3 +85,27 @@ def test_mutation_reference_distinguishes_envelope_from_complete_file(capsys: py
         with pytest.raises(SystemExit):
             tools_cli.main([name, "--help"])
         assert "Complete report fields (details_file)" in " ".join(capsys.readouterr().out.split())
+
+
+def test_reference_keeps_new_help_notes_without_repeating_shared_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sdo.agents.responder.command_reference import render_reference
+
+    original = tools_cli._parser
+    added = "New credential reference shapes belong in the authoritative guide."
+    shared = "Shared mutation output contract belongs in the guide once."
+
+    def changed_parser() -> argparse.ArgumentParser:
+        parser = original()
+        commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+        for name in ("act", "apply", "mitigate", "rollback"):
+            command = commands.choices[name]
+            command.epilog = (command.epilog or "") + "\n\n" + shared
+        command = commands.choices["mitigate"]
+        command.epilog = (command.epilog or "") + "\n\n" + added
+        return parser
+
+    monkeypatch.setattr(tools_cli, "_parser", changed_parser)
+    generated = render_reference()
+    assert added in generated
+    assert generated.count(shared) == 1
+    assert "apply, mitigate, act, rollback" in generated
