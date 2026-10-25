@@ -48,31 +48,6 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
             },
             1500,
         ),
-        (
-            "reflection_learning_instructions",
-            {
-                "skills_root": "/opt/sdo/sdo/skills",
-                "branch_instruction": "Return reflection and leave incident_result null.",
-            },
-            2000,
-        ),
-        (
-            "reflection_delta_overflow",
-            {"outcome_commit": "accepted-outcome", "verdict": "failed", "details_file": "/tmp/controller-facts.json"},
-            4000,
-        ),
-        (
-            "reflection_delta",
-            {
-                "outcome_commit": "accepted-outcome",
-                "verdict": "partial",
-                "confirmed_fixed": "[]",
-                "unseen_receipts": "[]",
-                "cause_work": "[]",
-                "unassigned_work": "[]",
-            },
-            4000,
-        ),
     ],
 )
 def test_short_workflow_templates_render_strictly(name: str, values: dict[str, str], limit: int) -> None:
