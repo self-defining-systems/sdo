@@ -17,3 +17,22 @@ func TestProgramApplicationsProduceControllerRepairReceipts(t *testing.T) {
 		t.Fatalf("controller receipt: %+v", receipts)
 	}
 }
+
+func TestRefusedActionReceiptDoesNotAttributeDeniedPeerResources(t *testing.T) {
+	first := sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "first"}
+	second := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "denied"}
+	actions := []program.Action{program.DeleteObject{Ref: first, Reason: "first"}, program.DeleteObject{Ref: second, Reason: "second"}}
+	receipts := ProgramRepairReceipts([]RecordedPlanApplication{{ID: "partial", Error: "forbidden", Result: PlanApplicationResult{Applied: true, Plan: program.Plan{Actions: actions}, ActionsApplied: actions[:1], ActionReports: []PlanActionReport{{ActionIndex: 0, Status: "applied"}, {ActionIndex: 1, Status: "refused", FailureReason: "authorization_denied"}}}}}, nil)
+	denied := false
+	for _, receipt := range receipts {
+		if receipt.FailureReason == "authorization_denied" {
+			if len(receipt.Resources) != 1 || receipt.Resources[0] != second || receipt.Success {
+				t.Fatalf("denied evidence attributed to another action: %+v", receipt)
+			}
+			denied = true
+		}
+	}
+	if !denied {
+		t.Fatal("missing denied action receipt")
+	}
+}

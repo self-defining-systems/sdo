@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sdo.dev/operator/sdk"
@@ -65,12 +66,14 @@ func authorizationDeniedNoProgress(previous string, verification ToolResponse, r
 		before[finding.Fingerprint] = true
 	}
 	denied := map[sdk.ObjectRef]bool{}
+	latest := map[sdk.ObjectRef]time.Time{}
 	for _, repair := range repairs {
-		if repair.Receipt.Success || repair.Receipt.FailureReason != "authorization_denied" {
-			continue
-		}
 		for _, ref := range repair.Receipt.Resources {
-			denied[ref] = true
+			if stamp, found := latest[ref]; found && repair.Receipt.CompletedAt.Before(stamp) {
+				continue
+			}
+			latest[ref] = repair.Receipt.CompletedAt
+			denied[ref] = !repair.Receipt.Success && repair.Receipt.FailureReason == "authorization_denied"
 		}
 	}
 	for _, finding := range verification.Findings {

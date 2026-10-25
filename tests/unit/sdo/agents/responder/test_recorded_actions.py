@@ -745,3 +745,37 @@ def test_delete_receipt_does_not_claim_extra_existing_resources(scratch: Path, t
     (receipt,) = _recorded(scratch)
     assert receipt["success"] is False
     assert receipt["failure_reason"] == "delete_not_confirmed"
+
+
+def test_patch_receipt_attributes_only_the_executed_target(scratch: Path, tmp_path: Path) -> None:
+    kubectl = tmp_path / "kubectl"
+    kubectl.write_text("#!/bin/sh\necho configmap/token patched\n")
+    kubectl.chmod(0o755)
+    assert (
+        tools_cli.main(
+            [
+                "act",
+                "--resource",
+                "Deployment/app/cleanup",
+                "--resource",
+                "ServiceAccount/app/cleanup",
+                "--resource",
+                "ConfigMap/app/token",
+                "--",
+                str(kubectl),
+                "-n",
+                "app",
+                "patch",
+                "configmap",
+                "token",
+                "--type=merge",
+                "-p",
+                '{"metadata":{"finalizers":[]}}',
+            ]
+        )
+        == 0
+    )
+    (receipt,) = _recorded(scratch)
+    assert receipt["success"] is True
+    assert receipt["resources"] == [recorded_actions.resource_ref("ConfigMap/app/token")]
+    assert receipt["target"] == "ConfigMap/app/token"

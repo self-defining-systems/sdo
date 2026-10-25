@@ -6,12 +6,14 @@ import (
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 type deniedDeleteClient struct{ *lifecycleTestClient }
@@ -130,5 +132,63 @@ func TestAuthorizationDeniedNoProgressNeedsExactBrokenSet(t *testing.T) {
 	denied.Receipt.FailureReason = "execution_failed"
 	if authorizationDeniedNoProgress(string(previous), verification, []continuationRepair{denied}) {
 		t.Fatal("ordinary failure stopped continuation")
+	}
+}
+
+func TestTerminalUnchangedInventoryBlockerSkipsGrace(t *testing.T) {
+	for _, mode := range []string{"exhausted", "denied", "changed", "pending-delete", "not-terminal"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			ref := sdk.ObjectRef{APIVersion: "v1", Kind: "ServiceAccount", Namespace: "app", Name: "cleanup"}
+			object := urObject(ref)
+			store := &inventoryStore{objects: []*unstructured.Unstructured{object}}
+			index := NewSourceInventory("app", "accepted", nil)
+			findings := index.Findings(store.objects, now)
+			config := testControllerConfig()
+			config.Namespace = "app"
+			config.SourceCommit = "accepted"
+			config.VerificationTimeout = 5 * time.Minute
+			controller, err := NewController(config, []sdk.Detector{inventoryHealth()}, staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app"}}, &verificationRetryDispatcher{}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			controller.currentIncidentRequest = &IncidentRequest{SchemaVersion: ProtocolSchemaVersion, IncidentID: "terminal", Namespace: "app", Findings: findings}
+			result := completedResult("terminal")
+			result.Status = IncidentFailed
+			result.ResponseLoopExhausted = true
+			result.UnresolvedFindings = findings
+			if mode == "denied" {
+				result.ResponseLoopExhausted = false
+				result.Error = "authorization_denied_no_progress"
+			}
+			if mode == "not-terminal" {
+				result.ResponseLoopExhausted = false
+			}
+			if mode == "changed" {
+				object.SetUID("new-incarnation")
+			}
+			if mode == "pending-delete" {
+				stamp := metav1.NewTime(now)
+				object.SetDeletionTimestamp(&stamp)
+				result.UnresolvedFindings = index.Findings(store.objects, now)
+			}
+			controller.currentIncidentResult = &result
+			controller.incidentOpen = true
+			controller.responderDone = true
+			controller.responderCompletedAt = now.Add(-time.Second)
+			controller.history = []DetectorEvaluation{{DetectorID: "health", Status: DetectorEvaluationClear, EvaluatedAt: now}}
+			controller.sourceInventory = index
+			controller.drift = &DriftControllerConfig{Inventory: true, Events: store}
+			var closed *IncidentClosure
+			controller.OnIncidentClosed = func(c IncidentClosure) { closed = &c }
+			controller.maybeCloseIncident(context.Background(), now, nil)
+			terminal := mode == "exhausted" || mode == "denied"
+			if terminal && (closed == nil || len(closed.FinalDetectorStates) != 0 || closed.Result.Status != IncidentFailed) {
+				t.Fatalf("terminal blocker waited or claimed healthy: %+v", closed)
+			}
+			if !terminal && closed != nil {
+				t.Fatalf("transient/changed blocker lost recovery grace: %+v", closed)
+			}
+		})
 	}
 }

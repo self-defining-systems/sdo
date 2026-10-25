@@ -284,6 +284,13 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		}
 		message.AppliedPlaybooks = append(message.AppliedPlaybooks, item)
 	}
+	for _, finding := range result.UnresolvedFindings {
+		encoded, err := findingContract(finding)
+		if err != nil {
+			return nil, err
+		}
+		message.UnresolvedFindings = append(message.UnresolvedFindings, encoded)
+	}
 	for _, action := range result.RepairActions {
 		message.RepairActions = append(message.RepairActions, &contracts.RepairActionReceipt{
 			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
@@ -385,6 +392,9 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			IncidentID: pull.GetIncidentId(), PullCount: pull.GetPullCount(), DetectorIDs: append([]string(nil), pull.GetDetectorIds()...),
 			PlaybookIDs: append([]string(nil), pull.GetPlaybookIds()...), ReportDigest: pull.GetReportDigest(),
 		}
+	}
+	for _, finding := range message.GetUnresolvedFindings() {
+		result.UnresolvedFindings = append(result.UnresolvedFindings, findingState(finding))
 	}
 	return result
 }

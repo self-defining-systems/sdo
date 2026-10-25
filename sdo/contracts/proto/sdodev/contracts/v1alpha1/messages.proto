@@ -405,6 +405,8 @@ message IncidentResult {
   reserved 24;
   reserved 25;
   repeated DriftEvent drift_events = 26;
+  // Controller verification at terminal responder completion, never worker authority.
+  repeated Finding unresolved_findings = 27;
 }
 
 // A responder claim that it read controller-published findings during its turn.

@@ -107,7 +107,9 @@ func (d KubernetesJobDispatcher) continueResponder(ctx context.Context, executor
 		if err := ctx.Err(); err != nil {
 			return IncidentResult{}, err
 		}
+		result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
 		state.Attempts++
+		result.ResponseLoopsUsed = state.Attempts
 		result.VerificationEvidence = append(result.VerificationEvidence, VerificationEvidence{Name: "controller-response-verification", Passed: verification.Healthy, Details: verification.Summary, ObservedAt: now().UTC()})
 		limit := loop.MaxBatches
 		if request.MaxResponseLoops > 0 && request.MaxResponseLoops < limit {

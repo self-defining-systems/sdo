@@ -171,6 +171,52 @@ def action_kind(command: Sequence[str]) -> str:
     return f"kubectl-{words[0]}"
 
 
+def _executed_resources(command: Sequence[str], declared: Sequence[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep only explicit kubectl patch/delete targets, never arbitrary attribution."""
+    if action_kind(command) not in {"kubectl-patch", "kubectl-delete"}:
+        return [dict(resource) for resource in declared]
+    words: list[str] = []
+    namespace: str | None = None
+    flags = _KUBECTL_VALUE_FLAGS | {
+        "-p",
+        "--patch",
+        "--type",
+        "--field-manager",
+        "--timeout",
+        "--request-timeout",
+        "--grace-period",
+        "--cascade",
+    }
+    args = iter(command[1:])
+    for token in args:
+        if token in flags:
+            value = next(args, "")
+            if token in {"-n", "--namespace"}:
+                namespace = value
+        elif token.startswith("--namespace="):
+            namespace = token.split("=", 1)[1]
+        elif not token.startswith("-"):
+            words.append(token)
+    targets: set[tuple[str, str]] = set()
+    if len(words) > 1:
+        arguments = words[1:]
+        if "/" in arguments[0]:
+            targets = {
+                (canonical_kind(word.split("/", 1)[0]), word.split("/", 1)[1])
+                for word in arguments
+                if word.count("/") == 1
+            }
+        elif len(arguments) > 1 and "," not in arguments[0]:
+            names = arguments[1:] if words[0] == "delete" else arguments[1:2]
+            targets = {(canonical_kind(arguments[0]), name) for name in names}
+    return [
+        dict(resource)
+        for resource in declared
+        if (resource["kind"], resource["name"]) in targets
+        and (not resource["namespace"] or resource["namespace"] == namespace)
+    ]
+
+
 def _timestamp(moment: datetime) -> str:
     return moment.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
@@ -255,10 +301,15 @@ def _receipt(
     except UnicodeEncodeError:
         raise ValueError("cannot record an invalid repair receipt: command contains invalid UTF-8") from None
     kind = action_kind(command)
+    resources = _executed_resources(command, resources)
     target = (
-        "{kind}/{namespace}/{name}".format(**resources[0])
-        if resources[0]["namespace"]
-        else ("{kind}/{name}".format(**resources[0]))
+        kind
+        if not resources
+        else (
+            "{kind}/{namespace}/{name}".format(**resources[0])
+            if resources[0]["namespace"]
+            else ("{kind}/{name}".format(**resources[0]))
+        )
     )
     withheld = (
         any(resource["kind"] == "Secret" for resource in resources)
@@ -399,7 +450,7 @@ def run_and_record(
     finally:
         completed = receipt(code, output, datetime.now(UTC))
         if code == 0 and action_kind(command) == "kubectl-delete":
-            reason = _confirm_deleted(command, resources)
+            reason = _confirm_deleted(command, _executed_resources(command, resources))
             if reason:
                 completed["success"] = False
                 completed["failure_reason"] = reason

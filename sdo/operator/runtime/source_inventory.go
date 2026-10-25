@@ -144,7 +144,8 @@ func (s *SourceInventory) Findings(objects []*unstructured.Unstructured, now tim
 		}
 		event := sdk.DriftEvent{Ref: ref, Source: source, Manager: "unknown", ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained, Fields: fields}
 		encoded, _ := json.Marshal(event)
-		sum := sha256.Sum256([]byte(driftEventKey(event)))
+		identity, _ := json.Marshal([]any{event.Ref, event.Source, event.Fields})
+		sum := sha256.Sum256(identity)
 		finding := sdk.Finding{DetectorID: "drift.unexplained", RuleID: "unexplained", Status: sdk.FindingActive, Severity: sdk.SeverityLatent,
 			Summary:  fmt.Sprintf("unexplained %s/%s: %s", ref.Kind, ref.Name, source),
 			Evidence: fmt.Sprintf("Accepted commit %s; %s", s.Revision, encoded), PrimaryResource: ref,

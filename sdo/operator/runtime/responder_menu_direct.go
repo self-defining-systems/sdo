@@ -32,6 +32,13 @@ func (l *ResponderLoop) listMenu(ctx context.Context, request ToolRequest, respo
 	}
 	l.openDirectMenuSession(response)
 	entries := rawMenuActions()
+	if capabilities, ok := l.Executor.Client.(interface{ unavailableMenuActions() map[string]bool }); ok {
+		for action, unavailable := range capabilities.unavailableMenuActions() {
+			if unavailable {
+				delete(entries, action)
+			}
+		}
+	}
 	if l.MenuConfig.Unexplained != nil {
 		removals, err := l.MenuConfig.Unexplained(ctx)
 		if err != nil {

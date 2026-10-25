@@ -1079,7 +1079,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	// it. Unresolved drift must not delay it or count as verified recovery.
 	terminalFailure := !scopeCurrent || (healthVerified && c.dispatchError != "")
 	verification := c.continuationVerificationLocked(healthVerified, driftClear, driftFindings)
-	if !verified && (len(verification.Findings) > 0 || verification.Error != "") && scopeCurrent && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
+	if healthVerified && c.terminalInventoryBlockerLocked(verification) {
+		terminalFailure = true
+		slog.Info("incident_terminal_blocker", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "unchanged_non_transient_findings", "findings", len(verification.Findings))
+	}
+	if !verified && !terminalFailure && (len(verification.Findings) > 0 || verification.Error != "") && scopeCurrent && c.dispatchError == "" && now.Before(c.currentIncidentRequest.ResponseDeadline) {
 		if continuer, ok := c.dispatcher.(interface {
 			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
 		}); ok {

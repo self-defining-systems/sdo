@@ -128,7 +128,7 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 		if stepErr != nil {
 			return result, stepErr
 		}
-		if ref, refErr := planActionRef(a); refErr == nil && ref.Kind != "" {
+		if ref, refErr := planActionRef(a); refErr == nil && ref.Kind != "" && objectActionOperation(a) != "delete" {
 			refs = append(refs, ref)
 		}
 	}
@@ -155,6 +155,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	case program.KubernetesRequest:
 		client, ok := e.Client.(PlanAPIClient)
 		if !ok {
+			return r, fmt.Errorf("Kubernetes API transport unavailable")
+		}
+		if capabilities, ok := e.Client.(interface{ hasAPITransport() bool }); ok && !capabilities.hasAPITransport() {
 			return r, fmt.Errorf("Kubernetes API transport unavailable")
 		}
 		if dry {

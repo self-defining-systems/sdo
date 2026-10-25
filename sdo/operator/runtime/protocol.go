@@ -140,6 +140,7 @@ type RepairActionReceipt struct {
 }
 
 type IncidentResult struct {
+ UnresolvedFindings []sdk.Finding
 	DriftEvents           []sdk.DriftEvent
 	SchemaVersion         string
 	IncidentID            string

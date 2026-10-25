@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -60,7 +61,7 @@ func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructu
 	case "policy/v1/PodDisruptionBudget":
 		object, err = c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	default:
-		return nil, fmt.Errorf("plan object kind %s/%s is unsupported", ref.APIVersion, ref.Kind)
+		return c.genericObjectGet(ctx, ref)
 	}
 	if err != nil {
 		return nil, err
@@ -95,7 +96,8 @@ func (c TypedPlanClient) Patch(ctx context.Context, ref sdk.ObjectRef, kind type
 		_, err := c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Patch(ctx, ref.Name, kind, patch, metav1.PatchOptions{})
 		return err
 	default:
-		return fmt.Errorf("plan object kind %s/%s is unsupported", ref.APIVersion, ref.Kind)
+		_, err := c.genericObjectRequest(ctx, ref, "PATCH", string(kind), patch, false)
+		return err
 	}
 }
 
@@ -111,7 +113,7 @@ func planUnstructured(object any, ref sdk.ObjectRef) (*unstructured.Unstructured
 }
 
 func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
-	if c.Client == nil || object == nil || !samePlanRef(object, ref) || ref.Namespace == "" {
+	if c.Client == nil || object == nil || !samePlanRef(object, ref) {
 		return nil, fmt.Errorf("matching named object is required")
 	}
 	var result any
@@ -158,7 +160,19 @@ func (c TypedPlanClient) Create(ctx context.Context, ref sdk.ObjectRef, object *
 			result, err = c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Create(ctx, typed, metav1.CreateOptions{})
 		}
 	default:
-		return nil, fmt.Errorf("object create transport is unavailable for %s/%s", ref.APIVersion, ref.Kind)
+		body, encodeErr := object.MarshalJSON()
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		raw, requestErr := c.genericObjectRequest(ctx, ref, "POST", "application/json", body, true)
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		created := &unstructured.Unstructured{}
+		if err := created.UnmarshalJSON(raw); err != nil {
+			return nil, err
+		}
+		return created, nil
 	}
 	if err != nil {
 		return nil, err
@@ -189,7 +203,12 @@ func (c TypedPlanClient) Delete(ctx context.Context, ref sdk.ObjectRef, uid type
 	case "policy/v1/PodDisruptionBudget":
 		return c.Client.PolicyV1().PodDisruptionBudgets(ref.Namespace).Delete(ctx, ref.Name, options)
 	}
-	return fmt.Errorf("object delete transport is unavailable for %s/%s", ref.APIVersion, ref.Kind)
+	body, err := json.Marshal(options)
+	if err != nil {
+		return err
+	}
+	_, err = c.genericObjectRequest(ctx, ref, "DELETE", "application/json", body, false)
+	return err
 }
 
 // Exec requests no stdout/stderr streams. Kubernetes requires at least one I/O

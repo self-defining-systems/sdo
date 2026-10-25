@@ -18,22 +18,34 @@ func (c TypedPlanClient) KubernetesRequest(ctx context.Context, r program.Kubern
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
-	if c.ExecConfig == nil {
+	var client *http.Client
+	var base *url.URL
+	var err error
+	if c.ExecConfig != nil {
+		config := rest.CopyConfig(c.ExecConfig)
+		client, err = rest.HTTPClientFor(config)
+		if err != nil {
+			return nil, fmt.Errorf("Kubernetes API transport unavailable")
+		}
+		base, err = url.Parse(config.Host)
+		if err != nil {
+			return nil, fmt.Errorf("invalid API host")
+		}
+		base.Path += r.Path
+	} else if c.Client != nil {
+		transport, ok := c.Client.Discovery().RESTClient().(*rest.RESTClient)
+		if !ok || transport == nil || transport.Client == nil {
+			return nil, fmt.Errorf("Kubernetes API transport unavailable")
+		}
+		client = transport.Client
+		base = transport.Verb(r.Method).AbsPath(r.Path).URL()
+	} else {
 		return nil, fmt.Errorf("Kubernetes API transport unavailable")
 	}
-	config := rest.CopyConfig(c.ExecConfig)
-	// Never follow API redirects carrying controller authorization.
-	client, err := rest.HTTPClientFor(config)
-	if err != nil {
-		return nil, fmt.Errorf("Kubernetes API transport unavailable")
-	}
+	// Reuse the supplied client's authenticated transport, with bounded bodies
+	// and redirects disabled just as for an explicitly supplied rest.Config.
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	base, err := url.Parse(config.Host)
-	if err != nil {
-		return nil, fmt.Errorf("invalid API host")
-	}
-	base.Path = base.Path + r.Path
 	values := url.Values{}
 	for k, v := range r.Query {
 		values.Set(k, v)

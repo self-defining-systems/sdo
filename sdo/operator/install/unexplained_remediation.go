@@ -37,7 +37,7 @@ func addUnexplainedRemovalGrants(c Config, p *Plan, resources []*metav1.APIResou
 			}
 		}
 	}
-	name := c.controlNamespace() + "-unexplained-removal"
+	name := "sdo-unexplained-removal-" + c.controlNamespace()
 	if len(namespaced) > 0 {
 		p.AppRoles = append(p.AppRoles, role(c.Namespace, name, namespaced))
 		p.AppBindings = append(p.AppBindings, binding(c.Namespace, name, "sdo-controller", c.controlNamespace()))
