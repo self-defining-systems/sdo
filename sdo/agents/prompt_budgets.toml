@@ -1,0 +1,193 @@
+# Unicode code points in production-rendered prompts; fixture maxima rounded upward to 100.
+
+[deployer.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 92 Unicode code points; byte-identical template extraction."
+
+[deployer.instructions]
+max_chars = 1100
+reason = "Baseline synthetic fixture maximum: 1072 Unicode code points; byte-identical template extraction."
+
+[health_judge.active_payload]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 52 Unicode code points; byte-identical template extraction."
+
+[health_judge.deployer]
+max_chars = 500
+reason = "Baseline synthetic fixture maximum: 433 Unicode code points; byte-identical template extraction."
+
+[health_judge.health_objective]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 17 Unicode code points; byte-identical template extraction."
+
+[health_judge.incident_data]
+max_chars = 300
+reason = "Baseline synthetic fixture maximum: 273 Unicode code points; byte-identical template extraction."
+
+[health_judge.instructions]
+max_chars = 7700
+reason = "Baseline synthetic fixture maximum: 7622 Unicode code points; byte-identical template extraction."
+
+[health_judge.metrics_authoring]
+max_chars = 900
+reason = "Baseline synthetic fixture maximum: 813 Unicode code points; byte-identical template extraction."
+
+[health_judge.previous_payload]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 4 Unicode code points; byte-identical template extraction."
+
+[health_judge.traffic_authoring]
+max_chars = 5300
+reason = "Baseline synthetic fixture maximum: 5202 Unicode code points; byte-identical template extraction."
+
+[lifecycle.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 5 Unicode code points; byte-identical template extraction."
+
+[lifecycle.instructions]
+max_chars = 1900
+reason = "Baseline synthetic fixture maximum: 1849 Unicode code points; byte-identical template extraction."
+
+[recovery.instructions]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 184 Unicode code points; byte-identical template extraction."
+
+[recovery.reports]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 168 Unicode code points; byte-identical template extraction."
+
+[reflection.cause_work]
+max_chars = 0
+reason = "Baseline synthetic fixture maximum: 0 Unicode code points; byte-identical template extraction."
+
+[reflection.history]
+max_chars = 400
+reason = "Baseline synthetic fixture maximum: 366 Unicode code points; byte-identical template extraction."
+
+[reflection.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 97 Unicode code points; byte-identical template extraction."
+
+[reflection.instructions]
+max_chars = 2400
+reason = "Baseline synthetic fixture maximum: 2323 Unicode code points; byte-identical template extraction."
+
+[reflection.memory]
+max_chars = 800
+reason = "Baseline synthetic fixture maximum: 766 Unicode code points; byte-identical template extraction."
+
+[reflection.outcome]
+max_chars = 3600
+reason = "Baseline synthetic fixture maximum: 3556 Unicode code points; byte-identical template extraction."
+
+[reflection.validation_feedback]
+max_chars = 300
+reason = "Baseline synthetic fixture maximum: 207 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.commands]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 94 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.findings]
+max_chars = 2600
+reason = "Baseline synthetic fixture maximum: 2511 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 3 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.instructions]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 103 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.memory]
+max_chars = 1300
+reason = "Baseline synthetic fixture maximum: 1209 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.result]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 140 Unicode code points; byte-identical template extraction."
+
+[reflection_brief.separators]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identical template extraction."
+
+[responder.additional_context]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 79 Unicode code points; byte-identical template extraction."
+
+[responder.detector_evidence]
+max_chars = 400
+reason = "Baseline synthetic fixture maximum: 365 Unicode code points; byte-identical template extraction."
+
+[responder.drift_guidance]
+max_chars = 800
+reason = "Baseline synthetic fixture maximum: 723 Unicode code points; byte-identical template extraction."
+
+[responder.incident_data]
+max_chars = 3100
+reason = "Baseline synthetic fixture maximum: 3037 Unicode code points; byte-identical template extraction."
+
+[responder.inlined_architecture_summary]
+max_chars = 8100
+reason = "Baseline synthetic fixture maximum: 8050 Unicode code points; byte-identical template extraction."
+
+[responder.inlined_health_objective]
+max_chars = 4100
+reason = "Baseline synthetic fixture maximum: 4046 Unicode code points; byte-identical template extraction."
+
+[responder.instructions]
+max_chars = 1300
+reason = "Baseline synthetic fixture maximum: 1208 Unicode code points; byte-identical template extraction."
+
+[responder.late_findings_guidance]
+max_chars = 700
+reason = "Baseline synthetic fixture maximum: 605 Unicode code points; byte-identical template extraction."
+
+[responder.memory_guard]
+max_chars = 300
+reason = "Baseline synthetic fixture maximum: 269 Unicode code points; byte-identical template extraction."
+
+[responder.no_action_instructions]
+max_chars = 1000
+reason = "Baseline synthetic fixture maximum: 978 Unicode code points; byte-identical template extraction."
+
+[responder.program_guidance]
+max_chars = 700
+reason = "Baseline synthetic fixture maximum: 679 Unicode code points; byte-identical template extraction."
+
+[responder.state_changes_section]
+max_chars = 700
+reason = "Baseline synthetic fixture maximum: 644 Unicode code points; byte-identical template extraction."
+
+[responder.strategy]
+max_chars = 12600
+reason = "Baseline synthetic fixture maximum: 12565 Unicode code points; byte-identical template extraction."
+
+[responder.surfaced_context]
+max_chars = 10200
+reason = "Baseline synthetic fixture maximum: 10184 Unicode code points; byte-identical template extraction."
+
+[responder.verification_instructions]
+max_chars = 2600
+reason = "Baseline synthetic fixture maximum: 2519 Unicode code points; byte-identical template extraction."
+
+[session.incident_data]
+max_chars = 100
+reason = "Baseline synthetic fixture maximum: 40 Unicode code points; byte-identical template extraction."
+
+[session.instructions]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 129 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-detector-authoring]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 187 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-memory]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 175 Unicode code points; byte-identical template extraction."
+
+[skills.sdo-playbook-authoring]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
