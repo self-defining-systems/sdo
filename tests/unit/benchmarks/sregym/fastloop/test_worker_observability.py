@@ -31,7 +31,9 @@ def test_legacy_astronomy_problem_gets_telemetry_before_deployment(monkeypatch: 
     monkeypatch.setattr(adapter, "prepare_oracle_observability", lambda **_: calls.append("telemetry"))
     monkeypatch.setattr(adapter, "route_astronomy_traces", lambda *_: calls.append("traces"))
     monkeypatch.setattr(
-        worker_bridge.importlib, "import_module", lambda name: module if name.endswith(".worker") else SimpleNamespace()
+        worker_bridge.importlib,
+        "import_module",
+        lambda name: module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {}),
     )
     assert worker_bridge.main() == {"deployed": True}
     assert calls == ["cleanup", "telemetry", "deploy", "admission", "traces"]

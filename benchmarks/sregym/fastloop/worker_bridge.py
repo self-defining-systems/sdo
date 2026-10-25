@@ -14,6 +14,9 @@ def main() -> int:
     worker_infra: Any = importlib.import_module("sregym.worker_infra")
     worker = importlib.import_module("sregym.fastloop.worker")
     handle = worker.FastloopWorker.handle
+    from benchmarks.sregym.fastloop.clean_start import install_probe_isolation
+
+    install_probe_isolation(importlib.import_module("sregym.conductor.problems.composition.grading"))
 
     def prepare_astronomy() -> None:
         from benchmarks.sregym.adapter import prepare_oracle_observability

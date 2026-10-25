@@ -47,6 +47,8 @@ class API:
         if args[0] == "get":
             if args[args.index("-o") + 1] == "name":
                 return SimpleNamespace(stdout="")
+            if args[1] == "pods,jobs,configmaps":
+                return SimpleNamespace(stdout=json.dumps({"items": []}))
             assert args[args.index("-l") + 1] == "platform.io/injected=true"
             namespaced = "--all-namespaces" in args
             return SimpleNamespace(
@@ -181,7 +183,9 @@ def run_bridge(monkeypatch: Any, requests: list[dict[str, Any]], api: API) -> li
     monkeypatch.setenv("KUBECONFIG", "synthetic-kubeconfig")
     monkeypatch.setattr(clean_start, "kubectl", api)
     monkeypatch.setattr(
-        worker_bridge.importlib, "import_module", lambda name: module if name.endswith(".worker") else SimpleNamespace()
+        worker_bridge.importlib,
+        "import_module",
+        lambda name: module if name.endswith(".worker") else SimpleNamespace(probe_pod_manifest=lambda *args: {}),
     )
     return worker_bridge.main()
 

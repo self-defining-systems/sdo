@@ -251,7 +251,7 @@ def test_external_worker_uses_registry_for_sdo_and_platform_images(monkeypatch, 
         source._kind_load_image(cluster_name="img1-contract", image_ref="app:v1")
         return 0
 
-    worker = SimpleNamespace(FastloopWorker=Worker, main=run)
+    worker = SimpleNamespace(FastloopWorker=Worker, main=run, probe_pod_manifest=lambda *args: {})
     monkeypatch.setattr(
         worker_bridge.importlib,
         "import_module",
