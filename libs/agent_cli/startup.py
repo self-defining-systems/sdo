@@ -45,6 +45,9 @@ class StartupTelemetry:
     prompts, credentials and tool arguments are discarded without persistence.
     """
 
+    def __init__(self, provider: str = "codex") -> None:
+        self.provider = provider
+
     endpoint = ""
     server: ThreadingHTTPServer | None = None
     thread: threading.Thread | None = None
@@ -91,7 +94,7 @@ class StartupTelemetry:
                         item["key"]: next(iter(item["value"].values()), None) for item in record.get("attributes", [])
                     }
                     event = attributes.get("event.name") or record.get("body", {}).get("stringValue")
-                    if event not in {"codex.api_request", "codex.websocket.request"}:
+                    if event not in {"codex.api_request", "codex.websocket_request"}:
                         continue
                     timestamp = int(record["timeUnixNano"]) / 1e9 - float(str(attributes["duration_ms"])) / 1000
                     mark_startup(
@@ -101,7 +104,9 @@ class StartupTelemetry:
                     )
 
     def process_started(self) -> None:
-        mark_startup("agent_process_started")
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        mark_startup("agent_process_started", timestamp)
+        mark_startup(f"{self.provider}_process_started", timestamp)
 
     def executor(self, live: CommandExecutor | None) -> CommandExecutor:
         return _TimingExecutor(live or HostCommandExecutor(), self)

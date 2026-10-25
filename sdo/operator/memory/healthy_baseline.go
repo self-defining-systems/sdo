@@ -57,6 +57,9 @@ func CaptureHealthyBaseline(root, revision string, view sdk.DetectionContext, na
 // BindIncidentHealthyBaseline freezes the pre-incident reference. A later
 // successful repair must never replace the healthy reference for this incident.
 func BindIncidentHealthyBaseline(root, revision, incidentID string) error {
+	releaseSessionStorage := SessionStorageUse()
+	defer releaseSessionStorage()
+
 	raw, err := os.ReadFile(healthyBaselinePath(root, revision))
 	if err != nil {
 		return err

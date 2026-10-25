@@ -2,10 +2,13 @@ import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+import pytest
+
 from libs.agent_cli.startup import StartupTelemetry, mark_startup
 
 
-def test_startup_records_actual_codex_request_start(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("event", ["codex.api_request", "codex.websocket_request"])
+def test_startup_records_actual_codex_request_start(tmp_path: Path, monkeypatch, event: str) -> None:
     target = tmp_path / "startup.json"
     monkeypatch.setenv("SDO_STARTUP_TIMING_PATH", str(target))
     mark_startup("worker_ready")
@@ -20,7 +23,7 @@ def test_startup_records_actual_codex_request_start(tmp_path: Path, monkeypatch)
                                 {
                                     "timeUnixNano": "2000000000",
                                     "attributes": [
-                                        {"key": "event.name", "value": {"stringValue": "codex.api_request"}},
+                                        {"key": "event.name", "value": {"stringValue": event}},
                                         {"key": "duration_ms", "value": {"intValue": "125"}},
                                     ],
                                 }
@@ -43,5 +46,5 @@ def test_startup_records_actual_codex_request_start(tmp_path: Path, monkeypatch)
         "first_model_request_source",
     }
     assert record["first_model_request_sent"] == "1970-01-01T00:00:01.875000Z"
-    assert record["first_model_request_source"] == "codex.otel.api_request.timestamp-minus-duration"
+    assert record["first_model_request_source"] == f"codex.otel.{event.removeprefix('codex.')}.timestamp-minus-duration"
     assert "prompt" not in target.read_text()

@@ -82,3 +82,49 @@ func TestResponderStartupRecordContainsEveryMeasuredBoundary(t *testing.T) {
 		t.Fatalf("incomplete telemetry: %s", logs.String())
 	}
 }
+
+func TestWarmStartupKeepsPodAgeAndClaimClockSeparate(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "session"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	claimed := time.Date(2026, 10, 25, 16, 0, 0, 0, time.UTC)
+	bound := claimed.Add(10 * time.Millisecond)
+	opened := claimed.Add(200 * time.Millisecond)
+	if err := RecordSessionStartup(root, "", "session", claimed.Add(100*time.Millisecond), opened); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordSessionStartup(root, "", "session", claimed.Add(time.Hour), claimed.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStartupOnce(filepath.Join(root, "session/startup-dispatch.json"), DispatchStartup{Mode: "warm", ClaimedAt: &claimed, TaskBoundAt: bound}); err != nil {
+		t.Fatal(err)
+	}
+	jobCreated := metav1.NewTime(claimed.Add(-2 * time.Minute))
+	r := &ResponderStartup{IncidentID: "clock", JobName: "standby", Mode: "warm", InitContainers: map[string]ContainerStartup{}, Missing: []string{}, JobCreatedAt: &jobCreated}
+	e := KubernetesExecutor{Client: fake.NewSimpleClientset(), Namespace: "control", RepositoryMountPath: root, SessionPVCSubPath: "session"}
+	e.emitStartup(r)
+	if r.ClaimToSessionOpenMilliseconds == nil || *r.ClaimToSessionOpenMilliseconds != 200 {
+		t.Fatalf("warm clock used Pod age: %+v", r)
+	}
+	if r.JobCreatedToSessionOpenMilliseconds == nil || *r.JobCreatedToSessionOpenMilliseconds != 120200 {
+		t.Fatalf("literal Job age hidden: %+v", r)
+	}
+	if r.TaskBoundToSessionOpenMilliseconds == nil || *r.TaskBoundToSessionOpenMilliseconds != 190 {
+		t.Fatalf("binding clock wrong: %+v", r)
+	}
+	if r.SessionOpenedAt == nil || !r.SessionOpenedAt.Equal(opened) {
+		t.Fatal("session restart reset startup clock")
+	}
+}
+
+func TestStartupArtifactRejectsArbitraryPayloads(t *testing.T) {
+	for _, payload := range []string{`{"auth":"private"}`, `{"worker_ready":"not-a-time"}`, `{} {"credentials":"private"}`, `{"first_model_request_source":"arbitrary-content"}`} {
+		if err := ValidateStartupArtifact("startup-worker.json", []byte(payload)); err == nil {
+			t.Fatalf("untyped startup payload accepted: %s", payload)
+		}
+	}
+	if err := ValidateStartupArtifact("startup-config.json", []byte(`{}`)); err == nil {
+		t.Fatal("unknown startup filename accepted")
+	}
+}

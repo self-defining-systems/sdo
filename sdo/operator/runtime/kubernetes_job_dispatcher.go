@@ -28,6 +28,7 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
+	Standby *worker_registry.StandbyPool
 	// AcceptedRepository is the durable broker-owned checkout used for trust.
 	// Proposal checkouts belong to individual incidents and may be retired.
 	AcceptedRepository    string
@@ -204,7 +205,18 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 	lateConfigMap := ""
 	sessionSubPath := ""
 	if d.RequireMemorySnapshot {
-		sessionSubPath, err = memory.PrepareIncidentAPIAttempt(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		rejoin := false
+		if d.Standby != nil {
+			rejoin, err = d.Standby.ExistingBinding(task)
+			if err != nil {
+				return IncidentResult{}, err
+			}
+		}
+		if rejoin {
+			sessionSubPath, err = memory.PrepareIncidentSession(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		} else {
+			sessionSubPath, err = memory.PrepareIncidentAPIAttempt(d.RepositoryMountPath, d.RepositoryPVCSubPath, request.IncidentID)
+		}
 		if err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare isolated responder session: %w", err)
 		}
@@ -217,6 +229,23 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			return IncidentResult{}, fmt.Errorf("prepare logical late findings transport: %w", err)
 		}
 		lateConfigMap = latefindings.ConfigMapName(request.IncidentID)
+	}
+	executor := worker_registry.KubernetesExecutor{
+		APIProxyImage:  d.APIProxyImage,
+		ToolchainImage: d.ToolchainImage,
+		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
+		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
+		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
+		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
+		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
+		LateFindingsConfigMap:  lateConfigMap,
+		TaskPayload:            request.PreparedAgentTask,
+	}
+	if d.Standby != nil {
+		executor, err = d.Standby.TryBind(ctx, executor, task)
+		if err != nil {
+			return IncidentResult{}, fmt.Errorf("bind standby responder: %w", err)
+		}
 	}
 	if loop != nil && sessionSubPath != "" {
 		base := d.RepositoryPVCSubPath
@@ -233,7 +262,16 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 		// Dispatch owns these goroutines: they write corpus captures and tool
 		// responses under the repository mount, so none may outlive it.
 		defer func() { stopTools(); tools.Wait() }()
-		server := SessionToolServer{Directory: directory, Handle: loop.Handle}
+		server := SessionToolServer{Directory: directory, Handle: func(toolCtx context.Context, toolRequest ToolRequest) ToolResponse {
+			received := time.Now().UTC()
+			response := loop.Handle(toolCtx, toolRequest)
+			if toolRequest.Command == "session-open" && response.Error == "" {
+				if err := worker_registry.RecordSessionStartup(d.RepositoryMountPath, d.RepositoryPVCSubPath, sessionSubPath, received, time.Now().UTC()); err != nil {
+					slog.Warn("responder_startup_session_record", "incident_id", request.IncidentID, "error", err)
+				}
+			}
+			return response
+		}}
 		if err := server.Prepare(); err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare responder tools: %w", err)
 		}
@@ -245,17 +283,7 @@ func (d KubernetesJobDispatcher) Dispatch(ctx context.Context, request IncidentR
 			environment["SDO_MITIGATION_SESSION"] = "1"
 		}
 	}
-	executor := worker_registry.KubernetesExecutor{
-		APIProxyImage:  d.APIProxyImage,
-		ToolchainImage: d.ToolchainImage,
-		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
-		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,
-		RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath,
-		CredentialsSecret: d.CredentialsSecret, Environment: environment, PollInterval: d.PollInterval, SessionPVCSubPath: sessionSubPath,
-		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
-		LateFindingsConfigMap:  lateConfigMap,
-		TaskPayload:            request.PreparedAgentTask,
-	}
+
 	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
 		var failed *worker_registry.JobFailedError

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -598,6 +599,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			},
 		}
 	}
+	if !clientInjected && jobDispatch {
+		d := dispatcher.(KubernetesJobDispatcher)
+		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
+		for name, value := range jobEnvironment {
+			standbyEnvironment[name] = value
+		}
+		standbyEnvironment["CODEX_HOME"] = "/sdo/session/codex"
+		standbyEnvironment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
+		standbyEnvironment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
+		standbyEnvironment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
+		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
+		if err := pool.Start(standbyCtx); err != nil {
+			stopStandby()
+			slog.Warn("responder_standby_unavailable", "error", err)
+		} else {
+			defer func() { stopStandby(); pool.Wait() }()
+			d.Standby = pool
+			dispatcher = d
+		}
+	}
+
 	// Detectors and plan verification read through the same capped runtime view.
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{DetectionContext: snapshot, Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {

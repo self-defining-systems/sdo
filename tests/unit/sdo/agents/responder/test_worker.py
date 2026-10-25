@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -168,3 +169,27 @@ def test_worker_rejects_invalid_go_late_findings_receipt(tmp_path: Path, monkeyp
         run_worker_task(path, "result-map", publisher, executor=lambda _: result)
 
     assert publisher.published is None
+
+
+def test_warm_worker_validates_canonical_task_before_local_workspace_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "agent-task.json"
+    _task(path)
+    expected = _result()
+    for playbook in expected.applied_playbooks:
+        playbook.playbook_id = "missing-configmap"
+        playbook.script_names[:] = ["verify.sh"]
+    del expected.proposed_artifact_ids[:]
+    monkeypatch.setenv("SDO_WORKSPACE_ALIAS", "/sdo/proposal")
+    seen = []
+
+    def execute(request: IncidentRequest) -> IncidentResult:
+        seen.append(request.repository_worktree)
+        return expected
+
+    publisher = RecordingPublisher()
+    run_worker_task(path, "result-map", publisher, executor=execute)
+    assert seen == ["/sdo/proposal"]
+    assert "SDO_WORKSPACE_ALIAS" not in os.environ
+    assert publisher.published is not None

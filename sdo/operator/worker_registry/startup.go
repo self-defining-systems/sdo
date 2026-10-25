@@ -3,6 +3,7 @@ package worker_registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,17 +25,29 @@ type ContainerStartup struct {
 // ResponderStartup is one structured controller telemetry record per launch.
 // Absent observations remain explicit; failed startup never invents times.
 type ResponderStartup struct {
-	IncidentID              string                      `json:"incident_id"`
-	JobName                 string                      `json:"job_name"`
-	JobCreatedAt            *metav1.Time                `json:"job_created_at"`
-	PodScheduledAt          *metav1.Time                `json:"pod_scheduled_at"`
-	InitContainers          map[string]ContainerStartup `json:"init_containers"`
-	AgentContainerStartedAt *metav1.Time                `json:"agent_container_started_at"`
-	WorkerReady             *time.Time                  `json:"worker_ready"`
-	AgentProcessStarted     *time.Time                  `json:"agent_process_started"`
-	FirstModelRequestSent   *time.Time                  `json:"first_model_request_sent"`
-	FirstModelRequestSource string                      `json:"first_model_request_source"`
-	Missing                 []string                    `json:"missing"`
+	TaskBoundAt                         *time.Time                  `json:"task_bound_at"`
+	PodReadyAt                          *metav1.Time                `json:"pod_ready_at"`
+	SessionOpenedAt                     *time.Time                  `json:"session_open_at"`
+	SessionOpenReceivedAt               *time.Time                  `json:"session_open_received_at"`
+	JobCreatedToSessionOpenMilliseconds *float64                    `json:"job_created_to_session_open_ms"`
+	ClaimToSessionOpenMilliseconds      *float64                    `json:"claim_to_session_open_ms"`
+	TaskBoundToSessionOpenMilliseconds  *float64                    `json:"task_bound_to_session_open_ms"`
+	CodexProcessStarted                 *time.Time                  `json:"codex_process_started"`
+	Mode                                string                      `json:"mode"`
+	ClaimedAt                           *time.Time                  `json:"claimed_at"`
+	RegisteredAgentProcessStarted       *time.Time                  `json:"registered_agent_process_started"`
+	ClaimToFirstModelMilliseconds       *float64                    `json:"claim_to_first_model_ms"`
+	IncidentID                          string                      `json:"incident_id"`
+	JobName                             string                      `json:"job_name"`
+	JobCreatedAt                        *metav1.Time                `json:"job_created_at"`
+	PodScheduledAt                      *metav1.Time                `json:"pod_scheduled_at"`
+	InitContainers                      map[string]ContainerStartup `json:"init_containers"`
+	AgentContainerStartedAt             *metav1.Time                `json:"agent_container_started_at"`
+	WorkerReady                         *time.Time                  `json:"worker_ready"`
+	AgentProcessStarted                 *time.Time                  `json:"agent_process_started"`
+	FirstModelRequestSent               *time.Time                  `json:"first_model_request_sent"`
+	FirstModelRequestSource             string                      `json:"first_model_request_source"`
+	Missing                             []string                    `json:"missing"`
 }
 
 func (e KubernetesExecutor) startupRecord(task *contracts.AgentTask, jobName string) *ResponderStartup {
@@ -42,7 +55,12 @@ func (e KubernetesExecutor) startupRecord(task *contracts.AgentTask, jobName str
 	if task.GetRequest().UnmarshalTo(request) != nil {
 		return nil
 	}
-	return &ResponderStartup{IncidentID: request.GetIncidentId(), JobName: jobName, InitContainers: map[string]ContainerStartup{}, Missing: []string{}}
+	record := &ResponderStartup{IncidentID: request.GetIncidentId(), JobName: jobName, Mode: "cold", InitContainers: map[string]ContainerStartup{}, Missing: []string{}}
+	if e.WarmBinding != nil {
+		record.Mode = "warm"
+		record.ClaimedAt = &e.WarmBinding.ClaimedAt
+	}
+	return record
 }
 
 func (r *ResponderStartup) observe(job *batchv1.Job, pods []corev1.Pod) {
@@ -51,6 +69,9 @@ func (r *ResponderStartup) observe(job *batchv1.Job, pods []corev1.Pod) {
 	}
 	for _, pod := range pods {
 		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				r.PodReadyAt = condition.LastTransitionTime.DeepCopy()
+			}
 			if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionTrue {
 				r.PodScheduledAt = condition.LastTransitionTime.DeepCopy()
 			}
@@ -96,17 +117,13 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 		r.observe(nil, pods.Items)
 	}
 	if e.SessionPVCSubPath != "" {
-		relative, err := filepath.Rel(filepath.Clean(e.RepositoryPVCSubPath+"/"), e.SessionPVCSubPath)
+		relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
 		if err == nil {
 			data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-worker.json"))
 			if err == nil {
-				var worker struct {
-					WorkerReady           *time.Time `json:"worker_ready"`
-					AgentProcessStarted   *time.Time `json:"agent_process_started"`
-					FirstModelRequestSent *time.Time `json:"first_model_request_sent"`
-					Source                string     `json:"first_model_request_source"`
-				}
+				var worker WorkerStartup
 				if json.Unmarshal(data, &worker) == nil {
+					r.CodexProcessStarted = worker.CodexProcessStarted
 					r.WorkerReady = worker.WorkerReady
 					r.AgentProcessStarted = worker.AgentProcessStarted
 					r.FirstModelRequestSent = worker.FirstModelRequestSent
@@ -115,6 +132,55 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 			}
 		}
 	}
+	if e.WarmBinding != nil {
+		relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
+		if err == nil {
+			data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-daemon.json"))
+			if err == nil {
+				var daemon DaemonStartup
+				if json.Unmarshal(data, &daemon) == nil {
+					r.RegisteredAgentProcessStarted = daemon.Started
+				}
+			}
+		}
+		if r.ClaimedAt != nil && r.FirstModelRequestSent != nil {
+			elapsed := float64(r.FirstModelRequestSent.Sub(*r.ClaimedAt).Microseconds()) / 1000
+			r.ClaimToFirstModelMilliseconds = &elapsed
+		}
+	}
+
+	if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil && e.SessionPVCSubPath != "" {
+		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-session.json")); err == nil {
+			var timing SessionStartup
+			if json.Unmarshal(data, &timing) == nil {
+				r.SessionOpenedAt = &timing.OpenedAt
+				r.SessionOpenReceivedAt = &timing.ReceivedAt
+			}
+		}
+		if data, err := os.ReadFile(filepath.Join(e.RepositoryMountPath, relative, "startup-dispatch.json")); err == nil {
+			var timing DispatchStartup
+			if json.Unmarshal(data, &timing) == nil {
+				r.Mode = timing.Mode
+				r.TaskBoundAt = &timing.TaskBoundAt
+				r.ClaimedAt = timing.ClaimedAt
+			}
+		}
+	}
+	if r.SessionOpenedAt != nil {
+		if r.JobCreatedAt != nil {
+			elapsed := float64(r.SessionOpenedAt.Sub(r.JobCreatedAt.Time).Microseconds()) / 1000
+			r.JobCreatedToSessionOpenMilliseconds = &elapsed
+		}
+		if r.ClaimedAt != nil {
+			elapsed := float64(r.SessionOpenedAt.Sub(*r.ClaimedAt).Microseconds()) / 1000
+			r.ClaimToSessionOpenMilliseconds = &elapsed
+		}
+		if r.TaskBoundAt != nil {
+			elapsed := float64(r.SessionOpenedAt.Sub(*r.TaskBoundAt).Microseconds()) / 1000
+			r.TaskBoundToSessionOpenMilliseconds = &elapsed
+		}
+	}
+
 	for name, missing := range map[string]bool{"job_created_at": r.JobCreatedAt == nil, "pod_scheduled_at": r.PodScheduledAt == nil, "agent_container_started_at": r.AgentContainerStartedAt == nil, "worker_ready": r.WorkerReady == nil, "agent_process_started": r.AgentProcessStarted == nil, "first_model_request_sent": r.FirstModelRequestSent == nil} {
 		if missing {
 			r.Missing = append(r.Missing, name)
@@ -131,6 +197,27 @@ func (e KubernetesExecutor) emitStartup(r *ResponderStartup) {
 	sort.Strings(r.Missing)
 	encoded, err := json.Marshal(r)
 	if err == nil {
+		if e.SessionPVCSubPath != "" {
+			relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath)
+			if err == nil {
+				filename := filepath.Join(e.RepositoryMountPath, relative, "startup-controller.json")
+				file, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+				if errors.Is(err, os.ErrExist) {
+					return
+				}
+				if err == nil {
+					_, _ = file.Write(encoded)
+					_ = file.Close()
+				}
+			}
+		}
 		slog.Info("responder_startup", "startup_json", string(encoded))
 	}
+}
+
+func sessionPVCBase(base string) string {
+	if base == "" {
+		return "."
+	}
+	return base
 }

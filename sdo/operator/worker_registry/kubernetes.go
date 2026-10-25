@@ -72,6 +72,9 @@ func (err *RequestStagingError) Unwrap() error { return err.Err }
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
+	WarmBinding            *WarmBinding
+	standbyMode            bool
+	standbySubPath         string
 	APIProxyImage          string
 	ToolchainImage         string
 	TaskPayload            string
@@ -216,10 +219,42 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 		request = requestSource{PVCSubPath: staged}
 		defer e.unstageRequest(jobName)
 	}
-	if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
+	taskBoundAt := time.Now().UTC()
+	if e.WarmBinding != nil {
+		if _, err := e.Client.BatchV1().Jobs(e.Namespace).Get(ctx, jobName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+			return nil, &JobFailedError{JobName: jobName}
+		} else if err != nil {
+			return nil, err
+		}
+		if err := e.publishWarmTask(ctx, task); err != nil {
+			var unpublished *standbyClaimUnpublished
+			if errors.As(err, &unpublished) {
+				if cleanupErr := e.abandonUnpublished(ctx, task); cleanupErr != nil && !apierrors.IsNotFound(cleanupErr) {
+					return nil, cleanupErr
+				}
+				e.WarmBinding = nil
+				return e.Execute(ctx, task)
+			}
+			return nil, err
+		}
+	} else if err := e.ensureJob(ctx, task, launch, jobName, request, resultName, proposalSubPath); err != nil {
 		return nil, err
 	}
 	startup := e.startupRecord(task, jobName)
+	if startup != nil {
+		timing := DispatchStartup{Mode: "cold", TaskBoundAt: taskBoundAt}
+		if e.WarmBinding != nil {
+			timing.Mode = "warm"
+			timing.ClaimedAt = &e.WarmBinding.ClaimedAt
+		}
+		startup.TaskBoundAt = &taskBoundAt
+		if e.SessionPVCSubPath != "" {
+			if relative, err := filepath.Rel(sessionPVCBase(e.RepositoryPVCSubPath), e.SessionPVCSubPath); err == nil {
+				_ = writeStartupOnce(filepath.Join(e.RepositoryMountPath, relative, "startup-dispatch.json"), timing)
+			}
+		}
+	}
+
 	defer e.emitStartup(startup)
 	if e.OnPhase != nil {
 		if err := e.OnPhase(ctx, "reflection_job_created"); err != nil {
@@ -230,6 +265,11 @@ func (e KubernetesExecutor) Execute(ctx context.Context, task *contracts.AgentTa
 	defer ticker.Stop()
 	observed := map[string]bool{}
 	for {
+		if e.WarmBinding != nil {
+			if err := e.projectWarmLateFindings(ctx); err != nil {
+				return nil, fmt.Errorf("project warm late findings: %w", err)
+			}
+		}
 		if e.OnPhase != nil && !observed["pod_ready"] {
 			pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + jobName})
 			if err == nil {
@@ -514,6 +554,9 @@ func (e KubernetesExecutor) ensureJob(ctx context.Context, task *contracts.Agent
 		},
 	}
 	e.addAPIHistory(job, task)
+	if e.standbyMode {
+		e.configureStandby(job, launch)
+	}
 	if task.GetRequest().MessageIs(&contracts.IncidentRequest{}) {
 		toolchain.ApplyShared(&job.Spec.Template.Spec, e.ToolchainImage, e.RepositoryPVCSubPath)
 	} else {

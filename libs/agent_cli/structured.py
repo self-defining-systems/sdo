@@ -239,7 +239,7 @@ def run_structured_turn(
     try:
         with ExitStack() as turn_scope:
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
-            startup = turn_scope.enter_context(StartupTelemetry())
+            startup = turn_scope.enter_context(StartupTelemetry(provider))
             if provider == "codex":
                 extra_args = [*extra_args, *startup.codex_args()]
             if startup.endpoint:

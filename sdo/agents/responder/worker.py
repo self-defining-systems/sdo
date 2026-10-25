@@ -17,6 +17,7 @@ from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import AGENT_SKILLS, prepare_claude_home, prepare_codex_home
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
+from sdo.agents.responder.standby import await_standby_claim
 from sdo.contracts import (
     SCHEMA_VERSION,
     AgentResult,
@@ -106,6 +107,8 @@ def run_worker_task(
     kubeconfig = write_application_kubeconfig(request.namespace)
     if kubeconfig is not None:
         os.environ["KUBECONFIG"] = str(kubeconfig)
+    if alias := os.environ.pop("SDO_WORKSPACE_ALIAS", None):
+        request.repository_worktree = alias
     mark_startup("worker_ready")
     result = executor(request)
     if result.incident_id != request.incident_id:
@@ -130,6 +133,7 @@ def run_worker_task(
 
 
 def main() -> int:
+    await_standby_claim()
     namespace = os.environ.get("SDO_NAMESPACE", "")
     result_name = os.environ.get("SDO_RESULT_CONFIGMAP", "")
     if not namespace or not result_name:

@@ -3,7 +3,9 @@ package operatorcli
 import (
 	"archive/tar"
 	"bytes"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -212,5 +214,78 @@ func TestRuntimeArtifactsExportsSetupUsageSeparatelyFromIncidents(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(root, "sessions")); !os.IsNotExist(err) {
 		t.Fatalf("setup appeared in incident usage: %v", err)
+	}
+}
+
+func TestRuntimeArtifactsExportsOnlyTypedStartupFiles(t *testing.T) {
+	for _, base := range []string{"startup-controller.json", "startup-worker.json", "startup-daemon.json", "startup-session.json", "startup-dispatch.json"} {
+		if !allowedRuntimeArtifact("sessions/id/" + base) {
+			t.Fatalf("startup evidence omitted: %s", base)
+		}
+	}
+	for _, name := range []string{"sessions/id/startup-auth.json", "sessions/id/startup-worker.json.bak", "sessions/id/nested/startup-worker.json", "sessions/id/startup.json"} {
+		if allowedRuntimeArtifact(name) {
+			t.Fatalf("startup allowlist expanded: %s", name)
+		}
+	}
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	payload := []byte(`{"worker_ready":"2026-10-25T16:00:00Z","codex_process_started":"2026-10-25T16:00:01Z","first_model_request_sent":"2026-10-25T16:00:02Z","first_model_request_source":"codex.otel.api_request.timestamp-minus-duration"}`)
+	if err := writer.WriteHeader(&tar.Header{Name: "sessions/id/startup-worker.json", Mode: 0600, Size: int64(len(payload))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := extractRuntimeArtifacts(&archive, root); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "sessions/id/startup-worker.json")); err != nil || !bytes.Contains(data, []byte("first_model_request_sent")) {
+		t.Fatal("startup evidence lost", err)
+	}
+}
+
+func TestRuntimeArtifactArchiveIncludesExactStartupFiles(t *testing.T) {
+	root := t.TempDir()
+	session := filepath.Join(root, "sessions/id")
+	if err := os.MkdirAll(session, 0700); err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]bool{}
+	for _, name := range []string{"startup-controller.json", "startup-worker.json", "startup-daemon.json", "startup-session.json", "startup-dispatch.json"} {
+		expected["sessions/id/"+name] = true
+		if err := os.WriteFile(filepath.Join(session, name), []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"credentials.json", "startup-config.json", "startup-worker.json.bak"} {
+		if err := os.WriteFile(filepath.Join(session, name), []byte("excluded-canary"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output, err := exec.Command("sh", "-c", runtimeArtifactsArchiveScript, "sh", root).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := tar.NewReader(bytes.NewReader(output))
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !expected[header.Name] {
+			t.Fatalf("archive included unrelated file: %s", header.Name)
+		}
+		delete(expected, header.Name)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("startup timing omitted by native archive: %v", expected)
 	}
 }

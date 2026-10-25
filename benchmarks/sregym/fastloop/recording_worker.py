@@ -15,6 +15,7 @@ from sdo.agents.responder import (
     CodexSessionBackend,
     KubernetesResultPublisher,
     SessionReflector,
+    await_standby_claim,
     execute_incident,
     prepare_claude_home,
     prepare_codex_home,
@@ -55,6 +56,7 @@ def _record_payload(path: Path, payload: str, *, limit: int = 1 << 20) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    await_standby_claim()
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1 or args[0] not in {"responder", "reflection"}:
         print("usage: recording_worker responder|reflection", file=sys.stderr)
