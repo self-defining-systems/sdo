@@ -186,6 +186,8 @@ def capture_checkpoints(
     edits_by_request: dict[str, tuple[FileEdit, ...]] = {}
     for path in sorted((receipt_dir / "sdo_runtime" / "sessions").glob("*/checkpoints/*/request.json")):
         wire = path.read_text(encoding="utf-8")
+        if not _could_belong_to_incident(wire, incident_id):
+            continue
         _bounded(wire.encode(), MAX_TASK_BYTES, "dispatch request")
         edits_path = path.with_name("file_edits.json")
         if edits_path.is_file():
@@ -201,7 +203,7 @@ def capture_checkpoints(
         if not isinstance(data, dict):
             continue
         wire = data.get("agent-task.json")
-        if isinstance(wire, str):
+        if isinstance(wire, str) and _could_belong_to_incident(wire, incident_id):
             try:
                 task = parse_json(wire, AgentTask())
             except ParseError as exc:
@@ -210,8 +212,18 @@ def capture_checkpoints(
             if stage and _task_incident_id(task) == incident_id:
                 metadata = item.get("metadata") or {}
                 requests[task.task_id] = (stage, wire, str(metadata.get("creationTimestamp", "")))
+    # Results may precede requests in ConfigMap order; select by the matched
+    # dispatch IDs before decoding a potentially retired result schema.
+    for item in configmaps:
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
         wire = data.get("agent-result.json")
         if isinstance(wire, str):
+            envelope = _json_envelope(wire)
+            task_id = envelope.get("task_id", envelope.get("taskId"))
+            if task_id is not None and task_id not in requests:
+                continue
             try:
                 result = parse_json(wire, AgentResult())
             except ParseError as exc:
@@ -250,6 +262,33 @@ def capture_checkpoints(
             broker=ledger,
             file_edits=edits_by_request.get(hashlib.sha256(request.encode()).hexdigest()),
         )
+
+
+def _json_envelope(wire: str) -> dict[str, Any]:
+    try:
+        value = json.loads(wire)
+    except (TypeError, ValueError) as exc:
+        raise CheckpointError(f"invalid exported JSON envelope: {exc}") from exc
+    if not isinstance(value, dict):
+        raise CheckpointError("exported worker envelope must be a JSON object")
+    return value
+
+
+def _could_belong_to_incident(wire: str, incident_id: str) -> bool:
+    """Read only routing identity before strict decoding of selected payloads."""
+    envelope = _json_envelope(wire)
+    task_type = envelope.get("task_type", envelope.get("taskType"))
+    if isinstance(task_type, str) and _task_stage(task_type) is None:
+        return False
+    request = envelope.get("request")
+    if not isinstance(request, dict):
+        return True  # Malformed relevant envelopes still fail strict parsing.
+    if isinstance(request.get("closure"), dict):
+        request = request["closure"].get("request", {})
+    if not isinstance(request, dict):
+        return True
+    value = request.get("incident_id", request.get("incidentId"))
+    return value is None or value == incident_id
 
 
 def _task_stage(task_type: str) -> str | None:
