@@ -95,6 +95,9 @@ func (c *Controller) PausedWake() time.Time {
 			next = c.earlyStopRetryAt
 		}
 	}
+	if retry := c.pausedEffectRetryAt; !retry.IsZero() && (next.IsZero() || retry.Before(next)) {
+		next = retry
+	}
 	c.mu.Unlock()
 	return c.closureRetryWake(next)
 }

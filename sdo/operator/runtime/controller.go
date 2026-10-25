@@ -123,6 +123,7 @@ type Controller struct {
 	responderLoop           *ResponderLoop
 	responderCancel         context.CancelFunc
 	earlyStopRetryAt        time.Time
+	pausedEffectRetryAt     time.Time
 	closureStableSince      time.Time
 	closureMutationRevision string
 	earlyLastMutationAt     time.Time
@@ -306,7 +307,17 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	c.processDispatchCompletions(now)
 	c.finishEarlyReport(ctx, now)
 	c.processBrokerCompletions()
-	return c.PersistState(ctx)
+	if err := c.PersistState(ctx); err != nil {
+		c.mu.Lock()
+		c.pausedEffectRetryAt = now.Add(time.Second)
+		c.mu.Unlock()
+		c.reportBrokerError("persist paused controller state", err)
+		return nil
+	}
+	c.mu.Lock()
+	c.pausedEffectRetryAt = time.Time{}
+	c.mu.Unlock()
+	return nil
 }
 
 // StepEvents evaluates, against one snapshot, every detector that is due or

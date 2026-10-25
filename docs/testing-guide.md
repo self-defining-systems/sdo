@@ -301,6 +301,8 @@ Generated Go must compile and test in an isolated workspace. Include a matching 
 
 Prefer deterministic fake clocks, snapshot sources, dispatchers, and state stores. Cover firing and clearing thresholds, debounce windows, restart recovery, idempotent dispatch, exact incident correlation, leader loss, and broker-effect sequencing.
 
+Live-run findings about SDO behavior become seeded deterministic-simulation schedule events under `sdo/operator/runtime/sim_*_test.go`, with invariants checked at the affected boundary and after recovery. Cover the observed interleaving (including maintenance pauses, foreign objects, process restarts and slow workers), reproduce bugs before fixing them, and replay a failing schedule with `SDO_SIM_SEED` (plus `SDO_SIM_SCHEDULE` for schedule bytes). Keep each simulation partition below five minutes. Benchmark-harness bugs instead get benchmark-adapter tests.
+
 ### Benchmark boundary
 
 Tests for `benchmarks/sregym/adapter/` should prove that benchmark resources are added through the runtime extension interface and that strict receipts derive from durable controller/broker evidence. Add architecture tests that reject imports from SREGym packages in production modules.
