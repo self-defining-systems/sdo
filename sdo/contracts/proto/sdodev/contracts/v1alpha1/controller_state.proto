@@ -193,6 +193,8 @@ message ReflectionDecision {
   repeated SdkGap sdk_gaps = 5;
   UsageMetrics usage = 6;
   string decline_reason = 7 [(buf.validate.field).string = {in: ["", "evidence_gap"]}];
+  // Controller-owned terminal execution failure; never a model-authored verdict.
+  string failure_reason = 8 [(buf.validate.field).string = {in: ["", "timeout"]}];
 }
 
 // ProposalRejection is one broker rejection of an agent proposal, with the

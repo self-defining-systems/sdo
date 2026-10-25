@@ -59,6 +59,13 @@ bindings. Positive corpus bindings or controller-settled equivalent repairs bind
 playbooks; detector references and shared-library imports must preserve that
 binding. A typed gap for cause A does not authorize executable changes for
 unverified cause B; gaps for either cause remain allowed.
+Reflection execution uses its frozen task deadline for both the wait context and
+Kubernetes Job `activeDeadlineSeconds`. A Pending worker is bounded too. Expiry
+records a terminal `ReflectionDecision` with `learning_decision=failed` and
+`failure_reason=timeout`, then cleans the proposal; it is not a validation retry.
+Restart retains the original task/deadline and cannot create another Job once
+that deadline expires. Leadership cancellation before expiry remains retryable.
+
 The persisted broker ledger, task ID and task payload preserve one logical
 reflection across restarts; validation corrections are separate attempts.
 When reflection runs, its usage follows the existing decision/result ledger path,

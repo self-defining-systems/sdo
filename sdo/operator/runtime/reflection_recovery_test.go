@@ -37,7 +37,7 @@ func TestReflectionRetryReusesFrozenTaskDespiteChangedClockAndMemory(t *testing.
 		return &contracts.AgentResult{SchemaVersion: task.SchemaVersion, TaskId: task.TaskId, ProposalId: task.Workspace.ProposalId, Status: "completed", Response: response}, err
 	})
 	record := &contracts.OutcomeRecord{SchemaVersion: 1, IncidentId: "frozen", Classification: "success"}
-	feedback := ReflectionFeedback{DispatchAt: time.Unix(1000, 0)}
+	feedback := ReflectionFeedback{DispatchAt: time.Now().UTC()}
 	if _, err := worker.Reflect(context.Background(), closure, workspace, record, "repair", "outcome", feedback); err == nil {
 		t.Fatal("expected result read fault")
 	}

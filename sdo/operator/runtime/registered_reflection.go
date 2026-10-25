@@ -206,7 +206,23 @@ func (w RegisteredReflectionWorker) Reflect(ctx context.Context, closure Inciden
 			}
 		}
 	}
-	result, err := executor.Execute(ctx, task)
+	if task.GetDeadline() == nil || task.GetDeadline().CheckValid() != nil {
+		return ReflectionDecision{}, errors.New("frozen reflection task requires a valid deadline")
+	}
+	deadline := task.GetDeadline().AsTime()
+	timeout := func() (ReflectionDecision, error) {
+		return w.withUsage(ReflectionDecision{LearningDecision: "failed", FailureReason: "timeout", Error: fmt.Sprintf("reflection task %s exceeded frozen deadline %s", task.GetTaskId(), deadline.UTC().Format(time.RFC3339Nano))}, workspace.IncidentID)
+	}
+	if !time.Now().Before(deadline) {
+		return timeout()
+	}
+	executionCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	result, err := executor.Execute(executionCtx, task)
+	var terminalTimeout *worker_registry.TaskTimeoutError
+	if errors.As(err, &terminalTimeout) || !time.Now().Before(deadline) {
+		return timeout()
+	}
 	if err != nil {
 		return ReflectionDecision{}, err
 	}
