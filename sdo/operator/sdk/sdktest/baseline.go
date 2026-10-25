@@ -48,17 +48,23 @@ func LoadSnapshots(dir string) ([]Snapshot, error) {
 }
 
 // HealthyBaselineViolations replays the detector on recorded snapshots of the
-// healthy application and returns one actionable message per active finding.
+// healthy application and returns actionable messages for active findings and
+// unavailable observations, using the production observation checks.
 // The snapshots are healthy by construction, so any active finding is a false
-// positive that would open an incident before any fault exists. Resolved
-// findings and detector errors are not violations here: other tests own them.
+// positive that would open an incident before any fault exists. An error cannot
+// prove quietness and is also a violation. Resolved findings are ignored.
 func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []string {
 	spec := detector.Spec()
 	violations := make([]string, 0)
 	seen := map[string]bool{}
 	for _, snapshot := range snapshots {
-		findings, err := detector.Detect(context.Background(), snapshot)
+		findings, err := sdk.DetectObserved(context.Background(), detector, snapshot)
 		if err != nil {
+			message := fmt.Sprintf("detector %q failed on healthy baseline snapshot %s (namespace %q): %v; every located binding must have available evidence and a conclusive diagnosis", spec.ID, snapshot.SourceName, snapshot.Namespace(), err)
+			if !seen[message] {
+				seen[message] = true
+				violations = append(violations, message)
+			}
 			continue
 		}
 		for _, finding := range findings {
