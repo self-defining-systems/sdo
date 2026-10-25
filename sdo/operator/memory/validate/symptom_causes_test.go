@@ -1,11 +1,14 @@
 package validate
 
 import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"testing"
-	"time"
 )
 
 func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
@@ -40,5 +43,30 @@ func TestVerifiedCauseAllowsObservedRecoveredSymptomWithoutWrite(t *testing.T) {
 				t.Fatalf("unproven cause authorized: %v", got)
 			}
 		})
+	}
+}
+
+func TestReflectionProgramBindsRepairTargetWithoutSymptomParameter(t *testing.T) {
+	root := t.TempDir()
+	copyTree(t, "../../../../tests/fixtures/sdo/playbook_program_app/.sdo", filepath.Join(root, ".sdo"))
+	if err := os.RemoveAll(filepath.Join(root, ".sdo/playbooks/missing-configmap")); err != nil {
+		t.Fatal(err)
+	}
+	ref := &contracts.ObjectRef{Kind: "Service", Namespace: "demo", Name: "front"}
+	symptom := &contracts.ObjectRef{Kind: "Pod", Namespace: "demo", Name: "front-1"}
+	outcome := &contracts.OutcomeRecord{Classification: "success", ConfirmedRootCauses: []*contracts.ConfirmedRootCause{{Resources: []*contracts.ObjectRef{ref}}}}
+	addSyntheticFindingRepairProof(outcome)
+	// The second object was observed, recovered and is available in the replay
+	// snapshot. It is deliberately not a required program parameter or a write.
+	outcome.ConfirmedRootCauses[0].Resources = append(outcome.ConfirmedRootCauses[0].Resources, symptom)
+	outcome.Findings = append(outcome.Findings, &contracts.Finding{DetectorId: outcome.Findings[0].DetectorId, Status: "active", PrimaryResource: symptom, Fingerprint: "symptom"})
+	decision := &contracts.ReflectionDecision{LearningDecision: "updated", PlaybookIds: []string{"service-targetport-mismatch"}}
+	ds, err := ReflectionLearningDiagnostics(root, outcome, decision)
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("symptom demanded as program parameter: %v %v", ds, err)
+	}
+	ds, err = reflectionExecutableDiagnostics(root, outcome, []string{".sdo/playbooks/service-targetport-mismatch/diagnose.go"})
+	if err != nil || len(ds) != 0 {
+		t.Fatalf("symptom blocked executable authority: %v %v", ds, err)
 	}
 }

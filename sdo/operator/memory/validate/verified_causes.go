@@ -34,16 +34,32 @@ func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.Ref
 				work.Items = candidate.GetItems()
 			}
 		}
-		repaired, after, valid := causeRepairs(outcome, cause.GetResources())
-		verified := eligible && valid && len(repaired) > 0
+		verified := eligible && RepairedCauseObserved(outcome, cause.GetResources())
 		for _, resource := range cause.GetResources() {
-			verified = verified && owners[[3]string{resource.GetKind(), resource.GetNamespace(), resource.GetName()}] == 1 && clearedOpenFinding(outcome, resource, after)
+			verified = verified && owners[[3]string{resource.GetKind(), resource.GetNamespace(), resource.GetName()}] == 1
 		}
 		if verified {
 			result = append(result, work)
 		}
 	}
 	return result
+}
+
+// RepairedCauseObserved checks the shared evidence contract independently of
+// aggregate classification or eligibility projection: a timed mutation and
+// opening findings for every target/symptom cleared after the last cause write.
+// Callers still enforce ownership, trusted action provenance and eligibility.
+func RepairedCauseObserved(outcome *contracts.OutcomeRecord, resources []*contracts.ObjectRef) bool {
+	repaired, after, valid := causeRepairs(outcome, resources)
+	if !valid || len(repaired) == 0 {
+		return false
+	}
+	for _, resource := range resources {
+		if !clearedOpenFinding(outcome, resource, after) {
+			return false
+		}
+	}
+	return true
 }
 
 func equalCauseResource(a, b *contracts.ObjectRef) bool {
