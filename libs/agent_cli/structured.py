@@ -281,8 +281,17 @@ def run_structured_turn(
             session = agent.start_session(cwd=str(workspace), timeout=timeout_seconds)
             if resume_session_id is not None and not session.adopt(resume_session_id):
                 raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
-            codex_home = _codex_session_home(extra_env) if provider == "codex" else None
+            codex_home = _codex_session_home(effective_environment) if provider == "codex" else None
             rollout_before = _codex_rollout_totals(codex_home, resume_session_id)
+            if (
+                on_usage is not None
+                and provider == "codex"
+                and resume_session_id is not None
+                and (rollout_before is None or (rollout_before.requests > 0 and rollout_before.totals is None))
+            ):
+                raise StructuredTurnError(
+                    "cannot checkpoint resumed usage without a readable cumulative token baseline"
+                )
             schema_dir = turn_scope.enter_context(tempfile.TemporaryDirectory(prefix="sdo-structured-turn-"))
             # Codex exposes response accounting in its rollout before its CLI
             # emits a terminal usage event. Poll only in the worker, never Go.
@@ -341,6 +350,13 @@ def run_structured_turn(
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
         raise StructuredTurnError(f"{provider} turn failed: {exc}") from exc
+
+    if on_usage is not None and provider == "codex" and resume_session_id is not None:
+        delta = rollout_after.since(rollout_before) if rollout_after is not None else None
+        if delta is None or delta.tokens is None:
+            # The CLI's whole-session total cannot safely become a turn delta.
+            # Keep any observed partial checkpoint rather than billing it twice.
+            raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
 
     structured_output: object = result.structured_output
     session_id = result.session_id or resume_session_id or ""

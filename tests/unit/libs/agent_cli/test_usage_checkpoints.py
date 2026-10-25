@@ -208,3 +208,135 @@ def test_interrupted_claude_retains_incremental_assistant_usage(tmp_path: Path) 
             executor=Worker([]),
             on_usage=checkpoint.publish,
         )
+
+
+@pytest.mark.parametrize("unavailable", [True, False])
+def test_checkpointed_codex_resume_requires_cumulative_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unavailable: bool
+) -> None:
+    from libs.agent_cli.structured import StructuredTurnError
+
+    home = tmp_path / "codex"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    if not unavailable:
+        # A response count without cumulative tokens cannot define a delta.
+        rollout = home / "sessions" / "rollout-fixture-resume-session.jsonl"
+        rollout.parent.mkdir(parents=True)
+        rollout.write_text(
+            json.dumps({"payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 10}}}}) + "\n"
+        )
+    checkpoint = UsageCheckpoint(tmp_path / "usage", "incident", "incident", "responder")
+    agent = ScriptedAgent(lambda _: scripted_turn("codex", session_id="resume-session", structured_output={}))
+    with pytest.raises(StructuredTurnError, match="cumulative.*baseline"):
+        run_structured_turn(
+            "codex",
+            "prompt",
+            output_schema={"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+            cwd=tmp_path,
+            access="danger-full-access",
+            resume_session_id="resume-session",
+            executor=agent.executor,
+            on_usage=checkpoint.publish,
+        )
+    assert not agent.requests, "an unaccountable resumed turn must not start model work"
+    assert not list((tmp_path / "usage").glob("*.json"))
+
+
+def test_checkpointed_codex_resume_never_publishes_ambiguous_session_total(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agentshim import TokenUsage
+
+    from libs.agent_cli.structured import StructuredTurnError
+
+    home = tmp_path / "codex"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    rollout = home / "sessions" / "rollout-fixture-resume-session.jsonl"
+    rollout.parent.mkdir(parents=True)
+    rollout.write_text(
+        json.dumps(
+            {
+                "payload": {
+                    "type": "token_count",
+                    "info": {"total_token_usage": {"input_tokens": 100, "output_tokens": 10}},
+                }
+            }
+        )
+        + "\n"
+    )
+
+    def worker(_request: object) -> FakeRun:
+        rollout.unlink()
+        return scripted_turn(
+            "codex",
+            session_id="resume-session",
+            structured_output={},
+            usage=TokenUsage(input_tokens=150, output_tokens=15),
+        )
+
+    checkpoint = UsageCheckpoint(tmp_path / "usage", "incident", "incident", "responder")
+    with pytest.raises(StructuredTurnError, match="cumulative.*unavailable"):
+        run_structured_turn(
+            "codex",
+            "prompt",
+            output_schema={"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+            cwd=tmp_path,
+            access="danger-full-access",
+            resume_session_id="resume-session",
+            executor=ScriptedAgent(worker).executor,
+            on_usage=checkpoint.publish,
+        )
+    assert not list(checkpoint.directory.glob("*.json")), "whole-session counters were billed as a new turn"
+
+
+def test_checkpoint_reads_the_process_effective_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agentshim import TokenUsage
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "unrelated-home"))
+    home = tmp_path / "worker-home"
+    rollout = home / "sessions" / "rollout-fixture-effective-session.jsonl"
+    rollout.parent.mkdir(parents=True)
+
+    def append_total(input_tokens: int) -> None:
+        with rollout.open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "total_token_usage": {"input_tokens": input_tokens, "output_tokens": input_tokens // 10}
+                            },
+                        }
+                    }
+                )
+                + "\n"
+            )
+
+    append_total(100)
+
+    def worker(_request: object) -> FakeRun:
+        append_total(200)
+        return scripted_turn(
+            "codex",
+            session_id="effective-session",
+            structured_output={},
+            usage=TokenUsage(input_tokens=200, output_tokens=20),
+        )
+
+    checkpoint = UsageCheckpoint(tmp_path / "usage", "incident", "incident", "responder")
+    turn = run_structured_turn(
+        "codex",
+        "prompt",
+        output_schema={"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        cwd=tmp_path,
+        access="danger-full-access",
+        resume_session_id="effective-session",
+        environment={"CODEX_HOME": str(home)},
+        executor=ScriptedAgent(worker).executor,
+        on_usage=checkpoint.publish,
+    )
+    assert turn.usage.tokens.input_tokens == 100
+    snapshot = json.loads((checkpoint.directory / f"{checkpoint.turn_id}.json").read_text())
+    assert snapshot["complete"] is True
+    assert snapshot["usage"]["input_tokens"] == 100
