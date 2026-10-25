@@ -66,6 +66,15 @@ func IncidentExecutionNames(ctx context.Context, client kubernetes.Interface, na
 		}
 		names[strings.TrimSuffix(cm.Name, "-request")] = true
 	}
+	jobs, err := client.BatchV1().Jobs(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("inspect bound incident Jobs: %w", err)
+	}
+	for _, job := range jobs.Items {
+		if job.Annotations["sdo.dev/incident-id"] == incidentID && (!initialOnly || job.Annotations["sdo.dev/task-id"] == incidentID) {
+			names[job.Name] = true
+		}
+	}
 	result := make([]string, 0, len(names))
 	for name := range names {
 		result = append(result, name)

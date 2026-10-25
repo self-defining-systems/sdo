@@ -498,6 +498,21 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 			return unpublished(errors.New("unpublished standby lost readiness"))
 		}
 	}
+	// Persist execution identity on the existing Job, including requests too
+	// large for ConfigMaps. This is metadata only; the immutable inbox remains
+	// the sole release point and no worker permission changes.
+	incidentIdentity := new(contracts.IncidentRequest)
+	if err := task.GetRequest().UnmarshalTo(incidentIdentity); err != nil {
+		return unpublished(err)
+	}
+	if job.Annotations == nil {
+		job.Annotations = map[string]string{}
+	}
+	job.Annotations["sdo.dev/incident-id"] = incidentIdentity.GetIncidentId()
+	job.Annotations["sdo.dev/task-id"] = task.GetTaskId()
+	if _, err := e.Client.BatchV1().Jobs(e.Namespace).Update(ctx, job, metav1.UpdateOptions{}); err != nil {
+		return unpublished(err)
+	}
 	environment := cloneEnvironment(e.Environment)
 	environment["SDO_REQUEST_SHA256"] = taskRequestDigest(task)
 	environment["SDO_RESULT_CONFIGMAP"] = b.JobName + "-result"

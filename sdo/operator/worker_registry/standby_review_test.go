@@ -161,3 +161,19 @@ func TestRWSAgingStandbyReplacedAndCannotClaim(t *testing.T) {
 		})
 	}
 }
+
+func TestRWSWarmReceiptIdentityDoesNotRequireRequestConfigMap(t *testing.T) {
+	p, e, task := standbyFixture(t)
+	readyStandby(t, p)
+	bound, err := p.TryBind(context.Background(), e, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bound.publishWarmTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	name, err := IncidentResponderJobName(context.Background(), e.Client, e.Namespace, "incident")
+	if err != nil || name != bound.WarmBinding.JobName {
+		t.Fatalf("PVC-backed request identity lost: %q %v", name, err)
+	}
+}
