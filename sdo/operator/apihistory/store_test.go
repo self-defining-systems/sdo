@@ -176,3 +176,46 @@ func TestRestartRecoversCapAccountingAfterManifestLag(t *testing.T) {
 		t.Fatalf("restart exceeded incident cap: %+v", h.Manifest)
 	}
 }
+
+// Stalled consumers and projection workers are explicit scheduling cuts. Record
+// must complete without either progressing; no elapsed-time estimate is needed.
+func TestRecordAdmissionWithStalledConsumers(t *testing.T) {
+	for _, scenario := range []string{"queue-full", "projection-full", "oversized"} {
+		t.Run(scenario, func(t *testing.T) {
+			store := &Store{queue: make(chan observation, 1), projecting: make(chan struct{}, 8)}
+			body := []byte(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p","namespace":"app"}}`)
+			switch scenario {
+			case "queue-full":
+				store.queue <- observation{event: Event{RequestID: "held"}}
+			case "projection-full":
+				for range cap(store.projecting) {
+					store.projecting <- struct{}{}
+				}
+			case "oversized":
+				body = make([]byte, MaxProjectionBytes+1)
+			}
+			store.Record(Event{RequestID: "observed", Phase: "end", Verb: "list"}, body)
+			if store.dropped.Load() != 1 || len(store.queue) != 1 {
+				t.Fatalf("stalled admission lost its gap: dropped=%d queue=%d", store.dropped.Load(), len(store.queue))
+			}
+			item := <-store.queue
+			if len(item.body) != 0 {
+				t.Fatal("stalled admission queued raw response bytes")
+			}
+			switch scenario {
+			case "queue-full":
+				if item.event.RequestID != "held" {
+					t.Fatal("full-queue admission replaced an earlier event")
+				}
+			case "projection-full":
+				if item.event.Omission != "redacted_projection_busy" || len(store.projecting) != cap(store.projecting) {
+					t.Fatal("admission waited for or exceeded the projection worker bound")
+				}
+			case "oversized":
+				if item.event.Omission != "redacted_projection_budget" || !item.event.Partial || len(store.projecting) != 0 {
+					t.Fatal("oversized admission started projection work")
+				}
+			}
+		})
+	}
+}

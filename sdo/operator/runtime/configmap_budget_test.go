@@ -3,10 +3,13 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
@@ -79,6 +82,20 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	sizes := recordConfigMapWrites(client)
 	controller := newClosureRetryController(t, ClosureRetryPolicy{MaxAttempts: 1}, mountedBroker{&rejectingIncidentBroker{rejections: 10}, root}, &now)
+	// Onboarding retains object identities, including in the incident view. It
+	// must fit alongside a large task without copying live object contents.
+	controller.namespaceOnboarding = &contracts.NamespaceOnboarding{
+		Namespace: "demo", AcceptedCommit: strings.Repeat("a", 40), EstablishedAt: timestamppb.New(now),
+	}
+	for i := range 1000 {
+		controller.namespaceOnboarding.Objects = append(controller.namespaceOnboarding.Objects,
+			&contracts.ObjectRef{ApiVersion: "v1", Kind: "ConfigMap", Namespace: "demo", Name: fmt.Sprintf("settings-%04d", i)})
+	}
+	created := make(chan *batchv1.Job, 1)
+	client.PrependReactor("create", "jobs", func(action ktesting.Action) (bool, k8sruntime.Object, error) {
+		created <- action.(ktesting.CreateAction).GetObject().(*batchv1.Job).DeepCopy()
+		return false, nil, nil
+	})
 	controller.dispatcher = KubernetesJobDispatcher{
 		Client: client, Namespace: "demo", Registry: testIncidentRegistry(t, "responder:test"), AgentID: testIncidentAgentID(t),
 		ServiceAccount: "sdo-responder", RepositoryPVC: "repository", RepositoryMountPath: root,
@@ -127,9 +144,11 @@ func TestEveryControllerConfigMapStaysUnderBudgetWithLargeMemory(t *testing.T) {
 	select {
 	case completion := <-controller.results:
 		t.Fatalf("dispatch ended before a Job was created: %v", completion.err)
-	case <-time.After(50 * time.Millisecond):
+	case job := <-created:
+		if job.Name != IncidentJobName(dispatch.Request.IncidentID) {
+			t.Fatalf("created Job %q for another incident", job.Name)
+		}
 	}
-	_ = awaitJob(t, client, IncidentJobName(dispatch.Request.IncidentID))
 	if err := controller.PersistState(ctx); err != nil {
 		t.Fatalf("persist dispatched incident: %v", err)
 	}
