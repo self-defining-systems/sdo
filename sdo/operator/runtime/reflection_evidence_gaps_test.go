@@ -1,17 +1,14 @@
 package runtime
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/proto"
-	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/runtime/lifecyclecore"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -54,12 +51,12 @@ func TestEvidenceGapsNameOnlyTheMissingResourceAndPhase(t *testing.T) {
 }
 
 func TestCaptureGapNeverExcusesLearning(t *testing.T) {
-	driver := lifecycleio.ReflectionDriver{Repository: &broker.Broker{}, Now: func() time.Time { return time.Unix(1, 0) }}
+	// Capture availability is not an exception to the complete shared validator's
+	// decision rules. The lifecycle review no longer has a separate content gate.
 	for _, count := range []uint32{0, 1} {
-		effect := lifecyclecore.ReflectionEffect{Kind: lifecyclecore.ReviewReflection, ID: "review", EvidenceGapCount: count, Decision: &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "evidence gap", DeclineReason: "evidence_gap"}}
-		rejected, err := driver.Execute(context.Background(), effect)
-		if err != nil || rejected.Kind != lifecyclecore.ReflectionRejected || len(rejected.Diagnostics) != 1 || rejected.Diagnostics[0].Rule != "reflection.decision" {
-			t.Fatalf("capture gap excused learning: %v %v", rejected, err)
+		ds := validate.ReflectionDiagnostics(&contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "evidence gap", DeclineReason: "evidence_gap"}, nil)
+		if len(ds) != 1 || ds[0].Rule != "reflection.decision" {
+			t.Fatalf("capture gap %d excused learning: %v", count, ds)
 		}
 	}
 }

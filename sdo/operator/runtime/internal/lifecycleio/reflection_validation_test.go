@@ -25,3 +25,16 @@ func TestReflectionReviewDoesNotUseUncommittedOutcomeForLearning(t *testing.T) {
 		t.Fatalf("review independently used a non-accepted outcome: %v %v", event, err)
 	}
 }
+
+func TestReflectionReviewDoesNotValidateStalePaths(t *testing.T) {
+	driver := ReflectionDriver{Repository: &broker.Broker{}, Now: func() time.Time { return time.Unix(1, 0) }}
+	effect := lifecyclecore.ReflectionEffect{
+		Kind: lifecyclecore.ReviewReflection, ID: "review",
+		Decision: &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "already covered"},
+		Paths:    []string{".sdo/playbooks/stale/README.md"},
+	}
+	event, err := driver.Execute(context.Background(), effect)
+	if err != nil || event.Kind != lifecyclecore.ReflectionReviewed {
+		t.Fatalf("review independently accepted stale effect paths: %v %v", event, err)
+	}
+}

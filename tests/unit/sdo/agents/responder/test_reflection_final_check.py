@@ -200,3 +200,69 @@ def test_final_check_rechecks_edits_after_an_earlier_pass(
     assert result.learning_decision == "no_change"
     assert calls == 2
     assert "layout.unknown-path" in agent.prompts[1]
+
+
+def test_final_check_stops_at_original_deadline(
+    accepted_reflection: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from sdo.agents.responder import reflection
+    from sdo.agents.responder.memory_check import check_reflection_result
+
+    now = 10.0
+    monkeypatch.setattr(reflection, "time", SimpleNamespace(monotonic=lambda: now))
+    budgets = []
+
+    def check(root, result, timeout):
+        nonlocal now
+        budgets.append(timeout)
+        checked = check_reflection_result(root, result, timeout)
+        now = 12.0  # The existing deadline expires during the rejected check.
+        return checked
+
+    agent = ScriptedAgent(
+        lambda _: reply(
+            "codex",
+            {"summary": "covered", "learning_decision": "no_change", "no_change_reason": "covered"},
+            session_id="reflection-session",
+            branch="reflection",
+        )
+    )
+    with pytest.raises(RuntimeError, match="reflection.program-required"):
+        CodexSessionBackend(executor=agent.executor, memory_checker=check, timeout_seconds=1).fresh(
+            worktree=accepted_reflection,
+            prompt="reflect",
+            idempotency_key="one-dispatch",
+        )
+    assert budgets == [1.0]
+    assert len(agent.requests) == 1
+
+
+def test_final_check_timeout_kills_the_validator_process_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    import time
+
+    from sdo.agents.responder.memory_check import check_reflection_result
+    from sdo.contracts import ReflectionResult
+
+    marker = tmp_path / "child-survived"
+    child = f"import time; from pathlib import Path; time.sleep(0.4); Path({str(marker)!r}).touch()"
+    executable = tmp_path / "sdo-operator"
+    executable.write_text(
+        f"#!{sys.executable}\nimport subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        "print('validation started', flush=True)\ntime.sleep(10)\n"
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    result = check_reflection_result(tmp_path, ReflectionResult(), 0.1)
+    assert result.exit_code != 0
+    assert result.timed_out
+    assert "validation started" in result.stdout
+    time.sleep(0.5)
+    assert not marker.exists()

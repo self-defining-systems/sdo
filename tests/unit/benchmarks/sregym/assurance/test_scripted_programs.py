@@ -211,7 +211,7 @@ def test_a_refine_prompt_is_confirmed_without_editing_memory(
 
 
 def test_responder_and_resumed_reflection_launch_codex_with_identical_schema_and_mcp_definitions(
-    toy: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    toy: dict[str, Path], monkeypatch: pytest.MonkeyPatch, prepare_reflection_memory
 ) -> None:
     from sdo.agents.responder.reflection import CodexSessionBackend
 
@@ -219,6 +219,7 @@ def test_responder_and_resumed_reflection_launch_codex_with_identical_schema_and
     result = execute_incident(request, model="gpt-6-luna", provider="codex")
     worktree = toy["tmp"] / "checkout"
     worktree.mkdir()
+    prepare_reflection_memory(worktree, request.incident_id)
     refine = (
         "This is a confirm-or-refine reflection, not a full one. Programs: "
         f"{PROGRAM}.\nIdempotency key: reflection:{request.incident_id}:{'a' * 40}\n"
@@ -243,6 +244,7 @@ def test_responder_and_resumed_reflection_launch_codex_with_identical_schema_and
         return [
             token.replace(str(worktree), "<checkout>").replace(str(toy["tmp"]), "<checkout>")
             for token in turn["mcp_config"]
+            if ".env." not in token  # Worker launch inputs are not model-visible tool definitions.
         ]
 
     assert definitions(reflection) == definitions(responder)

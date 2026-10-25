@@ -310,6 +310,22 @@ class SessionReflector:
             )
 
 
+def memory_check_correction(check: ValidationResult, idempotency_key: str) -> RenderedPrompt:
+    correction = render_prompt(
+        "responder",
+        "reflection_check_correction",
+        part="reflection.instructions",
+        diagnostics=named_prompt("reflection.validation_feedback", check.stdout + "\n" + check.stderr),
+    )
+    return render_prompt(
+        "responder",
+        "turn_01",
+        part="reflection.instructions",
+        idempotency_key=idempotency_key,
+        prompt=correction,
+    )
+
+
 class CodexSessionBackend:
     """Resume the responder's own Codex session to reflect on its outcome.
 
@@ -396,12 +412,7 @@ class CodexSessionBackend:
                 raise RuntimeError(f"reflection memory check failed before submission: {check.stdout}\n{check.stderr}")
             turn = self._run(
                 worktree=worktree,
-                prompt=render_prompt(
-                    "responder",
-                    "reflection_check_correction",
-                    part="reflection.instructions",
-                    diagnostics=check.stdout + "\n" + check.stderr,
-                ),
+                prompt=memory_check_correction(check, idempotency_key),
                 session_id=turn.session_id,
                 timeout_seconds=max(0, deadline - time.monotonic()),
             )

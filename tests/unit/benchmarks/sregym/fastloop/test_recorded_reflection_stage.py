@@ -38,6 +38,7 @@ def reflection_recording(
     *,
     captures: dict[str, bytes] | None = None,
     files: dict[str, bytes] | None = None,
+    file_turns: list[dict[str, bytes]] | None = None,
     classification: str = "success",
     verified_service: bool = False,
     check_prompt: Callable[[str], None] | None = None,
@@ -120,10 +121,14 @@ func main() {
         for index, output in enumerate(outputs)
     )
 
+    turn_index = 0
+
     def author(command: CommandRequest):
+        nonlocal turn_index
         if check_prompt is not None:
             check_prompt(command.stdin or "")
-        authored = files if files is not None else readme_files()
+        authored = file_turns[turn_index] if file_turns is not None else files if files is not None else readme_files()
+        turn_index += 1
         for name, data in authored.items():
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,30 +215,26 @@ def test_recorded_reflection_frontmatter_reaches_real_broker(
     assert subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"]) == before
 
 
-def test_recorded_reflection_replays_repeated_correction_dispatches(tmp_path: Path) -> None:
-    statuses = []
-    for attempt in range(3):
-        store, source = reflection_recording(
-            tmp_path / str(attempt), [frontmatter_output()], files=readme_files(physical=attempt < 2)
-        )
-        result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
-        statuses.append(result["proposals"][0]["status"])
-        if attempt < 2:
-            assert "text.physical-path" in result["proposals"][0]["error"]
-        assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 1
-    assert statuses == ["rejected", "rejected", "accepted"]
+def test_recorded_reflection_corrects_within_one_dispatch(tmp_path: Path) -> None:
+    store, source = reflection_recording(
+        tmp_path,
+        [frontmatter_output(), frontmatter_output()],
+        file_turns=[readme_files(physical=True), readme_files()],
+    )
+    assert len(list(store.root.parent.glob("000_*/sdo_runtime/sessions/*/model_io/*/*.json"))) == 2
+    result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
+    assert result["status"] == "completed"
+    assert result["proposals"][0]["status"] == "accepted"
 
 
-def test_recorded_reflection_reports_all_rejections(tmp_path: Path) -> None:
-    for attempt in range(3):
-        store, source = reflection_recording(
-            tmp_path / str(attempt), [frontmatter_output()], files=readme_files(physical=True)
+def test_recorded_reflection_withholds_persistently_rejected_result(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="text.physical-path"):
+        reflection_recording(
+            tmp_path,
+            [frontmatter_output()] * 4,
+            files=readme_files(physical=True),
         )
-        result = replay_live_worker(store, 0, "reflection", source=source, live_on_cache_miss=False)
-        assert result["status"] == "failed"
-        assert len(result["proposals"]) == 1
-        assert result["proposals"][0]["status"] == "rejected"
-        assert "text.physical-path" in result["proposals"][0]["error"]
+    assert not (tmp_path / "results/run" / "checkpoints/000_reflection.json").exists()
 
 
 @pytest.mark.parametrize("classification", ["success", "failed"])
