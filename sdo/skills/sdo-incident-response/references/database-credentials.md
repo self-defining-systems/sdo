@@ -1,0 +1,24 @@
+# Database credential references
+
+Use the typed database action to restore a missing user or its direct roles. Keep
+credential values out of arguments, evidence and memory; select their declared
+source by reference. The executor resolves values privately at execution time.
+
+`CredentialRef` selects exactly one source:
+
+- `Env`: a variable in the database container, including a Secret-backed variable.
+- `ConfigMap`: a named key in the target Pod namespace. An optional `Assignment`
+  selects exactly one literal `NAME=value` line in a shell script or dotenv file.
+  Quoted and bare values are supported; expansion, commands, missing assignments
+  and duplicates are refused with a typed error naming the reference.
+
+JSON uses `env` or `config_map: {name, key, assignment}`. The same references work
+for database authentication and the repaired user's password. ConfigMap data need
+not be exposed as container env. Direct Secret keys are unavailable under the
+existing metadata-only RBAC and require a separate security review.
+
+A successful catalog write is action evidence. Check application recovery through
+SDO's independent verification; include a dependent Deployment restart when the
+repair requires reconnection. Learn executable diagnosis and mitigation from the
+recorded open catalog, then replay to NoMatch. Replay preserves references and
+projects catalog membership and roles; it does not prove live authentication.

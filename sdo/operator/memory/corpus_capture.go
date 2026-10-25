@@ -40,6 +40,27 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 	if err := json.Unmarshal(data, &calls); err != nil {
 		return err
 	}
+	if call.Method == "DatabaseUsers" {
+		identity, err := databaseCaptureIdentity(call)
+		if err != nil {
+			return err
+		}
+		for _, prior := range calls {
+			if prior.Method != "DatabaseUsers" {
+				continue
+			}
+			previous, err := databaseCaptureIdentity(prior)
+			if err != nil {
+				return err
+			}
+			// Catalogs are mutable. A later responder call cannot replace the
+			// first observation at this immutable capture boundary, even when
+			// it selects another credential source or an equivalent shell.
+			if identity == previous {
+				return nil
+			}
+		}
+	}
 	calls = append(calls, call)
 	data, err = json.Marshal(calls)
 	if err != nil {
@@ -58,6 +79,28 @@ func AppendCapturedRecording(repositoryMount, incidentID, phase string, call sdk
 		return err
 	}
 	return os.Rename(file.Name(), path)
+}
+
+func databaseCaptureIdentity(call sdktest.PrimitiveCall) (string, error) {
+	var targets []program.DatabaseTarget
+	if err := json.Unmarshal(call.Arguments, &targets); err != nil || len(targets) != 1 {
+		return "", fmt.Errorf("invalid captured database target")
+	}
+	target := targets[0]
+	if err := target.Validate(); err != nil {
+		return "", fmt.Errorf("invalid captured database target")
+	}
+	target.Auth = nil
+	target.Shell = ""
+	phase := call.Phase
+	if phase == "" {
+		phase = "open"
+	}
+	raw, _ := json.Marshal(struct {
+		Phase  string
+		Target program.DatabaseTarget
+	}{phase, target})
+	return string(raw), nil
 }
 
 // IncidentCorpusDir locates trusted controller captures outside accepted memory.
